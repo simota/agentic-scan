@@ -181,6 +181,187 @@ class SourceRedactionTest(OutputTest):
         self.assertNotIn(value, redaction.redact('password = var.db_password + "' + value + '"'))
 
 
+class StructuredSourceRedactionTest(OutputTest):
+    POD = ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: app\nspec:\n"
+           "  containers:\n    - name: app\n      image: example/app:v1\n"
+           "      securityContext:\n        privileged: true\n")
+
+    def assert_source_omitted(self, record, value):
+        self.assertEqual(render.attach_sources(record, self.repo), {})
+        for page in self.pages(record):
+            self.assertNotIn(value, page)
+            self.assertNotIn('class="snippet"', page)
+
+    def test_secret_env_stays_out_of_baseline_reports(self):
+        value = "synthetic-" + "environment-value"
+        self.write("pod.yaml", self.POD + "      env:\n        - name: DB_PASSWORD\n"
+                   "          value: " + value + "\n")
+        scan = iac_scan.run(self.repo)
+        record = self.record("pod.yaml:10")
+        record["findings"] = iac_scan.build_findings(scan.hits)
+        self.assertEqual([(f["rule"], f["location"]) for f in record["findings"]],
+                         [("K8S-001", "pod.yaml:10")])
+        self.assertEqual(scan.not_run, [])
+        self.assert_source_omitted(record, value)
+
+    def test_yaml_env_order_flow_quotes_and_block_values(self):
+        value = "synthetic-" + "environment-variants"
+        variants = [
+            "      env:\n        - value: " + value + "\n          name: DB_PASSWORD\n",
+            '      "env": [{"value": "' + value + '", "name": "API_TOKEN"}]\n',
+            '      "e\\u006ev":\n        - "n\\u0061me": DB_PASSWORD\n'
+            '          "value": "' + value + '"\n',
+            "      env:\n        - name: DB_PASSWORD\n          value: |-\n            " + value + "\n",
+        ]
+        for env in variants:
+            with self.subTest(env=env):
+                self.write("pod.yml", self.POD + env)
+                self.assert_source_omitted(self.record("pod.yml:10"), value)
+
+    def test_json_pod_lists_and_other_container_kinds_hide_secret_env(self):
+        value = "synthetic-" + "json-environment"
+        for container_key in ("containers", "initContainers", "ephemeralContainers"):
+            for indent in (None, 2):
+                with self.subTest(container_key=container_key, indent=indent):
+                    pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "app"},
+                           "spec": {container_key: [{"name": "app", "securityContext": {"privileged": True},
+                                                     "env": [{"value": value, "name": "CLIENT_SECRET"}]}]}}
+                    doc = {"apiVersion": "v1", "kind": "List", "items": [pod]}
+                    self.write("pods.json", json.dumps(doc, indent=indent))
+                    self.assert_source_omitted(self.record("pods.json:1"), value)
+
+    def test_secret_in_later_yaml_document_prevents_neighboring_excerpts(self):
+        value = "synthetic-" + "second-document"
+        self.write("pods.yaml", self.POD + "--- # another workload\n" + self.POD +
+                   "      env: [{name: DB_PASSWORD, value: " + value + "}]\n...\n")
+        self.assert_source_omitted(self.record("pods.yaml:10"), value)
+
+    def test_secret_manifest_is_omitted_without_a_baseline_secret_finding(self):
+        value = "synthetic-" + "secret-object"
+        for suffix, text in (
+            ("yaml", "apiVersion: v1\nkind: Secret\nmetadata: {name: app}\nstringData:\n  config: " + value),
+            ("json", json.dumps({"kind": "Secret", "data": {"config": value}})),
+        ):
+            with self.subTest(suffix=suffix):
+                self.write("resource." + suffix, text)
+                self.assert_source_omitted(self.record("resource." + suffix + ":1"), value)
+
+    def test_typed_secret_list_with_kindless_items_has_no_excerpt(self):
+        value = "synthetic-" + "typed-secret-list"
+        doc = {"apiVersion": "v1", "kind": "SecretList", "items": [
+            {"metadata": {"name": "app"}, "stringData": {"config": value}}]}
+        texts = [("json", json.dumps(doc, indent=indent)) for indent in (None, 2)]
+        texts.append(("yaml", "apiVersion: v1\nkind: SecretList\nitems:\n"
+                      "  - metadata: {name: app}\n    data: {config: " + value + "}\n"))
+        for suffix, text in texts:
+            with self.subTest(suffix=suffix, text=text):
+                self.write("resource." + suffix, text)
+                self.assert_source_omitted(self.record("resource." + suffix + ":1"), value)
+
+    def test_env_dictionary_checks_decoded_secret_names(self):
+        for value in ("synthetic-" + "escaped-env", "var.bootstrap_value"):
+            for suffix in ("json", "yaml"):
+                with self.subTest(value=value, suffix=suffix):
+                    text = json.dumps({"env": {"DB_PASSWORD": value}, "privileged": True})
+                    text = text.replace("DB_PASSWORD", "DB_PASS\\u0057ORD")
+                    self.write("resource." + suffix, text)
+                    self.assert_source_omitted(self.record("resource." + suffix + ":1"), value)
+
+    def test_public_env_dictionary_keeps_its_excerpt(self):
+        for suffix in ("json", "yaml"):
+            with self.subTest(suffix=suffix):
+                text = json.dumps({"env": {"LOG_LEVEL": "visible-configuration"}, "privileged": True})
+                self.write("resource." + suffix, text.replace("LOG_LEVEL", "LOG\\u005fLEVEL"))
+                record = self.record("resource." + suffix + ":1")
+                self.assertIn("F-001", render.attach_sources(record, self.repo))
+                for page in self.pages(record):
+                    self.assertIn("visible-configuration", page)
+                    self.assertIn('class="snippet"', page)
+
+    def test_sensitive_plan_output_stays_out_of_baseline_reports(self):
+        value = "synthetic-" + "sensitive-output"
+        plan = {"format_version": "1.2", "terraform_version": "1.9.0", "planned_values": {
+            "outputs": {"bootstrap": {"sensitive": True, "type": "string", "value": value}},
+            "root_module": {"resources": [{"address": "aws_ebs_volume.data", "mode": "managed",
+                                           "type": "aws_ebs_volume", "name": "data",
+                                           "values": {"availability_zone": "us-east-1a", "encrypted": False}}]},
+        }}
+        for indent in (None, 2):
+            with self.subTest(indent=indent):
+                self.write("plan.json", json.dumps(plan, indent=indent))
+                scan = iac_scan.run(self.repo)
+                record = self.record("plan.json:1")
+                record["findings"] = iac_scan.build_findings(scan.hits)
+                self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-EBS-001"])
+                self.assertEqual(scan.not_run, [])
+                self.assert_source_omitted(record, value)
+
+    def test_nested_plan_sensitivity_masks_hide_original_source(self):
+        value = "synthetic-" + "masked-property"
+        for mask_name in ("sensitive_values", "before_sensitive", "after_sensitive"):
+            with self.subTest(mask_name=mask_name):
+                self.write("plan.json", json.dumps({
+                    "values": {"settings": [{"public": "visible"}, {"bootstrap": value}]},
+                    mask_name: {"settings": [{"public": False}, {"bootstrap": True}]},
+                }, indent=2))
+                self.assert_source_omitted(self.record("plan.json:4"), value)
+
+    def test_unsupported_yaml_and_invalid_json_never_use_raw_source(self):
+        value = "synthetic-" + "ambiguous-structure"
+        cases = [
+            ("yaml", self.POD + "      env: !Custom " + value),
+            ("yml", "defaults: &shared [{name: DB_PASSWORD, value: " + value + "}]\n" +
+             self.POD + "      env: *shared\n"),
+            ("yaml", self.POD + "      env:\n        - name: DB_PASSWORD\n          name: LOG_LEVEL\n"
+             "          value: " + value),
+            ("json", '{"env": [{"name": "DB_PASSWORD", "value": "' + value + '"}],'),
+            ("json", '{"sensitive": true, "sensitive": false, "value": "' + value + '"}'),
+        ]
+        for suffix, text in cases:
+            with self.subTest(suffix=suffix, text=text):
+                self.write("resource." + suffix, text)
+                self.assert_source_omitted(self.record("resource." + suffix + ":1"), value)
+
+    def test_opaque_env_names_and_malformed_sensitive_masks_are_omitted(self):
+        value = "synthetic-" + "opaque-structure"
+        documents = [
+            {"env": [{"value": value}]},
+            {"env": [{"name": None, "value": value}]},
+            {"env": value},
+            {"sensitive": None, "value": value},
+            {"sensitive_values": {"bootstrap": "unknown"}, "values": {"bootstrap": value}},
+        ]
+        for doc in documents:
+            with self.subTest(doc=doc):
+                self.write("resource.json", json.dumps(doc))
+                self.assert_source_omitted(self.record("resource.json:1"), value)
+
+    def test_public_env_and_secret_references_keep_original_source_lines(self):
+        variants = [
+            "      env:\n        - name: LOG_LEVEL\n          value: info\n",
+            "      env:\n        - name: DB_PASSWORD\n          valueFrom:\n"
+            "            secretKeyRef: {name: database, key: password}\n",
+        ]
+        for env in variants:
+            with self.subTest(env=env):
+                self.write("pod.yaml", self.POD + env)
+                rows = self.excerpt("pod.yaml:10")
+                self.assertEqual([(n, text) for n, text, hit in rows if hit],
+                                 [(10, "        privileged: true")])
+                self.assertIn("      env:", [text for _, text, _ in rows])
+
+    def test_false_and_empty_sensitivity_masks_keep_public_json_excerpts(self):
+        doc = {"sensitive": False, "value": "visible-configuration",
+               "environment": "production",
+               "sensitive_values": {"settings": [False, {}, []],
+                                    "env": [{"name": False, "value": False}]},
+               "before_sensitive": {}, "after_sensitive": []}
+        self.write("plan.json", json.dumps(doc, indent=2))
+        rows = self.excerpt("plan.json:3")
+        self.assertEqual([n for n, _, hit in rows if hit], [3])
+        self.assertIn("visible-configuration", "\n".join(text for _, text, _ in rows))
+
+
 class ModuleRedactionTest(OutputTest):
     def test_credentials_stay_out_of_all_module_outputs_and_excerpts(self):
         username = "synthetic-" + "username"

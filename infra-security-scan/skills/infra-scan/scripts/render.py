@@ -8,7 +8,9 @@ Writes DIR/dashboard.html (interactive, self-contained), DIR/assessment.html
 set CHROME to choose the binary). With --repo, each finding's `path:line` is
 embedded as a short source excerpt; state files, variable files and
 secret-looking files are never read, and lines that look like they assign a
-secret are redacted. Excerpt redaction is heuristic: inspect before sharing.
+secret are redacted. JSON/YAML with sensitive metadata, secret environment
+values or unsupported syntax has no excerpt. Other redaction is heuristic:
+inspect before sharing.
 
 `validate()` is the executable form of reference/findings-schema.md and is
 imported by findings.py and contract_check.py.
@@ -29,7 +31,7 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import redact, redact_lines
+from redaction import has_structured_secrets, redact, redact_lines
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -388,6 +390,39 @@ SENSITIVE_NAME = re.compile(r"(\.tfstate(\.backup)?|\.tfvars(\.json)?|\.pem|\.ke
                             r"secret|credential|id_rsa|\.netrc", re.IGNORECASE)
 
 
+def source_lines(path):
+    """Preserve source line numbers, or return None if an excerpt is unsafe.
+
+    Reuse the scanner's conservative YAML subset. A tag, alias or other
+    unsupported construct must not fall back to raw text near another finding.
+    JSON sensitivity and env name/value relationships require the whole document;
+    line-oriented redaction alone cannot enforce them.
+    """
+    text = path.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    try:
+        if path.suffix.lower() == ".json":
+            docs = [json.loads(text, object_pairs_hook=unique_object)]
+        elif path.suffix.lower() in (".yaml", ".yml"):
+            # Local import avoids a cycle: iac_scan also uses redaction helpers.
+            from iac_scan import _YamlSubset
+            docs, rows = [], []
+            for n, line in enumerate(lines, 1):
+                if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
+                    docs.append(_YamlSubset(rows).parse())
+                    rows = []
+                else:
+                    rows.append((n, line))
+            docs.append(_YamlSubset(rows).parse())
+        else:
+            docs = []
+        if any(has_structured_secrets(doc) for doc in docs):
+            return None
+    except (ValueError, TypeError, RecursionError):
+        return None
+    return redact_lines(lines)
+
+
 def attach_sources(data, repo, context=3):
     """Return {finding id: [(lineno, text, hit)]} for readable, non-sensitive locations."""
     root = Path(repo).resolve()
@@ -415,8 +450,10 @@ def attach_sources(data, repo, context=3):
             if cand.is_symlink() or not cand.is_file():
                 continue
             cand.resolve().relative_to(root)
-            lines = redact_lines(cand.read_text(encoding="utf-8", errors="replace").splitlines())
+            lines = source_lines(cand)
         except (OSError, ValueError):
+            continue
+        if lines is None:
             continue
         end = min(end, start + 40)
         lo, hi = max(1, start - context), min(len(lines), end + context)

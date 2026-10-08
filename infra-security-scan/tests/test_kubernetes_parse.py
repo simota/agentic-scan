@@ -17,6 +17,24 @@ class KubernetesParseTest(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             return iac_scan.run(tmp)
 
+    def test_indented_root_is_scanned_like_an_unindented_manifest(self):
+        text = """apiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec:
+  hostNetwork: true
+  containers:
+  - name: agent
+    image: example/agent:1.0
+"""
+        expected = self.scan(text)
+        scan = self.scan("\n".join("  " + line for line in text.splitlines()) + "\n")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual(scan.resources, expected.resources)
+        self.assertEqual(scan.hits, expected.hits)
+        self.assertEqual([h["rule"] for h in scan.hits], ["K8S-001"])
+        self.assertEqual(scan.not_run, [])
+
     def test_metadata_and_service_account_names_do_not_grant_admin(self):
         scan = self.scan("""apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

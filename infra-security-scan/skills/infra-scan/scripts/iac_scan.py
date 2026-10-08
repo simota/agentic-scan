@@ -324,20 +324,20 @@ class _Lit:
     def ws(self, newlines=True):
         self.i = skip_space(self.s, self.i, len(self.s), newlines)
 
-    def value(self):
+    def value(self, multiline=False):
         self.ws()
         start = self.i
-        v = self.primary()
-        self.ws(newlines=False)
+        v = self.primary(multiline)
+        self.ws(newlines=multiline)
         if self.i < len(self.s) and self.s[self.i] not in self.SEP:
-            self.skip_term()
+            self.skip_term(multiline)
             return UNKNOWN
         if self.i == start:
-            self.skip_term()
+            self.skip_term(multiline)
             return UNKNOWN
         return v
 
-    def primary(self):
+    def primary(self, multiline=False):
         s, i = self.s, self.i
         if i >= len(s):
             return UNKNOWN
@@ -376,7 +376,7 @@ class _Lit:
                     return v
                 self.i = skip_balanced(s, after)
                 return UNKNOWN
-        self.skip_term()
+        self.skip_term(multiline)
         return UNKNOWN
 
     def seq(self):
@@ -394,7 +394,10 @@ class _Lit:
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             before = self.i
-            out.append(self.value())
+            # Tuple elements end at commas, not newlines. An unsupported
+            # multiline expression must stay one UNKNOWN, including its branches.
+            # Object attributes retain their separate newline-delimited context.
+            out.append(self.value(multiline=True))
             self.ws()
             if self.i < len(s) and s[self.i] == ",":
                 self.i += 1
@@ -445,13 +448,20 @@ class _Lit:
             if self.i < len(s) and s[self.i] == ",":
                 self.i += 1
 
-    def skip_term(self):
+    def skip_term(self, multiline=False):
         s, i = self.s, self.i
         while i < len(s):
             c = s[i]
-            if c in self.SEP or c == "#" or s.startswith("//", i):
+            if c in self.SEP and (c != "\n" or not multiline):
                 break
-            if c == '"':
+            if c == "#" or s.startswith("//", i):
+                if not multiline:
+                    break
+                i = line_end(s, i)
+            elif s.startswith("/*", i):
+                j = s.find("*/", i + 2)
+                i = len(s) if j < 0 else j + 2
+            elif c == '"':
                 i = skip_string(s, i)
             elif c in OPEN:
                 i = skip_balanced(s, i)
@@ -1048,7 +1058,9 @@ def check_tf(scan, res):
                     scan.hit("GCP-SQL-001", res, ipc.line(), f"authorized network {open_from[0]}")
                 ipv4_enabled = tf_bool(ipc.get("ipv4_enabled"))
                 require_ssl = tf_bool(ipc.get("require_ssl"))
-                if ipv4_enabled is True and require_ssl in (False, None) and \
+                # The provider defaults an omitted/null ipv4_enabled to true;
+                # UNKNOWN must still remain distinct from that default.
+                if ipv4_enabled in (True, None) and require_ssl in (False, None) and \
                         (ipc.get("ssl_mode") is None or ipc.get("ssl_mode") not in (*SSL_MODES, UNKNOWN)):
                     scan.hit("GCP-SQL-001", res, ipc.line(), "public IP without required TLS", "Low")
     elif t in ("google_compute_instance", "google_compute_instance_template"):
@@ -1076,7 +1088,15 @@ def check_tf(scan, res):
         if not v.blocks("master_authorized_networks_config") and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
         if not v.blocks("workload_identity_config"):
-            scan.hit("GCP-GKE-001", res, res.line, "no workload_identity_config", "Low")
+            # Autopilot always enables Workload Identity. The default mode is
+            # Standard, but an unresolved mode does not establish a gap.
+            autopilot = tf_bool(v.get("enable_autopilot"))
+            if autopilot in (False, None):
+                scan.hit("GCP-GKE-001", res, res.line, "no workload_identity_config", "Low")
+            elif autopilot is UNKNOWN:
+                line = v.line("enable_autopilot")
+                scan.not_run.append("GCP-GKE-001: unknown Autopilot mode; workload identity check not run: "
+                                    f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
     elif t == "google_iam_workload_identity_pool_provider":
         if any(oidc.known_present for oidc in v.blocks("oidc")) and \
                 v.get("attribute_condition") in (None, ""):
@@ -1402,6 +1422,19 @@ def cfn_ingress(scan, res, rule):
                  rule.get("FromPort"), rule.get("ToPort"))
 
 
+def is_gcp_firewall_snapshot(value):
+    if not isinstance(value, dict):
+        return False
+    if "kind" in value:
+        return value["kind"] == "compute#firewall"
+    # Concise snapshots may omit kind. Require firewall-specific selectors and
+    # protocol entries so an unrelated sourceRanges field is not sufficient.
+    selectors = ("sourceRanges", "sourceTags", "sourceServiceAccounts", "destinationRanges")
+    return any(isinstance(value.get(key), list) for key in selectors) and any(
+        isinstance(rule, dict) and isinstance(rule.get("IPProtocol"), str)
+        for key in ("allowed", "denied") for rule in aslist(value.get(key)))
+
+
 def handle_snapshot(scan, rel, text, doc):
     if isinstance(doc, dict) and isinstance(doc.get("SecurityGroups"), list):
         for sg in doc["SecurityGroups"]:
@@ -1436,8 +1469,7 @@ def handle_snapshot(scan, rel, text, doc):
                 line = find_line(text, r'"role"\s*:\s*' + re.escape(json.dumps(b["role"])))
                 scan.gcp_iam(res, b["role"], aslist(b.get("members")), line)
         return True
-    if isinstance(doc, list) and doc and all(isinstance(x, dict) for x in doc) \
-            and any("sourceRanges" in x for x in doc):
+    if isinstance(doc, list) and doc and all(is_gcp_firewall_snapshot(x) for x in doc):
         for fw in doc:
             name = str(fw.get("name", ""))
             line = find_line(text, r'"name"\s*:\s*' + re.escape(json.dumps(name)))

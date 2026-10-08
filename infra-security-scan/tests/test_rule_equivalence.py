@@ -71,7 +71,7 @@ class TerraformBooleanTest(ScanCase):
       require_ssl = false
     }
   }
-''', True, "GCP-SQL-001", False),
+''', True, "GCP-SQL-001", True),
         ("sql_tls", "google_sql_database_instance", '''
   settings {
     ip_configuration {

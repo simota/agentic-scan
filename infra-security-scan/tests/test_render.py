@@ -6,6 +6,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
@@ -190,6 +191,94 @@ class RenderTest(unittest.TestCase):
             code, err = run([str(src), "--out", tmp, "--no-pdf"])
             self.assertEqual(code, 2)
             self.assertIn("duplicate", err)
+
+
+class PdfTest(unittest.TestCase):
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.out = Path(self.tmp.name)
+        self.pdf = self.out / "assessment.pdf"
+        self.pdf.write_bytes(b"previous assessment")
+        self.html = self.out / "assessment.html"
+        self.html.write_text("<html><body>Current assessment</body></html>", encoding="utf-8")
+        self.env = patch.dict(render.os.environ, {"CHROME": ""})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        candidates = patch.object(render, "CHROME_CANDIDATES", ["test-chrome"])
+        candidates.start()
+        self.addCleanup(candidates.stop)
+
+    def test_missing_engines_remove_the_previous_pdf_on_rerender(self):
+        with patch.object(render.shutil, "which", return_value=None):
+            code, err = run([str(SAMPLE), "--out", str(self.out)])
+        self.assertEqual(code, 0)
+        self.assertIn("PDF not generated", err)
+        self.assertIn(sample()["meta"]["project"], self.html.read_text(encoding="utf-8"))
+        self.assertTrue((self.out / "dashboard.html").exists())
+        self.assertFalse(self.pdf.exists())
+
+    def test_no_pdf_removes_the_previous_pdf_without_running_an_engine(self):
+        with patch.object(render, "to_pdf") as generate:
+            code, err = run([str(SAMPLE), "--out", str(self.out), "--no-pdf"])
+        self.assertEqual(code, 0)
+        self.assertEqual(err, "")
+        generate.assert_not_called()
+        self.assertFalse(self.pdf.exists())
+
+    def test_successful_chrome_output_is_kept_after_exit_or_while_running(self):
+        for status in (0, None):
+            with self.subTest(exit_status=status):
+                def chrome(*args, **kwargs):
+                    self.pdf.write_bytes(b"current chrome assessment")
+                    return Mock(poll=Mock(return_value=status))
+
+                with patch.object(render.shutil, "which", side_effect=lambda name: name), \
+                        patch.object(render.subprocess, "Popen", side_effect=chrome), \
+                        patch.object(render.subprocess, "run") as fallback, \
+                        patch.object(render.time, "sleep"):
+                    self.assertEqual(render.to_pdf(self.html, self.pdf), "chrome")
+                fallback.assert_not_called()
+                self.assertEqual(self.pdf.read_bytes(), b"current chrome assessment")
+
+    def test_failed_chrome_output_is_removed_before_weasyprint_fallback(self):
+        def chrome(*args, **kwargs):
+            self.assertFalse(self.pdf.exists())
+            self.pdf.write_bytes(b"partial chrome output")
+            return Mock(poll=Mock(return_value=1))
+
+        def weasyprint(args, **kwargs):
+            self.assertFalse(self.pdf.exists())
+            self.pdf.write_bytes(b"current assessment")
+            return render.subprocess.CompletedProcess(args, 0)
+
+        with patch.object(render.shutil, "which", side_effect=lambda name: name), \
+                patch.object(render.subprocess, "Popen", side_effect=chrome), \
+                patch.object(render.subprocess, "run", side_effect=weasyprint), \
+                patch.object(render.time, "sleep"):
+            self.assertEqual(render.to_pdf(self.html, self.pdf), "weasyprint")
+        self.assertEqual(self.pdf.read_bytes(), b"current assessment")
+
+    def test_failed_weasyprint_does_not_leave_partial_output(self):
+        def fail(args, **kwargs):
+            self.assertFalse(self.pdf.exists())
+            self.pdf.write_bytes(b"partial weasyprint output")
+            return render.subprocess.CompletedProcess(args, 1)
+
+        with patch.object(render.shutil, "which", side_effect=lambda name: name if name == "weasyprint" else None), \
+                patch.object(render.subprocess, "run", side_effect=fail):
+            self.assertIsNone(render.to_pdf(self.html, self.pdf))
+        self.assertFalse(self.pdf.exists())
+
+    def test_weasyprint_timeout_does_not_leave_partial_output(self):
+        def timeout(args, **kwargs):
+            self.pdf.write_bytes(b"partial weasyprint output")
+            raise render.subprocess.TimeoutExpired(args, kwargs["timeout"])
+
+        with patch.object(render.shutil, "which", side_effect=lambda name: name if name == "weasyprint" else None), \
+                patch.object(render.subprocess, "run", side_effect=timeout):
+            self.assertIsNone(render.to_pdf(self.html, self.pdf))
+        self.assertFalse(self.pdf.exists())
 
 
 class ExcerptTest(unittest.TestCase):

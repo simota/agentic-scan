@@ -424,7 +424,7 @@ def hcl_module_sensitive(directory):
                 continue
             if sibling.is_symlink():
                 return True
-            if sibling.is_file() and hcl_declares_sensitive(sibling.read_text(encoding="utf-8")):
+            if sibling.is_file() and hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig")):
                 return True
     except (OSError, ValueError, TypeError, RecursionError):
         return True
@@ -439,7 +439,8 @@ def source_lines(path):
     JSON sensitivity and env name/value relationships require the whole document;
     line-oriented redaction alone cannot enforce them.
     """
-    text = path.read_text(encoding="utf-8")
+    # Match the scanner's BOM handling before checking sensitivity or line numbers.
+    text = path.read_text(encoding="utf-8-sig")
     lines = text.splitlines()
     suffix = path.suffix.lower()
     syntax = "text"
@@ -874,42 +875,59 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
 
 
 def to_pdf(html_path, pdf_path):
-    """Print html_path to pdf_path with headless Chrome, else WeasyPrint. Returns the engine used or None."""
+    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds."""
+    pdf = Path(pdf_path)
+    pdf.unlink(missing_ok=True)
     chrome = os.environ.get("CHROME")
     for c in ([chrome] if chrome else CHROME_CANDIDATES):
         exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
         if not exe:
             continue
-        pdf = Path(pdf_path)
-        pdf.unlink(missing_ok=True)
         with tempfile.TemporaryDirectory() as profile:
-            proc = subprocess.Popen(
-                [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
-                 f"--user-data-dir={profile}", f"--print-to-pdf={pdf}", Path(html_path).resolve().as_uri()],
-                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            try:
+                proc = subprocess.Popen(
+                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                     f"--user-data-dir={profile}", f"--print-to-pdf={pdf}", Path(html_path).resolve().as_uri()],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError:
+                continue
             # Chrome may keep running after writing: wait until the file stops growing.
+            complete = False
             last, deadline = -1, time.monotonic() + 120
             while time.monotonic() < deadline:
-                if proc.poll() is not None and not pdf.exists():
-                    break
+                status = proc.poll()
                 size = pdf.stat().st_size if pdf.exists() else -1
+                if status is not None:
+                    complete = status == 0 and size > 0
+                    break
                 if size > 0 and size == last:
+                    complete = True
                     break
                 last = size
                 time.sleep(0.5)
-            if proc.poll() is None:
+            status = proc.poll()
+            if status is None:
                 proc.terminate()
                 try:
                     proc.wait(timeout=10)
                 except subprocess.TimeoutExpired:
                     proc.kill()
-        if pdf.exists() and pdf.stat().st_size > 0:
+                    proc.wait()
+            elif status != 0:
+                complete = False
+        if complete and pdf.exists() and pdf.stat().st_size > 0:
             return "chrome"
+        pdf.unlink(missing_ok=True)
     wp = shutil.which("weasyprint")
     if wp:
-        r = subprocess.run([wp, str(html_path), str(pdf_path)], capture_output=True, text=True, timeout=120)
-        if r.returncode == 0 and Path(pdf_path).exists():
-            return "weasyprint"
+        try:
+            r = subprocess.run([wp, str(html_path), str(pdf)], capture_output=True, text=True, timeout=120)
+        except (OSError, subprocess.TimeoutExpired):
+            pass
+        else:
+            if r.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0:
+                return "weasyprint"
+    pdf.unlink(missing_ok=True)
     return None
 
 
@@ -918,7 +936,7 @@ def main(argv=None):
     p.add_argument("findings")
     p.add_argument("--out", required=True)
     p.add_argument("--lang", choices=sorted(LABELS), default="en")
-    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
+    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation and remove any previous PDF")
     p.add_argument("--repo", help="assessed repository root: embeds redacted source excerpts for path:line locations")
     a = p.parse_args(argv)
     try:
@@ -932,14 +950,16 @@ def main(argv=None):
     sources = attach_sources(data, a.repo) if a.repo else {}
     out = Path(a.out)
     out.mkdir(parents=True, exist_ok=True)
+    pdf = out / "assessment.pdf"
+    pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
     (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
     assessment = out / "assessment.html"
     assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
-        engine = to_pdf(assessment, out / "assessment.pdf")
+        engine = to_pdf(assessment, pdf)
         if engine:
-            print(f"wrote {out / 'assessment.pdf'} ({engine})")
+            print(f"wrote {pdf} ({engine})")
         else:
             assessment.write_text(render_assessment(data, L, a.lang, sources, L["pdf_missing"]), encoding="utf-8")
             print(f"warning: {L['pdf_missing']}", file=sys.stderr)

@@ -29,6 +29,8 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
+from redaction import redact, redact_lines
+
 SKILL = Path(__file__).resolve().parents[1]
 
 TOP = {"schema_version", "meta", "inventory", "attack_paths", "findings", "perspectives",
@@ -384,48 +386,41 @@ def counts(data):
 
 SENSITIVE_NAME = re.compile(r"(\.tfstate(\.backup)?|\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.env)$|"
                             r"secret|credential|id_rsa|\.netrc", re.IGNORECASE)
-SECRET_LINE = re.compile(
-    r"(?i)(password|passwd|secret|token|private_key|access_key|secret_key|api_key|client_secret|"
-    r"connection_string|credentials?)\w*\s*[:=]")
-SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|"
-                          r"ghp_[A-Za-z0-9]{36}|xox[baprs]-[A-Za-z0-9-]+")
-
-
-def redact(line):
-    if SECRET_SHAPE.search(line):
-        return SECRET_SHAPE.sub("[redacted]", line)
-    m = SECRET_LINE.search(line)
-    if m:
-        rest = line[m.end():].strip()
-        # References to variables or secret stores are not values.
-        if rest and not re.match(r"^(var\.|local\.|data\.|module\.|aws_|google_|\$\{|\{\{|null\b|true\b|false\b)", rest):
-            return line[:m.end()] + " [redacted]"
-    return line
 
 
 def attach_sources(data, repo, context=3):
     """Return {finding id: [(lineno, text, hit)]} for readable, non-sensitive locations."""
     root = Path(repo).resolve()
     out = {}
+    # Kubernetes Secret values can have arbitrary keys and remain secret even
+    # when base64-encoded. Do not expose them through a neighboring finding.
+    secret_manifests = set()
     for f in data.get("findings", []):
+        if f.get("rule") == "K8S-003":
+            match = LOCATION.match(f.get("location", ""))
+            if match:
+                secret_manifests.add(match.group(1))
+    for f in data.get("findings", []):
+        if f.get("rule") in ("SEC-001", "K8S-003"):
+            continue
         m = LOCATION.match(f.get("location", ""))
         if not m:
             continue
         rel, start = m.group(1), int(m.group(2))
         end = int(m.group(3) or start)
-        if SENSITIVE_NAME.search(rel):
+        if rel in secret_manifests or SENSITIVE_NAME.search(rel):
             continue
         cand = root / rel
         try:
             if cand.is_symlink() or not cand.is_file():
                 continue
             cand.resolve().relative_to(root)
-            lines = cand.read_text(encoding="utf-8", errors="replace").splitlines()
+            lines = redact_lines(cand.read_text(encoding="utf-8", errors="replace").splitlines())
         except (OSError, ValueError):
             continue
         end = min(end, start + 40)
         lo, hi = max(1, start - context), min(len(lines), end + context)
-        out[f["id"]] = [(i, redact(lines[i - 1]), start <= i <= end) for i in range(lo, hi + 1)]
+        out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
     return out
 
 

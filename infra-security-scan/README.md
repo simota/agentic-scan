@@ -41,6 +41,9 @@ baseline                perspectives         └─ chat summary
 - **Baseline** — `scripts/iac_scan.py` parses HCL, plan JSON, CloudFormation
   JSON, Kubernetes YAML and AWS/GCP snapshot JSON (stdlib only), inventories
   resources and applies deterministic rules as `I-*` findings to triage
+  — Kubernetes supports block maps/lists, single-line flow collections, comments
+  and opaque block strings. Unsupported YAML, including anchors, aliases, tags
+  and multiline flow values, is listed in `not_run` for manual review
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`)
 

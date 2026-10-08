@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "acme-platform",
+    "scope": "AWS アカウント prod / shared、GCP プロジェクト acme-prod。環境は prod と staging",
+    "date": "2026-10-08",
+    "assessor": "Claude Code (example)",
+    "method": "Terraform と plan JSON の静的レビュー。クラウド API の呼び出しなし",
+    "providers": ["aws", "gcp"],
+    "inputs": [
+      {"kind": "iac", "path": "envs/", "note": "prod・staging・shared の Terraform"},
+      {"kind": "iac", "path": "modules/"},
+      {"kind": "plan", "path": "plans/prod-aws.json", "note": "依頼者が terraform show -json で出力"}
+    ],
+    "commit": "3f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39"
+  },
+  "inventory": {
+    "resources": 142,
+    "files": 37,
+    "by_provider": {"aws": 98, "gcp": 44},
+    "not_run": ["CloudFormation YAML: YAML パーサがないため未解析（該当ファイルなし）"]
+  },
+  "attack_paths": [
+    {
+      "id": "AP-01",
+      "entry": "インターネット（api サービスのコード実行または SSRF の不備を経由）",
+      "target": "本番データベースの認証情報（aws_secretsmanager_secret.db_master）",
+      "status": "open",
+      "edges": [
+        "インターネット → ALB の 443 リスナー (envs/prod/aws/alb.tf:14)",
+        "ALB → ECS サービス api。タスクの SG が ALB の SG から 8080 を許可 (modules/service/sg.tf:22)",
+        "タスクロール api-task が * に対する secretsmanager:GetSecretValue を保持 (modules/service/iam.tf:31)",
+        "シークレット prod/db/master に読み取り元を絞るリソースポリシーがない (envs/prod/aws/secrets.tf:5)"
+      ],
+      "findings": ["F-005"],
+      "note": ""
+    },
+    {
+      "id": "AP-02",
+      "entry": "github.com 上の任意のリポジトリの GitHub Actions ワークフロー",
+      "target": "Terraform ステートバケット acme-tfstate と shared アカウントの管理者権限",
+      "status": "open",
+      "edges": [
+        "OIDC プロバイダ token.actions.githubusercontent.com を信頼 (envs/shared/aws/oidc.tf:3)",
+        "ロール terraform-deploy の信頼ポリシーが aud のみ確認し sub 条件がない (envs/shared/aws/oidc.tf:18-34)",
+        "ロール terraform-deploy に AdministratorAccess が付与 (envs/shared/aws/oidc.tf:40)",
+        "ステートバケット acme-tfstate をこのロールが読み取れる (envs/shared/aws/state.tf:9)"
+      ],
+      "findings": ["F-002"],
+      "note": ""
+    },
+    {
+      "id": "AP-03",
+      "entry": "インターネット",
+      "target": "顧客データベース（aws_db_instance.main）",
+      "status": "blocked",
+      "edges": [
+        "インターネット → DB サブネット: ルートなし、プライベートサブネットのみ (envs/prod/aws/vpc.tf:40)",
+        "prod で publicly_accessible を false に上書き (envs/prod/aws/rds.tf:8)"
+      ],
+      "findings": ["F-003"],
+      "note": "DB 側で遮断: publicly_accessible = false かつプライベートサブネットのみ。"
+    }
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "顧客エクスポート用バケットが allUsers に公開されている",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Data protection",
+      "provider": "gcp",
+      "resources": ["google_storage_bucket_iam_member.exports_public"],
+      "location": "envs/prod/gcp/storage.tf:27",
+      "actor": "インターネット上の誰でも。アカウント不要",
+      "path": "1. バケット acme-customer-exports が allUsers に roles/storage.objectViewer を付与 (envs/prod/gcp/storage.tf:27)\n2. バケットで公開アクセス防止が強制されていない (envs/prod/gcp/storage.tf:3)\n3. 入力内に組織ポリシー constraints/storage.publicAccessPrevention がない (envs/shared/gcp/org.tf:1)",
+      "impact": "期待: 顧客エクスポートはエクスポート用サービスのみが読める。実際: オブジェクト名を知るか推測できる誰もが全オブジェクトを読める。",
+      "fix": "allUsers のバインディングを削除し public_access_prevention = \"enforced\" を設定。配布は署名付き URL で行う。",
+      "regression": "ポリシーテスト: google_storage_bucket_iam_* のメンバーに allUsers / allAuthenticatedUsers がなく、全バケットが public_access_prevention = enforced。",
+      "controls": ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"],
+      "cwe": "CWE-200",
+      "references": [{"title": "Public access prevention", "url": "https://cloud.google.com/storage/docs/public-access-prevention"}],
+      "validation": {"verdict": "Valid", "evidence": "記載行でバインディングとバケットを通しで確認。入力内に組織ポリシーや VPC-SC 境界はない。"}
+    },
+    {
+      "id": "F-002",
+      "title": "GitHub OIDC のデプロイ用ロールが github.com 上の全リポジトリを信頼している",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Trust and federation",
+      "provider": "aws",
+      "resources": ["aws_iam_role.terraform_deploy", "aws_iam_openid_connect_provider.github"],
+      "location": "envs/shared/aws/oidc.tf:18-34",
+      "actor": "自分が管理するリポジトリでワークフローを実行できる任意の GitHub ユーザー",
+      "path": "1. ワークフローが audience sts.amazonaws.com の OIDC トークンを取得 (envs/shared/aws/oidc.tf:3)\n2. 信頼ポリシーは aud クレームのみを条件とし sub 条件がない (envs/shared/aws/oidc.tf:18-34)\n3. ロールに AdministratorAccess が付与 (envs/shared/aws/oidc.tf:40)",
+      "impact": "期待: acme/infra の main ブランチのみが terraform-deploy を引き受けられる。実際: 任意のリポジトリが引き受けられ、shared アカウントと Terraform ステートの管理者権限を得る。",
+      "fix": "token.actions.githubusercontent.com:sub に repo:acme/infra:ref:refs/heads/main（または environment）の StringEquals 条件を追加する。",
+      "regression": "ポリシーテスト: GitHub OIDC プロバイダを信頼する全ロールに、組織・リポジトリ部分がワイルドカードでない sub 条件がある。",
+      "controls": ["CIS AWS Foundations — no IAM policy grants full *:* admin privileges"],
+      "cwe": "CWE-287",
+      "attack_paths": ["AP-02"],
+      "references": [{"title": "Configuring OpenID Connect in AWS", "url": "https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services"}],
+      "validation": {"verdict": "Valid", "evidence": "信頼ポリシーを全文確認。入力内にロールを制限する permission boundary や SCP はない。"}
+    },
+    {
+      "id": "F-003",
+      "title": "RDS モジュールの既定値が publicly accessible",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Network exposure",
+      "provider": "aws",
+      "resources": ["module.db.aws_db_instance.main"],
+      "location": "envs/prod/aws/rds.tf:8",
+      "actor": "インターネット",
+      "path": "1. モジュール変数 publicly_accessible の既定値が true (modules/db/variables.tf:12)\n2. prod のインスタンスがこのモジュールを使用 (envs/prod/aws/rds.tf:8)",
+      "impact": "期待: DB はアプリケーションのサブネットからのみ到達可能。疑い: 公開エンドポイント。",
+      "fix": "モジュールの既定値を false にし、新しい呼び出し元が既定でプライベートになるようにする。",
+      "regression": "ポリシーテスト: 全 plan で aws_db_instance.publicly_accessible が false。",
+      "controls": ["CIS AWS Foundations — RDS instances are not publicly accessible"],
+      "cwe": "CWE-668",
+      "attack_paths": ["AP-03"],
+      "validation": {"verdict": "FalsePositive", "evidence": "prod は envs/prod/aws/rds.tf:8 で publicly_accessible = false に上書きし、plan も false。サブネットはプライベート (envs/prod/aws/vpc.tf:40)。"}
+    },
+    {
+      "id": "F-004",
+      "title": "GKE コントロールプレーンの承認済みネットワークが未設定の変数に依存している",
+      "severity": "Medium",
+      "confidence": "Environment-dependent",
+      "category": "Kubernetes",
+      "provider": "gcp",
+      "resources": ["google_container_cluster.prod"],
+      "location": "envs/prod/gcp/gke.tf:12",
+      "actor": "デプロイ時の CIDR が広い場合、インターネット",
+      "path": "1. クラスタがパブリックエンドポイントを持つ (envs/prod/gcp/gke.tf:9)\n2. master_authorized_networks_config が既定値のない var.admin_cidrs を参照 (envs/prod/gcp/variables.tf:4)",
+      "condition": "prod の var.admin_cidrs に 0.0.0.0/0 か広い範囲が含まれる。値はリポジトリにない",
+      "impact": "期待: API サーバーは管理用 VPN からのみ到達可能。条件が成り立つ場合、API サーバーはインターネットから到達でき、認証だけが防御になる。",
+      "fix": "プライベートエンドポイントを有効にするか、var.admin_cidrs の validation で 0.0.0.0/0 と /24 より広い範囲を拒否する。",
+      "regression": "ポリシーテスト: master_authorized_networks_config に 0.0.0.0/0 が含まれず、変数の validation が拒否する。",
+      "controls": ["CIS GKE — control plane authorized networks are enabled"],
+      "cwe": "CWE-284",
+      "validation": {"verdict": "Likely", "evidence": "変数の値はパイプライン側にある。所有者に確認を依頼済み。"}
+    },
+    {
+      "id": "F-005",
+      "title": "api のタスクロールがアカウント内の全シークレットを読める",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "category": "Identity and privilege",
+      "provider": "aws",
+      "resources": ["module.service.aws_iam_role_policy.api_task"],
+      "location": "modules/service/iam.tf:31",
+      "actor": "インターネットに公開された api タスクでコード実行を得た攻撃者",
+      "path": "1. ALB が api サービスを 443 で公開 (envs/prod/aws/alb.tf:14)\n2. タスクロールのポリシーが * に secretsmanager:GetSecretValue を付与 (modules/service/iam.tf:31)\n3. シークレット prod/db/master にリソースポリシーがない (envs/prod/aws/secrets.tf:5)",
+      "impact": "期待: api は自分のシークレットのみ読める。実際: api が侵害されると DB マスター認証情報を含む全シークレットが漏れる。",
+      "fix": "ステートメントを arn:aws:secretsmanager:*:*:secret:prod/api/* に限定し、重要なシークレットにリソースポリシーを付ける。",
+      "regression": "ポリシーテスト: タスクロールのポリシーが Resource \"*\" で secretsmanager:GetSecretValue を付与しない。",
+      "controls": ["CIS AWS Foundations — users receive permissions only through groups"],
+      "cwe": "CWE-250",
+      "attack_paths": ["AP-01"],
+      "validation": {"verdict": "Valid", "evidence": "記載行でロール・ポリシー・アタッチを確認。ロールに permission boundary はない。"}
+    },
+    {
+      "id": "F-006",
+      "title": "本番 VPC にフローログがない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Logging and detection",
+      "provider": "aws",
+      "resources": ["aws_vpc.prod"],
+      "location": "envs/prod/aws/vpc.tf:1",
+      "actor": "攻撃経路ではない。AP-01 の調査を制限する",
+      "path": "1. aws_vpc.prod に対応する aws_flow_log が宣言されていない (envs/prod/aws/vpc.tf:1)",
+      "impact": "期待: インシデントの範囲特定のため通信が記録される。実際: 記録されない。",
+      "fix": "aws_vpc.prod に aws_flow_log を追加し、中央ログアーカイブのバケットに送る。",
+      "regression": "ポリシーテスト: すべての aws_vpc を参照する aws_flow_log がある。",
+      "controls": ["CIS AWS Foundations — VPC flow logging is enabled"],
+      "cwe": "CWE-778",
+      "validation": {"verdict": "Valid", "evidence": "入力全体に aws_flow_log がない。"}
+    },
+    {
+      "id": "I-001",
+      "title": "Security group allows SSH from 0.0.0.0/0",
+      "severity": "High",
+      "confidence": "Suspected",
+      "category": "Network exposure",
+      "provider": "aws",
+      "resources": ["aws_security_group.bastion"],
+      "location": "envs/staging/aws/bastion.tf:12",
+      "rule": "AWS-NET-001",
+      "detail": "ingress from_port 22 to_port 22 cidr_blocks 0.0.0.0/0",
+      "validation": {"verdict": "Likely", "evidence": "staging の踏み台はパブリック IP を持つ。踏み台のロールは staging の読み取り専用。"}
+    },
+    {
+      "id": "I-002",
+      "title": "Instance allows IMDSv1",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Compute and workload",
+      "provider": "aws",
+      "resources": ["aws_instance.bastion"],
+      "location": "envs/staging/aws/bastion.tf:30",
+      "rule": "AWS-CMP-001",
+      "validation": {"verdict": "Unverified"}
+    },
+    {
+      "id": "I-003",
+      "title": "Basic role roles/editor bound to the default compute service account",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Identity and privilege",
+      "provider": "gcp",
+      "resources": ["google_project_iam_member.default_sa_editor"],
+      "location": "envs/prod/gcp/iam.tf:5",
+      "rule": "GCP-IAM-002",
+      "validation": {"verdict": "Valid", "evidence": "専用サービスアカウントを持たない VM はすべて acme-prod の editor を継承する。"}
+    }
+  ],
+  "perspectives": [
+    {"name": "Network exposure", "status": "Applied", "note": "NE1–NE6。AP-03 は遮断。I-001 をトリアージ済み"},
+    {"name": "Identity and privilege", "status": "Applied", "note": "IP1–IP5。F-005, I-003"},
+    {"name": "Trust and federation", "status": "Applied", "note": "TF1–TF5。AP-02 経由で F-002"},
+    {"name": "Data protection", "status": "Applied", "note": "DP1–DP5。F-001"},
+    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4。I-002 は未トリアージ"},
+    {"name": "Kubernetes", "status": "Applied", "note": "GKE prod に K81–K85。F-004。リポジトリにマニフェストなし"},
+    {"name": "Serverless and API edge", "status": "N/A", "note": "入力に関数・関数 URL・API ゲートウェイがない"},
+    {"name": "Secrets and keys", "status": "Applied", "note": "SK1–SK4。リテラルのシークレットなし"},
+    {"name": "Logging and detection", "status": "Applied", "note": "LD1–LD4。F-006"},
+    {"name": "Resilience and recovery", "status": "Applied", "note": "RR1–RR3"},
+    {"name": "Governance and guardrails", "status": "Not checked", "note": "SCP と組織ポリシーは別リポジトリ。エクスポートが必要"},
+    {"name": "Pipeline and state", "status": "Applied", "note": "PS1–PS4。F-002 がステートに到達"},
+    {"name": "Coverage and drift", "status": "Applied", "note": "CD1, CD3。CD2 はスナップショット未提供のため未実施"}
+  ],
+  "checked_ok": [
+    "ステートバケット acme-tfstate は KMS 暗号化・バージョニング・公開アクセスブロック済み (envs/shared/aws/state.tf:9-40)",
+    "CloudTrail は組織トレイルでログファイル検証が有効 (envs/shared/aws/trail.tf:1)",
+    "prod の RDS はストレージ暗号化と削除保護が有効 (envs/prod/aws/rds.tf:8-30)"
+  ],
+  "decisions": [
+    "prod の var.admin_cidrs の値を確認してください（F-004）",
+    "staging の踏み台はインターネットからの SSH を受け付ける想定ですか（I-001）"
+  ],
+  "limitations": [
+    "SCP と GCP 組織ポリシーは入力に含まれず、それらなしで評価した",
+    "設定スナップショットなし: Terraform 外で作成されたリソースは対象外",
+    "レジストリのリモートモジュールは固定バージョンのみ確認した"
+  ],
+  "next_steps": [
+    "最初に F-002 を修正: 任意の GitHub ユーザーが shared アカウントの管理者になれる",
+    "F-001 の公開バインディングを削除し、組織全体で公開アクセス防止を強制する",
+    "I-002 をトリアージする"
+  ]
+}

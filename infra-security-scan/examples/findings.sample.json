@@ -1,0 +1,252 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "acme-platform",
+    "scope": "AWS accounts prod and shared, GCP project acme-prod; environments prod and staging",
+    "date": "2026-10-08",
+    "assessor": "Claude Code (example)",
+    "method": "Static review of Terraform and plan JSON; no cloud API calls",
+    "providers": ["aws", "gcp"],
+    "inputs": [
+      {"kind": "iac", "path": "envs/", "note": "Terraform for prod, staging and shared"},
+      {"kind": "iac", "path": "modules/"},
+      {"kind": "plan", "path": "plans/prod-aws.json", "note": "exported by the requester with terraform show -json"}
+    ],
+    "commit": "3f2a9c1d8e7b6a5f4e3d2c1b0a9f8e7d6c5b4a39"
+  },
+  "inventory": {
+    "resources": 142,
+    "files": 37,
+    "by_provider": {"aws": 98, "gcp": 44},
+    "not_run": ["CloudFormation YAML: no YAML parser available (none present)"]
+  },
+  "attack_paths": [
+    {
+      "id": "AP-01",
+      "entry": "Internet, through a code-execution or SSRF flaw in the api service",
+      "target": "Production database credentials (aws_secretsmanager_secret.db_master)",
+      "status": "open",
+      "edges": [
+        "Internet → ALB listener on 443 (envs/prod/aws/alb.tf:14)",
+        "ALB → ECS service api; task security group allows 8080 from the ALB group (modules/service/sg.tf:22)",
+        "Task role api-task holds secretsmanager:GetSecretValue on * (modules/service/iam.tf:31)",
+        "Secret prod/db/master has no resource policy narrowing readers (envs/prod/aws/secrets.tf:5)"
+      ],
+      "findings": ["F-005"],
+      "note": ""
+    },
+    {
+      "id": "AP-02",
+      "entry": "Any GitHub Actions workflow in any repository on github.com",
+      "target": "Terraform state bucket acme-tfstate and admin of the shared account",
+      "status": "open",
+      "edges": [
+        "OIDC provider token.actions.githubusercontent.com is trusted (envs/shared/aws/oidc.tf:3)",
+        "Role terraform-deploy trust checks the audience only, no subject condition (envs/shared/aws/oidc.tf:18-34)",
+        "Role terraform-deploy has AdministratorAccess attached (envs/shared/aws/oidc.tf:40)",
+        "State bucket acme-tfstate is readable by the role (envs/shared/aws/state.tf:9)"
+      ],
+      "findings": ["F-002"],
+      "note": ""
+    },
+    {
+      "id": "AP-03",
+      "entry": "Internet",
+      "target": "Customer database (aws_db_instance.main)",
+      "status": "blocked",
+      "edges": [
+        "Internet → database subnet: no route, subnets are private (envs/prod/aws/vpc.tf:40)",
+        "Database publicly_accessible is overridden to false in prod (envs/prod/aws/rds.tf:8)"
+      ],
+      "findings": ["F-003"],
+      "note": "Blocked at the database: publicly_accessible = false and private subnets only."
+    }
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "Customer export bucket is readable by allUsers",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Data protection",
+      "provider": "gcp",
+      "resources": ["google_storage_bucket_iam_member.exports_public"],
+      "location": "envs/prod/gcp/storage.tf:27",
+      "actor": "Anyone on the internet; no account needed",
+      "path": "1. Bucket acme-customer-exports grants roles/storage.objectViewer to allUsers (envs/prod/gcp/storage.tf:27)\n2. Public access prevention is not enforced on the bucket (envs/prod/gcp/storage.tf:3)\n3. No organization policy constraints/storage.publicAccessPrevention in the inputs (envs/shared/gcp/org.tf:1)",
+      "impact": "Expected: customer exports readable only by the export service. Actual: every object is readable by anyone who knows or guesses its name.",
+      "fix": "Remove the allUsers binding and set public_access_prevention = \"enforced\"; serve exports through signed URLs.",
+      "regression": "Policy test: no google_storage_bucket_iam_* member equals allUsers or allAuthenticatedUsers; every bucket sets public_access_prevention = enforced.",
+      "controls": ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"],
+      "cwe": "CWE-200",
+      "references": [{"title": "Public access prevention", "url": "https://cloud.google.com/storage/docs/public-access-prevention"}],
+      "validation": {"verdict": "Valid", "evidence": "Binding and bucket read end to end at the cited lines; no org policy or VPC-SC perimeter in the inputs."}
+    },
+    {
+      "id": "F-002",
+      "title": "GitHub OIDC deploy role trusts every repository on github.com",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Trust and federation",
+      "provider": "aws",
+      "resources": ["aws_iam_role.terraform_deploy", "aws_iam_openid_connect_provider.github"],
+      "location": "envs/shared/aws/oidc.tf:18-34",
+      "actor": "Any GitHub user who can run a workflow in a repository they control",
+      "path": "1. Workflow requests an OIDC token with audience sts.amazonaws.com (envs/shared/aws/oidc.tf:3)\n2. Trust policy conditions only on the aud claim; no sub condition (envs/shared/aws/oidc.tf:18-34)\n3. Role has AdministratorAccess (envs/shared/aws/oidc.tf:40)",
+      "impact": "Expected: only acme/infra on the main branch may assume terraform-deploy. Actual: any repository can, gaining admin of the shared account and the Terraform state.",
+      "fix": "Add a StringEquals condition on token.actions.githubusercontent.com:sub for repo:acme/infra:ref:refs/heads/main (or its environment).",
+      "regression": "Policy test: every role trusting the GitHub OIDC provider has a sub condition without wildcards in the organization or repository part.",
+      "controls": ["CIS AWS Foundations — no IAM policy grants full *:* admin privileges"],
+      "cwe": "CWE-287",
+      "attack_paths": ["AP-02"],
+      "references": [{"title": "Configuring OpenID Connect in AWS", "url": "https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/configuring-openid-connect-in-amazon-web-services"}],
+      "validation": {"verdict": "Valid", "evidence": "Trust policy read in full; no permission boundary or SCP in the inputs restricts the role."}
+    },
+    {
+      "id": "F-003",
+      "title": "RDS module defaults to publicly accessible",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Network exposure",
+      "provider": "aws",
+      "resources": ["module.db.aws_db_instance.main"],
+      "location": "envs/prod/aws/rds.tf:8",
+      "actor": "Internet",
+      "path": "1. Module variable publicly_accessible defaults to true (modules/db/variables.tf:12)\n2. Prod instance uses the module (envs/prod/aws/rds.tf:8)",
+      "impact": "Expected: database reachable only from the application subnets. Suspected: a public endpoint.",
+      "fix": "Change the module default to false so new callers are private by default.",
+      "regression": "Policy test: aws_db_instance.publicly_accessible is false in every plan.",
+      "controls": ["CIS AWS Foundations — RDS instances are not publicly accessible"],
+      "cwe": "CWE-668",
+      "attack_paths": ["AP-03"],
+      "validation": {"verdict": "FalsePositive", "evidence": "Prod overrides publicly_accessible = false at envs/prod/aws/rds.tf:8 and the plan shows false; subnets are private (envs/prod/aws/vpc.tf:40)."}
+    },
+    {
+      "id": "F-004",
+      "title": "GKE control plane authorized networks come from an unset variable",
+      "severity": "Medium",
+      "confidence": "Environment-dependent",
+      "category": "Kubernetes",
+      "provider": "gcp",
+      "resources": ["google_container_cluster.prod"],
+      "location": "envs/prod/gcp/gke.tf:12",
+      "actor": "Internet, if the deployed CIDR list is broad",
+      "path": "1. Cluster has a public endpoint (envs/prod/gcp/gke.tf:9)\n2. master_authorized_networks_config takes var.admin_cidrs, which has no default (envs/prod/gcp/variables.tf:4)",
+      "condition": "var.admin_cidrs in prod includes 0.0.0.0/0 or a broad range; its value is not in the repository",
+      "impact": "Expected: the API server reachable only from the admin VPN. If the condition holds, the API server is reachable from the internet and protected by authentication alone.",
+      "fix": "Enable a private endpoint, or validate var.admin_cidrs to reject 0.0.0.0/0 and ranges wider than /24.",
+      "regression": "Policy test: master_authorized_networks_config never contains 0.0.0.0/0; variable validation rejects it.",
+      "controls": ["CIS GKE — control plane authorized networks are enabled"],
+      "cwe": "CWE-284",
+      "validation": {"verdict": "Likely", "evidence": "The variable value lives in the pipeline; requested from the owner."}
+    },
+    {
+      "id": "F-005",
+      "title": "api task role can read every secret in the account",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "category": "Identity and privilege",
+      "provider": "aws",
+      "resources": ["module.service.aws_iam_role_policy.api_task"],
+      "location": "modules/service/iam.tf:31",
+      "actor": "An attacker with code execution in the internet-facing api task",
+      "path": "1. ALB exposes the api service on 443 (envs/prod/aws/alb.tf:14)\n2. Task role policy grants secretsmanager:GetSecretValue on * (modules/service/iam.tf:31)\n3. Secret prod/db/master has no resource policy (envs/prod/aws/secrets.tf:5)",
+      "impact": "Expected: api reads only its own secrets. Actual: a compromise of api yields every secret, including the database master credential.",
+      "fix": "Scope the statement to arn:aws:secretsmanager:*:*:secret:prod/api/* and add resource policies on crown-jewel secrets.",
+      "regression": "Policy test: no task role policy grants secretsmanager:GetSecretValue with Resource \"*\".",
+      "controls": ["CIS AWS Foundations — users receive permissions only through groups"],
+      "cwe": "CWE-250",
+      "attack_paths": ["AP-01"],
+      "validation": {"verdict": "Valid", "evidence": "Role, policy and attachment read at the cited lines; no permission boundary on the role."}
+    },
+    {
+      "id": "F-006",
+      "title": "Production VPC has no flow logs",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Logging and detection",
+      "provider": "aws",
+      "resources": ["aws_vpc.prod"],
+      "location": "envs/prod/aws/vpc.tf:1",
+      "actor": "Not an attack path; limits investigation of AP-01",
+      "path": "1. aws_vpc.prod is declared without an aws_flow_log (envs/prod/aws/vpc.tf:1)",
+      "impact": "Expected: network flows recorded for incident scoping. Actual: none recorded.",
+      "fix": "Add aws_flow_log for aws_vpc.prod to the central log archive bucket.",
+      "regression": "Policy test: every aws_vpc has an aws_flow_log referencing it.",
+      "controls": ["CIS AWS Foundations — VPC flow logging is enabled"],
+      "cwe": "CWE-778",
+      "validation": {"verdict": "Valid", "evidence": "No aws_flow_log anywhere in the inputs."}
+    },
+    {
+      "id": "I-001",
+      "title": "Security group allows SSH from 0.0.0.0/0",
+      "severity": "High",
+      "confidence": "Suspected",
+      "category": "Network exposure",
+      "provider": "aws",
+      "resources": ["aws_security_group.bastion"],
+      "location": "envs/staging/aws/bastion.tf:12",
+      "rule": "AWS-NET-001",
+      "detail": "ingress from_port 22 to_port 22 cidr_blocks 0.0.0.0/0",
+      "validation": {"verdict": "Likely", "evidence": "Staging bastion has a public IP; the bastion role is read-only in staging."}
+    },
+    {
+      "id": "I-002",
+      "title": "Instance allows IMDSv1",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Compute and workload",
+      "provider": "aws",
+      "resources": ["aws_instance.bastion"],
+      "location": "envs/staging/aws/bastion.tf:30",
+      "rule": "AWS-CMP-001",
+      "validation": {"verdict": "Unverified"}
+    },
+    {
+      "id": "I-003",
+      "title": "Basic role roles/editor bound to the default compute service account",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Identity and privilege",
+      "provider": "gcp",
+      "resources": ["google_project_iam_member.default_sa_editor"],
+      "location": "envs/prod/gcp/iam.tf:5",
+      "rule": "GCP-IAM-002",
+      "validation": {"verdict": "Valid", "evidence": "Every VM without its own service account inherits editor on acme-prod."}
+    }
+  ],
+  "perspectives": [
+    {"name": "Network exposure", "status": "Applied", "note": "NE1–NE6; AP-03 blocked; I-001 triaged"},
+    {"name": "Identity and privilege", "status": "Applied", "note": "IP1–IP5; F-005, I-003"},
+    {"name": "Trust and federation", "status": "Applied", "note": "TF1–TF5; F-002 via AP-02"},
+    {"name": "Data protection", "status": "Applied", "note": "DP1–DP5; F-001"},
+    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4; I-002 not yet triaged"},
+    {"name": "Kubernetes", "status": "Applied", "note": "K81–K85 on GKE prod; F-004. No manifests in the repository"},
+    {"name": "Serverless and API edge", "status": "N/A", "note": "No functions, function URLs or API gateways in the inputs"},
+    {"name": "Secrets and keys", "status": "Applied", "note": "SK1–SK4; no literals found"},
+    {"name": "Logging and detection", "status": "Applied", "note": "LD1–LD4; F-006"},
+    {"name": "Resilience and recovery", "status": "Applied", "note": "RR1–RR3"},
+    {"name": "Governance and guardrails", "status": "Not checked", "note": "SCPs and org policies live in another repository; export needed"},
+    {"name": "Pipeline and state", "status": "Applied", "note": "PS1–PS4; F-002 reaches the state"},
+    {"name": "Coverage and drift", "status": "Applied", "note": "CD1, CD3; CD2 not run: no snapshot supplied"}
+  ],
+  "checked_ok": [
+    "State bucket acme-tfstate is encrypted with KMS, versioned and blocks public access (envs/shared/aws/state.tf:9-40)",
+    "CloudTrail is an organization trail with log file validation (envs/shared/aws/trail.tf:1)",
+    "RDS storage encrypted and deletion protection on in prod (envs/prod/aws/rds.tf:8-30)"
+  ],
+  "decisions": [
+    "Confirm the prod value of var.admin_cidrs (F-004)",
+    "Is the staging bastion meant to accept SSH from the internet (I-001)?"
+  ],
+  "limitations": [
+    "SCPs and GCP organization policies were not in the inputs; findings are graded without them",
+    "No config snapshot: resources created outside Terraform are not covered",
+    "Remote modules from the registry were read at their pinned versions only"
+  ],
+  "next_steps": [
+    "Fix F-002 first: it gives any GitHub user admin of the shared account",
+    "Remove the public binding in F-001 and enforce public access prevention org-wide",
+    "Triage I-002"
+  ]
+}

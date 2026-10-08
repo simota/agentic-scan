@@ -1,0 +1,33 @@
+{
+  "AWSTemplateFormatVersion": "2010-09-09",
+  "Resources": {
+    "OpenRdpGroup": {
+      "Type": "AWS::EC2::SecurityGroup",
+      "Properties": {
+        "GroupDescription": "rdp",
+        "SecurityGroupIngress": [
+          {"IpProtocol": "tcp", "FromPort": 3389, "ToPort": 3389, "CidrIp": "0.0.0.0/0"}
+        ]
+      }
+    },
+    "PublicBucket": {
+      "Type": "AWS::S3::Bucket",
+      "Properties": {"AccessControl": "PublicRead"}
+    },
+    "AnyoneRole": {
+      "Type": "AWS::IAM::Role",
+      "Properties": {
+        "AssumeRolePolicyDocument": {
+          "Statement": [{"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole"}]
+        },
+        "Policies": [
+          {"PolicyName": "all", "PolicyDocument": {"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}}
+        ]
+      }
+    },
+    "Database": {
+      "Type": "AWS::RDS::DBInstance",
+      "Properties": {"Engine": "mysql", "PubliclyAccessible": true, "StorageEncrypted": true}
+    }
+  }
+}

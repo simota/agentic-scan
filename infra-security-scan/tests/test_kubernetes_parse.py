@@ -17,6 +17,181 @@ class KubernetesParseTest(unittest.TestCase):
             path.write_text(text, encoding="utf-8")
             return iac_scan.run(tmp)
 
+    def test_utf8_bom_does_not_hide_a_manifest(self):
+        pod = """apiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec:
+  hostNetwork: true
+  containers:
+  - name: agent
+    image: example/agent:1.0
+    securityContext: {privileged: true}
+"""
+        for prefix in ("", "---\n", "# workload\n"):
+            with self.subTest(prefix=prefix):
+                expected = self.scan(prefix + pod)
+                scan = self.scan("\ufeff" + prefix + pod)
+                self.assertEqual(scan.files, expected.files)
+                self.assertEqual(scan.resources, expected.resources)
+                self.assertEqual(scan.hits, expected.hits)
+                self.assertEqual(len(scan.hits), 2)
+                self.assertEqual(scan.not_run, [])
+
+    def test_bom_at_later_document_start_preserves_inventory_and_lines(self):
+        scan = self.scan("""apiVersion: v1
+kind: ConfigMap
+metadata: {name: config}
+---
+\ufeffapiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec: {hostNetwork: true}
+""")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual([(r["address"], r["line"]) for r in scan.resources],
+                         [("k8s:ConfigMap/config", 2), ("k8s:Pod/agent", 6)])
+        self.assertEqual([(h["rule"], h["line"]) for h in scan.hits], [("K8S-001", 8)])
+        self.assertEqual(scan.not_run, [])
+
+    def test_yaml_boolean_spellings_match_kubernetes(self):
+        for value in ("y", "Y", "yes", "Yes", "YES", "on", "On", "ON",
+                      "true", "True", "TRUE"):
+            with self.subTest(value=value):
+                scan = self.scan(f"""apiVersion: v1
+kind: Pod
+metadata: {{name: agent}}
+spec:
+  hostNetwork: {value}
+  containers:
+  - name: agent
+    image: example/agent:1.0
+    securityContext: {{privileged: {value}}}
+""")
+                self.assertEqual([(h["detail"], h["line"]) for h in scan.hits],
+                                 [("hostNetwork: true", 5), ("privileged: true", 9)])
+                self.assertEqual(scan.not_run, [])
+        for value in ("n", "N", "no", "No", "NO", "off", "Off", "OFF",
+                      "false", "False", "FALSE"):
+            with self.subTest(value=value):
+                doc = iac_scan._YamlSubset([(1, f"hostNetwork: {value}")]).parse()
+                self.assertIs(doc["hostNetwork"], False)
+        for value in ("y", "Y", "n", "N", "true", "false"):
+            with self.subTest(quoted=value):
+                doc = iac_scan._YamlSubset([(1, f'hostNetwork: "{value}"')]).parse()
+                self.assertEqual(doc["hostNetwork"], value)
+
+    def test_cloudformation_markers_in_comments_do_not_hide_kubernetes(self):
+        scan = self.scan("""# AWSTemplateFormatVersion belongs to CloudFormation, not this workload.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: agent
+  annotations:
+    example.com/note: AWSTemplateFormatVersion
+spec: {hostNetwork: true}
+""")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual([r["address"] for r in scan.resources], ["k8s:Pod/agent"])
+        self.assertEqual([(h["rule"], h["line"]) for h in scan.hits], [("K8S-001", 8)])
+        self.assertEqual(scan.not_run, [])
+
+    def test_cloudformation_block_strings_do_not_hide_later_workloads(self):
+        scan = self.scan("""apiVersion: v1
+kind: ConfigMap
+metadata: {name: templates}
+data:
+  stack.yaml: |
+    AWSTemplateFormatVersion: '2010-09-09'
+    Resources:
+      Example:
+        Type: AWS::S3::Bucket
+---
+apiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec: {hostNetwork: true}
+""")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual([r["address"] for r in scan.resources],
+                         ["k8s:ConfigMap/templates", "k8s:Pod/agent"])
+        self.assertEqual([(h["rule"], h["line"]) for h in scan.hits], [("K8S-001", 14)])
+        self.assertEqual(scan.not_run, [])
+
+    def test_mixed_yaml_documents_preserve_inventory_and_evidence_lines(self):
+        cfn = """Resources:
+  Bucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Ref BucketName
+"""
+        pod = """apiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec: {hostNetwork: true}
+"""
+        for docs in ((cfn, pod), (pod, cfn)):
+            with self.subTest(first=docs[0].splitlines()[0]):
+                text = "---\n".join(docs)
+                scan = self.scan(text)
+                lines = text.splitlines()
+                self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "mixed-yaml"}])
+                self.assertEqual({r["address"]: r["line"] for r in scan.resources},
+                                 {"cfn:Bucket": lines.index("    Type: AWS::S3::Bucket") + 1,
+                                  "k8s:Pod/agent": lines.index("kind: Pod") + 1})
+                self.assertEqual([(h["rule"], h["line"]) for h in scan.hits],
+                                 [("K8S-001", lines.index("spec: {hostNetwork: true}") + 1)])
+                self.assertEqual(scan.not_run,
+                                 ["cloudformation yaml: rules not applied (no YAML parser): manifest.yaml"])
+
+    def test_cloudformation_text_in_non_infrastructure_yaml_is_not_inventory(self):
+        scan = self.scan("""# AWSTemplateFormatVersion
+documentation: |
+  Resources:
+    Bucket:
+      Type: AWS::S3::Bucket
+""")
+        self.assertEqual(scan.files, [])
+        self.assertEqual(scan.resources, [])
+        self.assertEqual(scan.hits, [])
+        self.assertEqual(scan.not_run, [])
+
+    def test_unsupported_kubernetes_keeps_its_not_run_despite_cfn_comment(self):
+        scan = self.scan("""# AWSTemplateFormatVersion
+apiVersion: v1
+kind: Pod
+metadata: {name: agent}
+spec: &unsupported {hostNetwork: true}
+""")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual(scan.resources, [])
+        self.assertEqual(scan.hits, [])
+        self.assertEqual(len(scan.not_run), 1)
+        self.assertIn("kubernetes YAML rules not applied", scan.not_run[0])
+        self.assertTrue(scan.not_run[0].endswith("manifest.yaml:5"))
+
+    def test_tagged_or_anchored_root_flow_maps_are_explicitly_not_run(self):
+        for prefix in ("!!map", "&root"):
+            with self.subTest(prefix=prefix):
+                scan = self.scan(prefix + " {apiVersion: v1, kind: Pod, "
+                                 "metadata: {name: agent}, spec: {hostNetwork: true}}\n")
+                self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+                self.assertEqual(scan.resources, [])
+                self.assertEqual(scan.hits, [])
+                self.assertEqual(len(scan.not_run), 1)
+                self.assertIn("kubernetes YAML rules not applied", scan.not_run[0])
+                self.assertTrue(scan.not_run[0].endswith("manifest.yaml:1"))
+
+    def test_inline_document_start_flow_map_is_explicitly_not_run(self):
+        scan = self.scan("--- {apiVersion: v1, kind: Pod, metadata: {name: agent}, "
+                         "spec: {hostNetwork: true}}\n")
+        self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
+        self.assertEqual(scan.resources, [])
+        self.assertEqual(scan.hits, [])
+        self.assertEqual(len(scan.not_run), 1)
+        self.assertIn("kubernetes YAML rules not applied", scan.not_run[0])
+        self.assertTrue(scan.not_run[0].endswith("manifest.yaml:1"))
+
     def test_indented_root_is_scanned_like_an_unindented_manifest(self):
         text = """apiVersion: v1
 kind: Pod

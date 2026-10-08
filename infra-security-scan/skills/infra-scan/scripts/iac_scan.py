@@ -488,9 +488,14 @@ class HclView:
 
     def blocks(self, name):
         found = [HclView(b) for b in self.block.blocks if b.type == name]
-        if found or name not in self.block.attrs:
-            return found
-        return DictView.wrap(self.get(name), self.line(name))
+        if not found and name in self.block.attrs:
+            found = DictView.wrap(self.get(name), self.line(name))
+        # A dynamic block may generate zero or more blocks. Do not mistake its
+        # unevaluated presence for an omitted setting, or discard known static
+        # blocks when both forms occur together.
+        found.extend(DictView(UNKNOWN, b.line) for b in self.block.blocks
+                     if b.type == "dynamic" and b.labels == [name])
+        return found
 
     def line(self, name=None):
         if name and name in self.block.attrs:
@@ -834,7 +839,7 @@ def github_trust_gap(st):
 
 # ---------------------------------------------------------------- Terraform rules
 
-ADMIN_ARN = re.compile(r":policy/AdministratorAccess$")
+ADMIN_ARN = re.compile(r"\Aarn:[a-z0-9-]+:iam::aws:policy/AdministratorAccess\Z")
 GCP_IAM = re.compile(r"^google_\w+_iam_(member|binding)$")
 DEFAULT_SA = re.compile(r"-compute@developer\.gserviceaccount\.com$")
 SSL_MODES = ("ENCRYPTED_ONLY", "TRUSTED_CLIENT_CERTIFICATE_REQUIRED")
@@ -1001,6 +1006,13 @@ def handle_terraform(scan, parsed):
     """parsed: [(rel, blocks)]. Policy documents first, then rules."""
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
+        pending = list(reversed(blocks))
+        while pending:
+            block = pending.pop()
+            if block.type == "dynamic":
+                scan.not_run.append(f"Terraform dynamic block not evaluated; affected checks not run: "
+                                    f"{rel}:{block.line}")
+            pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
                 scan.policy_docs[(d, b.labels[1])] = doc_statements(HclView(b))
@@ -1650,7 +1662,7 @@ def run(root):
             if "AWSTemplateFormatVersion" in text or re.search(r"^\s+Type:\s*[\"']?AWS::", text, re.M):
                 kind = "cloudformation-yaml"
                 handle_cfn_yaml(scan, rel, lines)
-            elif all(re.search(r'(?:^|[,{]\s*)["\']?' + key + r'["\']?\s*:', text, re.M)
+            elif all(re.search(r'(?:^[ \t]*|[,{]\s*)["\']?' + key + r'["\']?\s*:', text, re.M)
                      for key in ("apiVersion", "kind")):
                 kind = "kubernetes"
                 handle_k8s(scan, rel, lines)

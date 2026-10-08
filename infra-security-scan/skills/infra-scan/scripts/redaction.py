@@ -18,6 +18,7 @@ URL = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*::)?"
 # These getter options identify a revision or limit its history. Other query
 # values can be credentials (including signed storage URLs), so omit them.
 PUBLIC_QUERY = {"ref", "depth", "version"}
+SENSITIVITY_MASKS = {"sensitive_values", "before_sensitive", "after_sensitive"}
 
 
 def _secret_field(line):
@@ -26,6 +27,59 @@ def _secret_field(line):
     urls = [match.span() for match in URL.finditer(line)]
     return next((match for match in SECRET_FIELD.finditer(line)
                  if not any(start <= match.start() < end for start, end in urls)), None)
+
+
+def _sensitive_mask(value):
+    """Terraform masks may nest objects/lists; only explicit false is safe."""
+    if isinstance(value, dict):
+        return any(_sensitive_mask(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_sensitive_mask(item) for item in value)
+    return value is not False
+
+
+def has_structured_secrets(value):
+    """Detect secrets whose meaning is not confined to one source line.
+
+    A renderer cannot safely reuse the original text of these documents:
+    sensitivity masks and name/value pairs may be far apart or in any order.
+    Omit their excerpts instead of inventing new line numbers by reserializing.
+    """
+    if isinstance(value, list):
+        return any(has_structured_secrets(item) for item in value)
+    if not isinstance(value, dict):
+        return False
+    if "sensitive" in value and value["sensitive"] is not False:
+        return True
+    if any(_sensitive_mask(value[key]) for key in SENSITIVITY_MASKS if key in value):
+        return True
+    if value.get("kind") == "SecretList":
+        return True  # Typed list items may omit their own kind: Secret.
+    if value.get("kind") == "Secret" and any(key in value for key in ("data", "stringData")):
+        return True
+    # Covers Kubernetes env entries and other literal name/value collections,
+    # including a value that precedes its name in the source.
+    if "name" in value and "value" in value:
+        name = value["name"]
+        if not isinstance(name, str) or _secret_field(name + ":"):
+            return True
+    if "env" in value and value["env"] is not None:
+        entries = value["env"]
+        if not isinstance(entries, (dict, list)):
+            return True  # Opaque block strings and unknown env expressions.
+        # Check decoded keys too; a JSON/YAML escape can hide a secret name
+        # from line redaction. Env strings such as "var.password" are literal
+        # values, so Terraform's SAFE_VALUE reference exception does not apply.
+        if isinstance(entries, dict) and any(
+                not isinstance(name, str) or _secret_field(name + ":") for name in entries):
+            return True
+        if isinstance(entries, list) and any(
+                not isinstance(entry, dict) or ("value" in entry and "name" not in entry)
+                for entry in entries):
+            return True
+    # Masks describe booleans, not configuration name/value objects themselves.
+    return any(has_structured_secrets(item) for key, item in value.items()
+               if key not in SENSITIVITY_MASKS)
 
 
 def module_source(source):

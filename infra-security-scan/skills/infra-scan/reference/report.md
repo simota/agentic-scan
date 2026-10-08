@@ -67,3 +67,18 @@ Source excerpts omit JSON/YAML documents with CloudFormation `NoEcho` metadata
 unless its value is explicitly false (boolean or string). Unresolved values,
 including opaque YAML block strings, also omit the excerpt. Parameter defaults
 may be secret even when their names do not look sensitive.
+
+Terraform excerpts are also omitted when a `variable` or `output` block in the same
+module directory declares `sensitive` with a value other than the boolean
+literal `false`. This conservative check covers declarations and defaults split
+across files, including overrides; it can omit excerpts even when a later
+override makes a value public. Unreadable or symlinked sibling `.tf` files, or
+the presence of a sibling `.tf.json` file whose declarations are not evaluated,
+also prevent Terraform excerpts rather than leaving sensitivity unchecked. A
+neighboring finding must not copy a sensitive `default` or `value` into either
+HTML report.
+
+In JSON/YAML, strings resembling Terraform references are still literal values:
+secret fields containing `var.*`, `aws_*` or similar text remain redacted.
+Multiline secret values must stay hidden across adjacent fields, heredocs and
+YAML list entries.

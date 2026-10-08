@@ -1,4 +1,5 @@
 """Conservative redaction for values copied into scan outputs (stdlib only)."""
+import bisect
 import json
 import re
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
@@ -13,24 +14,30 @@ KEY_MARKER = re.compile(r"-----(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
     r"\s*[,}]?\s*$")
+SAFE_SCALAR = re.compile(r"(?:null|true|false)\s*[,}]?\s*$")
 HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 # Apostrophes are valid in URL userinfo. Keep it through the last @ so a
 # surrounding string's quote cannot cut off credentials before module_source.
 URL = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*::)?"
                  r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^/\s\"<>]*@)?[^\s\"'<>]+")
 QUOTED_KEY = re.compile(r'("(?:\\.|[^"\\])*")\s*:')
+JSON_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 # These getter options identify a revision or limit its history. Other query
 # values can be credentials (including signed storage URLs), so omit them.
 PUBLIC_QUERY = {"ref", "depth", "version"}
 SENSITIVITY_MASKS = {"sensitive_values", "before_sensitive", "after_sensitive"}
 
 
-def _secret_field(line):
+def _secret_fields(line):
     # Qualified YAML/JSON keys can contain slashes. A URL path or query is
     # handled by module_source instead of being mistaken for such a key.
     urls = [match.span() for match in URL.finditer(line)]
-    return next((match for match in SECRET_FIELD.finditer(line)
-                 if not any(start <= match.start() < end for start, end in urls)), None)
+    return (match for match in SECRET_FIELD.finditer(line)
+            if not any(start <= match.start() < end for start, end in urls))
+
+
+def _secret_field(line):
+    return next(_secret_fields(line), None)
 
 
 def has_escaped_secret_keys(text, docs):
@@ -122,6 +129,48 @@ def has_structured_secrets(value):
                if key not in SENSITIVITY_MASKS)
 
 
+def redact_json_values(text, lines):
+    """Mask complete secret values in validated JSON, retaining source line numbers.
+
+    A string token followed by a colon is a real key, unlike a key-like spelling
+    inside a string value. Decode each secret value to find its exact endpoint:
+    a closing value and the next secret key may share the same source line.
+    """
+    starts, offset = [], 0
+    for line in text.splitlines(keepends=True):
+        starts.append(offset)
+        offset += len(line)
+    decoder = json.JSONDecoder()
+    result = list(lines)
+    hidden_until = 0
+    for match in JSON_STRING.finditer(text):
+        if match.start() < hidden_until:
+            continue  # An enclosing secret value already covers these tokens.
+        after = match.end()
+        while after < len(text) and text[after].isspace():
+            after += 1
+        if after >= len(text) or text[after] != ":":
+            continue
+        if not _secret_field(json.loads(match.group()) + ":"):
+            continue
+        start = after + 1
+        while start < len(text) and text[start].isspace():
+            start += 1
+        value, end = decoder.raw_decode(text, start)
+        if value is None or isinstance(value, bool):
+            continue
+        hidden_until = end
+        first = bisect.bisect_right(starts, start) - 1
+        last = bisect.bisect_right(starts, end - 1) - 1
+        if bisect.bisect_right(starts, match.start()) - 1 == first:
+            # redact_lines already hides the key's trailing value. Preserve
+            # public fields before that key in compact, single-line documents.
+            first += 1
+        for index in range(first, last + 1):
+            result[index] = "[redacted]"
+    return result
+
+
 def module_source(source):
     """Keep a module's address and pin, without URL credentials or signatures."""
     prefix = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", source)
@@ -155,14 +204,15 @@ def module_source(source):
     return getter + SECRET_SHAPE.sub("[redacted]", safe)
 
 
-def redact(line):
-    """Redact a single line; use redact_lines for a source file's excerpts."""
+def redact(line, *, syntax="hcl"):
+    """Redact a line; only HCL may treat reference-shaped values as public."""
     match = _secret_field(line)
     if match:
         rest = line[match.end():].strip()
         # Only complete references/booleans are safe, not expressions that
         # happen to start with a reference and then contain a literal value.
-        if rest and not SAFE_VALUE.fullmatch(rest):
+        safe = SAFE_VALUE if syntax == "hcl" else SAFE_SCALAR
+        if rest and not safe.fullmatch(rest):
             line = line[:match.end()] + " [redacted]"
     if KEY_MARKER.search(line):
         return "[redacted]"
@@ -203,7 +253,7 @@ class _Value:
         return not self.started or bool(self.stack or self.quote)
 
 
-def redact_lines(lines):
+def redact_lines(lines, *, syntax="hcl"):
     """Redact before slicing excerpts, preserving the original line numbers.
 
     A finding can point into the middle of a PEM or heredoc. Processing the
@@ -213,8 +263,18 @@ def redact_lines(lines):
     pem = False
     heredoc = None
     block_indent = None
+    indentless = False
     value = None
     for line in lines:
+        # A line hidden by an earlier composite value can also start another
+        # secret heredoc. Find every key before line hiding skips that boundary.
+        start_heredoc = None
+        if syntax == "hcl" and not pem and heredoc is None and not (value and value.quote):
+            for match in _secret_fields(line):
+                start = HEREDOC.fullmatch(line[match.end():].strip())
+                if start:
+                    start_heredoc = start.group(1)
+                    break
         private = pem
         for marker in KEY_MARKER.finditer(line):
             private = True
@@ -230,7 +290,10 @@ def redact_lines(lines):
                 value = None
         if block_indent is not None:
             indent = len(line) - len(line.lstrip())
-            if line.strip() and indent <= block_indent:
+            same_level_item = (indentless and indent == block_indent and
+                               re.match(r"-(?:\s|$)", line.lstrip()))
+            content = line.strip() and not (syntax == "yaml" and line.lstrip().startswith("#"))
+            if content and indent <= block_indent and not same_level_item:
                 block_indent = None
             else:
                 hidden = True
@@ -243,12 +306,17 @@ def redact_lines(lines):
                     heredoc = start.group(1)
                 elif not rest or rest.startswith("#") or re.fullmatch(r"[|>][1-9+-]*(?:\s+#.*)?", rest):
                     block_indent = len(line) - len(line.lstrip())
-                    if not rest or rest.startswith("#"):
+                    empty = not rest or rest.startswith("#")
+                    indentless = syntax == "yaml" and empty
+                    if empty and syntax != "yaml":
                         # JSON permits a value on the next line at any indent.
+                        # YAML instead follows its mapping/list indentation.
                         value = _Value()
                 else:
                     pending = _Value()
                     if pending.feed(rest):
                         value = pending
-        result.append("[redacted]" if hidden else redact(line))
+        if start_heredoc is not None:
+            heredoc = start_heredoc
+        result.append("[redacted]" if hidden else redact(line, syntax=syntax))
     return result

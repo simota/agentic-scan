@@ -21,6 +21,13 @@ List every input and what it can and cannot tell:
 Run `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json`.
 Its `not_run` list goes into `limitations` as-is.
 
+The Terraform baseline merges `override.tf` and `*_override.tf` after ordinary
+`.tf` files, in filename order within each module directory. Attribute and
+nested-block evidence retains the contributing source file; whole-resource
+checks cite the final block declaration. Unsupported or ambiguous override
+targets are named in `not_run`; do not treat those entries as a completed check
+of the final configuration.
+
 ## 2. Estate layout
 
 - Providers, accounts / projects / subscriptions, regions, clusters

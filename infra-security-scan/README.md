@@ -46,6 +46,13 @@ baseline                perspectives         └─ chat summary
   and multiline flow values, is listed in `not_run` for manual review
   — Kubernetes and CloudFormation documents are classified individually; files
   containing both retain both inventories and count once as `mixed-yaml`
+  — Terraform `override.tf` and `*_override.tf` files are merged within each
+  module directory before rules run, retaining source locations for inherited
+  attributes and nested blocks. Boolean resource attributes accept native and
+  quoted `true` / `false`; IAM action matching recognizes `*` and `?`
+  — CloudFormation YAML inventories resource definitions under `Resources`,
+  excluding parameter types and embedded template text; its baseline rules
+  still require JSON input
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`)
 

@@ -53,7 +53,7 @@ judged by where they lead, not by the rule they break.
 | Review units | One unit per environment × provider (e.g. `prod/aws`, `prod/gcp`), plus one cross-cutting unit (organization guardrails, CI/CD and state, cross-account and cross-cloud trust). Each unit first traces the attack paths to the crown jewels it holds, then sweeps every applicable perspective once |
 | Baseline | `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json` runs first. It inventories resources and applies deterministic baseline rules, producing `I-*` findings. Never hand-write, merge or split `I-*`; review each one in its `validation` |
 | Granularity | One finding per root cause, i.e. per fix location (a module, a policy document, a shared security group). The same flaw instantiated in several environments is one finding listing every resource address |
-| IDs | `F-001`… for findings from review, numbered without gaps in severity order (then path); `I-*` only from `iac_scan.py`; attack paths `AP-01`… |
+| IDs | `F-001`… for findings from review, numbered without gaps in severity order (then path); `I-*` only from `iac_scan.py`; attack paths `AP-01`…; use at least three digits for finding IDs and two for attack paths; compare ID numbers numerically, including beyond `999` / `99` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `iac.json`, `dashboard.html`, `assessment.html`, `assessment.pdf`, in the requester's language. Extra files only on request (`contract_check.py --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |

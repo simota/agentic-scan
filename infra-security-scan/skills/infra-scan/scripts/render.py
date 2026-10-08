@@ -47,9 +47,9 @@ EXCLUDED = {"FalsePositive", "NotApplicable"}
 AP_STATUSES = ("open", "blocked", "unknown")
 P_STATUSES = ("Applied", "N/A", "Not checked")
 INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
-F_ID = re.compile(r"^F-\d{3}$")
-I_ID = re.compile(r"^I-\d{3}$")
-AP_ID = re.compile(r"^AP-\d{2}$")
+F_ID = re.compile(r"^F-(\d{3,})$")
+I_ID = re.compile(r"^I-(\d{3,})$")
+AP_ID = re.compile(r"^AP-(\d{2,})$")
 LOCATION = re.compile(r"^([^\s:]+):(\d+)(?:-(\d+))?$")
 CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:\d+")
 DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -170,7 +170,7 @@ def validate(data, partial=False):
         is_f = isinstance(fid, str) and bool(F_ID.match(fid))
         is_i = isinstance(fid, str) and bool(I_ID.match(fid))
         if not (is_f or is_i):
-            add(f"{where}: id must be F-NNN or I-NNN")
+            add(f"{where}: id must be F-NNN or I-NNN (at least three digits)")
         if fid in seen:
             add(f"{where}: duplicate id")
         seen.add(fid)
@@ -239,7 +239,7 @@ def validate(data, partial=False):
         aid = a.get("id")
         where = aid if isinstance(aid, str) else f"attack_paths[{n}]"
         if not isinstance(aid, str) or not AP_ID.match(aid):
-            add(f"{where}: id must be AP-NN")
+            add(f"{where}: id must be AP-NN (at least two digits)")
         if aid in seen:
             add(f"{where}: duplicate id")
         seen.add(aid)
@@ -372,8 +372,14 @@ def is_excluded(f):
     return f.get("validation", {}).get("verdict") in EXCLUDED
 
 
+def id_key(identifier):
+    """Sort a validated ID by prefix and number, including IDs beyond 999."""
+    prefix, number = identifier.rsplit("-", 1)
+    return prefix, int(number)
+
+
 def ordered(findings):
-    return sorted(findings, key=lambda f: (SEV_RANK.get(f.get("severity"), 9), f.get("id", "")))
+    return sorted(findings, key=lambda f: (SEV_RANK.get(f.get("severity"), 9), id_key(f["id"])))
 
 
 def counts(data):

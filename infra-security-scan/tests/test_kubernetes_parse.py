@@ -253,6 +253,70 @@ roleRef:
         self.assertEqual(len(scan.not_run), 1)
         self.assertIn("opaque identity needs manual review", scan.not_run[0])
 
+    def namespaced_pod(self, namespace):
+        return f'''apiVersion: v1
+kind: Pod
+metadata: {{name: worker, namespace: {namespace}}}
+spec:
+  hostNetwork: true
+  containers: [{{name: worker, image: example/worker:1.0}}]
+'''
+
+    def test_same_named_pods_in_different_namespaces_keep_distinct_identities(self):
+        scan = self.scan(self.namespaced_pod("alpha") + "---\n" + self.namespaced_pod("beta"))
+        addresses = ["k8s:Pod/alpha/worker", "k8s:Pod/beta/worker"]
+        self.assertEqual([r["address"] for r in scan.resources], addresses)
+        self.assertEqual(iac_scan.build_findings(scan.hits)[0]["resources"], addresses)
+        self.assertEqual(scan.not_run, [])
+
+    def test_removing_a_namespace_resource_invalidates_its_attack_path(self):
+        alpha, beta = self.namespaced_pod("alpha"), self.namespaced_pod("beta")
+        old = iac_scan.build_findings(self.scan(alpha + "---\n" + beta).hits)
+        new = iac_scan.build_findings(self.scan(beta).hits)
+        data = {"attack_paths": [{"id": "AP-01", "status": "open", "target": "alpha/worker",
+                                  "findings": [old[0]["id"]]}], "limitations": []}
+        iac_scan.remap_baseline_references(data, old, new)
+        self.assertEqual(data["attack_paths"][0]["status"], "unknown")
+        self.assertEqual(data["attack_paths"][0]["findings"], [])
+
+    def test_legacy_ambiguous_namespace_address_requires_fresh_review(self):
+        new = iac_scan.build_findings(self.scan(self.namespaced_pod("alpha")).hits)
+        old = [{**new[0], "resources": ["k8s:Pod/worker"]}]
+        data = {"attack_paths": [{"id": "AP-01", "status": "open", "findings": [old[0]["id"]]}],
+                "limitations": []}
+        iac_scan.remap_baseline_references(data, old, new)
+        self.assertEqual(data["attack_paths"][0]["status"], "unknown")
+        self.assertEqual(data["attack_paths"][0]["findings"], [])
+
+    def test_missing_namespace_and_cluster_scope_keep_legacy_addresses(self):
+        scan = self.scan('''apiVersion: v1
+kind: Pod
+metadata: {name: worker}
+spec: {hostNetwork: true}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata: {name: admins}
+roleRef: {kind: ClusterRole, name: cluster-admin}
+''')
+        self.assertEqual([r["address"] for r in scan.resources],
+                         ["k8s:Pod/worker", "k8s:ClusterRoleBinding/admins"])
+        self.assertEqual(scan.not_run, [])
+
+    def test_opaque_namespace_is_an_explicit_unknown_identity(self):
+        scan = self.scan('''apiVersion: v1
+kind: Pod
+metadata:
+  name: worker
+  namespace: |-
+    alpha
+spec: {hostNetwork: true}
+''')
+        self.assertEqual(scan.resources[0]["address"], "k8s:Pod/?/worker")
+        self.assertEqual([h["rule"] for h in scan.hits], ["K8S-001"])
+        self.assertEqual(len(scan.not_run), 1)
+        self.assertIn("opaque identity needs manual review", scan.not_run[0])
+
 
 if __name__ == "__main__":
     unittest.main()

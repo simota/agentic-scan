@@ -62,3 +62,8 @@ Always, when true:
 
 Never print secret values; location and kind only. Describe permission chains
 and fix directions, not exploitation steps.
+
+Source excerpts omit JSON/YAML documents with CloudFormation `NoEcho` metadata
+unless its value is explicitly false (boolean or string). Unresolved values,
+including opaque YAML block strings, also omit the excerpt. Parameter defaults
+may be secret even when their names do not look sensitive.

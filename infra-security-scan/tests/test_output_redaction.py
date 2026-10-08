@@ -362,6 +362,102 @@ class StructuredSourceRedactionTest(OutputTest):
         self.assertIn("visible-configuration", "\n".join(text for _, text, _ in rows))
 
 
+class CloudFormationSourceRedactionTest(OutputTest):
+    @staticmethod
+    def template(no_echo, value, default_first):
+        fields = [("NoEcho", no_echo), ("Default", value)]
+        if default_first:
+            fields.reverse()
+        return {"AWSTemplateFormatVersion": "2010-09-09",
+                "Parameters": {"Bootstrap": {"Type": "String", **dict(fields)}},
+                "Resources": {"Database": {"Type": "AWS::RDS::DBInstance", "Properties": {
+                    "DBInstanceClass": "db.t3.micro", "Engine": "postgres", "AllocatedStorage": "20",
+                    "PubliclyAccessible": True, "StorageEncrypted": True, "MasterUsername": "dbadmin",
+                    "MasterUserPassword": {"Ref": "Bootstrap"},
+                }}}}
+
+    @staticmethod
+    def yaml_text(template, flow):
+        if flow:
+            return json.dumps(template)  # JSON flow syntax is also valid YAML.
+        return ('AWSTemplateFormatVersion: "2010-09-09"\nParameters:\n  Bootstrap:\n' +
+                "".join(f"    {key}: {json.dumps(value)}\n"
+                        for key, value in template["Parameters"]["Bootstrap"].items()) +
+                "Resources: " + json.dumps(template["Resources"]) + "\n")
+
+    def assert_source_omitted(self, record, value):
+        self.assertEqual(render.attach_sources(record, self.repo), {})
+        for page in self.pages(record):
+            self.assertNotIn(value, page)
+            self.assertNotIn('class="snippet"', page)
+
+    def test_noecho_defaults_stay_out_of_baseline_reports(self):
+        value = "synthetic-" + "noecho-default"
+        for no_echo in (True, "true", "TRUE"):
+            for default_first in (False, True):
+                for indent in (None, 2):
+                    with self.subTest(no_echo=no_echo, default_first=default_first, indent=indent):
+                        template = self.template(no_echo, value, default_first)
+                        self.write("template.json", json.dumps(template, indent=indent))
+                        scan = iac_scan.run(self.repo)
+                        record = self.record("template.json:1")
+                        record["findings"] = iac_scan.build_findings(scan.hits)
+                        self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-RDS-001"])
+                        self.assertEqual(scan.not_run, [])
+                        self.assert_source_omitted(record, value)
+
+    def test_noecho_defaults_stay_out_of_yaml_excerpts(self):
+        value = "synthetic-" + "noecho-yaml-default"
+        for no_echo in (True, "true", "TRUE"):
+            for default_first in (False, True):
+                for flow in (False, True):
+                    with self.subTest(no_echo=no_echo, default_first=default_first, flow=flow):
+                        text = self.yaml_text(self.template(no_echo, value, default_first), flow)
+                        self.write("template.yaml", text)
+                        # CloudFormation YAML baseline rules are not supported;
+                        # a reviewed finding points at the neighboring resource.
+                        line = next(n for n, row in enumerate(text.splitlines(), 1) if "Resources" in row)
+                        self.assert_source_omitted(self.record(f"template.yaml:{line}"), value)
+
+    def test_noecho_block_strings_omit_source_lines_and_html(self):
+        value = "synthetic-" + "noecho-block-default"
+        for style in ("|-", ">-"):
+            for default_first in (False, True):
+                with self.subTest(style=style, default_first=default_first):
+                    text = self.yaml_text(self.template(True, value, default_first), flow=False)
+                    text = text.replace("    NoEcho: true\n", f"    NoEcho: {style}\n      true\n")
+                    self.write("template.yaml", text)
+                    self.assertIsNone(render.source_lines(self.repo / "template.yaml"))
+                    line = next(n for n, row in enumerate(text.splitlines(), 1) if "Resources" in row)
+                    self.assert_source_omitted(self.record(f"template.yaml:{line}"), value)
+
+    def test_ambiguous_noecho_values_omit_source_lines_and_html(self):
+        value = "synthetic-" + "noecho-ambiguous-default"
+        for no_echo in (None, 0, "", {"Ref": "DisplayMode"}):
+            with self.subTest(no_echo=no_echo):
+                self.write("template.json", json.dumps(self.template(no_echo, value, default_first=True)))
+                self.assertIsNone(render.source_lines(self.repo / "template.json"))
+                self.assert_source_omitted(self.record("template.json:1"), value)
+
+    def test_false_noecho_keeps_public_json_and_yaml_excerpts(self):
+        value = "visible-configuration"
+        for no_echo in (False, "false", "FALSE"):
+            for default_first in (False, True):
+                template = self.template(no_echo, value, default_first)
+                variants = [("json", json.dumps(template, indent=indent)) for indent in (None, 2)]
+                variants += [("yaml", self.yaml_text(template, flow)) for flow in (False, True)]
+                for suffix, text in variants:
+                    with self.subTest(no_echo=no_echo, default_first=default_first, suffix=suffix, text=text):
+                        filename = "template." + suffix
+                        self.write(filename, text)
+                        line = next(n for n, row in enumerate(text.splitlines(), 1) if value in row)
+                        record = self.record(f"{filename}:{line}")
+                        self.assertIn("F-001", render.attach_sources(record, self.repo))
+                        for page in self.pages(record):
+                            self.assertIn(value, page)
+                            self.assertIn('class="snippet"', page)
+
+
 class ModuleRedactionTest(OutputTest):
     def test_credentials_stay_out_of_all_module_outputs_and_excerpts(self):
         username = "synthetic-" + "username"

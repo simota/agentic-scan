@@ -63,13 +63,14 @@ Fragments may not set it.
 
 `status` is `open` (every edge allowed in the inputs), `blocked` (an edge is
 denied — name it in `note`), or `unknown` (an edge is `UNKNOWN`; name it).
-Every finding ID listed must exist.
+Every finding ID listed must exist. IDs start at `AP-01`, with at least two
+digits; the sequence continues through `AP-100` and beyond.
 
 ## findings
 
 | Field | Required | Content |
 |---|---|---|
-| `id` | yes | `F-001`… (review) or `I-001`… (`iac_scan.py`) |
+| `id` | yes | `F-001`… (review) or `I-001`… (`iac_scan.py`), with at least three digits; continues through `F-1000` / `I-1000` and beyond |
 | `title` | yes | One line naming the weakness |
 | `severity` | yes | `High`, `Medium`, `Low`, `Info` |
 | `confidence` | yes | `Confirmed`, `Environment-dependent`, `Suspected` |
@@ -89,6 +90,10 @@ Every finding ID listed must exist.
 | `references` | no | `[{"title": "...", "url": "https://..."}]`, https only, no credentials |
 | `rule` | I-* | The baseline rule ID (`AWS-NET-001`…) |
 | `validation` | yes | `{"verdict": "...", "evidence": "..."}` |
+
+IDs are ordered by their numeric suffix within each prefix, so `I-999` precedes
+`I-1000`. Review IDs run without gaps in severity order, then location; the
+minimum width is padding, not a limit on the number of findings.
 
 ### validation
 
@@ -112,6 +117,12 @@ excluded. `Valid` + `Confirmed` requires every edge in `path` to cite `path:line
 
 ## Prose rules
 
-Finding text describes the weakness, never an attack. `findings.py merge`
-refuses literal exploit strings, live credential shapes (access keys, private
-keys, tokens) and instance-metadata addresses in prose fields.
+`findings.py merge` refuses known credential shapes (access keys, private keys,
+tokens) in every string it saves, including metadata, reference titles and
+URLs, resource addresses and nested fields. This also checks retained content
+from an existing record; credential refusals do not echo a matching value.
+
+Finding text describes the weakness, never an attack. Literal exploit strings
+and instance-metadata addresses remain prohibited in finding prose, attack-path
+descriptions, perspective notes and the string lists. Ordinary reference URLs
+and input paths are preserved rather than interpreted as attack prose.

@@ -18,8 +18,9 @@ shell heredoc or a generated script). It may hold:
 The merged record must pass render.py's schema check (meta completeness is
 checked at render time) before anything is written; the write is atomic.
 
-Prose describes the weakness, never an attack: literal exploit strings,
-credential-shaped values and instance-metadata addresses are refused.
+Credential-shaped values are refused in every string saved to the record.
+Finding prose describes the weakness, never an attack: literal exploit strings
+and instance-metadata addresses are refused in those fields.
 
 Exit codes: 0 merged, 1 a fragment was refused (reason on stderr), 2 unreadable
 input or schema error.
@@ -35,6 +36,7 @@ import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
+from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
@@ -46,9 +48,13 @@ PAYLOAD = re.compile(
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+['\d]|union\s+select|"
     r"(?:\.\./){2,}|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
-    r"169\.254\.169\.254|metadata\.google\.internal|"
-    r"(?:AKIA|ASIA)[0-9A-Z]{16}|-----BEGIN [A-Z ]*PRIVATE KEY-----|\"private_key\"\s*:|"
-    r"ghp_[A-Za-z0-9]{36}|xox[baprs]-",
+    r"169\.254\.169\.254|metadata\.google\.internal",
+    re.IGNORECASE,
+)
+# Share the renderer's known credential formats and retain the merge gate's
+# conservative handling of private-key fields and incomplete Slack tokens.
+CREDENTIAL = re.compile(
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'"private_key"\s*:', r"xox[baprs]-")),
     re.IGNORECASE,
 )
 
@@ -57,8 +63,27 @@ class Refused(Exception):
     pass
 
 
+def credential_problems(value, name):
+    """Check every persisted string, including object keys and unknown fields.
+
+    Never echo a matching value or its key: either may itself be a credential.
+    """
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+        elif isinstance(item, str) and CREDENTIAL.search(item):
+            return [f"{name}: credential-shaped content refused; describe the weakness, "
+                    "not a payload or credential; report its location and kind instead"]
+    return []
+
+
 def prose_strings(fragment):
-    """Yield (where, text) for every prose field the fragment sets."""
+    """Yield fields where literal attack payloads are prohibited."""
     for f in fragment.get("findings", []):
         fid = f.get("id", "?")
         for key in FINDING_PROSE:
@@ -87,7 +112,9 @@ def prose_strings(fragment):
 def fragment_problems(fragment, name, record):
     if not isinstance(fragment, dict):
         return [f"{name}: a fragment must be a JSON object"]
-    problems = []
+    problems = credential_problems(fragment, name)
+    if problems:
+        return problems
     owned = OWNED.intersection(fragment)
     if owned:
         problems.append(f"{name}: {sorted(owned)} are written by iac_scan.py, not fragments")
@@ -193,6 +220,9 @@ def merge(findings_path, fragment_paths):
         if problems:
             raise Refused("\n".join(problems))
         apply(merged, fragment)
+    problems = credential_problems(merged, path)
+    if problems:
+        raise Refused("\n".join(problems))
     render.validate(merged, partial=True)
     write_atomic(path, merged)
     return merged

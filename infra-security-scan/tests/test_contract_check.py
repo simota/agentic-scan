@@ -1,4 +1,5 @@
 import contextlib
+import copy
 import io
 import json
 from pathlib import Path
@@ -71,6 +72,24 @@ class ContractTest(unittest.TestCase):
         self.data["findings"][5]["id"] = "F-009"
         self.write()
         self.assertIn("without gaps", self.check()[2])
+
+    def test_four_digit_review_ids_follow_numeric_order(self):
+        template = self.data["findings"][0]
+        self.data["findings"] = []
+        self.data["attack_paths"] = []
+        for n in range(1000, 0, -1):
+            f = copy.deepcopy(template)
+            f["id"] = f"F-{n:03d}"
+            f["location"] = f"resources/{n:04d}.tf:1"
+            f["path"] = f"1. Public ACL ({f['location']})"
+            f.pop("attack_paths", None)
+            self.data["findings"].append(f)
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 0, err)
+        for name in ("dashboard.html", "assessment.html"):
+            page = (self.out / name).read_text(encoding="utf-8")
+            self.assertLess(page.index('id="F-999"'), page.index('id="F-1000"'))
 
     def test_perspective_missing_and_inventory_missing(self):
         self.data["perspectives"] = self.data["perspectives"][1:]

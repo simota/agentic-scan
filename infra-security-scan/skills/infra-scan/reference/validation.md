@@ -55,6 +55,15 @@ Each baseline hit gets a verdict:
 | The hit is real and is an edge of an attack path | `Valid` or `Likely`; the root-cause `F-*` finding, if one is written, names the `I-*` in its `validation.evidence` |
 | The hit is real but leads nowhere | Keep its severity from the rule; verdict `Valid`; note "no path" in evidence |
 
+Treat standalone `I-*` IDs in `F-*.validation.evidence` as baseline references;
+IDs embedded in source filenames or URLs are left unchanged.
+On rescan, the scanner updates them together with attack-path references when
+the same rule, file and previously affected resources survive. If a reference
+disappears or loses resources, its evidence names the former rule and file,
+the finding becomes `Unverified` / `Suspected`, and linked attack paths become
+`unknown`, whether linked through the finding's `attack_paths` or the path's
+`findings`. Recheck those findings before giving them a definitive verdict again.
+
 ## Verdicts
 
 | Verdict | Meaning |

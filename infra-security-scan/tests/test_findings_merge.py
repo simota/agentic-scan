@@ -130,6 +130,68 @@ class MergeTest(unittest.TestCase):
         code, _ = self.merge(self.fragment({"attack_paths": [ap]}))
         self.assertEqual(code, 1)
 
+    def test_credentials_refused_in_metadata_references_and_nested_strings(self):
+        self.merge(self.fragment({"meta": META, "findings": [finding()]}))
+        before = self.record.read_bytes()
+        value = "AKIA" + "Z" * 16
+        fragments = [
+            {"meta": {"method": "Snapshot used " + value}},
+            {"meta": {"inputs": [{"kind": "snapshot", "path": "snapshot.json", "note": value}]}},
+            {"findings": [{"id": "F-001", "controls": [value]}]},
+            {"findings": [{"id": "F-001", "references": [{"title": value, "url": "https://example.com/"}]}]},
+            {"findings": [{"id": "F-001", "references": [{"title": "Reference", "url": "https://example.com/?token=" + value}]}]},
+            {"findings": [{"id": "F-001", "resources": [value]}]},
+            {"findings": [{"id": "F-001", "location": value + ".tf:1"}]},
+            {"meta": {"custom": [{"nested": value}]}},
+            {"meta": {"custom": {value: "placeholder"}}},
+            {value: []},
+        ]
+        for n, fragment in enumerate(fragments):
+            with self.subTest(field=n):
+                code, err = self.merge(self.fragment(fragment))
+                self.assertEqual(code, 1, err)
+                self.assertIn("credential-shaped content refused", err)
+                self.assertNotIn(value, err)
+                self.assertEqual(self.record.read_bytes(), before)
+
+    def test_shared_token_and_private_key_formats_refused_outside_finding_prose(self):
+        values = [
+            "github_" + "pat_" + "a" * 40,
+            "ghp_" + "b" * 36,
+            "-----BEGIN " + "OPENSSH PRIVATE KEY-----",
+            "xox" + "b-123",
+            "akia" + "q" * 16,
+        ]
+        for n, value in enumerate(values):
+            with self.subTest(format=n):
+                code, err = self.merge(self.fragment({"meta": {"method": value}}))
+                self.assertEqual(code, 1, err)
+                self.assertNotIn(value, err)
+        self.assertFalse(self.record.exists())
+
+    def test_retained_credentials_cannot_be_written_by_an_unrelated_merge(self):
+        value = "AKIA" + "R" * 16
+        record = render.empty_record()
+        record["meta"] = {**META, "method": value}
+        self.record.write_text(json.dumps(record), encoding="utf-8")
+        before = self.record.read_bytes()
+        code, err = self.merge(self.fragment({"limitations": ["No live calls"]}))
+        self.assertEqual(code, 1, err)
+        self.assertNotIn(value, err)
+        self.assertEqual(self.record.read_bytes(), before)
+
+    def test_public_urls_and_structured_paths_are_preserved(self):
+        reference = {"title": "Metadata controls", "url":
+                     "https://docs.example.com/metadata.google.internal?view=full&lang=en#checks"}
+        inputs = [{"kind": "snapshot", "path": "../../exports/snapshot.json", "note": "Requester export"}]
+        f = finding(references=[reference], location="../../shared/main.tf:12")
+        code, err = self.merge(self.fragment({"meta": {**META, "inputs": inputs}, "findings": [f]}))
+        self.assertEqual(code, 0, err)
+        data = self.load()
+        self.assertEqual(data["meta"]["inputs"], inputs)
+        self.assertEqual(data["findings"][0]["references"], [reference])
+        self.assertEqual(data["findings"][0]["location"], "../../shared/main.tf:12")
+
     def test_duplicate_json_keys_unreadable(self):
         code, err = self.merge(self.fragment(None, raw='{"meta": {}, "meta": {}}'))
         self.assertEqual(code, 2)

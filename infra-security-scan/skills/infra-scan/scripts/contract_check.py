@@ -20,7 +20,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
-F_ID = re.compile(r"^F-(\d{3})$")
+F_ID = render.F_ID
 FORBIDDEN = re.compile(r"\.tfstate(\.backup)?$|\.tfvars(\.json)?$")
 
 
@@ -35,7 +35,7 @@ def check(data, out_dir, pdf=True, allow=()):
     findings = [f for f in data.get("findings", []) if isinstance(f, dict)]
 
     fs = [f for f in findings if F_ID.match(str(f.get("id", "")))]
-    by_id = sorted(fs, key=lambda f: f["id"])
+    by_id = sorted(fs, key=lambda f: render.id_key(f["id"]))
     numbers = [int(F_ID.match(f["id"]).group(1)) for f in by_id]
     if numbers != list(range(1, len(fs) + 1)):
         add(f"F-*: IDs must run F-001..F-{len(fs):03d} without gaps; found {[f['id'] for f in by_id]}")

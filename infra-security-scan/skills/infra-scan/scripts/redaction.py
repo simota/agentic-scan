@@ -53,6 +53,12 @@ def has_structured_secrets(value):
         return True
     if any(_sensitive_mask(value[key]) for key in SENSITIVITY_MASKS if key in value):
         return True
+    # CloudFormation parameter defaults can be secret without a secret-looking
+    # parameter name. Only explicit false is safe; YAML block strings may be
+    # opaque, and NoEcho also permits string booleans in templates.
+    no_echo = value.get("NoEcho", False)
+    if no_echo is not False and not (isinstance(no_echo, str) and no_echo.lower() == "false"):
+        return True
     if value.get("kind") == "SecretList":
         return True  # Typed list items may omit their own kind: Secret.
     if value.get("kind") == "Secret" and any(key in value for key in ("data", "stringData")):

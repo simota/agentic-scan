@@ -107,6 +107,7 @@ class NetworkCidrTest(ScanCase):
             ("GCP-SQL-001", '''resource "google_sql_database_instance" "app" {
   settings {
     ip_configuration {
+      ssl_mode = "ENCRYPTED_ONLY"
       authorized_networks {
         value = "CIDR"
       }

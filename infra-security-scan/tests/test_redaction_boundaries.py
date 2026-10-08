@@ -91,6 +91,36 @@ class RedactionBoundaryTest(unittest.TestCase):
                     record["findings"] += self.record("main.tf:2-3")["findings"]
                     self.assert_hidden(record, value, omitted=True)
 
+    def test_bom_sensitive_hcl_omits_neighboring_baseline_excerpts(self):
+        value = "synthetic-" + "bom-sensitive-value"
+        for kind, field in (("variable", "default"), ("output", "value")):
+            with self.subTest(kind=kind):
+                text = (f'{kind} "bootstrap" {{\n  sensitive = true\n  {field} = "{value}"\n}}\n'
+                        'resource "aws_ebs_volume" "main" {\n  encrypted = false\n'
+                        '  availability_zone = "us-east-1a"\n}\n')
+                path = self.write("main.tf", "\ufeff" + text)
+                record = self.record()
+                self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-EBS-001"])
+                self.assert_hidden(record, value, omitted=True)
+                self.assertIsNone(render.source_lines(path))
+
+    def test_bom_sibling_and_override_sensitivity_omit_public_file_excerpts(self):
+        value = "synthetic-" + "bom-module-value"
+        self.write("main.tf", f'variable "bootstrap" {{\n  default = "{value}"\n}}\n' + self.EBS)
+        declarations = {
+            "outputs.tf": 'output "private_export" {\n  sensitive = true\n  value = var.bootstrap\n}\n',
+            "override.tf": 'variable "bootstrap" {\n  sensitive = true\n}\n',
+        }
+        for name, declaration in declarations.items():
+            with self.subTest(sibling=name):
+                sibling = self.write(name, "\ufeff" + declaration)
+                try:
+                    record = self.record("main.tf:2")
+                    record["findings"] += self.record()["findings"]
+                    self.assert_hidden(record, value, omitted=True)
+                finally:
+                    sibling.unlink()
+
     def test_unknown_hcl_sensitivity_is_conservative(self):
         value = "synthetic-" + "unknown-sensitivity-value"
         for flag in ('var.visibility', 'null', '"false"', '(false)'):
@@ -152,13 +182,14 @@ class RedactionBoundaryTest(unittest.TestCase):
         value = "visible-configuration"
         for kind, field in (("variable", "default"), ("output", "value")):
             for flag in ('  sensitive = false # public\n', ''):
-                with self.subTest(kind=kind, flag=flag):
-                    text = (f'{kind} "public_label" {{\n  {field} = "{value}"\n' + flag + '}\n' + self.EBS)
-                    path = self.write("main.tf", text)
-                    self.assertEqual(render.source_lines(path), text.splitlines())
-                    for page in self.pages(self.record("main.tf:1-10")):
-                        self.assertIn(value, page)
-                        self.assertIn('class="snippet"', page)
+                for prefix in ("", "\ufeff"):
+                    with self.subTest(kind=kind, flag=flag, bom=bool(prefix)):
+                        text = (f'{kind} "public_label" {{\n  {field} = "{value}"\n' + flag + '}\n' + self.EBS)
+                        path = self.write("main.tf", prefix + text)
+                        self.assertEqual(render.source_lines(path), text.splitlines())
+                        for page in self.pages(self.record("main.tf:1-10")):
+                            self.assertIn(value, page)
+                            self.assertIn('class="snippet"', page)
 
     def test_sensitive_looking_hcl_comments_and_strings_do_not_omit_public_excerpts(self):
         text = ('# variable "hidden" { sensitive = true }\n'

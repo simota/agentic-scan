@@ -31,7 +31,7 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import has_structured_secrets, redact, redact_lines
+from redaction import has_escaped_secret_keys, has_structured_secrets, redact, redact_lines
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -90,7 +90,8 @@ def unique_object(pairs):
     result = {}
     for key, value in pairs:
         if key in result:
-            raise ValueError(f"duplicate JSON key {key!r}")
+            # Object keys can themselves be credentials. Keep errors safe to log.
+            raise ValueError("duplicate JSON key")
         result[key] = value
     return result
 
@@ -422,7 +423,7 @@ def source_lines(path):
             docs.append(_YamlSubset(rows).parse())
         else:
             docs = []
-        if any(has_structured_secrets(doc) for doc in docs):
+        if has_escaped_secret_keys(text, docs) or any(has_structured_secrets(doc) for doc in docs):
             return None
     except (ValueError, TypeError, RecursionError):
         return None
@@ -629,6 +630,7 @@ tr.detail>td{background:var(--soft);padding:14px 18px}
 thead{display:none}table,tbody,tr,td{display:block}tr.row{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;padding:10px 0;border-bottom:1px solid var(--line)}
 tr.row td{border:0;padding:0}tr.row td.t{grid-column:1/-1}td[data-l]:before{content:attr(data-l);display:block;font-size:10px;color:var(--muted)}
 dl{grid-template-columns:1fr}dd{margin-bottom:6px}}
+@media screen{tr[hidden]{display:none!important}}
 @media print{.tools,.filters,.detail-actions{display:none}tr.detail{display:table-row!important}}
 """
 

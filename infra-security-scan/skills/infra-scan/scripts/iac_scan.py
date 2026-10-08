@@ -27,6 +27,8 @@ Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.jso
 """
 import argparse
 import bisect
+import fnmatch
+import ipaddress
 import json
 import os
 from pathlib import Path
@@ -39,7 +41,6 @@ from redaction import module_source
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
 MAX_BYTES = 2 * 1024 * 1024
-WORLD = ("0.0.0.0/0", "::/0")
 SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
 SENSITIVE_PORTS = {
     22: "SSH", 23: "Telnet", 445: "SMB", 1433: "SQL Server", 1521: "Oracle", 2375: "Docker",
@@ -660,6 +661,22 @@ def lower_strs(values):
     return {v.lower() for v in values if isinstance(v, str)}
 
 
+def matches_action(st, action):
+    """Match known Action values using IAM's case-insensitive * and ? syntax."""
+    if st["not_action"]:
+        return UNKNOWN
+    unknown = False
+    for value in st["actions"]:
+        if not isinstance(value, str) or "${" in value or "%{" in value:
+            unknown = True
+            continue
+        # Escape bracket expressions: IAM only treats * and ? as wildcards.
+        pattern = value.lower().replace("[", "[[]")
+        if fnmatch.fnmatchcase(action.lower(), pattern):
+            return True
+    return UNKNOWN if unknown else False
+
+
 # ---------------------------------------------------------------- the scan
 
 class Scan:
@@ -699,10 +716,15 @@ class Scan:
             if st["effect"] != "Allow":
                 continue
             if not st["conditions"] and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
-                self.hit("AWS-IAM-003", res, line, "Principal * without a condition")
+                allows_assume = matches_action(st, "sts:AssumeRole")
+                if allows_assume is UNKNOWN:
+                    self.not_run.append("AWS-IAM-003: unknown or unsupported trust policy actions; "
+                                        f"check not run: {res.file}:{line} ({res.address})")
+                elif allows_assume:
+                    self.hit("AWS-IAM-003", res, line, "Principal * without a condition")
             gap = github_trust_gap(st)
             if gap is UNKNOWN:
-                self.not_run.append("AWS-IAM-004: unknown or unsupported GitHub OIDC conditions "
+                self.not_run.append("AWS-IAM-004: unknown or unsupported GitHub OIDC actions or conditions "
                                     f"at {res.file}:{line} ({res.address})")
             elif gap:
                 self.hit("AWS-IAM-004", res, line, gap)
@@ -714,7 +736,7 @@ class Scan:
                 self.hit("AWS-S3-003", res, line, "Allow to Principal * without a condition")
 
     def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001"):
-        open_from = [c for c in cidrs if c in WORLD]
+        open_from = world_cidrs(cidrs)
         if not open_from:
             return
         ports = sensitive_ports(proto, lo, hi)
@@ -756,7 +778,7 @@ class Scan:
             return
         if direction not in (None, "INGRESS"):
             return
-        open_from = [r for r in aslist(ranges) if r in WORLD]
+        open_from = world_cidrs(ranges)
         if not open_from:
             return
         for proto, ports in allows:
@@ -777,6 +799,21 @@ class Scan:
                 self.hit("GCP-NET-001", res, line,
                          f"ingress from {open_from[0]} to {', '.join(sorted(set(found))[:5])}")
                 return
+
+
+def world_cidrs(values):
+    """Canonical /0 ranges only; unknown, invalid and narrower ranges are skipped."""
+    out = []
+    for value in aslist(values):
+        if not isinstance(value, str):
+            continue
+        try:
+            network = ipaddress.ip_network(value, strict=False)
+        except ValueError:
+            continue
+        if network.prefixlen == 0:
+            out.append(str(network))
+    return out
 
 
 def port_span(value):
@@ -817,6 +854,9 @@ def github_trust_gap(st):
     """
     if st["effect"] != "Allow":
         return None
+    allows_assume = matches_action(st, "sts:AssumeRoleWithWebIdentity")
+    if allows_assume is False:
+        return None
     fed = any(k == "Federated" and isinstance(x, str) and
               (x == GITHUB_ISSUER or x.endswith(":oidc-provider/" + GITHUB_ISSUER))
               for k, x in st["principals"])
@@ -826,7 +866,7 @@ def github_trust_gap(st):
         if keyed and contains_unknown(st["principals"]):
             return UNKNOWN
         return None
-    subs, unsupported = [], contains_unknown(st["conditions"])
+    subs, unsupported = [], allows_assume is UNKNOWN or contains_unknown(st["conditions"])
     for op, key, vals in st["conditions"]:
         if not isinstance(key, str):
             unsupported = True
@@ -955,9 +995,9 @@ def check_tf(scan, res):
         for cfg in v.blocks("vpc_config"):
             public = cfg.get("endpoint_public_access")
             cidrs = cfg.get("public_access_cidrs")
-            if public in (True, None) and (cidrs is None or
-                                           (isinstance(cidrs, list) and "0.0.0.0/0" in cidrs)):
-                scan.hit("AWS-EKS-001", res, cfg.line(), "public endpoint open to 0.0.0.0/0")
+            open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
+            if public in (True, None) and open_from:
+                scan.hit("AWS-EKS-001", res, cfg.line(), f"public endpoint open to {open_from[0]}")
     elif t == "google_compute_firewall":
         allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
         scan.firewall(res, res.line, v.get("direction"), v.get("disabled"), v.get("source_ranges"), allows)
@@ -981,8 +1021,9 @@ def check_tf(scan, res):
     elif t == "google_sql_database_instance":
         for settings in v.blocks("settings"):
             for ipc in settings.blocks("ip_configuration"):
-                if any(n.get("value") in WORLD for n in ipc.blocks("authorized_networks")):
-                    scan.hit("GCP-SQL-001", res, ipc.line(), "authorized network 0.0.0.0/0")
+                open_from = world_cidrs([n.get("value") for n in ipc.blocks("authorized_networks")])
+                if open_from:
+                    scan.hit("GCP-SQL-001", res, ipc.line(), f"authorized network {open_from[0]}")
                 if ipc.get("ipv4_enabled") is True and ipc.get("require_ssl") in (False, None) and \
                         (ipc.get("ssl_mode") is None or ipc.get("ssl_mode") not in (*SSL_MODES, UNKNOWN)):
                     scan.hit("GCP-SQL-001", res, ipc.line(), "public IP without required TLS", "Low")
@@ -1389,9 +1430,10 @@ class _YamlFlow:
             raise ValueError("unsupported YAML scalar, tag or reference")
         if key:
             return word
-        if word.lower() in ("true", "yes", "on"):
+        # Kubernetes uses YAML 1.1 boolean spellings, including single-letter y/n.
+        if word in ("y", "Y", "yes", "Yes", "YES", "true", "True", "TRUE", "on", "On", "ON"):
             return True
-        if word.lower() in ("false", "no", "off"):
+        if word in ("n", "N", "no", "No", "NO", "false", "False", "FALSE", "off", "Off", "OFF"):
             return False
         if word.lower() in ("null", "~"):
             return None
@@ -1564,42 +1606,94 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             scan.hit("K8S-001", res, mapping.lines[key], label)
 
 
-def handle_k8s(scan, rel, lines):
+def _yaml_kind(rows, doc):
+    """Classify a document by its root keys, never by opaque string contents."""
+    if isinstance(doc, _YamlMap):
+        keys = doc.keys()
+        cfn_resources = classify_json(doc) == "cloudformation"
+    else:
+        # Unsupported syntax still needs routing to not_run. Read only mapping
+        # headers at the outermost indentation; do not interpret their values.
+        headers, content = [], []
+        for n, raw in rows:
+            text = _yaml_comment(raw.lstrip(" "))
+            content.append(text)
+            pair = _yaml_pair(text)
+            if pair:
+                try:
+                    key = _YamlFlow(pair[0], n).parse()
+                except (ValueError, RecursionError):
+                    continue
+                if isinstance(key, str):
+                    headers.append((len(raw) - len(raw.lstrip(" ")), key))
+        indent = min((i for i, _ in headers), default=0)
+        keys = {key for i, key in headers if i == indent}
+        text = "\n".join(content)
+        if re.match(r"(?:---\s+)?(?:(?:!\S*|&\S+)\s+)*\{", text.lstrip()):
+            # Multiline flow values and tagged/anchored roots need manual review.
+            keys.update(re.findall(r'(?:^|[,{])\s*["\']?(apiVersion|kind|Resources|'
+                                   r'AWSTemplateFormatVersion)["\']?\s*:', text, re.M))
+        cfn_resources = "Resources" in keys and bool(
+            re.search(r'^Type:\s*["\']?AWS::', text, re.M))
+    if {"apiVersion", "kind"} <= keys:
+        return "kubernetes"
+    if "AWSTemplateFormatVersion" in keys or cfn_resources:
+        return "cloudformation-yaml"
+    return None
+
+
+def handle_yaml(scan, rel, lines):
     docs, current = [], []
     for n, line in enumerate(lines, 1):
+        if not current:
+            # YAML permits a BOM at each document start, not only the file start.
+            line = line.removeprefix("\ufeff")
         if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
             docs.append(current)
             current = []
         else:
             current.append((n, line))
     docs.append(current)
+    kinds = set()
     for rows in docs:
         parser = _YamlSubset(rows)
+        doc, reason = None, None
         try:
             doc = parser.parse()
         except (ValueError, RecursionError) as exc:
             reason = "nesting too deep" if isinstance(exc, RecursionError) else str(exc)
+        kind = _yaml_kind(rows, doc)
+        if not kind:
+            continue
+        kinds.add(kind)
+        if kind == "cloudformation-yaml":
+            handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0])
+            continue
+        if reason:
             scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
             continue
         if isinstance(doc, _YamlMap):
             _check_k8s(scan, rel, doc)
         elif doc is not None:
             scan.not_run.append(f"kubernetes YAML rules not applied (expected a mapping): {rel}:{rows[0][0]}")
+    return "mixed-yaml" if len(kinds) > 1 else next(iter(kinds), None)
 
 
-def handle_cfn_yaml(scan, rel, lines):
-    for n, line in enumerate(lines, 1):
+def handle_cfn_yaml(scan, rel, lines, start_line=1):
+    for index, line in enumerate(lines):
         m = re.match(r"^(\s+)Type:\s*[\"']?(AWS::[A-Za-z0-9:]+)", line)
         if not m:
             continue
         lid = "?"
-        for back in range(n - 2, -1, -1):
+        for back in range(index - 1, -1, -1):
             pm = re.match(r"^(\s*)([A-Za-z0-9]+):\s*$", lines[back])
             if pm and len(pm.group(1)) < len(m.group(1)):
                 lid = pm.group(2)
                 break
-        scan.add_resource(Res(m.group(2), f"cfn:{lid}", rel, n), "aws")
-    scan.not_run.append(f"cloudformation yaml: rules not applied (no YAML parser): {rel}")
+        scan.add_resource(Res(m.group(2), f"cfn:{lid}", rel, start_line + index), "aws")
+    note = f"cloudformation yaml: rules not applied (no YAML parser): {rel}"
+    if note not in scan.not_run:
+        scan.not_run.append(note)
 
 
 SECRET_PATTERNS = [
@@ -1682,7 +1776,7 @@ def run(root):
         if b"\0" in data:
             continue
         try:
-            text = data.decode("utf-8")
+            text = data.decode("utf-8-sig")
         except UnicodeDecodeError:
             scan.not_run.append(f"not UTF-8, skipped: {rel}")
             continue
@@ -1707,14 +1801,7 @@ def run(root):
             elif doc is not None and handle_snapshot(scan, rel, text, doc):
                 kind = "snapshot"
         elif name.endswith((".yaml", ".yml")):
-            lines = text.splitlines()
-            if "AWSTemplateFormatVersion" in text or re.search(r"^\s+Type:\s*[\"']?AWS::", text, re.M):
-                kind = "cloudformation-yaml"
-                handle_cfn_yaml(scan, rel, lines)
-            elif all(re.search(r'(?:^[ \t]*|[,{]\s*)["\']?' + key + r'["\']?\s*:', text, re.M)
-                     for key in ("apiVersion", "kind")):
-                kind = "kubernetes"
-                handle_k8s(scan, rel, lines)
+            kind = handle_yaml(scan, rel, text.splitlines())
         if kind:
             scan.files.append({"path": rel, "kind": kind})
         scan_secrets(scan, rel, text, kind)

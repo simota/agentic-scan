@@ -1,4 +1,5 @@
 """Conservative redaction for values copied into scan outputs (stdlib only)."""
+import json
 import re
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
@@ -13,8 +14,11 @@ SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
     r"\s*[,}]?\s*$")
 HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
+# Apostrophes are valid in URL userinfo. Keep it through the last @ so a
+# surrounding string's quote cannot cut off credentials before module_source.
 URL = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*::)?"
-                 r"[A-Za-z][A-Za-z0-9+.-]*://[^\s\"'<>]+")
+                 r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^/\s\"<>]*@)?[^\s\"'<>]+")
+QUOTED_KEY = re.compile(r'("(?:\\.|[^"\\])*")\s*:')
 # These getter options identify a revision or limit its history. Other query
 # values can be credentials (including signed storage URLs), so omit them.
 PUBLIC_QUERY = {"ref", "depth", "version"}
@@ -27,6 +31,36 @@ def _secret_field(line):
     urls = [match.span() for match in URL.finditer(line)]
     return next((match for match in SECRET_FIELD.finditer(line)
                  if not any(start <= match.start() < end for start, end in urls)), None)
+
+
+def has_escaped_secret_keys(text, docs):
+    """Omit parsed JSON/YAML whose escaped keys defeat raw-line redaction.
+
+    Use decoded document keys as the source of sensitivity. Raw key candidates
+    only identify escaped spellings; comments and YAML plain scalars must not
+    change which keys are examined. Ordinary/public keys keep their excerpts.
+    """
+    names, pending = set(), [docs]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            names.update(key for key in value if isinstance(key, str) and _secret_field(key + ":"))
+            pending.extend(item for key, item in value.items() if key not in SENSITIVITY_MASKS)
+        elif isinstance(value, list):
+            pending.extend(value)
+    if not names:
+        return False
+    for match in QUOTED_KEY.finditer(text):
+        raw = match.group(1)
+        if "\\" not in raw:
+            continue
+        try:
+            key = json.loads(raw)
+        except ValueError:
+            continue  # The caller already omits unsupported JSON/YAML syntax.
+        if key in names:
+            return True
+    return False
 
 
 def _sensitive_mask(value):

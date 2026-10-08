@@ -1,5 +1,6 @@
 import base64
 import contextlib
+import html
 import io
 import json
 from pathlib import Path
@@ -62,6 +63,46 @@ class OutputTest(unittest.TestCase):
 
 
 class SourceRedactionTest(OutputTest):
+    def test_escaped_secret_keys_omit_json_and_yaml_excerpts(self):
+        value = "synthetic-" + "escaped-field-value"
+        for key, encoded in (("password", "pass\\u0077ord"),
+                             ("api_key", "api\\u005fkey"),
+                             ("credentials", "credential\\u0073")):
+            for suffix in ("json", "yaml"):
+                with self.subTest(key=key, suffix=suffix):
+                    text = json.dumps({"settings": {key: value}, "publicly_accessible": True})
+                    self.write("resource." + suffix, text.replace(key, encoded))
+                    record = self.record("resource." + suffix + ":1")
+                    self.assertEqual(render.attach_sources(record, self.repo), {})
+                    for page in self.pages(record):
+                        self.assertNotIn(value, page)
+
+    def test_public_escapes_and_keylike_values_keep_original_source(self):
+        value = "visible-configuration"
+        variants = [
+            json.dumps({"public_name": value}).replace("public_name", "public\\u005fname"),
+            json.dumps({"pass\\u0077ord": value}),  # Decoding once leaves a literal backslash.
+            json.dumps({"note": '"pass\\u0077ord": "' + value + '"'}),
+        ]
+        for suffix in ("json", "yaml"):
+            for text in variants:
+                with self.subTest(suffix=suffix, text=text):
+                    self.write("resource." + suffix, text)
+                    rows = self.excerpt("resource." + suffix + ":1")
+                    self.assertEqual(rows, [(1, text, True)])
+
+    def test_yaml_apostrophes_do_not_hide_escaped_secret_keys(self):
+        value = "synthetic-" + "yaml-escaped-field"
+        for before, after in (("# don't", "# don't"),
+                              ("description: don't", "note: don't")):
+            with self.subTest(before=before):
+                self.write("resource.yaml", before + '\n"pass\\u0077ord": "' + value + '"\n' +
+                           after + "\npublicly_accessible: true\n")
+                record = self.record("resource.yaml:4")
+                self.assertEqual(render.attach_sources(record, self.repo), {})
+                for page in self.pages(record):
+                    self.assertNotIn(value, page)
+
     def test_kubernetes_secret_values_are_not_exposed_by_neighboring_findings(self):
         plaintext = "synthetic-" + "configuration-value"
         for field, value in (("data", base64.b64encode(plaintext.encode()).decode()),
@@ -391,6 +432,22 @@ class CloudFormationSourceRedactionTest(OutputTest):
             self.assertNotIn(value, page)
             self.assertNotIn('class="snippet"', page)
 
+    def test_escaped_password_property_stays_out_of_baseline_reports(self):
+        value = "synthetic-" + "escaped-database-password"
+        template = self.template(False, "public-configuration", default_first=False)
+        template["Resources"]["Database"]["Properties"]["MasterUserPassword"] = value
+        for indent in (None, 2):
+            with self.subTest(indent=indent):
+                text = json.dumps(template, indent=indent).replace("MasterUserPassword", "MasterUserPass\\u0077ord")
+                self.write("template.json", text)
+                scan = iac_scan.run(self.repo)
+                record = self.record("template.json:1")
+                record["findings"] = iac_scan.build_findings(scan.hits)
+                self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-RDS-001"])
+                self.assertEqual(scan.not_run, [])
+                self.assertNotIn(value, json.dumps(iac_scan.report(scan, self.repo, "", record["findings"])))
+                self.assert_source_omitted(record, value)
+
     def test_noecho_defaults_stay_out_of_baseline_reports(self):
         value = "synthetic-" + "noecho-default"
         for no_echo in (True, "true", "TRUE"):
@@ -459,6 +516,24 @@ class CloudFormationSourceRedactionTest(OutputTest):
 
 
 class ModuleRedactionTest(OutputTest):
+    def test_apostrophe_userinfo_stays_out_of_all_module_outputs_and_excerpts(self):
+        credentials = [("synthetic'" + "username", "synthetic-" + "password"),
+                       ("synthetic-" + "username", "synthetic'" + "password")]
+        for username, password in credentials:
+            with self.subTest(username=username, password=password):
+                source = f"git::https://{username}:{password}@git.example.invalid/config.git?ref=main"
+                self.write("main.tf", f'module "example" {{\n  source = "{source}"\n}}\n')
+                scan = iac_scan.run(self.repo)
+                record = self.record("main.tf:2")
+                record["findings"] = iac_scan.build_findings(scan.hits)
+                self.assertEqual([f["rule"] for f in record["findings"]], ["PS-001"])
+                outputs = [json.dumps(iac_scan.report(scan, self.repo, "", record["findings"]))]
+                outputs += [html.unescape(page) for page in self.pages(record)]
+                for output in outputs:
+                    self.assertNotIn(username, output)
+                    self.assertNotIn(password, output)
+                    self.assertIn("git.example.invalid/config.git?ref=main", output)
+
     def test_credentials_stay_out_of_all_module_outputs_and_excerpts(self):
         username = "synthetic-" + "username"
         password = "synthetic-" + "password"

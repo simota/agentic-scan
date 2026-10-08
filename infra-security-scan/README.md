@@ -44,6 +44,8 @@ baseline                perspectives         └─ chat summary
   — Kubernetes supports block maps/lists, single-line flow collections, comments
   and opaque block strings. Unsupported YAML, including anchors, aliases, tags
   and multiline flow values, is listed in `not_run` for manual review
+  — Kubernetes and CloudFormation documents are classified individually; files
+  containing both retain both inventories and count once as `mixed-yaml`
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`)
 

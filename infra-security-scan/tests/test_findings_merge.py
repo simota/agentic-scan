@@ -197,6 +197,28 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("duplicate", err)
 
+    def test_duplicate_credential_key_is_not_echoed_from_fragment(self):
+        value = "ghp_" + "R" * 36
+        key = json.dumps(value)
+        raw = '{"meta":{' + key + ':"first",' + key + ':"second"}}'
+        code, err = self.merge(self.fragment(None, raw=raw))
+        self.assertEqual(code, 2)
+        self.assertIn("duplicate JSON key", err)
+        self.assertNotIn(value, err)
+        self.assertFalse(self.record.exists())
+
+    def test_duplicate_credential_key_is_not_echoed_from_existing_record(self):
+        value = "ghp_" + "S" * 36
+        key = json.dumps(value)
+        raw = '{"meta":{' + key + ':"first",' + key + ':"second"}}'
+        self.record.write_text(raw, encoding="utf-8")
+        before = self.record.read_bytes()
+        code, err = self.merge(self.fragment({"limitations": ["No live calls"]}))
+        self.assertEqual(code, 2)
+        self.assertIn("duplicate JSON key", err)
+        self.assertNotIn(value, err)
+        self.assertEqual(self.record.read_bytes(), before)
+
     def test_schema_error_leaves_record_untouched(self):
         self.merge(self.fragment({"meta": META, "findings": [finding()]}))
         before = self.record.read_text(encoding="utf-8")

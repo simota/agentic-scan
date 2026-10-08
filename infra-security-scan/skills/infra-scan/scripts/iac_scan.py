@@ -19,7 +19,9 @@ name the section title only; section numbers vary by edition.
 
 --out writes the inventory (`iac.json`); without it the inventory goes to stdout.
 --into replaces every `I-*` finding in findings.json (creating it when absent),
-keeps every other finding, and sets `meta.commit` and `inventory`.
+keeps every other finding, and sets `meta.commit` and `inventory`. Attack-path
+references follow the same (rule, file) after renumbering; paths whose referenced
+baseline finding disappeared or lost resources become unknown and need review.
 
 Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.json.
 """
@@ -32,6 +34,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+from redaction import module_source
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
 MAX_BYTES = 2 * 1024 * 1024
@@ -468,6 +472,7 @@ def literal(raw):
 class HclView:
     def __init__(self, block):
         self.block = block
+        self.known_present = True
         self._cache = {}
 
     def get(self, name):
@@ -496,23 +501,26 @@ class HclView:
 class DictView:
     def __init__(self, data, line):
         self.data, self._line = data, line
+        # An unknown block may be absent after apply; unknown attributes in
+        # an existing dictionary do not make the block's presence unknown.
+        self.known_present = data is not UNKNOWN
 
     @staticmethod
     def wrap(value, line):
-        if isinstance(value, dict):
+        if value is UNKNOWN or isinstance(value, dict):
             return [DictView(value, line)]
         if isinstance(value, list):
-            return [DictView(v, line) for v in value if isinstance(v, dict)]
+            return [DictView(v, line) for v in value if v is UNKNOWN or isinstance(v, dict)]
         return []
 
     def get(self, name):
-        return self.data.get(name)
+        return UNKNOWN if self.data is UNKNOWN else self.data.get(name)
 
     def raw(self, name):
         return None
 
     def blocks(self, name):
-        return self.wrap(self.data.get(name), self._line)
+        return self.wrap(self.get(name), self._line)
 
     def line(self, name=None):
         return self._line
@@ -532,6 +540,16 @@ def aslist(value):
     if isinstance(value, list):
         return value
     return [value]
+
+
+def contains_unknown(value):
+    if value is UNKNOWN:
+        return True
+    if isinstance(value, dict):
+        return any(contains_unknown(v) for v in value.values())
+    if isinstance(value, (list, tuple)):
+        return any(contains_unknown(v) for v in value)
+    return False
 
 
 def to_int(value):
@@ -659,7 +677,10 @@ class Scan:
             if not st["conditions"] and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 self.hit("AWS-IAM-003", res, line, "Principal * without a condition")
             gap = github_trust_gap(st)
-            if gap:
+            if gap is UNKNOWN:
+                self.not_run.append("AWS-IAM-004: unknown or unsupported GitHub OIDC conditions "
+                                    f"at {res.file}:{line} ({res.address})")
+            elif gap:
                 self.hit("AWS-IAM-004", res, line, gap)
 
     def resource_policy(self, res, stmts, line):
@@ -706,7 +727,7 @@ class Scan:
             self.hit("GCP-IAM-004", res, line, f"{role} granted at {res.type.split('_')[1]} level")
 
     def firewall(self, res, line, direction, disabled, ranges, allows):
-        if disabled is True or str(disabled).lower() == "true":
+        if disabled is UNKNOWN or disabled is True or str(disabled).lower() == "true":
             return
         if direction not in (None, "INGRESS"):
             return
@@ -757,24 +778,58 @@ def sensitive_ports(proto, lo, hi):
     return [f"{p}/{name}" for p, name in sorted(SENSITIVE_PORTS.items()) if lo <= p <= hi]
 
 
+GITHUB_ISSUER = "token.actions.githubusercontent.com"
+GITHUB_REPO_SUB = re.compile(r"^repo:[^/*?:]+/[^/*?:]+:")
+
+
 def github_trust_gap(st):
+    """Return a gap, no gap, or UNKNOWN when subject conditions need review.
+
+    Values within one condition are ORed; different conditions are ANDed.
+    A fixed positive subject condition therefore bounds the whole statement,
+    even when another condition contains a broad pattern. Negation and more
+    complex intersections are left for review rather than called public.
+    """
     if st["effect"] != "Allow":
         return None
-    fed = any(k == "Federated" and isinstance(x, str) and "token.actions.githubusercontent.com" in x
+    fed = any(k == "Federated" and isinstance(x, str) and
+              (x == GITHUB_ISSUER or x.endswith(":oidc-provider/" + GITHUB_ISSUER))
               for k, x in st["principals"])
-    keyed = any(isinstance(key, str) and "token.actions.githubusercontent.com" in key
+    keyed = any(isinstance(key, str) and key.lower().startswith(GITHUB_ISSUER + ":")
                 for _, key, _ in st["conditions"])
-    if not (fed or keyed):
+    if not fed:
+        if keyed and contains_unknown(st["principals"]):
+            return UNKNOWN
         return None
-    subs = [vals for _, key, vals in st["conditions"]
-            if isinstance(key, str) and key.lower().endswith(":sub")]
+    subs, unsupported = [], contains_unknown(st["conditions"])
+    for op, key, vals in st["conditions"]:
+        if not isinstance(key, str):
+            unsupported = True
+        elif key.lower() == GITHUB_ISSUER + ":sub":
+            subs.append((op, vals))
+        elif key.lower() != GITHUB_ISSUER + ":aud":
+            # Other claims can narrow an otherwise broad subject. Do not
+            # pretend to evaluate their effect on the set of repositories.
+            unsupported = True
+    broad = 0
+    for op, vals in subs:
+        if not vals or not all(isinstance(v, str) and "${" not in v for v in vals):
+            unsupported = True
+        elif op in ("StringEquals", "StringEqualsIgnoreCase"):
+            # These operators do not expand '*' or '?'. Even a wildcard-
+            # shaped value is an exact subject, not an all-repository grant.
+            return None
+        elif op == "StringLike":
+            if all(not any(c in v for c in "*?") or GITHUB_REPO_SUB.match(v) for v in vals):
+                return None
+            broad += 1
+        else:
+            unsupported = True
+    if unsupported or broad > 1:
+        return UNKNOWN
     if not subs:
         return "no :sub condition on the GitHub OIDC token"
-    for vals in subs:
-        for v in vals:
-            if isinstance(v, str) and (v == "*" or v.startswith("repo:*")):
-                return f"sub condition allows {v}"
-    return None
+    return "GitHub :sub pattern does not pin the organization and repository"
 
 
 # ---------------------------------------------------------------- Terraform rules
@@ -919,13 +974,14 @@ def check_tf(scan, res):
         if v.get("enable_legacy_abac") is True:
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
         private = v.blocks("private_cluster_config")
-        private_endpoint = bool(private) and private[0].get("enable_private_endpoint") is True
-        if not v.blocks("master_authorized_networks_config") and not private_endpoint:
+        private_endpoint = private[0].get("enable_private_endpoint") if private else None
+        if not v.blocks("master_authorized_networks_config") and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
         if not v.blocks("workload_identity_config"):
             scan.hit("GCP-GKE-001", res, res.line, "no workload_identity_config", "Low")
     elif t == "google_iam_workload_identity_pool_provider":
-        if v.blocks("oidc") and v.get("attribute_condition") in (None, ""):
+        if any(oidc.known_present for oidc in v.blocks("oidc")) and \
+                v.get("attribute_condition") in (None, ""):
             scan.hit("GCP-WIF-001", res, res.line, "OIDC provider without attribute_condition")
 
 
@@ -979,12 +1035,13 @@ def handle_terraform(scan, parsed):
 def handle_module(scan, rel, b, view):
     source, version = view.get("source"), view.get("version")
     name = b.labels[0]
-    scan.modules.append({"name": name, "source": source if isinstance(source, str) else "UNKNOWN",
+    safe_source = module_source(source) if isinstance(source, str) else "UNKNOWN"
+    scan.modules.append({"name": name, "source": safe_source,
                          "version": version if isinstance(version, str) else None,
                          "file": rel, "line": b.line})
     if not isinstance(source, str) or source.startswith(("./", "../")):
         return
-    scan.not_run.append(f"remote module not read: module.{name} ({source}) at {rel}:{b.line}")
+    scan.not_run.append(f"remote module not read: module.{name} ({safe_source}) at {rel}:{b.line}")
     res = Res("module", f"module.{name}", rel, b.line)
     if GIT_SOURCE.search(source):
         m = re.search(r"[?&]ref=([^&]+)", source)
@@ -1014,15 +1071,47 @@ def finish_dirs(scan):
                      "no backend in a production root module; state is local", "Low")
 
 
+def with_plan_unknowns(value, mask):
+    """Restore values omitted from planned_values using change.after_unknown."""
+    if mask is True:
+        return UNKNOWN
+    if not mask:
+        return value
+    if isinstance(mask, dict):
+        out = dict(value) if isinstance(value, dict) else {}
+        for key, child in mask.items():
+            out[key] = with_plan_unknowns(out.get(key), child)
+        return out
+    if isinstance(mask, list):
+        values = value if isinstance(value, list) else []
+        return [with_plan_unknowns(values[i] if i < len(values) else None,
+                                   mask[i] if i < len(mask) else False)
+                for i in range(max(len(values), len(mask)))]
+    return value
+
+
 def handle_plan(scan, rel, text, doc):
+    unknowns = {}
+    for resource in doc.get("resource_changes", []) or []:
+        if not isinstance(resource, dict) or not isinstance(resource.get("address"), str) \
+                or "deposed" in resource:
+            continue
+        change = resource.get("change")
+        if isinstance(change, dict):
+            unknowns[resource["address"]] = change.get("after_unknown")
+
     def walk(module):
         for r in module.get("resources", []) or []:
             if not isinstance(r, dict) or r.get("mode") == "data":
                 continue
             address, type_ = r.get("address", ""), r.get("type", "")
             line = find_line(text, r'"address"\s*:\s*' + re.escape(json.dumps(address)))
-            res = Res(type_, address, rel, line, DictView(r.get("values") or {}, line), rel)
+            values = with_plan_unknowns(r.get("values") or {}, unknowns.get(address))
+            res = Res(type_, address, rel, line, DictView(values, line), rel)
             scan.add_resource(res)
+            if contains_unknown(values):
+                scan.not_run.append(f"plan contains unknown values; affected checks not run: "
+                                    f"{address} at {rel}:{line}")
             check_tf(scan, res)
         for child in module.get("child_modules", []) or []:
             if isinstance(child, dict):
@@ -1133,60 +1222,308 @@ def handle_snapshot(scan, rel, text, doc):
     return False
 
 
-K8S_HOST = [(re.compile(r"^\s*-?\s*privileged:\s*true\b"), "privileged: true"),
-            (re.compile(r"^\s*-?\s*hostNetwork:\s*true\b"), "hostNetwork: true"),
-            (re.compile(r"^\s*-?\s*hostPID:\s*true\b"), "hostPID: true"),
-            (re.compile(r"^\s*-?\s*hostIPC:\s*true\b"), "hostIPC: true"),
-            (re.compile(r"^\s*-?\s*hostPath:"), "hostPath volume")]
-K8S_BROAD = re.compile(r"^\s*-?\s*name:\s*[\"']?(cluster-admin|system:authenticated|system:unauthenticated|system:anonymous)[\"']?\s*$")
+class _YamlMap(dict):
+    def __init__(self, line):
+        super().__init__()
+        self.line, self.lines = line, {}
+
+    def put(self, key, value, line):
+        if not isinstance(key, str) or key == "<<" or key in self:
+            raise ValueError("complex, merge or duplicate mapping key")
+        self[key], self.lines[key] = value, line
+
+
+def _yaml_marks(text):
+    """Unquoted characters with their flow nesting depth."""
+    quote, depth, previous, i = None, 0, "", 0
+    while i < len(text):
+        c = text[i]
+        if quote:
+            if c == "\\" and quote == '"':
+                i += 2
+                continue
+            if c == quote:
+                if quote == "'" and text[i:i + 2] == "''":
+                    i += 2
+                    continue
+                quote = None
+        elif c in "\"'" and previous in ("", ":", "[", "{", ",", "-"):
+            quote = c
+        else:
+            yield i, c, depth
+            depth += (c in "[{") - (c in "]}")
+        if not c.isspace():
+            previous = c
+        i += 1
+
+
+def _yaml_comment(text):
+    for i, c, _ in _yaml_marks(text):
+        if c == "#" and (i == 0 or text[i - 1].isspace()):
+            return text[:i].rstrip()
+    return text.rstrip()
+
+
+def _yaml_pair(text):
+    for i, c, depth in _yaml_marks(text):
+        if c == ":" and depth == 0 and (i + 1 == len(text) or text[i + 1].isspace()):
+            return text[:i].strip(), text[i + 1:].strip()
+    return None
+
+
+class _YamlFlow:
+    """Single-line flow collections and scalars; no YAML tags or references."""
+    def __init__(self, text, line):
+        self.text, self.line, self.i = text, line, 0
+
+    def ws(self):
+        while self.i < len(self.text) and self.text[self.i].isspace():
+            self.i += 1
+
+    def take(self, char):
+        self.ws()
+        if self.text[self.i:self.i + 1] == char:
+            self.i += 1
+            return True
+        return False
+
+    def value(self, flow=False, key=False):
+        self.ws()
+        start = self.i
+        if start >= len(self.text):
+            raise ValueError("multiline or incomplete scalar")
+        c = self.text[start]
+        if c in "\"'":
+            self.i += 1
+            while self.i < len(self.text):
+                char = self.text[self.i]
+                self.i += 1
+                if char == "\\" and c == '"':
+                    self.i += 1
+                elif char == c:
+                    if c == "'" and self.text[self.i:self.i + 1] == "'":
+                        self.i += 1
+                        continue
+                    raw = self.text[start:self.i]
+                    return json.loads(raw) if c == '"' else raw[1:-1].replace("''", "'")
+            raise ValueError("multiline or incomplete quoted scalar")
+        if c in "[{":
+            self.i += 1
+            close = "]" if c == "[" else "}"
+            result = [] if c == "[" else _YamlMap(self.line)
+            while not self.take(close):
+                if c == "[":
+                    result.append(self.value(flow=True))
+                else:
+                    self.ws()
+                    quoted_key = self.text[self.i:self.i + 1] in ("'", '"')
+                    name = self.value(flow=True, key=True)
+                    if not self.take(":"):
+                        raise ValueError("unsupported flow mapping key")
+                    if not quoted_key and self.text[self.i:self.i + 1] \
+                            and not self.text[self.i].isspace():
+                        raise ValueError("ambiguous unquoted flow mapping key")
+                    result.put(name, self.value(flow=True), self.line)
+                if self.take(close):
+                    return result
+                if not self.take(","):
+                    raise ValueError("multiline or malformed flow collection")
+            return result
+        while self.i < len(self.text) and not (
+                (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":")):
+            self.i += 1
+        word = self.text[start:self.i].strip()
+        if not word or word[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", word):
+            raise ValueError("unsupported YAML scalar, tag or reference")
+        if key:
+            return word
+        if word.lower() in ("true", "yes", "on"):
+            return True
+        if word.lower() in ("false", "no", "off"):
+            return False
+        if word.lower() in ("null", "~"):
+            return None
+        return word
+
+    def parse(self):
+        result = self.value()
+        self.ws()
+        if self.i != len(self.text):
+            raise ValueError("unsupported trailing scalar content")
+        return result
+
+
+class _YamlSubset:
+    """Kubernetes block maps/lists, single-line flow values and opaque block strings.
+
+    Indentless lists, comments and quoted strings are supported. Anchors, aliases,
+    tags, directives, complex/duplicate keys and multiline flow/quoted/plain
+    scalars are rejected, so the caller records the document in not_run.
+    """
+    def __init__(self, rows):
+        self.rows, self.i = rows, 0
+        self.line = rows[0][0] if rows else 1
+
+    def peek(self):
+        while self.i < len(self.rows):
+            n, raw = self.rows[self.i]
+            self.line = n
+            text = _yaml_comment(raw.lstrip(" "))
+            if text and not text.startswith("#"):
+                if text.startswith("\t"):
+                    raise ValueError("tab indentation")
+                return len(raw) - len(raw.lstrip(" ")), text, n
+            self.i += 1
+        return None
+
+    @staticmethod
+    def is_list(text):
+        return text == "-" or text.startswith("- ")
+
+    def entry(self, text, indent, line, indentless=True):
+        if re.fullmatch(r"[|>](?:[+-][1-9]?|[1-9][+-]?)?", text):
+            # Never interpret embedded manifests, scripts or configuration as YAML.
+            while self.i < len(self.rows):
+                raw = self.rows[self.i][1]
+                if raw.strip() and len(raw) - len(raw.lstrip(" ")) <= indent:
+                    break
+                self.i += 1
+            return UNKNOWN
+        if text:
+            return _YamlFlow(text, line).parse()
+        nxt = self.peek()
+        if nxt and (nxt[0] > indent or
+                    (indentless and nxt[0] == indent and self.is_list(nxt[1]))):
+            return self.block(nxt[0])
+        return None
+
+    def pair(self, result, text, indent, line):
+        pair = _yaml_pair(text)
+        if not pair:
+            raise ValueError("unsupported mapping or multiline plain scalar")
+        key, value = pair
+        result.put(_YamlFlow(key, line).parse(), self.entry(value, indent, line), line)
+
+    def mapping(self, indent, result):
+        while (row := self.peek()) and row[0] == indent and not self.is_list(row[1]):
+            self.i += 1
+            self.pair(result, row[1], indent, row[2])
+        return result
+
+    def block(self, indent):
+        row = self.peek()
+        if not self.is_list(row[1]):
+            if row[1].startswith(("{", "[")):
+                self.i += 1
+                return _YamlFlow(row[1], row[2]).parse()
+            return self.mapping(indent, _YamlMap(row[2]))
+        result = []
+        while (row := self.peek()) and row[0] == indent and self.is_list(row[1]):
+            self.i += 1
+            text = row[1][1:].lstrip(" ")
+            item_indent = indent + len(row[1]) - len(text)
+            if _yaml_pair(text):
+                value = _YamlMap(row[2])
+                self.pair(value, text, item_indent, row[2])
+                self.mapping(item_indent, value)
+            else:
+                value = self.entry(text, indent, row[2], indentless=False)
+            result.append(value)
+        return result
+
+    def parse(self):
+        row = self.peek()
+        result = self.block(row[0]) if row else None
+        if self.peek():
+            raise ValueError("unsupported indentation or multiline value")
+        return result
+
+
+def _k8s_map(value, *keys):
+    for key in keys:
+        value = value.get(key) if isinstance(value, dict) else None
+    return value if isinstance(value, _YamlMap) else _YamlMap(1)
+
+
+def _check_k8s(scan, rel, doc, fallback_kind=None):
+    kind = doc.get("kind", fallback_kind)
+    if not isinstance(kind, str):
+        scan.not_run.append(f"kubernetes rules not applied (missing or opaque kind): {rel}:{doc.line}")
+        return
+    if kind.endswith("List") and isinstance(doc.get("items"), list):
+        for item in doc["items"]:
+            if isinstance(item, _YamlMap):
+                _check_k8s(scan, rel, item, kind[:-4] if kind != "List" else None)
+        return
+    meta = _k8s_map(doc, "metadata")
+    name = meta.get("name")
+    res = Res(kind, f"k8s:{kind}/{name if isinstance(name, str) else '?'}",
+              rel, doc.lines.get("kind", doc.line))
+    scan.add_resource(res, "kubernetes")
+    # An opaque string in a rule-relevant identity needs manual review.
+    relevant = [meta]
+    if kind in ("ClusterRoleBinding", "RoleBinding"):
+        role = _k8s_map(doc, "roleRef")
+        subjects = [s for s in aslist(doc.get("subjects")) if isinstance(s, _YamlMap)]
+        relevant += [role, *subjects]
+        if role.get("kind") == "ClusterRole" and role.get("name") == "cluster-admin":
+            scan.hit("K8S-002", res, role.lines["name"], "binds cluster-admin")
+        for subject in subjects:
+            if (subject.get("kind") == "Group" and subject.get("name") in
+                    ("system:authenticated", "system:unauthenticated")) or (
+                    subject.get("kind") == "User" and subject.get("name") == "system:anonymous"):
+                scan.hit("K8S-002", res, subject.lines["name"], f"binds {subject['name']}")
+    if any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
+        scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
+    if kind == "Secret":
+        for key in ("data", "stringData"):
+            if isinstance(doc.get(key), dict) and doc[key]:
+                scan.hit("K8S-003", res, doc.lines[key], "Secret manifest with data")
+    paths = {
+        "Pod": ("spec",), "PodTemplate": ("template", "spec"),
+        "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+        **{k: ("spec", "template", "spec") for k in (
+            "Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "ReplicationController", "Job")},
+    }
+    pod = _k8s_map(doc, *paths[kind]) if kind in paths else _YamlMap(res.line)
+    hits = [(pod, k, f"{k}: true") for k in ("hostNetwork", "hostPID", "hostIPC")
+            if pod.get(k) is True]
+    for key in ("containers", "initContainers", "ephemeralContainers"):
+        for container in aslist(pod.get(key)):
+            security = _k8s_map(container, "securityContext")
+            if security.get("privileged") is True:
+                hits.append((security, "privileged", "privileged: true"))
+    for volume in aslist(pod.get("volumes")):
+        if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
+            hits.append((volume, "hostPath", "hostPath volume"))
+    seen = set()
+    for mapping, key, label in hits:
+        if label not in seen:
+            seen.add(label)
+            scan.hit("K8S-001", res, mapping.lines[key], label)
 
 
 def handle_k8s(scan, rel, lines):
-    docs, current, start = [], [], 1
+    docs, current = [], []
     for n, line in enumerate(lines, 1):
-        if line.startswith("---"):
-            docs.append((start, current))
-            current, start = [], n + 1
+        if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
+            docs.append(current)
+            current = []
         else:
-            current.append(line)
-    docs.append((start, current))
-    for start, body in docs:
-        kind = name = None
-        for line in body:
-            m = re.match(r"^kind:\s*[\"']?([A-Za-z]+)", line)
-            if m and not kind:
-                kind = m.group(1)
-        if not kind:
+            current.append((n, line))
+    docs.append(current)
+    for rows in docs:
+        parser = _YamlSubset(rows)
+        try:
+            doc = parser.parse()
+        except (ValueError, RecursionError) as exc:
+            reason = "nesting too deep" if isinstance(exc, RecursionError) else str(exc)
+            scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
             continue
-        in_meta = False
-        for line in body:
-            if re.match(r"^metadata:", line):
-                in_meta = True
-            elif in_meta and re.match(r"^\s+name:\s*(\S+)", line):
-                name = re.match(r"^\s+name:\s*[\"']?([^\"'\s]+)", line).group(1)
-                break
-            elif in_meta and re.match(r"^\S", line):
-                in_meta = False
-        res = Res(kind, f"k8s:{kind}/{name or '?'}", rel, start)
-        scan.add_resource(res, "kubernetes")
-        seen = set()
-        for offset, line in enumerate(body):
-            lineno = start + offset
-            if line.lstrip().startswith("#"):
-                continue
-            for pattern, label in K8S_HOST:
-                if label not in seen and pattern.match(line):
-                    seen.add(label)
-                    scan.hit("K8S-001", res, lineno, label)
-            if kind in ("ClusterRoleBinding", "RoleBinding"):
-                m = K8S_BROAD.match(line)
-                if m:
-                    scan.hit("K8S-002", res, lineno, f"binds {m.group(1)}")
-            if kind == "Secret" and re.match(r"^(data|stringData):\s*(\{\s*\S.*)?$", line):
-                rest = line.split(":", 1)[1].strip()
-                nxt = body[offset + 1] if offset + 1 < len(body) else ""
-                if (rest and rest != "{}") or re.match(r"^\s+\S", nxt):
-                    scan.hit("K8S-003", res, lineno, "Secret manifest with data")
+        if isinstance(doc, _YamlMap):
+            _check_k8s(scan, rel, doc)
+        elif doc is not None:
+            scan.not_run.append(f"kubernetes YAML rules not applied (expected a mapping): {rel}:{rows[0][0]}")
 
 
 def handle_cfn_yaml(scan, rel, lines):
@@ -1313,7 +1650,8 @@ def run(root):
             if "AWSTemplateFormatVersion" in text or re.search(r"^\s+Type:\s*[\"']?AWS::", text, re.M):
                 kind = "cloudformation-yaml"
                 handle_cfn_yaml(scan, rel, lines)
-            elif re.search(r"^apiVersion:", text, re.M) and re.search(r"^kind:", text, re.M):
+            elif all(re.search(r'(?:^|[,{]\s*)["\']?' + key + r'["\']?\s*:', text, re.M)
+                     for key in ("apiVersion", "kind")):
                 kind = "kubernetes"
                 handle_k8s(scan, rel, lines)
         if kind:
@@ -1392,6 +1730,62 @@ EMPTY_RECORD = ("attack_paths", "findings", "perspectives", "checked_ok", "decis
                 "limitations", "next_steps")
 
 
+def baseline_key(finding):
+    """The same root-cause grouping used by build_findings, independent of ID/line."""
+    rule, location = finding.get("rule"), finding.get("location")
+    if not isinstance(rule, str) or not rule or not isinstance(location, str) or ":" not in location:
+        return None
+    return rule, location.rsplit(":", 1)[0]
+
+
+def remap_baseline_references(data, old, new):
+    """Rebind structured references before an old I-ID can be reused by another hit."""
+    old_by_id = {f["id"]: f for f in old}
+    if len(old_by_id) != len(old):
+        raise ValueError("existing baseline findings have duplicate IDs")
+    new_by_key = {baseline_key(f): f for f in new if baseline_key(f) is not None}
+    replacements = {}
+    for fid, finding in old_by_id.items():
+        replacement = new_by_key.get(baseline_key(finding))
+        resources = finding.get("resources")
+        # The same rule/file may now refer only to another resource. If any
+        # previously affected resource vanished, its paths need fresh review.
+        if replacement is not None and isinstance(resources, list) and resources \
+                and all(isinstance(r, str) for r in resources) \
+                and set(resources) <= set(replacement.get("resources", [])):
+            replacements[fid] = replacement["id"]
+    for ap in data["attack_paths"]:
+        if not isinstance(ap, dict) or not isinstance(ap.get("findings", []), list):
+            raise ValueError("attack_paths must contain objects with finding-reference lists")
+        if "findings" not in ap:
+            continue
+        refs, removed = [], []
+        for fid in ap["findings"]:
+            if not isinstance(fid, str):
+                raise ValueError("attack-path finding references must be strings")
+            if not fid.startswith("I-"):
+                refs.append(fid)
+            elif replacements.get(fid) is not None:
+                refs.append(replacements[fid])
+            else:
+                key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
+                label = f"{key[0]} at {key[1]}" if key else f"unmatched baseline reference {fid}"
+                if key in new_by_key:
+                    label += " (affected resources changed)"
+                removed.append(label)
+        ap["findings"] = refs
+        if removed:
+            note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this attack path."
+            previous = ap.get("note", "")
+            if not isinstance(previous, str):
+                raise ValueError("attack-path note must be a string")
+            ap["status"] = "unknown"
+            ap["note"] = (previous.rstrip() + "\n" + note).lstrip()
+            limitation = f"{ap.get('id', 'Attack path')}: {note}"
+            if limitation not in data["limitations"]:
+                data["limitations"].append(limitation)
+
+
 def merge_into(path, findings, inventory, commit):
     path = Path(path)
     if path.exists():
@@ -1406,9 +1800,14 @@ def merge_into(path, findings, inventory, commit):
         raise ValueError("meta must be an object")
     for key in EMPTY_RECORD:
         data.setdefault(key, [])
+    for key in ("findings", "attack_paths", "limitations"):
+        if not isinstance(data[key], list):
+            raise ValueError(f"{key} must be a list")
     meta["commit"] = commit
     data["inventory"] = inventory
+    old = [f for f in data["findings"] if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")]
     kept = [f for f in data["findings"] if not (isinstance(f, dict) and str(f.get("id", "")).startswith("I-"))]
+    remap_baseline_references(data, old, findings)
     data["findings"] = kept + findings
     atomic_write(path, data)
 

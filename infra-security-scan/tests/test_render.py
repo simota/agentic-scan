@@ -103,8 +103,33 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("unknown top-level keys", found)
         self.assertIn("id must be F-NNN or I-NNN", found)
 
+    def test_attack_path_ids_can_grow_past_two_digits(self):
+        data = sample()
+        data["attack_paths"][0]["id"] = "AP-100"
+        for finding in data["findings"]:
+            if "attack_paths" in finding:
+                finding["attack_paths"] = ["AP-100" if aid == "AP-01" else aid
+                                            for aid in finding["attack_paths"]]
+        self.assertEqual(problems(data), [])
+
+    def test_minimum_id_widths_still_required(self):
+        for fid in ("F-01", "I-99"):
+            with self.subTest(fid=fid):
+                data = sample()
+                data["findings"][0]["id"] = fid
+                self.assertTrue(any("at least three digits" in p for p in problems(data)))
+        data = sample()
+        data["attack_paths"][0]["id"] = "AP-9"
+        self.assertTrue(any("at least two digits" in p for p in problems(data)))
+
 
 class RenderTest(unittest.TestCase):
+    def test_finding_order_uses_numeric_suffix_within_each_prefix(self):
+        data = [{"id": fid, "severity": "High"}
+                for fid in ("I-1000", "F-1000", "I-999", "F-999", "I-002")]
+        self.assertEqual([f["id"] for f in render.ordered(data)],
+                         ["F-999", "F-1000", "I-002", "I-999", "I-1000"])
+
     def test_render_english_escapes_markup(self):
         data = sample()
         data["findings"][0]["title"] = "Bucket <b>open</b> & public"

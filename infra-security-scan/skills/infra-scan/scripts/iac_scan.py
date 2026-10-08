@@ -20,8 +20,8 @@ name the section title only; section numbers vary by edition.
 --out writes the inventory (`iac.json`); without it the inventory goes to stdout.
 --into replaces every `I-*` finding in findings.json (creating it when absent),
 keeps every other finding, and sets `meta.commit` and `inventory`. Attack-path
-references follow the same (rule, file) after renumbering; paths whose referenced
-baseline finding disappeared or lost resources become unknown and need review.
+references and I-IDs in review evidence follow the same (rule, file) after
+renumbering. Lost references require fresh review of the finding and its paths.
 
 Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.json.
 """
@@ -313,6 +313,12 @@ class _Lit:
 
     def __init__(self, s):
         self.s, self.i = s, 0
+        self.unknown_object_keys = False
+
+    def parse(self):
+        value = self.value()
+        self.ws()
+        return value if self.i >= len(self.s) else UNKNOWN
 
     def ws(self, newlines=True):
         self.i = skip_space(self.s, self.i, len(self.s), newlines)
@@ -398,13 +404,14 @@ class _Lit:
         s, start = self.s, self.i
         self.i += 1
         out = {}
+        unknown_keys = False
         while True:
             self.ws()
             if self.i >= len(s):
                 return UNKNOWN
             if s[self.i] == "}":
                 self.i += 1
-                return out
+                return UNKNOWN if unknown_keys else out
             if s.startswith("for ", self.i):
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
@@ -429,6 +436,10 @@ class _Lit:
             v = self.value()
             if isinstance(key, str):
                 out[key] = v
+            else:
+                # An unresolved key can also name a known entry in this map.
+                # Dropping it would turn unknown restrictions into absent ones.
+                unknown_keys = self.unknown_object_keys = True
             self.ws()
             if self.i < len(s) and s[self.i] == ",":
                 self.i += 1
@@ -461,25 +472,26 @@ def unquote(raw):
 
 
 def literal(raw):
-    p = _Lit(raw)
-    v = p.value()
-    p.ws()
-    return v if p.i >= len(raw) else UNKNOWN
+    return _Lit(raw).parse()
 
 
 # ---------------------------------------------------------------- views
 
 class HclView:
-    def __init__(self, block):
+    def __init__(self, block, on_unknown_key=None):
         self.block = block
         self.known_present = True
         self._cache = {}
+        self.on_unknown_key = on_unknown_key
 
     def get(self, name):
         if name not in self.block.attrs:
             return None
         if name not in self._cache:
-            self._cache[name] = literal(self.block.attrs[name][0])
+            parser = _Lit(self.block.attrs[name][0])
+            self._cache[name] = parser.parse()
+            if parser.unknown_object_keys and self.on_unknown_key is not None:
+                self.on_unknown_key(self.line(name))
         return self._cache[name]
 
     def raw(self, name):
@@ -487,7 +499,7 @@ class HclView:
         return attr[0] if attr else None
 
     def blocks(self, name):
-        found = [HclView(b) for b in self.block.blocks if b.type == name]
+        found = [HclView(b, self.on_unknown_key) for b in self.block.blocks if b.type == name]
         if not found and name in self.block.attrs:
             found = DictView.wrap(self.get(name), self.line(name))
         # A dynamic block may generate zero or more blocks. Do not mistake its
@@ -621,6 +633,13 @@ def norm_statements(doc):
 
 def doc_statements(view):
     """Statements of a data "aws_iam_policy_document" block."""
+    # Composition can introduce statements or replace local ones by Sid. Until
+    # that merge is evaluated, even literal local statements are not final.
+    # Empty inputs are known no-ops; keep checking ordinary documents that use
+    # the provider's empty defaults explicitly, including the legacy aliases.
+    if any(view.get(name) not in (None, [], "") for name in (
+            "source_policy_documents", "override_policy_documents", "source_json", "override_json")):
+        return UNKNOWN
     out = []
     for st in view.blocks("statement"):
         effect = st.get("effect")
@@ -716,7 +735,8 @@ class Scan:
         if raw:
             m = DOC_REF.match(raw.strip())
             if m:
-                return self.policy_docs.get((res.dir, m.group(1)))
+                statements = self.policy_docs.get((res.dir, m.group(1)))
+                return None if statements is UNKNOWN else statements
         return None
 
     def gcp_iam(self, res, role, members, line):
@@ -900,7 +920,15 @@ def check_tf(scan, res):
         if not opts:
             scan.hit("AWS-EC2-001", res, res.line, "no metadata_options; IMDSv1 allowed")
         else:
+            endpoint = opts[0].get("http_endpoint")
             tokens = opts[0].get("http_tokens")
+            if endpoint == "disabled":
+                return
+            if endpoint is UNKNOWN:
+                if tokens != "required":
+                    scan.not_run.append("AWS-EC2-001: unknown metadata endpoint; check not run: "
+                                        f"{res.file}:{opts[0].line('http_endpoint')} ({res.address})")
+                return
             if tokens is None or (isinstance(tokens, str) and tokens != "required"):
                 scan.hit("AWS-EC2-001", res, opts[0].line("http_tokens"),
                          f"http_tokens = {tokens if tokens else 'unset'}")
@@ -1004,6 +1032,14 @@ PROD_DIR = re.compile(r"(^|/)(prod|production|prd)(/|$)")
 
 def handle_terraform(scan, parsed):
     """parsed: [(rel, blocks)]. Policy documents first, then rules."""
+    def view_of(block, rel):
+        def unknown_key(line):
+            note = ("Terraform object has an unresolved key; affected checks not run: "
+                    f"{rel}:{line}")
+            if note not in scan.not_run:
+                scan.not_run.append(note)
+        return HclView(block, unknown_key)
+
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
         pending = list(reversed(blocks))
@@ -1015,12 +1051,16 @@ def handle_terraform(scan, parsed):
             pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
-                scan.policy_docs[(d, b.labels[1])] = doc_statements(HclView(b))
+                statements = doc_statements(view_of(b, rel))
+                scan.policy_docs[(d, b.labels[1])] = statements
+                if statements is UNKNOWN:
+                    scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
+                                        f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
         info = scan.tf_dirs.setdefault(d, {"resources": False, "backend": False, "file": rel})
         for b in blocks:
-            view = HclView(b)
+            view = view_of(b, rel)
             if b.type == "resource" and len(b.labels) == 2:
                 res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
                 scan.add_resource(res)
@@ -1469,7 +1509,16 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         return
     meta = _k8s_map(doc, "metadata")
     name = meta.get("name")
-    res = Res(kind, f"k8s:{kind}/{name if isinstance(name, str) else '?'}",
+    identity = name if isinstance(name, str) else "?"
+    namespace = meta.get("namespace")
+    if isinstance(namespace, str) and namespace:
+        identity = f"{namespace}/{identity}"
+    elif namespace is UNKNOWN:
+        identity = f"?/{identity}"
+    # An omitted namespace depends on the apply context. Keep the legacy
+    # kind/name address instead of assuming 'default'; cluster-scoped objects
+    # also have no namespace and retain that address form.
+    res = Res(kind, f"k8s:{kind}/{identity}",
               rel, doc.lines.get("kind", doc.line))
     scan.add_resource(res, "kubernetes")
     # An opaque string in a rule-relevant identity needs manual review.
@@ -1485,7 +1534,7 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
                     ("system:authenticated", "system:unauthenticated")) or (
                     subject.get("kind") == "User" and subject.get("name") == "system:anonymous"):
                 scan.hit("K8S-002", res, subject.lines["name"], f"binds {subject['name']}")
-    if any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
+    if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
     if kind == "Secret":
         for key in ("data", "stringData"):
@@ -1740,6 +1789,27 @@ def atomic_write(path, data):
 
 EMPTY_RECORD = ("attack_paths", "findings", "perspectives", "checked_ok", "decisions",
                 "limitations", "next_steps")
+# Match references in prose and Markdown labels, excluding words and filenames.
+# URL ranges are protected separately, including their queries and fragments.
+BASELINE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
+EVIDENCE_URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
+
+
+def evidence_url_spans(evidence):
+    """Keep URL contents intact while allowing references after Markdown links."""
+    cursor = 0
+    while match := EVIDENCE_URL.search(evidence, cursor):
+        depth, end = 0, match.end()
+        for offset, char in enumerate(match.group()):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    end = match.start() + offset
+                    break
+                depth -= 1
+        yield match.start(), end
+        cursor = end
 
 
 def baseline_key(finding):
@@ -1751,7 +1821,7 @@ def baseline_key(finding):
 
 
 def remap_baseline_references(data, old, new):
-    """Rebind structured references before an old I-ID can be reused by another hit."""
+    """Rebind path and review-evidence references before an I-ID can be reused."""
     old_by_id = {f["id"]: f for f in old}
     if len(old_by_id) != len(old):
         raise ValueError("existing baseline findings have duplicate IDs")
@@ -1766,26 +1836,79 @@ def remap_baseline_references(data, old, new):
                 and all(isinstance(r, str) for r in resources) \
                 and set(resources) <= set(replacement.get("resources", [])):
             replacements[fid] = replacement["id"]
+
+    def removed_label(fid, evidence=False):
+        key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
+        if key:
+            label = f"{key[0]} at {key[1]}"
+            if key in new_by_key:
+                label += " (affected resources changed)"
+            return label
+        # Do not leave a live-looking I-ID in rewritten evidence: it could be
+        # assigned to an unrelated hit on the next scan.
+        return (f"unmatched baseline number {fid[2:]}" if evidence
+                else f"unmatched baseline reference {fid}")
+
+    invalidated = set()
+    invalidated_paths = {}
+    for finding in data.get("findings", []):
+        if not isinstance(finding, dict) or not str(finding.get("id", "")).startswith("F-"):
+            continue
+        validation = finding.get("validation")
+        if not isinstance(validation, dict) or not isinstance(validation.get("evidence"), str):
+            continue
+        removed = []
+        url_spans = list(evidence_url_spans(validation["evidence"]))
+
+        def replace_reference(match):
+            fid = match.group()
+            if any(start <= match.start() < end for start, end in url_spans):
+                return fid
+            if fid in replacements:
+                return replacements[fid]
+            label = removed_label(fid, evidence=True)
+            if label not in removed:
+                removed.append(label)
+            return f"[removed baseline: {label}]"
+
+        # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
+        # a sequence of string replacements would move both to I-003.
+        validation["evidence"] = BASELINE_REFERENCE.sub(replace_reference, validation["evidence"])
+        if removed:
+            note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this finding."
+            validation["evidence"] = validation["evidence"].rstrip() + "\n" + note
+            validation["verdict"] = "Unverified"
+            finding["confidence"] = "Suspected"
+            invalidated.add(finding["id"])
+            links = finding.get("attack_paths", [])
+            if not isinstance(links, list) or not all(isinstance(aid, str) for aid in links):
+                raise ValueError("finding attack-path references must be a list of strings")
+            for aid in links:
+                reason = f"supporting evidence for {finding['id']}"
+                if reason not in invalidated_paths.setdefault(aid, []):
+                    invalidated_paths[aid].append(reason)
+            limitation = f"{finding['id']}: {note}"
+            if limitation not in data["limitations"]:
+                data["limitations"].append(limitation)
+
     for ap in data["attack_paths"]:
         if not isinstance(ap, dict) or not isinstance(ap.get("findings", []), list):
             raise ValueError("attack_paths must contain objects with finding-reference lists")
-        if "findings" not in ap:
-            continue
-        refs, removed = [], []
-        for fid in ap["findings"]:
+        refs = []
+        removed = list(invalidated_paths.get(ap.get("id"), []))
+        for fid in ap.get("findings", []):
             if not isinstance(fid, str):
                 raise ValueError("attack-path finding references must be strings")
             if not fid.startswith("I-"):
                 refs.append(fid)
+                if fid in invalidated and f"supporting evidence for {fid}" not in removed:
+                    removed.append(f"supporting evidence for {fid}")
             elif replacements.get(fid) is not None:
                 refs.append(replacements[fid])
             else:
-                key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
-                label = f"{key[0]} at {key[1]}" if key else f"unmatched baseline reference {fid}"
-                if key in new_by_key:
-                    label += " (affected resources changed)"
-                removed.append(label)
-        ap["findings"] = refs
+                removed.append(removed_label(fid))
+        if "findings" in ap:
+            ap["findings"] = refs
         if removed:
             note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this attack path."
             previous = ap.get("note", "")

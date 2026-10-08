@@ -31,7 +31,8 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import has_escaped_secret_keys, has_structured_secrets, redact, redact_lines
+from redaction import (has_escaped_secret_keys, has_structured_secrets, redact,
+                       redact_json_values, redact_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -397,6 +398,39 @@ SENSITIVE_NAME = re.compile(r"(\.tfstate(\.backup)?|\.tfvars(\.json)?|\.pem|\.ke
                             r"secret|credential|id_rsa|\.netrc", re.IGNORECASE)
 
 
+def hcl_declares_sensitive(text):
+    """Only a known false variable/output declaration permits its source."""
+    # Local imports avoid a cycle: the scanner also uses redaction helpers.
+    from iac_scan import literal, parse_hcl
+    for block in parse_hcl(text):
+        if block.type in ("variable", "output") and "sensitive" in block.attrs:
+            raw, _ = block.attrs["sensitive"]
+            if literal(raw) is not False:
+                return True
+    return False
+
+
+def hcl_module_sensitive(directory):
+    """Conservatively include declarations inherited through override files.
+
+    Do not evaluate override order or read symlink targets. Unknown sibling
+    context makes the module's excerpts unsafe, even when this file looks public.
+    """
+    try:
+        for sibling in directory.iterdir():
+            if sibling.name.lower().endswith(".tf.json"):
+                return True  # Unsupported Terraform JSON can also override sensitivity.
+            if sibling.suffix.lower() != ".tf":
+                continue
+            if sibling.is_symlink():
+                return True
+            if sibling.is_file() and hcl_declares_sensitive(sibling.read_text(encoding="utf-8")):
+                return True
+    except (OSError, ValueError, TypeError, RecursionError):
+        return True
+    return False
+
+
 def source_lines(path):
     """Preserve source line numbers, or return None if an excerpt is unsafe.
 
@@ -407,10 +441,14 @@ def source_lines(path):
     """
     text = path.read_text(encoding="utf-8")
     lines = text.splitlines()
+    suffix = path.suffix.lower()
+    syntax = "text"
     try:
-        if path.suffix.lower() == ".json":
+        if suffix == ".json":
+            syntax = "json"
             docs = [json.loads(text, object_pairs_hook=unique_object)]
-        elif path.suffix.lower() in (".yaml", ".yml"):
+        elif suffix in (".yaml", ".yml"):
+            syntax = "yaml"
             # Local import avoids a cycle: iac_scan also uses redaction helpers.
             from iac_scan import _YamlSubset
             docs, rows = [], []
@@ -423,17 +461,27 @@ def source_lines(path):
             docs.append(_YamlSubset(rows).parse())
         else:
             docs = []
+            if suffix == ".tf":
+                syntax = "hcl"
+                # Sensitivity belongs to the block, not to the default/value
+                # line. Only a known false declaration permits an excerpt.
+                if hcl_declares_sensitive(text):
+                    return None
         if has_escaped_secret_keys(text, docs) or any(has_structured_secrets(doc) for doc in docs):
             return None
+        lines = redact_lines(lines, syntax=syntax)
+        if syntax == "json":
+            lines = redact_json_values(text, lines)
     except (ValueError, TypeError, RecursionError):
         return None
-    return redact_lines(lines)
+    return lines
 
 
 def attach_sources(data, repo, context=3):
     """Return {finding id: [(lineno, text, hit)]} for readable, non-sensitive locations."""
     root = Path(repo).resolve()
     out = {}
+    hcl_modules = {}
     # Kubernetes Secret values can have arbitrary keys and remain secret even
     # when base64-encoded. Do not expose them through a neighboring finding.
     secret_manifests = set()
@@ -457,6 +505,13 @@ def attach_sources(data, repo, context=3):
             if cand.is_symlink() or not cand.is_file():
                 continue
             cand.resolve().relative_to(root)
+            if cand.suffix.lower() == ".tf" or cand.name.lower().endswith(".tf.json"):
+                directory = cand.parent.resolve()
+                directory.relative_to(root)
+                if directory not in hcl_modules:
+                    hcl_modules[directory] = hcl_module_sensitive(directory)
+                if hcl_modules[directory]:
+                    continue
             lines = source_lines(cand)
         except (OSError, ValueError):
             continue

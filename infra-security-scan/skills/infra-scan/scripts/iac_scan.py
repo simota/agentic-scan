@@ -688,7 +688,8 @@ class Scan:
         self.tf_dirs = {}
 
     def hit(self, rule, res, line, detail, severity=None, strong=False):
-        self.hits.append({"rule": rule, "file": res.file, "line": line or res.line,
+        line = line or res.line
+        self.hits.append({"rule": rule, "file": getattr(line, "file", res.file), "line": int(line),
                           "address": res.address, "detail": detail,
                           "severity": severity or RULES[rule][1], "strong": strong})
 
@@ -708,10 +709,11 @@ class Scan:
                 continue
             if acts & {"*", "*:*"}:
                 self.hit("AWS-IAM-001", res, line, "Allow Action * on Resource *")
-            elif acts & {"iam:passrole", "iam:*", "iam:pass*"}:
+            elif matches_action(st, "iam:PassRole") is True:
                 self.hit("AWS-IAM-002", res, line, "Allow iam:PassRole on Resource *")
 
     def trust_policy(self, res, stmts, line):
+        source = getattr(line, "file", res.file)
         for st in stmts or []:
             if st["effect"] != "Allow":
                 continue
@@ -719,13 +721,13 @@ class Scan:
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
                     self.not_run.append("AWS-IAM-003: unknown or unsupported trust policy actions; "
-                                        f"check not run: {res.file}:{line} ({res.address})")
+                                        f"check not run: {source}:{line} ({res.address})")
                 elif allows_assume:
                     self.hit("AWS-IAM-003", res, line, "Principal * without a condition")
             gap = github_trust_gap(st)
             if gap is UNKNOWN:
                 self.not_run.append("AWS-IAM-004: unknown or unsupported GitHub OIDC actions or conditions "
-                                    f"at {res.file}:{line} ({res.address})")
+                                    f"at {source}:{line} ({res.address})")
             elif gap:
                 self.hit("AWS-IAM-004", res, line, gap)
 
@@ -905,6 +907,23 @@ DEFAULT_SA = re.compile(r"-compute@developer\.gserviceaccount\.com$")
 SSL_MODES = ("ENCRYPTED_ONLY", "TRUSTED_CLIENT_CERTIFICATE_REQUIRED")
 
 
+def tf_bool(value):
+    """Convert only arguments known to expect a Terraform bool.
+
+    Terraform coerces the strings "true" and "false" at a typed argument,
+    not inside arbitrary strings or policy documents. Preserve omission and
+    uncertainty separately so neither unknown nor invalid values use defaults.
+    """
+    if value is None or value is UNKNOWN or isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        if value == "true":
+            return True
+        if value == "false":
+            return False
+    return UNKNOWN
+
+
 def check_tf(scan, res):
     t, v = res.type, res.view
     if t == "aws_security_group":
@@ -927,7 +946,7 @@ def check_tf(scan, res):
     elif t in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block"):
         flags = ("block_public_acls", "block_public_policy", "ignore_public_acls",
                  "restrict_public_buckets")
-        off = [f for f in flags if v.get(f) is False or v.get(f) is None]
+        off = [f for f in flags if tf_bool(v.get(f)) in (False, None)]
         if off:
             scan.hit("AWS-S3-002", res, res.line, "off: " + ", ".join(off))
     elif t == "aws_s3_bucket_policy":
@@ -950,9 +969,9 @@ def check_tf(scan, res):
     elif t == "aws_iam_user_login_profile":
         scan.hit("AWS-IAM-005", res, res.line, "console password for an IAM user", "Low")
     elif t in ("aws_db_instance", "aws_rds_cluster", "aws_rds_cluster_instance"):
-        if v.get("publicly_accessible") is True:
+        if tf_bool(v.get("publicly_accessible")) is True:
             scan.hit("AWS-RDS-001", res, v.line("publicly_accessible"), "publicly_accessible = true")
-        if t != "aws_rds_cluster_instance" and v.get("storage_encrypted") in (False, None) \
+        if t != "aws_rds_cluster_instance" and tf_bool(v.get("storage_encrypted")) in (False, None) \
                 and v.get("replicate_source_db") is None:
             scan.hit("AWS-RDS-002", res, v.line("storage_encrypted"), "storage_encrypted not true")
     elif t in ("aws_instance", "aws_launch_template"):
@@ -966,15 +985,16 @@ def check_tf(scan, res):
                 return
             if endpoint is UNKNOWN:
                 if tokens != "required":
+                    line = opts[0].line("http_endpoint")
                     scan.not_run.append("AWS-EC2-001: unknown metadata endpoint; check not run: "
-                                        f"{res.file}:{opts[0].line('http_endpoint')} ({res.address})")
+                                        f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
                 return
             if tokens is None or (isinstance(tokens, str) and tokens != "required"):
                 scan.hit("AWS-EC2-001", res, opts[0].line("http_tokens"),
                          f"http_tokens = {tokens if tokens else 'unset'}")
     elif t == "aws_ebs_volume":
-        if v.get("encrypted") in (False, None):
-            scan.hit("AWS-EBS-001", res, res.line, "encrypted not true")
+        if tf_bool(v.get("encrypted")) in (False, None):
+            scan.hit("AWS-EBS-001", res, v.line("encrypted"), "encrypted not true")
     elif t == "aws_lambda_function_url":
         if v.get("authorization_type") == "NONE":
             scan.hit("AWS-LAMBDA-001", res, v.line("authorization_type"), "authorization_type = NONE")
@@ -984,23 +1004,25 @@ def check_tf(scan, res):
             scan.hit("AWS-LAMBDA-002", res, v.line("principal"), "principal = * without a source condition")
     elif t == "aws_cloudtrail":
         off = [k for k in ("is_multi_region_trail", "enable_log_file_validation")
-               if v.get(k) in (False, None)]
+               if tf_bool(v.get(k)) in (False, None)]
         if off:
             scan.hit("AWS-CT-001", res, res.line, "not true: " + ", ".join(off))
     elif t == "aws_kms_key":
         spec = v.get("customer_master_key_spec") or v.get("key_spec")
-        if spec in (None, "SYMMETRIC_DEFAULT") and v.get("enable_key_rotation") in (False, None):
+        if spec in (None, "SYMMETRIC_DEFAULT") and \
+                tf_bool(v.get("enable_key_rotation")) in (False, None):
             scan.hit("AWS-KMS-001", res, res.line, "enable_key_rotation not true")
     elif t == "aws_eks_cluster":
         for cfg in v.blocks("vpc_config"):
-            public = cfg.get("endpoint_public_access")
+            public = tf_bool(cfg.get("endpoint_public_access"))
             cidrs = cfg.get("public_access_cidrs")
             open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
             if public in (True, None) and open_from:
                 scan.hit("AWS-EKS-001", res, cfg.line(), f"public endpoint open to {open_from[0]}")
     elif t == "google_compute_firewall":
         allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
-        scan.firewall(res, res.line, v.get("direction"), v.get("disabled"), v.get("source_ranges"), allows)
+        scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
+                      v.get("source_ranges"), allows)
     elif GCP_IAM.match(t):
         members = [v.get("member")] if v.get("member") is not None else aslist(v.get("members"))
         scan.gcp_iam(res, v.get("role"), members, v.line("role"))
@@ -1011,7 +1033,7 @@ def check_tf(scan, res):
         scan.hit("GCP-IAM-003", res, res.line, "google_service_account_key resource")
     elif t == "google_storage_bucket":
         gaps = []
-        if v.get("uniform_bucket_level_access") in (False, None):
+        if tf_bool(v.get("uniform_bucket_level_access")) in (False, None):
             gaps.append("uniform_bucket_level_access not true")
         pap = v.get("public_access_prevention")
         if pap is None or (isinstance(pap, str) and pap != "enforced"):
@@ -1024,7 +1046,9 @@ def check_tf(scan, res):
                 open_from = world_cidrs([n.get("value") for n in ipc.blocks("authorized_networks")])
                 if open_from:
                     scan.hit("GCP-SQL-001", res, ipc.line(), f"authorized network {open_from[0]}")
-                if ipc.get("ipv4_enabled") is True and ipc.get("require_ssl") in (False, None) and \
+                ipv4_enabled = tf_bool(ipc.get("ipv4_enabled"))
+                require_ssl = tf_bool(ipc.get("require_ssl"))
+                if ipv4_enabled is True and require_ssl in (False, None) and \
                         (ipc.get("ssl_mode") is None or ipc.get("ssl_mode") not in (*SSL_MODES, UNKNOWN)):
                     scan.hit("GCP-SQL-001", res, ipc.line(), "public IP without required TLS", "Low")
     elif t in ("google_compute_instance", "google_compute_instance_template"):
@@ -1045,10 +1069,10 @@ def check_tf(scan, res):
             if gaps:
                 scan.hit("GCP-GCE-002", res, v.line("metadata"), "; ".join(gaps))
     elif t == "google_container_cluster":
-        if v.get("enable_legacy_abac") is True:
+        if tf_bool(v.get("enable_legacy_abac")) is True:
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
         private = v.blocks("private_cluster_config")
-        private_endpoint = private[0].get("enable_private_endpoint") if private else None
+        private_endpoint = tf_bool(private[0].get("enable_private_endpoint")) if private else None
         if not v.blocks("master_authorized_networks_config") and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
         if not v.blocks("workload_identity_config"):
@@ -1071,15 +1095,125 @@ REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+\.[a-z]+/)?[A-Za-z0-9_-]+/[A-Za-z
 PROD_DIR = re.compile(r"(^|/)(prod|production|prd)(/|$)")
 
 
+class _HclLine(int):
+    """A source line that keeps its file when an override inherits an argument."""
+    def __new__(cls, line, file):
+        result = super().__new__(cls, line)
+        result.file = file
+        return result
+
+
+def _hcl_source(block, rel):
+    block.line, block.end = _HclLine(block.line, rel), _HclLine(block.end, rel)
+    block.attrs = {key: (raw, _HclLine(line, rel)) for key, (raw, line) in block.attrs.items()}
+    for child in block.blocks:
+        _hcl_source(child, rel)
+    return block
+
+
+def _merge_hcl_block(base, override):
+    """Terraform's shallow override merge; dynamic blocks retain their uncertainty."""
+    result = Block(base.type, base.labels, override.line, override.end)
+    result.attrs = {**base.attrs, **override.attrs}
+
+    def block_type(block):
+        return block.labels[0] if block.type == "dynamic" and block.labels else block.type
+
+    replaced = {block_type(block) for block in override.blocks}
+    if base.type == "terraform" and replaced & {"backend", "cloud"}:
+        replaced.update(("backend", "cloud"))
+    result.blocks = [block for block in base.blocks if block_type(block) not in replaced]
+    for block in override.blocks:
+        previous = next((old for old in base.blocks if old.type == block.type), None)
+        if previous and ((base.type == "resource" and block.type == "lifecycle") or
+                         (base.type == "terraform" and block.type == "required_providers")):
+            # Lifecycle arguments and provider requirements are the documented
+            # exceptions; ordinary nested resource blocks are replaced in full.
+            block = _merge_hcl_block(previous, block)
+        result.blocks.append(block)
+    return result
+
+
+def terraform_overrides(scan, parsed):
+    """Apply native .tf overrides per module before policy resolution and checks."""
+    def is_override(rel):
+        name = Path(rel).name
+        return name == "override.tf" or name.endswith("_override.tf")
+
+    def header(rel, block):
+        alias = HclView(block).get("alias") if block.type == "provider" else None
+        # A provider alias must be a literal string; invalid aliases must not
+        # accidentally match a different provider configuration.
+        if alias is not None and not isinstance(alias, str):
+            alias = (rel, block.line)
+        return str(Path(rel).parent), block.type, tuple(block.labels), alias
+
+    overrides = [(rel, blocks) for rel, blocks in sorted(parsed) if is_override(rel)]
+    if not overrides:
+        return parsed, set()
+    entries, positions, uncertain = [], {}, set()
+    for rel, blocks in parsed:
+        if is_override(rel):
+            continue
+        for block in blocks:
+            _hcl_source(block, rel)
+            positions.setdefault(header(rel, block), []).append(len(entries))
+            entries.append((rel, block))
+    for rel, blocks in overrides:
+        for block in blocks:
+            # These are the declarations consumed by the baseline. Locals,
+            # variables and expressions remain unevaluated as before.
+            if block.type not in ("resource", "data", "module", "provider", "terraform"):
+                continue
+            _hcl_source(block, rel)
+            key = header(rel, block)
+            address = ".".join(block.labels if block.type == "resource" else
+                               [block.type, *block.labels])
+            matches = positions.get(key, [])
+            if not matches:
+                if block.type == "terraform" or (block.type == "provider" and key[-1] is None):
+                    positions[key] = [len(entries)]
+                    entries.append((rel, block))
+                else:
+                    scan.not_run.append(f"Terraform override has no base declaration; checks not run: "
+                                        f"{rel}:{block.line} ({address})")
+                continue
+            index = matches[0]
+            base = entries[index][1]
+            if len(matches) > 1 and block.type != "terraform":
+                uncertain.add(base)
+                scan.not_run.append(f"Terraform override has ambiguous base declarations; checks not run: "
+                                    f"{rel}:{block.line} ({address})")
+                for other in matches[1:]:
+                    entries[other] = None
+                positions[key] = [index]
+                continue
+            if base in uncertain:
+                continue
+            if block.type == "terraform":
+                # Normal files may spread distinct terraform settings over
+                # several blocks; an override backend replaces all prior ones.
+                for other in matches[1:]:
+                    old = entries[other][1]
+                    base.attrs.update(old.attrs)
+                    base.blocks.extend(old.blocks)
+                    entries[other] = None
+                positions[key] = [index]
+            entries[index] = (rel, _merge_hcl_block(base, block))
+    return [(entry[0], [entry[1]]) for entry in entries if entry is not None], uncertain
+
+
 def handle_terraform(scan, parsed):
     """parsed: [(rel, blocks)]. Policy documents first, then rules."""
+    parsed, uncertain = terraform_overrides(scan, parsed)
+
     def view_of(block, rel):
         def unknown_key(line):
             note = ("Terraform object has an unresolved key; affected checks not run: "
-                    f"{rel}:{line}")
+                    f"{getattr(line, 'file', rel)}:{line}")
             if note not in scan.not_run:
                 scan.not_run.append(note)
-        return HclView(block, unknown_key)
+        return DictView(UNKNOWN, block.line) if block in uncertain else HclView(block, unknown_key)
 
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
@@ -1088,7 +1222,7 @@ def handle_terraform(scan, parsed):
             block = pending.pop()
             if block.type == "dynamic":
                 scan.not_run.append(f"Terraform dynamic block not evaluated; affected checks not run: "
-                                    f"{rel}:{block.line}")
+                                    f"{getattr(block.line, 'file', rel)}:{block.line}")
             pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
@@ -1106,12 +1240,13 @@ def handle_terraform(scan, parsed):
                 res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
                 scan.add_resource(res)
                 info["resources"] = True
-                check_tf(scan, res)
+                if b not in uncertain:
+                    check_tf(scan, res)
             elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
                 check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
             elif b.type == "module" and b.labels:
                 handle_module(scan, rel, b, view)
-            elif b.type == "provider" and b.labels:
+            elif b.type == "provider" and b.labels and b not in uncertain:
                 for key in ("access_key", "secret_key"):
                     if key in b.attrs:
                         scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
@@ -1122,7 +1257,7 @@ def handle_terraform(scan, parsed):
                     if inner.type == "cloud" or (inner.type == "backend" and inner.labels):
                         info["backend"] = True
                     if inner.type == "backend" and inner.labels:
-                        handle_backend(scan, rel, inner)
+                        handle_backend(scan, getattr(inner.line, "file", rel), inner)
 
 
 def handle_module(scan, rel, b, view):
@@ -1151,7 +1286,7 @@ def handle_backend(scan, rel, block):
     view = HclView(block)
     scan.backends.append({"type": kind, "file": rel, "line": block.line})
     res = Res("backend", f"terraform.backend.{kind}", rel, block.line)
-    if kind == "s3" and view.get("encrypt") in (False, None) and view.get("kms_key_id") is None:
+    if kind == "s3" and tf_bool(view.get("encrypt")) in (False, None) and view.get("kms_key_id") is None:
         scan.hit("PS-002", res, block.line, "s3 backend without encrypt = true")
     elif kind == "local" and PROD_DIR.search(rel):
         scan.hit("PS-002", res, block.line, "local state for a production directory", "Low")
@@ -1606,6 +1741,72 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             scan.hit("K8S-001", res, mapping.lines[key], label)
 
 
+def _cfn_yaml_resources(rows, doc=None):
+    """Only Resources.<logical ID>.Type is a resource declaration.
+
+    Prefer parsed structure. The fallback reads block mapping headers when an
+    intrinsic tag such as !Ref makes the YAML subset unavailable, and treats
+    non-mapping values and their continuation lines as opaque.
+    """
+    def resource(lid, value):
+        if isinstance(value, _YamlMap):
+            type_ = value.get("Type")
+            if isinstance(type_, str) and type_.startswith("AWS::"):
+                yield lid, type_, value.lines["Type"]
+
+    def resources(value):
+        if isinstance(value, _YamlMap):
+            for lid, entry in value.items():
+                yield from resource(lid, entry)
+
+    if isinstance(doc, _YamlMap):
+        yield from resources(doc.get("Resources"))
+        return
+    parents, opaque_indent = [], None
+    for line, raw in rows:
+        indent = len(raw) - len(raw.lstrip(" "))
+        text = _yaml_comment(raw.lstrip(" "))
+        if not text:
+            continue
+        if opaque_indent is not None:
+            if indent > opaque_indent:
+                continue
+            opaque_indent = None
+        while parents and indent <= parents[-1][0]:
+            parents.pop()
+        pair = _yaml_pair(text)
+        if not pair:
+            opaque_indent = indent
+            continue
+        try:
+            key = _YamlFlow(pair[0], line).parse()
+        except (ValueError, RecursionError):
+            opaque_indent = indent
+            continue
+        if not isinstance(key, str):
+            opaque_indent = indent
+            continue
+        path = [name for _, name in parents] + [key]
+        value = pair[1]
+        if not value:
+            parents.append((indent, key))
+            continue
+        try:
+            parsed = _YamlFlow(value, line).parse()
+        except (ValueError, RecursionError):
+            parsed = UNKNOWN
+        if path == ["Resources"]:
+            yield from resources(parsed)
+        elif len(path) == 2 and path[0] == "Resources":
+            yield from resource(key, parsed)
+        elif len(path) == 3 and path[0] == "Resources" and key == "Type" \
+                and isinstance(parsed, str) and parsed.startswith("AWS::"):
+            yield path[1], parsed, line
+        # This includes block strings, multiline scalars and tagged values.
+        # Nested text in them cannot introduce mapping headers or resources.
+        opaque_indent = indent
+
+
 def _yaml_kind(rows, doc):
     """Classify a document by its root keys, never by opaque string contents."""
     if isinstance(doc, _YamlMap):
@@ -1633,8 +1834,7 @@ def _yaml_kind(rows, doc):
             # Multiline flow values and tagged/anchored roots need manual review.
             keys.update(re.findall(r'(?:^|[,{])\s*["\']?(apiVersion|kind|Resources|'
                                    r'AWSTemplateFormatVersion)["\']?\s*:', text, re.M))
-        cfn_resources = "Resources" in keys and bool(
-            re.search(r'^Type:\s*["\']?AWS::', text, re.M))
+        cfn_resources = "Resources" in keys and next(_cfn_yaml_resources(rows), None) is not None
     if {"apiVersion", "kind"} <= keys:
         return "kubernetes"
     if "AWSTemplateFormatVersion" in keys or cfn_resources:
@@ -1667,7 +1867,7 @@ def handle_yaml(scan, rel, lines):
             continue
         kinds.add(kind)
         if kind == "cloudformation-yaml":
-            handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0])
+            handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0], doc)
             continue
         if reason:
             scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
@@ -1679,18 +1879,9 @@ def handle_yaml(scan, rel, lines):
     return "mixed-yaml" if len(kinds) > 1 else next(iter(kinds), None)
 
 
-def handle_cfn_yaml(scan, rel, lines, start_line=1):
-    for index, line in enumerate(lines):
-        m = re.match(r"^(\s+)Type:\s*[\"']?(AWS::[A-Za-z0-9:]+)", line)
-        if not m:
-            continue
-        lid = "?"
-        for back in range(index - 1, -1, -1):
-            pm = re.match(r"^(\s*)([A-Za-z0-9]+):\s*$", lines[back])
-            if pm and len(pm.group(1)) < len(m.group(1)):
-                lid = pm.group(2)
-                break
-        scan.add_resource(Res(m.group(2), f"cfn:{lid}", rel, start_line + index), "aws")
+def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
+    for lid, type_, line in _cfn_yaml_resources(list(enumerate(lines, start_line)), doc):
+        scan.add_resource(Res(type_, f"cfn:{lid}", rel, line), "aws")
     note = f"cloudformation yaml: rules not applied (no YAML parser): {rel}"
     if note not in scan.not_run:
         scan.not_run.append(note)

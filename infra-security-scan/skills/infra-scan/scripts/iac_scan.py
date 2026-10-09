@@ -2056,6 +2056,28 @@ def handle_yaml(scan, rel, lines):
     return "mixed-yaml" if len(kinds) > 1 else next(iter(kinds), None)
 
 
+def _json_as_yaml(value, keys, path=(), line=1):
+    """Give parsed JSON the line-aware mappings the Kubernetes rules read."""
+    if isinstance(value, dict):
+        lines = {key: keys.get((path, key), line) for key in value}
+        result = _YamlMap(min(lines.values(), default=line))
+        for key, item in value.items():
+            result.put(key, _json_as_yaml(item, keys, (*path, key), lines[key]), lines[key])
+        return result
+    if isinstance(value, list):
+        return [_json_as_yaml(item, keys, (*path, n), line) for n, item in enumerate(value)]
+    return value
+
+
+def handle_k8s_json(scan, rel, text, doc):
+    """Kubernetes manifests and `kubectl get -o json` exports written as JSON."""
+    if not (isinstance(doc, dict) and isinstance(doc.get("apiVersion"), str)
+            and isinstance(doc.get("kind"), str)):
+        return False
+    _check_k8s(scan, rel, _json_as_yaml(doc, json_key_lines(text)))
+    return True
+
+
 def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
     for lid, type_, line in _cfn_yaml_resources(list(enumerate(lines, start_line)), doc):
         scan.add_resource(Res(type_, f"cfn:{lid}", rel, line), "aws")
@@ -2225,6 +2247,8 @@ def run(root, snapshots=()):
                 handle_plan(scan, rel, text, doc)
             elif kind == "cloudformation":
                 handle_cfn(scan, rel, text, doc)
+            elif doc is not None and handle_k8s_json(scan, rel, text, doc):
+                kind = "kubernetes"
             elif doc is not None and handle_snapshot(scan, rel, text, doc):
                 kind = "snapshot"
         elif name.endswith((".yaml", ".yml")):

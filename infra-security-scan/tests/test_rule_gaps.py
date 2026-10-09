@@ -191,6 +191,22 @@ class CloudFormationAndSnapshotTest(unittest.TestCase):
         self.assertEqual(rules({"trust.json": anyone}), {"AWS-IAM-003"})
 
 
+class KubernetesJsonTest(unittest.TestCase):
+    def test_kubectl_json_exports_get_kubernetes_rules(self):
+        pods = {"apiVersion": "v1", "kind": "List", "items": [{
+            "apiVersion": "v1", "kind": "Pod", "metadata": {"name": "a", "namespace": "n"},
+            "spec": {"hostPID": True, "containers": [{"name": "c", "securityContext": {"privileged": True}}]}}]}
+        text = json.dumps(pods, indent=2)
+        lines = text.split("\n")
+        expected = sorted(("K8S-001", "k8s:Pod/n/a", n + 1) for n, line in enumerate(lines)
+                          if '"hostPID"' in line or '"privileged"' in line)
+        self.assertEqual(hits({"k8s-pods.json": text}), expected)
+        binding = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding",
+                   "metadata": {"name": "x"}, "roleRef": {"kind": "ClusterRole", "name": "cluster-admin"},
+                   "subjects": [{"kind": "Group", "name": "system:authenticated"}]}
+        self.assertEqual(rules({"k8s-rbac.json": binding}), {"K8S-002"})
+
+
 class YamlKeyTest(unittest.TestCase):
     def test_boolean_spelled_keys_stay_strings(self):
         pod = ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n  labels:\n    y: \"1\"\n    on: x\n"

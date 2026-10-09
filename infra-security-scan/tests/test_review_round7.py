@@ -182,6 +182,10 @@ class SchemaHardeningTest(unittest.TestCase):
             lambda d: d["findings"][0].__setitem__("references", [{"url": "https://example.com/"}]),
             lambda d: d["findings"][5].__setitem__("id", "F-0001"),
             lambda d: d["findings"][0].pop("contrast"),
+            lambda d: d["findings"][0].__setitem__("contrats", "typo"),
+            lambda d: d["meta"].__setitem__("owner", "x"),
+            lambda d: d["attack_paths"][0].__setitem__("severity", "High"),
+            lambda d: d["perspectives"][0].__setitem__("steps", "NE1"),
         ]
         for n, change in enumerate(cases):
             with self.subTest(case=n):

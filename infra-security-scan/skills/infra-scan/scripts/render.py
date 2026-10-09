@@ -57,6 +57,14 @@ LOCATION = re.compile(r"^([^\s:]+):([0-9]+)(?:-([0-9]+))?\Z")
 CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:[0-9]+")
 DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
+# Keys outside these sets are typos or fields no output shows; refuse them
+# rather than silently dropping what the reviewer wrote.
+META_KEYS = {"project", "scope", "date", "assessor", "method", "providers", "inputs", "commit"}
+FINDING_KEYS = {"id", "title", "severity", "confidence", "category", "provider", "resources", "location",
+                *F_FIELDS, "controls", "cwe", "attack_paths", "condition", "references", "rule",
+                "detail", "validation"}
+AP_KEYS = {"id", "entry", "target", "status", "edges", "findings", "note"}
+PERSPECTIVE_KEYS = {"name", "status", "note"}
 BASE_FIELDS = ("title", "location")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
@@ -152,6 +160,9 @@ def validate(data, partial=False):
     if not isinstance(meta, dict):
         add("meta: must be an object")
         meta = {}
+    unknown = sorted(k for k in meta if k not in META_KEYS)
+    if unknown:
+        add(f"meta: unknown keys {unknown}")
     if not partial:
         for key in ("project", "scope", "date", "assessor"):
             if blank(meta.get(key)):
@@ -206,6 +217,9 @@ def validate(data, partial=False):
             if id_key(fid) in seen:
                 add(f"{where}: duplicate id")
             seen.add(id_key(fid))
+        unknown = sorted(str(k) for k in f if k not in FINDING_KEYS)
+        if unknown:
+            add(f"{where}: unknown keys {unknown}")
         for key in BASE_FIELDS:
             if blank(f.get(key)):
                 add(f"{where}: {key} required")
@@ -283,6 +297,9 @@ def validate(data, partial=False):
             if id_key(aid) in seen:
                 add(f"{where}: duplicate id")
             seen.add(id_key(aid))
+        unknown = sorted(str(k) for k in a if k not in AP_KEYS)
+        if unknown:
+            add(f"{where}: unknown keys {unknown}")
         for key in ("entry", "target"):
             if blank(a.get(key)):
                 add(f"{where}: {key} required")
@@ -319,6 +336,8 @@ def validate(data, partial=False):
             add(f"perspectives: {name} listed twice")
         else:
             seen.add(name)
+        if set(item) - PERSPECTIVE_KEYS:
+            add(f"perspectives[{n}]: unknown keys {sorted(str(k) for k in set(item) - PERSPECTIVE_KEYS)}")
         if item.get("status") not in P_STATUSES:
             add(f"perspectives[{n}]: status must be one of {', '.join(P_STATUSES)}")
         if "note" in item and not isinstance(item["note"], str):

@@ -25,6 +25,9 @@ and `scripts/iac_scan.py --into` (`I-*` findings and `meta.commit`).
 }
 ```
 
+Every object accepts only the keys listed in this file; `validate` refuses any
+other key (a typo such as `contrats` would otherwise vanish from every report).
+
 ## meta
 
 | Field | Required | Content |

@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 
-from test_privacy_scan import complete_doc, render
+from test_privacy_scan import complete_doc, finding, render
 
 
 class ParsedHTML(HTMLParser):
@@ -18,15 +18,26 @@ class ParsedHTML(HTMLParser):
         self.tags = []
         self.links = []
         self.text = []
+        self.summaries = []
+        self._in_summary = False
         self.feed(source)
 
     def handle_starttag(self, tag, attrs):
         self.tags.append(tag)
         if tag == "a":
             self.links.append(dict(attrs))
+        if tag == "summary":
+            self.summaries.append("")
+            self._in_summary = True
+
+    def handle_endtag(self, tag):
+        if tag == "summary":
+            self._in_summary = False
 
     def handle_data(self, data):
         self.text.append(data)
+        if self._in_summary:
+            self.summaries[-1] += data
 
 
 class ReportRenderingTests(unittest.TestCase):
@@ -39,6 +50,63 @@ class ReportRenderingTests(unittest.TestCase):
                 self.assertEqual(render.main([str(source), "--out", str(out), "--lang", lang]), 0)
             return {name: (out / name).read_text(encoding="utf-8")
                     for name in ("report.md", "dashboard.html")}
+
+    def assert_overview_counts(self, doc, severities, verdicts, excluded):
+        severity_names = ("High", "Medium", "Low", "Info")
+        verdict_names = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
+        verdict_summary = " / ".join(f"{name} {count}" for name, count in zip(verdict_names, verdicts))
+        for lang, label, excluded_label in (("en", "Verdict counts", "Excluded"),
+                                            ("ja", "検証判定別の件数", "除外")):
+            with self.subTest(lang=lang):
+                outputs = self.render_outputs(doc, lang)
+                markdown_overview = outputs["report.md"].split("\n## ", 1)[0]
+                html_overview = outputs["dashboard.html"].split("<h2>", 1)[0]
+                overview_text = "".join(ParsedHTML(html_overview).text)
+                self.assertIn(f"**{label}:** {verdict_summary}", markdown_overview)
+                self.assertIn(f"{label}: {verdict_summary}", overview_text)
+                self.assertIn(
+                    " / ".join(f"{name} {count}" for name, count in zip(severity_names, severities))
+                    + f" · {excluded_label} {excluded}", markdown_overview)
+                self.assertIn(
+                    "".join(f"{name}{count}" for name, count in zip(severity_names, severities))
+                    + f"{excluded_label}{excluded}", overview_text)
+
+    def test_overviews_count_all_verdicts_and_keep_severity_exclusions(self):
+        doc = complete_doc()
+        records = (("High", "Likely"), ("High", "Likely"), ("High", "FalsePositive"),
+                   ("Medium", "Valid"), ("Medium", "NotApplicable"),
+                   ("Low", "Unverified"), ("Info", "Unlikely"))
+        doc["findings"] = [
+            finding(f"PV-{i:03d}", severity, validation={
+                "verdict": verdict, "method": "static", "evidence": "api/app.py:22"})
+            for i, (severity, verdict) in enumerate(records, 1)
+        ]
+        self.assert_overview_counts(doc, (2, 1, 1, 1), (1, 2, 1, 1, 1, 1), 2)
+
+    def test_empty_overviews_show_zero_counts(self):
+        doc = complete_doc()
+        doc["findings"] = []
+        self.assert_overview_counts(doc, (0, 0, 0, 0), (0, 0, 0, 0, 0, 0), 0)
+
+    def test_excluded_only_overviews_show_zero_active_severities(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["verdict"] = "FalsePositive"
+        doc["findings"][1]["validation"]["verdict"] = "NotApplicable"
+        self.assert_overview_counts(doc, (0, 0, 0, 0), (0, 0, 0, 0, 1, 1), 2)
+
+    def test_collapsed_findings_show_every_recorded_verdict(self):
+        verdicts = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
+        doc = complete_doc()
+        doc["findings"] = [finding(f"PV-{i:03d}", validation={
+            "verdict": verdict, "method": "static", "evidence": "api/app.py:22"})
+            for i, verdict in enumerate(verdicts, 1)]
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                parsed = ParsedHTML(self.render_outputs(doc, lang)["dashboard.html"])
+                self.assertEqual(len(parsed.summaries), len(verdicts))
+                for record, summary in zip(doc["findings"], parsed.summaries):
+                    self.assertIn(record["id"], summary)
+                    self.assertIn(record["validation"]["verdict"], summary)
 
     def test_inferred_commitment_is_labeled_in_both_languages(self):
         doc = complete_doc()

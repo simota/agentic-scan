@@ -30,6 +30,7 @@ import json
 from pathlib import Path
 import re
 import sys
+import unicodedata
 
 # Keep source-only CLI runs from writing imported helpers into the skill tree.
 sys.dont_write_bytecode = True
@@ -73,10 +74,17 @@ COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
-EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+EMAIL_START = re.compile(
+    r'(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|[^\s"(),:;<>@\[\]\\]+)@')
+IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
+# IDNA exceptions and join controls (RFC 5892, sections 2.6 and 2.8) can
+# occur in labels too. Candidate detection need not validate their context.
+IDNA_LABEL_EXTRAS = frozenset("\u00b7\u0375\u05f3\u05f4\u06fd\u06fe\u0f0b\u200c\u200d\u30fb")
 EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|test|invalid)$",
                              re.IGNORECASE)
-LONG_NUMBER = re.compile(r"\d(?:[ -]?\d){11,}")
+# Horizontal Unicode whitespace and hyphens may separate the digits; line
+# boundaries still separate unrelated numbers in prose.
+LONG_NUMBER = re.compile(r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|-)*\d){11,}")
 
 
 class SchemaError(ValueError):
@@ -86,6 +94,8 @@ class SchemaError(ValueError):
 def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 
@@ -134,13 +144,34 @@ def _choice(value, allowed, where):
         raise SchemaError(f"{where}: must be one of {', '.join(allowed)}")
 
 
+def _email_domains(value):
+    """Read complete Unicode labels without consuming surrounding punctuation."""
+    for match in EMAIL_START.finditer(value):
+        end = match.end()
+        while end < len(value):
+            char = value[end]
+            # Unlike \w, Unicode marks remain part of the current label. Do
+            # not exempt an example-domain prefix followed by such a mark.
+            if (char not in ".-_" and char not in IDNA_LABEL_EXTRAS
+                    and unicodedata.category(char)[0] not in "LMN"):
+                break
+            end += 1
+        domain = value[match.end():end].rstrip(".")
+        # Malformed trailing labels must not hide a preceding address in prose.
+        if "." in domain:
+            yield domain
+
+
 def _no_personal_values(value, where):
     if value is None:
         return
     # Keep this guard safe for callers that have not checked the shape yet.
     value = str(value)
-    for match in EMAIL.finditer(value):
-        if not EXAMPLE_DOMAINS.search(match.group(1)):
+    # Inspect a normalised copy: non-breaking spaces and width variants must
+    # not evade the guard, and accepted text must keep its original spelling.
+    value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
+    for domain in _email_domains(value):
+        if not EXAMPLE_DOMAINS.search(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
     if LONG_NUMBER.search(value):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
@@ -336,15 +367,30 @@ def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
     problems = []
-    present = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    try:
+        present = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    except OSError:
+        return ["output directory is not readable"]
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
-    for name in sorted(OUTPUTS & present):
-        if not (out / name).is_file():
-            problems.append(f"output is not a file: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
         problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    if "findings.json" not in present or not (out / "findings.json").is_file():
+    unusable = set()
+    for name in sorted(OUTPUTS & present):
+        path = out / name
+        try:
+            if not path.is_file():
+                problems.append(f"output is not a file: {name}")
+                unusable.add(name)
+                continue
+            with path.open("rb") as stream:
+                if not stream.read(1):
+                    problems.append(f"empty output: {name}")
+                    unusable.add(name)
+        except OSError:
+            problems.append(f"unreadable output: {name}")
+            unusable.add(name)
+    if "findings.json" not in present or "findings.json" in unusable:
         return problems
     try:
         doc = read_json(out / "findings.json")

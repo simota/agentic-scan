@@ -14,8 +14,12 @@ python3 scripts/findings.py check <out> [--allow NAME]
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
-is named). `findings.py check` exits `1` and lists every contract violation,
-including required outputs that are directories or broken links instead of files.
+is named). `findings.py check` exits `1` and lists every contract violation.
+All three required outputs must be readable, nonempty files; directories and
+broken links do not qualify.
+
+Both reports include counts for every verdict, including zero counts, alongside
+the severity counts. Collapsed HTML findings also show their recorded verdict.
 
 Both report contents are generated and UTF-8 encoded before writing starts.
 The scripts stage all output bytes in temporary files alongside their destinations
@@ -53,9 +57,12 @@ be valid UTF-8 text; unpaired Unicode surrogates are refused before saving. Repo
 prose, including analysis results, commitments, perspective notes and the
 top-level text lists, is checked for e-mail addresses (other than
 `example.com`, `example.org`, `example.net` or the `.example`, `.test`,
-`.invalid` domains) and runs of 12 or more digits, including space- or
-hyphen-separated digits and numbers next to punctuation. Name fields and use
-placeholders.
+`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
+and Unicode e-mail forms, including complete internationalised domain labels,
+and repeated spaces, tabs, non-breaking spaces or hyphens between digits.
+Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
+for inspection; accepted text retains its original spelling. Name fields and
+use placeholders.
 
 Only the fields documented below are accepted, at every object level: `meta`,
 findings, validation, analysis, references, commitments and perspectives.

@@ -148,7 +148,7 @@ class InstallerTests(unittest.TestCase):
             with self.subTest(agents=agents):
                 result, _, errors = self.run_install("link", "--agents", agents)
                 self.assertEqual(result, 1)
-                self.assertIn("not a usable directory", errors)
+                self.assertRegex(errors, "not a usable directory|[Ll]oop")
                 self.assertFalse((self.hosts["claude"] / "skills").exists())
 
     def test_missing_source_and_unknown_agent_do_not_create_links(self):

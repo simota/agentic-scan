@@ -68,7 +68,9 @@ Merge semantics:
 
 - `meta` updates key by key
 - `findings` and `budgets` match by `id`: a known record is updated key by key
-  (so a later fragment can add just `validation` to `P-003`), a new one is
+  (so a later fragment can add just `validation` to `P-003`; nested objects
+  such as `validation` and `measurement` are replaced whole, so send all their
+  keys), a new one is
   appended. Duplicate IDs within one fragment are refused
 - `perspectives` match by `name` and replace the whole entry, so parallel
   reviewers leave `perspectives` out of their fragments; the coordinator writes
@@ -168,15 +170,15 @@ embedding Markdown link syntax in another field.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
-| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` does not rank them) |
+| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` enforces both; it does not rank excluded findings by severity) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
-| `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
+| `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition, stated with its threshold in `scale_driver` or `impact`), `Suspected` (the cost model itself rests on an unconfirmed code link; `check` refuses it with verdict `Valid`) |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional string: the hunt step ID from `reference/perspectives.md` (`DB1`…) |
 | `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
 | `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `budget` holds exactly one ID, and `check` requires a nonblank `budget` to name an ID in `budgets[]`; name other violated budgets in `impact` |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`. For other verdicts, `evidence` may be omitted or empty but must be a string when present |
+| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line`. For other verdicts, `evidence` may be omitted or empty but must be a string when present |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost; still counted in the totals, with the decision recorded in `decisions`) |

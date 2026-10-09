@@ -165,3 +165,37 @@ class MergeMessageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportLayoutTests(unittest.TestCase):
+    def test_index_excluded_section_method_and_budget_links(self):
+        doc = complete_doc()
+        doc["meta"]["method"] = "Static review"
+        doc["findings"][0]["budget"] = "B-01"
+        doc["findings"].append(finding("P-003", "High", budget="B-01", validation={
+            "verdict": "NotApplicable", "method": "static", "evidence": "x.py:3"}))
+        report = render.render_markdown(doc, "en")
+        self.assertIn("| Method | Static review |", report)
+        self.assertIn("| ID | Severity | Confidence | Verdict | Title | Location |", report)
+        self.assertIn("| P-003 | High | Confirmed | NotApplicable |", report)
+        findings_part, excluded_part = report.split("## Excluded findings")
+        self.assertNotIn("### P-003", findings_part)
+        self.assertIn("### P-003 [NotApplicable] ", excluded_part)
+        self.assertNotIn("**status:**", excluded_part.split("## Performance budgets")[0])
+        budget = next(line for line in report.splitlines() if line.startswith("| B-01 |"))
+        self.assertTrue(budget.endswith(" | P-001 |"))
+        html = render.render_html(doc, "en")
+        self.assertIn("<td>P-001</td>", html)
+        self.assertEqual(html.count("<dt>status</dt>"), 2)
+
+
+class LanguageNoteTests(unittest.TestCase):
+    def test_overriding_the_record_language_is_noted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            code, _, err = run(render.main, source, "--out", directory, "--lang", "ja")
+            self.assertEqual(code, 0)
+            self.assertEqual(err, "render: note: labels in ja, but the record's text is in en\n")
+            code, _, err = run(render.main, source, "--out", directory, "--lang", "en")
+            self.assertEqual((code, err), (0, ""))

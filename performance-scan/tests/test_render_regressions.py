@@ -355,7 +355,7 @@ class RenderRegressions(unittest.TestCase):
                 self.assertIn(reason_label, report)
                 self.assertIn("Supplier API &#124; &lt;latency&gt; is unknown<br>Confirm the contract", report)
                 rows = [line for line in report.splitlines() if line.startswith("| B-")]
-                self.assertEqual(len(rows), 3)
+                self.assertEqual(len(rows), len(self.doc["budgets"]))
                 self.assertTrue(all(line.count("|") == 7 for line in rows))
                 self.assertIn(f" | {no} | ", rows[0])
                 self.assertIn(" | — | ", rows[1])

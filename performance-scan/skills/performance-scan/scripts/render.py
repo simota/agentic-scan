@@ -45,6 +45,7 @@ LABELS = {
         "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
+        "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
     },
     "ja": {
         "title": "パフォーマンス診断", "summary": "サマリー", "scope": "対象と方法",
@@ -64,6 +65,7 @@ LABELS = {
         "source": "出典", "inferred": "推定", "reason": "未確認の理由",
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
+        "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
     },
 }
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
@@ -203,7 +205,7 @@ def render_markdown(doc, lang):
     lines += ["", f"{verdicts} · **{incomplete_high}**"]
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
-              f"| Scope | {markdown_cell(meta.get('scope', ''))} |",
+              f"| {t['scope_row']} | {markdown_cell(meta.get('scope', ''))} |",
               f"| {t['revision']} | {markdown_cell(meta.get('commit', 'UNKNOWN'))} |",
               f"| {t['date']} | {markdown_cell(meta.get('date', ''))} / "
               f"{markdown_cell(meta.get('assessor', ''))} |", ""]
@@ -214,6 +216,8 @@ def render_markdown(doc, lang):
         v = f["validation"]
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
         lines.append("")
+        step = f" ({markdown_text(f['step'])})" if f.get("step") else ""
+        lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
         for key in FIELDS:
             if key in f:
                 lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
@@ -236,7 +240,7 @@ def render_markdown(doc, lang):
         for b in doc["budgets"]:
             lines.append("| " + " | ".join(markdown_cell(cell) for cell in budget_cells(b, t)) + " |")
         lines.append("")
-    lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
+    lines += [f"## {t['perspectives']}", "", f"| | {t['status_col']} | {t['note']} |", "|---|---|---|"]
     for p in doc.get("perspectives", []):
         lines.append("| " + " | ".join(markdown_cell(p[key]) for key in ("name", "status", "note")) + " |")
     lines.append("")
@@ -308,6 +312,7 @@ def render_html(doc, lang):
         group = finding_group(f)
         exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                      if group == "excluded" else "")
+        step = f" ({e(f['step'])})" if f.get("step") else ""
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
         rows += [(t["verdict"], f"{v['verdict']} ({v['method']})"), (t["evidence"], v.get("evidence", "")),
                  (t["status"], f.get("status", "Open"))]
@@ -316,7 +321,7 @@ def render_html(doc, lang):
             rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
         out.append(f"<details data-sev='{group}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span>{exclusion}</summary><dl>"
+                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>{exclusion}</summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows))
         if "measurement" in f:
             out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"

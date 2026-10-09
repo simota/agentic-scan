@@ -21,7 +21,7 @@ Before sending:
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Unverified: {{n_unverified}}.
+Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}.
 
 ## 2. Scope and method
 

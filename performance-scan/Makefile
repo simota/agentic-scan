@@ -25,6 +25,18 @@ REPO    := $(shell $(call shell_quote,$(PYTHON)) -c 'from pathlib import Path; i
   print(next(p for p in paths if p.is_file()).resolve().parent)' $(call shell_quote,$(MAKEFILE_LIST)))
 SKILL   := $(REPO)/skills/$(NAME)
 
+# Generic names such as PROJECT are often exported for unrelated tools. Only a
+# command-line or makefile setting may redirect where links are written.
+# (Plain ifeq blocks: macOS still ships GNU Make 3.81, which lacks undefine.)
+ifeq ($(origin AGENT),environment)
+AGENT   := claude codex agy
+endif
+ifeq ($(origin PROJECT),environment)
+PROJECT :=
+endif
+ifeq ($(origin SKILLS_DIR),environment)
+SKILLS_DIR :=
+endif
 AGENT   ?= claude codex agy
 PROJECT ?=
 SKILLS_DIR ?=
@@ -78,7 +90,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
 	for f in $(call shell_quote,$(SKILL))/reference/*.md; do \
 	  [ -e "$$f" ] || continue; b=$$(basename "$$f"); \
-	  grep -q "$$b" $(call shell_quote,$(SKILL)/SKILL.md) || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
+	  grep -qF "reference/$$b" $(call shell_quote,$(SKILL)/SKILL.md) || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
 	  head -10 "$$f" | grep -q '\*\*Read when:\*\*' || { echo "MISS reference/$$b has no **Read when:** header" >&2; fail=1; }; \
 	done; \
 	head -1 $(call shell_quote,$(SKILL)/SKILL.md) | grep -qx -- '---' || { echo "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \

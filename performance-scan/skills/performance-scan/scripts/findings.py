@@ -42,6 +42,7 @@ DEFINITIVE = ("Valid", "FalsePositive", "NotApplicable")
 EXCLUDED = ("FalsePositive", "NotApplicable")
 METHODS = ("static", "measured")
 STATUSES = ("Open", "Fixed", "Accepted")
+BUDGET_FAMILIES = ("QRY", "SIZE", "CPLX", "LAT", "RES", "FE")
 BUDGET_STATUSES = ("holds", "violated", "partly read", "not checked")
 PERSPECTIVE_STATUSES = ("applied", "N/A", "not checked")
 PERSPECTIVES = (
@@ -150,7 +151,7 @@ def validate_finding(f, where):
     for key in ("title", "workload", "scale_driver", "cost_model", "request",
                 "impact", "fix", "regression_test"):
         _text(f[key], f"{where}.{key}")
-    _optional_strings(f, ("contrast", "budget"), where)
+    _optional_strings(f, ("contrast", "budget", "step"), where)
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -210,7 +211,7 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
-    _optional_strings(meta, ("commit",), "meta")
+    _optional_strings(meta, ("commit", "method"), "meta")
     for key in ("findings", "budgets", "perspectives"):
         if not isinstance(doc.get(key, []), list):
             raise SchemaError(f"{key}: must be a list")
@@ -234,6 +235,8 @@ def validate(doc, complete=False):
         if "inferred" in b and not isinstance(b["inferred"], bool):
             raise SchemaError(f"{where}.inferred: must be a boolean")
         _optional_strings(b, ("reason",), where)
+        if "family" in b:
+            _choice(b["family"], BUDGET_FAMILIES, f"{where}.family")
         _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
     seen = set()
     for i, p in enumerate(doc.get("perspectives", [])):
@@ -397,9 +400,15 @@ def contract_problems(out, allow=()):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    budget_ids = set()
     for b in doc.get("budgets", []):
-        if b["status"] == "not checked" and "reason" not in b:
+        budget_ids.add(b["id"])
+        if b["status"] == "not checked" and not b.get("reason", "").strip():
             problems.append(f"{b['id']}: a not-checked budget needs a reason")
+    for f in findings:
+        budget = f.get("budget", "").strip()
+        if budget and budget not in budget_ids:
+            problems.append(f"{f['id']}.budget: {budget} is not in budgets")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

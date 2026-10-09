@@ -46,6 +46,8 @@ import re
 import subprocess
 import sys
 
+# Run with python -I (isolated mode), the script's own directory is not on the path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
                     unique_object, write_json_atomic)
 from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
@@ -1342,11 +1344,22 @@ def handle_terraform(scan, parsed):
                 if statements is UNKNOWN:
                     scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
                                         f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
+    declared = {}
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
         info = scan.tf_dirs.setdefault(d, {"resources": False, "backend": False, "file": rel})
         for b in blocks:
             view = view_of(b, rel)
+            if b.type in ("resource", "data") and len(b.labels) == 2:
+                # Terraform refuses a module that declares one address twice;
+                # the scanner reads both, so say the module is not valid as given.
+                key = (d, b.type, *b.labels)
+                if key in declared:
+                    address = ".".join(b.labels if b.type == "resource" else ["data", *b.labels])
+                    scan.not_run.append(f"duplicate declaration of {address} in one module (Terraform would "
+                                        f"reject it): {declared[key]} and {rel}:{b.line}")
+                else:
+                    declared[key] = f"{rel}:{b.line}"
             if b.type == "resource" and len(b.labels) == 2:
                 res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
                 scan.add_resource(res)
@@ -1634,6 +1647,30 @@ def is_gcp_firewall_snapshot(value):
     return any(isinstance(value.get(key), list) for key in selectors) and any(
         isinstance(rule, dict) and isinstance(rule.get("IPProtocol"), str)
         for key in ("allowed", "denied") for rule in aslist(value.get(key)))
+
+
+def is_export(doc):
+    """Output of a cloud CLI rather than configuration written by hand.
+
+    AWS CLI JSON is an object of CamelCase keys holding lists (SecurityGroups,
+    Reservations, Functions); gcloud prints lists of resources with selfLink or a
+    "compute#..." kind, and IAM policies with an etag; kubectl prints a List.
+    """
+    if isinstance(doc, list):
+        return bool(doc) and all(isinstance(x, dict) and ("selfLink" in x or "#" in str(x.get("kind", "")))
+                                 for x in doc)
+    if not isinstance(doc, dict) or not doc:
+        return False
+    if "Resources" in doc or "AWSTemplateFormatVersion" in doc or "planned_values" in doc:
+        return False
+    if isinstance(doc.get("bindings"), list) and "etag" in doc:
+        return True
+    if str(doc.get("kind", "")).endswith("List") and isinstance(doc.get("items"), list):
+        return True
+    if isinstance(doc.get("Policy"), str):
+        return True
+    return all(isinstance(k, str) and k[:1].isupper() for k in doc) and \
+        any(isinstance(v, list) for v in doc.values()) and "Statement" not in doc
 
 
 def handle_snapshot(scan, rel, text, doc):

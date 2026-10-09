@@ -64,6 +64,12 @@ Do not export `secrets`.
 
 ## Reading snapshots
 
+- Exports committed inside the assessed repository (for example a
+  `snapshots/` directory) are still snapshots: their capture time is unknown
+  unless stated, they get no source excerpts in the reports (the renderer
+  recognises the export shapes wherever they sit), and their values are
+  reported by location only
+
 - Pass the export directory to the same baseline run as the repository:
   `scripts/iac_scan.py <repo> --snapshots <exports> --out <out>/iac.json --into <out>/findings.json`.
   Each run replaces the whole `I-*` baseline, so a separate run on the exports

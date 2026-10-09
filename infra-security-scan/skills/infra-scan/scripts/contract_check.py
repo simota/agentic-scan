@@ -94,6 +94,8 @@ def check(data, out_dir, pdf=True, allow=()):
     for a in data.get("attack_paths", []):
         if isinstance(a, dict) and a.get("status") not in render.AP_STATUSES:
             add(f"{a.get('id')}: attack path status must be open, blocked or unknown")
+    for where, rid in render.dangling_references(data):
+        add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):
         add("inventory: missing; run iac_scan.py --into findings.json")
 

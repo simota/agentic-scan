@@ -4,6 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py remove FINDINGS ID [ID ...]
     python3 findings.py renumber FINDINGS
+    python3 findings.py status FINDINGS
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It may hold:
@@ -30,6 +31,9 @@ checked at render time) before anything is written; the write is atomic.
 Credential-shaped values are refused in every string saved to the record.
 Finding prose describes the weakness, never an attack: literal exploit strings
 and instance-metadata addresses are refused in those fields.
+
+`status` lists untriaged `I-*` findings and prose naming IDs no record has;
+it exits 1 while either remains.
 
 Exit codes: 0 done, 1 refused (a fragment, a removal or a renumbering; reason on
 stderr), 2 unreadable input, schema error or unwritable record.
@@ -153,9 +157,9 @@ def fragment_problems(fragment, name, record):
             if key == "findings" and rid.startswith("I-"):
                 if rid not in existing:
                     problems.append(f"{name}: {rid}: I-* findings come only from iac_scan.py")
-                elif set(rec) - {"id", "validation", "confidence"}:
+                elif set(rec) - {"id", "validation", "confidence", "condition"}:
                     problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's "
-                                    "validation and confidence")
+                                    "validation, confidence and condition")
     for p in fragment.get("perspectives", []):
         if not isinstance(p, dict) or not isinstance(p.get("name"), str):
             problems.append(f"{name}: perspectives entries need a name")
@@ -303,11 +307,28 @@ def renumber(findings_path):
 
     for key in ("findings", "attack_paths", "perspectives", *LISTS):
         record[key] = rewrite(record.get(key, []))
+    record["attack_paths"] = sorted(record["attack_paths"], key=lambda ap: render.id_key(ap["id"]))
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
         sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))
     render.validate(record, partial=True)
     write_json_atomic(path, record)
     return record, {old: new for old, new in mapping.items() if old != new}
+
+
+def status(findings_path):
+    """What is left before contract_check: untriaged I-* and dangling references."""
+    record = render.load(findings_path)
+    findings = [f for f in record.get("findings", []) if isinstance(f, dict)]
+    open_items = [f for f in findings if str(f.get("id", "")).startswith("I-")
+                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
+    dangling = render.dangling_references(record)
+    print(f"{len(findings)} findings, {len(record.get('attack_paths', []))} attack paths; "
+          f"{len(open_items)} I-* untriaged, {len(dangling)} dangling reference(s)")
+    for f in open_items:
+        print(f"  untriaged {f['id']} {f.get('rule', '')} {f.get('location', '')}")
+    for where, rid in dangling:
+        print(f"  dangling  {rid} in {where}")
+    return 1 if open_items or dangling else 0
 
 
 def main(argv=None):
@@ -321,8 +342,12 @@ def main(argv=None):
     r.add_argument("ids", nargs="+")
     n = sub.add_parser("renumber", help="renumber F-* findings in severity order, then location")
     n.add_argument("findings")
+    s = sub.add_parser("status", help="list untriaged I-* findings and references to missing IDs")
+    s.add_argument("findings")
     a = p.parse_args(argv)
     try:
+        if a.cmd == "status":
+            return status(a.findings)
         if a.cmd == "remove":
             remove(a.findings, a.ids)
             print(f"removed {', '.join(a.ids)} from {a.findings}")

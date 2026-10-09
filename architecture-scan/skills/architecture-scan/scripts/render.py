@@ -113,7 +113,7 @@ def markdown_table_cell(value):
 
 
 def markdown_reference(ref):
-    title = markdown_inline(ref.get("title", ref["url"]))
+    title = markdown_inline(ref.get("title") or ref["url"])
     title = title.replace("[", "&#91;").replace("]", "&#93;")
     # Angle destinations allow parentheses; entities keep input from ending
     # the destination or escaping its closing delimiter.
@@ -206,11 +206,17 @@ document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d
 """
 
 
+def html_text(value):
+    """Keep recorded line breaks visible without interpreting recorded HTML."""
+    value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    return escape(value).replace("\n", "<br>")
+
+
 def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    e = lambda v: escape(as_text(v))  # noqa: E731
+    e = html_text
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
@@ -236,7 +242,7 @@ def render_html(doc, lang):
             a = f["analysis"]
             rows.append((t["analysis"], f"{a['result']} — {a['tool']}: {a['command']}"))
         for ref in f.get("references", []):
-            title, url = ref.get("title", ref["url"]), ref["url"]
+            title, url = ref.get("title") or ref["url"], ref["url"]
             rows.append((t["references"], f"{title}: {url}" if title != url else url))
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "

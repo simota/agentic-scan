@@ -52,7 +52,7 @@ FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "val
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^A-\d{3}$")
 RULE_ID = re.compile(r"^R-\d{2,}$")
-LOCATION = re.compile(r"^[^\s:]+(?::\d+(?:-\d+)?)$")
+LOCATION = re.compile(r"[^\r\n]+:\d+(?:-\d+)?")
 
 
 class SchemaError(ValueError):
@@ -106,7 +106,7 @@ def validate_finding(f, where):
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
-        if not isinstance(loc, str) or not LOCATION.match(loc):
+        if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
     v = f["validation"]
     if not isinstance(v, dict):
@@ -240,9 +240,11 @@ def cmd_merge(args):
     target = Path(args.findings)
     try:
         doc = read_json(target) if target.exists() else {}
+        validate(doc)
         for path in args.fragments:
             merge(doc, read_json(path), path)
-        validate(doc)
+            # Each fragment must leave a valid record, even in a batch.
+            validate(doc)
         # Encode before opening the target so invalid Unicode cannot truncate it.
         data = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
     except (SchemaError, UnicodeError) as exc:

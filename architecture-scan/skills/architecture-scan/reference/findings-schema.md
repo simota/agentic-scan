@@ -12,8 +12,10 @@ python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
-record does not match the shape (the field is named). `findings.py check`
+filter by severity) and `<out>/report.md`. The dashboard preserves line breaks
+in recorded text, including multiline evidence and analysis commands.
+Exit codes: `0` written, `2` the record does not match the shape (the field is
+named). `findings.py check`
 exits `1` and lists every contract violation. All three required output paths
 must be files.
 
@@ -40,7 +42,9 @@ Merge semantics:
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
-Every merge validates the combined record; a refused merge writes nothing.
+The existing record is validated before merging, then the combined record is
+validated after each fragment. A refused batch writes nothing, even if earlier
+fragments were valid. Invalid existing records must be corrected before merging.
 Each finding must be complete in the fragment that first adds it.
 Inputs must be UTF-8, including every string after JSON escapes are decoded.
 Invalid text is rejected before merge or render opens an output for writing.
@@ -105,7 +109,7 @@ Invalid text is rejected before merge or render opens an output for writing.
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`BL1`…) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
@@ -113,7 +117,7 @@ Invalid text is rejected before merge or render opens an output for writing.
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | Objects with a required nonblank string `url` and optional string `title` |
+| `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. `family` and `inferred` are optional |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

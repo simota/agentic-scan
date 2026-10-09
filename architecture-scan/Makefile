@@ -68,18 +68,19 @@ help: ## list targets
 	@echo $(call shell_quote,  skill:  $(SKILL))
 	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT"
 
+# os.symlink refuses a destination created concurrently, including directories.
 link: ## symlink the skill into every installed host's skills dir
 	@n=0; set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  guard="$$1"; dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = $(QSKILL) ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
-	    echo "refusing $$d is a symlink to $$(readlink "$$d") - resolve it, then re-run" >&2; exit 1; \
+	    if [ "$$(readlink -- "$$d")" = $(QSKILL) ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
+	    echo "refusing $$d is a symlink to $$(readlink -- "$$d") - resolve it, then re-run" >&2; exit 1; \
 	  elif [ -e "$$d" ]; then \
 	    echo "refusing $$d exists and is not a symlink - move it aside first" >&2; exit 1; \
 	  fi; \
-	  mkdir -p "$$dir" && ln -s $(QSKILL) "$$d" || exit 1; \
+	  mkdir -p -- "$$dir" && $(PYTHON) -c 'import os,sys; os.symlink(sys.argv[1], sys.argv[2])' $(QSKILL) "$$d" || exit 1; \
 	  echo "linked   $$d -> "$(QSKILL); n=$$((n+1)); \
 	done; \
 	if [ $$n -eq 0 ]; then echo "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
@@ -90,8 +91,8 @@ unlink: ## remove the symlinks this Makefile created
 	while [ "$$#" -gt 0 ]; do \
 	  dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = $(QSKILL) ]; then rm -f "$$d" || exit 1; echo "unlinked $$d"; \
-	    else echo "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
+	    if [ "$$(readlink -- "$$d")" = $(QSKILL) ]; then rm -f -- "$$d" || exit 1; echo "unlinked $$d"; \
+	    else echo "left     $$d - points at $$(readlink -- "$$d"), not this repo"; fi; \
 	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
 	  else echo "absent   $$d"; fi; \
 	done
@@ -101,7 +102,7 @@ status: ## show what is installed, per host
 	while [ "$$#" -gt 0 ]; do \
 	  guard="$$1"; dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - host not installed"; \
-	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink "$$d")"; \
+	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink -- "$$d")"; \
 	  elif [ -d "$$d" ]; then echo "dir      $$d - not a symlink"; \
 	  elif [ -e "$$d" ]; then echo "file     $$d - not a skill directory"; \
 	  else echo "absent   $$d"; fi; \

@@ -7,7 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 
 from test_privacy_scan import SKILL, complete_doc, finding, findings, render
 
@@ -76,6 +76,10 @@ class RecordConsistencyTests(unittest.TestCase):
         doc["findings"][0]["commitment"] = "C-07"
         self.assertIn("findings[0].commitment: C-07 is not in the commitments ledger",
                       self.problems(doc))
+        for cited in ("C-07 ", "C-07\n", "C-01, C-07", "see C-07"):
+            doc["findings"][0]["commitment"] = cited
+            self.assertIn("findings[0].commitment: C-07 is not in the commitments ledger",
+                          self.problems(doc), cited)
         doc["findings"][0]["commitment"] = "C-01"
         self.assertEqual(self.problems(doc), [])
         # Free text is not a ledger ID and stays allowed.
@@ -97,6 +101,20 @@ class RecordConsistencyTests(unittest.TestCase):
                     "verdict": "FalsePositive", "method": "static", "evidence": "scrubber at app.py:30"}
                 doc["findings"][1]["validation"] = copy.deepcopy(doc["findings"][0]["validation"])
                 self.assertEqual(self.problems(doc), [])
+
+
+class UnusableJsonTests(unittest.TestCase):
+    def test_huge_integers_and_deep_nesting_are_refused_not_raised(self):
+        for text in ('{"meta": ' + "1" * 5000 + "}", "[" * 200000):
+            with self.subTest(size=len(text)), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / "findings.json"
+                path.write_text(text, encoding="utf-8")
+                with self.assertRaises(findings.SchemaError):
+                    findings.read_json(path)
+                stderr = io.StringIO()
+                with redirect_stderr(stderr):
+                    self.assertEqual(render.main([str(path), "--out", directory]), 2)
+                self.assertEqual(findings.contract_problems(directory)[-1][:14], "findings.json:")
 
 
 class RenderConsistencyTests(unittest.TestCase):

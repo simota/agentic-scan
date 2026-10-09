@@ -82,6 +82,7 @@ PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 COMMITMENT_ID = re.compile(r"^C-\d{2,}$")
+COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,}(?![\w-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
@@ -114,6 +115,9 @@ def read_json(path):
         raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
+    except (ValueError, RecursionError) as exc:
+        # Over-long integers and deep nesting are refused, not tracebacks.
+        raise SchemaError(f"{path}: not usable JSON ({type(exc).__name__})") from None
 
 
 def _utf8(value, where):
@@ -553,11 +557,10 @@ def contract_problems(out, allow=()):
             problems.append(f"perspective not recorded: {name}")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
-        commitment = f.get("commitment")
         # Ledger IDs are technical identifiers; other prose was checked by validate.
-        if isinstance(commitment, str) and COMMITMENT_ID.fullmatch(commitment) \
-                and commitment not in ledger:
-            problems.append(f"findings[{i}].commitment: {commitment} is not in the commitments ledger")
+        for cited in COMMITMENT_REF.findall(f.get("commitment", "")):
+            if cited not in ledger:
+                problems.append(f"findings[{i}].commitment: {cited} is not in the commitments ledger")
         status = recorded.get(f["category"])
         if f["validation"]["verdict"] not in EXCLUDED and status not in (None, "applied"):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "

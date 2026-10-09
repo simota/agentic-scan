@@ -102,9 +102,16 @@ Each step says **what** to hunt, **where** to look, and what evidence makes it
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
 | CC1 | Global locks or synchronised sections on hot paths | Mutexes, `synchronized`, file locks, advisory locks | The critical section holds no I/O and is short — because every request serialises behind it |
-| CC2 | Pool sizing: DB pool smaller than concurrent workers, per-process pools multiplied by process count beyond the DB limit, thread-pool starvation from blocking calls | Pool config, worker counts, IaC | Pool × instances ≤ server limit and ≥ concurrent demand, cited — because exhaustion queues every request |
+| CC2 | Pool sizing and contention: acquisition waits or timeouts that violate caller deadlines, simultaneous connection holdings that can deadlock, aggregate pool capacity beyond the DB connection budget, thread-pool starvation from blocking calls | Pool and acquisition config, call paths, worker and replica counts, IaC | Acquisition waits are bounded within the caller's time budget, simultaneous holdings cannot deadlock, and total pool capacity fits the DB connection budget, cited — because bounded waiting can protect the DB from excess concurrency |
 | CC3 | *(sound constructs)* Unbounded parallelism: `Promise.all`/`gather`/goroutine per element of a growing collection | Fan-out code | A concurrency limit at `path:line` — because N simultaneous calls exhaust pools and trip rate limits |
 | CC4 | Contention on shared counters, hot rows, single queues or single partitions | Counters, sequences, aggregates updated per request | Sharded, batched or asynchronous updates — because a single hot spot caps throughput |
+
+For CC2, do not report a small pool solely because workers or concurrent demand
+outnumber connections. [HikariCP's pool-sizing guidance](https://github.com/brettwooldridge/HikariCP/wiki/About-Pool-Sizing)
+explains why a small pool with waiting threads can be appropriate. Check bounded
+backpressure and the acquisition wait plus subsequent work against the caller's
+deadline; unknown workload or DB capacity is a limitation, not evidence that the
+pool should be enlarged.
 
 ### Payload and API shape (PA) [SIZE, LAT]
 

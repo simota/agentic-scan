@@ -70,6 +70,12 @@ def _text(value, where):
         raise SchemaError(f"{where}: must be a nonblank string")
 
 
+def _optional_strings(record, keys, where):
+    for key in keys:
+        if key in record and not isinstance(record[key], str):
+            raise SchemaError(f"{where}.{key}: must be a string")
+
+
 def _choice(value, allowed, where):
     if value not in allowed:
         raise SchemaError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
@@ -86,6 +92,7 @@ def validate_finding(f, where):
     for key in ("title", "workload", "scale_driver", "cost_model", "request",
                 "impact", "fix", "regression_test"):
         _text(f[key], f"{where}.{key}")
+    _optional_strings(f, ("contrast", "budget"), where)
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -109,6 +116,8 @@ def validate_finding(f, where):
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if v["verdict"] in DEFINITIVE:
         _text(v.get("evidence"), f"{where}.validation.evidence ({v['verdict']} needs evidence)")
+    else:
+        _optional_strings(v, ("evidence",), f"{where}.validation")
     if v["method"] == "measured" and "measurement" not in f:
         raise SchemaError(f"{where}.measurement: required when validation.method is measured")
     if "measurement" in f:
@@ -117,10 +126,14 @@ def validate_finding(f, where):
             raise SchemaError(f"{where}.measurement: must be an object")
         for key in ("environment", "command", "result"):
             _text(m.get(key), f"{where}.measurement.{key}")
-    for i, ref in enumerate(f.get("references", [])):
+    references = f.get("references", [])
+    if not isinstance(references, list):
+        raise SchemaError(f"{where}.references: must be a list")
+    for i, ref in enumerate(references):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
         _text(ref.get("url"), f"{where}.references[{i}].url")
+        _optional_strings(ref, ("title",), f"{where}.references[{i}]")
 
 
 def validate(doc, complete=False):
@@ -138,6 +151,7 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    _optional_strings(meta, ("commit",), "meta")
     seen = set()
     for i, f in enumerate(doc.get("findings", [])):
         validate_finding(f, f"findings[{i}]")
@@ -150,6 +164,7 @@ def validate(doc, complete=False):
             raise SchemaError(f"{where}.id: must look like B-01")
         for key in ("statement", "source"):
             _text(b.get(key), f"{where}.{key}")
+        _optional_strings(b, ("reason",), where)
         _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
     for i, p in enumerate(doc.get("perspectives", [])):
         where = f"perspectives[{i}]"

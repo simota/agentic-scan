@@ -1,4 +1,4 @@
-"""Regression checks for finding measurements and source locations."""
+"""Regression checks for finding fields, measurements and source locations."""
 import io
 import json
 from pathlib import Path
@@ -111,6 +111,101 @@ class LocationRegressionTests(unittest.TestCase):
             with self.subTest(location=location):
                 with self.assertRaises(findings.SchemaError):
                     findings.validate({"findings": [finding(location=location)]})
+
+
+class OptionalFieldRegressionTests(unittest.TestCase):
+    def invalid_documents(self):
+        fields = (
+            ("findings[0].contrast", ("findings", 0), "contrast"),
+            ("findings[0].budget", ("findings", 0), "budget"),
+            ("findings[0].validation.evidence", ("findings", 0, "validation"), "evidence"),
+            ("findings[0].references[0].title", ("findings", 0, "references", 0), "title"),
+            ("meta.commit", ("meta",), "commit"),
+            ("budgets[0].reason", ("budgets", 0), "reason"),
+        )
+        for where, path, key in fields:
+            for value in (None, False, 0, [], [1], {}):
+                doc = complete_doc()
+                doc["findings"][0]["title"] = "This update must not be persisted"
+                doc["findings"][0]["validation"]["verdict"] = "Likely"
+                doc["findings"][0]["references"] = [{"url": "https://example.test/docs"}]
+                record = doc
+                for part in path:
+                    record = record[part]
+                record[key] = value
+                yield where, value, doc
+        for value in (None, False, 0, "", {}):
+            doc = complete_doc()
+            doc["findings"][0]["references"] = value
+            yield "findings[0].references", value, doc
+
+    def test_invalid_optional_fields_preserve_merge_target(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            target = root / "findings.json"
+            original = (json.dumps(complete_doc()) + "\n").encode("utf-8")
+            fragment = root / "fragment.json"
+            for where, value, doc in self.invalid_documents():
+                with self.subTest(field=where, value=value):
+                    target.write_bytes(original)
+                    fragment.write_text(json.dumps(doc), encoding="utf-8")
+                    errors = io.StringIO()
+                    with redirect_stdout(io.StringIO()), redirect_stderr(errors):
+                        result = findings.main(["merge", str(target), str(fragment)])
+                    self.assertEqual(result, 1)
+                    self.assertIn(where, errors.getvalue())
+                    self.assertEqual(target.read_bytes(), original)
+
+    def test_render_and_check_reject_invalid_optional_fields_without_changing_outputs(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = Path(d)
+            source = out / "findings.json"
+            source.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(render.main([str(source), "--out", str(out)]), 0)
+            original = {path: path.read_bytes() for path in
+                        (out / "report.md", out / "dashboard.html")}
+            for where, value, doc in self.invalid_documents():
+                with self.subTest(field=where, value=value):
+                    for path, content in original.items():
+                        path.write_bytes(content)
+                    source.write_text(json.dumps(doc), encoding="utf-8")
+                    errors = io.StringIO()
+                    with redirect_stdout(io.StringIO()), redirect_stderr(errors):
+                        result = render.main([str(source), "--out", str(out)])
+                    self.assertEqual(result, 2)
+                    self.assertIn(where, errors.getvalue())
+                    self.assertTrue(any(where in problem for problem in
+                                        findings.contract_problems(out)))
+                    for path, content in original.items():
+                        self.assertEqual(path.read_bytes(), content)
+
+    def test_optional_strings_may_be_empty_and_reference_title_may_be_omitted(self):
+        doc = complete_doc()
+        doc["meta"]["commit"] = ""
+        doc["budgets"][0]["reason"] = ""
+        doc["findings"][0].update({
+            "contrast": "", "budget": "",
+            "validation": {"verdict": "Likely", "method": "static", "evidence": ""},
+            "references": [
+                {"title": "", "url": "https://example.test/empty-title"},
+                {"url": "https://example.test/fallback"},
+            ],
+        })
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            out = root / "out"
+            out.mkdir()
+            source = out / "findings.json"
+            fragment = root / "fragment.json"
+            fragment.write_text(json.dumps(doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(source), str(fragment)]), 0)
+                self.assertEqual(render.main([str(source), "--out", str(out)]), 0)
+                self.assertEqual(findings.main(["check", str(out)]), 0)
+            self.assertEqual(json.loads(source.read_text(encoding="utf-8")), doc)
+            self.assertIn("[https&#58;//example.test/fallback](<https://example.test/fallback>)",
+                          (out / "report.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

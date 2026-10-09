@@ -48,15 +48,15 @@ PAYLOAD = re.compile(
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+['\d]|union\s+select|"
     r"(?:\.\./){2,}|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
-    r"169\.254\.169\.254|metadata\.google\.internal",
+    r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
+    r"metadata\.google\.internal",
     re.IGNORECASE,
 )
 # Share the renderer's known credential formats and retain the merge gate's
 # conservative handling of private-key fields and incomplete Slack tokens.
+# Token prefixes are case-sensitive: "asiaPacific..." is a name, not a key.
 CREDENTIAL = re.compile(
-    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'"private_key"\s*:', r"xox[baprs]-")),
-    re.IGNORECASE,
-)
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 
 
 class Refused(Exception):

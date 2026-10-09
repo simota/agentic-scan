@@ -318,6 +318,7 @@ LABELS = {
         "expand": "Details", "active": "active", "excluded_n": "excluded", "unverified_n": "unverified",
         "static_note": "Static review of configuration. No cloud API was called and no deployed resource was contacted.",
         "pdf_missing": "PDF not generated: no headless Chrome or WeasyPrint found.",
+        "pdf_failed": "PDF not generated: the PDF engine was found but failed.",
         "cover_note": "Confidential — for the owner of the assessed estate.",
         "scope_method": "Scope and method", "counts": "Counts by severity (excluded findings not counted)",
         "md_intro": "Infrastructure security finding from a static configuration review. Propose a minimal IaC change that restores the boundary, and a policy-as-code test for it.",
@@ -343,6 +344,7 @@ LABELS = {
         "expand": "詳細", "active": "有効", "excluded_n": "除外", "unverified_n": "未検証",
         "static_note": "設定の静的レビューです。クラウド API の呼び出しや稼働中リソースへの通信は行っていません。",
         "pdf_missing": "PDF は生成されませんでした（ヘッドレス Chrome / WeasyPrint が見つかりません）。",
+        "pdf_failed": "PDF は生成されませんでした（PDF エンジンは見つかりましたが失敗しました）。",
         "cover_note": "機密 — 診断対象の所有者向け。",
         "scope_method": "範囲と方法", "counts": "深刻度別の件数（除外分を除く）",
         "md_intro": "設定の静的レビューで見つかったインフラのセキュリティ検出事項です。境界を回復する最小限の IaC 変更と、それを守る policy-as-code テストを提案してください。",
@@ -394,8 +396,12 @@ def counts(data):
 
 # ---------------------------------------------------------------- source excerpts
 
-SENSITIVE_NAME = re.compile(r"(\.tfstate(\.backup)?|\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.env)$|"
-                            r"secret|credential|id_rsa|\.netrc", re.IGNORECASE)
+# Terraform names state backups terraform.tfstate.<timestamp>.backup; dotenv
+# files carry an environment suffix (.env.production).
+SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
+                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|secret|credential|"
+                            r"id_(rsa|dsa|ecdsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
+                            r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
 
 
 def hcl_declares_sensitive(text):
@@ -740,7 +746,10 @@ def render_dashboard(data, L, lang, sources):
     c = counts(data)
     fs = ordered(data.get("findings", []))
     md = {f["id"]: finding_markdown(f, L, lang) for f in fs}
-    md_json = json.dumps(md, ensure_ascii=False).replace("</", "<\\/")
+    # Escape every markup character: "<!--<script>" in a finding would
+    # otherwise keep the real </script> from closing this block.
+    md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")
+               .replace(">", "\\u003e").replace("&", "\\u0026"))
     banner = " · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES) + \
         f" — {L['excluded_n']} {c['excluded']}, {L['unverified_n']} {c['unverified']}"
     cards = "".join(f'<div class="card {s}"><span class="l">{esc(shown(s, lang))}</span><span class="n">{c[s]}</span></div>'
@@ -874,11 +883,18 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
 """
 
 
-def to_pdf(html_path, pdf_path):
-    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds."""
+def to_pdf(html_path, pdf_path, failed=None):
+    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds.
+
+    Engines that were found but did not produce a PDF are appended to `failed`.
+    """
+    failed = [] if failed is None else failed
     pdf = Path(pdf_path)
     pdf.unlink(missing_ok=True)
     chrome = os.environ.get("CHROME")
+    # Chrome refuses to start its sandbox as root (containers, CI runners).
+    # The page is a local file this script just wrote, not a remote site.
+    sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
     for c in ([chrome] if chrome else CHROME_CANDIDATES):
         exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
         if not exe:
@@ -886,7 +902,7 @@ def to_pdf(html_path, pdf_path):
         with tempfile.TemporaryDirectory() as profile:
             try:
                 proc = subprocess.Popen(
-                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", *sandbox,
                      f"--user-data-dir={profile}", f"--print-to-pdf={pdf}", Path(html_path).resolve().as_uri()],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
@@ -917,6 +933,7 @@ def to_pdf(html_path, pdf_path):
                 complete = False
         if complete and pdf.exists() and pdf.stat().st_size > 0:
             return "chrome"
+        failed.append(f"{exe} (exit {status})" if status is not None else f"{exe} (timed out)")
         pdf.unlink(missing_ok=True)
     wp = shutil.which("weasyprint")
     if wp:
@@ -927,7 +944,20 @@ def to_pdf(html_path, pdf_path):
         else:
             if r.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0:
                 return "weasyprint"
+        failed.append(f"{wp}")
     pdf.unlink(missing_ok=True)
+    return None
+
+
+def output_problem(out, repo):
+    """Refuse outputs inside the assessed repository or through symlinks."""
+    if repo:
+        root, target = Path(repo).resolve(), out.resolve()
+        if target == root or root in target.parents:
+            return f"{out} is inside the assessed repository {repo}; write outputs elsewhere"
+    for name in ("dashboard.html", "assessment.html", "assessment.pdf"):
+        if (out / name).is_symlink():
+            return f"{out / name} is a symlink; refusing to write through it"
     return None
 
 
@@ -947,8 +977,12 @@ def main(argv=None):
             print(f"schema: {problem}", file=sys.stderr)
         return 2
     L = LABELS[a.lang]
-    sources = attach_sources(data, a.repo) if a.repo else {}
     out = Path(a.out)
+    problem = output_problem(out, a.repo)
+    if problem:
+        print(f"render: {problem}", file=sys.stderr)
+        return 2
+    sources = attach_sources(data, a.repo) if a.repo else {}
     out.mkdir(parents=True, exist_ok=True)
     pdf = out / "assessment.pdf"
     pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
@@ -957,12 +991,14 @@ def main(argv=None):
     assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
-        engine = to_pdf(assessment, pdf)
+        failed = []
+        engine = to_pdf(assessment, pdf, failed)
         if engine:
             print(f"wrote {pdf} ({engine})")
         else:
-            assessment.write_text(render_assessment(data, L, a.lang, sources, L["pdf_missing"]), encoding="utf-8")
-            print(f"warning: {L['pdf_missing']}", file=sys.stderr)
+            note = L["pdf_failed"] if failed else L["pdf_missing"]
+            assessment.write_text(render_assessment(data, L, a.lang, sources, note), encoding="utf-8")
+            print(f"warning: {note}" + (f" Tried: {', '.join(failed)}" if failed else ""), file=sys.stderr)
     return 0
 
 

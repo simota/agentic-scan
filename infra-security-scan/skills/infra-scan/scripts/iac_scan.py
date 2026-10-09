@@ -41,6 +41,9 @@ from redaction import module_source
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
 MAX_BYTES = 2 * 1024 * 1024
+# terraform.tfstate, .tfstate.backup and the timestamped backups that
+# `terraform state` subcommands write (terraform.tfstate.1700000000.backup).
+STATE_FILE = re.compile(r"\.tfstate(\.[^/]*)?$")
 SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
 SENSITIVE_PORTS = {
     22: "SSH", 23: "Telnet", 445: "SMB", 1433: "SQL Server", 1521: "Oracle", 2375: "Docker",
@@ -1921,7 +1924,10 @@ def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
 
 SECRET_PATTERNS = [
     ("AWS access key ID", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("private key", re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")),
+    ("private key", re.compile(r"-{4,5} ?BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")),
+    ("access token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|"
+                                r"glpat-[A-Za-z0-9_-]{20}|xox[abeoprs]-[0-9]{6,}-[A-Za-z0-9-]+|"
+                                r"AIza[0-9A-Za-z_-]{35})")),
 ]
 GENERIC_SECRET = re.compile(
     r'^\s*"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
@@ -1988,7 +1994,7 @@ def run(root):
     parsed = []
     for full, rel in walk(root, scan):
         name = full.name
-        if name.endswith((".tfstate", ".tfstate.backup")):
+        if STATE_FILE.search(name):
             scan.files.append({"path": rel, "kind": "state"})
             scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "state file in the repository", strong=True)
             continue
@@ -2267,6 +2273,20 @@ def main(argv=None):
     if not root.is_dir():
         print(f"iac_scan: {root} is not a readable directory", file=sys.stderr)
         return 2
+    resolved = root.resolve()
+    for option, target in (("--out", args.out), ("--into", args.into)):
+        if target is None:
+            continue
+        target = Path(target)
+        if target.is_symlink():
+            print(f"iac_scan: {option} {target} is a symlink; refusing to write through it", file=sys.stderr)
+            return 2
+        # The assessment writes nothing inside the repository it reads, and
+        # a previous iac.json there would be rescanned as input.
+        if resolved in target.resolve().parents:
+            print(f"iac_scan: {option} {target} is inside the scanned repository; write it elsewhere",
+                  file=sys.stderr)
+            return 2
     scan = run(root)
     commit = git_commit(root)
     findings = build_findings(scan.hits)

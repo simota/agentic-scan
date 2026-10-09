@@ -8,9 +8,12 @@ from urllib.parse import unquote_plus, urlsplit, urlunsplit
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
     r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*[\"']?\s*[:=]")
-SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|"
-                          r"github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+")
-KEY_MARKER = re.compile(r"-----(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
+SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|"
+                          r"github_pat_[A-Za-z0-9_]{20,}|xox[abeoprs]-[A-Za-z0-9-]+|"
+                          r"xapp-[0-9]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|"
+                          r"glpat-[A-Za-z0-9_-]{20}")
+# PEM and OpenSSH use five dashes; RFC 4716 (SSH2) uses four and spaces.
+KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
     r"\s*[,}]?\s*$")
@@ -104,12 +107,16 @@ def has_structured_secrets(value):
         return True  # Typed list items may omit their own kind: Secret.
     if value.get("kind") == "Secret" and any(key in value for key in ("data", "stringData")):
         return True
-    # Covers Kubernetes env entries and other literal name/value collections,
-    # including a value that precedes its name in the source.
-    if "name" in value and "value" in value:
-        name = value["name"]
-        if not isinstance(name, str) or _secret_field(name + ":"):
-            return True
+    # Covers Kubernetes env entries, CloudFormation Name/Value and Key/Value
+    # pairs and other literal collections, including a value that precedes its
+    # name in the source. CloudFormation capitalizes these keys.
+    keys = {key.lower(): key for key in value if isinstance(key, str)}
+    if "value" in keys:
+        for label in ("name", "key"):
+            if label in keys:
+                name = value[keys[label]]
+                if not isinstance(name, str) or _secret_field(name + ":"):
+                    return True
     if "env" in value and value["env"] is not None:
         entries = value["env"]
         if not isinstance(entries, (dict, list)):

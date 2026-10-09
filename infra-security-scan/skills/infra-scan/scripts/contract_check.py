@@ -21,7 +21,7 @@ import render  # noqa: E402
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
-FORBIDDEN = re.compile(r"\.tfstate(\.backup)?$|\.tfvars(\.json)?$")
+FORBIDDEN = re.compile(r"\.tfstate(\.[^/]*)?$|\.tfvars(\.json)?$")
 
 
 def check(data, out_dir, pdf=True, allow=()):

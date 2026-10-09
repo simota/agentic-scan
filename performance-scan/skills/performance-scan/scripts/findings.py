@@ -55,13 +55,21 @@ FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "locati
                     "workload", "scale_driver", "cost_model", "request", "impact",
                     "fix", "regression_test", "validation")
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
-FINDING_ID = re.compile(r"^P-\d{3}$")
-BUDGET_ID = re.compile(r"^B-\d{2,}$")
+FINDING_ID = re.compile(r"P-[0-9]{3}")
+BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
 class SchemaError(ValueError):
     pass
+
+
+def resolve_path(path):
+    """Report symlink loops as I/O errors on Python versions that raise RuntimeError."""
+    try:
+        return Path(path).resolve()
+    except RuntimeError as exc:
+        raise OSError(f"cannot resolve {path}: {exc}") from exc
 
 
 def read_json(path):
@@ -93,7 +101,7 @@ def validate_finding(f, where):
     for key in FINDING_REQUIRED:
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
-    if not FINDING_ID.match(str(f["id"])):
+    if not isinstance(f["id"], str) or not FINDING_ID.fullmatch(f["id"]):
         raise SchemaError(f"{where}.id: {f['id']!r} must look like P-001")
     for key in ("title", "workload", "scale_driver", "cost_model", "request",
                 "impact", "fix", "regression_test"):
@@ -170,7 +178,8 @@ def validate(doc, complete=False):
     seen = set()
     for i, b in enumerate(doc.get("budgets", [])):
         where = f"budgets[{i}]"
-        if not isinstance(b, dict) or not BUDGET_ID.match(str(b.get("id"))):
+        if (not isinstance(b, dict) or not isinstance(b.get("id"), str)
+                or not BUDGET_ID.fullmatch(b["id"])):
             raise SchemaError(f"{where}.id: must look like B-01")
         if b["id"] in seen:
             raise SchemaError(f"{where}.id: duplicate {b['id']}")
@@ -279,7 +288,7 @@ def cmd_merge(args):
     target = Path(args.findings)
     try:
         # Keep the existing behavior of reading and updating a symlink's destination.
-        destination = target.resolve()
+        destination = resolve_path(target)
         doc = read_json(destination) if destination.exists() else {}
         validate(doc)
         for path in args.fragments:

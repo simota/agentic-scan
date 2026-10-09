@@ -135,7 +135,7 @@ embedding Markdown link syntax in another field.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only); omission or an empty string is allowed |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
-| `findings[].id` | `P-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
+| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…). Gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
@@ -148,7 +148,7 @@ embedding Markdown link syntax in another field.
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Omit `title` to use the URL as the link label; an empty title is also allowed |
-| `budgets[]` | `id` (`B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. A present `reason` must be a string (empty allowed). `family` and `inferred` are optional |
+| `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. A present `reason` must be a string (empty allowed). `family` and `inferred` are optional |
 | `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

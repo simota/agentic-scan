@@ -82,7 +82,13 @@ Existing and combined records require unique finding IDs, budget IDs and
 perspective names.
 Within a fragment, repeated perspective names still replace the whole entry
 in order, so the last entry wins.
-Each finding must be complete in the fragment that first adds it.
+Each finding must be complete in the fragment that first adds it: the record is
+validated after every fragment, not only once per command.
+A merge never removes a key, so an update that turns a finding into a
+different one keeps its old optional fields (`measurement`, `contrast`,
+`budget`, `step`, `references`). Reuse an ID only for the same root cause; to
+renumber, build a fresh `findings.json` from fragments that already carry the
+final IDs.
 
 Partial records may omit required metadata during merges. When present,
 `meta.project`, `scope`, `date`, `assessor` and `lang` must be nonblank strings;
@@ -155,7 +161,7 @@ embedding Markdown link syntax in another field.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
 | `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…). Gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
@@ -169,7 +175,7 @@ embedding Markdown link syntax in another field.
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Omit `title` to use the URL as the link label; an empty title is also allowed |
+| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. An omitted or blank `title` uses the URL as the link label |
 | `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs a nonblank `reason` for `check`. A present `reason` must be a string (empty allowed while merging). `family` (`QRY`, `SIZE`, `CPLX`, `LAT`, `RES` or `FE`, from `reference/budgets.md` §2) and `inferred` are optional |
 | `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |

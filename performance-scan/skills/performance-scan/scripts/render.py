@@ -116,14 +116,16 @@ def markdown_text(value):
     """Keep record strings literal and keep newlines inside their current block."""
     def inline(line):
         line = escape(line, quote=False)
-        line = re.sub(r"([\\`*_\[\]#!~])", r"\\\1", line)
+        line = re.sub(r"([\\`*_\[\]#!~$])", r"\\\1", line)
         # A list value has no static label before it: "- - text", "- 1. text"
         # and "-     text" would otherwise create nested blocks.
         line = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", line)
         line = re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=[ \t]|$)", r"\1\\\2", line)
         # GFM also recognises bare URLs and email addresses. Only references[]
         # should create links; character references retain their visible text.
-        line = line.replace("://", "&#58;//").replace("@", "&#64;")
+        # cmark-gfm decodes entities before matching emails, so an empty
+        # comment splits the text node around "@" instead.
+        line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
         line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
                       flags=re.IGNORECASE)
         return re.sub(r"^[ \t]+", lambda match: "".join(
@@ -185,6 +187,12 @@ def html_link(title, url):
     return f"<a href='{escape(destination)}'>{label}</a>"
 
 
+def reference_title(ref):
+    """Fall back to the URL so an empty title never yields an invisible link."""
+    title = ref.get("title", "")
+    return title if title.strip() else ref["url"]
+
+
 def budget_cells(budget, labels):
     inferred = budget.get("inferred")
     inference = (labels["inferred_yes"] if inferred is True else
@@ -206,7 +214,7 @@ def render_markdown(doc, lang):
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {markdown_cell(meta.get('scope', ''))} |",
-              f"| {t['revision']} | {markdown_cell(meta.get('commit', 'UNKNOWN'))} |",
+              f"| {t['revision']} | {markdown_cell(meta.get('commit') or 'UNKNOWN')} |",
               f"| {t['date']} | {markdown_cell(meta.get('date', ''))} / "
               f"{markdown_cell(meta.get('assessor', ''))} |", ""]
     lines += [f"## {t['findings']}", ""]
@@ -231,7 +239,7 @@ def render_markdown(doc, lang):
         lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** "
-                         f"{markdown_link(ref.get('title', ref['url']), ref['url'])}")
+                         f"{markdown_link(reference_title(ref), ref['url'])}")
         lines.append("")
     if doc.get("budgets"):
         headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
@@ -241,8 +249,10 @@ def render_markdown(doc, lang):
             lines.append("| " + " | ".join(markdown_cell(cell) for cell in budget_cells(b, t)) + " |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "", f"| | {t['status_col']} | {t['note']} |", "|---|---|---|"]
-    for p in doc.get("perspectives", []):
-        lines.append("| " + " | ".join(markdown_cell(p[key]) for key in ("name", "status", "note")) + " |")
+    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
+    for name in PERSPECTIVES:
+        p = recorded.get(name, {"status": "—", "note": ""})
+        lines.append("| " + " | ".join(markdown_cell(v) for v in (name, p["status"], p["note"])) + " |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -293,7 +303,7 @@ def render_html(doc, lang):
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
-           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', 'UNKNOWN'))} · "
+           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit') or 'UNKNOWN')} · "
            f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
@@ -328,7 +338,7 @@ def render_html(doc, lang):
                        f"{e(f['measurement']['command'])}</code></pre></dd>")
         for ref in f.get("references", []):
             out.append(f"<dt>{e(t['references'])}</dt><dd>"
-                       f"{html_link(ref.get('title', ref['url']), ref['url'])}</dd>")
+                       f"{html_link(reference_title(ref), ref['url'])}</dd>")
         out.append("</dl></details>")
     if doc.get("budgets"):
         headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])

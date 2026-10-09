@@ -158,7 +158,7 @@ class RenderRegressions(unittest.TestCase):
     def test_plain_text_urls_do_not_use_gfm_autolinks(self):
         self.doc["findings"][0]["workload"] = "https://example.test www.example.test a@example.test"
         report = render.render_markdown(self.doc, "en")
-        self.assertIn("- **workload:** https&#58;//example.test www&#46;example.test a&#64;example.test", report)
+        self.assertIn("- **workload:** https&#58;//example.test www&#46;example.test a@<!-- -->example.test", report)
 
     def test_unsafe_or_malformed_urls_stay_visible_without_active_links(self):
         self.doc["findings"][0]["references"] = [

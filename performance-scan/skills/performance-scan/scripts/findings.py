@@ -7,8 +7,7 @@
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
 `meta` is merged key by key; `findings` and `budgets` records are matched by
-`id`, a known record updated key by key and a new one appended; `perspectives`
-are matched by `name` and replaced whole; the string lists (`checked_ok`,
+`id`, a known record updated key by key and a new one appended; `perspectives` are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
@@ -135,9 +134,15 @@ def _optional_strings(record, keys, where):
             raise SchemaError(f"{where}.{key}: must be a string")
 
 
+def _show(value, limit=80):
+    """Quote a value for an error message without dumping a huge or nested input."""
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
 def _choice(value, allowed, where):
     if value not in allowed:
-        raise SchemaError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
+        raise SchemaError(f"{where}: {_show(value)} is not one of {', '.join(allowed)}")
 
 
 def validate_finding(f, where):
@@ -147,7 +152,7 @@ def validate_finding(f, where):
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
     if not isinstance(f["id"], str) or not FINDING_ID.fullmatch(f["id"]):
-        raise SchemaError(f"{where}.id: {f['id']!r} must look like P-001")
+        raise SchemaError(f"{where}.id: {_show(f['id'])} must look like P-001")
     for key in ("title", "workload", "scale_driver", "cost_model", "request",
                 "impact", "fix", "regression_test"):
         _text(f[key], f"{where}.{key}")
@@ -162,12 +167,12 @@ def validate_finding(f, where):
     for loc in locations:
         match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
         if match is None or not match["path"].strip():
-            raise SchemaError(f"{where}.location: {loc!r} must be path:line")
+            raise SchemaError(f"{where}.location: {_show(loc)} must be path:line")
         # Compare decimal strings without Python's integer-conversion digit limit.
         start = match["start"].lstrip("0") or "0"
         end = (match["end"] or match["start"]).lstrip("0") or "0"
         if start == "0" or (len(end), end) < (len(start), start):
-            raise SchemaError(f"{where}.location: {loc!r} needs positive line numbers "
+            raise SchemaError(f"{where}.location: {_show(loc)} needs positive line numbers "
                               "and a range end not before its start")
     v = f["validation"]
     if not isinstance(v, dict):
@@ -342,7 +347,11 @@ def cmd_merge(args):
         validate(doc)
         for path in args.fragments:
             merge(doc, read_json(path), path)
-        validate(doc)
+            # Validate per fragment: a finding must be complete where it first appears.
+            try:
+                validate(doc)
+            except SchemaError as exc:
+                raise SchemaError(f"{path}: {exc}") from exc
         content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         write_atomic(destination, content)
     except (SchemaError, OSError, UnicodeError, RecursionError) as exc:
@@ -386,6 +395,8 @@ def contract_problems(out, allow=()):
     try:
         doc = read_json(out / "findings.json")
         validate(doc, complete=True)
+        # A "\ud800" escape decodes to a lone surrogate that render cannot encode.
+        json.dumps(doc, ensure_ascii=False).encode("utf-8")
     except (SchemaError, UnicodeError) as exc:
         return problems + [f"findings.json: {exc}"]
     findings = doc.get("findings", [])

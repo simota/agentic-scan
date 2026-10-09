@@ -33,7 +33,7 @@ Rules:
 - Every finding names the perspective that surfaced it in `category`
 - A hunt step covered by an attack path cites it (`AP-…`) in the `note`
 - The `note` lists the step IDs applied and each one left out with its reason
-  (e.g. `NE1–NE4 via AP-01; NE5 N/A: no IPv6`)
+  (e.g. `NE1–NE4 via AP-01; NE5 N/A: single VPC, no peering`)
 - A step is sound only when the enforcing setting is cited at `path:line`. A
   provider default counts only when the provider version that sets it is cited,
   and only for resources that do not override it

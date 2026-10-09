@@ -1,6 +1,7 @@
 <!--
 検出結果をインフラ担当者・セキュリティ窓口へまとめて報告するテンプレート（メール、非公開チケット用）。
-数値と各 finding は findings.json（または dashboard.html の「コピー」出力）から転記する。
+各 finding は findings.json から転記する。件数も findings.json から数える: n_* は FalsePositive /
+NotApplicable と、F-* に統合された I-* を除く（ダッシュボードの要約と同じ数え方）。
 
 送る前に確認すること:
 - 宛先が対象アカウント / プロジェクトの情報を見てよい人に限られている
@@ -22,7 +23,7 @@
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。未検証: {{n_unverified}} 件。
+除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。検出事項に統合: {{n_covered}} 件。未検証: {{n_unverified}} 件。
 
 ## 2. 対象と方法
 

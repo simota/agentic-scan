@@ -61,7 +61,7 @@ class ReportViewTest(unittest.TestCase):
         self.assertNotIn("- Impact:", rest)
         self.assertIn("### References", md)
         self.assertIn("confirmed:", md)
-        self.assertIn("- Attack paths: AP-01", md) if f.get("attack_paths") else None
+        self.assertIn("- Attack paths: " + ", ".join(f["attack_paths"]), md)
         ja = render.finding_markdown(f, render.LABELS["ja"], "ja")
         self.assertIn("深刻度: 高", ja)
         self.assertNotIn(": High", ja)

@@ -1,6 +1,7 @@
 <!--
 Template for reporting several findings to infrastructure owners or a security contact (email, private ticket).
-Copy numbers and findings from findings.json (or the dashboard's "copy" output).
+Copy findings from findings.json. Count from findings.json too: n_* excludes FalsePositive /
+NotApplicable findings and I-* findings covered by an F-* (the dashboard summary shows the same counts).
 
 Before sending:
 - The recipients may see the accounts / projects concerned
@@ -22,7 +23,7 @@ Before sending:
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Unverified: {{n_unverified}}.
+Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Covered by a review finding: {{n_covered}}. Unverified: {{n_unverified}}.
 
 ## 2. Scope and method
 
@@ -39,10 +40,12 @@ This was a static review of configuration. No cloud API was called and no deploy
 
 ## 3. Open attack paths
 
+<!-- attack_paths with status: open only. Entry → target, and the findings that open it. -->
 - **{{attack_paths[].id}}:** {{attack_paths[].entry}} → {{attack_paths[].target}} ({{attack_paths[].findings}})
 
 ## 4. Fix first
 
+<!-- High and Medium findings in severity order, three to five lines each. -->
 ### {{id}} [{{severity}}] {{title}}
 
 - **Resource / location:** `{{resources}}` / `{{location}}`

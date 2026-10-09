@@ -7,8 +7,8 @@ Both outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` follows the
 findings-report shape in `reference/report.md`.
 
-Exit codes: 0 written, 1 an output could not be encoded or saved, 2 the record
-does not match the schema (the field is named on stderr).
+Exit codes: 0 written, 1 an output could not be encoded or saved, 2 an input
+could not be read or decoded, or does not match the schema (reasons on stderr).
 """
 import argparse
 from html import escape

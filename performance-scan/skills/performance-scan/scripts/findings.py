@@ -73,9 +73,13 @@ def resolve_path(path):
 
 
 def read_json(path):
+    """Read a regular UTF-8 JSON file, following symbolic links."""
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+        source = Path(path)
+        if not stat.S_ISREG(source.stat().st_mode):
+            raise ValueError("input must be a regular file")
+        return json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -118,9 +122,10 @@ def validate_finding(f, where):
         match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
         if match is None or not match["path"].strip():
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
-        start = int(match["start"])
-        end = int(match["end"] or match["start"])
-        if start < 1 or end < start:
+        # Compare decimal strings without Python's integer-conversion digit limit.
+        start = match["start"].lstrip("0") or "0"
+        end = (match["end"] or match["start"]).lstrip("0") or "0"
+        if start == "0" or (len(end), end) < (len(start), start):
             raise SchemaError(f"{where}.location: {loc!r} needs positive line numbers "
                               "and a range end not before its start")
     v = f["validation"]

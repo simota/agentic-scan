@@ -27,6 +27,16 @@ each fragment. Symbolic links to regular files are allowed. Named pipes
 write their contents to a regular JSON file first. A refused input leaves
 existing records and reports unchanged.
 
+JSON object member names must be unique at every nesting level, including
+after decoding escapes (for example, `"id"` and `"\u0069d"` are the same name).
+Repeated names are refused before schema validation so no value is silently
+discarded. Nonstandard numeric constants (`NaN`, `Infinity`, `-Infinity`) and
+numbers that overflow Python's finite floating-point range (such as `1e400`)
+are also refused; they must not be persisted as nonstandard JSON. Ordinary
+strings containing these tokens are allowed. These input rules apply to the
+existing record, every merge fragment, rendering and the contract check.
+Updates in separate fragments still follow the merge semantics below.
+
 Rendering encodes both outputs and finishes temporary files and recovery
 copies before replacing either destination. A handled replacement error
 restores outputs already replaced; if restoration also fails, the error names

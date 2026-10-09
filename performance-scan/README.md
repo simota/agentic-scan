@@ -65,8 +65,11 @@ python3 skills/performance-scan/scripts/findings.py check out   # exit 1 lists e
 
 JSON inputs must be regular files; symbolic links to regular files are allowed.
 Named pipes (FIFOs), devices and shell process substitution are not supported.
-JSON decoding failures, including Python's parsing limits, are reported as
-input errors before any record or report is changed.
+Object member names must be unique at every nesting level. Nonstandard numeric
+constants (`NaN`, `Infinity`, `-Infinity`) and numbers that overflow Python's
+finite floating-point range (for example `1e400`) are refused. JSON decoding
+failures, including Python's parsing limits, are reported as input errors
+before any record or report is changed.
 
 Run all merges to the same `findings.json` sequentially through one REPORT
 coordinator. Parallel reviewers write fragments in scratch for that coordinator

@@ -180,7 +180,17 @@ class CloudFormationAndSnapshotTest(unittest.TestCase):
 
     def test_policy_files_get_identity_and_trust_rules(self):
         admin = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
-        self.assertEqual(rules({"policies/admin.json": admin}), {"AWS-IAM-001"})
+        # Alone, the file may be an SCP or a permissions boundary: noted, not flagged.
+        result = scan({"policies/admin.json": admin})
+        self.assertEqual(result.hits, [])
+        self.assertTrue(any("review by hand: policies/admin.json" in n for n in result.not_run))
+        # Read by an IAM policy resource, it is that resource's identity policy.
+        tf = ('resource "aws_iam_policy" "admin" {\n  name = "admin"\n'
+              '  policy = file("${path.module}/policies/admin.json")\n}\n')
+        result = scan({"policies/admin.json": admin, "main.tf": tf})
+        self.assertEqual([(h["rule"], h["file"], h["line"]) for h in result.hits],
+                         [("AWS-IAM-001", "main.tf", 3)])
+        self.assertFalse(any("admin.json" in n for n in result.not_run))
         trust = {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRoleWithWebIdentity",
                                 "Principal": {"Federated": "arn:aws:iam::111122223333:oidc-provider/"
                                                            "token.actions.githubusercontent.com"},
@@ -189,6 +199,12 @@ class CloudFormationAndSnapshotTest(unittest.TestCase):
         self.assertEqual(rules({"trust.json": trust}), {"AWS-IAM-004"})
         anyone = {"Statement": [{"Effect": "Allow", "Action": "sts:AssumeRole", "Principal": {"AWS": "*"}}]}
         self.assertEqual(rules({"trust.json": anyone}), {"AWS-IAM-003"})
+        bucket = {"Statement": [
+            {"Effect": "Deny", "NotPrincipal": {"AWS": "arn:aws:iam::111122223333:root"}, "Action": "*",
+             "Resource": "arn:aws:s3:::b/*"},
+            {"Effect": "Allow", "Principal": "*", "Action": "*", "Resource": "arn:aws:s3:::b/*",
+             "Condition": {"Bool": {"aws:SecureTransport": "true"}}}]}
+        self.assertEqual(rules({"bucket-policy.json": bucket}), {"AWS-S3-003"})
 
 
 class KubernetesJsonTest(unittest.TestCase):
@@ -207,6 +223,16 @@ class KubernetesJsonTest(unittest.TestCase):
         self.assertEqual(rules({"k8s-rbac.json": binding}), {"K8S-002"})
 
 
+class DeepJsonTest(unittest.TestCase):
+    def test_deep_kubernetes_json_is_noted_not_a_crash(self):
+        text = '{"apiVersion": "v1", "kind": "ConfigMap", "data": ' + "[" * 5000 + "]" * 5000 + "}"
+        try:
+            json.loads(text)
+        except RecursionError:
+            self.skipTest("this Python's json module rejects the nesting itself")
+        self.assertTrue(any("nested too deeply" in n for n in scan({"cm.json": text}).not_run))
+
+
 class YamlKeyTest(unittest.TestCase):
     def test_boolean_spelled_keys_stay_strings(self):
         pod = ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n  labels:\n    y: \"1\"\n    on: x\n"
@@ -216,6 +242,13 @@ class YamlKeyTest(unittest.TestCase):
         self.assertEqual(result.not_run, [])
         self.assertEqual(sorted((h["rule"], h["line"]) for h in result.hits),
                          [("K8S-001", 10), ("K8S-001", 15)])
+
+    def test_plain_keys_may_contain_colons(self):
+        pod = ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\n  annotations:\n    example.com/a:b: x\n"
+               "spec:\n  hostNetwork: true\n  containers:\n  - name: c\n    image: x\n")
+        result = scan({"pod.yaml": pod})
+        self.assertEqual(result.not_run, [])
+        self.assertEqual([(h["rule"], h["line"]) for h in result.hits], [("K8S-001", 8)])
 
 
 if __name__ == "__main__":

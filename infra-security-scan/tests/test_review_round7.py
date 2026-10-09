@@ -60,6 +60,11 @@ class ExcerptLeakTest(OutputTest):
             f'  default = "{value}"\n}}\n'
             'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'), 4, value)
 
+    def test_numeric_secret_named_variable_keeps_the_excerpt(self):
+        self.write("kms.tf", 'variable "secret_recovery_window_in_days" {\n  default = 7\n}\n'
+                             'resource "x" "y" {\n  a = 1\n}\n')
+        self.assertIn("F-001", render.attach_sources(self.record("kms.tf:4"), self.repo))
+
     def test_public_name_value_pairs_keep_the_excerpt(self):
         self.write("tags.tf", 'resource "x" "y" {\n  env {\n    name  = "REGION"\n'
                               '    value = "eu-west-1"\n  }\n}\n')
@@ -140,6 +145,14 @@ class OutputPathTest(unittest.TestCase):
                                              str(fragment)])
         self.assertEqual(code, 2)
         self.assertNotIn("Traceback", err)
+
+
+class ContrastProseTest(unittest.TestCase):
+    def test_contrast_is_checked_for_payloads(self):
+        f = finding("main.tf:1")
+        f["contrast"] = "metadata at 169.254.169.254"
+        problems = findings.fragment_problems({"findings": [f]}, "fragment", render.empty_record())
+        self.assertTrue(any("F-001.contrast" in p for p in problems), problems)
 
 
 class SchemaHardeningTest(unittest.TestCase):

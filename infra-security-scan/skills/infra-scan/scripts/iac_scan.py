@@ -41,6 +41,7 @@ import ipaddress
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import stat
 import subprocess
@@ -615,6 +616,8 @@ def provider_of(type_):
 
 # ---------------------------------------------------------------- policies
 
+# file("policy.json") or file("${path.module}/policy.json"), relative to the module.
+FILE_REF = re.compile(r'^(?:file|templatefile)\(\s*"(?:\$\{path\.module\}/)?([^"$]+)"\s*[,)]')
 DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)\.(?:minified_)?json'
                      r'\s*\}?"?$')
 
@@ -714,6 +717,8 @@ class Scan:
         self.files, self.resources, self.modules, self.backends = [], [], [], []
         self.not_run, self.hits = [], []
         self.policy_docs = {}
+        # Principal-less policy JSON files: {rel: [statements, referenced?]}
+        self.policy_files = {}
         self.tf_dirs = {}
 
     def hit(self, rule, res, line, detail, severity=None, strong=False):
@@ -790,6 +795,12 @@ class Scan:
             if m:
                 statements = self.policy_docs.get((res.dir, m.group(1)))
                 return None if statements is UNKNOWN else statements
+            m = FILE_REF.match(raw.strip())
+            if m:
+                entry = self.policy_files.get(posixpath.normpath(posixpath.join(res.dir, m.group(1))))
+                if entry:
+                    entry[1] = True
+                    return entry[0]
         return None
 
     def gcp_iam(self, res, role, members, line):
@@ -1576,7 +1587,7 @@ def handle_snapshot(scan, rel, text, doc):
                 cidrs = [r.get("CidrIp") for r in aslist(perm.get("IpRanges")) if isinstance(r, dict)]
                 cidrs += [r.get("CidrIpv6") for r in aslist(perm.get("Ipv6Ranges")) if isinstance(r, dict)]
                 scan.ingress(res, line, cidrs, perm.get("IpProtocol"), perm.get("FromPort"), perm.get("ToPort"))
-        return True
+        return "snapshot"
     if isinstance(doc, dict) and isinstance(doc.get("Policy"), str):
         try:
             doc = json.loads(doc["Policy"])
@@ -1584,14 +1595,21 @@ def handle_snapshot(scan, rel, text, doc):
             return False
     if isinstance(doc, dict) and "Statement" in doc:
         statements = norm_statements(doc) or []
+        raw = doc["Statement"] if isinstance(doc["Statement"], list) else [doc["Statement"]]
         line = keys.get(((), "Statement"), find_line(text, r'"Statement"'))
         if not any(st["principals"] for st in statements):
-            # An identity policy document, e.g. read by file() from Terraform.
-            res = Res("iam_policy_document", f"policy:{Path(rel).name}", rel, line)
-            scan.add_resource(res, "aws")
-            scan.identity_policy(res, statements, line)
-        elif any(matches_action(st, action) is True for st in statements
-                 for action in ("sts:AssumeRole", "sts:AssumeRoleWithWebIdentity", "sts:AssumeRoleWithSAML")):
+            # An identity policy, an SCP or a permissions boundary: the file
+            # alone cannot say which. Terraform IAM policy resources that
+            # read it with file() apply the identity rules at their own line.
+            scan.policy_files[rel] = [statements, False]
+            return "policy"
+        # Trust policies name no Resource and grant an sts: action. A
+        # resource policy's "Action": "*" is not a trust relationship.
+        trust = not any(isinstance(st, dict) and ("Resource" in st or "NotResource" in st) for st in raw) \
+            and any(st["effect"] == "Allow" and st["principals"] and any(
+                isinstance(a, str) and a.lower().startswith("sts:assumerole") for a in st["actions"])
+                for st in statements)
+        if trust:
             res = Res("iam_trust_policy", f"policy:{Path(rel).name}", rel, line)
             scan.add_resource(res, "aws")
             scan.trust_policy(res, statements, line)
@@ -1599,7 +1617,7 @@ def handle_snapshot(scan, rel, text, doc):
             res = Res("resource_policy", f"snapshot:{Path(rel).name}", rel, line)
             scan.add_resource(res, "aws")
             scan.resource_policy(res, statements, line)
-        return True
+        return "policy"
     if isinstance(doc, dict) and isinstance(doc.get("bindings"), list):
         res = Res("google_project_iam_policy", f"snapshot:{Path(rel).name}", rel, 1)
         scan.add_resource(res, "gcp")
@@ -1607,7 +1625,7 @@ def handle_snapshot(scan, rel, text, doc):
             if isinstance(b, dict) and isinstance(b.get("role"), str):
                 line = keys.get((("bindings", index), "role"), 1)
                 scan.gcp_iam(res, b["role"], aslist(b.get("members")), line)
-        return True
+        return "snapshot"
     if isinstance(doc, list) and doc and all(is_gcp_firewall_snapshot(x) for x in doc):
         for index, fw in enumerate(doc):
             name = str(fw.get("name", ""))
@@ -1617,7 +1635,7 @@ def handle_snapshot(scan, rel, text, doc):
             allows = [(a.get("IPProtocol"), a.get("ports")) for a in aslist(fw.get("allowed"))
                       if isinstance(a, dict)]
             scan.firewall(res, line, fw.get("direction"), fw.get("disabled"), fw.get("sourceRanges"), allows)
-        return True
+        return "snapshot"
     return False
 
 
@@ -1802,12 +1820,14 @@ class _YamlSubset:
         if not pair:
             raise ValueError("unsupported mapping or multiline plain scalar")
         key, value = pair
-        # Keys stay strings: a label named y, on or null is not a boolean or None.
-        parser = _YamlFlow(key, line)
-        name = parser.value(key=True)
-        parser.ws()
-        if parser.i != len(parser.text):
-            raise ValueError("unsupported trailing scalar content")
+        # Keys stay strings: a label named y, on or null is not a boolean or
+        # None. A plain key may contain ':' (Fn::Sub, example.com/a:b).
+        if key.strip()[:1] in ("'", '"', "[", "{"):
+            name = _YamlFlow(key, line).parse()
+        else:
+            name = key.strip()
+            if not name or name[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", name):
+                raise ValueError("unsupported YAML scalar, tag or reference")
         result.put(name, self.entry(value, indent, line), line)
 
     def mapping(self, indent, result):
@@ -2190,7 +2210,8 @@ SNAPSHOT_PREFIX = "@snapshots/"
 
 def snapshot_prefixes(dirs):
     """Label each export directory so its paths never collide with the repository's."""
-    names = [Path(d).resolve().name or "root" for d in dirs]
+    # Locations are path:line without spaces or colons; keep the label in that form.
+    names = [re.sub(r"[\s:]+", "_", Path(d).resolve().name) or "root" for d in dirs]
     return [f"{SNAPSHOT_PREFIX}{name}/" if names.count(name) == 1 else f"{SNAPSHOT_PREFIX}{n}-{name}/"
             for n, name in enumerate(names, 1)]
 
@@ -2243,20 +2264,28 @@ def run(root, snapshots=()):
                 if "planned_values" in text or "AWSTemplateFormatVersion" in text:
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
-            if kind == "plan":
-                handle_plan(scan, rel, text, doc)
-            elif kind == "cloudformation":
-                handle_cfn(scan, rel, text, doc)
-            elif doc is not None and handle_k8s_json(scan, rel, text, doc):
-                kind = "kubernetes"
-            elif doc is not None and handle_snapshot(scan, rel, text, doc):
-                kind = "snapshot"
+            try:
+                if kind == "plan":
+                    handle_plan(scan, rel, text, doc)
+                elif kind == "cloudformation":
+                    handle_cfn(scan, rel, text, doc)
+                elif doc is not None and handle_k8s_json(scan, rel, text, doc):
+                    kind = "kubernetes"
+                elif doc is not None:
+                    kind = handle_snapshot(scan, rel, text, doc) or None
+            except RecursionError:
+                # json.loads accepts deeper nesting than the recursive rules.
+                scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
         elif name.endswith((".yaml", ".yml")):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
         scan_secrets(scan, rel, text, kind)
     handle_terraform(scan, parsed)
+    for rel, (_, referenced) in sorted(scan.policy_files.items()):
+        if not referenced:
+            scan.not_run.append("policy JSON without Principal is not read by a Terraform IAM policy "
+                                f"resource (identity policy, SCP or boundary?); review by hand: {rel}")
     finish_dirs(scan)
     return scan
 
@@ -2383,7 +2412,6 @@ def remap_baseline_references(data, old, new):
                 and all(isinstance(r, str) for r in resources) \
                 and set(resources) <= set(replacement.get("resources", [])):
             replacements[fid] = replacement["id"]
-    carry_triage(data, old_by_id, replacements, new)
 
     def removed_label(fid, evidence=False):
         key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
@@ -2396,6 +2424,21 @@ def remap_baseline_references(data, old, new):
         # assigned to an unrelated hit on the next scan.
         return (f"unmatched baseline number {fid[2:]}" if evidence
                 else f"unmatched baseline reference {fid}")
+
+    def rewrite_carried(evidence):
+        """Renumber I-IDs in carried I-* evidence in one pass, as for F-* below."""
+        spans = list(evidence_url_spans(evidence))
+
+        def replace(match):
+            fid = match.group()
+            if any(start <= match.start() < end for start, end in spans):
+                return fid
+            if fid in replacements:
+                return replacements[fid]
+            return f"[removed baseline: {removed_label(fid, evidence=True)}]"
+        return BASELINE_REFERENCE.sub(replace, evidence)
+
+    carry_triage(data, old_by_id, replacements, new, rewrite_carried)
 
     invalidated = set()
     invalidated_paths = {}
@@ -2479,7 +2522,7 @@ def unique_keys(pairs):
     return result
 
 
-def carry_triage(data, old_by_id, replacements, new):
+def carry_triage(data, old_by_id, replacements, new, rewrite):
     """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
 
     Triage lives only in I-*.validation; dropping it on every rescan would
@@ -2493,6 +2536,8 @@ def carry_triage(data, old_by_id, replacements, new):
             continue
         if set(old.get("resources", [])) == set(current.get("resources", [])):
             current["validation"] = copy.deepcopy(validation)
+            if isinstance(validation.get("evidence"), str):
+                current["validation"]["evidence"] = rewrite(validation["evidence"])
         else:
             note = (f"{new_id} (was {fid}): {validation['verdict']} triage not carried over; "
                     "affected resources changed. Recheck this baseline finding.")

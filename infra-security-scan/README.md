@@ -40,7 +40,9 @@ baseline                perspectives         └─ chat summary
   recovery, governance and guardrails, pipeline and state, coverage and drift
 - **Baseline** — `scripts/iac_scan.py` parses HCL (`.tf`, `.tofu`), plan JSON,
   CloudFormation JSON, Kubernetes YAML and JSON (including `kubectl -o json`
-  exports), standalone IAM policy JSON and AWS/GCP snapshot JSON (stdlib only), inventories
+  exports), policy JSON files (trust and resource policies directly; identity
+  policies through the Terraform resource that reads them with `file()`) and
+  AWS/GCP snapshot JSON (stdlib only), inventories
   resources and applies deterministic rules as `I-*` findings to triage
   — Kubernetes supports block maps/lists, single-line flow collections, comments
   and opaque block strings. Unsupported YAML, including anchors, aliases, tags

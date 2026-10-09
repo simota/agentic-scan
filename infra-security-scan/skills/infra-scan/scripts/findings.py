@@ -44,7 +44,7 @@ RECORDS = ("findings", "attack_paths")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
-FINDING_PROSE = ("title", "actor", "path", "impact", "fix", "regression", "detail", "condition")
+FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
 PAYLOAD = re.compile(
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+['\d]|union\s+select|"
     r"(?:\.\./){2,}|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"

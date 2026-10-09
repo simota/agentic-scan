@@ -130,6 +130,37 @@ class ScanTest(unittest.TestCase):
         locations = [f["location"] for f in json.loads(record.read_text(encoding="utf-8"))["findings"]]
         self.assertIn("@snapshots/exports/aws-sg.json:1", locations)
 
+    def test_snapshot_labels_stay_valid_locations(self):
+        exports = self.root / "aws exports: prod"
+        exports.mkdir()
+        (exports / "aws-sg.json").write_text(json.dumps(SG), encoding="utf-8")
+        record = self.out / "findings.json"
+        self.scan("--snapshots", str(exports), "--into", str(record))
+        import render
+        for f in json.loads(record.read_text(encoding="utf-8"))["findings"]:
+            self.assertIsNone(render.location_problem(f["location"]), f["location"])
+
+    def test_carried_evidence_follows_renumbering(self):
+        kms = 'resource "aws_kms_key" "k" {\n}\n'
+        ebs = 'resource "aws_ebs_volume" "v" {\n  encrypted = false\n}\n'
+        self.write("a.tf", kms)
+        self.write("b.tf", ebs)
+        record = self.out / "findings.json"
+        self.scan("--into", str(record))
+        ids = {f["location"].split(":")[0]: f["id"]
+               for f in json.loads(record.read_text(encoding="utf-8"))["findings"]}
+        fragment = self.root / "triage.json"
+        fragment.write_text(json.dumps({"findings": [
+            {"id": ids["a.tf"], "validation": {"verdict": "Valid", "evidence": f"same owner as {ids['b.tf']}"}},
+            {"id": ids["b.tf"], "validation": {"verdict": "Valid", "evidence": f"same owner as {ids['a.tf']}"}},
+        ]}), encoding="utf-8")
+        self.assertEqual(quiet(findings.main, ["merge", str(record), str(fragment)])[0], 0)
+        self.write("0.tf", BUCKET)  # sorts first and takes a lower number
+        self.scan("--into", str(record))
+        now = {f["location"].split(":")[0]: f for f in json.loads(record.read_text(encoding="utf-8"))["findings"]}
+        self.assertEqual(now["a.tf"]["validation"]["evidence"], f"same owner as {now['b.tf']['id']}")
+        self.assertEqual(now["b.tf"]["validation"]["evidence"], f"same owner as {now['a.tf']['id']}")
+
     def test_snapshots_inside_the_repository_are_refused(self):
         (self.repo / "exports").mkdir()
         code, err = quiet(iac_scan.main, [str(self.repo), "--snapshots", str(self.repo / "exports")])

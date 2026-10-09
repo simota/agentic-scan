@@ -486,7 +486,7 @@ def hcl_has_paired_secret(text):
     Line redaction sees `value = "..."`, not that its sibling `name` is
     DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
     """
-    from iac_scan import parse_hcl
+    from iac_scan import literal, parse_hcl
     lines = text.split("\n")
     for n, line in enumerate(lines):
         for match in HCL_NAME.finditer(line):
@@ -496,7 +496,10 @@ def hcl_has_paired_secret(text):
     for block in parse_hcl(text):
         if block.type == "variable" and block.labels and "default" in block.attrs and \
                 is_secret_name(block.labels[0]):
-            return True
+            default = literal(block.attrs["default"][0])
+            # A number (secret_recovery_window_in_days = 7) or an empty string is no secret.
+            if not isinstance(default, (int, float, bool)) and default not in (None, ""):
+                return True
     return False
 
 

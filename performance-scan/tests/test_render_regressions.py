@@ -1,88 +1,19 @@
 """Regression checks for literal record content and complete budget output."""
 from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
-from html.parser import HTMLParser
-import importlib.util
 import io
 import json
 from pathlib import Path
 import re
 import tempfile
 import unittest
-from xml.etree.ElementTree import Element, SubElement
 
-
-ROOT = Path(__file__).resolve().parents[1]
-spec = importlib.util.spec_from_file_location(
-    "perf_render_regressions", ROOT / "skills" / "performance-scan" / "scripts" / "render.py")
-render = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(render)
-
-
-class HtmlTableReader(HTMLParser):
-    def __init__(self):
-        super().__init__()
-        self.rows = []
-        self.tags = []
-        self.row = []
-        self.cell = None
-
-    def handle_starttag(self, tag, attrs):
-        self.tags.append(tag)
-        if tag == "tr":
-            self.row = []
-        if tag in ("td", "th"):
-            self.cell = ""
-
-    def handle_data(self, data):
-        if self.cell is not None:
-            self.cell += data
-
-    def handle_endtag(self, tag):
-        if tag in ("td", "th"):
-            self.row.append(self.cell)
-            self.cell = None
-        if tag == "tr":
-            self.rows.append(self.row)
-
-
-class HtmlTreeReader(HTMLParser):
-    """Read rendered elements and decoded text without a browser dependency."""
-    VOID = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link",
-            "meta", "param", "source", "track", "wbr"}
-
-    def __init__(self, html):
-        super().__init__()
-        self.root = Element("document")
-        self.stack = [self.root]
-        self.feed(html)
-
-    def handle_starttag(self, tag, attrs):
-        element = SubElement(self.stack[-1], tag, dict(attrs))
-        if tag not in self.VOID:
-            self.stack.append(element)
-
-    def handle_endtag(self, tag):
-        for i in range(len(self.stack) - 1, 0, -1):
-            if self.stack[i].tag == tag:
-                del self.stack[i:]
-                break
-
-    def handle_data(self, data):
-        element = self.stack[-1]
-        if len(element):
-            element[-1].tail = (element[-1].tail or "") + data
-        else:
-            element.text = (element.text or "") + data
-
-
-def element_text(element):
-    return "".join(element.itertext())
+from support import REPO, HtmlTableReader, HtmlTreeReader, element_text, render
 
 
 class RenderRegressions(unittest.TestCase):
     def setUp(self):
-        self.doc = json.loads((ROOT / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+        self.doc = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
 
     def test_sample_request_placeholders_remain_literal(self):
         report = render.render_markdown(self.doc, "en")

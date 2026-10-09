@@ -2,61 +2,27 @@
 from __future__ import annotations
 
 import copy
-import importlib.util
 import io
 import json
 from pathlib import Path
 import re
 import shutil
-import sys
 import tempfile
-from types import ModuleType
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
-from unittest.mock import patch
 
-SKILL = Path(__file__).resolve().parents[1] / "skills" / "performance-scan"
+# Re-exported for code that still imports these helpers from this module.
+from support import (
+    REPO, SKILL, complete_doc, contract_problems, element_text, finding, findings,
+    HtmlTableReader, HtmlTreeReader, import_module, render, run_cli, run_main, snapshot,
+    write_run_dir,
+)
 
-
-def import_module(path: Path, name: str) -> ModuleType:
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    with patch.object(sys, "path", [str(path.parent)] + sys.path):
-        spec.loader.exec_module(module)
-    return module
-
-
-findings = import_module(SKILL / "scripts" / "findings.py", "perf_findings")
-render = import_module(SKILL / "scripts" / "render.py", "perf_render")
-
-
-def finding(fid="P-001", severity="High", **extra) -> dict:
-    record = {
-        "id": fid, "title": "Order list loads items per order", "severity": severity,
-        "confidence": "Confirmed", "category": "Database access", "step": "DB1",
-        "location": ["app/orders/serializers.py:42"],
-        "workload": "Order list, hot", "scale_driver": "Items per order, uncapped",
-        "cost_model": "1 + N queries", "request": "1. GET /api/orders?page=<n>",
-        "impact": "Expected constant queries; actual 1 + N", "fix": "Prefetch items",
-        "regression_test": "Query count equal for 1 and 50 orders",
-        "validation": {"verdict": "Valid", "method": "static", "evidence": "views.py:18"},
-    }
-    record.update(extra)
-    return record
-
-
-def complete_doc() -> dict:
-    return {
-        "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
-                 "assessor": "test", "lang": "en"},
-        "budgets": [{"id": "B-01", "statement": "constant queries", "source": "baseline",
-                     "status": "violated"}],
-        "findings": [finding(), finding("P-002", "Low")],
-        "perspectives": [{"name": n, "status": "applied", "note": "applied"}
-                         for n in findings.PERSPECTIVES],
-        "checked_ok": ["search paginates"],
-        "limitations": ["production volume not observed"],
-    }
+__all__ = [
+    "REPO", "SKILL", "complete_doc", "contract_problems", "element_text", "finding",
+    "findings", "HtmlTableReader", "HtmlTreeReader", "import_module", "render", "run_cli",
+    "run_main", "snapshot", "write_run_dir",
+]
 
 
 class MergeTests(unittest.TestCase):
@@ -155,6 +121,25 @@ class DocumentTests(unittest.TestCase):
         table = text.split("| Perspective |", 1)[1].split("\n\n", 1)[0]
         names = tuple(re.findall(r"^\| ([A-Z][^|]+?) \|", table, re.MULTILINE))
         self.assertEqual(names, findings.PERSPECTIVES)
+
+    def test_budget_families_match_script(self):
+        text = (SKILL / "reference" / "budgets.md").read_text(encoding="utf-8")
+        families = tuple(re.findall(r"^- \*\*([A-Z]+)\*\* —", text, re.MULTILINE))
+        self.assertEqual(families, findings.BUDGET_FAMILIES)
+
+    def test_readme_hunt_step_count_matches_perspectives(self):
+        text = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        steps = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \| (?!\*?Sound)", text, re.MULTILINE))
+        readme = (SKILL.parents[1] / "README.md").read_text(encoding="utf-8")
+        self.assertIn(f"with {len(steps)} hunt steps", " ".join(readme.split()))
+
+    def test_chat_block_follows_the_rendered_field_order(self):
+        text = (SKILL / "reference" / "report.md").read_text(encoding="utf-8")
+        block = text.split("```", 2)[1]
+        labels = [line.strip().split(":")[0] for line in block.splitlines()[2:] if ":" in line]
+        en = render.LABELS["en"]
+        rendered = [en[key] for key in render.FIELDS]
+        self.assertEqual([label for label in labels if label in rendered], rendered)
 
     def test_frontmatter(self):
         head = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("---")[1]

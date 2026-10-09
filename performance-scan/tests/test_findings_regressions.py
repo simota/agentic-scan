@@ -2,13 +2,12 @@
 import io
 import json
 from pathlib import Path
-import subprocess
-import sys
+import re
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_performance_scan import SKILL, complete_doc, finding, findings, render
+from support import complete_doc, finding, findings, render, run_cli, run_main
 
 
 MEASUREMENT = {
@@ -40,10 +39,7 @@ class JsonReadRegressionTests(unittest.TestCase):
                     out.mkdir()
                     for name, content in originals.items():
                         (out / name).write_bytes(content)
-                result = subprocess.run(
-                    [sys.executable, str(SKILL / "scripts" / "render.py"),
-                     str(source), "--out", str(out)],
-                    capture_output=True, text=True, check=False)
+                result = run_cli("render.py", source, "--out", out)
                 self.assertEqual(result.returncode, 2)
                 self.assertIn("schema:", result.stderr)
                 self.assertIn(str(source), result.stderr)
@@ -54,6 +50,23 @@ class JsonReadRegressionTests(unittest.TestCase):
                         self.assertEqual((out / name).read_bytes(), content)
                 else:
                     self.assertFalse(out.exists())
+
+
+class SchemaMessageTests(unittest.TestCase):
+    def test_schema_errors_name_the_input_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_text("[]", encoding="utf-8")
+            code, _, err = run_main(render.main, source, "--out", directory)
+            self.assertEqual(code, 2)
+            self.assertEqual(err, f"schema: {source}: top level: must be an object\n")
+
+    def test_error_messages_truncate_large_values(self):
+        doc = complete_doc()
+        doc["findings"][0]["severity"] = "x" * 10000
+        with self.assertRaises(findings.SchemaError) as caught:
+            findings.validate(doc)
+        self.assertLess(len(str(caught.exception)), 200)
 
 
 class MeasurementRegressionTests(unittest.TestCase):
@@ -221,6 +234,24 @@ class OptionalFieldRegressionTests(unittest.TestCase):
             doc = complete_doc()
             doc["findings"][0]["references"] = value
             yield "findings[0].references", value, doc
+
+    def test_optional_descriptive_fields_must_have_their_documented_types(self):
+        cases = (
+            (lambda d: d["meta"].update(method=1), "meta.method"),
+            (lambda d: d["findings"][0].update(step=5), "findings[0].step"),
+            (lambda d: d["budgets"][0].update(family="NET"), "budgets[0].family"),
+            (lambda d: d["budgets"][0].update(family=None), "budgets[0].family"),
+        )
+        for change, where in cases:
+            with self.subTest(where=where):
+                doc = complete_doc()
+                change(doc)
+                with self.assertRaisesRegex(findings.SchemaError, "^" + re.escape(where)):
+                    findings.validate(doc)
+        doc = complete_doc()
+        doc["meta"]["method"] = "Static review"
+        doc["budgets"][0]["family"] = "QRY"
+        findings.validate(doc, complete=True)
 
     def test_invalid_optional_fields_preserve_merge_target(self):
         with tempfile.TemporaryDirectory() as d:

@@ -17,6 +17,18 @@ install = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(install)
 
 
+STUB_TEST = """\
+import os
+import sys
+import unittest
+
+
+class StubTests(unittest.TestCase):
+    def test_stub(self):
+        print(f"stub suite ran in {os.getcwd()} with {sys.executable}")
+"""
+
+
 class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="performance-install-")
@@ -194,10 +206,12 @@ class MakefilePathTests(unittest.TestCase):
             shutil.copy2(REPO / name, self.repo / name)
         for name in ("skills", "examples", "scripts"):
             shutil.copytree(REPO / name, self.repo / name, ignore=shutil.ignore_patterns("__pycache__"))
-        # Exercise make test/check with the real script tests, without recursively
-        # copying this installer integration suite into its own fixture.
-        shutil.copytree(REPO / "tests", self.repo / "tests",
-                        ignore=shutil.ignore_patterns("test_install.py", "__pycache__"))
+        # make test/check run "unittest discover -s tests" from the checkout. What is
+        # under test is the Makefile's path quoting, not the suite itself (which runs
+        # on its own), so a one-file stub stands in and reports where it ran and with
+        # which interpreter.
+        (self.repo / "tests").mkdir()
+        (self.repo / "tests" / "test_stub.py").write_text(STUB_TEST, encoding="utf-8")
         self.skill = self.repo / "skills" / "performance-scan"
 
     def run_make(self, target, *variables, external=False, preceding=(), preload=None,
@@ -289,9 +303,12 @@ class MakefilePathTests(unittest.TestCase):
         self.run_make("demo", f"DEMO_OUT={output}")
         self.assertTrue((output / "dashboard.html").is_file())
         self.assertTrue((output / "report.md").is_file())
+        ran = f"stub suite ran in {self.repo.resolve()} with "
+        self.assertIn(ran, self.run_make("test", external=True))
         scratch = self.root / "check scratch"
         scratch.mkdir()
         output = self.run_make("check", f"TMPDIR={scratch}")
+        self.assertIn(ran, output)  # check depends on test
         self.assertIn("check ok", output)
         self.assertEqual(list(scratch.iterdir()), [])
 
@@ -312,6 +329,7 @@ class MakefilePathTests(unittest.TestCase):
         scratch = self.root / "check scratch"
         scratch.mkdir()
         output = self.run_make("check", variable, f"TMPDIR={scratch}", external=True)
+        self.assertIn(f"stub suite ran in {self.repo.resolve()} with {python}\n", output)
         self.assertIn("check ok", output)
         self.assertEqual(list(scratch.iterdir()), [])
 

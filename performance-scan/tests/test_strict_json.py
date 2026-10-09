@@ -1,14 +1,11 @@
 """Refuse ambiguous JSON and non-finite numbers before records can be lost."""
-from contextlib import redirect_stderr, redirect_stdout
-import io
 import json
 import os
 from pathlib import Path
-import stat
 import tempfile
 import unittest
 
-from test_performance_scan import complete_doc, findings, render
+from support import complete_doc, findings, render, run_main, snapshot
 
 
 def invalid_inputs():
@@ -26,18 +23,6 @@ def invalid_inputs():
 
 
 class StrictJsonTests(unittest.TestCase):
-    def snapshot(self, root):
-        entries = {}
-        for path in root.rglob("*"):
-            mode = path.lstat().st_mode
-            record = (stat.S_IFMT(mode), stat.S_IMODE(mode))
-            if stat.S_ISLNK(mode):
-                record += (path.readlink(),)
-            elif stat.S_ISREG(mode):
-                record += (path.read_bytes(),)
-            entries[str(path.relative_to(root))] = record
-        return entries
-
     def prepare(self, root):
         out = root / "out"
         out.mkdir()
@@ -54,10 +39,7 @@ class StrictJsonTests(unittest.TestCase):
         return out, source, fragment
 
     def invoke(self, main, args):
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            result = main([str(arg) for arg in args])
-        return result, output.getvalue(), errors.getvalue()
+        return run_main(main, *args)
 
     def assert_diagnostic(self, message, source, reason, detail):
         self.assertIn(str(source), message)
@@ -90,7 +72,7 @@ class StrictJsonTests(unittest.TestCase):
                     invalid.write_text(content, encoding="utf-8")
                     if origin == "new target":
                         source.unlink()
-                    original = self.snapshot(root)
+                    original = snapshot(root)
 
                     code, output, errors = self.invoke(
                         findings.main, ["merge", source, fragment])
@@ -99,7 +81,7 @@ class StrictJsonTests(unittest.TestCase):
                     self.assertEqual(output, "")
                     self.assertIn("refused:", errors)
                     self.assert_diagnostic(errors, invalid, reason, detail)
-                    self.assertEqual(self.snapshot(root), original)
+                    self.assertEqual(snapshot(root), original)
 
     def test_render_and_check_reject_ambiguous_or_non_standard_records(self):
         cases = [case for case in invalid_inputs()
@@ -111,7 +93,7 @@ class StrictJsonTests(unittest.TestCase):
                     root = Path(directory)
                     out, source, _ = self.prepare(root)
                     source.write_text(content, encoding="utf-8")
-                    original = self.snapshot(root)
+                    original = snapshot(root)
 
                     if operation == "render":
                         result = self.invoke(render.main, [source, "--out", out])
@@ -125,7 +107,7 @@ class StrictJsonTests(unittest.TestCase):
                     self.assertEqual(output, "")
                     self.assertIn(prefix, errors)
                     self.assert_diagnostic(errors, source, reason, detail)
-                    self.assertEqual(self.snapshot(root), original)
+                    self.assertEqual(snapshot(root), original)
 
     def test_finite_numbers_separate_objects_and_fragment_updates_still_round_trip(self):
         doc = complete_doc()

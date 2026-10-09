@@ -2,8 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from test_performance_scan import complete_doc, finding, findings, render
-from test_render_regressions import HtmlTreeReader, element_text
+from support import HtmlTreeReader, complete_doc, element_text, finding, findings, render
 
 
 LANGUAGES = (

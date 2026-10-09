@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_performance_scan import complete_doc, findings, render
+from support import complete_doc, findings, render
 
 
 class BudgetInferredValidationTests(unittest.TestCase):

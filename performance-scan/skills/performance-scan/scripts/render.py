@@ -33,6 +33,7 @@ LABELS = {
         "cost_model": "cost model", "request": "steps", "contrast": "contrast",
         "impact": "what happens", "verdict": "recorded verdict", "method": "verification",
         "evidence": "evidence", "measurement": "measurement", "fix": "fix direction",
+        "command": "command", "environment": "environment",
         "regression_test": "regression test", "references": "references", "status": "status",
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
@@ -50,6 +51,7 @@ LABELS = {
         "cost_model": "コストモデル", "request": "再現手順", "contrast": "対照",
         "impact": "何が起きるか", "verdict": "検証判定", "method": "検証の根拠",
         "evidence": "根拠", "measurement": "計測", "fix": "修正方針",
+        "command": "コマンド", "environment": "実行環境",
         "regression_test": "回帰テスト", "references": "参考", "status": "ステータス",
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
@@ -62,9 +64,14 @@ FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "cont
           "impact", "budget", "fix", "regression_test")
 
 
+def finding_group(finding):
+    """Use the same groups for summary counts and dashboard filters."""
+    return "excluded" if finding["validation"]["verdict"] in EXCLUDED else finding["severity"]
+
+
 def counts(findings):
-    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
-    return {s: sum(f["severity"] == s for f in active) for s in SEVERITIES}, len(findings) - len(active)
+    groups = [finding_group(f) for f in findings]
+    return {s: groups.count(s) for s in SEVERITIES}, groups.count("excluded")
 
 
 def as_text(value):
@@ -116,17 +123,36 @@ def markdown_code(value):
     return "<br>".join(span(line) for line in text_lines(value))
 
 
-def markdown_link(title, url):
-    label = markdown_text(title)
+def link_destination(url):
+    """Return a URL safe to link, before escaping for Markdown or HTML."""
     try:
         scheme = urlsplit(url).scheme.lower()
     except ValueError:
-        scheme = None
+        return None
     if scheme not in ("", "http", "https", "mailto"):
+        return None
+    return quote(url, safe="/:?#[]@!$&'+,;=%")
+
+
+def markdown_link(title, url):
+    label = markdown_text(title)
+    destination = link_destination(url)
+    if destination is None:
         return f"{label} ({markdown_text(url)})"
     # Keep URL syntax separate from Markdown syntax and from HTML entities.
-    destination = escape(quote(url, safe="/:?#[]@!$&'+,;=%"), quote=False)
-    return f"[{label}](<{destination}>)"
+    return f"[{label}](<{escape(destination, quote=False)}>)"
+
+
+def html_text(value):
+    return escape("\n".join(text_lines(value)))
+
+
+def html_link(title, url):
+    label = html_text(title)
+    destination = link_destination(url)
+    if destination is None:
+        return f"{label} ({html_text(url)})"
+    return f"<a href='{escape(destination)}'>{label}</a>"
 
 
 def budget_cells(budget, labels):
@@ -206,9 +232,12 @@ h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:96px}
 .card b{display:block;font-size:1.4rem}
 .High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
+a{color:var(--low)}
 details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
 summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
 dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+h1,summary,p,dd,td,li{white-space:pre-wrap}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 button[aria-pressed="true"]{border-color:var(--fg)}
@@ -225,7 +254,7 @@ def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    e = lambda v: escape(as_text(v))  # noqa: E731
+    e = html_text
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
@@ -238,21 +267,32 @@ def render_html(doc, lang):
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
+               + f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
                + "</p>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
+        group = finding_group(f)
+        exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
+                     if group == "excluded" else "")
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
         rows += [(t["verdict"], f"{v['verdict']} ({v['method']})"), (t["evidence"], v.get("evidence", "")),
                  (t["status"], f.get("status", "Open"))]
         if "measurement" in f:
             m = f["measurement"]
-            rows.append((t["measurement"], f"{m['result']} — {m['command']} ({m['environment']})"))
-        out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
+            rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
+        out.append(f"<details data-sev='{group}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
-                   + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows) + "</dl></details>")
+                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span>{exclusion}</summary><dl>"
+                   + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows))
+        if "measurement" in f:
+            out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"
+                       f"{e(f['measurement']['command'])}</code></pre></dd>")
+        for ref in f.get("references", []):
+            out.append(f"<dt>{e(t['references'])}</dt><dd>"
+                       f"{html_link(ref.get('title', ref['url']), ref['url'])}</dd>")
+        out.append("</dl></details>")
     if doc.get("budgets"):
         headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
         out.append(f"<h2>{e(t['budgets'])}</h2><table><thead><tr>"

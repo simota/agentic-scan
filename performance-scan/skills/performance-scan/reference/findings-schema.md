@@ -62,23 +62,23 @@ Each finding must be complete in the fragment that first adds it.
   "findings": [
     {
       "id": "P-001",
-      "title": "Order list loads line items per order (N+1)",
+      "title": "Order list lazy-loads items per order and products per item (N+1)",
       "severity": "High",
       "confidence": "Confirmed",
       "category": "Database access",
       "step": "DB1",
       "location": ["app/orders/serializers.py:42", "app/orders/views.py:18"],
       "workload": "Every signed-in user opening the order list (hot; polled every 30 s)",
-      "scale_driver": "Orders per page (max 100) × items per order (uncapped)",
-      "cost_model": "1 + N queries for items, + N for products; N = orders on the page",
-      "request": "1. A tenant with 100 orders, each with 20 items. 2. GET /api/orders?page=<n>",
-      "contrast": "GET /api/orders/<id> prefetches items at app/orders/views.py:61",
-      "impact": "Expected (B-01): constant queries. Actual: 201 queries per page; the list approaches the 30 s gateway timeout as items grow",
+      "scale_driver": "N = orders per page (max 100); M = items per order (uncapped)",
+      "cost_model": "1 + N + N × M data queries: one for orders, N for items, N × M for lazy-loaded products; excludes fixed request overhead",
+      "request": "1. The requested tenant page contains N=100 orders, each with M=20 items referencing distinct products; relation caches are empty. 2. GET /api/orders?page=<n>&page_size=100",
+      "contrast": "GET /api/orders/<id> prefetches items and their products at app/orders/views.py:61",
+      "impact": "Expected (B-01): constant data queries. Actual: 1 + 100 + 100 × 20 = 2101 data queries per page, growing with uncapped items per order even at a fixed page size; response latency was not measured",
       "budget": "B-01",
       "fix": "Prefetch items and products on the list queryset at app/orders/views.py:18",
-      "regression_test": "Query count for GET /api/orders is equal with 1 and 50 orders",
+      "regression_test": "After prefetching, GET /api/orders data-query counts are equal for (N,M)=(1,1), (50,1), (1,20), (50,20); each response still contains all expected orders, items and products",
       "validation": {"verdict": "Valid", "method": "static",
-                     "evidence": "views.py:18 queryset has no prefetch; serializers.py:42 iterates order.items.all()"},
+                     "evidence": "views.py:18 fetches orders without prefetch; serializers.py:42 evaluates order.items.all() once per order and reads item.product once per item without select_related or a shared product cache"},
       "status": "Open",
       "references": [{"title": "Django prefetch_related", "url": "https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related"}]
     }
@@ -101,7 +101,7 @@ embedding Markdown link syntax in another field.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only); omission or an empty string is allowed |
 | `findings[].id` | `P-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
@@ -109,12 +109,12 @@ embedding Markdown link syntax in another field.
 | `step` | Optional hunt step ID (`DB1`…) |
 | `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
-| `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
+| `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string |
+| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`. For other verdicts, `evidence` may be omitted or empty but must be a string when present |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | `{title, url}` |
-| `budgets[]` | `id` (`B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. `family` and `inferred` are optional |
+| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Omit `title` to use the URL as the link label; an empty title is also allowed |
+| `budgets[]` | `id` (`B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. A present `reason` must be a string (empty allowed). `family` and `inferred` are optional |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

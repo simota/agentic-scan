@@ -37,6 +37,7 @@ Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
 failed (reasons on stderr).
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -44,6 +45,11 @@ import re
 import secrets
 import stat
 import sys
+
+try:
+    import fcntl
+except ImportError:  # Windows: merges must run one at a time.
+    fcntl = None
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
@@ -78,7 +84,10 @@ FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
-EVIDENCE_LINE = re.compile(r"[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
+# It starts after a blank or opening punctuation, so the port in
+# `https://host:443` is not one; a Windows drive (`C:\repo\a.py:3`) is allowed.
+EVIDENCE_LINE = re.compile(
+    r"(?<![^\s(\[{'\"`,;])(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -392,13 +401,20 @@ def _first_location(f):
     return loc[:match.start(1) - 1], int(match[1])
 
 
-def _rewrite_ids(value, mapping):
+# Literal values that only look like prose: a path, a URL, a command that ran,
+# a rule's source. An `A-001` in them is a file, ticket or argument, not a finding.
+LITERAL_KEYS = {"location", "url", "command", "source"}
+
+
+def _rewrite_ids(value, mapping, key=None):
+    if key in LITERAL_KEYS:
+        return value
     if isinstance(value, str):
         return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
     if isinstance(value, list):
-        return [_rewrite_ids(v, mapping) for v in value]
+        return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):
-        return {k: _rewrite_ids(v, mapping) for k, v in value.items()}
+        return {k: _rewrite_ids(v, mapping, k) for k, v in value.items()}
     return value
 
 
@@ -409,7 +425,8 @@ def renumber(doc):
         SEVERITIES.index(findings[i]["severity"]), _first_location(findings[i]), i))
     mapping = {findings[i]["id"]: f"A-{n:03d}" for n, i in enumerate(order, 1)}
     # One pass over the old text, so A-001 -> A-002 and A-002 -> A-001 do not chain.
-    renamed = _rewrite_ids(doc, mapping)
+    # meta describes the run (its scope may name an earlier run's IDs).
+    renamed = {k: v if k == "meta" else _rewrite_ids(v, mapping) for k, v in doc.items()}
     if findings:
         renamed["findings"] = [renamed["findings"][i] for i in order]
         for f, i in zip(renamed["findings"], order):
@@ -421,20 +438,53 @@ def _serialize(doc):
     return (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
 
 
+@contextmanager
+def _exclusive(target):
+    """Hold an exclusive lock on target's directory from read to replace.
+
+    Two merges started together would otherwise both read the same record and
+    the later replace would drop the other's findings. The lock is on the
+    directory, so no lock file joins the outputs. Without fcntl (Windows), run
+    merges one at a time.
+    """
+    directory = target.resolve().parent
+    directory.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def cmd_renumber(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target)
-        validate(doc)
-        if len(doc.get("findings", [])) > 999:
-            raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
-        doc, changed = renumber(doc)
-        validate(doc)
-        if changed:
-            _atomic_write(target, _serialize(doc))
+        with _exclusive(target):
+            changed = _renumber_file(target)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
+    _report_renumber(target, changed)
+    return 0
+
+
+def _renumber_file(target):
+    doc = read_json(target)
+    validate(doc)
+    if len(doc.get("findings", [])) > 999:
+        raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
+    doc, changed = renumber(doc)
+    validate(doc)
+    if changed:
+        _atomic_write(target, _serialize(doc))
+    return changed
+
+
+def _report_renumber(target, changed):
     for old, new in sorted(changed.items()):
         print(f"{old} -> {new}")
     if changed:
@@ -445,21 +495,20 @@ def cmd_renumber(args):
               file=sys.stderr)
     else:
         print(f"already in order: {target}")
-    return 0
 
 
 def cmd_merge(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target) if target.exists() else {}
-        validate(doc)
-        for path in args.fragments:
-            merge(doc, read_json(path), path)
-            # Each fragment must leave a valid record, even in a batch.
+        with _exclusive(target):
+            doc = read_json(target) if target.exists() else {}
             validate(doc)
-        # Serialize before staging any output.
-        data = _serialize(doc)
-        _atomic_write(target, data)
+            for path in args.fragments:
+                merge(doc, read_json(path), path)
+                # Each fragment must leave a valid record, even in a batch.
+                validate(doc)
+            # Serialize before staging any output.
+            _atomic_write(target, _serialize(doc))
     except (OSError, ValueError, RuntimeError) as exc:
         # RuntimeError: Path.resolve() on a symlink loop before Python 3.13.
         print(f"refused: {exc}", file=sys.stderr)

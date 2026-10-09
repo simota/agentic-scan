@@ -247,11 +247,13 @@ class RenderConsistencyTests(unittest.TestCase):
         doc["findings"][1]["validation"].update(verdict="FalsePositive", evidence="delegates")
         html = render.render_html(doc, "en")
         self.assertEqual(html.count("class='excluded'"), 1)
-        self.assertIn("<details data-sev='Low' class='excluded'>", html)
+        self.assertIn("<details data-sev='excluded' class='excluded'>", html)
+        self.assertEqual(html.count("<details data-sev='Low'"), 0)
+        self.assertIn("<button data-filter='excluded' aria-pressed='false'>Excluded</button>", html)
 
     def test_list_items_cannot_open_markdown_blocks(self):
         items = {
-            "[Confirmed]: https://evil.example/x": "&#91;Confirmed&#93;: https://evil.example/x",
+            "[Confirmed]: https://evil.example/x": "&#91;Confirmed&#93;: https&#58;//evil.example/x",
             "---": "&#45;--", "***": "&#42;**", "# Not a heading": "&#35; Not a heading",
             "1) numbered": "1&#41; numbered", "12. twelve": "12&#46; twelve",
             "[x] looks done": "&#91;x&#93; looks done", "    indented": "&#32;&#32;&#32;&#32;indented",

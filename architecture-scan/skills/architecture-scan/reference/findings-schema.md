@@ -24,7 +24,10 @@ only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
 any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
-definition) and cannot form a link or image; backslashes are shown as written
+definition) and cannot form a link, image or autolink (a bare URL, `www.` or
+an e-mail address stays plain text, as in the dashboard); a blank optional
+field gets no row. The dashboard filters excluded findings separately from the
+severities, matching the counts; backslashes are shown as written
 (`docs\adr`), so they never escape a delimiter.
 Both outputs are written to temporary files first and replace the previous
 pair only once both are complete.
@@ -94,9 +97,11 @@ finding was added or regraded, render, and check again.
 Fragments may assign IDs in the order findings are found. Before rendering,
 `findings.py renumber <out>/findings.json` sorts the findings by severity, then
 by the path and line of their first location, and renames them `A-001`…
-without gaps. Every whole-word mention of an old ID anywhere in the record
-(`trace`, `next_steps`, `decisions`…) is rewritten in the same pass; a token
-such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
+without gaps. Every whole-word mention of an old ID in the record's prose
+(`title`, `trace`, `evidence`, `next_steps`, `decisions`…) is rewritten in the
+same pass. Literal values keep theirs: `meta`, every `location`, reference
+`url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
+ticket or an argument). A token such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds or regrades a finding, then render.
 
@@ -107,6 +112,11 @@ merging them. If a finding is added or regraded later, merge it, renumber
 again and re-render.
 
 ## Merge guarantees
+
+Merge and renumber hold an exclusive lock on the record's directory from
+reading the record to replacing it, so review units may merge at the same
+time without losing each other's findings. Where the lock is unavailable
+(Windows has no `fcntl`), run merges one at a time.
 
 The existing record is validated before merging, then the combined record is
 validated after each fragment. A refused batch writes nothing, even if earlier

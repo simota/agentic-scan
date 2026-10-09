@@ -120,6 +120,9 @@ def markdown_code(value):
 # Backslashes are literal (paths such as `docs\\adr`), so the punctuation after
 # one loses its escape and is encoded instead; `&<>` are already entities.
 AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
+# What GFM turns into a link without brackets: a scheme's colon, `www.`, and
+# the `@` of an e-mail address. Encoding the last character disarms each.
+AUTOLINK = re.compile(r"(?i)\b(?:https?|ftp|mailto|xmpp):|\bwww\.|@")
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
@@ -138,6 +141,7 @@ def markdown_inline(value):
         part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
                       escape(part, quote=False))
         part = AFTER_BACKSLASH.sub(lambda m: f"&#{ord(m[0])};", part)
+        part = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", part)
         return part.translate(LITERAL).replace("\n", "<br>")
 
     parts, end = [], 0
@@ -197,6 +201,11 @@ def perspective_rows(doc, lang):
     return [(name, recorded.get(name, missing)) for name in PERSPECTIVES]
 
 
+def filled(record, key):
+    """A recorded value worth a row: present and not blank."""
+    return key in record and bool(as_text(record[key]).strip())
+
+
 def markdown_reference(ref):
     if not is_safe_link(ref["url"]):
         # Web URLs and relative paths become links; any other scheme stays literal.
@@ -240,7 +249,7 @@ def render_markdown(doc, lang):
         lines.append("")
         lines.append(f"- **{t['category']}:** {text(category(f))}")
         for key in FIELDS:
-            if key in f:
+            if filled(f, key):
                 value = f[key]
                 if key == "location":
                     paths = value if isinstance(value, list) else [value]
@@ -249,7 +258,7 @@ def render_markdown(doc, lang):
                     formatted = text(value)
                 lines.append(f"- **{t[key]}:** {formatted}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
-        if v.get("evidence"):
+        if filled(v, "evidence"):
             lines.append(f"- **{t['evidence']}:** {text(v['evidence'])}")
         if "analysis" in f:
             a = f["analysis"]
@@ -359,22 +368,25 @@ def render_html(doc, lang):
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
-               + "</p>")
+               + f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button></p>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
         rows = [(t["category"], e(category(f)))]
-        rows += [(t[k], e(f[k])) for k in FIELDS if k in f]
-        rows += [(t["verdict"], e(f"{v['verdict']} ({v['method']})")),
-                 (t["evidence"], e(v.get("evidence", ""))), (t["status"], e(f.get("status", "Open")))]
+        rows += [(t[k], e(f[k])) for k in FIELDS if filled(f, k)]
+        rows.append((t["verdict"], e(f"{v['verdict']} ({v['method']})")))
+        if filled(v, "evidence"):
+            rows.append((t["evidence"], e(v["evidence"])))
+        rows.append((t["status"], e(f.get("status", "Open"))))
         if "analysis" in f:
             a = f["analysis"]
             rows.append((t["analysis"], e(f"{a['result']} — {a['tool']}: {a['command']}")))
         for ref in f.get("references", []):
             rows.append((t["references"], html_reference(ref)))
-        excluded_class = " class='excluded'" if v["verdict"] in EXCLUDED else ""
-        out.append(f"<details data-sev='{f['severity']}'{excluded_class}><summary>"
+        # Excluded findings are not in the severity counts, so not in their filters.
+        group = "excluded' class='excluded" if v["verdict"] in EXCLUDED else f["severity"]
+        out.append(f"<details data-sev='{group}'><summary>"
                    f"<span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"<span class='muted'>· {e(f['confidence'])} · {e(v['verdict'])} · "

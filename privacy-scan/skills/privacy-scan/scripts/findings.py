@@ -31,6 +31,10 @@ from pathlib import Path
 import re
 import sys
 
+# Keep source-only CLI runs from writing imported helpers into the skill tree.
+sys.dont_write_bytecode = True
+from output_io import write_utf8_files  # noqa: E402
+
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
 VERDICTS = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
@@ -65,7 +69,8 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 COMMITMENT_ID = re.compile(r"^C-\d{2,}$")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
-LOCATION = re.compile(r"^[^\s:]+(?::\d+(?:-\d+)?)$")
+# Spaces are valid in source paths; control characters and line breaks are not.
+LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
@@ -85,9 +90,17 @@ def read_json(path):
         raise SchemaError(f"{path}: {exc}") from exc
 
 
+def _utf8(value, where):
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        raise SchemaError(f"{where}: must contain valid Unicode characters") from None
+
+
 def _text(value, where):
     if not isinstance(value, str) or not value.strip():
         raise SchemaError(f"{where}: must be a nonblank string")
+    _utf8(value, where)
 
 
 def _object(value, allowed, where):
@@ -105,8 +118,10 @@ def _list(value, where):
 
 def _optional_strings(record, keys, where):
     for key in keys:
-        if key in record and not isinstance(record[key], str):
-            raise SchemaError(f"{where}.{key}: must be a string when present")
+        if key in record:
+            if not isinstance(record[key], str):
+                raise SchemaError(f"{where}.{key}: must be a string when present")
+            _utf8(record[key], f"{where}.{key}")
 
 
 def _id(value, pattern, example, where):
@@ -161,7 +176,9 @@ def validate_finding(f, where):
         if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
             raise SchemaError(f"{where}.location[{i}]: must be path:line")
         # The parsed line range is technical metadata; the path can hold PII.
-        _no_personal_values(loc.rsplit(":", 1)[0], f"{where}.location[{i}]")
+        path = loc.rsplit(":", 1)[0]
+        _text(path, f"{where}.location[{i}]")
+        _no_personal_values(path, f"{where}.location[{i}]")
     v = f["validation"]
     _object(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
@@ -305,7 +322,11 @@ def cmd_merge(args):
     except SchemaError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
-    target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    try:
+        write_utf8_files({target: json.dumps(doc, ensure_ascii=False, indent=2) + "\n"})
+    except (OSError, UnicodeError) as exc:
+        print(f"write failed: could not save merged record ({type(exc).__name__})", file=sys.stderr)
+        return 1
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "
           f"{len(doc.get('findings', []))} finding(s)")
     return 0
@@ -318,9 +339,12 @@ def contract_problems(out, allow=()):
     present = {p.name for p in out.iterdir()} if out.is_dir() else set()
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
+    for name in sorted(OUTPUTS & present):
+        if not (out / name).is_file():
+            problems.append(f"output is not a file: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
         problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    if "findings.json" not in present:
+    if "findings.json" not in present or not (out / "findings.json").is_file():
         return problems
     try:
         doc = read_json(out / "findings.json")
@@ -340,8 +364,8 @@ def contract_problems(out, allow=()):
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
     for i, r in enumerate(doc.get("commitments", [])):
-        if r["status"] == "not checked" and "reason" not in r:
-            problems.append(f"commitments[{i}]: a not-checked commitment needs a reason")
+        if r["status"] == "not checked" and not r.get("reason", "").strip():
+            problems.append(f"commitments[{i}]: a not-checked commitment needs a nonblank reason")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

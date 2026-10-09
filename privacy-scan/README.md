@@ -77,9 +77,14 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 | `report.md` | The written assessment: scope, findings, commitments, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
-gapless `PV-NNN` IDs in severity order, every perspective recorded, and
-nonempty `checked_ok` and `limitations`. It checks shape, not whether a finding
-is true.
+gapless `PV-NNN` IDs in severity order, every perspective recorded, nonblank
+reasons for unchecked commitments, and nonempty `checked_ok` and `limitations`.
+It checks shape, not whether a finding is true.
+
+The scripts reject text that cannot be encoded as UTF-8 and stage output bytes
+before replacing files, so encoding or staging failures preserve existing results.
+Reports retain the recorded review method even with zero findings, and the
+dashboard preserves line breaks and indentation in analysis commands.
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report for an owner or
@@ -98,6 +103,7 @@ skills/privacy-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; refuses personal values; checks the run contract
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/output_io.py         stages UTF-8 output before replacing files
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or DPO
 examples/findings.sample.json  fictional sample for make demo / make check

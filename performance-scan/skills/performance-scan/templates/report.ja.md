@@ -1,6 +1,10 @@
 <!--
 パフォーマンス上の検出事項を、オーナーや管理者に報告するテンプレート。1 通に複数の finding を載せてよい。
 件数と各 finding は findings.json から転記し、ダッシュボードと食い違わないようにする。
+件数は findings.json のフィールドではない。n_<深刻度> は判定が FalsePositive / NotApplicable 以外の
+該当深刻度の件数、n_excluded はそれ以外の件数、n_likely / n_unverified / n_unlikely は除外以外の
+判定別件数。「うち Valid」は深刻度ごとの Valid 件数。
+任意フィールド: meta.commit が空なら UNKNOWN と書き、値のないフィールドの行は削除する。
 
 送る前に確認すること:
 - 計測していないレイテンシ・スループット・メモリの数値を書かない
@@ -21,7 +25,7 @@
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。可能性が高い（Likely）: {{n_likely}} 件。未検証（Unverified）: {{n_unverified}} 件。
+除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。可能性が高い（Likely）: {{n_likely}} 件。未検証（Unverified）: {{n_unverified}} 件。可能性が低い（Unlikely）: {{n_unlikely}} 件。
 
 ## 2. 対象と方法
 
@@ -47,7 +51,7 @@
 - **コストモデル:** {{cost_model}}
 - **影響:** {{impact}}
 - **修正方針:** {{fix}}
-- **管理先:** <issue の URL>
+- **対応 issue:** <issue の URL>
 
 ## 4. 性能バジェット
 
@@ -76,5 +80,5 @@
 
 ## 添付
 
-- `report.md` — 診断結果の文書
+- `report.md` — 診断レポート本文
 - `dashboard.html` — 全検出事項（オフラインで閲覧可）

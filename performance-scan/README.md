@@ -29,7 +29,7 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 - **Perspectives** — twelve review angles (database access, algorithms,
   memory, I/O and network, caching, concurrency and resources, payload and API
   shape, front end, background work, startup and configuration, dependencies,
-  observability) with about 45 hunt steps and a table of sound vs look-alike
+  observability) with 47 hunt steps and a table of sound vs look-alike
   constructs. Each perspective applied, not applicable, or not checked is
   recorded in the report
 - **Validation** — every finding gets a verdict (`Valid`, `Likely`,

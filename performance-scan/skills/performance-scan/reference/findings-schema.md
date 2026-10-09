@@ -17,7 +17,8 @@ output could not be encoded or saved, `2` the input is unreadable, is not valid
 UTF-8 JSON, exceeds Python's parsing limits, or does not match the shape
 (the field is named for shape errors).
 `findings.py check` exits `1` and lists contract
-violations. Required outputs must be readable, nonempty regular files;
+violations; a path that is not a directory is reported as such. Both scripts
+exit `2` on a command-line usage error. Required outputs must be readable, nonempty regular files;
 symbolic links to such files are allowed. The check validates the record and
 file structure, not whether rendered text is current or a finding is true.
 
@@ -69,7 +70,11 @@ Merge semantics:
 - `findings` and `budgets` match by `id`: a known record is updated key by key
   (so a later fragment can add just `validation` to `P-003`), a new one is
   appended. Duplicate IDs within one fragment are refused
-- `perspectives` match by `name` and replace the whole entry
+- `perspectives` match by `name` and replace the whole entry, so parallel
+  reviewers leave `perspectives` out of their fragments; the coordinator writes
+  one final entry per perspective: `applied` if any unit applied it, `not
+  checked` if any unit could not check it, otherwise `N/A`, with a note joining
+  the unit notes (`orders: DB1–DB3 via B-01; billing: DB5 N/A …`)
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
@@ -163,18 +168,18 @@ embedding Markdown link syntax in another field.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
-| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…). Gapless, numbered in severity order (excluded verdicts may sit anywhere) |
+| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` does not rank them) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional string: the hunt step ID from `reference/perspectives.md` (`DB1`…) |
 | `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
-| `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `check` requires a nonblank `budget` to name an ID in `budgets[]` |
+| `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `budget` holds exactly one ID, and `check` requires a nonblank `budget` to name an ID in `budgets[]`; name other violated budgets in `impact` |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`. For other verdicts, `evidence` may be omitted or empty but must be a string when present |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
-| `status` | `Open` (default), `Fixed`, `Accepted` |
+| `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost; still counted in the totals, with the decision recorded in `decisions`) |
 | `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. An omitted or blank `title` uses the URL as the link label |
 | `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs a nonblank `reason` for `check`. A present `reason` must be a string (empty allowed while merging). `family` (`QRY`, `SIZE`, `CPLX`, `LAT`, `RES` or `FE`, from `reference/budgets.md` §2) and `inferred` are optional |
 | `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |

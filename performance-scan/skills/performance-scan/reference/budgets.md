@@ -31,7 +31,7 @@ drivers grow. Derive it from evidence in the repository, strongest first:
 
 Write each budget with its source (`path:line`). A budget inferred only from
 sources 3–6 is marked `inferred`, and the bound itself goes to `decisions` so a
-person can confirm it.
+person can confirm it. Budgets from sources 1–2 are not `inferred`.
 
 ## 2. The ledger
 
@@ -53,13 +53,15 @@ Families:
 
 Seed the ledger with one `baseline` entry per family that applies (e.g. `B-01
 QRY baseline: every hot list endpoint issues a constant number of queries`),
-then add app-specific entries. *Status* is `holds`, `violated`, `partly read`
+then add app-specific entries. A baseline entry uses `source: "baseline"` plus
+any supporting `path:line` and `inferred: false`; it goes to `decisions` only
+when the code contradicts it. *Status* is `holds`, `violated`, `partly read`
 or `not checked` (with a reason).
 
 ## 3. Cost-trace rows
 
-For each ledger entry, one row per path that pays it, and one row per scale
-driver the path iterates:
+For each ledger entry, one row per path that pays it and scale driver that path
+iterates; a path with constant cost gets one row with Driver `none`:
 
 | Entry | Path | Driver | Hops (entry → loop → sink, `path:line`) | Cost | Mitigation | Verdict |
 |---|---|---|---|---|---|---|
@@ -74,7 +76,8 @@ driver the path iterates:
 
 ## 4. Close-check per review unit
 
-A unit closes when: rows = paths × drivers for every owned entry; every
+A unit closes when, for every owned entry, rows = the sum over its paths of
+max(1, drivers that path iterates); every
 *Mitigation* cell is filled (zero blank); every `lead` is resolved into a
 finding, a `checked_ok` line or a `limitations` line. Record the counts
 (`entries 4, paths 11, rows 15, blank 0`) in scratch.
@@ -92,7 +95,7 @@ Each finding carries:
   "none"
 - `impact` — expected (the budget) vs actual (the cost model), and the bounded
   consequence (timeouts at the gateway limit, pool exhaustion, memory growth)
-- `budget` — the ledger ID
+- `budget` — exactly one ledger ID; name any other violated budget in `impact`
 - `fix` — one line: the bound restored and where (eager load at `path:line`,
   `LIMIT` with a cursor, a batch call, a composite index on named columns)
 - `regression_test` — at least one deterministic assertion: query or call

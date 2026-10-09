@@ -48,25 +48,31 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | Group the workload inventory by domain: one unit per domain plus one cross-cutting unit (DB and HTTP client setup, middleware, caching layer, runtime and build config). Each unit first hunts the budget ledger entries it owns, then sweeps every applicable perspective once over the unit. A unit closes only when its close-check matches (`reference/budgets.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
-| IDs | `P-001`… numbered without gaps in severity order (then path). No other prefixes |
+| IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). One REPORT coordinator runs all merges to the same `findings.json` sequentially; parallel reviewers write scratch fragments only. Atomic replacement does not detect concurrent updates |
+| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). Reviewers never put `perspectives` in their fragments (a later entry replaces an earlier one whole); they keep per-unit notes in scratch, and the coordinator writes one entry per perspective combining every unit. One REPORT coordinator runs all merges to the same `findings.json` sequentially; parallel reviewers write scratch fragments only. Atomic replacement does not detect concurrent updates |
 | Read-only | Read, search and run this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
 
 | Severity | When |
 |---|---|
-| High | On a hot path (an interactive request, a frequent API call, a job with a deadline), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime |
-| Medium | A High-class growth that needs one condition the code does not control (a large tenant, a missing index that the migrations do not show either way, a feature flag), a large bounded cost on a hot path (many sequential outbound calls, multi-megabyte responses, a render that redoes all work per keystroke), or uncapped growth on a warm path |
-| Low | Inefficiency on a cold path (admin, one-off, startup), a missed cache with small cost, constant-factor waste |
+| High | On a hot path (an interactive request, a frequent API call, a job with a deadline), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime on a hot or warm path |
+| Medium | A High-class growth that needs one condition the code does not control (a large tenant, a missing index that the migrations do not show either way, a feature flag), a bounded cost that, at its cap, violates a ledger budget on a hot path (many sequential outbound calls, multi-megabyte responses, a render that redoes all work per keystroke), uncapped growth on a warm path, or a leak fed only by a cold path |
+| Low | Inefficiency on a cold path (admin, one-off, startup) that stalls nothing shared, a bounded budget violation on a warm path, a missed cache with small cost, constant-factor waste |
 | Info | A tuning or observability note with no demonstrated cost path |
 
-Each further condition the code does not control lowers severity one level. An
-`Environment-dependent` finding is graded as if its stated condition holds, and
-names that condition and the threshold (e.g. "above ~10k rows per tenant").
+The condition the code does not control is what lowers High-class growth to
+Medium; each further such condition lowers it one more level. Record such a
+finding as `Environment-dependent` and name the condition and the threshold at
+which it matters (e.g. "above ~10k rows per tenant"). Confidence does not move
+severity again: the condition has already been counted here.
+
+A stall of a shared resource (event loop, pool, global lock) is graded by the
+workloads that stall, not by the path that causes it: an admin export that
+blocks the event loop of the API is High, not Low.
 
 ## Phases
 
@@ -99,12 +105,12 @@ requester's language (`--lang ja|en`).
 | Asked "what should we check" or "list the items" | RECON and CHECKLIST only, then stop and deliver the checklist |
 | Asked to check, audit, scan or find bottlenecks | All five phases |
 | Asked about one slow screen, endpoint or job | Scope the review units to the paths that serve it, plus the cross-cutting unit; say the rest was not read in `limitations` |
-| No document states a latency target or limit | Infer the budget from timeouts, page-size defaults, existing pagination and the majority of handlers; mark it `inferred` in the ledger, hunt it anyway, and put the bound itself in `decisions` |
+| No document states a latency target or limit | Derive the budget from hard limits (timeouts, page-size maxima, body limits; not `inferred`) and, failing those, from existing pagination and the majority of handlers (`inferred: true`, with the bound itself in `decisions`). Hunt it either way (`reference/budgets.md` §1) |
 | The ORM loads relations lazily by default | List every relation accessed inside a loop or a serializer over a collection, and check each for eager loading on that path. This list is the N+1 hunt list |
 | Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them; if they do not, report `Environment-dependent` and name the index to confirm |
 | A finding's cost depends on data volume | State the volume at which it matters and where the volume comes from; never present a guess of production size as fact |
-| A cache sits in front of the cost | Check the key, the invalidation, the TTL, the bound on size and what happens on a miss storm. A cache does not mitigate a cold path or a per-user key on a shared cost |
-| The framework is async or event-loop based | Hunt synchronous blocking calls (file, crypto, DNS, sync HTTP or DB clients, CPU-heavy loops) on the loop. One is enough to stall every concurrent request |
+| A cache sits in front of the cost | Check the key, the invalidation, the TTL, the bound on size and what happens on a miss storm. A cache does not mitigate the first request after a miss or expiry (cold cache), nor a shared cost cached under a per-user key |
+| The framework is async or event-loop based | Hunt synchronous blocking calls (file, crypto, synchronous DNS resolution such as `socket.gethostbyname`, sync HTTP or DB clients, CPU-heavy loops) on the loop. One is enough to stall every concurrent request. Check what the framework already offloads (e.g. FastAPI runs sync `def` routes in a threadpool) before reporting |
 | A front end is in the repo | Apply the *Front end* perspective; read the build config and the largest routes. Bundle size from a local build is a measurement and needs the MEASURE go-ahead |
 | The requester wants numbers (latency, throughput, memory) | MEASURE only on their own local or throwaway environment after an explicit go-ahead; never production, never shared environments, never third-party endpoints. Without measurement, report cost models, not milliseconds |
 | Asked to confirm a fix or guard against regression | VERIFY-FIX: a deterministic assertion (query count, call count, allocation or size budget) in the repo's own suite, red before and green after. Prefer counts over wall-clock thresholds, which flake |
@@ -158,7 +164,7 @@ requester's language (`--lang ja|en`).
 ## Done when
 
 `scripts/findings.py check <out>` passes, every entry point on a hot workload
-has been read, every budget ledger entry has a status (holds on all paths,
+has been read or is counted as unreached in `limitations`, every budget ledger entry has a status (holds on all paths,
 violated, partly read, or not checked with the reason), every review unit's
 close-check matches with zero blank cells, every perspective in
 `reference/perspectives.md` is recorded as applied, N/A or not checked, every

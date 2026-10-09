@@ -46,7 +46,8 @@ wrong, and run it by reading:
 
 ## Triaging `I-*`
 
-Each baseline hit gets a verdict:
+Each baseline hit gets a verdict; `contract_check.py` fails while any `I-*` is
+still `Unverified`:
 
 | Situation | Verdict |
 |---|---|

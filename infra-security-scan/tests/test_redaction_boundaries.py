@@ -45,7 +45,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                 "confidence": "Suspected", "category": "Network exposure", "provider": "multi",
                 "resources": ["example.main"], "location": location, "actor": "External actor",
                 "path": "1. Review the configuration boundary", "impact": "A private boundary is expected",
-                "fix": "Restrict the boundary", "regression": "Assert private access",
+                "fix": "Restrict the boundary", "regression": "Assert private access", "contrast": "none",
                 "validation": {"verdict": "Likely"},
             }]
         else:

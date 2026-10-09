@@ -20,7 +20,7 @@ def finding(fid="F-001", **extra):
         "category": "Data protection", "provider": "gcp", "resources": ["google_storage_bucket_iam_member.x"],
         "location": "envs/prod/gcp/storage.tf:27", "actor": "Anyone on the internet",
         "path": "1. allUsers binding (envs/prod/gcp/storage.tf:27)", "impact": "Expected private; actual public",
-        "fix": "Remove the binding", "regression": "No allUsers members",
+        "fix": "Remove the binding", "regression": "No allUsers members", "contrast": "none",
         "validation": {"verdict": "Valid", "evidence": "Read at the cited line"},
     }
     f.update(extra)
@@ -88,7 +88,7 @@ class MergeTest(unittest.TestCase):
         self.assertIn("I-* findings come only from iac_scan.py", err)
         seeded = render.empty_record()
         seeded["findings"].append({k: v for k, v in finding("I-001", rule="AWS-NET-001").items()
-                                   if k not in ("actor", "path", "impact", "fix", "regression")}
+                                   if k not in ("actor", "path", "contrast", "impact", "fix", "regression")}
                                   | {"validation": {"verdict": "Unverified"}})
         self.record.write_text(json.dumps(seeded), encoding="utf-8")
         code, err = self.merge(self.fragment({"findings": [{"id": "I-001", "title": "renamed"}]}))

@@ -31,7 +31,7 @@ and `scripts/iac_scan.py --into` (`I-*` findings and `meta.commit`).
 |---|---|---|
 | `project` | yes | Name of the assessed estate or repository |
 | `scope` | yes | Accounts/projects/clusters and environments in scope |
-| `date` | yes | `YYYY-MM-DD` |
+| `date` | yes | `YYYY-MM-DD`, a real calendar date |
 | `assessor` | yes | Host and model |
 | `method` | no | e.g. `Static review of Terraform and plan JSON; no cloud API calls` |
 | `providers` | no | Subset of `aws`, `gcp`, `azure`, `kubernetes` |
@@ -77,22 +77,25 @@ digits; the sequence continues through `AP-100` and beyond.
 | `category` | yes | A perspective name from `reference/perspectives.md` |
 | `provider` | yes | `aws`, `gcp`, `azure`, `kubernetes`, `multi` |
 | `resources` | yes | Resource addresses (`module.web.aws_security_group.app`) |
-| `location` | yes | `path:line` or `path:line-line` in the assessed repository |
+| `location` | yes | `path:line` or `path:line-line` in the assessed repository; lines start at 1 and a range does not run backwards |
 | `actor` | F-* | The entry actor and the preconditions it needs |
 | `path` | F-* | Numbered edges of the attack path, `\n`-separated |
+| `contrast` | F-* | A sibling resource configured soundly, with `path:line`, or `none` and why |
 | `impact` | F-* | Expected vs actual, and the bounded impact |
 | `fix` | F-* | One line: the boundary restored and where it goes |
 | `regression` | F-* | A policy-as-code assertion of the secure state |
 | `controls` | no | Benchmark and section title, e.g. `CIS AWS Foundations — S3 Block Public Access is enabled`; add the section number only from the edition the requester uses |
-| `cwe` | no | e.g. `CWE-284` |
+| `cwe` | no | `CWE-` and a number, e.g. `CWE-284` |
 | `attack_paths` | no | `AP-*` IDs this finding is an edge of |
 | `condition` | Environment-dependent | The unverified setting the grade assumes |
-| `references` | no | `[{"title": "...", "url": "https://..."}]`, https only, no credentials |
+| `references` | no | `[{"title": "...", "url": "https://..."}]`; both required, https only, no credentials |
 | `rule` | I-* | The baseline rule ID (`AWS-NET-001`…) |
+| `detail` | no | What the baseline rule matched; written by `iac_scan.py` |
 | `validation` | yes | `{"verdict": "...", "evidence": "..."}` |
 
 IDs are ordered by their numeric suffix within each prefix, so `I-999` precedes
-`I-1000`. Review IDs run without gaps in severity order, then location; the
+`I-1000`. IDs are unique by number: `F-001` and `F-0001` (or `AP-01` and
+`AP-001`) are the same ID and cannot both appear. Review IDs run without gaps in severity order, then location; the
 minimum width is padding, not a limit on the number of findings.
 
 ### validation

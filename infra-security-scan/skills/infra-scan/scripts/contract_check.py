@@ -5,13 +5,15 @@
 
 OUT_DIR holds findings.json and the rendered outputs. The check covers shape
 and provenance only: schema, ID scheme and order, the fields every F-* finding
-carries, a verdict on every I-*, every perspective recorded once, the
-inventory written by iac_scan.py, and the exact output file set. It cannot
-tell whether a finding is true.
+carries, a triage verdict (not `Unverified`) on every I-*, every perspective
+recorded once, the inventory written by iac_scan.py, and the exact output file
+set, each output nonempty and of its kind (HTML, iac_scan JSON, %PDF). It
+cannot tell whether a finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """
 import argparse
+import json
 from pathlib import Path
 import re
 import sys
@@ -22,6 +24,38 @@ import render  # noqa: E402
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
 FORBIDDEN = re.compile(r"\.tfstate(\.[^/]*)?$|\.tfvars(\.json)?$")
+
+
+def location_key(location):
+    """Order path:line numerically within a file: storage.tf:9 before :10."""
+    m = render.LOCATION.match(location) if isinstance(location, str) else None
+    if not m:
+        return (str(location), 0, 0)
+    return (m.group(1), int(m.group(2)), int(m.group(3) or m.group(2)))
+
+
+def output_problem(path):
+    """Catch placeholders: an output must hold what its producer writes."""
+    if path.is_symlink() or not path.is_file():
+        return "is not a regular file"
+    if path.stat().st_size == 0:
+        return "is empty"
+    if path.name == "assessment.pdf":
+        with path.open("rb") as fh:
+            if fh.read(5) != b"%PDF-":
+                return "is not a PDF"
+    elif path.name == "iac.json":
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, UnicodeError, ValueError, RecursionError):
+            return "is not valid JSON"
+        if not isinstance(doc, dict) or doc.get("tool") != "iac_scan":
+            return "was not written by iac_scan.py --out"
+    elif path.suffix == ".html":
+        with path.open("rb") as fh:
+            if not fh.read(64).lstrip().lower().startswith(b"<!doctype html"):
+                return "is not an HTML report written by render.py"
+    return None
 
 
 def check(data, out_dir, pdf=True, allow=()):
@@ -39,7 +73,7 @@ def check(data, out_dir, pdf=True, allow=()):
     numbers = [int(F_ID.match(f["id"]).group(1)) for f in by_id]
     if numbers != list(range(1, len(fs) + 1)):
         add(f"F-*: IDs must run F-001..F-{len(fs):03d} without gaps; found {[f['id'] for f in by_id]}")
-    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9), str(f.get("location", ""))))
+    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9), location_key(f.get("location"))))
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "
             + ", ".join(f"{f['id']}={f.get('severity')}@{f.get('location')}" for f in expected))
@@ -53,10 +87,12 @@ def check(data, out_dir, pdf=True, allow=()):
         fid = str(f.get("id", ""))
         if not (F_ID.match(fid) or render.I_ID.match(fid)):
             add(f"{fid}: only F-* and I-* IDs are allowed")
-    unverified = [f["id"] for f in findings if str(f.get("id", "")).startswith("I-")
-                  and f.get("validation", {}).get("verdict") == "Unverified"]
+    # "Done when" requires a verdict on every I-*; Unverified means not triaged.
+    unverified = [str(f.get("id")) for f in findings if str(f.get("id", "")).startswith("I-")
+                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
     if unverified:
-        notes.append(f"{len(unverified)} I-* finding(s) still Unverified: {', '.join(unverified)}")
+        add(f"I-*: {len(unverified)} finding(s) still Unverified; triage each one "
+            f"(reference/validation.md): {', '.join(unverified)}")
 
     names = render.perspective_names()
     recorded = [p.get("name") for p in data.get("perspectives", []) if isinstance(p, dict)]
@@ -75,6 +111,10 @@ def check(data, out_dir, pdf=True, allow=()):
     present = {p.name for p in out.iterdir()}
     for name in sorted(required - present):
         add(f"outputs: {name} missing")
+    for name in sorted(required & present):
+        problem = output_problem(out / name)
+        if problem:
+            add(f"outputs: {name} {problem}")
     for name in sorted(present - OUTPUTS - set(allow)):
         add(f"outputs: unexpected {name} (pass --allow {name} if the requester asked for it)")
     for p in out.rglob("*"):

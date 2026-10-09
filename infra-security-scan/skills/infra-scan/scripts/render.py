@@ -19,6 +19,7 @@ Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input
 or schema error (every problem on stderr).
 """
 import argparse
+import datetime
 import html
 import json
 import os
@@ -48,13 +49,14 @@ EXCLUDED = {"FalsePositive", "NotApplicable"}
 AP_STATUSES = ("open", "blocked", "unknown")
 P_STATUSES = ("Applied", "N/A", "Not checked")
 INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
-F_ID = re.compile(r"^F-(\d{3,})$")
-I_ID = re.compile(r"^I-(\d{3,})$")
-AP_ID = re.compile(r"^AP-(\d{2,})$")
-LOCATION = re.compile(r"^([^\s:]+):(\d+)(?:-(\d+))?$")
-CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:\d+")
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-F_FIELDS = ("actor", "path", "impact", "fix", "regression")
+# ASCII digits and \Z: "$" would accept a trailing newline and \d other scripts' digits.
+F_ID = re.compile(r"^F-([0-9]{3,})\Z")
+I_ID = re.compile(r"^I-([0-9]{3,})\Z")
+AP_ID = re.compile(r"^AP-([0-9]{2,})\Z")
+LOCATION = re.compile(r"^([^\s:]+):([0-9]+)(?:-([0-9]+))?\Z")
+CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:[0-9]+")
+DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
 BASE_FIELDS = ("title", "location")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
@@ -104,6 +106,30 @@ def load(path):
         raise SchemaError(f"{path}: {e}") from None
 
 
+CWE = re.compile(r"^CWE-[0-9]+\Z")
+
+
+def valid_date(value):
+    if not DATE.match(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def location_problem(location):
+    """path:line or path:line-line, with lines counted from 1."""
+    m = LOCATION.match(location)
+    if not m:
+        return "location must be path:line or path:line-line"
+    start, end = int(m.group(2)), int(m.group(3) or m.group(2))
+    if start < 1 or end < start:
+        return "location lines start at 1 and a range must not run backwards"
+    return None
+
+
 def empty_record():
     return {"schema_version": 1, "meta": {}, "attack_paths": [], "findings": [], "perspectives": [],
             "checked_ok": [], "decisions": [], "limitations": [], "next_steps": []}
@@ -119,7 +145,7 @@ def validate(data, partial=False):
     unknown = set(data) - TOP
     if unknown:
         add(f"record: unknown top-level keys {sorted(unknown)}")
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         add("record: schema_version must be 1")
 
     meta = data.get("meta", {})
@@ -130,8 +156,8 @@ def validate(data, partial=False):
         for key in ("project", "scope", "date", "assessor"):
             if blank(meta.get(key)):
                 add(f"meta.{key}: required")
-    if not blank(meta.get("date")) and not DATE.match(meta["date"]):
-        add("meta.date: must be YYYY-MM-DD")
+    if not blank(meta.get("date")) and not valid_date(meta["date"]):
+        add("meta.date: must be a calendar date, YYYY-MM-DD")
     for key in ("project", "scope", "date", "assessor", "method", "commit"):
         if key in meta and not isinstance(meta[key], str):
             add(f"meta.{key}: must be a string")
@@ -158,8 +184,10 @@ def validate(data, partial=False):
     if not isinstance(paths, list):
         add("attack_paths: must be a list")
         paths = []
-    finding_ids = {f.get("id") for f in findings if isinstance(f, dict)}
-    ap_ids = {a.get("id") for a in paths if isinstance(a, dict)}
+    # Only string IDs can be referenced; other types are reported below
+    # instead of crashing set membership.
+    finding_ids = {f.get("id") for f in findings if isinstance(f, dict) and isinstance(f.get("id"), str)}
+    ap_ids = {a.get("id") for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)}
     names = perspective_names()
 
     seen = set()
@@ -173,12 +201,16 @@ def validate(data, partial=False):
         is_i = isinstance(fid, str) and bool(I_ID.match(fid))
         if not (is_f or is_i):
             add(f"{where}: id must be F-NNN or I-NNN (at least three digits)")
-        if fid in seen:
-            add(f"{where}: duplicate id")
-        seen.add(fid)
+        else:
+            # F-001 and F-0001 are the same number; IDs are compared numerically.
+            if id_key(fid) in seen:
+                add(f"{where}: duplicate id")
+            seen.add(id_key(fid))
         for key in BASE_FIELDS:
             if blank(f.get(key)):
                 add(f"{where}: {key} required")
+        if isinstance(f.get("title"), str) and "\n" in f["title"].strip():
+            add(f"{where}: title must be one line")
         if f.get("severity") not in SEVERITIES:
             add(f"{where}: severity must be one of {', '.join(SEVERITIES)}")
         if f.get("confidence") not in CONFIDENCES:
@@ -190,8 +222,10 @@ def validate(data, partial=False):
         res = f.get("resources")
         if not isinstance(res, list) or not res or any(blank(r) for r in res):
             add(f"{where}: resources must be a nonempty list of resource addresses")
-        if not blank(f.get("location")) and not LOCATION.match(f["location"]):
-            add(f"{where}: location must be path:line or path:line-line")
+        if not blank(f.get("location")):
+            problem = location_problem(f["location"])
+            if problem:
+                add(f"{where}: {problem}")
         if is_f:
             for key in F_FIELDS:
                 if blank(f.get(key)):
@@ -200,20 +234,23 @@ def validate(data, partial=False):
             add(f"{where}: rule required for I-* findings")
         if f.get("confidence") == "Environment-dependent" and blank(f.get("condition")):
             add(f"{where}: condition required when confidence is Environment-dependent")
-        for key in ("actor", "path", "impact", "fix", "regression", "condition", "cwe", "rule", "detail"):
+        for key in ("actor", "path", "contrast", "impact", "fix", "regression", "condition", "cwe", "rule",
+                    "detail"):
             if key in f and not isinstance(f[key], str):
                 add(f"{where}: {key} must be a string")
         if "controls" in f and (not isinstance(f["controls"], list) or any(blank(c) for c in f["controls"])):
             add(f"{where}: controls must be a list of strings")
+        if isinstance(f.get("cwe"), str) and not CWE.match(f["cwe"]):
+            add(f"{where}: cwe must look like CWE-284")
         if "attack_paths" in f:
             if not isinstance(f["attack_paths"], list):
                 add(f"{where}: attack_paths must be a list")
             else:
                 for ap in f["attack_paths"]:
-                    if ap not in ap_ids:
+                    if not isinstance(ap, str) or ap not in ap_ids:
                         add(f"{where}: attack path {ap} does not exist")
         for i, ref in enumerate(f.get("references", []) if isinstance(f.get("references", []), list) else [None]):
-            if not isinstance(ref, dict) or blank(ref.get("url")):
+            if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")):
                 add(f"{where}: references[{i}] needs title and url")
                 continue
             u = urlparse(ref["url"])
@@ -242,9 +279,10 @@ def validate(data, partial=False):
         where = aid if isinstance(aid, str) else f"attack_paths[{n}]"
         if not isinstance(aid, str) or not AP_ID.match(aid):
             add(f"{where}: id must be AP-NN (at least two digits)")
-        if aid in seen:
-            add(f"{where}: duplicate id")
-        seen.add(aid)
+        else:
+            if id_key(aid) in seen:
+                add(f"{where}: duplicate id")
+            seen.add(id_key(aid))
         for key in ("entry", "target"):
             if blank(a.get(key)):
                 add(f"{where}: {key} required")
@@ -262,7 +300,7 @@ def validate(data, partial=False):
             add(f"{where}: findings must be a list")
         else:
             for fid in refs:
-                if fid not in finding_ids:
+                if not isinstance(fid, str) or fid not in finding_ids:
                     add(f"{where}: finding {fid} does not exist")
 
     persp = data.get("perspectives", [])
@@ -275,11 +313,12 @@ def validate(data, partial=False):
             add(f"perspectives[{n}]: must be an object")
             continue
         name = item.get("name")
-        if name not in names:
+        if not isinstance(name, str) or name not in names:
             add(f"perspectives[{n}]: unknown perspective {name!r}")
-        if name in seen:
+        elif name in seen:
             add(f"perspectives: {name} listed twice")
-        seen.add(name)
+        else:
+            seen.add(name)
         if item.get("status") not in P_STATUSES:
             add(f"perspectives[{n}]: status must be one of {', '.join(P_STATUSES)}")
         if "note" in item and not isinstance(item["note"], str):
@@ -306,7 +345,8 @@ LABELS = {
         "excluded": "Excluded findings", "none": "None recorded.",
         "severity": "Severity", "confidence": "Confidence", "verdict": "Verdict", "provider": "Provider",
         "category": "Perspective", "resources": "Resources", "location": "Location", "actor": "Actor",
-        "path": "Attack path", "impact": "Impact", "fix": "Fix direction", "regression": "Regression check",
+        "path": "Attack path", "contrast": "Contrast (sound sibling)", "impact": "Impact",
+        "fix": "Fix direction", "regression": "Regression check",
         "controls": "Controls", "cwe": "CWE", "condition": "Assumed condition", "references": "References",
         "rule": "Baseline rule", "evidence": "Evidence", "detail": "Detail", "source": "Source excerpt",
         "entry": "Entry", "target": "Target", "status": "Status", "edges": "Edges", "note": "Note",
@@ -332,7 +372,8 @@ LABELS = {
         "excluded": "除外した検出事項", "none": "記録なし。",
         "severity": "深刻度", "confidence": "確度", "verdict": "判定", "provider": "プロバイダ",
         "category": "観点", "resources": "リソース", "location": "場所", "actor": "攻撃主体",
-        "path": "攻撃経路", "impact": "影響", "fix": "修正の方向", "regression": "回帰チェック",
+        "path": "攻撃経路", "contrast": "対照（健全な同種設定）", "impact": "影響",
+        "fix": "修正の方向", "regression": "回帰チェック",
         "controls": "対応コントロール", "cwe": "CWE", "condition": "前提条件", "references": "参考",
         "rule": "ベースラインルール", "evidence": "根拠", "detail": "詳細", "source": "ソース抜粋",
         "entry": "侵入点", "target": "標的", "status": "状態", "edges": "経路", "note": "備考",
@@ -539,7 +580,7 @@ def snippet_html(rows):
 
 # ---------------------------------------------------------------- shared pieces
 
-FIELD_ORDER = ("actor", "path", "impact", "condition", "fix", "regression", "detail",
+FIELD_ORDER = ("actor", "path", "contrast", "impact", "condition", "fix", "regression", "detail",
                "rule", "controls", "cwe")
 
 

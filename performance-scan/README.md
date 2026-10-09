@@ -63,6 +63,10 @@ python3 skills/performance-scan/scripts/render.py out/findings.json --out out --
 python3 skills/performance-scan/scripts/findings.py check out   # exit 1 lists each violation
 ```
 
+Run all merges to the same `findings.json` sequentially through one REPORT
+coordinator. Parallel reviewers write fragments in scratch for that coordinator
+to merge. Atomic replacement does not detect concurrent updates.
+
 | Output | What it is |
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |

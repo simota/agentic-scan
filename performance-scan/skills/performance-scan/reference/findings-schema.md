@@ -41,6 +41,11 @@ python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-001.json
 python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
 ```
 
+One REPORT coordinator runs all merges to the same `findings.json`
+sequentially. Parallel reviewers write fragments in scratch for that coordinator
+to merge. Atomic replacement does not detect concurrent updates; one merge can
+overwrite another's changes.
+
 Merge semantics:
 
 - `meta` updates key by key
@@ -52,8 +57,12 @@ Merge semantics:
   duplicates
 
 Every merge validates the existing record before applying fragments, then
-validates the combined record; a refused merge writes nothing. Existing and
-combined records require unique finding IDs, budget IDs and perspective names.
+validates the combined record; a refused merge writes nothing. Before combining
+records, each fragment entry in `findings`, `budgets` and `perspectives` must be
+an object with a nonblank string `id` (`findings` and `budgets`) or `name`
+(`perspectives`). Known IDs still allow partial updates as described above.
+Existing and combined records require unique finding IDs, budget IDs and
+perspective names.
 Within a fragment, repeated perspective names still replace the whole entry
 in order, so the last entry wins.
 Each finding must be complete in the fragment that first adds it.
@@ -140,5 +149,6 @@ embedding Markdown link syntax in another field.
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Omit `title` to use the URL as the link label; an empty title is also allowed |
 | `budgets[]` | `id` (`B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. A present `reason` must be a string (empty allowed). `family` and `inferred` are optional |
+| `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

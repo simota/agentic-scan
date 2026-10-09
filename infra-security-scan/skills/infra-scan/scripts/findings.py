@@ -57,8 +57,8 @@ FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regress
 PAYLOAD = re.compile(
     # Narrow shapes only: relative module paths (../../modules/app) and
     # quoted names joined by "and"/"or" are ordinary infrastructure prose.
-    r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?\d+'?\s*=\s*'?\d|union\s+select|"
-    r"(?:\.\./){2,}(?:etc|proc|root|windows)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
+    r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
+    r"(?:\.\./){3,}|(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
     r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
     r"metadata\.google\.internal",
@@ -262,6 +262,25 @@ def merge(findings_path, fragment_paths):
 F_REFERENCE = re.compile(r"(?<![\w/.-])F-[0-9]{3,}(?![\w-])")
 
 
+def record_strings(record):
+    """(where, text) for every string in findings, attack paths, perspectives and lists."""
+    def walk(value, where):
+        if isinstance(value, str):
+            yield where, value
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item, where)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{where}.{key}")
+    for key in ("findings", "attack_paths", "perspectives"):
+        for item in record.get(key, []):
+            if isinstance(item, dict):
+                yield from walk(item, str(item.get("id") or item.get("name") or key))
+    for key in LISTS:
+        yield from walk(record.get(key, []), key)
+
+
 def remove(findings_path, ids):
     path = Path(findings_path)
     record = copy.deepcopy(render.load(path))
@@ -278,6 +297,13 @@ def remove(findings_path, ids):
         for other in record.get(owner, []):
             if isinstance(other, dict) and isinstance(other.get(link), list) and rid in other[link]:
                 other[link] = [x for x in other[link] if x != rid]
+        # Prose mentioning the removed ID would later name whichever record
+        # takes its number; make the author reword it first.
+        pattern = re.compile(r"(?<![\w/.-])" + re.escape(rid) + r"(?![\w-])")
+        mentions = sorted({where for where, text in record_strings(record) if pattern.search(text)})
+        if mentions:
+            raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
+                          "(merge a fragment) before removing it")
     render.validate(record, partial=True)
     write_atomic(path, record)
     return record
@@ -292,6 +318,10 @@ def renumber(findings_path):
     order = sorted(fs, key=lambda f: (render.SEV_RANK[f["severity"]], render.location_key(f["location"]),
                                       render.id_key(f["id"])))
     mapping = {f["id"]: f"F-{n:03d}" for n, f in enumerate(order, 1)}
+    stale = sorted({m.group() for _, text in record_strings(record) for m in F_REFERENCE.finditer(text)
+                    if m.group() not in mapping})
+    if stale:
+        raise Refused(f"text mentions {', '.join(stale)}, which no longer exist; reword before renumbering")
 
     def rewrite(value):
         if isinstance(value, str):

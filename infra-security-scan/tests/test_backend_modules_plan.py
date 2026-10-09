@@ -102,3 +102,26 @@ class PlanTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PrecisionTest(unittest.TestCase):
+    def test_backend_configs_must_all_encrypt(self):
+        files = {"main.tf": 'terraform {\n  backend "s3" {\n    key = "k"\n  }\n}\n',
+                 "dev.tfbackend": "encrypt = true\n", "prod.tfbackend": "encrypt = false\n"}
+        self.assertEqual([h[0] for h in hits(files)], ["PS-002"])
+
+    def test_dated_branch_names_are_not_tags(self):
+        text = 'module "m" {\n  source = "git::https://example.com/m.git?ref=2024-hotfix-branch"\n}\n'
+        self.assertEqual([h[0] for h in hits({"main.tf": text})], ["PS-001"])
+
+    def test_wrapped_file_credentials(self):
+        for value in ('"${file("sa-key.json")}"', 'trimspace(file("secret.txt"))'):
+            with self.subTest(value=value):
+                text = f'provider "google" {{\n  credentials = {value}\n}}\n'
+                self.assertEqual([h[0] for h in hits({"main.tf": text})], ["PS-003"])
+
+    def test_rule_line_is_the_open_range(self):
+        text = ('resource "aws_security_group_rule" "r" {\n  type = "ingress"\n  from_port = 22\n'
+                '  to_port = 22\n  protocol = "tcp"\n  cidr_blocks = ["10.0.0.0/8"]\n'
+                '  ipv6_cidr_blocks = ["::/0"]\n}\n')
+        self.assertEqual(hits({"main.tf": text}), [("AWS-NET-001", "main.tf", 7)])

@@ -90,3 +90,52 @@ class ExcerptScrubTest(OutputTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ScrubPrecisionTest(OutputTest):
+    """The scrub keeps the evidence a finding needs and runs in linear time."""
+
+    def test_long_lines_are_fast(self):
+        import time
+        for line in ("x://" + 'a"' * 50000, "password" + " " * 100000 + "x", '{"a": "s3://b", ' * 20000):
+            start = time.monotonic()
+            redaction.scrub_lines([line], "json")
+            self.assertLess(time.monotonic() - start, 2.0)
+
+    def test_json_heredoc_policy_stays_readable(self):
+        text = ('resource "aws_iam_policy" "p" {\n  policy = <<EOF\n{\n  "Statement": [{\n'
+                '    "Effect": "Allow", "Action": "*", "Resource": "*"\n  }]\n}\nEOF\n}\n')
+        self.write("main.tf", text)
+        shown = "\n".join(r[1] for r in self.excerpt("main.tf:1-9"))
+        self.assertIn('"Action": "*"', shown)
+
+    def test_ordinary_names_do_not_hide_whole_files(self):
+        cases = {
+            "plan.json": json.dumps({"format_version": "1.2", "planned_values": {"root_module": {}},
+                                     "configuration": {"root_module": {"resources": [{"expressions": {
+                                         "metadata_options": [{"http_tokens": {"constant_value": "optional"}}],
+                                         "authorization_type": {"constant_value": "NONE"}}}]}}}, indent=2),
+            "deploy.yaml": ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  containers:\n  - name: c\n"
+                            "    image: x\n    args: [\"-port=8080\", \"/bin/auth-server\"]\n"),
+            "svc.tf": ('resource "aws_ecs_service" "s" {\n  name = "auth-service"\n}\n'
+                       'output "o" {\n  value = aws_ecs_service.s.id\n}\n'),
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                self.write(name, text)
+                self.assertIn("F-001", render.attach_sources(self.record(f"{name}:2"), self.repo))
+
+    def test_openers_in_comments_open_nothing(self):
+        text = '# usage: cat <<EOF\nresource "aws_s3_bucket" "b" {\n  bucket = "visible-bucket"\n}\n'
+        self.write("main.tf", text)
+        self.assertIn("visible-bucket", "\n".join(r[1] for r in self.excerpt("main.tf:3")))
+
+    def test_identifiers_and_refs_stay_readable(self):
+        for line, kept in (('  role = "arn:aws:iam::111122223333:role/my-role-2024"', "my-role-2024"),
+                           ('  source = "git::https://e.com/m.git?ref=' + "a1b2" * 10 + '"', "ref=a1b2"),
+                           ('  bucket = "my-bucket-2024-prod"', "my-bucket-2024-prod"),
+                           ('  member = "user:alice@example.com"', "user:alice@example.com"),
+                           ('  args = ["-port=8080"]', "-port=8080")):
+            with self.subTest(line=line):
+                self.assertIn(kept, redaction.scrub_line(line))
+        self.assertNotIn("Zx", redaction.scrub_line('  cmd = "mysql -uroot -pZx9secret"'))

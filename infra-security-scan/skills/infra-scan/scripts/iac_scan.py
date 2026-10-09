@@ -999,7 +999,7 @@ def check_tf(scan, res):
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
-            line = v.line("cidr_blocks") if v.get("cidr_blocks") is not None else v.line("ipv6_cidr_blocks")
+            line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
             scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
                          v.get("protocol"), v.get("from_port"), v.get("to_port"))
     elif t == "aws_vpc_security_group_ingress_rule":
@@ -1198,7 +1198,7 @@ def find_line(text, pattern, default=1):
 GIT_SOURCE = re.compile(r"^(git::|git@|github\.com/|bitbucket\.org/)|\.git(//|$|\?)")
 REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+(?:\.[a-z]+|:[0-9]+)/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
                              r"(//[^?]+)?$")
-PINNED_REF = re.compile(r"[0-9a-f]{7,40}|v?[0-9]+(?:\.[0-9]+)*(?:[-+.][0-9A-Za-z.-]+)?")
+PINNED_REF = re.compile(r"[0-9a-f]{7,40}|v?[0-9]+(?:\.[0-9]+){1,2}(?:[-+][0-9A-Za-z.-]+)?")
 PROD_DIR = re.compile(r"(^|/)(prod|production|prd)([-_.][^/]*)?(/|$)", re.IGNORECASE)
 
 
@@ -1370,7 +1370,7 @@ def handle_terraform(scan, parsed):
                     # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
                     # a literal value or a key file read from the repository.
                     if key in b.attrs and key not in ("access_key", "secret_key") and not (
-                            isinstance(view.get(key), str) or b.attrs[key][0].lstrip().startswith("file(")):
+                            isinstance(view.get(key), str) or re.search(r"\bfile\(", b.attrs[key][0])):
                         continue
                     if key in b.attrs:
                         scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
@@ -1440,14 +1440,16 @@ def backend_config_encrypts(scan, rel):
         candidates = sorted(p for p in directory.iterdir()
                             if p.is_file() and not p.is_symlink() and
                             (p.name.endswith(".tfbackend") or re.fullmatch(r"backend.*\.hcl", p.name)))
+        # Every config that sets encrypt must enable it: prod.tfbackend may differ from dev.
+        settings = []
         for path in candidates:
             for line in path.read_text(encoding="utf-8-sig").splitlines():
                 m = re.match(r'\s*encrypt\s*=\s*"?(true|false)"?\s*(?:#.*)?$', line)
                 if m:
-                    return m.group(1) == "true"
+                    settings.append(m.group(1) == "true")
     except (OSError, UnicodeError):
         return False
-    return False
+    return bool(settings) and all(settings)
 
 
 def finish_dirs(scan):

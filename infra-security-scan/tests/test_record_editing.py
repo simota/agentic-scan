@@ -64,9 +64,13 @@ class RecordEditingTest(unittest.TestCase):
         fs = [finding("F-001", "Low", "b.tf:10", attack_paths=["AP-01"]),
               finding("F-002", "High", "a.tf:9", attack_paths=["AP-01"]),
               finding("F-003", "High", "a.tf:10", attack_paths=["AP-01"],
-                      validation={"verdict": "Likely", "evidence": "same root cause as F-001; see https://x/F-001"})]
+                      validation={"verdict": "Likely", "evidence": "same root cause as F-002; see https://x/F-001"})]
         self.assertEqual(self.merge({"meta": META, "findings": fs, "attack_paths": [ap],
                                      "decisions": ["Fix F-002 first"]})[0], 0)
+        # A removed ID still named in prose would later name another finding.
+        code, out = run("remove", str(self.record), "F-002")
+        self.assertEqual(code, 1)
+        self.assertIn("F-003.validation.evidence", out)
         code, out = run("remove", str(self.record), "F-001")
         self.assertEqual(code, 0, out)
         self.assertEqual(self.load()["attack_paths"][0]["findings"], ["F-002", "F-003"])
@@ -77,7 +81,7 @@ class RecordEditingTest(unittest.TestCase):
         self.assertEqual(data["findings"][0]["location"], "a.tf:9")
         self.assertEqual(data["attack_paths"][0]["findings"], ["F-001", "F-002"])
         self.assertEqual(data["decisions"], ["Fix F-001 first"])
-        self.assertIn("https://x/F-001", data["findings"][1]["validation"]["evidence"])
+        self.assertEqual(data["findings"][1]["validation"]["evidence"], "same root cause as F-001; see https://x/F-001")
         self.assertEqual(run("remove", str(self.record), "I-001")[0], 1)
 
     def test_ordinary_infrastructure_prose_is_not_a_payload(self):
@@ -88,7 +92,8 @@ class RecordEditingTest(unittest.TestCase):
             with self.subTest(n=n):
                 f["path"] = text
                 self.assertEqual(self.merge({"meta": META, "findings": [f]})[0], 0)
-        for text in ("' or 1=1 --", "../../../etc/passwd"):
+        for text in ("' or 1=1 --", "../../../etc/passwd", "admin' or 'a'='a",
+                     "../../../../var/run/secrets/kubernetes.io/serviceaccount/token"):
             f["path"] = text
             self.assertEqual(self.merge({"findings": [f]})[0], 1)
 

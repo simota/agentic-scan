@@ -1,7 +1,7 @@
 # infra-scan
 
 An agent skill for a **static, read-only security review of cloud
-infrastructure from its configuration** — Terraform / OpenTofu, plan JSON,
+infrastructure from its configuration** — Terraform / OpenTofu (`.tf`, `.tofu`), plan JSON,
 CloudFormation, Kubernetes manifests, and read-only config exports — for AWS and
 GCP (Kubernetes and Azure by checklist). It maps exposure, identity and trust,
 traces attack paths from entry actors to crown-jewel data, and delivers a chat
@@ -38,8 +38,11 @@ baseline                perspectives         └─ chat summary
   and federation, data protection, compute and workload, Kubernetes, serverless
   and API edge, secrets and keys, logging and detection, resilience and
   recovery, governance and guardrails, pipeline and state, coverage and drift
-- **Baseline** — `scripts/iac_scan.py` parses HCL, plan JSON, CloudFormation
-  JSON, Kubernetes YAML and AWS/GCP snapshot JSON (stdlib only), inventories
+- **Baseline** — `scripts/iac_scan.py` parses HCL (`.tf`, `.tofu`), plan JSON,
+  CloudFormation JSON, Kubernetes YAML and JSON (including `kubectl -o json`
+  exports), policy JSON files (trust and resource policies directly; identity
+  policies through the Terraform resource that reads them with `file()`) and
+  AWS/GCP snapshot JSON (stdlib only), inventories
   resources and applies deterministic rules as `I-*` findings to triage
   — Kubernetes supports block maps/lists, single-line flow collections, comments
   and opaque block strings. Unsupported YAML, including anchors, aliases, tags
@@ -53,8 +56,13 @@ baseline                perspectives         └─ chat summary
   — CloudFormation YAML inventories resource definitions under `Resources`,
   excluding parameter types and embedded template text; its baseline rules
   still require JSON input
+  — Terraform JSON (`*.tf.json`), unreadable, binary and deeply nested inputs
+  are listed in `not_run`; UTF-16/32 exports with a BOM are read
+  — on rescan, an `I-*` verdict follows its finding when the rule, file and
+  resources are unchanged
 - **Snapshots** — when deployed state matters, the skill hands the requester
-  read-only export commands to run themselves (`reference/snapshots.md`)
+  read-only export commands to run themselves (`reference/snapshots.md`); the
+  exports join the baseline with `iac_scan.py --snapshots DIR`
 
 ## Install
 
@@ -73,6 +81,7 @@ Then ask the agent, e.g. "infra-scan で `infra/` を診断して" or
 make test                                  # offline unit tests
 make check                                 # tests + skill self-consistency
 make scan TARGET=../my-infra OUT=$TMPDIR/infra-out   # baseline only
+make scan TARGET=../my-infra SNAPSHOTS=$TMPDIR/exports OUT=$TMPDIR/infra-out  # with exports
 make demo LANG_OUT=ja                      # render the sample report
 ```
 

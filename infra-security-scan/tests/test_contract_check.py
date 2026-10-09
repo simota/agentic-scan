@@ -27,7 +27,7 @@ class ContractTest(unittest.TestCase):
 
     def write(self):
         (self.out / "findings.json").write_text(json.dumps(self.data), encoding="utf-8")
-        (self.out / "iac.json").write_text("{}", encoding="utf-8")
+        (self.out / "iac.json").write_text('{"tool": "iac_scan"}', encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(render.main([str(self.out / "findings.json"), "--out", str(self.out), "--no-pdf"]), 0)
 
@@ -37,10 +37,50 @@ class ContractTest(unittest.TestCase):
             code = contract_check.main([str(self.out), "--no-pdf", *extra])
         return code, out.getvalue(), err.getvalue()
 
-    def test_sample_holds_and_reports_unverified(self):
+    def test_sample_holds(self):
         code, out, err = self.check()
         self.assertEqual(code, 0, err)
-        self.assertIn("I-002", out)
+
+    def test_untriaged_baseline_finding_is_a_violation(self):
+        self.data["findings"][7]["validation"] = {"verdict": "Unverified"}
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("still Unverified", err)
+        self.assertIn("I-002", err)
+
+    def test_baseline_validation_of_the_wrong_type_is_a_violation(self):
+        self.data["findings"][7]["validation"] = "Valid"
+        self.write_raw()
+        code, _, err = self.check()
+        self.assertEqual(code, 1, err)
+        self.assertIn("validation.verdict", err)
+
+    def write_raw(self):
+        (self.out / "findings.json").write_text(json.dumps(self.data), encoding="utf-8")
+
+    def test_placeholder_outputs_are_violations(self):
+        for name, body in (("dashboard.html", ""), ("assessment.html", "not a report"),
+                           ("iac.json", "{}"), ("assessment.pdf", "not a pdf")):
+            with self.subTest(name=name):
+                self.write()
+                (self.out / name).write_text(body, encoding="utf-8")
+                code, _, err = self.check() if name != "assessment.pdf" else self.check_pdf()
+                self.assertEqual(code, 1)
+                self.assertIn(f"outputs: {name} ", err)
+
+    def check_pdf(self):
+        out, err = io.StringIO(), io.StringIO()
+        with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+            code = contract_check.main([str(self.out)])
+        return code, out.getvalue(), err.getvalue()
+
+    def test_lines_in_one_file_order_numerically(self):
+        fs = [f for f in self.data["findings"] if f["id"] in ("F-001", "F-002")]
+        fs[0]["location"], fs[1]["location"] = "storage.tf:9", "storage.tf:10"
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 0, err)
 
     def test_pdf_required_without_flag(self):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:

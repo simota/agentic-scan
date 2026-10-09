@@ -64,9 +64,16 @@ Do not export `secrets`.
 
 ## Reading snapshots
 
+- Pass the export directory to the same baseline run as the repository:
+  `scripts/iac_scan.py <repo> --snapshots <exports> --out <out>/iac.json --into <out>/findings.json`.
+  Each run replaces the whole `I-*` baseline, so a separate run on the exports
+  alone would drop the repository's hits. Snapshot files are reported as
+  `@snapshots/<dir>/<file>` and never excerpted in the reports
 - `iac_scan.py` applies its rules to snapshot shapes it recognises
   (`SecurityGroups`, IAM policy `bindings`, firewall lists, bucket policy
   `Statement`); others are read by hand
+- Exports saved by Windows PowerShell (`>` writes UTF-16) are read; other
+  encodings are listed in `not_run`
 - Match each snapshot resource to an IaC resource by ID, name or tag. Unmatched
   snapshot resources are drift (perspective *Coverage and drift*, CD2) and are
   reviewed like any other resource

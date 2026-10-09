@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 
@@ -43,20 +44,20 @@ RECORDS = ("findings", "attack_paths")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
-FINDING_PROSE = ("title", "actor", "path", "impact", "fix", "regression", "detail", "condition")
+FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
 PAYLOAD = re.compile(
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+['\d]|union\s+select|"
     r"(?:\.\./){2,}|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
-    r"169\.254\.169\.254|metadata\.google\.internal",
+    r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
+    r"metadata\.google\.internal",
     re.IGNORECASE,
 )
 # Share the renderer's known credential formats and retain the merge gate's
 # conservative handling of private-key fields and incomplete Slack tokens.
+# Token prefixes are case-sensitive: "asiaPacific..." is a name, not a key.
 CREDENTIAL = re.compile(
-    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'"private_key"\s*:', r"xox[baprs]-")),
-    re.IGNORECASE,
-)
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 
 
 class Refused(Exception):
@@ -197,10 +198,24 @@ def apply(record, fragment):
                 current.append(item)
 
 
+def file_mode(path):
+    """Keep an existing file's mode; give a new one the umask default, not mkstemp's 0600."""
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
 def write_atomic(path, data):
     path = Path(path)
+    if path.is_symlink():
+        raise OSError(f"{path} is a symlink; refusing to replace it")
+    mode = file_mode(path)
     fd, tmp = tempfile.mkstemp(prefix=".findings.", suffix=".json", dir=path.parent)
     try:
+        os.chmod(tmp, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
@@ -243,6 +258,9 @@ def main(argv=None):
     except render.SchemaError as e:
         for problem in e.problems:
             print(f"schema: {problem}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"cannot write {a.findings}: {e.strerror or e}", file=sys.stderr)
         return 2
     print(f"merged {len(a.fragments)} fragment(s) into {a.findings}: "
           f"{len(merged.get('findings', []))} findings, {len(merged.get('attack_paths', []))} attack paths")

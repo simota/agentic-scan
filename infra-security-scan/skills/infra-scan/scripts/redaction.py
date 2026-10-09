@@ -8,9 +8,12 @@ from urllib.parse import unquote_plus, urlsplit, urlunsplit
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
     r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*[\"']?\s*[:=]")
-SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|ghp_[A-Za-z0-9]{36}|"
-                          r"github_pat_[A-Za-z0-9_]+|xox[baprs]-[A-Za-z0-9-]+")
-KEY_MARKER = re.compile(r"-----(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)?-----")
+SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|"
+                          r"github_pat_[A-Za-z0-9_]{20,}|xox[abeoprs]-[A-Za-z0-9-]+|"
+                          r"xapp-[0-9]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|"
+                          r"glpat-[A-Za-z0-9_-]{20}")
+# PEM and OpenSSH use five dashes; RFC 4716 (SSH2) uses four and spaces.
+KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
     r"\s*[,}]?\s*$")
@@ -28,6 +31,21 @@ PUBLIC_QUERY = {"ref", "depth", "version"}
 SENSITIVITY_MASKS = {"sensitive_values", "before_sensitive", "after_sensitive"}
 
 
+def split_lines(text, keepends=False):
+    """Split on LF (and CRLF) only, as the HCL and JSON line counters do.
+
+    str.splitlines() also breaks on form feeds, vertical tabs and Unicode
+    separators, which would shift every later line number in a report.
+    """
+    lines = text.split("\n")
+    if keepends:
+        lines = [line + "\n" for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
+        return lines
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
 def _secret_fields(line):
     # Qualified YAML/JSON keys can contain slashes. A URL path or query is
     # handled by module_source instead of being mistaken for such a key.
@@ -38,6 +56,11 @@ def _secret_fields(line):
 
 def _secret_field(line):
     return next(_secret_fields(line), None)
+
+
+def is_secret_name(name):
+    """A key or variable name that conventionally holds a secret."""
+    return _secret_field(name + ":") is not None
 
 
 def has_escaped_secret_keys(text, docs):
@@ -104,12 +127,16 @@ def has_structured_secrets(value):
         return True  # Typed list items may omit their own kind: Secret.
     if value.get("kind") == "Secret" and any(key in value for key in ("data", "stringData")):
         return True
-    # Covers Kubernetes env entries and other literal name/value collections,
-    # including a value that precedes its name in the source.
-    if "name" in value and "value" in value:
-        name = value["name"]
-        if not isinstance(name, str) or _secret_field(name + ":"):
-            return True
+    # Covers Kubernetes env entries, CloudFormation Name/Value and Key/Value
+    # pairs and other literal collections, including a value that precedes its
+    # name in the source. CloudFormation capitalizes these keys.
+    keys = {key.lower(): key for key in value if isinstance(key, str)}
+    if "value" in keys:
+        for label in ("name", "key"):
+            if label in keys:
+                name = value[keys[label]]
+                if not isinstance(name, str) or _secret_field(name + ":"):
+                    return True
     if "env" in value and value["env"] is not None:
         entries = value["env"]
         if not isinstance(entries, (dict, list)):
@@ -137,7 +164,7 @@ def redact_json_values(text, lines):
     a closing value and the next secret key may share the same source line.
     """
     starts, offset = [], 0
-    for line in text.splitlines(keepends=True):
+    for line in split_lines(text, keepends=True):
         starts.append(offset)
         offset += len(line)
     decoder = json.JSONDecoder()

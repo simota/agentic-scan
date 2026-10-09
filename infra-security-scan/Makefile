@@ -4,7 +4,7 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make scan      baseline IaC scan of TARGET into OUT (iac.json + findings.json)
+#   make scan      baseline IaC scan of TARGET (+ SNAPSHOTS dirs) into OUT (iac.json + findings.json)
 #   make demo      render examples/findings.sample.json into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
@@ -59,7 +59,7 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
 	@echo
 	@echo "  skill:  $(SKILL)"
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT NO_PDF"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT NO_PDF TARGET OUT SNAPSHOTS"
 
 link: ## symlink the skill into every installed host's skills dir
 	@n=0; \
@@ -142,7 +142,7 @@ check: test ## verify the skill is self-contained and internally consistent
 scan: ## baseline IaC scan of TARGET into OUT (iac.json + findings.json); never calls a cloud
 	@[ -n "$(TARGET)" ] && [ -n "$(OUT)" ] || { echo "usage: make scan TARGET=/path/to/iac-repo OUT=/new/output/dir" >&2; exit 2; }
 	@mkdir -p "$(OUT)" && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" "$(TARGET)" \
-	  --out "$(OUT)/iac.json" --into "$(OUT)/findings.json"
+	  $(foreach d,$(SNAPSHOTS),--snapshots '$(d)') --out "$(OUT)/iac.json" --into "$(OUT)/findings.json"
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + PDF)
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$(DEMO_INPUT)" \

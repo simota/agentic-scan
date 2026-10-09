@@ -46,7 +46,8 @@ wrong, and run it by reading:
 
 ## Triaging `I-*`
 
-Each baseline hit gets a verdict:
+Each baseline hit gets a verdict; `contract_check.py` fails while any `I-*` is
+still `Unverified`:
 
 | Situation | Verdict |
 |---|---|
@@ -58,7 +59,10 @@ Each baseline hit gets a verdict:
 Treat standalone `I-*` IDs in `F-*.validation.evidence` as baseline references;
 IDs embedded in source filenames or URLs are left unchanged.
 On rescan, the scanner updates them together with attack-path references when
-the same rule, file and previously affected resources survive. If a reference
+the same rule, file and previously affected resources survive. An `I-*`
+verdict carries over to its new ID when the same rule, file and exactly the
+same resources survive; if the resources changed, the finding returns to
+`Unverified` and `limitations` names the dropped verdict. If a reference
 disappears or loses resources, its evidence names the former rule and file,
 the finding becomes `Unverified` / `Suspected`, and linked attack paths become
 `unknown`, whether linked through the finding's `attack_paths` or the path's

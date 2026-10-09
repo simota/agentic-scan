@@ -39,7 +39,7 @@ Before filing:
 
 {{path}}
 
-**Contrast (a sibling configured soundly):** 
+**Contrast (a sibling configured soundly):** {{contrast}}
 
 <!-- If Environment-dependent, state the assumed setting ({{condition}}) here. -->
 

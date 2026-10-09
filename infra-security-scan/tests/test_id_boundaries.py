@@ -50,8 +50,9 @@ class IdBoundaryTest(unittest.TestCase):
                                  "date": "2026-10-08", "assessor": "test"},
                         "perspectives": [{"name": name, "status": "Applied"}
                                          for name in render.perspective_names()],
-                        "findings": [{"id": f"I-{count:03d}", "validation": {
-                            "verdict": "Valid", "evidence": f"Public ACL read at bucket{count - 1:04d}.tf:2"}}],
+                        "findings": [{"id": f"I-{n:03d}", "validation": {
+                            "verdict": "Valid", "evidence": f"Public ACL read at bucket{n - 1:04d}.tf:2"}}
+                            for n in range(1, count + 1)],
                     }), encoding="utf-8")
                     self.main_ok(findings.main, ["merge", str(record), str(fragment)])
                     merged = render.load(record)

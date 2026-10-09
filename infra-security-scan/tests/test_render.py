@@ -159,7 +159,22 @@ class RenderTest(unittest.TestCase):
             run([str(src), "--out", tmp, "--no-pdf"])
             dash = (Path(tmp) / "dashboard.html").read_text(encoding="utf-8")
             md_block = dash.split('<script type="application/json" id="md">')[1].split("</script>")[0]
-            self.assertIn("<\\/script>", md_block)
+            self.assertIn("\\u003c/script\\u003e", md_block)
+            self.assertNotIn("<", md_block)
+
+    def test_comment_opener_cannot_swallow_dashboard_script(self):
+        # "<!--<script>" switches the HTML tokenizer to the double-escaped
+        # state, in which the real </script> no longer closes the data block.
+        data = sample()
+        data["findings"][0]["title"] = "web<!--<script>"
+        with tempfile.TemporaryDirectory() as tmp:
+            src = Path(tmp) / "f.json"
+            src.write_text(json.dumps(data), encoding="utf-8")
+            run([str(src), "--out", tmp, "--no-pdf"])
+            dash = (Path(tmp) / "dashboard.html").read_text(encoding="utf-8")
+            md_block = dash.split('<script type="application/json" id="md">')[1].split("</script>")[0]
+            self.assertNotIn("<!--", md_block)
+            self.assertNotIn("<script", md_block)
 
     def test_render_japanese_labels(self):
         with tempfile.TemporaryDirectory() as tmp:

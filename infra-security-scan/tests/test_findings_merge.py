@@ -20,7 +20,7 @@ def finding(fid="F-001", **extra):
         "category": "Data protection", "provider": "gcp", "resources": ["google_storage_bucket_iam_member.x"],
         "location": "envs/prod/gcp/storage.tf:27", "actor": "Anyone on the internet",
         "path": "1. allUsers binding (envs/prod/gcp/storage.tf:27)", "impact": "Expected private; actual public",
-        "fix": "Remove the binding", "regression": "No allUsers members",
+        "fix": "Remove the binding", "regression": "No allUsers members", "contrast": "none",
         "validation": {"verdict": "Valid", "evidence": "Read at the cited line"},
     }
     f.update(extra)
@@ -88,7 +88,7 @@ class MergeTest(unittest.TestCase):
         self.assertIn("I-* findings come only from iac_scan.py", err)
         seeded = render.empty_record()
         seeded["findings"].append({k: v for k, v in finding("I-001", rule="AWS-NET-001").items()
-                                   if k not in ("actor", "path", "impact", "fix", "regression")}
+                                   if k not in ("actor", "path", "contrast", "impact", "fix", "regression")}
                                   | {"validation": {"verdict": "Unverified"}})
         self.record.write_text(json.dumps(seeded), encoding="utf-8")
         code, err = self.merge(self.fragment({"findings": [{"id": "I-001", "title": "renamed"}]}))
@@ -160,7 +160,11 @@ class MergeTest(unittest.TestCase):
             "ghp_" + "b" * 36,
             "-----BEGIN " + "OPENSSH PRIVATE KEY-----",
             "xox" + "b-123",
-            "akia" + "q" * 16,
+            "AKIA" + "Q" * 16,
+            "gho_" + "c" * 36,
+            "AIza" + "d" * 35,
+            "---- BEGIN SSH2 ENCRYPTED " + "PRIVATE KEY ----",
+            '{"Private_Key": "x"}',
         ]
         for n, value in enumerate(values):
             with self.subTest(format=n):
@@ -168,6 +172,15 @@ class MergeTest(unittest.TestCase):
                 self.assertEqual(code, 1, err)
                 self.assertNotIn(value, err)
         self.assertFalse(self.record.exists())
+
+    def test_token_prefixes_are_case_sensitive(self):
+        # Access key IDs and tokens are upper/lower-case exact; ordinary names
+        # that happen to start with "asia" or mention github_pat_ are prose.
+        for n, value in enumerate(["aws_s3_bucket.asiaPacificCustomerData1",
+                                   "Rotate the github_pat_tokens used by CI"]):
+            with self.subTest(text=n):
+                code, err = self.merge(self.fragment({"meta": {"method": value}}))
+                self.assertEqual(code, 0, err)
 
     def test_retained_credentials_cannot_be_written_by_an_unrelated_merge(self):
         value = "AKIA" + "R" * 16

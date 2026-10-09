@@ -22,7 +22,7 @@ def finding(location):
         "confidence": "Suspected", "category": "Network exposure", "provider": "multi",
         "resources": ["example.main"], "location": location, "actor": "External actor",
         "path": f"1. Public configuration ({location})", "impact": "A private boundary is expected",
-        "fix": "Restrict the public boundary", "regression": "Assert private access",
+        "fix": "Restrict the public boundary", "regression": "Assert private access", "contrast": "none",
         "validation": {"verdict": "Likely"},
     }
 

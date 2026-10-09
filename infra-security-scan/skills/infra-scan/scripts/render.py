@@ -19,6 +19,7 @@ Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input
 or schema error (every problem on stderr).
 """
 import argparse
+import datetime
 import html
 import json
 import os
@@ -31,8 +32,8 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import (has_escaped_secret_keys, has_structured_secrets, redact,
-                       redact_json_values, redact_lines)
+from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
+                       redact_json_values, redact_lines, split_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -48,13 +49,22 @@ EXCLUDED = {"FalsePositive", "NotApplicable"}
 AP_STATUSES = ("open", "blocked", "unknown")
 P_STATUSES = ("Applied", "N/A", "Not checked")
 INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
-F_ID = re.compile(r"^F-(\d{3,})$")
-I_ID = re.compile(r"^I-(\d{3,})$")
-AP_ID = re.compile(r"^AP-(\d{2,})$")
-LOCATION = re.compile(r"^([^\s:]+):(\d+)(?:-(\d+))?$")
-CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:\d+")
-DATE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
-F_FIELDS = ("actor", "path", "impact", "fix", "regression")
+# ASCII digits and \Z: "$" would accept a trailing newline and \d other scripts' digits.
+F_ID = re.compile(r"^F-([0-9]{3,})\Z")
+I_ID = re.compile(r"^I-([0-9]{3,})\Z")
+AP_ID = re.compile(r"^AP-([0-9]{2,})\Z")
+LOCATION = re.compile(r"^([^\s:]+):([0-9]+)(?:-([0-9]+))?\Z")
+CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:[0-9]+")
+DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
+# Keys outside these sets are typos or fields no output shows; refuse them
+# rather than silently dropping what the reviewer wrote.
+META_KEYS = {"project", "scope", "date", "assessor", "method", "providers", "inputs", "commit"}
+FINDING_KEYS = {"id", "title", "severity", "confidence", "category", "provider", "resources", "location",
+                *F_FIELDS, "controls", "cwe", "attack_paths", "condition", "references", "rule",
+                "detail", "validation"}
+AP_KEYS = {"id", "entry", "target", "status", "edges", "findings", "note"}
+PERSPECTIVE_KEYS = {"name", "status", "note"}
 BASE_FIELDS = ("title", "location")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
@@ -104,6 +114,30 @@ def load(path):
         raise SchemaError(f"{path}: {e}") from None
 
 
+CWE = re.compile(r"^CWE-[0-9]+\Z")
+
+
+def valid_date(value):
+    if not DATE.match(value):
+        return False
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError:
+        return False
+    return True
+
+
+def location_problem(location):
+    """path:line or path:line-line, with lines counted from 1."""
+    m = LOCATION.match(location)
+    if not m:
+        return "location must be path:line or path:line-line"
+    start, end = int(m.group(2)), int(m.group(3) or m.group(2))
+    if start < 1 or end < start:
+        return "location lines start at 1 and a range must not run backwards"
+    return None
+
+
 def empty_record():
     return {"schema_version": 1, "meta": {}, "attack_paths": [], "findings": [], "perspectives": [],
             "checked_ok": [], "decisions": [], "limitations": [], "next_steps": []}
@@ -119,19 +153,22 @@ def validate(data, partial=False):
     unknown = set(data) - TOP
     if unknown:
         add(f"record: unknown top-level keys {sorted(unknown)}")
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         add("record: schema_version must be 1")
 
     meta = data.get("meta", {})
     if not isinstance(meta, dict):
         add("meta: must be an object")
         meta = {}
+    unknown = sorted(k for k in meta if k not in META_KEYS)
+    if unknown:
+        add(f"meta: unknown keys {unknown}")
     if not partial:
         for key in ("project", "scope", "date", "assessor"):
             if blank(meta.get(key)):
                 add(f"meta.{key}: required")
-    if not blank(meta.get("date")) and not DATE.match(meta["date"]):
-        add("meta.date: must be YYYY-MM-DD")
+    if not blank(meta.get("date")) and not valid_date(meta["date"]):
+        add("meta.date: must be a calendar date, YYYY-MM-DD")
     for key in ("project", "scope", "date", "assessor", "method", "commit"):
         if key in meta and not isinstance(meta[key], str):
             add(f"meta.{key}: must be a string")
@@ -158,8 +195,10 @@ def validate(data, partial=False):
     if not isinstance(paths, list):
         add("attack_paths: must be a list")
         paths = []
-    finding_ids = {f.get("id") for f in findings if isinstance(f, dict)}
-    ap_ids = {a.get("id") for a in paths if isinstance(a, dict)}
+    # Only string IDs can be referenced; other types are reported below
+    # instead of crashing set membership.
+    finding_ids = {f.get("id") for f in findings if isinstance(f, dict) and isinstance(f.get("id"), str)}
+    ap_ids = {a.get("id") for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)}
     names = perspective_names()
 
     seen = set()
@@ -173,12 +212,19 @@ def validate(data, partial=False):
         is_i = isinstance(fid, str) and bool(I_ID.match(fid))
         if not (is_f or is_i):
             add(f"{where}: id must be F-NNN or I-NNN (at least three digits)")
-        if fid in seen:
-            add(f"{where}: duplicate id")
-        seen.add(fid)
+        else:
+            # F-001 and F-0001 are the same number; IDs are compared numerically.
+            if id_key(fid) in seen:
+                add(f"{where}: duplicate id")
+            seen.add(id_key(fid))
+        unknown = sorted(str(k) for k in f if k not in FINDING_KEYS)
+        if unknown:
+            add(f"{where}: unknown keys {unknown}")
         for key in BASE_FIELDS:
             if blank(f.get(key)):
                 add(f"{where}: {key} required")
+        if isinstance(f.get("title"), str) and "\n" in f["title"].strip():
+            add(f"{where}: title must be one line")
         if f.get("severity") not in SEVERITIES:
             add(f"{where}: severity must be one of {', '.join(SEVERITIES)}")
         if f.get("confidence") not in CONFIDENCES:
@@ -190,8 +236,10 @@ def validate(data, partial=False):
         res = f.get("resources")
         if not isinstance(res, list) or not res or any(blank(r) for r in res):
             add(f"{where}: resources must be a nonempty list of resource addresses")
-        if not blank(f.get("location")) and not LOCATION.match(f["location"]):
-            add(f"{where}: location must be path:line or path:line-line")
+        if not blank(f.get("location")):
+            problem = location_problem(f["location"])
+            if problem:
+                add(f"{where}: {problem}")
         if is_f:
             for key in F_FIELDS:
                 if blank(f.get(key)):
@@ -200,20 +248,23 @@ def validate(data, partial=False):
             add(f"{where}: rule required for I-* findings")
         if f.get("confidence") == "Environment-dependent" and blank(f.get("condition")):
             add(f"{where}: condition required when confidence is Environment-dependent")
-        for key in ("actor", "path", "impact", "fix", "regression", "condition", "cwe", "rule", "detail"):
+        for key in ("actor", "path", "contrast", "impact", "fix", "regression", "condition", "cwe", "rule",
+                    "detail"):
             if key in f and not isinstance(f[key], str):
                 add(f"{where}: {key} must be a string")
         if "controls" in f and (not isinstance(f["controls"], list) or any(blank(c) for c in f["controls"])):
             add(f"{where}: controls must be a list of strings")
+        if isinstance(f.get("cwe"), str) and not CWE.match(f["cwe"]):
+            add(f"{where}: cwe must look like CWE-284")
         if "attack_paths" in f:
             if not isinstance(f["attack_paths"], list):
                 add(f"{where}: attack_paths must be a list")
             else:
                 for ap in f["attack_paths"]:
-                    if ap not in ap_ids:
+                    if not isinstance(ap, str) or ap not in ap_ids:
                         add(f"{where}: attack path {ap} does not exist")
         for i, ref in enumerate(f.get("references", []) if isinstance(f.get("references", []), list) else [None]):
-            if not isinstance(ref, dict) or blank(ref.get("url")):
+            if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")):
                 add(f"{where}: references[{i}] needs title and url")
                 continue
             u = urlparse(ref["url"])
@@ -242,9 +293,13 @@ def validate(data, partial=False):
         where = aid if isinstance(aid, str) else f"attack_paths[{n}]"
         if not isinstance(aid, str) or not AP_ID.match(aid):
             add(f"{where}: id must be AP-NN (at least two digits)")
-        if aid in seen:
-            add(f"{where}: duplicate id")
-        seen.add(aid)
+        else:
+            if id_key(aid) in seen:
+                add(f"{where}: duplicate id")
+            seen.add(id_key(aid))
+        unknown = sorted(str(k) for k in a if k not in AP_KEYS)
+        if unknown:
+            add(f"{where}: unknown keys {unknown}")
         for key in ("entry", "target"):
             if blank(a.get(key)):
                 add(f"{where}: {key} required")
@@ -262,7 +317,7 @@ def validate(data, partial=False):
             add(f"{where}: findings must be a list")
         else:
             for fid in refs:
-                if fid not in finding_ids:
+                if not isinstance(fid, str) or fid not in finding_ids:
                     add(f"{where}: finding {fid} does not exist")
 
     persp = data.get("perspectives", [])
@@ -275,11 +330,14 @@ def validate(data, partial=False):
             add(f"perspectives[{n}]: must be an object")
             continue
         name = item.get("name")
-        if name not in names:
+        if not isinstance(name, str) or name not in names:
             add(f"perspectives[{n}]: unknown perspective {name!r}")
-        if name in seen:
+        elif name in seen:
             add(f"perspectives: {name} listed twice")
-        seen.add(name)
+        else:
+            seen.add(name)
+        if set(item) - PERSPECTIVE_KEYS:
+            add(f"perspectives[{n}]: unknown keys {sorted(str(k) for k in set(item) - PERSPECTIVE_KEYS)}")
         if item.get("status") not in P_STATUSES:
             add(f"perspectives[{n}]: status must be one of {', '.join(P_STATUSES)}")
         if "note" in item and not isinstance(item["note"], str):
@@ -306,7 +364,8 @@ LABELS = {
         "excluded": "Excluded findings", "none": "None recorded.",
         "severity": "Severity", "confidence": "Confidence", "verdict": "Verdict", "provider": "Provider",
         "category": "Perspective", "resources": "Resources", "location": "Location", "actor": "Actor",
-        "path": "Attack path", "impact": "Impact", "fix": "Fix direction", "regression": "Regression check",
+        "path": "Attack path", "contrast": "Contrast (sound sibling)", "impact": "Impact",
+        "fix": "Fix direction", "regression": "Regression check",
         "controls": "Controls", "cwe": "CWE", "condition": "Assumed condition", "references": "References",
         "rule": "Baseline rule", "evidence": "Evidence", "detail": "Detail", "source": "Source excerpt",
         "entry": "Entry", "target": "Target", "status": "Status", "edges": "Edges", "note": "Note",
@@ -318,6 +377,7 @@ LABELS = {
         "expand": "Details", "active": "active", "excluded_n": "excluded", "unverified_n": "unverified",
         "static_note": "Static review of configuration. No cloud API was called and no deployed resource was contacted.",
         "pdf_missing": "PDF not generated: no headless Chrome or WeasyPrint found.",
+        "pdf_failed": "PDF not generated: the PDF engine was found but failed.",
         "cover_note": "Confidential — for the owner of the assessed estate.",
         "scope_method": "Scope and method", "counts": "Counts by severity (excluded findings not counted)",
         "md_intro": "Infrastructure security finding from a static configuration review. Propose a minimal IaC change that restores the boundary, and a policy-as-code test for it.",
@@ -331,7 +391,8 @@ LABELS = {
         "excluded": "除外した検出事項", "none": "記録なし。",
         "severity": "深刻度", "confidence": "確度", "verdict": "判定", "provider": "プロバイダ",
         "category": "観点", "resources": "リソース", "location": "場所", "actor": "攻撃主体",
-        "path": "攻撃経路", "impact": "影響", "fix": "修正の方向", "regression": "回帰チェック",
+        "path": "攻撃経路", "contrast": "対照（健全な同種設定）", "impact": "影響",
+        "fix": "修正の方向", "regression": "回帰チェック",
         "controls": "対応コントロール", "cwe": "CWE", "condition": "前提条件", "references": "参考",
         "rule": "ベースラインルール", "evidence": "根拠", "detail": "詳細", "source": "ソース抜粋",
         "entry": "侵入点", "target": "標的", "status": "状態", "edges": "経路", "note": "備考",
@@ -343,6 +404,7 @@ LABELS = {
         "expand": "詳細", "active": "有効", "excluded_n": "除外", "unverified_n": "未検証",
         "static_note": "設定の静的レビューです。クラウド API の呼び出しや稼働中リソースへの通信は行っていません。",
         "pdf_missing": "PDF は生成されませんでした（ヘッドレス Chrome / WeasyPrint が見つかりません）。",
+        "pdf_failed": "PDF は生成されませんでした（PDF エンジンは見つかりましたが失敗しました）。",
         "cover_note": "機密 — 診断対象の所有者向け。",
         "scope_method": "範囲と方法", "counts": "深刻度別の件数（除外分を除く）",
         "md_intro": "設定の静的レビューで見つかったインフラのセキュリティ検出事項です。境界を回復する最小限の IaC 変更と、それを守る policy-as-code テストを提案してください。",
@@ -394,8 +456,12 @@ def counts(data):
 
 # ---------------------------------------------------------------- source excerpts
 
-SENSITIVE_NAME = re.compile(r"(\.tfstate(\.backup)?|\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.env)$|"
-                            r"secret|credential|id_rsa|\.netrc", re.IGNORECASE)
+# Terraform names state backups terraform.tfstate.<timestamp>.backup; dotenv
+# files carry an environment suffix (.env.production).
+SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
+                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|secret|credential|"
+                            r"id_(rsa|dsa|ecdsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
+                            r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
 
 
 def hcl_declares_sensitive(text):
@@ -410,6 +476,33 @@ def hcl_declares_sensitive(text):
     return False
 
 
+HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key)"?\s*[=:]\s*"([^"\n]*)"')
+HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?value"?\s*[=:]')
+
+
+def hcl_has_paired_secret(text):
+    """Name/value pairs (env blocks, jsonencode lists) and secret-named variables.
+
+    Line redaction sees `value = "..."`, not that its sibling `name` is
+    DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
+    """
+    from iac_scan import literal, parse_hcl
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        for match in HCL_NAME.finditer(line):
+            if is_secret_name(match.group(1)) and any(
+                    HCL_VALUE.search(near) for near in lines[max(0, n - 5):n + 6]):
+                return True
+    for block in parse_hcl(text):
+        if block.type == "variable" and block.labels and "default" in block.attrs and \
+                is_secret_name(block.labels[0]):
+            default = literal(block.attrs["default"][0])
+            # A number (secret_recovery_window_in_days = 7) or an empty string is no secret.
+            if not isinstance(default, (int, float, bool)) and default not in (None, ""):
+                return True
+    return False
+
+
 def hcl_module_sensitive(directory):
     """Conservatively include declarations inherited through override files.
 
@@ -418,9 +511,9 @@ def hcl_module_sensitive(directory):
     """
     try:
         for sibling in directory.iterdir():
-            if sibling.name.lower().endswith(".tf.json"):
+            if sibling.name.lower().endswith((".tf.json", ".tofu.json")):
                 return True  # Unsupported Terraform JSON can also override sensitivity.
-            if sibling.suffix.lower() != ".tf":
+            if sibling.suffix.lower() not in (".tf", ".tofu"):
                 continue
             if sibling.is_symlink():
                 return True
@@ -441,7 +534,7 @@ def source_lines(path):
     """
     # Match the scanner's BOM handling before checking sensitivity or line numbers.
     text = path.read_text(encoding="utf-8-sig")
-    lines = text.splitlines()
+    lines = split_lines(text)
     suffix = path.suffix.lower()
     syntax = "text"
     try:
@@ -462,11 +555,11 @@ def source_lines(path):
             docs.append(_YamlSubset(rows).parse())
         else:
             docs = []
-            if suffix == ".tf":
+            if suffix in (".tf", ".tofu"):
                 syntax = "hcl"
                 # Sensitivity belongs to the block, not to the default/value
                 # line. Only a known false declaration permits an excerpt.
-                if hcl_declares_sensitive(text):
+                if hcl_declares_sensitive(text) or hcl_has_paired_secret(text):
                     return None
         if has_escaped_secret_keys(text, docs) or any(has_structured_secrets(doc) for doc in docs):
             return None
@@ -506,7 +599,7 @@ def attach_sources(data, repo, context=3):
             if cand.is_symlink() or not cand.is_file():
                 continue
             cand.resolve().relative_to(root)
-            if cand.suffix.lower() == ".tf" or cand.name.lower().endswith(".tf.json"):
+            if cand.suffix.lower() in (".tf", ".tofu") or cand.name.lower().endswith((".tf.json", ".tofu.json")):
                 directory = cand.parent.resolve()
                 directory.relative_to(root)
                 if directory not in hcl_modules:
@@ -533,7 +626,7 @@ def snippet_html(rows):
 
 # ---------------------------------------------------------------- shared pieces
 
-FIELD_ORDER = ("actor", "path", "impact", "condition", "fix", "regression", "detail",
+FIELD_ORDER = ("actor", "path", "contrast", "impact", "condition", "fix", "regression", "detail",
                "rule", "controls", "cwe")
 
 
@@ -740,7 +833,10 @@ def render_dashboard(data, L, lang, sources):
     c = counts(data)
     fs = ordered(data.get("findings", []))
     md = {f["id"]: finding_markdown(f, L, lang) for f in fs}
-    md_json = json.dumps(md, ensure_ascii=False).replace("</", "<\\/")
+    # Escape every markup character: "<!--<script>" in a finding would
+    # otherwise keep the real </script> from closing this block.
+    md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")
+               .replace(">", "\\u003e").replace("&", "\\u0026"))
     banner = " · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES) + \
         f" — {L['excluded_n']} {c['excluded']}, {L['unverified_n']} {c['unverified']}"
     cards = "".join(f'<div class="card {s}"><span class="l">{esc(shown(s, lang))}</span><span class="n">{c[s]}</span></div>'
@@ -874,11 +970,18 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
 """
 
 
-def to_pdf(html_path, pdf_path):
-    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds."""
+def to_pdf(html_path, pdf_path, failed=None):
+    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds.
+
+    Engines that were found but did not produce a PDF are appended to `failed`.
+    """
+    failed = [] if failed is None else failed
     pdf = Path(pdf_path)
     pdf.unlink(missing_ok=True)
     chrome = os.environ.get("CHROME")
+    # Chrome refuses to start its sandbox as root (containers, CI runners).
+    # The page is a local file this script just wrote, not a remote site.
+    sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
     for c in ([chrome] if chrome else CHROME_CANDIDATES):
         exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
         if not exe:
@@ -886,7 +989,7 @@ def to_pdf(html_path, pdf_path):
         with tempfile.TemporaryDirectory() as profile:
             try:
                 proc = subprocess.Popen(
-                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer",
+                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", *sandbox,
                      f"--user-data-dir={profile}", f"--print-to-pdf={pdf}", Path(html_path).resolve().as_uri()],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             except OSError:
@@ -917,6 +1020,7 @@ def to_pdf(html_path, pdf_path):
                 complete = False
         if complete and pdf.exists() and pdf.stat().st_size > 0:
             return "chrome"
+        failed.append(f"{exe} (exit {status})" if status is not None else f"{exe} (timed out)")
         pdf.unlink(missing_ok=True)
     wp = shutil.which("weasyprint")
     if wp:
@@ -927,7 +1031,20 @@ def to_pdf(html_path, pdf_path):
         else:
             if r.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0:
                 return "weasyprint"
+        failed.append(f"{wp}")
     pdf.unlink(missing_ok=True)
+    return None
+
+
+def output_problem(out, repo):
+    """Refuse outputs inside the assessed repository or through symlinks."""
+    if repo:
+        root, target = Path(repo).resolve(), out.resolve()
+        if target == root or root in target.parents:
+            return f"{out} is inside the assessed repository {repo}; write outputs elsewhere"
+    for name in ("dashboard.html", "assessment.html", "assessment.pdf"):
+        if (out / name).is_symlink():
+            return f"{out / name} is a symlink; refusing to write through it"
     return None
 
 
@@ -947,8 +1064,12 @@ def main(argv=None):
             print(f"schema: {problem}", file=sys.stderr)
         return 2
     L = LABELS[a.lang]
-    sources = attach_sources(data, a.repo) if a.repo else {}
     out = Path(a.out)
+    problem = output_problem(out, a.repo)
+    if problem:
+        print(f"render: {problem}", file=sys.stderr)
+        return 2
+    sources = attach_sources(data, a.repo) if a.repo else {}
     out.mkdir(parents=True, exist_ok=True)
     pdf = out / "assessment.pdf"
     pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
@@ -957,12 +1078,14 @@ def main(argv=None):
     assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
-        engine = to_pdf(assessment, pdf)
+        failed = []
+        engine = to_pdf(assessment, pdf, failed)
         if engine:
             print(f"wrote {pdf} ({engine})")
         else:
-            assessment.write_text(render_assessment(data, L, a.lang, sources, L["pdf_missing"]), encoding="utf-8")
-            print(f"warning: {L['pdf_missing']}", file=sys.stderr)
+            note = L["pdf_failed"] if failed else L["pdf_missing"]
+            assessment.write_text(render_assessment(data, L, a.lang, sources, note), encoding="utf-8")
+            print(f"warning: {note}" + (f" Tried: {', '.join(failed)}" if failed else ""), file=sys.stderr)
     return 0
 
 

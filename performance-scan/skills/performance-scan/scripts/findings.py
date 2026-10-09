@@ -12,6 +12,8 @@ are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
+Run merges to the same FINDINGS sequentially; atomic replacement does not
+detect concurrent updates.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -175,6 +177,8 @@ def validate(doc, complete=False):
         seen.add(b["id"])
         for key in ("statement", "source"):
             _text(b.get(key), f"{where}.{key}")
+        if "inferred" in b and not isinstance(b["inferred"], bool):
+            raise SchemaError(f"{where}.inferred: must be a boolean")
         _optional_strings(b, ("reason",), where)
         _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
     seen = set()
@@ -196,9 +200,18 @@ def validate(doc, complete=False):
             _text(value, f"{key}[{i}]")
 
 
+def _record_identity(record, key, where):
+    if not isinstance(record, dict):
+        raise SchemaError(f"{where}: must be an object")
+    value = record.get(key)
+    _text(value, f"{where}.{key}")
+    return value
+
+
 def _merge_records(current, incoming, key, where):
-    ids = [r.get(key) if isinstance(r, dict) else None for r in incoming]
-    if None in ids or len(set(ids)) != len(ids):
+    ids = [_record_identity(record, key, f"{where}[{i}]")
+           for i, record in enumerate(incoming)]
+    if len(set(ids)) != len(ids):
         raise SchemaError(f"{where}: every record needs a unique {key}")
     index = {r[key]: r for r in current}
     for record in incoming:
@@ -224,9 +237,10 @@ def merge(doc, fragment, where):
             if not isinstance(fragment[key], list):
                 raise SchemaError(f"{where}.{key}: must be a list")
             if key == "perspectives":
-                for p in fragment[key]:
+                for i, p in enumerate(fragment[key]):
+                    name = _record_identity(p, match, f"{where}.{key}[{i}]")
                     doc.setdefault(key, [])
-                    doc[key] = [q for q in doc[key] if q.get("name") != p.get("name")]
+                    doc[key] = [q for q in doc[key] if q.get("name") != name]
                     doc[key].append(p)
             else:
                 _merge_records(doc.setdefault(key, []), fragment[key], match, f"{where}.{key}")

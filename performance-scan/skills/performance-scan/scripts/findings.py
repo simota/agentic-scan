@@ -301,7 +301,7 @@ def cmd_merge(args):
         validate(doc)
         content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         write_atomic(destination, content)
-    except (SchemaError, OSError, UnicodeError) as exc:
+    except (SchemaError, OSError, UnicodeError, RecursionError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "

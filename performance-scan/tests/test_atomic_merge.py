@@ -45,6 +45,27 @@ class AtomicMergeTests(unittest.TestCase):
                 self.assertNotIn("Traceback", result.stderr)
                 self.assertEqual({path.name for path in root.iterdir()}, names)
 
+    def test_encoder_recursion_failure_preserves_existing_or_absent_target(self):
+        for existing in (True, False):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                target, fragment = self.prepare(root, existing)
+                original = target.read_bytes() if existing else None
+                names = {path.name for path in root.iterdir()}
+                output, errors = io.StringIO(), io.StringIO()
+                # Decoder and encoder recursion limits differ across Python versions.
+                with patch.object(findings.json, "dumps", side_effect=RecursionError(
+                        "JSON encoding nesting limit")), \
+                        redirect_stdout(output), redirect_stderr(errors):
+                    result = findings.main(["merge", str(target), str(fragment)])
+                self.assertEqual(target.read_bytes() if target.exists() else None, original)
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertIn("refused:", errors.getvalue())
+                self.assertIn("JSON encoding nesting limit", errors.getvalue())
+                self.assertNotIn("Traceback", errors.getvalue())
+                self.assertEqual({path.name for path in root.iterdir()}, names)
+
     @unittest.skipUnless(resource is not None and hasattr(resource, "RLIMIT_FSIZE"),
                          "requires a per-process file size limit")
     def test_partial_write_failure_preserves_record_and_removes_temporary_file(self):

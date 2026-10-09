@@ -75,8 +75,16 @@ def review_method(doc, lang):
     return LABELS[lang]["analysed_note" if analysed else "static_note"]
 
 
-def markdown_table_cell(value):
-    """Keep pipes and line breaks inside a GFM cell, including in code spans."""
+def markdown_code(value):
+    """Keep a literal command or code span intact, even with backticks."""
+    value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    literal = value.translate({ord(char): f"&#{ord(char)};" for char in punctuation + " \t"})
+    literal = literal.replace("\n", "<br>")
+    return f"<code>{literal}</code>"
+
+
+def markdown_inline(value):
+    """Keep recorded text in one GFM block while preserving inline Markdown."""
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
 
     def text(part):
@@ -93,23 +101,37 @@ def markdown_table_cell(value):
         code = match[3].replace("\n", " ")
         if code.startswith(" ") and code.endswith(" ") and code.strip(" "):
             code = code[1:-1]  # CommonMark code spans trim one surrounding space.
-        # Entities prevent both table splitting and inline Markdown interpretation.
-        literal = code.translate({ord(char): f"&#{ord(char)};" for char in punctuation + " \t"})
-        parts.append(f"<code>{literal}</code>")
+        parts.append(markdown_code(code))
         end = match.end()
     parts.append(text(value[end:]))
     return "".join(parts)
 
 
+def markdown_table_cell(value):
+    """Keep pipes and line breaks inside a GFM cell, including in code spans."""
+    return markdown_inline(value)
+
+
+def markdown_reference(ref):
+    title = markdown_inline(ref.get("title", ref["url"]))
+    title = title.replace("[", "&#91;").replace("]", "&#93;")
+    # Angle destinations allow parentheses; entities keep input from ending
+    # the destination or escaping its closing delimiter.
+    url = (escape(ref["url"], quote=False).replace("\\", "&#92;")
+           .replace("\r", "&#13;").replace("\n", "&#10;"))
+    return f"[{title}](<{url}>)"
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
     cell = markdown_table_cell
+    text = markdown_inline
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    lines = [f"# {t['title']}: {meta.get('project', '')}", ""]
+    lines = [f"# {t['title']}: {text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
-                 + review_method(doc, lang))
+                 + text(review_method(doc, lang)))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {cell(meta.get('scope', ''))} |",
@@ -120,20 +142,21 @@ def render_markdown(doc, lang):
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {f['title']}")
+        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {text(f['title'])}")
         lines.append("")
         for key in FIELDS:
             if key in f:
-                lines.append(f"- **{t[key]}:** {as_text(f[key])}")
+                lines.append(f"- **{t[key]}:** {text(f[key])}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
         if v.get("evidence"):
-            lines.append(f"- **{t['evidence']}:** {v['evidence']}")
+            lines.append(f"- **{t['evidence']}:** {text(v['evidence'])}")
         if "analysis" in f:
             a = f["analysis"]
-            lines.append(f"- **{t['analysis']}:** {a['result']} ({a['tool']}: `{a['command']}`)")
+            lines.append(f"- **{t['analysis']}:** {text(a['result'])} "
+                         f"({text(a['tool'])}: {markdown_code(a['command'])})")
         lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
         for ref in f.get("references", []):
-            lines.append(f"- **{t['references']}:** [{ref.get('title', ref['url'])}]({ref['url']})")
+            lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
     if doc.get("rules"):
         lines += [f"## {t['rules']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
@@ -149,7 +172,7 @@ def render_markdown(doc, lang):
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
-        lines += [f"- {item}" for item in doc.get(key, [])] or [t["none"]]
+        lines += [f"- {text(item)}" for item in doc.get(key, [])] or [t["none"]]
         lines.append("")
     return "\n".join(lines)
 

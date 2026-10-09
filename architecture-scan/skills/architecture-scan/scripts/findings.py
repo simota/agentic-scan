@@ -61,8 +61,11 @@ class SchemaError(ValueError):
 
 def read_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        # Escaped lone surrogates parse as JSON but cannot be written as UTF-8.
+        json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        return doc
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -110,6 +113,8 @@ def validate_finding(f, where):
         raise SchemaError(f"{where}.validation: must be an object")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
+    if "evidence" in v and not isinstance(v["evidence"], str):
+        raise SchemaError(f"{where}.validation.evidence: must be a string")
     if v["verdict"] in DEFINITIVE:
         _text(v.get("evidence"), f"{where}.validation.evidence ({v['verdict']} needs evidence)")
     if v["method"] == "analysed" and "analysis" not in f:
@@ -124,6 +129,8 @@ def validate_finding(f, where):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
         _text(ref.get("url"), f"{where}.references[{i}].url")
+        if "title" in ref and not isinstance(ref["title"], str):
+            raise SchemaError(f"{where}.references[{i}].title: must be a string")
 
 
 def _validate_perspectives(records, where):
@@ -156,8 +163,9 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
-    if "method" in meta and not isinstance(meta["method"], str):
-        raise SchemaError("meta.method: must be a string")
+    for key in ("method", "commit"):
+        if key in meta and not isinstance(meta[key], str):
+            raise SchemaError(f"meta.{key}: must be a string")
     seen = set()
     for i, f in enumerate(_list(doc.get("findings", []), "findings")):
         validate_finding(f, f"findings[{i}]")
@@ -175,6 +183,8 @@ def validate(doc, complete=False):
         for key in ("statement", "source"):
             _text(r.get(key), f"{where}.{key}")
         _choice(r.get("status"), RULE_STATUSES, f"{where}.status")
+        if "reason" in r and not isinstance(r["reason"], str):
+            raise SchemaError(f"{where}.reason ({r['id']}): must be a string")
     _validate_perspectives(doc.get("perspectives", []), "perspectives")
     for key in LISTS:
         values = _list(doc.get(key, []), key)
@@ -233,10 +243,12 @@ def cmd_merge(args):
         for path in args.fragments:
             merge(doc, read_json(path), path)
         validate(doc)
-    except SchemaError as exc:
+        # Encode before opening the target so invalid Unicode cannot truncate it.
+        data = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+    except (SchemaError, UnicodeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
-    target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    target.write_bytes(data)
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "
           f"{len(doc.get('findings', []))} finding(s)")
     return 0
@@ -251,7 +263,10 @@ def contract_problems(out, allow=()):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
         problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    if "findings.json" not in present:
+    not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
+    for name in sorted(not_files):
+        problems.append(f"output is not a file: {name}")
+    if "findings.json" not in present or "findings.json" in not_files:
         return problems
     try:
         doc = read_json(out / "findings.json")

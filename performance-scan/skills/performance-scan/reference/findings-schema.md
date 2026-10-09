@@ -12,9 +12,21 @@ python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
-record does not match the shape (the field is named). `findings.py check`
-exits `1` and lists every contract violation.
+filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
+output could not be encoded or saved, `2` the record does not match the shape
+(the field is named). `findings.py check` exits `1` and lists contract
+violations. Required outputs must be readable, nonempty regular files;
+symbolic links to such files are allowed. The check validates the record and
+file structure, not whether rendered text is current or a finding is true.
+
+Rendering encodes both outputs and finishes temporary files and recovery
+copies before replacing either destination. A handled replacement error
+restores outputs already replaced; if restoration also fails, the error names
+the retained recovery copy. Existing permission bits and symbolic links are
+preserved, and new outputs start with private permissions. Destination
+directories must be writable. Run renders sequentially: this is not a
+transaction for concurrent readers or writers, and does not guarantee recovery
+after forced termination or a system crash.
 
 ## Writing the file
 

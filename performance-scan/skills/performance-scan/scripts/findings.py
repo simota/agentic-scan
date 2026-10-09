@@ -15,7 +15,8 @@ FINDINGS is created when absent. The merged record must pass the schema check
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order and every perspective in
+required outputs are readable nonempty regular files, the record is complete,
+IDs are gapless in severity order and every perspective in
 `reference/perspectives.md` is recorded.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
@@ -276,17 +277,36 @@ def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
     problems = []
-    present = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    try:
+        present = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    except OSError as exc:
+        return [f"cannot inspect output directory: {out}: {exc}"]
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
         problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    if "findings.json" not in present:
+    readable = set()
+    for name in sorted(OUTPUTS & present):
+        path = out / name
+        try:
+            # Follow valid symlinks, but never open a FIFO or device as a report.
+            if not stat.S_ISREG(path.stat().st_mode):
+                problems.append(f"invalid output: {name} (must be a regular file)")
+                continue
+            with path.open("rb") as source:
+                if not source.read(1):
+                    problems.append(f"empty output: {name}")
+                    continue
+        except OSError as exc:
+            problems.append(f"unreadable output: {name}: {exc}")
+            continue
+        readable.add(name)
+    if "findings.json" not in readable:
         return problems
     try:
         doc = read_json(out / "findings.json")
         validate(doc, complete=True)
-    except SchemaError as exc:
+    except (SchemaError, UnicodeError) as exc:
         return problems + [f"findings.json: {exc}"]
     findings = doc.get("findings", [])
     expected = [f"P-{i:03d}" for i in range(1, len(findings) + 1)]

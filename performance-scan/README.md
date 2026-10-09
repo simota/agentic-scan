@@ -70,9 +70,11 @@ python3 skills/performance-scan/scripts/findings.py check out   # exit 1 lists e
 | `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity, budgets, perspective coverage |
 | `report.md` | The written assessment: scope, findings, budgets, coverage, sound items, limitations, next steps |
 
-`findings.py check` enforces the run contract: exactly these three files,
+`findings.py check` enforces the run contract: exactly these three readable,
+nonempty files (valid symbolic links are allowed),
 gapless `P-NNN` IDs in severity order, every perspective recorded, and nonempty
-`checked_ok` and `limitations`. It checks shape, not whether a finding is true.
+`checked_ok` and `limitations`. It checks shape, not whether rendered text is
+current or a finding is true.
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report covering several).

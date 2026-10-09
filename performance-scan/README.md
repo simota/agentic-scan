@@ -94,6 +94,7 @@ skills/performance-scan/
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
 examples/findings.sample.json  fictional sample for make demo / make check
+scripts/install.py             path-safe install helper used by Makefile
 tests/                         offline tests for the scripts and the documents
 ```
 

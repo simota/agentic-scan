@@ -51,7 +51,7 @@ FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "locati
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^P-\d{3}$")
 BUDGET_ID = re.compile(r"^B-\d{2,}$")
-LOCATION = re.compile(r"^[^\s:]+(?::\d+(?:-\d+)?)$")
+LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
 class SchemaError(ValueError):
@@ -94,8 +94,14 @@ def validate_finding(f, where):
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
-        if not isinstance(loc, str) or not LOCATION.match(loc):
+        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
+        if match is None or not match["path"].strip():
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
+        start = int(match["start"])
+        end = int(match["end"] or match["start"])
+        if start < 1 or end < start:
+            raise SchemaError(f"{where}.location: {loc!r} needs positive line numbers "
+                              "and a range end not before its start")
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
@@ -103,10 +109,12 @@ def validate_finding(f, where):
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if v["verdict"] in DEFINITIVE:
         _text(v.get("evidence"), f"{where}.validation.evidence ({v['verdict']} needs evidence)")
-    if v["method"] == "measured":
-        m = f.get("measurement")
+    if v["method"] == "measured" and "measurement" not in f:
+        raise SchemaError(f"{where}.measurement: required when validation.method is measured")
+    if "measurement" in f:
+        m = f["measurement"]
         if not isinstance(m, dict):
-            raise SchemaError(f"{where}.measurement: required when validation.method is measured")
+            raise SchemaError(f"{where}.measurement: must be an object")
         for key in ("environment", "command", "result"):
             _text(m.get(key), f"{where}.measurement.{key}")
     for i, ref in enumerate(f.get("references", [])):

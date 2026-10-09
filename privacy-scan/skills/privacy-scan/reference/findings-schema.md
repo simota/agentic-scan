@@ -85,11 +85,17 @@ Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
 for inspection; accepted text retains its original spelling. Name fields and
 use placeholders.
 
-Reference URLs are checked both as supplied and after one percent-decoding pass
-over their parsed components. Query names and values also receive form decoding
-(`+` means a space). A URL that cannot be parsed is checked after one decoding
-pass over the whole string. These checks use temporary copies; accepted URLs
-retain their original spelling, and decoding is not recursive.
+All checked prose is also inspected after percent-decoding and HTML-entity
+decoding (`%40`, `&#64;`), repeated up to three times so double-encoded values
+are caught, and with invisible format characters (zero-width spaces, word
+joiners, soft hyphens) removed. Hex digests and dashless UUIDs (whole tokens of
+32 or more hex digits containing a letter) are not counted as digit runs.
+
+Reference URLs are checked both as supplied and after percent-decoding their
+parsed components. Query names and values also receive form decoding (`+`
+means a space). A URL that cannot be parsed is checked after decoding the whole
+string. These checks use temporary copies; accepted URLs retain their original
+spelling.
 
 Only the fields documented below are accepted, at every object level: `meta`,
 findings, validation, analysis, references, commitments and perspectives.
@@ -114,7 +120,12 @@ dashboard, commands use preformatted code blocks that preserve line breaks and
 indentation. Table headers follow the report language, perspectives are listed
 in the order of `reference/perspectives.md`, blank optional fields add no row,
 a blank reference `title` shows the URL, and a blank `meta.commit` shows
-`UNKNOWN`.
+`UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown
+links, so renderers that link bare URLs do not keep escape characters in the
+target. Excluded findings (`FalsePositive`, `NotApplicable`) are labelled in
+both reports and have their own dashboard filter instead of appearing under
+their severity; a filter that matches nothing says so. Dashboard cells wrap
+long paths and keep line breaks.
 
 ## Shape
 

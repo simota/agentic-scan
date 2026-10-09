@@ -2,6 +2,7 @@
 """Merge finding fragments into findings.json and check a run's output directory.
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
+    python3 findings.py renumber FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -12,6 +13,11 @@ are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
+
+`renumber` orders the findings by severity, then path and line of their first
+location, and renames them `A-001`… without gaps. Every whole-word mention of
+an old ID in the record's text is rewritten in the same pass, so `next_steps`
+and traces keep pointing at the same finding.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -305,6 +311,66 @@ def _atomic_write(target, data):
         temporary.unlink(missing_ok=True)
 
 
+# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`.
+ID_MENTION = re.compile(r"(?<![\w-])A-[0-9]{3}(?![\w-])")
+
+
+def _first_location(f):
+    loc = f["location"][0] if isinstance(f["location"], list) else f["location"]
+    match = LOCATION.fullmatch(loc)
+    return loc[:match.start(1) - 1], int(match[1])
+
+
+def _rewrite_ids(value, mapping):
+    if isinstance(value, str):
+        return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
+    if isinstance(value, list):
+        return [_rewrite_ids(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {k: _rewrite_ids(v, mapping) for k, v in value.items()}
+    return value
+
+
+def renumber(doc):
+    """Return (doc, mapping): findings in severity then path order, IDs gapless."""
+    findings = doc.get("findings", [])
+    order = sorted(range(len(findings)), key=lambda i: (
+        SEVERITIES.index(findings[i]["severity"]), _first_location(findings[i]), i))
+    mapping = {findings[i]["id"]: f"A-{n:03d}" for n, i in enumerate(order, 1)}
+    # One pass over the old text, so A-001 -> A-002 and A-002 -> A-001 do not chain.
+    renamed = _rewrite_ids(doc, mapping)
+    if findings:
+        renamed["findings"] = [renamed["findings"][i] for i in order]
+        for f, i in zip(renamed["findings"], order):
+            f["id"] = mapping[findings[i]["id"]]
+    return renamed, {old: new for old, new in mapping.items() if old != new}
+
+
+def _serialize(doc):
+    return (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+
+
+def cmd_renumber(args):
+    target = Path(args.findings)
+    try:
+        doc = read_json(target)
+        validate(doc)
+        if len(doc.get("findings", [])) > 999:
+            raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
+        doc, changed = renumber(doc)
+        validate(doc)
+        if changed:
+            _atomic_write(target, _serialize(doc))
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    for old, new in sorted(changed.items()):
+        print(f"{old} -> {new}")
+    print(f"renumbered {len(changed)} finding(s) in {target}" if changed
+          else f"already in order: {target}")
+    return 0
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
@@ -315,7 +381,7 @@ def cmd_merge(args):
             # Each fragment must leave a valid record, even in a batch.
             validate(doc)
         # Serialize before staging any output.
-        data = (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        data = _serialize(doc)
         _atomic_write(target, data)
     except (OSError, ValueError, RuntimeError) as exc:
         # RuntimeError: Path.resolve() on a symlink loop before Python 3.13.
@@ -413,6 +479,8 @@ def _renderer():
     here = str(Path(__file__).resolve().parent)
     if here not in sys.path:
         sys.path.insert(0, here)
+    # Leave no __pycache__ beside the skill (it may be a linked checkout).
+    sys.dont_write_bytecode = True
     import render
     return render
 
@@ -433,11 +501,13 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    r = sub.add_parser("renumber", help="order findings by severity and path, IDs gapless")
+    r.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return cmd_merge(args) if args.cmd == "merge" else cmd_check(args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

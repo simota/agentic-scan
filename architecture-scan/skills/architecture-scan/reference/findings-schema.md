@@ -7,6 +7,7 @@ summary use the same recorded facts.
 Render with (paths relative to this skill's directory):
 
 ```
+python3 scripts/findings.py renumber <out>/findings.json
 python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
@@ -61,6 +62,19 @@ Merge semantics:
   within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
+
+## Numbering
+
+Fragments may assign IDs in the order findings are found. Before rendering,
+`findings.py renumber <out>/findings.json` sorts the findings by severity, then
+by the path and line of their first location, and renames them `A-001`…
+without gaps. Every whole-word mention of an old ID anywhere in the record
+(`trace`, `next_steps`, `decisions`…) is rewritten in the same pass; a token
+such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
+record untouched, and writes the same way merge does. Renumber after the last
+merge that adds or regrades a finding, then render.
+
+## Merge guarantees
 
 The existing record is validated before merging, then the combined record is
 validated after each fragment. A refused batch writes nothing, even if earlier

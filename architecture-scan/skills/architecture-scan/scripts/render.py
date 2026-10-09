@@ -20,6 +20,7 @@ from string import punctuation
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       _atomic_write, read_json, validate)
 

@@ -10,8 +10,9 @@
   },
   "budgets": [
     {"id": "B-01", "statement": "Hot list endpoints issue a constant number of queries", "source": "baseline; tests/test_products.py:30 asserts 3 queries", "family": "QRY", "inferred": false, "status": "violated"},
-    {"id": "B-02", "statement": "List responses are capped at 100 records", "source": "app/pagination.py:5 MAX_PAGE_SIZE", "family": "SIZE", "inferred": false, "status": "violated"},
-    {"id": "B-03", "statement": "The nightly sync finishes before the next run", "source": "inferred from deploy/cron.yaml:12", "family": "LAT", "inferred": true, "status": "not checked", "reason": "Supplier API latency is not in the repository"}
+    {"id": "B-02", "statement": "List responses are capped at 100 records", "source": "app/pagination.py:5 MAX_PAGE_SIZE", "family": "SIZE", "inferred": false, "status": "holds"},
+    {"id": "B-03", "statement": "The nightly sync finishes before the next run", "source": "inferred from deploy/cron.yaml:12", "family": "LAT", "inferred": true, "status": "not checked", "reason": "Supplier API latency is not in the repository"},
+    {"id": "B-04", "statement": "Exports and other in-memory collections stay bounded as tenant history grows", "source": "baseline", "family": "SIZE", "inferred": false, "status": "violated"}
   ],
   "findings": [
     {
@@ -47,8 +48,8 @@
       "cost_model": "Memory proportional to all orders of the tenant; one query returning every row",
       "request": "1. A tenant with a large order history. 2. GET /api/orders/export",
       "contrast": "none",
-      "impact": "Expected (B-02): bounded memory per request. Actual: whole history materialised as a list, then as one CSV string; matters above roughly 100k orders per tenant",
-      "budget": "B-02",
+      "impact": "Expected (B-04): bounded memory per request. Actual: whole history materialised as a list, then as one CSV string; matters above roughly 100k orders per tenant",
+      "budget": "B-04",
       "fix": "Stream rows with a server-side cursor and write the CSV incrementally to the response",
       "regression_test": "Export of 10k synthetic orders keeps peak allocation below a fixed bound",
       "validation": {"verdict": "Likely", "method": "static", "evidence": "export.py:27 list(Order.objects.filter(tenant=...)); production volume unknown"},
@@ -58,15 +59,15 @@
       "id": "P-003",
       "title": "Product search filters on a column with no index",
       "severity": "Low",
-      "confidence": "Suspected",
+      "confidence": "Environment-dependent",
       "category": "Database access",
       "step": "DB3",
       "location": "app/products/search.py:14",
       "workload": "Admin product search (cold)",
       "scale_driver": "Products per tenant",
       "cost_model": "Full scan of the products table per search",
-      "request": "1. GET /admin/products?sku=<sku>",
-      "impact": "Expected: indexed lookup. Actual: no index on (tenant_id, sku) in db/migrations",
+      "request": "1. A tenant with a large product catalogue (matters above roughly 100k products; production volume unknown). 2. GET /admin/products?sku=<sku>",
+      "impact": "Expected: indexed lookup. Actual: db/migrations defines no index on (tenant_id, sku); the deployed schema was not observed",
       "fix": "Add a composite index on (tenant_id, sku)",
       "regression_test": "EXPLAIN for the search query uses the new index",
       "validation": {"verdict": "Unverified", "method": "static"},
@@ -74,7 +75,7 @@
     }
   ],
   "perspectives": [
-    {"name": "Database access", "status": "applied", "note": "DB1-DB2 via B-01, B-02; DB3-DB6 applied"},
+    {"name": "Database access", "status": "applied", "note": "DB1-DB2 via B-01, B-02, B-04; DB3-DB6 applied"},
     {"name": "Algorithms and data structures", "status": "applied", "note": "AL1-AL4 applied; nothing found"},
     {"name": "Memory", "status": "applied", "note": "ME1-ME3 applied"},
     {"name": "I/O and network", "status": "applied", "note": "IO1 N/A: synchronous WSGI; IO2-IO6 applied"},
@@ -82,13 +83,13 @@
     {"name": "Concurrency and resources", "status": "applied", "note": "CC1-CC4 applied"},
     {"name": "Payload and API shape", "status": "applied", "note": "PA1-PA4 applied"},
     {"name": "Front end", "status": "applied", "note": "FE1-FE5 applied; bundle size not measured"},
-    {"name": "Background work", "status": "not checked", "note": "BG2 needs the supplier API contract (B-03)"},
+    {"name": "Background work", "status": "applied", "note": "BG1 and BG3 applied; BG2 not checked: the nightly sync needs the supplier API contract (B-03)"},
     {"name": "Startup and configuration", "status": "applied", "note": "SC1-SC3 applied"},
     {"name": "Dependencies and platform", "status": "applied", "note": "DP1-DP2 applied"},
     {"name": "Observability", "status": "applied", "note": "OB1 applied"}
   ],
   "checked_ok": ["Product list paginates with a cursor and prefetches images (app/products/views.py:22)"],
-  "decisions": ["Confirm the intended maximum items per order"],
+  "decisions": ["Confirm the intended maximum items per order", "Confirm the inferred nightly sync deadline from deploy/cron.yaml:12 (B-03)", "Confirm whether the production schema indexes products (tenant_id, sku) (P-003)"],
   "limitations": ["Production data volumes, deployed indexes and pool sizes were not observed", "No measurement was run; costs are static cost models"],
   "next_steps": ["Fix P-001 and add the query-count test", "Confirm export volumes, then stream P-002"]
 }

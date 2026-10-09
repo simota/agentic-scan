@@ -108,7 +108,7 @@ requester's language (`--lang ja|en`).
 | A front end is in the repo | Apply the *Front end* perspective; read the build config and the largest routes. Bundle size from a local build is a measurement and needs the MEASURE go-ahead |
 | The requester wants numbers (latency, throughput, memory) | MEASURE only on their own local or throwaway environment after an explicit go-ahead; never production, never shared environments, never third-party endpoints. Without measurement, report cost models, not milliseconds |
 | Asked to confirm a fix or guard against regression | VERIFY-FIX: a deterministic assertion (query count, call count, allocation or size budget) in the repo's own suite, red before and green after. Prefer counts over wall-clock thresholds, which flake |
-| The host cannot run a second, independent reviewer | Record that in `limitations`; High findings stay `Likely` unless the reporting agent traced them end to end. Never invent a second reviewer |
+| The host cannot run a second, independent reviewer | Record that in `limitations`. The reporting agent's own end-to-end trace (required for every High and Medium) is then the only review, so a High finding whose trace leaves any link unconfirmed stays `Likely`. Never invent a second reviewer |
 | Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several. Filing or sending is the requester's step |
 
 ## Always / Never

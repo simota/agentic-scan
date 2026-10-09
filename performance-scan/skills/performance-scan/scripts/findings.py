@@ -10,8 +10,9 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
-FINDINGS is created when absent. The merged record must pass the schema check
-(`reference/findings-schema.md`) before anything is written.
+FINDINGS is created when absent. The record must pass the schema check
+(`reference/findings-schema.md`) after every fragment before anything is
+written. A merge never removes a key.
 Run merges to the same FINDINGS sequentially; atomic replacement does not
 detect concurrent updates.
 
@@ -25,6 +26,7 @@ Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr).
 """
 import argparse
+import errno
 import json
 import math
 import os
@@ -41,6 +43,7 @@ DEFINITIVE = ("Valid", "FalsePositive", "NotApplicable")
 EXCLUDED = ("FalsePositive", "NotApplicable")
 METHODS = ("static", "measured")
 STATUSES = ("Open", "Fixed", "Accepted")
+BUDGET_FAMILIES = ("QRY", "SIZE", "CPLX", "LAT", "RES", "FE")
 BUDGET_STATUSES = ("holds", "violated", "partly read", "not checked")
 PERSPECTIVE_STATUSES = ("applied", "N/A", "not checked")
 PERSPECTIVES = (
@@ -66,11 +69,26 @@ class SchemaError(ValueError):
 
 
 def resolve_path(path):
-    """Report symlink loops as I/O errors on Python versions that raise RuntimeError."""
+    """Resolve symbolic links, reporting a loop as an I/O error on every Python version.
+
+    Python 3.12 and earlier raise RuntimeError; 3.13+ return the looping link
+    itself, which would otherwise look like an absent file and be replaced.
+    """
     try:
-        return Path(path).resolve()
+        resolved = Path(path).resolve()
     except RuntimeError as exc:
         raise OSError(f"cannot resolve {path}: {exc}") from exc
+    if resolved.is_symlink():
+        raise OSError(errno.ELOOP, f"cannot resolve {path}: symbolic link loop")
+    return resolved
+
+
+def file_mode(path):
+    """Return st_mode, or None when the path does not exist; other errors propagate."""
+    try:
+        return path.stat().st_mode
+    except FileNotFoundError:
+        return None
 
 
 def _unique_object(pairs):
@@ -118,9 +136,15 @@ def _optional_strings(record, keys, where):
             raise SchemaError(f"{where}.{key}: must be a string")
 
 
+def _show(value, limit=80):
+    """Quote a value for an error message without dumping a huge or nested input."""
+    text = repr(value)
+    return text if len(text) <= limit else text[:limit - 3] + "..."
+
+
 def _choice(value, allowed, where):
     if value not in allowed:
-        raise SchemaError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
+        raise SchemaError(f"{where}: {_show(value)} is not one of {', '.join(allowed)}")
 
 
 def validate_finding(f, where):
@@ -130,11 +154,11 @@ def validate_finding(f, where):
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
     if not isinstance(f["id"], str) or not FINDING_ID.fullmatch(f["id"]):
-        raise SchemaError(f"{where}.id: {f['id']!r} must look like P-001")
+        raise SchemaError(f"{where}.id: {_show(f['id'])} must look like P-001")
     for key in ("title", "workload", "scale_driver", "cost_model", "request",
                 "impact", "fix", "regression_test"):
         _text(f[key], f"{where}.{key}")
-    _optional_strings(f, ("contrast", "budget"), where)
+    _optional_strings(f, ("contrast", "budget", "step"), where)
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -145,12 +169,12 @@ def validate_finding(f, where):
     for loc in locations:
         match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
         if match is None or not match["path"].strip():
-            raise SchemaError(f"{where}.location: {loc!r} must be path:line")
+            raise SchemaError(f"{where}.location: {_show(loc)} must be path:line")
         # Compare decimal strings without Python's integer-conversion digit limit.
         start = match["start"].lstrip("0") or "0"
         end = (match["end"] or match["start"]).lstrip("0") or "0"
         if start == "0" or (len(end), end) < (len(start), start):
-            raise SchemaError(f"{where}.location: {loc!r} needs positive line numbers "
+            raise SchemaError(f"{where}.location: {_show(loc)} needs positive line numbers "
                               "and a range end not before its start")
     v = f["validation"]
     if not isinstance(v, dict):
@@ -194,7 +218,7 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
-    _optional_strings(meta, ("commit",), "meta")
+    _optional_strings(meta, ("commit", "method"), "meta")
     for key in ("findings", "budgets", "perspectives"):
         if not isinstance(doc.get(key, []), list):
             raise SchemaError(f"{key}: must be a list")
@@ -218,6 +242,8 @@ def validate(doc, complete=False):
         if "inferred" in b and not isinstance(b["inferred"], bool):
             raise SchemaError(f"{where}.inferred: must be a boolean")
         _optional_strings(b, ("reason",), where)
+        if "family" in b:
+            _choice(b["family"], BUDGET_FAMILIES, f"{where}.family")
         _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
     seen = set()
     for i, p in enumerate(doc.get("perspectives", [])):
@@ -293,7 +319,8 @@ def merge(doc, fragment, where):
 
 def write_atomic(target, content):
     """Replace a resolved target only after all bytes have been written and closed."""
-    mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    mode = file_mode(target)
+    mode = None if mode is None else stat.S_IMODE(mode)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="wb", dir=target.parent,
@@ -318,11 +345,15 @@ def cmd_merge(args):
     try:
         # Keep the existing behavior of reading and updating a symlink's destination.
         destination = resolve_path(target)
-        doc = read_json(destination) if destination.exists() else {}
+        doc = read_json(destination) if file_mode(destination) is not None else {}
         validate(doc)
         for path in args.fragments:
             merge(doc, read_json(path), path)
-        validate(doc)
+            # Validate per fragment: a finding must be complete where it first appears.
+            try:
+                validate(doc)
+            except SchemaError as exc:
+                raise SchemaError(f"{path}: {exc}") from exc
         content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
         write_atomic(destination, content)
     except (SchemaError, OSError, UnicodeError, RecursionError) as exc:
@@ -366,6 +397,8 @@ def contract_problems(out, allow=()):
     try:
         doc = read_json(out / "findings.json")
         validate(doc, complete=True)
+        # A "\ud800" escape decodes to a lone surrogate that render cannot encode.
+        json.dumps(doc, ensure_ascii=False).encode("utf-8")
     except (SchemaError, UnicodeError) as exc:
         return problems + [f"findings.json: {exc}"]
     findings = doc.get("findings", [])
@@ -380,9 +413,15 @@ def contract_problems(out, allow=()):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    budget_ids = set()
     for b in doc.get("budgets", []):
-        if b["status"] == "not checked" and "reason" not in b:
+        budget_ids.add(b["id"])
+        if b["status"] == "not checked" and not b.get("reason", "").strip():
             problems.append(f"{b['id']}: a not-checked budget needs a reason")
+    for f in findings:
+        budget = f.get("budget", "").strip()
+        if budget and budget not in budget_ids:
+            problems.append(f"{f['id']}.budget: {budget} is not in budgets")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

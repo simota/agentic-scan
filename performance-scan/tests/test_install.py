@@ -104,6 +104,39 @@ class InstallerTests(unittest.TestCase):
                 else:
                     self.assertEqual(destination.read_text(encoding="utf-8"), "existing")
 
+    def test_a_conflict_on_one_host_links_none(self):
+        for host in self.hosts.values():
+            host.mkdir()
+        (self.hosts["codex"] / "skills" / self.skill.name).mkdir(parents=True)
+        result, _, errors = self.run_install("link")
+        self.assertEqual(result, 1)
+        self.assertIn("refusing", errors)
+        for name in ("claude", "agy"):
+            self.assertFalse((self.hosts[name] / "skills").exists())
+
+    def test_a_skills_dir_inside_the_skill_is_refused(self):
+        for directory in (self.skill, self.skill / "nested"):
+            with self.subTest(directory=directory):
+                directory.mkdir(exist_ok=True)
+                result, _, errors = self.run_install("link", "--skills-dir", str(directory))
+                self.assertEqual(result, 1)
+                self.assertIn("inside the skill", errors)
+                self.assertFalse((directory / self.skill.name).is_symlink())
+
+    def test_a_link_through_a_checkout_alias_is_recognised(self):
+        alias = self.root / "alias"
+        alias.symlink_to(self.skill.parents[1], target_is_directory=True)
+        directory = self.root / "custom skills"
+        directory.mkdir()
+        destination = directory / self.skill.name
+        destination.symlink_to(alias / "skills" / self.skill.name, target_is_directory=True)
+        result, output, errors = self.run_install("link", "--skills-dir", str(directory))
+        self.assertEqual(result, 0, errors)
+        self.assertIn("already linked", output)
+        result, output, errors = self.run_install("unlink", "--skills-dir", str(directory))
+        self.assertEqual(result, 0, errors)
+        self.assertFalse(destination.is_symlink())
+
     def test_missing_source_and_unknown_agent_do_not_create_links(self):
         directory = self.root / "custom skills"
         directory.mkdir()
@@ -135,7 +168,8 @@ class MakefilePathTests(unittest.TestCase):
                         ignore=shutil.ignore_patterns("test_install.py", "__pycache__"))
         self.skill = self.repo / "skills" / "performance-scan"
 
-    def run_make(self, target, *variables, external=False, preceding=(), preload=None):
+    def run_make(self, target, *variables, external=False, preceding=(), preload=None,
+                 environment=None):
         args = ["make", "--no-print-directory"]
         for makefile in preceding:
             args += ["-f", str(makefile)]
@@ -148,6 +182,7 @@ class MakefilePathTests(unittest.TestCase):
         env.pop("MAKEFILES", None)
         if preload is not None:
             env["MAKEFILES"] = str(preload)
+        env.update(environment or {})
         result = subprocess.run(
             [*args, target, f"PYTHON={sys.executable}", *variables],
             cwd=self.root if external else self.repo, env=env,
@@ -179,6 +214,17 @@ class MakefilePathTests(unittest.TestCase):
         self.assertIn(str(destination), self.run_make("status", variable, external=True))
         self.run_make("unlink", variable, external=True)
         self.assertFalse(destination.is_symlink())
+
+    def test_exported_selection_variables_are_ignored(self):
+        home = self.root / "home"
+        (home / ".claude").mkdir(parents=True)
+        project = self.root / "unrelated project"
+        project.mkdir()
+        output = self.run_make("link", f"HOME={home}", environment={
+            "PROJECT": str(project), "SKILLS_DIR": str(project), "AGENT": "unknown"})
+        self.assertEqual((home / ".claude" / "skills" / self.skill.name).readlink(), self.skill)
+        self.assertNotIn(str(project), output)
+        self.assertEqual(list(project.iterdir()), [])
 
     def test_preceding_makefiles_preserve_spaceful_checkout_paths(self):
         settings = self.root / "settings.mk"

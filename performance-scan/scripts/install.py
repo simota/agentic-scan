@@ -28,31 +28,50 @@ def targets(args):
     return sorted({(roots[a], roots[a] / "skills") for a in agents}, key=lambda t: str(t[0]))
 
 
+def points_at(destination, skill):
+    """True when a symlink reaches this skill, even through another path alias."""
+    try:
+        return destination.resolve() == skill
+    except (OSError, RuntimeError):
+        return False
+
+
 def link(skill, destinations, agents):
     if not skill.is_dir():
         raise ValueError(f"refusing {skill} - skill directory does not exist")
-    linked = 0
+    # Check every destination before creating any link, so a conflict on one
+    # host does not leave the others half-installed.
+    plan = []
     for guard, directory in destinations:
         destination = directory / skill.name
         if not guard.is_dir():
             print(f"skip     {destination} - {guard} does not exist")
             continue
+        try:
+            resolved = directory.resolve()
+        except RuntimeError as exc:
+            raise ValueError(f"refusing {directory} - {exc}") from exc
+        if resolved == skill or skill in resolved.parents:
+            raise ValueError(f"refusing {directory} - it is inside the skill itself")
         if destination.is_symlink():
-            current = os.readlink(destination)
-            if current != str(skill):
+            if not points_at(destination, skill):
                 raise ValueError(
-                    f"refusing {destination} is a symlink to {current} - resolve it, then re-run"
+                    f"refusing {destination} is a symlink to {os.readlink(destination)}"
+                    " - resolve it, then re-run"
                 )
-            print(f"ok       {destination} already linked")
         elif destination.exists():
             raise ValueError(
                 f"refusing {destination} exists and is not a symlink - move it aside first"
             )
+        plan.append((directory, destination))
+    for directory, destination in plan:
+        if destination.is_symlink():
+            print(f"ok       {destination} already linked")
         else:
             directory.mkdir(parents=True, exist_ok=True)
             destination.symlink_to(skill, target_is_directory=True)
             print(f"linked   {destination} -> {skill}")
-        linked += 1
+    linked = len(plan)
     if not linked:
         raise ValueError(f"nothing linked - no skills directory found for: {agents}")
     print(f"invoke it with:  {skill.name}   (or /{skill.name} in a slash-command harness)")
@@ -62,12 +81,11 @@ def unlink(skill, destinations):
     for _, directory in destinations:
         destination = directory / skill.name
         if destination.is_symlink():
-            current = os.readlink(destination)
-            if current == str(skill):
+            if points_at(destination, skill):
                 destination.unlink()
                 print(f"unlinked {destination}")
             else:
-                print(f"left     {destination} - points at {current}, not this repo")
+                print(f"left     {destination} - points at {os.readlink(destination)}, not this repo")
         elif destination.exists():
             print(f"left     {destination} - not a symlink")
         else:
@@ -78,7 +96,7 @@ def status(skill, destinations):
     for guard, directory in destinations:
         destination = directory / skill.name
         if not guard.is_dir():
-            print(f"skip     {destination} - host not installed")
+            print(f"skip     {destination} - {guard} does not exist")
         elif destination.is_symlink():
             print(f"symlink  {destination} -> {os.readlink(destination)}")
         elif destination.is_dir():

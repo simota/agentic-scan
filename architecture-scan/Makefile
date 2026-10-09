@@ -43,14 +43,17 @@ tgt_agy    := $(call shell_quote,$(AGY_HOME)) $(call shell_quote,$(AGY_HOME)/ski
 
 ifneq ($(SKILLS_DIR),)
 QTARGETS := $(call shell_quote,$(SKILLS_DIR)) $(call shell_quote,$(SKILLS_DIR))
+SCOPE   := $(call shell_quote,SKILLS_DIR=$(SKILLS_DIR))
 else ifneq ($(PROJECT),)
 QTARGETS := $(call shell_quote,$(PROJECT)) $(call shell_quote,$(PROJECT)/.claude/skills)
+SCOPE   := $(call shell_quote,PROJECT=$(PROJECT))
 else
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
 ifneq ($(UNKNOWN),)
 $(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
 endif
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(tgt_$(a)))
+SCOPE   := $(call shell_quote,AGENT=$(AGENT))
 endif
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
@@ -85,7 +88,7 @@ link: ## symlink the skill into every installed host's skills dir
 	  mkdir -p -- "$$dir" && $(PYTHON) -c 'import os,sys; os.symlink(sys.argv[1], sys.argv[2])' $(QSKILL) "$$d" || exit 1; \
 	  echo "linked   $$d -> "$(QSKILL); n=$$((n+1)); \
 	done; \
-	if [ $$n -eq 0 ]; then echo "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
+	if [ $$n -eq 0 ]; then echo "nothing linked - no skills directory found for "$(SCOPE) >&2; exit 1; fi; \
 	echo "invoke it with:  $(NAME)   (or /$(NAME) in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created

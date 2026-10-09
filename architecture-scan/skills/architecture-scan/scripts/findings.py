@@ -57,6 +57,7 @@ PERSPECTIVES = (
 )
 # Hunt step prefixes, in PERSPECTIVES order (reference/perspectives.md).
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
+STEP_COUNTS = (4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
@@ -68,8 +69,9 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
-STEP_ID = re.compile(r"([A-Z]{2})[1-9][0-9]*")
-EVIDENCE_LINE = re.compile(r"\S:[0-9]+")
+STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
+# A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
+EVIDENCE_LINE = re.compile(r"[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -87,7 +89,8 @@ def read_json(path):
         return obj
 
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+        # utf-8-sig: a byte order mark from a Windows editor is not content.
+        doc = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
         # Reject lone surrogates and non-finite numbers, including float overflow.
         json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")
         return doc
@@ -144,10 +147,11 @@ def validate_finding(f, where):
         step = STEP_ID.fullmatch(f["step"]) if isinstance(f["step"], str) else None
         if not step or step[1] not in STEP_PREFIXES:
             raise SchemaError(f"{where}.step: {f['step']!r} must be a hunt step ID like DM1")
-        expected = STEP_PREFIXES[PERSPECTIVES.index(f["category"])]
-        if step[1] != expected:
+        index = PERSPECTIVES.index(f["category"])
+        expected, count = STEP_PREFIXES[index], STEP_COUNTS[index]
+        if step[1] != expected or int(step[2]) > count:
             raise SchemaError(f"{where}.step: {f['step']} is not a {f['category']} step "
-                              f"({expected}…)")
+                              f"({expected}1-{expected}{count})")
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
@@ -281,6 +285,11 @@ def merge(doc, fragment, where):
 
 
 def _atomic_write(target, data):
+    _atomic_write_all({target: data})
+
+
+def _stage(target, data):
+    """Write data beside target; return (temporary, resolved target)."""
     # Follow symlinks as write_bytes did, preserving the link itself.
     target = target.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -306,9 +315,23 @@ def _atomic_write(target, data):
             stream.flush()
             # The replacement must never expose a record that is not yet on disk.
             os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
+    return temporary, target
+
+
+def _atomic_write_all(files):
+    """Replace every target only after all of them are staged, keeping links and modes."""
+    staged = []
+    try:
+        for target, data in files.items():
+            staged.append(_stage(target, data))
+        for temporary, target in staged:
+            os.replace(temporary, target)
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
 
 
 # An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`.
@@ -428,11 +451,16 @@ def contract_problems(out, allow=()):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
-    rule_ids = {r["id"] for r in doc.get("rules", [])}
+    rule_status = {r["id"]: r["status"] for r in doc.get("rules", [])}
     for f in findings:
-        if f.get("rule", "").strip() and f["rule"] not in rule_ids:
-            problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
         verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
+        if f.get("rule", "").strip():
+            status = rule_status.get(f["rule"])
+            if status is None:
+                problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
+            elif verdict in ("Valid", "Likely") and status not in ("violated", "partly read"):
+                problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
+                                f"{status}, not violated or partly read")
         if verdict in DEFINITIVE and not EVIDENCE_LINE.search(evidence):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
         if verdict in EXCLUDED:

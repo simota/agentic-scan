@@ -41,9 +41,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   checked against four claims: reach, the data that actually arrives,
   controls, and whether the commitment is the app's own
 - **No values** — `findings.py merge` checks report prose, including analysis
-  results, commitments and coverage notes, for e-mail addresses (outside
-  reserved example domains) and runs of 12 or more digits. Use field names
-  and placeholders throughout the record
+  results, commitments and coverage notes, for e-mail addresses (including
+  quoted and Unicode forms, outside reserved example domains) and runs of
+  12 or more digits, even with repeated spaces, tabs or non-breaking spaces.
+  Use field names and placeholders throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
 
@@ -73,12 +74,13 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity, commitments, perspective coverage |
-| `report.md` | The written assessment: scope, findings, commitments, coverage, sound items, limitations, next steps |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, commitments, perspective coverage |
+| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, next steps |
 
-`findings.py check` enforces the run contract: exactly these three files,
-gapless `PV-NNN` IDs in severity order, every perspective recorded, nonblank
-reasons for unchecked commitments, and nonempty `checked_ok` and `limitations`.
+`findings.py check` enforces the run contract: exactly these three readable,
+nonempty files, gapless `PV-NNN` IDs in severity order, every perspective
+recorded, nonblank reasons for unchecked commitments, and nonempty `checked_ok`
+and `limitations`.
 It checks shape, not whether a finding is true.
 
 The scripts reject text that cannot be encoded as UTF-8 and stage output bytes

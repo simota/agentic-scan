@@ -20,7 +20,7 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
+from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       read_json, validate)
 from output_io import write_utf8_files  # noqa: E402
 
@@ -35,6 +35,7 @@ LABELS = {
         "flow": "flow", "contrast": "contrast", "impact": "what happens", "commitment": "commitment",
         "fix": "fix direction", "guard": "guard", "verdict": "recorded verdict",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
+        "verdict_counts": "Verdict counts",
         "references": "references", "status": "status", "review_method": "Review method",
         "inferred": "inferred", "not_checked_reason": "reason",
         "static_note": "Static review; no personal data was read from any data store.",
@@ -51,6 +52,7 @@ LABELS = {
         "flow": "データの流れ", "contrast": "対照", "impact": "何が起きるか", "commitment": "約束",
         "fix": "修正方針", "guard": "再発防止チェック", "verdict": "検証判定",
         "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
+        "verdict_counts": "検証判定別の件数",
         "references": "参考", "status": "ステータス", "review_method": "診断方法",
         "inferred": "推定", "not_checked_reason": "未確認の理由",
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
@@ -65,6 +67,12 @@ FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "commitm
 def counts(findings):
     active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     return {s: sum(f["severity"] == s for f in active) for s in SEVERITIES}, len(findings) - len(active)
+
+
+def verdict_summary(findings):
+    """Show every recorded verdict, including exclusions and zero counts."""
+    return " / ".join(f"{v} {sum(f['validation']['verdict'] == v for f in findings)}"
+                      for v in VERDICTS)
 
 
 def as_text(value):
@@ -173,6 +181,7 @@ def render_markdown(doc, lang):
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
                  + markdown_text(method))
+    lines += ["", f"**{t['verdict_counts']}:** {verdict_summary(findings)}"]
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               markdown_row((t['project'], meta.get('project', ''))),
               markdown_row((t['scope_row'], meta.get('scope', ''))),
@@ -262,6 +271,7 @@ def render_html(doc, lang):
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
+    out.append(f"<p><strong>{e(t['verdict_counts'])}:</strong> {e(verdict_summary(findings))}</p>")
     scope_rows = [(t['project'], meta.get('project', '')),
                   (t['scope_row'], meta.get('scope', '')),
                   (t['revision'], meta.get('commit', 'UNKNOWN')),
@@ -288,7 +298,8 @@ def render_html(doc, lang):
                              f"<pre><code>{e(a['command'])}</code></pre></dd>")
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
+                   f"· {e(v['verdict'])} <span class='muted'>· {e(f['confidence'])} · "
+                   f"{e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows)
                    + analysis_html
                    + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"

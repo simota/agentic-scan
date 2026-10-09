@@ -354,7 +354,7 @@ def write_outputs(outputs):
     destinations = [(path.resolve(), content) for path, content in outputs]
     if len({path for path, _ in destinations}) != len(destinations):
         raise OSError("report and dashboard must have different destinations")
-    temporary_dirs, prepared, replaced = [], [], []
+    temporary_dirs, prepared, attempted = [], [], []
     retained = set()
     try:
         for target, content in destinations:
@@ -378,13 +378,17 @@ def write_outputs(outputs):
             prepared.append((target, staged, backup))
         try:
             for target, staged, backup in prepared:
+                # An interrupt can arrive after the rename has succeeded.
+                attempted.append((target, staged, backup))
                 os.replace(staged, target)
-                replaced.append((target, backup))
         except BaseException as exc:
             # Also restore after an interrupt between the two replacements.
             failures = []
-            for target, backup in reversed(replaced):
+            for target, staged, backup in reversed(attempted):
                 try:
+                    # A surviving staged file means the rename did not happen.
+                    if staged.exists():
+                        continue
                     if backup is None:
                         target.unlink(missing_ok=True)
                     else:

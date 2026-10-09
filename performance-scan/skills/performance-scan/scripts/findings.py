@@ -65,7 +65,7 @@ class SchemaError(ValueError):
 def read_json(path):
     try:
         return json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -165,19 +165,27 @@ def validate(doc, complete=False):
         if f["id"] in seen:
             raise SchemaError(f"findings[{i}].id: duplicate {f['id']}")
         seen.add(f["id"])
+    seen = set()
     for i, b in enumerate(doc.get("budgets", [])):
         where = f"budgets[{i}]"
         if not isinstance(b, dict) or not BUDGET_ID.match(str(b.get("id"))):
             raise SchemaError(f"{where}.id: must look like B-01")
+        if b["id"] in seen:
+            raise SchemaError(f"{where}.id: duplicate {b['id']}")
+        seen.add(b["id"])
         for key in ("statement", "source"):
             _text(b.get(key), f"{where}.{key}")
         _optional_strings(b, ("reason",), where)
         _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
+    seen = set()
     for i, p in enumerate(doc.get("perspectives", [])):
         where = f"perspectives[{i}]"
         if not isinstance(p, dict):
             raise SchemaError(f"{where}: must be an object")
         _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
+        if p["name"] in seen:
+            raise SchemaError(f"{where}.name: duplicate {p['name']}")
+        seen.add(p["name"])
         _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{where}.status")
         _text(p.get("note"), f"{where}.note")
     for key in LISTS:

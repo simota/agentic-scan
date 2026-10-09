@@ -13,8 +13,9 @@ python3 scripts/findings.py check <out> [--allow NAME]
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
-output could not be encoded or saved, `2` the record does not match the shape
-(the field is named). `findings.py check` exits `1` and lists contract
+output could not be encoded or saved, `2` the input is unreadable, is not valid
+UTF-8 JSON, or does not match the shape (the field is named for shape errors).
+`findings.py check` exits `1` and lists contract
 violations. Required outputs must be readable, nonempty regular files;
 symbolic links to such files are allowed. The check validates the record and
 file structure, not whether rendered text is current or a finding is true.
@@ -51,7 +52,10 @@ Merge semantics:
   duplicates
 
 Every merge validates the existing record before applying fragments, then
-validates the combined record; a refused merge writes nothing.
+validates the combined record; a refused merge writes nothing. Existing and
+combined records require unique finding IDs, budget IDs and perspective names.
+Within a fragment, repeated perspective names still replace the whole entry
+in order, so the last entry wins.
 Each finding must be complete in the fragment that first adds it.
 
 Merges finish UTF-8 encoding and write a temporary file beside the destination

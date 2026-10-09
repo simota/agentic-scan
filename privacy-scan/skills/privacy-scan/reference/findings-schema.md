@@ -16,6 +16,8 @@ filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
 record does not match the shape (the field is named). `findings.py check`
 exits `1` and lists every contract violation.
 
+Both report contents are generated before either output file is written.
+
 ## Writing the file
 
 Build `findings.json` from fragments, never from a heredoc or a generated
@@ -46,6 +48,10 @@ top-level text lists, is checked for e-mail addresses (other than
 `.invalid` domains) and runs of 12 or more digits, including space- or
 hyphen-separated digits and numbers next to punctuation. Name fields and use
 placeholders.
+
+Schema errors identify the field and expected shape without echoing rejected
+values. Optional text fields may be omitted, but must be strings when present;
+record collections and `references` must be lists.
 
 Recognised hexadecimal revisions in `meta.commit` and the line-number suffix
 of a validated `location` are treated as technical identifiers. The location's
@@ -120,10 +126,11 @@ encoded separately; other URL schemes remain visible as text.
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values |
 | `contrast`, `commitment` | Optional strings: the flow that keeps the commitment; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
+| `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`; an optional string for other verdicts |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | `{title, url}` |
+| `references[]` | Objects with a nonblank `url` string and an optional `title` string |
 | `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`, shown in both reports. `family` and `inferred` are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

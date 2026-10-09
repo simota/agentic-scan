@@ -2,6 +2,7 @@
 """Merge finding fragments into findings.json and check a run's output directory.
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
+    python3 findings.py renumber FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -12,6 +13,11 @@ are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
+
+`renumber` orders the findings by severity, then path and line of their first
+location, and renames them `A-001`… without gaps. Every whole-word mention of
+an old ID in the record's text is rewritten in the same pass, so `next_steps`
+and traces keep pointing at the same finding.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -51,6 +57,7 @@ PERSPECTIVES = (
 )
 # Hunt step prefixes, in PERSPECTIVES order (reference/perspectives.md).
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
+STEP_COUNTS = (4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
@@ -62,8 +69,9 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
-STEP_ID = re.compile(r"([A-Z]{2})[1-9][0-9]*")
-EVIDENCE_LINE = re.compile(r"\S:[0-9]+")
+STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
+# A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
+EVIDENCE_LINE = re.compile(r"[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -81,7 +89,8 @@ def read_json(path):
         return obj
 
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+        # utf-8-sig: a byte order mark from a Windows editor is not content.
+        doc = json.loads(Path(path).read_text(encoding="utf-8-sig"), object_pairs_hook=unique_object)
         # Reject lone surrogates and non-finite numbers, including float overflow.
         json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")
         return doc
@@ -138,10 +147,11 @@ def validate_finding(f, where):
         step = STEP_ID.fullmatch(f["step"]) if isinstance(f["step"], str) else None
         if not step or step[1] not in STEP_PREFIXES:
             raise SchemaError(f"{where}.step: {f['step']!r} must be a hunt step ID like DM1")
-        expected = STEP_PREFIXES[PERSPECTIVES.index(f["category"])]
-        if step[1] != expected:
+        index = PERSPECTIVES.index(f["category"])
+        expected, count = STEP_PREFIXES[index], STEP_COUNTS[index]
+        if step[1] != expected or int(step[2]) > count:
             raise SchemaError(f"{where}.step: {f['step']} is not a {f['category']} step "
-                              f"({expected}…)")
+                              f"({expected}1-{expected}{count})")
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
@@ -275,6 +285,11 @@ def merge(doc, fragment, where):
 
 
 def _atomic_write(target, data):
+    _atomic_write_all({target: data})
+
+
+def _stage(target, data):
+    """Write data beside target; return (temporary, resolved target)."""
     # Follow symlinks as write_bytes did, preserving the link itself.
     target = target.resolve()
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -300,9 +315,83 @@ def _atomic_write(target, data):
             stream.flush()
             # The replacement must never expose a record that is not yet on disk.
             os.fsync(stream.fileno())
-        os.replace(temporary, target)
-    finally:
+    except BaseException:
         temporary.unlink(missing_ok=True)
+        raise
+    return temporary, target
+
+
+def _atomic_write_all(files):
+    """Replace every target only after all of them are staged, keeping links and modes."""
+    staged = []
+    try:
+        for target, data in files.items():
+            staged.append(_stage(target, data))
+        for temporary, target in staged:
+            os.replace(temporary, target)
+    finally:
+        for temporary, _ in staged:
+            temporary.unlink(missing_ok=True)
+
+
+# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`.
+ID_MENTION = re.compile(r"(?<![\w-])A-[0-9]{3}(?![\w-])")
+
+
+def _first_location(f):
+    loc = f["location"][0] if isinstance(f["location"], list) else f["location"]
+    match = LOCATION.fullmatch(loc)
+    return loc[:match.start(1) - 1], int(match[1])
+
+
+def _rewrite_ids(value, mapping):
+    if isinstance(value, str):
+        return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
+    if isinstance(value, list):
+        return [_rewrite_ids(v, mapping) for v in value]
+    if isinstance(value, dict):
+        return {k: _rewrite_ids(v, mapping) for k, v in value.items()}
+    return value
+
+
+def renumber(doc):
+    """Return (doc, mapping): findings in severity then path order, IDs gapless."""
+    findings = doc.get("findings", [])
+    order = sorted(range(len(findings)), key=lambda i: (
+        SEVERITIES.index(findings[i]["severity"]), _first_location(findings[i]), i))
+    mapping = {findings[i]["id"]: f"A-{n:03d}" for n, i in enumerate(order, 1)}
+    # One pass over the old text, so A-001 -> A-002 and A-002 -> A-001 do not chain.
+    renamed = _rewrite_ids(doc, mapping)
+    if findings:
+        renamed["findings"] = [renamed["findings"][i] for i in order]
+        for f, i in zip(renamed["findings"], order):
+            f["id"] = mapping[findings[i]["id"]]
+    return renamed, {old: new for old, new in mapping.items() if old != new}
+
+
+def _serialize(doc):
+    return (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+
+
+def cmd_renumber(args):
+    target = Path(args.findings)
+    try:
+        doc = read_json(target)
+        validate(doc)
+        if len(doc.get("findings", [])) > 999:
+            raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
+        doc, changed = renumber(doc)
+        validate(doc)
+        if changed:
+            _atomic_write(target, _serialize(doc))
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    for old, new in sorted(changed.items()):
+        print(f"{old} -> {new}")
+    print(f"renumbered {len(changed)} finding(s) in {target}" if changed
+          else f"already in order: {target}")
+    return 0
 
 
 def cmd_merge(args):
@@ -315,7 +404,7 @@ def cmd_merge(args):
             # Each fragment must leave a valid record, even in a batch.
             validate(doc)
         # Serialize before staging any output.
-        data = (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        data = _serialize(doc)
         _atomic_write(target, data)
     except (OSError, ValueError, RuntimeError) as exc:
         # RuntimeError: Path.resolve() on a symlink loop before Python 3.13.
@@ -362,11 +451,16 @@ def contract_problems(out, allow=()):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
-    rule_ids = {r["id"] for r in doc.get("rules", [])}
+    rule_status = {r["id"]: r["status"] for r in doc.get("rules", [])}
     for f in findings:
-        if f.get("rule", "").strip() and f["rule"] not in rule_ids:
-            problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
         verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
+        if f.get("rule", "").strip():
+            status = rule_status.get(f["rule"])
+            if status is None:
+                problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
+            elif verdict in ("Valid", "Likely") and status not in ("violated", "partly read"):
+                problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
+                                f"{status}, not violated or partly read")
         if verdict in DEFINITIVE and not EVIDENCE_LINE.search(evidence):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
         if verdict in EXCLUDED:
@@ -413,6 +507,8 @@ def _renderer():
     here = str(Path(__file__).resolve().parent)
     if here not in sys.path:
         sys.path.insert(0, here)
+    # Leave no __pycache__ beside the skill (it may be a linked checkout).
+    sys.dont_write_bytecode = True
     import render
     return render
 
@@ -433,11 +529,13 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    r = sub.add_parser("renumber", help="order findings by severity and path, IDs gapless")
+    r.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return cmd_merge(args) if args.cmd == "merge" else cmd_check(args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

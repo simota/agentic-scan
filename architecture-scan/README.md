@@ -68,6 +68,7 @@ builds from JSON fragments rather than heredocs:
 
 ```sh
 python3 skills/architecture-scan/scripts/findings.py merge out/findings.json frag-001.json
+python3 skills/architecture-scan/scripts/findings.py renumber out/findings.json  # severity, then path
 python3 skills/architecture-scan/scripts/render.py out/findings.json --out out --lang ja
 python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists each violation
 ```
@@ -101,7 +102,7 @@ skills/architecture-scan/
   reference/validation.md      verdicts, the four claims, read-only analysis, fitness functions
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
-  scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
+  scripts/findings.py          merges JSON fragments; renumbers; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead

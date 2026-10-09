@@ -34,11 +34,11 @@ class SchemaConsistencyTests(unittest.TestCase):
         findings.validate({"findings": [finding(location=["src/a.py:5-5", "src/a.py:1-40"])]})
 
     def test_step_is_a_hunt_step_of_the_finding_category(self):
-        for step in ("dm1", "DM", "DM0", "XX1", "DM1 DM2", 1, None):
+        for step in ("dm1", "DM", "DM0", "DM5", "XX1", "DM1 DM2", 1, None):
             with self.subTest(step=step):
                 self.assert_refused({"findings": [finding(step=step)]}, r"\.step")
         self.assert_refused({"findings": [finding(step="BL1")]}, "not a Domain model")
-        findings.validate({"findings": [finding(step="DM12"),
+        findings.validate({"findings": [finding(step="DM4"),
                                         finding("A-002", category="Coupling", step="CP3")]})
         self.assertEqual(len(findings.STEP_PREFIXES), len(findings.PERSPECTIVES))
 
@@ -246,12 +246,12 @@ class RenderConsistencyTests(unittest.TestCase):
 
     def test_list_items_cannot_open_markdown_blocks(self):
         items = {
-            "[Confirmed]: https://evil.example/x": "&#91;Confirmed]: https://evil.example/x",
+            "[Confirmed]: https://evil.example/x": "&#91;Confirmed&#93;: https://evil.example/x",
             "---": "&#45;--", "***": "&#42;**", "# Not a heading": "&#35; Not a heading",
             "1) numbered": "1&#41; numbered", "12. twelve": "12&#46; twelve",
-            "[x] looks done": "&#91;x] looks done", "    indented": "&#32;&#32;&#32;&#32;indented",
+            "[x] looks done": "&#91;x&#93; looks done", "    indented": "&#32;&#32;&#32;&#32;indented",
             "+ plus": "&#43; plus", "~~~": "&#126;~~", "=": "&#61;",
-            "plain [link](https://a.example)": "plain [link](https://a.example)",
+            "plain *em* `c`": "plain *em* <code>c</code>",
         }
         doc = complete_doc()
         doc["checked_ok"] = list(items)

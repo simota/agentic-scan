@@ -7,6 +7,7 @@ summary use the same recorded facts.
 Render with (paths relative to this skill's directory):
 
 ```
+python3 scripts/findings.py renumber <out>/findings.json
 python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
@@ -20,9 +21,13 @@ name the verdict and perspective (with the hunt step) of every finding,
 including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
-any other scheme is shown as literal text. Recorded text cannot open a Markdown
-block (heading, list, rule, code block, link definition) in `report.md`.
-Each output is replaced only once completely written.
+any other scheme, or any URL containing a control character, is shown as
+literal text. In `report.md`, recorded text keeps emphasis and code spans, but
+cannot open a Markdown block (heading, list, rule, code block, link
+definition) and cannot form a link or image; backslashes are shown as written
+(`docs\adr`), so they never escape a delimiter.
+Both outputs are written to temporary files first and replace the previous
+pair only once both are complete.
 Exit codes: `0` written, `1` an output could not be written (the previous files
 are kept), `2` the record does not match the shape (the field is named).
 
@@ -32,10 +37,12 @@ be byte-identical to what `render.py` produces from the current
 `findings.json` (in either language, both from one rendering) — re-render after
 the last merge. It also requires:
 
-- every nonblank `findings[].rule` to name a `rules[].id`
+- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` or `Likely`
+  finding not excluded cites a rule recorded as `violated` or `partly read`
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
+  (a token with a letter, then a line from 1: `job.py:58`, `Makefile:12`)
 
 ## Writing the file
 
@@ -62,11 +69,25 @@ Merge semantics:
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
+## Numbering
+
+Fragments may assign IDs in the order findings are found. Before rendering,
+`findings.py renumber <out>/findings.json` sorts the findings by severity, then
+by the path and line of their first location, and renames them `A-001`…
+without gaps. Every whole-word mention of an old ID anywhere in the record
+(`trace`, `next_steps`, `decisions`…) is rewritten in the same pass; a token
+such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
+record untouched, and writes the same way merge does. Renumber after the last
+merge that adds or regrades a finding, then render.
+
+## Merge guarantees
+
 The existing record is validated before merging, then the combined record is
 validated after each fragment. A refused batch writes nothing, even if earlier
 fragments were valid. Invalid existing records must be corrected before merging.
 Each finding must be complete in the fragment that first adds it.
-Inputs must be UTF-8, including every string after JSON escapes are decoded.
+Inputs must be UTF-8, including every string after JSON escapes are decoded;
+a leading byte order mark is ignored.
 JSON numbers must decode to finite values; `NaN`, `Infinity`, `-Infinity`, and
 numeric overflow are rejected rather than written back as nonstandard JSON.
 Duplicate keys within a JSON object are rejected, including nested objects,
@@ -138,7 +159,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category` |
+| `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM4`, not `DM9`) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |

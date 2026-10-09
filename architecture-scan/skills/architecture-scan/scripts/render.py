@@ -20,8 +20,9 @@ from string import punctuation
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      _atomic_write, read_json, validate)
+                      _atomic_write_all, read_json, validate)
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -32,8 +33,14 @@ def is_web_url(url):
 
 
 def is_safe_link(url):
-    """A web URL or a scheme-less relative path; never javascript:, data: and the like."""
-    return is_web_url(url) or not SCHEME.match(url.lstrip("\x00 \t\r\n\f"))
+    """A web URL or a scheme-less relative path; never javascript:, data: and the like.
+
+    Browsers drop tabs, newlines and leading control characters from a URL, so
+    any control character could hide a scheme: such a URL is never a link.
+    """
+    if re.search(r"[\x00-\x1f\x7f]", url):
+        return False
+    return is_web_url(url) or not SCHEME.match(url.lstrip(" "))
 
 
 LABELS = {
@@ -110,15 +117,28 @@ def markdown_code(value):
     return f"<code>{literal}</code>"
 
 
+# Backslashes are literal (paths such as `docs\\adr`), so the punctuation after
+# one loses its escape and is encoded instead; `&<>` are already entities.
+AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
+# Outside code spans these stay literal: a backslash, a stray backtick, the
+# brackets of a link or image (whose target could be any scheme), a cell pipe.
+LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
+           ord("|"): "&#124;"}
+
+
 def markdown_inline(value):
-    """Keep recorded text in one GFM block while preserving inline Markdown."""
+    """Keep recorded text in one GFM block, keeping emphasis and code spans.
+
+    Links and images are shown as literal text, and backslashes as written, so
+    no recorded text turns into a link or loses a delimiter it escaped.
+    """
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
 
     def text(part):
         part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
                       escape(part, quote=False))
-        return (part.replace("\\", "&#92;")
-                .replace("|", "&#124;").replace("\n", "<br>"))
+        part = AFTER_BACKSLASH.sub(lambda m: f"&#{ord(m[0])};", part)
+        return part.translate(LITERAL).replace("\n", "<br>")
 
     parts, end = [], 0
     # An odd backslash prefix escapes the opening backtick; delimiter lengths match.
@@ -151,7 +171,8 @@ def block_safe(rendered):
 
 def heading_text(value):
     """Inline text that cannot lose a trailing `#` to a closing sequence."""
-    rendered = markdown_inline(value)
+    # The heading drops trailing blanks, which would expose the `#` again.
+    rendered = markdown_inline(value).rstrip(" \t")
     return rendered[:-1] + "&#35;" if rendered.endswith("#") else rendered
 
 
@@ -324,7 +345,7 @@ def render_html(doc, lang):
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}: {e(meta.get('project', ''))}</title>"
+           f"<title>{escape(t['title'])}: {escape(' '.join(meta.get('project', '').split()))}</title>"
            f"<style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
            f"<p class='muted'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "
@@ -406,9 +427,8 @@ def main(argv=None):
     out = Path(args.out)
     try:
         out.mkdir(parents=True, exist_ok=True)
-        for name, data in rendered_outputs(doc, lang).items():
-            # Each output is replaced only once complete, keeping links and modes.
-            _atomic_write(out / name, data)
+        # Both outputs are staged before either replaces the previous file.
+        _atomic_write_all({out / name: data for name, data in rendered_outputs(doc, lang).items()})
     except (OSError, RuntimeError) as exc:
         print(f"write failed: {exc}", file=sys.stderr)
         return 1

@@ -13,7 +13,9 @@ named on stderr).
 import argparse
 from html import escape
 from pathlib import Path
+import re
 import sys
+from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
@@ -66,10 +68,61 @@ def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
+MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
+
+
+def markdown_text(value):
+    """Keep prose literal inside headings, inline text and table cells."""
+    text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    # Add our own breaks only after escaping the supplied HTML and Markdown.
+    return escape(text, quote=False).translate(MARKDOWN_ESCAPES).replace("\n", "<br>")
+
+
 def markdown_cell(value):
     """Keep literal text and line breaks inside one Markdown table cell."""
-    text = escape(as_text(value)).replace("\\", "\\\\").replace("|", "\\|")
-    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+    return markdown_text(value)
+
+
+def markdown_row(values):
+    return "| " + " | ".join(markdown_cell(value) for value in values) + " |"
+
+
+def markdown_item(value):
+    """Prevent a literal list marker from starting a nested list or rule."""
+    text = markdown_text(value)
+    text = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", text)
+    return re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=\s|$)", r"\1\\\2", text)
+
+
+def markdown_code(value):
+    """Keep commands literal, including backticks, padding and line breaks."""
+    lines = as_text(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    spans = []
+    for line in lines:
+        if not line:
+            spans.append("")
+            continue
+        fence = "`" * (max((len(run) for run in re.findall(r"`+", line)), default=0) + 1)
+        if line.strip(" ") and (line.startswith(("`", " ")) or line.endswith(("`", " "))):
+            # CommonMark removes one padding space at each end of a code span.
+            line = " " + line + " "
+        spans.append(f"{fence}{line}{fence}")
+    return "<br>".join(spans)
+
+
+def markdown_reference(ref):
+    url = ref["url"]
+    title = ref.get("title", url)
+    label = markdown_text(title)
+    try:
+        scheme = urlsplit(url).scheme.lower()
+    except ValueError:
+        scheme = None
+    # Unsupported or malformed destinations remain visible as literal text.
+    if scheme not in ("", "http", "https"):
+        return label if title == url else f"{label} — {markdown_text(url)}"
+    destination = escape(quote(url, safe="/:?#[]@!$&'()*+,;=%"), quote=False)
+    return f"[{label}](<{destination}>)"
 
 
 def commitment_text(record, labels):
@@ -87,49 +140,50 @@ def render_markdown(doc, lang):
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     analysed = any(f["validation"]["method"] == "analysed" for f in findings)
-    lines = [f"# {t['title']}: {meta.get('project', '')}", ""]
+    lines = [f"# {t['title']}: {markdown_text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
                  + (t["analysed_note"] if analysed else t["static_note"]))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
-              f"| {t['project']} | {meta.get('project', '')} |",
-              f"| {t['scope_row']} | {meta.get('scope', '')} |",
-              f"| {t['revision']} | {meta.get('commit', 'UNKNOWN')} |",
-              f"| {t['date']} | {meta.get('date', '')} / {meta.get('assessor', '')} |", ""]
+              markdown_row((t['project'], meta.get('project', ''))),
+              markdown_row((t['scope_row'], meta.get('scope', ''))),
+              markdown_row((t['revision'], meta.get('commit', 'UNKNOWN'))),
+              markdown_row((t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")), ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {f['title']}")
+        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
         lines.append("")
         for key in FIELDS:
             if key in f:
-                lines.append(f"- **{t[key]}:** {as_text(f[key])}")
+                lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
         if v.get("evidence"):
-            lines.append(f"- **{t['evidence']}:** {v['evidence']}")
+            lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
         if "analysis" in f:
             a = f["analysis"]
-            lines.append(f"- **{t['analysis']}:** {a['result']} ({a['tool']}: `{a['command']}`)")
+            lines.append(f"- **{t['analysis']}:** {markdown_text(a['result'])} "
+                         f"({markdown_text(a['tool'])}: {markdown_code(a['command'])})")
         lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
         for ref in f.get("references", []):
-            lines.append(f"- **{t['references']}:** [{ref.get('title', ref['url'])}]({ref['url']})")
+            lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
     if doc.get("commitments"):
         lines += [f"## {t['commitments']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r["source"], status)
-            lines.append("| " + " | ".join(markdown_cell(value) for value in cells) + " |")
+            lines.append(markdown_row(cells))
         lines.append("")
     lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
     for p in doc.get("perspectives", []):
-        lines.append(f"| {p['name']} | {p['status']} | {p['note']} |")
+        lines.append(markdown_row((p['name'], p['status'], p['note'])))
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
-        lines += [f"- {item}" for item in doc.get(key, [])] or [t["none"]]
+        lines += [f"- {markdown_item(item)}" for item in doc.get(key, [])] or [t["none"]]
         lines.append("")
     return "\n".join(lines)
 

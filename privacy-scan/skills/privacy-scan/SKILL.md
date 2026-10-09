@@ -57,7 +57,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in risk order (sensitive categories, third-party flows and deletion first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (data map, ledger, flow rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). The merge refuses text containing e-mail addresses or long digit runs: name fields and use placeholders |
+| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). To correct a record, write a new fragment with just the changed keys; after a severity changes, run `scripts/findings.py renumber <out>/findings.json`, which reorders IDs and rewrites every `PV-NNN` reference. The merge refuses text containing e-mail addresses or long digit runs: name fields and use placeholders |
 | Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
 
 | Severity | When |
@@ -69,8 +69,12 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Grade a gap by the row it would match if every condition it needs held, then
 lower it one level for each condition the code does not control (a High-class
-gap behind one deployment setting is Medium). An `Environment-dependent`
-finding names each such condition; confidence never changes the grade.
+gap behind one deployment setting is Medium). The configuration a feature needs
+to work at all — an SDK's DSN or API key, a service endpoint, a credential read
+from the environment — is not such a condition: grade as if it is present. Only
+a setting that would have to differ from what the code evidently intends (a log
+level, an SDK option, a region) counts. An `Environment-dependent` finding
+records each such condition in `conditions`; confidence never changes the grade.
 
 ## Phases
 
@@ -105,7 +109,7 @@ requester's language (`--lang ja|en`).
 | No privacy policy or retention rule is in the repository | Infer the commitments from consent UI texts, settings screens, retention jobs and the majority of flows; mark them `inferred`, hunt them anyway, and put each in `decisions`. Ask for the published policy if the requester can share it |
 | A regulation is named | Add its requirements as commitments with the regulation as source, phrased as checks on the code (e.g. "deletion reaches every store holding the subject's data"). Never state that the app is or is not compliant |
 | A third party receives data | Record exactly which fields reach it, from where and when (before or after consent). Whether a contract or DPA covers it is `UNKNOWN` unless the repository says so; put it in `decisions` |
-| The data reaching a sink depends on runtime values (log level, SDK options set by environment, region) | Report as `Environment-dependent` and name the setting |
+| The data reaching a sink depends on runtime values (log level, SDK options set by environment, region) | Report as `Environment-dependent` and name the setting in `conditions` |
 | Real personal data appears in the repository (fixtures, seeds, dumps, screenshots) | Report its location and kind only. Never print the values; never copy them into scratch or the record |
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
 | Asked to lock a commitment in or confirm a fix | GUARD: a test in the repo's own suite with synthetic data, red before and green after |

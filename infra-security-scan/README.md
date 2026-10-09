@@ -62,6 +62,10 @@ baseline                perspectives         └─ chat summary
   are listed in `not_run`; UTF-16/32 exports with a BOM are read
   — on rescan, an `I-*` verdict follows its finding when the rule, file and
   resources are unchanged
+  — settings elsewhere in the inputs are honoured before a rule fires:
+  account defaults for IMDSv2 and EBS encryption, an org policy enforcing
+  public access prevention, policies used only as permissions boundaries,
+  Terragrunt-generated backends and Google-managed service agents
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`); the
   exports join the baseline with `iac_scan.py --snapshots DIR`

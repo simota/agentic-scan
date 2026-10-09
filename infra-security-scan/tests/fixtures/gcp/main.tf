@@ -79,3 +79,8 @@ resource "google_iam_workload_identity_pool_provider" "github" {
     issuer_uri = "https://token.actions.githubusercontent.com"
   }
 }
+
+resource "google_storage_bucket_acl" "public" {
+  bucket         = "example-public"
+  predefined_acl = "publicRead"
+}

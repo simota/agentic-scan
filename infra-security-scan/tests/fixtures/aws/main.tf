@@ -158,3 +158,18 @@ resource "aws_eks_cluster" "main" {
     endpoint_public_access = true
   }
 }
+
+resource "aws_ami_launch_permission" "public" {
+  image_id = "ami-12345678"
+  group    = "all"
+}
+
+resource "aws_cloudfront_distribution" "site" {
+  enabled = true
+  default_cache_behavior {
+    viewer_protocol_policy = "allow-all"
+  }
+  viewer_certificate {
+    cloudfront_default_certificate = true
+  }
+}

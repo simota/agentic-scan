@@ -84,7 +84,7 @@ RULES = {
                     "Trust and federation", "aws", [], "CWE-287"),
     "AWS-IAM-005": ("IAM user with long-lived credentials managed in IaC", "Medium",
                     "Identity and privilege", "aws", [], "CWE-798"),
-    "AWS-RDS-001": ("Database instance is publicly accessible", "High", "Network exposure", "aws",
+    "AWS-RDS-001": ("Database or data service is publicly accessible", "High", "Network exposure", "aws",
                     ["CIS AWS Foundations — RDS instances are not publicly accessible"], "CWE-668"),
     "AWS-RDS-002": ("Database storage not encrypted", "Low", "Data protection", "aws",
                     ["CIS AWS Foundations — RDS storage encryption is enabled"], "CWE-311"),
@@ -140,7 +140,35 @@ RULES = {
                 "Kubernetes", "kubernetes", [], "CWE-269"),
     "K8S-003": ("Kubernetes Secret with data committed", "Medium", "Kubernetes", "kubernetes",
                 [], "CWE-312"),
+    "AWS-SNAP-001": ("Machine image or database snapshot shared publicly", "High", "Data protection", "aws",
+                     ["AWS Foundational Security Best Practices — RDS snapshots are private"], "CWE-200"),
+    "AWS-CF-001": ("CloudFront serves viewers over plaintext HTTP or outdated TLS", "Medium",
+                   "Network exposure", "aws",
+                   ["AWS Foundational Security Best Practices — CloudFront requires encryption in transit"],
+                   "CWE-319"),
+    "GCP-GCS-002": ("Bucket, object or dataset ACL grants public access", "High", "Data protection", "gcp",
+                    ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"], "CWE-200"),
 }
+# Resource types whose policy argument is a resource policy (AWS-S3-003).
+RESOURCE_POLICY_ATTRS = {
+    "aws_sqs_queue_policy": "policy", "aws_sqs_queue": "policy", "aws_sns_topic_policy": "policy",
+    "aws_sns_topic": "policy", "aws_ecr_repository_policy": "policy", "aws_secretsmanager_secret_policy": "policy",
+    "aws_secretsmanager_secret": "policy", "aws_kms_key": "policy", "aws_opensearch_domain_policy": "access_policies",
+    "aws_elasticsearch_domain_policy": "access_policies", "aws_opensearch_domain": "access_policies",
+    "aws_elasticsearch_domain": "access_policies", "aws_glacier_vault": "access_policy",
+}
+CFN_RESOURCE_POLICIES = {
+    "AWS::SQS::QueuePolicy": "PolicyDocument", "AWS::SNS::TopicPolicy": "PolicyDocument",
+    "AWS::ECR::Repository": "RepositoryPolicyText", "AWS::SecretsManager::ResourcePolicy": "ResourcePolicy",
+    "AWS::KMS::Key": "KeyPolicy", "AWS::OpenSearchService::Domain": "AccessPolicies",
+    "AWS::Elasticsearch::Domain": "AccessPolicies",
+}
+PUBLIC_DATA_SERVICES = ("aws_redshift_cluster", "aws_redshiftserverless_workgroup",
+                        "aws_dms_replication_instance", "aws_mq_broker")
+CFN_PUBLIC_DATA = ("AWS::Redshift::Cluster", "AWS::DMS::ReplicationInstance", "AWS::AmazonMQ::Broker",
+                   "AWS::RedshiftServerless::Workgroup")
+OLD_TLS = ("SSLv3", "TLSv1", "TLSv1_2016", "TLSv1.1_2016")
+PUBLIC_GCS_ACL = ("publicRead", "publicReadWrite", "authenticatedRead")
 
 
 class _Unknown:
@@ -642,6 +670,16 @@ DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9
                      r'\s*\}?"?$')
 
 
+def cfn_string(value):
+    """The template text of {"Fn::Sub": "..."}; other values unchanged."""
+    if isinstance(value, dict) and len(value) == 1 and "Fn::Sub" in value:
+        sub = value["Fn::Sub"]
+        if isinstance(sub, list) and sub and isinstance(sub[0], str):
+            return sub[0]
+        return sub if isinstance(sub, str) else value
+    return value
+
+
 def norm_statements(doc):
     if not isinstance(doc, dict):
         return None
@@ -660,7 +698,7 @@ def norm_statements(doc):
             principals.append(("*", "*"))
         elif isinstance(p, dict):
             for kind, ids in p.items():
-                principals.extend((kind, x) for x in aslist(ids))
+                principals.extend((kind, cfn_string(x)) for x in aslist(ids))
         elif p is not None:
             principals.append((UNKNOWN, UNKNOWN))
         if "NotPrincipal" in st:
@@ -738,6 +776,10 @@ class Scan:
         self.not_run, self.hits = [], []
         self.policy_docs = {}
         self.local_module_dirs = set()
+        # Account- or org-level settings that change what an omitted
+        # argument means, per module directory (see collect_context).
+        self.imds_required_dirs, self.ebs_default_dirs, self.gcs_pap_dirs = set(), set(), set()
+        self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
         self.tf_dirs = {}
@@ -828,11 +870,13 @@ class Scan:
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
         return None
 
-    def gcp_iam(self, res, role, members, line):
+    def gcp_iam(self, res, role, members, line, service_agent=False):
         role_text = role if isinstance(role, str) else "a role"
         public = [m for m in members if m in ("allUsers", "allAuthenticatedUsers")]
         if public:
             self.hit("GCP-IAM-001", res, line, f"{role_text} granted to {public[0]}")
+        if service_agent:
+            return  # Google-managed service agents receive these roles by design
         if role in ("roles/owner", "roles/editor"):
             self.hit("GCP-IAM-002", res, line, f"{role} granted")
         if role in ("roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser") and \
@@ -840,11 +884,15 @@ class Scan:
                                      "google_organization_iam_")):
             self.hit("GCP-IAM-004", res, line, f"{role} granted at {res.type.split('_')[1]} level")
 
-    def firewall(self, res, line, direction, disabled, ranges, allows):
+    def firewall(self, res, line, direction, disabled, ranges, allows, other_sources=()):
         if disabled is UNKNOWN or disabled is True or str(disabled).lower() == "true":
             return
-        if direction not in (None, "INGRESS"):
+        # direction is computed in a plan (UNKNOWN); source ranges only apply
+        # to ingress, so known source ranges settle it.
+        if direction not in (None, "INGRESS") and not (direction is UNKNOWN and ranges not in (None, UNKNOWN)):
             return
+        if ranges is None and all(src in (None, []) for src in other_sources):
+            ranges = ["0.0.0.0/0"]  # GCP: an ingress rule with no source applies to every source
         open_from = world_cidrs(ranges)
         if not open_from:
             return
@@ -947,9 +995,12 @@ def github_trust_gap(st):
               for k, x in st["principals"])
     keyed = any(isinstance(key, str) and key.lower().startswith(GITHUB_ISSUER + ":")
                 for _, key, _ in st["conditions"])
+    if not fed and keyed and any((k == "Federated" and not isinstance(x, str)) or k is UNKNOWN
+                                 for k, x in st["principals"]):
+        # Federated = aws_iam_openid_connect_provider.github.arn: the provider is
+        # a reference, but only GitHub tokens carry these condition keys.
+        fed = True
     if not fed:
-        if keyed and contains_unknown(st["principals"]):
-            return UNKNOWN
         return None
     subs, unsupported = [], allows_assume is UNKNOWN or contains_unknown(st["conditions"])
     for op, key, vals in st["conditions"]:
@@ -984,8 +1035,13 @@ def github_trust_gap(st):
 
 # ---------------------------------------------------------------- Terraform rules
 
-ADMIN_ARN = re.compile(r"\Aarn:[a-z0-9-]+:iam::aws:policy/AdministratorAccess\Z")
+ADMIN_ARN = re.compile(r"\Aarn:(?:[a-z0-9-]+|\$\{[^}]+\}):iam::aws:policy/AdministratorAccess\Z")
+# The same ARN in raw HCL, with the partition interpolated (terraform-aws-modules idiom).
+ADMIN_ARN_RAW = re.compile(r'"arn:(?:[a-z0-9-]+|\$\{[^}"]+\}):iam::aws:policy/AdministratorAccess"')
+PUBLIC_GROUP = re.compile(r"/global/(?:AllUsers|AuthenticatedUsers)$")
 GCP_IAM = re.compile(r"^google_\w+_iam_(member|binding)$")
+SERVICE_AGENT = re.compile(r"@(?:gcp-sa-[a-z0-9-]+\.iam|cloudservices|cloudbuild|"
+                           r"container-engine-robot\.iam|compute-system\.iam)\.gserviceaccount\.com")
 GCP_IAM_POLICY = re.compile(r"^google_\w+_iam_policy$")
 DEFAULT_SA = re.compile(r"-compute@developer\.gserviceaccount\.com$")
 SSL_MODES = ("ENCRYPTED_ONLY", "TRUSTED_CLIENT_CERTIFICATE_REQUIRED")
@@ -1008,8 +1064,54 @@ def tf_bool(value):
     return UNKNOWN
 
 
+def check_tf_shared(scan, res):
+    """Rules that apply across several resource types, ahead of the per-type chain."""
+    t, v = res.type, res.view
+    attr = RESOURCE_POLICY_ATTRS.get(t)
+    if attr and v.get(attr) is not None:
+        scan.resource_policy(res, scan.statements(res, attr), v.line(attr))
+    if t in PUBLIC_DATA_SERVICES and tf_bool(v.get("publicly_accessible")) is True:
+        scan.hit("AWS-RDS-001", res, v.line("publicly_accessible"), "publicly_accessible = true")
+    if t in ("aws_instance", "aws_launch_template", "aws_launch_configuration"):
+        devices = v.blocks("root_block_device") + v.blocks("ebs_block_device")
+        devices += [ebs for mapping in v.blocks("block_device_mappings") for ebs in mapping.blocks("ebs")]
+        for device in devices:
+            if tf_bool(device.get("encrypted")) is False:
+                scan.hit("AWS-EBS-001", res, device.line("encrypted"), "block device encrypted = false")
+    if t == "aws_ami_launch_permission" and v.get("group") == "all":
+        scan.hit("AWS-SNAP-001", res, v.line("group"), "launch permission group = all")
+    if t in ("aws_db_snapshot", "aws_db_cluster_snapshot") and "all" in aslist(v.get("shared_accounts")):
+        scan.hit("AWS-SNAP-001", res, v.line("shared_accounts"), "shared_accounts includes all")
+    if t == "aws_cloudfront_distribution":
+        behaviors = v.blocks("default_cache_behavior") + v.blocks("ordered_cache_behavior")
+        for behavior in behaviors:
+            if behavior.get("viewer_protocol_policy") == "allow-all":
+                scan.hit("AWS-CF-001", res, behavior.line("viewer_protocol_policy"),
+                         "viewer_protocol_policy = allow-all")
+        for cert in v.blocks("viewer_certificate"):
+            if cert.get("minimum_protocol_version") in OLD_TLS and \
+                    tf_bool(cert.get("cloudfront_default_certificate")) is not True:
+                scan.hit("AWS-CF-001", res, cert.line("minimum_protocol_version"),
+                         f"minimum_protocol_version = {cert.get('minimum_protocol_version')}")
+    if t in ("google_storage_bucket_acl", "google_storage_object_acl", "google_storage_default_object_acl",
+             "google_storage_bucket_object"):
+        if v.get("predefined_acl") in PUBLIC_GCS_ACL:
+            scan.hit("GCP-GCS-002", res, v.line("predefined_acl"), f"predefined_acl = {v.get('predefined_acl')}")
+        entities = [e for e in aslist(v.get("role_entity")) if isinstance(e, str)]
+        public = [e for e in entities if e.endswith((":allUsers", ":allAuthenticatedUsers"))]
+        if public:
+            scan.hit("GCP-GCS-002", res, v.line("role_entity"), f"role_entity {public[0]}")
+    if t in ("google_bigquery_dataset", "google_bigquery_dataset_access"):
+        grants = v.blocks("access") if t == "google_bigquery_dataset" else [v]
+        for grant in grants:
+            who = grant.get("special_group") if grant.get("special_group") is not None else grant.get("iam_member")
+            if who in ("allUsers", "allAuthenticatedUsers"):
+                scan.hit("GCP-GCS-002", res, grant.line(), f"dataset access granted to {who}")
+
+
 def check_tf(scan, res):
     t, v = res.type, res.view
+    check_tf_shared(scan, res)
     if t in ("aws_security_group", "aws_default_security_group"):
         for rule in v.blocks("ingress"):
             scan.ingress(res, rule.line(), aslist(rule.get("cidr_blocks")) +
@@ -1027,6 +1129,12 @@ def check_tf(scan, res):
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
         if v.get("acl") in ("public-read", "public-read-write", "authenticated-read"):
             scan.hit("AWS-S3-001", res, v.line("acl"), f"acl = {v.get('acl')}")
+        grants = v.blocks("grant") + [g for policy in v.blocks("access_control_policy") for g in policy.blocks("grant")]
+        for grant in grants:
+            uris = [grant.get("uri")] + [grantee.get("uri") for grantee in grant.blocks("grantee")]
+            group = next((u for u in uris if isinstance(u, str) and PUBLIC_GROUP.search(u)), None)
+            if group:
+                scan.hit("AWS-S3-001", res, grant.line(), f"grant to {group.rsplit('/', 1)[-1]}")
         if t == "aws_s3_bucket" and v.get("policy") is not None:
             scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"))
     elif t in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block"):
@@ -1038,17 +1146,25 @@ def check_tf(scan, res):
     elif t == "aws_s3_bucket_policy":
         scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"))
     elif t in ("aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy"):
+        key = re.sub(r"\[[^\]]*\]", "", res.address)  # module.app.aws_iam_policy.b[0] -> ...b
+        if t == "aws_iam_policy" and key in scan.boundary_policies and key not in scan.attached_policies:
+            # A permissions boundary caps permissions ("allow *, deny X" is the
+            # usual shape); it grants nothing by itself.
+            scan.not_run.append(f"IAM policy used only as a permissions boundary; grant rules not applied: "
+                                f"{res.file}:{res.line} ({res.address})")
+            return
         scan.identity_policy(res, scan.statements(res, "policy"), v.line("policy"))
     elif t == "aws_iam_role":
         scan.trust_policy(res, scan.statements(res, "assume_role_policy"), v.line("assume_role_policy"))
         for inline in v.blocks("inline_policy"):
             scan.identity_policy(res, scan.statements(res, "policy", inline), inline.line())
-        if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("managed_policy_arns"))):
+        if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("managed_policy_arns"))) or \
+                ADMIN_ARN_RAW.search(text_of(v, "managed_policy_arns")):
             scan.hit("AWS-IAM-001", res, v.line("managed_policy_arns"), "AdministratorAccess attached")
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
                "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
         arn = v.get("policy_arn")
-        if isinstance(arn, str) and ADMIN_ARN.search(arn):
+        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")):
             scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
     elif t == "aws_iam_access_key":
         scan.hit("AWS-IAM-005", res, res.line, "access key for an IAM user")
@@ -1060,15 +1176,18 @@ def check_tf(scan, res):
         # Replicas and restores inherit encryption from their source; Aurora
         # Serverless v1 clusters are always encrypted.
         inherited = any(v.get(k) not in (None, "") for k in (
-            "replicate_source_db", "snapshot_identifier", "replication_source_identifier"))
+            "replicate_source_db", "snapshot_identifier", "replication_source_identifier")) or bool(
+            v.blocks("restore_to_point_in_time"))
         if t != "aws_rds_cluster_instance" and tf_bool(v.get("storage_encrypted")) in (False, None) \
                 and not inherited and v.get("engine_mode") != "serverless":
             scan.hit("AWS-RDS-002", res, v.line("storage_encrypted"), "storage_encrypted not true")
-    elif t in ("aws_instance", "aws_launch_template"):
+    elif t in ("aws_instance", "aws_launch_template", "aws_launch_configuration"):
         opts = v.blocks("metadata_options")
         if not opts and t == "aws_instance" and v.blocks("launch_template"):
             scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
                                 f"template: {res.file}:{res.line} ({res.address})")
+        elif not opts and res.dir in scan.imds_required_dirs:
+            pass  # aws_ec2_instance_metadata_defaults requires IMDSv2 for omitted settings
         elif not opts:
             scan.hit("AWS-EC2-001", res, res.line, "no metadata_options; IMDSv1 allowed")
         else:
@@ -1086,7 +1205,10 @@ def check_tf(scan, res):
                 scan.hit("AWS-EC2-001", res, opts[0].line("http_tokens"),
                          f"http_tokens = {tokens if tokens else 'unset'}")
     elif t == "aws_ebs_volume":
-        if tf_bool(v.get("encrypted")) in (False, None):
+        encrypted = tf_bool(v.get("encrypted"))
+        # aws_ebs_encryption_by_default encrypts volumes that omit the argument.
+        if encrypted is False or (encrypted is None and res.dir not in scan.ebs_default_dirs
+                                  and v.get("snapshot_id") in (None, "")):
             scan.hit("AWS-EBS-001", res, v.line("encrypted"), "encrypted not true")
     elif t == "aws_lambda_function_url":
         if v.get("authorization_type") == "NONE":
@@ -1117,10 +1239,13 @@ def check_tf(scan, res):
     elif t == "google_compute_firewall":
         allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
         scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
-                      v.get("source_ranges"), allows)
+                      v.get("source_ranges"), allows, (v.get("source_tags"), v.get("source_service_accounts")))
     elif GCP_IAM.match(t):
         members = [v.get("member")] if v.get("member") is not None else aslist(v.get("members"))
-        scan.gcp_iam(res, v.get("role"), members, v.line("role"))
+        raw = (v.raw("member") or v.raw("members") or "") if hasattr(v, "raw") else ""
+        agents = bool(SERVICE_AGENT.search(raw)) or (
+            bool(members) and all(isinstance(m, str) and SERVICE_AGENT.search(m) for m in members))
+        scan.gcp_iam(res, v.get("role"), members, v.line("role"), service_agent=agents)
     elif GCP_IAM_POLICY.match(t):
         data = v.get("policy_data")
         if isinstance(data, str):
@@ -1142,7 +1267,9 @@ def check_tf(scan, res):
         if tf_bool(v.get("uniform_bucket_level_access")) in (False, None):
             gaps.append("uniform_bucket_level_access not true")
         pap = v.get("public_access_prevention")
-        if pap is None or (isinstance(pap, str) and pap != "enforced"):
+        # "inherited" (the default) is enforced when the org policy in the inputs enforces it.
+        inherited = pap in (None, "inherited") and bool(scan.gcs_pap_dirs)
+        if not inherited and (pap is None or (isinstance(pap, str) and pap != "enforced")):
             gaps.append("public_access_prevention not enforced")
         if gaps:
             scan.hit("GCP-GCS-001", res, res.line, "; ".join(gaps))
@@ -1185,7 +1312,11 @@ def check_tf(scan, res):
         private = v.blocks("private_cluster_config")
         private_endpoint = tf_bool(private[0].get("enable_private_endpoint")) if private else None
         authorized = v.blocks("master_authorized_networks_config")
-        if not authorized and private_endpoint in (False, None):
+        ip_endpoints = [ip for cfg in v.blocks("control_plane_endpoints_config")
+                        for ip in cfg.blocks("ip_endpoints_config")]
+        if ip_endpoints and all(tf_bool(ip.get("enabled")) is False for ip in ip_endpoints):
+            pass  # DNS-based endpoint only: no IP endpoint to authorize networks for
+        elif not authorized and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
         elif private_endpoint in (False, None):
             open_from = world_cidrs([c.get("cidr_block") for cfg in authorized for c in cfg.blocks("cidr_blocks")])
@@ -1331,6 +1462,37 @@ def terraform_overrides(scan, parsed):
     return [(entry[0], [entry[1]]) for entry in entries if entry is not None], uncertain
 
 
+def block_text(block):
+    """Every raw argument of a block and its nested blocks, for reference lookups."""
+    parts = [f"{key} = {raw}" for key, (raw, _) in block.attrs.items()]
+    parts += [block_text(child) for child in block.blocks]
+    return "\n".join(parts)
+
+
+def collect_context(scan, d, type_, view, text):
+    """Settings elsewhere in the inputs that change what an omitted argument means."""
+    if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required":
+        scan.imds_required_dirs.add(d)
+    elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None):
+        scan.ebs_default_dirs.add(d)
+    elif type_ in ("google_org_policy_policy", "google_organization_policy", "google_folder_organization_policy",
+                   "google_project_organization_policy") and "storage.publicAccessPrevention" in text \
+            and re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', text):
+        # An org policy applies across projects: one in the inputs covers every bucket.
+        scan.gcs_pap_dirs.add(d)
+    if type_ in ("aws_iam_role", "aws_iam_user"):
+        for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, "permissions_boundary")):
+            scan.boundary_policies.add(f"aws_iam_policy.{m.group(1)}")
+    for attr in ("policy_arn", "managed_policy_arns", "policy_arns"):
+        for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, attr)):
+            scan.attached_policies.add(f"aws_iam_policy.{m.group(1)}")
+
+
+def text_of(view, attr):
+    raw = view.raw(attr) if hasattr(view, "raw") else None
+    return raw or ""
+
+
 def handle_terraform(scan, parsed):
     """parsed: [(rel, blocks)]. Policy documents first, then rules."""
     # OpenTofu reads x.tofu instead of x.tf when both exist in one directory.
@@ -1365,6 +1527,10 @@ def handle_terraform(scan, parsed):
                 if statements is UNKNOWN:
                     scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
                                         f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
+    for rel, blocks in parsed:
+        for b in blocks:
+            if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
+                collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
     declared = {}
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
@@ -1392,7 +1558,7 @@ def handle_terraform(scan, parsed):
             elif b.type == "module" and b.labels:
                 info["resources"] = True  # a root that only calls modules still holds state
                 handle_module(scan, rel, b, view)
-            elif b.type == "provider" and b.labels and b not in uncertain:
+            elif b.type == "provider" and b.labels and b not in uncertain and not local_emulator(b, view):
                 for key in ("access_key", "secret_key", "token", "credentials", "access_token",
                             "client_secret", "client_certificate_password"):
                     # AWS keys in a provider block are flagged in any form.
@@ -1412,6 +1578,12 @@ def handle_terraform(scan, parsed):
                         info["backend"] = True
                     if inner.type == "backend" and inner.labels:
                         handle_backend(scan, getattr(inner.line, "file", rel), inner)
+
+
+def local_emulator(block, view):
+    """A provider pointed at LocalStack or another local emulator takes dummy keys."""
+    return tf_bool(view.get("skip_credentials_validation")) is True and \
+        re.search(r"localhost|127\.0\.0\.1|localstack", block_text(block)) is not None
 
 
 def never_created(view):
@@ -1458,7 +1630,10 @@ def handle_backend(scan, rel, block):
         elif encrypt is None and kms in (None, "") and backend_config_encrypts(scan, rel):
             pass
         elif encrypt is False or (encrypt is None and kms in (None, "")):
-            scan.hit("PS-002", res, block.line, "s3 backend without encrypt = true")
+            # S3 encrypts new objects (SSE-S3) by default since 2023: without
+            # encrypt the state relies on the bucket's settings, which are not here.
+            scan.hit("PS-002", res, block.line, "s3 backend without encrypt = true; relies on bucket default "
+                     "encryption", "Low")
     elif kind == "local" and PROD_DIR.search(rel):
         scan.hit("PS-002", res, block.line, "local state for a production directory", "Low")
 
@@ -1482,12 +1657,33 @@ def backend_config_encrypts(scan, rel):
     return bool(settings) and all(settings)
 
 
+def terragrunt_remote_state(scan, d):
+    """Terragrunt writes the backend at run time from remote_state in a terragrunt.hcl
+    in this directory or one above it within the scanned tree."""
+    root = Path(scan.root)
+    here = root / d
+    for directory in (here, *here.parents):
+        try:
+            directory.relative_to(root)
+        except ValueError:
+            break
+        candidate = directory / "terragrunt.hcl"
+        try:
+            if candidate.is_file() and not candidate.is_symlink() and \
+                    re.search(r"^\s*remote_state\s*\{", candidate.read_text(encoding="utf-8-sig"), re.M):
+                return True
+        except (OSError, UnicodeError):
+            return False
+    return False
+
+
 def finish_dirs(scan):
     for d, info in sorted(scan.tf_dirs.items()):
         # A directory another module calls is a child module, not a root.
         if d in scan.local_module_dirs:
             continue
-        if info["resources"] and not info["backend"] and PROD_DIR.search(d + "/"):
+        if info["resources"] and not info["backend"] and PROD_DIR.search(d + "/") \
+                and not terragrunt_remote_state(scan, d):
             scan.hit("PS-002", Res("backend", "terraform.backend.local", info["file"], 1), 1,
                      "no backend in a production root module; state is local", "Low")
 
@@ -1511,6 +1707,14 @@ def with_plan_unknowns(value, mask):
     return value
 
 
+# Attributes known only after apply on almost every resource. Rules do not read
+# them, so their being unknown says nothing about a check.
+COMPUTED = {"id", "arn", "tags_all", "owner_id", "unique_id", "self_link", "etag", "creation_date",
+            "create_date", "creation_timestamp", "fingerprint", "bucket_domain_name",
+            "bucket_regional_domain_name", "hosted_zone_id", "dns_name", "endpoint", "address",
+            "number", "project_number", "version", "latest_version", "key_id", "name_prefix"}
+
+
 def handle_plan(scan, rel, text, doc):
     unknowns = {}
     changes = doc.get("resource_changes")
@@ -1528,7 +1732,9 @@ def handle_plan(scan, rel, text, doc):
     for m in re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text):
         lines.setdefault(json.loads(m.group(1)), text.count("\n", 0, m.start()) + 1)
 
-    def walk(module):
+    plan_config_refs(scan, doc)
+
+    def walk(module, check):
         if not isinstance(module, dict):
             return
         for r in module.get("resources", []) or []:
@@ -1541,17 +1747,52 @@ def handle_plan(scan, rel, text, doc):
                 continue
             line = lines.get(address, 1)
             values = with_plan_unknowns(r.get("values") or {}, unknowns.get(address))
+            if not check:
+                # First pass: account and org settings that change what omitted arguments mean.
+                collect_context(scan, rel, type_, DictView(values, line), json.dumps(values, default=str))
+                continue
             res = Res(type_, address, rel, line, DictView(values, line), rel)
             scan.add_resource(res)
-            if contains_unknown(values):
+            relevant = {k: x for k, x in values.items() if k not in COMPUTED} if isinstance(values, dict) else values
+            if contains_unknown(relevant):
                 scan.not_run.append(f"plan contains unknown values; affected checks not run: "
                                     f"{address} at {rel}:{line}")
             check_tf(scan, res)
         children = module.get("child_modules")
         for child in children if isinstance(children, list) else []:
-            walk(child)
+            walk(child, check)
     planned = doc.get("planned_values")
-    walk(planned.get("root_module") if isinstance(planned, dict) else None)
+    root = planned.get("root_module") if isinstance(planned, dict) else None
+    walk(root, False)
+    walk(root, True)
+
+
+def plan_config_refs(scan, doc):
+    """Policy references from the plan's configuration section (values are unknown at plan time)."""
+    config = doc.get("configuration")
+
+    def walk(module, prefix):
+        if not isinstance(module, dict):
+            return
+        for r in module.get("resources", []) if isinstance(module.get("resources"), list) else []:
+            expressions = r.get("expressions") if isinstance(r, dict) else None
+            if not isinstance(expressions, dict):
+                continue
+            for attr, target in (("permissions_boundary", scan.boundary_policies),
+                                 ("policy_arn", scan.attached_policies),
+                                 ("managed_policy_arns", scan.attached_policies),
+                                 ("policy_arns", scan.attached_policies)):
+                expr = expressions.get(attr)
+                refs = expr.get("references") if isinstance(expr, dict) else None
+                for ref in refs if isinstance(refs, list) else []:
+                    m = re.match(r"^(aws_iam_policy\.[\w-]+)", str(ref))
+                    if m:
+                        target.add(prefix + m.group(1))
+        calls = module.get("module_calls")
+        for name, call in calls.items() if isinstance(calls, dict) else []:
+            if isinstance(call, dict):
+                walk(call.get("module"), f"{prefix}module.{name}.")
+    walk(config.get("root_module") if isinstance(config, dict) else None, "")
 
 
 JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\],\n]')
@@ -1605,6 +1846,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         line = line_of(lid)
         res = Res(type_, f"cfn:{lid}", rel, line, DictView(props, line))
         scan.add_resource(res, "aws")
+        cfn_shared(scan, res, type_, props, line)
         if type_ == "AWS::EC2::SecurityGroup":
             for rule in aslist(props.get("SecurityGroupIngress")):
                 if isinstance(rule, dict):
@@ -1630,8 +1872,34 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
             for p in aslist(props.get("Policies")):
                 if isinstance(p, dict):
                     scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
-            if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(props.get("ManagedPolicyArns"))):
-                scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
+            cfn_admin(scan, res, props, line)
+        elif type_ in ("AWS::IAM::User", "AWS::IAM::Group"):
+            for p in aslist(props.get("Policies")):
+                if isinstance(p, dict):
+                    scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
+            cfn_admin(scan, res, props, line)
+        elif type_ == "AWS::IAM::AccessKey":
+            scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
+        elif type_ == "AWS::KMS::Key":
+            spec = props.get("KeySpec")
+            if spec in (None, "SYMMETRIC_DEFAULT") and props.get("EnableKeyRotation") in (False, "false", None):
+                scan.hit("AWS-KMS-001", res, line, "EnableKeyRotation not true")
+        elif type_ == "AWS::CloudTrail::Trail":
+            off = [k for k in ("IsMultiRegionTrail", "EnableLogFileValidation")
+                   if props.get(k) in (False, "false", None)]
+            if off:
+                scan.hit("AWS-CT-001", res, line, "not true: " + ", ".join(off))
+        elif type_ == "AWS::EC2::Volume":
+            if props.get("Encrypted") in (False, "false") or (
+                    props.get("Encrypted") is None and "SnapshotId" not in props):
+                scan.hit("AWS-EBS-001", res, line, "Encrypted not true")
+        elif type_ == "AWS::EKS::Cluster":
+            cfg = props.get("ResourcesVpcConfig") if isinstance(props.get("ResourcesVpcConfig"), dict) else {}
+            public = cfg.get("EndpointPublicAccess", True)
+            cidrs = cfg.get("PublicAccessCidrs")
+            open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
+            if public in (True, "true") and open_from:
+                scan.hit("AWS-EKS-001", res, line, f"public endpoint open to {open_from[0]}")
         elif type_ in ("AWS::RDS::DBInstance", "AWS::RDS::DBCluster"):
             if props.get("PubliclyAccessible") in (True, "true"):
                 scan.hit("AWS-RDS-001", res, line, "PubliclyAccessible = true")
@@ -1650,6 +1918,29 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         elif type_ == "AWS::Lambda::Permission":
             if props.get("Principal") == "*" and not ({"SourceArn", "SourceAccount", "PrincipalOrgID"} & props.keys()):
                 scan.hit("AWS-LAMBDA-002", res, line, "Principal = * without a source condition")
+
+
+def cfn_shared(scan, res, type_, props, line):
+    """CloudFormation counterparts of check_tf_shared."""
+    key = CFN_RESOURCE_POLICIES.get(type_)
+    if key and isinstance(props.get(key), dict):
+        scan.resource_policy(res, norm_statements(props[key]), line)
+    if type_ in CFN_PUBLIC_DATA and props.get("PubliclyAccessible") in (True, "true"):
+        scan.hit("AWS-RDS-001", res, line, "PubliclyAccessible = true")
+    if type_ == "AWS::CloudFront::Distribution":
+        config = props.get("DistributionConfig") if isinstance(props.get("DistributionConfig"), dict) else {}
+        behaviors = [config.get("DefaultCacheBehavior"), *aslist(config.get("CacheBehaviors"))]
+        if any(isinstance(b, dict) and b.get("ViewerProtocolPolicy") == "allow-all" for b in behaviors):
+            scan.hit("AWS-CF-001", res, line, "ViewerProtocolPolicy = allow-all")
+        cert = config.get("ViewerCertificate") if isinstance(config.get("ViewerCertificate"), dict) else {}
+        if cert.get("MinimumProtocolVersion") in OLD_TLS and cert.get("CloudFrontDefaultCertificate") not in (True, "true"):
+            scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
+
+
+def cfn_admin(scan, res, props, line):
+    if any(isinstance(cfn_string(a), str) and ADMIN_ARN.search(cfn_string(a))
+           for a in aslist(props.get("ManagedPolicyArns"))):
+        scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
 
 
 def cfn_ingress(scan, res, rule):
@@ -1758,7 +2049,8 @@ def handle_snapshot(scan, rel, text, doc):
             scan.add_resource(res, "gcp")
             allows = [(a.get("IPProtocol"), a.get("ports")) for a in aslist(fw.get("allowed"))
                       if isinstance(a, dict)]
-            scan.firewall(res, line, fw.get("direction"), fw.get("disabled"), fw.get("sourceRanges"), allows)
+            scan.firewall(res, line, fw.get("direction"), fw.get("disabled"), fw.get("sourceRanges"), allows,
+                          (fw.get("sourceTags"), fw.get("sourceServiceAccounts")))
         return "snapshot"
     return None
 
@@ -2037,9 +2329,16 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         role = _k8s_map(doc, "roleRef")
         subjects = [s for s in aslist(doc.get("subjects")) if isinstance(s, _YamlMap)]
         relevant += [role, *subjects]
-        if role.get("kind") == "ClusterRole" and role.get("name") == "cluster-admin":
+        labels = _k8s_map(meta, "labels")
+        # Kubernetes' own bootstrap RBAC (exported with kubectl get -o json):
+        # system:* bindings labelled rbac-defaults, and cluster-admin to system:masters.
+        bootstrap = labels.get("kubernetes.io/bootstrapping") == "rbac-defaults" and \
+            isinstance(name, str) and name.startswith("system:")
+        masters_only = bool(subjects) and all(s.get("kind") == "Group" and s.get("name") == "system:masters"
+                                              for s in subjects)
+        if role.get("kind") == "ClusterRole" and role.get("name") == "cluster-admin" and not masters_only:
             scan.hit("K8S-002", res, role.lines["name"], "binds cluster-admin")
-        for subject in subjects:
+        for subject in subjects if not bootstrap else []:
             if (subject.get("kind") == "Group" and subject.get("name") in
                     ("system:authenticated", "system:unauthenticated")) or (
                     subject.get("kind") == "User" and subject.get("name") == "system:anonymous"):
@@ -2054,7 +2353,8 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         "Pod": ("spec",), "PodTemplate": ("template", "spec"),
         "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
         **{k: ("spec", "template", "spec") for k in (
-            "Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "ReplicationController", "Job")},
+            "Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "ReplicationController", "Job",
+            "Rollout")},  # Argo Rollouts keeps a Deployment-shaped template
     }
     pod = _k8s_map(doc, *paths[kind]) if kind in paths else _YamlMap(res.line)
     hits = [(pod, k, f"{k}: true") for k in ("hostNetwork", "hostPID", "hostIPC")
@@ -2064,6 +2364,11 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             security = _k8s_map(container, "securityContext")
             if security.get("privileged") is True:
                 hits.append((security, "privileged", "privileged: true"))
+            caps = _k8s_map(security, "capabilities")
+            added = [c for c in aslist(caps.get("add")) if isinstance(c, str)]
+            dangerous = [c for c in added if c.upper().removeprefix("CAP_") in ("SYS_ADMIN", "ALL")]
+            if dangerous:
+                hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
     for volume in aslist(pod.get("volumes")):
         if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
             hits.append((volume, "hostPath", "hostPath volume"))
@@ -2245,7 +2550,14 @@ SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 GENERIC_SECRET = re.compile(
     r'^\s*"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
     r'access_key|private_key))"?\s*=\s*"([^"]*)"', re.IGNORECASE)
-PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*)$", re.IGNORECASE)
+# Values that are not secrets even under a secret-looking key: placeholders,
+# references and time units (Cognito token_validity_units).
+PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*|"
+                         r"seconds|minutes|hours|days)$", re.IGNORECASE)
+# A Secret Manager secret *name* (Cloud Run secret_key_ref, Cloud Functions
+# secret_environment_variables): lowercase words joined by - or _.
+SECRET_NAME_KEY = re.compile(r"^(?:secret|secret_id|secret_name)$", re.IGNORECASE)
+SECRET_NAME_VALUE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
 
 
 def scan_secrets(scan, rel, text, kind):
@@ -2253,10 +2565,14 @@ def scan_secrets(scan, rel, text, kind):
     lines = split_lines(text)
     for n, line in enumerate(lines, 1):
         for label, pattern in SECRET_PATTERNS:
-            if pattern.search(line):
+            m = pattern.search(line)
+            # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
+            if m and not m.group().endswith("EXAMPLE"):
                 scan.hit("SEC-001", res, n, label, strong=True)
         if kind in ("terraform", "tfvars"):
             m = GENERIC_SECRET.match(line)
+            if m and SECRET_NAME_KEY.match(m.group(1)) and SECRET_NAME_VALUE.match(m.group(2)):
+                continue
             if m and "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")
     if re.search(r'"type"\s*:\s*"service_account"', text) and re.search(r'"private_key"\s*:', text):

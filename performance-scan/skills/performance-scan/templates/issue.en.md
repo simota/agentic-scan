@@ -1,6 +1,8 @@
 <!--
 Files one finding as one issue (one root cause = one fix location = one issue).
 Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty.
+Write the perspective without "()" when step is absent, UNKNOWN for an empty meta.commit, one
+path:line per line when location is a list, and the URL as the link text when a reference title is blank.
 
 Before filing:
 - No latency or memory figures that were not measured. Give the cost model instead
@@ -30,7 +32,7 @@ Before filing:
 - **Workload:** {{workload}}
 - **Scale driver:** {{scale_driver}}
 - **Cost model:** {{cost_model}}
-- **Violated budget:** {{budget}}
+- **Violated budget:** {{budget}} — {{budgets[id=budget].statement}}
 
 ## Static reproduction
 

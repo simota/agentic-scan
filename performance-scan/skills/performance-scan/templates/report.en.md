@@ -1,6 +1,10 @@
 <!--
 Reports performance findings to the owner or a manager. One report can carry several findings.
 Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
+Counts are not fields: n_<severity> counts findings of that severity whose verdict is not
+FalsePositive/NotApplicable; n_excluded counts the rest; n_likely, n_unverified and n_unlikely count
+verdicts among the included findings. "Of which Valid" counts verdict Valid per severity.
+Optional fields: write UNKNOWN for an empty meta.commit, and delete lines whose field is absent.
 
 Before sending:
 - No latency, throughput or memory figures that were not measured
@@ -21,7 +25,7 @@ Before sending:
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}.
+Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}. Unlikely: {{n_unlikely}}.
 
 ## 2. Scope and method
 

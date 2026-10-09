@@ -77,10 +77,10 @@
   "perspectives": [
     {"name": "Database access", "status": "applied", "note": "DB1-DB2 via B-01, B-02, B-04; DB3-DB6 applied"},
     {"name": "Algorithms and data structures", "status": "applied", "note": "AL1-AL4 applied; nothing found"},
-    {"name": "Memory", "status": "applied", "note": "ME1-ME3 applied"},
+    {"name": "Memory", "status": "applied", "note": "ME1-ME4 applied"},
     {"name": "I/O and network", "status": "applied", "note": "IO1 N/A: synchronous WSGI; IO2-IO6 applied"},
     {"name": "Caching", "status": "applied", "note": "CA1-CA4 applied"},
-    {"name": "Concurrency and resources", "status": "applied", "note": "CC1-CC4 applied"},
+    {"name": "Concurrency and resources", "status": "applied", "note": "CC1-CC5 applied"},
     {"name": "Payload and API shape", "status": "applied", "note": "PA1-PA4 applied"},
     {"name": "Front end", "status": "applied", "note": "FE1-FE5 applied; bundle size not measured"},
     {"name": "Background work", "status": "applied", "note": "BG1 and BG3 applied; BG2 not checked: the nightly sync needs the supplier API contract (B-03)"},

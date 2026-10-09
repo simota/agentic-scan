@@ -1,6 +1,8 @@
 <!--
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
 各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
+step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
+path:line、参考の title が空なら URL をリンク文字列にする。
 
 登録前に確認すること:
 - 計測していないレイテンシやメモリの数値を書かない。代わりにコストモデルを書く
@@ -29,7 +31,7 @@
 - **ワークロード:** {{workload}}
 - **規模の要因:** {{scale_driver}}
 - **コストモデル:** {{cost_model}}
-- **破られているバジェット:** {{budget}}
+- **違反しているバジェット:** {{budget}} — {{budgets[id=budget].statement}}
 
 ## 再現手順（静的）
 

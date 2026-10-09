@@ -16,7 +16,6 @@ import hashlib
 from html import escape
 from pathlib import Path
 import re
-from string import punctuation
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -58,7 +57,7 @@ LABELS = {
         "references": "references", "status": "status", "reason": "Reason",
         "category": "perspective", "id": "ID", "statement": "Rule", "source": "Source",
         "rule_status": "Status", "perspective": "Perspective", "note": "Note",
-        "not_recorded": "not recorded",
+        "not_recorded": "not recorded", "inferred": "inferred, to confirm",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
@@ -73,11 +72,11 @@ LABELS = {
         "trace": "追跡", "contrast": "対照", "impact": "何が起きるか", "rule": "ルール",
         "fix": "修正方針", "guard": "適合性チェック", "verdict": "検証判定",
         "verdicts": "検証判定別件数",
-        "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
+        "method": "検証方法", "evidence": "根拠", "analysis": "解析",
         "references": "参考", "status": "ステータス", "reason": "理由",
-        "category": "観点", "id": "ID", "statement": "ルール", "source": "根拠",
+        "category": "観点", "id": "ID", "statement": "ルール", "source": "出典",
         "rule_status": "状態", "perspective": "観点", "note": "メモ",
-        "not_recorded": "未記録",
+        "not_recorded": "未記録", "inferred": "推定・要確認",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
@@ -109,10 +108,18 @@ def review_method(doc, lang):
     return LABELS[lang]["analysed_note" if analysed else "static_note"]
 
 
+# Inside `<code>` GFM still parses inline syntax, so these are encoded; the rest
+# of a path or command (`/`, `.`, `:`, `-`) stays readable in the raw file.
+CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<>&|!\t"}
+
+
 def markdown_code(value):
     """Keep a literal command or code span intact, even with backticks."""
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
-    literal = value.translate({ord(char): f"&#{ord(char)};" for char in punctuation + " \t"})
+    literal = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};",
+                           value.translate(CODE_LITERAL))
+    # Runs of spaces and edge spaces would collapse or be trimmed.
+    literal = re.sub(r"^ +| {2,}| +$", lambda m: "&#32;" * len(m[0]), literal)
     literal = literal.replace("\n", "<br>")
     return f"<code>{literal}</code>"
 
@@ -201,6 +208,18 @@ def perspective_rows(doc, lang):
     return [(name, recorded.get(name, missing)) for name in PERSPECTIVES]
 
 
+def rule_id(rule):
+    """The ledger ID with its family (reference/rules.md §2), e.g. `R-01 · OWN`."""
+    return f"{rule['id']} · {rule['family']}" if rule.get("family") else rule["id"]
+
+
+def rule_statement(rule, lang):
+    """An inferred rule is a question for the requester (reference/rules.md §1)."""
+    if rule.get("inferred") is True:
+        return f"{rule['statement']} ({LABELS[lang]['inferred']})"
+    return rule["statement"]
+
+
 def filled(record, key):
     """A recorded value worth a row: present and not blank."""
     return key in record and bool(as_text(record[key]).strip())
@@ -276,7 +295,8 @@ def render_markdown(doc, lang):
             status = r["status"]
             if r.get("reason"):
                 status += f"\n{t['reason']}: {r['reason']}"
-            lines.append(f"| {cell(r['id'])} | {cell(r['statement'])} | {cell(r['source'])} | {cell(status)} |")
+            lines.append(f"| {cell(rule_id(r))} | {cell(rule_statement(r, lang))} | "
+                         f"{cell(r['source'])} | {cell(status)} |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "",
               f"| {t['perspective']} | {t['rule_status']} | {t['note']} |", "|---|---|---|"]
@@ -309,6 +329,7 @@ summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max
 dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
 th{color:var(--muted);font-weight:600}a{color:inherit}
+.rules td:first-child,.rules td:last-child,.coverage td:nth-child(2){overflow-wrap:normal}
 details.excluded{opacity:.65}details.excluded summary{text-decoration:line-through}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 button[aria-pressed="true"]{border-color:var(--fg)}
@@ -393,17 +414,18 @@ def render_html(doc, lang):
                    f"{e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in rows) + "</dl></details>")
     if doc.get("rules"):
-        out.append(f"<h2>{e(t['rules'])}</h2><table><thead><tr><th>{e(t['id'])}</th>"
+        out.append(f"<h2>{e(t['rules'])}</h2><table class='rules'><thead><tr><th>{e(t['id'])}</th>"
                    f"<th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
                    f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>")
         for r in doc["rules"]:
             status = e(r["status"])
             if r.get("reason"):
                 status += f"<br>{e(t['reason'])}: {e(r['reason'])}"
-            out.append(f"<tr><td>{e(r['id'])}</td><td>{e(r['statement'])}</td>"
-                       f"<td>{e(r['source'])}</td><td>{status}</td></tr>")
+            out.append(f"<tr><td>{e(rule_id(r))}</td>"
+                       f"<td>{e(rule_statement(r, lang))}</td><td>{e(r['source'])}</td>"
+                       f"<td>{status}</td></tr>")
         out.append("</tbody></table>")
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th>{e(t['perspective'])}</th>"
+    out.append(f"<h2>{e(t['perspectives'])}</h2><table class='coverage'><thead><tr><th>{e(t['perspective'])}</th>"
                f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>")
     for name, p in perspective_rows(doc, lang):
         out.append(f"<tr><td>{e(name)}</td><td>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")

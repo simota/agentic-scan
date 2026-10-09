@@ -269,10 +269,14 @@ def _apply(target, updates, required, where):
 
 
 def _collides(existing, record):
-    """A complete record unlike the finding that holds its ID: another unit's finding."""
+    """A complete record unlike the finding that holds its ID: another unit's finding.
+
+    Two findings can share a location, so either a new title or a new location
+    marks a different finding; a correction sends only the fields that change.
+    """
     return (all(key in record for key in FINDING_REQUIRED)
-            and record["title"] != existing.get("title")
-            and record["location"] != existing.get("location"))
+            and (record["title"] != existing.get("title")
+                 or record["location"] != existing.get("location")))
 
 
 def _merge_records(current, incoming, where, required):
@@ -571,8 +575,14 @@ def contract_problems(out, allow=()):
         if recorded.get(f["category"], "applied") != "applied":
             problems.append(f"{f['id']}: category {f['category']} is recorded as "
                             f"{recorded[f['category']]}, not applied")
-        if f["severity"] in ("High", "Medium") and not evidence.strip():
-            problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence")
+        if f["severity"] in ("High", "Medium"):
+            # SKILL.md: never report a High or Medium finding that was not traced.
+            if verdict == "Unverified":
+                problems.append(f"{f['id']}: an Unverified {f['severity']} finding was not "
+                                "traced; trace it to a verdict, or lower its severity")
+            elif not evidence.strip():
+                problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence "
+                                "naming what the trace found")
     for r in doc.get("rules", []):
         if r["status"] == "not checked":
             reason = r.get("reason")
@@ -596,7 +606,8 @@ def _stale_outputs(out, doc, unusable):
         return [f"rendered output cannot be read: {exc}"]
     lang = doc["meta"]["lang"]
     expected = _renderer().rendered_outputs(doc, lang)
-    return [f"{name} is not rendered from the current findings.json in meta.lang {lang} "
+    return [f"{name} does not match findings.json: the record changed after the last render, "
+            f"or it was rendered in another language than meta.lang {lang} "
             "(re-run scripts/render.py without --lang)"
             for name in names if current[name] != expected[name]]
 

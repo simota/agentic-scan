@@ -2,7 +2,14 @@
 
 **Read when:** REPORT, before producing the dashboard and the report. Write the
 results to `findings.json` once; the dashboard, `report.md` and the chat
-summary use the same recorded facts.
+summary use the same recorded facts. The chat summary's evidence line also
+draws on scratch notes the record does not hold (what was read, what was
+traced end to end, the scratch path); its counts and findings come only from
+the record.
+
+Enum values (severities, confidences, verdicts, statuses, perspective names)
+stay in English in both languages: they are the record's vocabulary, the same
+words a reader filters or searches by. Labels and headings follow `meta.lang`.
 
 Render with (paths relative to this skill's directory):
 

@@ -13,7 +13,7 @@ finding judged false stays in the record with its exclusion and evidence.
 | Verdict | Meaning | Who may set it |
 |---|---|---|
 | `Valid` | The workload reaches the path, the scale driver and cost model are supported, and the claimed budget violation remains after accounting for caps and other mitigations | Agent or person, with evidence |
-| `Likely` | Strong signals, but at least one link in the code is not yet confirmed (e.g. whether this route uses the serializer that issues the query, or whether a shared helper applies a cap). A production condition the repository cannot show (data volume, a deployed index) is not a missing link: it is carried in `confidence: Environment-dependent`, and such a finding can still be `Valid` | Agent or person |
+| `Likely` | Strong signals, but at least one link in the code is not yet confirmed (e.g. whether this route uses the serializer that issues the query, or whether a shared helper applies a cap). A production condition the repository cannot show (data volume, a deployed index) is not a missing link: it is carried in `confidence: Environment-dependent`, and such a finding can still be `Valid`. A `Suspected` finding is never `Valid` | Agent or person |
 | `Unverified` | Not yet examined | Default |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
 | `FalsePositive` | Evidence contradicts the claimed cost in this code (e.g. an eager load on this exact path) | Agent or person, with evidence |

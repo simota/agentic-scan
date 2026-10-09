@@ -1,5 +1,5 @@
 """Regression checks for literal record content and complete budget output."""
-from contextlib import redirect_stdout
+from contextlib import redirect_stderr, redirect_stdout
 from copy import deepcopy
 from html.parser import HTMLParser
 import importlib.util
@@ -348,7 +348,7 @@ class RenderRegressions(unittest.TestCase):
                 out = Path(directory)
                 source = out / "findings.json"
                 source.write_text(json.dumps(self.doc), encoding="utf-8")
-                with redirect_stdout(io.StringIO()):
+                with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                     self.assertEqual(render.main([str(source), "--out", str(out), "--lang", lang]), 0)
                 report = (out / "report.md").read_text(encoding="utf-8")
                 dashboard = (out / "dashboard.html").read_text(encoding="utf-8")

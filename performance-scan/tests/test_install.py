@@ -133,10 +133,28 @@ class InstallerTests(unittest.TestCase):
         result, output, errors = self.run_install("link", "--skills-dir", str(directory))
         self.assertEqual(result, 0, errors)
         self.assertIn("already linked", output)
-        # unlink removes only links whose literal target is this skill.
+        # Older Makefiles linked through unresolved paths; unlink still removes them.
         result, output, errors = self.run_install("unlink", "--skills-dir", str(directory))
         self.assertEqual(result, 0, errors)
-        self.assertIn("left     ", output)
+        self.assertIn("unlinked ", output)
+        self.assertFalse(destination.is_symlink())
+
+    def test_relative_links_are_removed_but_dotfiles_chains_are_left(self):
+        directory = self.root / "custom skills"
+        directory.mkdir()
+        destination = directory / self.skill.name
+        destination.symlink_to(os.path.relpath(self.skill, directory), target_is_directory=True)
+        result, output, errors = self.run_install("unlink", "--skills-dir", str(directory))
+        self.assertEqual(result, 0, errors)
+        self.assertIn("unlinked ", output)
+        dotfiles = self.root / "dotfiles" / self.skill.name
+        dotfiles.parent.mkdir()
+        dotfiles.symlink_to(self.skill, target_is_directory=True)
+        destination.symlink_to(dotfiles, target_is_directory=True)
+        result, output, errors = self.run_install("link", "--skills-dir", str(directory))
+        self.assertIn("already linked", output)
+        result, output, errors = self.run_install("unlink", "--skills-dir", str(directory))
+        self.assertIn("through another symlink", output)
         self.assertTrue(destination.is_symlink())
 
     def test_an_unusable_skills_dir_on_one_host_links_none(self):

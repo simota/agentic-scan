@@ -39,12 +39,15 @@ Write in the requester's language.
      cost model: formula in the driver
      steps: numbered preconditions (data shape), numbered request shapes
      contrast: the sibling path that keeps the budget, path:line (or "none")
-     budget: the ledger ID
      what happens: expected (the budget) vs actual (the cost model) and its consequence
-     recorded verdict / verification: Valid … / static or measured
+     budget: the ledger ID
      fix direction: one line — the bound restored and where
      regression test: at least one deterministic assertion
+     recorded verdict / verification: Valid … / static or measured
+     evidence: path:line and what it shows
    ```
+
+   The fields follow the order of `report.md` so both read the same way.
 
 4. **Checked and sound** — what was examined and held
 5. **Decisions for a human** — bounds to confirm, production volumes and

@@ -36,6 +36,17 @@ def points_at(destination, skill):
         return False
 
 
+def made_by_link(destination, skill):
+    """True for a link that link() (or an older Makefile) could have created.
+
+    That is a symlink whose own target is this skill, written absolute, relative
+    or through a checkout alias. A chain whose target is another symlink (e.g. a
+    dotfiles link) is someone else's and is left alone.
+    """
+    target = destination.parent / os.readlink(destination)
+    return target.is_dir() and not target.is_symlink() and points_at(destination, skill)
+
+
 def link(skill, destinations, agents):
     if not skill.is_dir():
         raise ValueError(f"refusing {skill} - skill directory does not exist")
@@ -84,11 +95,12 @@ def unlink(skill, destinations):
     for _, directory in destinations:
         destination = directory / skill.name
         if destination.is_symlink():
-            # Remove only what link() creates: a symlink whose literal target is
-            # this skill, never a dotfiles-style chain that merely ends here.
-            if os.readlink(destination) == str(skill):
+            if made_by_link(destination, skill):
                 destination.unlink()
                 print(f"unlinked {destination}")
+            elif points_at(destination, skill):
+                print(f"left     {destination} - reaches this skill through another symlink"
+                      f" ({os.readlink(destination)}); remove it where it was made")
             else:
                 print(f"left     {destination} - points at {os.readlink(destination)}, not this repo")
         elif destination.exists():

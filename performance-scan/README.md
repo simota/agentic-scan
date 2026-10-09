@@ -79,15 +79,23 @@ to merge. Atomic replacement does not detect concurrent updates.
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity, budgets, perspective coverage |
-| `report.md` | The written assessment: scope, findings, budgets, coverage, sound items, limitations, next steps |
+| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity or Excluded, budgets, perspective coverage; light and dark themes |
+| `report.md` | Severity and verification counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, checked and sound, limitations, decisions, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,
-nonempty files (valid symbolic links are allowed),
-gapless `P-NNN` IDs in severity order, every perspective recorded, each
-finding's `budget` naming a ledger entry, a reason for every `not checked`
-budget, and nonempty `checked_ok` and `limitations`. It checks shape, not whether rendered text is
-current or a finding is true.
+nonempty regular files (symbolic links allowed; more only with `--allow NAME`);
+a complete, schema-valid record whose text encodes as UTF-8; gapless `P-NNN`
+IDs in severity order with `FalsePositive`/`NotApplicable` last;
+`Valid`/`FalsePositive`/`NotApplicable` evidence citing a `path:line`; no
+`Suspected` finding marked `Valid`; every perspective recorded; each finding's
+`budget` naming a ledger entry, and no `holds` budget with a `Valid`, unfixed
+finding against it; a reason for every `not checked` budget; nonempty
+`checked_ok` and `limitations`. It checks structure, not whether rendered text
+is current or a finding is true.
+
+Exit codes: `render.py` 0 written, 1 an output could not be written, 2 bad
+input or usage; `findings.py` 0 ok, 1 merge refused or contract violated
+(reasons on stderr), 2 usage.
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report covering several).
@@ -118,11 +126,13 @@ tests/                         offline tests for the scripts and the documents
 ```sh
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
-             # scripts parse, sample renders in ja/en and passes the run contract
-make demo    # render the sample into $TMPDIR/performance-scan-demo (LANG_OUT=en for English)
+             # scripts parse, description <= 400 bytes, no cited ../ paths,
+             # sample renders in ja/en and passes the run contract
+make demo    # render the sample into $TMPDIR/performance-scan-demo (LANG_OUT=ja for Japanese labels)
 ```
 
-Requirements: Python 3.9+. No third-party packages.
+Requirements: Python 3.9+. No third-party packages. The `make` targets need
+GNU Make 3.81+ and a POSIX shell.
 
 The format follows the sibling `security-scan` skill (same phases, run
 contract, verdicts and report shape), adapted from vulnerabilities to

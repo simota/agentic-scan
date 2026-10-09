@@ -67,8 +67,11 @@ Then flag:
   global, append-only history), and what caps it
 - Indexes from migrations and schema files, mapped to the filters, sorts and
   joins the hot queries use. A query whose filter or sort has no matching index
-  is a lead; whether production has it is `UNKNOWN` unless the schema is in the
-  repo
+  is a lead. If the migrations form a complete chain (the first revision has no
+  parent), its absence in the repository is confirmed and production table size
+  is the remaining condition; with a partial history or a schema kept outside
+  the repository, whether production has the index is `UNKNOWN` (`SKILL.md`,
+  *Decide first*)
 - Soft-delete flags, status columns and tenant columns that every query filters
   on — they belong in composite indexes
 - Large columns (blobs, JSON documents, long text) that list queries load

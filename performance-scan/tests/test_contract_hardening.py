@@ -111,7 +111,10 @@ class ContractTests(unittest.TestCase):
             "P-001.validation.evidence: Valid evidence must cite a path:line",
             "P-002: a Suspected finding cannot be Valid; confirm the code link "
             "(Confirmed or Environment-dependent) or record Likely",
-            "B-01: status holds, but P-001 is a Valid open violation of it"])
+            "B-01: status holds, but P-001 is a Valid, unfixed violation of it"])
+        doc["findings"][0]["status"] = "Accepted"  # an accepted cost still violates it
+        self.assertIn("B-01: status holds, but P-001 is a Valid, unfixed violation of it",
+                      self.problems(doc))
         doc["findings"][0]["status"] = "Fixed"
         doc["findings"][0]["validation"]["evidence"] = "C:\\app\\x.py:12 shows it"
         doc["findings"][1]["validation"]["verdict"] = "Likely"
@@ -163,9 +166,6 @@ class MergeMessageTests(unittest.TestCase):
             findings.merge(doc, {"checked_ok": [["unhashable"]]}, "f.json")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ReportLayoutTests(unittest.TestCase):
     def test_index_excluded_section_method_and_budget_links(self):
@@ -199,3 +199,32 @@ class LanguageNoteTests(unittest.TestCase):
             self.assertEqual(err, "render: note: labels in ja, but the record's text is in en\n")
             code, _, err = run(render.main, source, "--out", directory, "--lang", "en")
             self.assertEqual((code, err), (0, ""))
+
+
+class CitationTests(unittest.TestCase):
+    def test_evidence_must_name_a_file_position(self):
+        cites = ["app/orders/views.py:18 lacks prefetch", "app/orders/views.py#L18",
+                 "views.py：18", "C:\\app\\x.py:12", "Makefile:12 sets -O0", "src/main:40"]
+        not_cites = ["confirmed against https://staging.example:8080/api/orders",
+                     "measured locally at 12:30", "ratio 1:10", "redis at localhost:6379",
+                     "views.py line 18"]
+        for text in cites:
+            self.assertTrue(findings.cites_location(text), text)
+        for text in not_cites:
+            self.assertFalse(findings.cites_location(text), text)
+
+
+class AllExcludedLayoutTests(unittest.TestCase):
+    def test_an_all_excluded_record_does_not_say_none_under_its_index(self):
+        doc = complete_doc()
+        for f in doc["findings"]:
+            f["validation"] = {"verdict": "NotApplicable", "method": "static", "evidence": "a.py:1"}
+        doc["findings"][0]["location"] = ["a.py:3", "c.py:4"]
+        report = render.render_markdown(doc, "en")
+        findings_part = report.split("## Findings")[1].split("## Excluded findings")[0]
+        self.assertNotIn("None.", findings_part)
+        self.assertIn("| a.py:3 (+1) |", findings_part)
+
+
+if __name__ == "__main__":
+    unittest.main()

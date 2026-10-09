@@ -48,7 +48,7 @@ LABELS = {
         "incomplete_high": "High with incomplete verification",
         "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
         "method_row": "Method", "index": "Index", "confidence": "Confidence", "verdict_col": "Verdict",
-        "title_col": "Title", "location_col": "Location", "findings_col": "Findings",
+        "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
         "excluded_findings": "Excluded findings",
     },
     "ja": {
@@ -71,7 +71,7 @@ LABELS = {
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
         "method_row": "方法", "index": "一覧", "confidence": "確度", "verdict_col": "検証判定",
-        "title_col": "タイトル", "location_col": "場所", "findings_col": "検出事項",
+        "title_col": "タイトル", "location_col": "場所", "findings_col": "引用する検出事項", "budget_col": "バジェット",
         "excluded_findings": "除外した検出事項",
     },
 }
@@ -215,13 +215,15 @@ def budget_cells(budget, labels, findings):
 
 
 def budget_headers(labels):
-    return ("ID", labels["budget"], labels["source"], labels["status"], labels["inferred"],
+    return ("ID", labels["budget_col"], labels["source"], labels["status_col"], labels["inferred"],
             labels["reason"], labels["findings_col"])
 
 
 def first_location(finding):
     location = finding["location"]
-    return location[0] if isinstance(location, list) else location
+    if not isinstance(location, list):
+        return location
+    return location[0] + (f" (+{len(location) - 1})" if len(location) > 1 else "")
 
 
 def markdown_finding(f, t):
@@ -280,7 +282,7 @@ def render_markdown(doc, lang):
                 f["id"], f["severity"], f["confidence"], f["validation"]["verdict"], f["title"],
                 first_location(f))) + " |")
         lines.append("")
-    if not included:
+    if not findings:
         lines += [t["none"], ""]
     for f in included:
         lines += markdown_finding(f, t)
@@ -353,7 +355,8 @@ def render_html(doc, lang):
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
            f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit') or 'UNKNOWN')} · "
-           f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
+           + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
+           + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")

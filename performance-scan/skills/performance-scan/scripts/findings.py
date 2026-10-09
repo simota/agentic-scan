@@ -61,13 +61,26 @@ FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "locati
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
-# Evidence for a definitive verdict cites at least one path:line.
-CITATION = re.compile(r"[^\s:]+:[0-9]+")
+# Evidence for a definitive verdict cites at least one path:line (or path#L42).
+CITATION = re.compile(r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
 class SchemaError(ValueError):
     pass
+
+
+def cites_location(text):
+    """True when text names a file position, not a URL port, a time or a ratio."""
+    for match in CITATION.finditer(text):
+        path = match.group(1)
+        if "//" in path or path.isdigit():
+            continue
+        # A file has an extension, a directory part, or a conventional name (Makefile).
+        if (re.search(r"\.[A-Za-z0-9]+$", path) or "/" in path or "\\" in path
+                or re.fullmatch(r"[A-Z][A-Za-z]*file", path)):
+            return True
+    return False
 
 
 def resolve_path(path):
@@ -441,7 +454,7 @@ def contract_problems(out, allow=()):
             break
     for f in findings:
         v = f["validation"]
-        if v["verdict"] in DEFINITIVE and not CITATION.search(v["evidence"]):
+        if v["verdict"] in DEFINITIVE and not cites_location(v["evidence"]):
             problems.append(f"{f['id']}.validation.evidence: {v['verdict']} evidence must "
                             "cite a path:line")
         if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
@@ -461,9 +474,9 @@ def contract_problems(out, allow=()):
         budget = f.get("budget", "")
         if budget.strip() and budget not in budget_ids:
             problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")
-        elif (budget in holding and f.get("status", "Open") == "Open"
+        elif (budget in holding and f.get("status", "Open") != "Fixed"
               and f["validation"]["verdict"] == "Valid"):
-            problems.append(f"{budget}: status holds, but {f['id']} is a Valid open "
+            problems.append(f"{budget}: status holds, but {f['id']} is a Valid, unfixed "
                             "violation of it")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")

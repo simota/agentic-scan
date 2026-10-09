@@ -77,15 +77,22 @@ python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists 
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity (excluded findings apart), design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
 gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
-`checked_ok` and `limitations`, cited rules that exist, evidence on every High
-and Medium finding, and a dashboard and report that match the current
-`findings.json` byte for byte (re-render after the last merge). It checks
-shape and consistency, not whether a finding is true.
+`checked_ok` and `limitations`, cited rules that exist and are recorded as
+violated, evidence on every High and Medium finding, and a dashboard and
+report that match a fresh render of the current `findings.json` in
+`meta.lang`, byte for byte (re-render after the last merge). It checks shape
+and consistency, not whether a finding is true.
+
+`findings.json` is never edited by hand. A fragment corrects it: `null`
+removes an optional key, `{"remove": {"next_steps": ["…"]}}` deletes a list
+item, and a key sent again replaces its value. Merges may run in parallel
+(each holds a lock on the output directory; on Windows, run them one at a
+time).
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report covering several).

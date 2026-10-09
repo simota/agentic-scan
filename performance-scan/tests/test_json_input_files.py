@@ -80,7 +80,7 @@ class JsonInputFileTests(unittest.TestCase):
                     self.assertEqual(self.snapshot(root), original)
 
     def test_commands_report_json_decoder_limits_without_changing_files(self):
-        cases = [("nesting", "[" * 10000 + "0" + "]" * 10000, {})]
+        cases = [("nesting", "[" * 200000 + "0" + "]" * 200000, {})]
         if hasattr(sys, "get_int_max_str_digits"):
             cases.append(("integer", "1" * 4301, {"PYTHONINTMAXSTRDIGITS": "4300"}))
         for kind, content, env_updates in cases:

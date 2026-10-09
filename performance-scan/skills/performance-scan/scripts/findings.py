@@ -61,6 +61,8 @@ FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "locati
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
+# Evidence for a definitive verdict cites at least one path:line.
+CITATION = re.compile(r"[^\s:]+:[0-9]+")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
@@ -228,7 +230,8 @@ def validate(doc, complete=False):
             validate_finding(f, f"findings[{i}]")
         except SchemaError as exc:
             # After a merge the index is the combined record's, not the fragment's.
-            if isinstance(f, dict) and isinstance(f.get("id"), str):
+            if (isinstance(f, dict) and isinstance(f.get("id"), str)
+                    and not str(exc).startswith(f"findings[{i}].id:")):
                 raise SchemaError(f"{exc} (finding {_show(f['id'])})") from exc
             raise
         if f["id"] in seen:
@@ -421,10 +424,29 @@ def contract_problems(out, allow=()):
     expected = [f"P-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}")
-    ranks = [SEVERITIES.index(f["severity"]) for f in findings if
-             f["validation"]["verdict"] not in EXCLUDED]
-    if ranks != sorted(ranks):
-        problems.append("findings must be numbered in severity order (High first)")
+    included = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    for before, after in zip(included, included[1:]):
+        if SEVERITIES.index(after["severity"]) < SEVERITIES.index(before["severity"]):
+            problems.append("findings must be numbered in severity order (High first): "
+                            f"{after['id']} ({after['severity']}) follows "
+                            f"{before['id']} ({before['severity']})")
+            break
+    seen_excluded = None
+    for f in findings:
+        if f["validation"]["verdict"] in EXCLUDED:
+            seen_excluded = seen_excluded or f["id"]
+        elif seen_excluded:
+            problems.append(f"{f['id']}: excluded findings ({seen_excluded}) must be numbered "
+                            "after all others")
+            break
+    for f in findings:
+        v = f["validation"]
+        if v["verdict"] in DEFINITIVE and not CITATION.search(v["evidence"]):
+            problems.append(f"{f['id']}.validation.evidence: {v['verdict']} evidence must "
+                            "cite a path:line")
+        if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
+            problems.append(f"{f['id']}: a Suspected finding cannot be Valid; confirm the "
+                            "code link (Confirmed or Environment-dependent) or record Likely")
     recorded = {p["name"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
@@ -434,10 +456,15 @@ def contract_problems(out, allow=()):
         budget_ids.add(b["id"])
         if b["status"] == "not checked" and not b.get("reason", "").strip():
             problems.append(f"{b['id']}: a not-checked budget needs a reason")
+    holding = {b["id"] for b in doc.get("budgets", []) if b["status"] == "holds"}
     for f in findings:
-        budget = f.get("budget", "").strip()
-        if budget and budget not in budget_ids:
-            problems.append(f"{f['id']}.budget: {budget} is not in budgets")
+        budget = f.get("budget", "")
+        if budget.strip() and budget not in budget_ids:
+            problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")
+        elif (budget in holding and f.get("status", "Open") == "Open"
+              and f["validation"]["verdict"] == "Valid"):
+            problems.append(f"{budget}: status holds, but {f['id']} is a Valid open "
+                            "violation of it")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

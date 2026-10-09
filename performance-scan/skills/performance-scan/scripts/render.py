@@ -128,7 +128,8 @@ def markdown_text(value):
         # comment splits the text node around "@" instead.
         line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
         # GitHub turns ":name:" into an emoji; split the first colon off the same way.
-        line = re.sub(r":(?=[A-Za-z0-9_+-]+:)", ":<!-- -->", line)
+        # Escaping ran first, so a shortcode may already contain "\_".
+        line = re.sub(r":(?=(?:\\.|[A-Za-z0-9_+-])+:)", ":<!-- -->", line)
         line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
                       flags=re.IGNORECASE)
         return re.sub(r"^[ \t]+", lambda match: "".join(
@@ -227,7 +228,7 @@ def render_markdown(doc, lang):
         v = f["validation"]
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
         lines.append("")
-        step = f" ({markdown_text(f['step'])})" if f.get("step") else ""
+        step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
         lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
         for key in FIELDS:
             if key in f:
@@ -326,7 +327,7 @@ def render_html(doc, lang):
         group = finding_group(f)
         exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                      if group == "excluded" else "")
-        step = f" ({e(f['step'])})" if f.get("step") else ""
+        step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
         rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
         if v.get("evidence"):
@@ -448,8 +449,11 @@ def main(argv=None):
     parser.add_argument("--lang", choices=("ja", "en"))
     args = parser.parse_args(argv)
     try:
-        doc = read_json(args.findings)
-        validate(doc, complete=True)
+        doc = read_json(args.findings)  # Its errors already name the file.
+        try:
+            validate(doc, complete=True)
+        except SchemaError as exc:
+            raise SchemaError(f"{args.findings}: {exc}") from exc
     except SchemaError as exc:
         print(f"schema: {exc}", file=sys.stderr)
         return 2

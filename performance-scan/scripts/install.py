@@ -51,6 +51,9 @@ def link(skill, destinations, agents):
             resolved = directory.resolve()
         except RuntimeError as exc:
             raise ValueError(f"refusing {directory} - {exc}") from exc
+        # Python 3.13+ returns a looping link instead of raising; a file cannot hold links.
+        if resolved.is_symlink() or (directory.exists() and not directory.is_dir()):
+            raise ValueError(f"refusing {directory} - not a usable directory")
         if resolved == skill or skill in resolved.parents:
             raise ValueError(f"refusing {directory} - it is inside the skill itself")
         if destination.is_symlink():
@@ -81,7 +84,9 @@ def unlink(skill, destinations):
     for _, directory in destinations:
         destination = directory / skill.name
         if destination.is_symlink():
-            if points_at(destination, skill):
+            # Remove only what link() creates: a symlink whose literal target is
+            # this skill, never a dotfiles-style chain that merely ends here.
+            if os.readlink(destination) == str(skill):
                 destination.unlink()
                 print(f"unlinked {destination}")
             else:

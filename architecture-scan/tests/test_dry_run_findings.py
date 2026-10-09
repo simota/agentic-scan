@@ -54,7 +54,8 @@ class UntracedFindingTests(unittest.TestCase):
                 problems = self.problems(doc)
                 self.assertEqual(problems == [], ok, problems)
                 if not ok:
-                    self.assertIn("lower its severity", problems[0])
+                    self.assertIn("trace it end to end", problems[0])
+                    self.assertNotIn("lower", problems[0])  # severity is never the remedy
 
     def test_stale_message_names_both_causes(self):
         doc = complete_doc()
@@ -104,9 +105,15 @@ class AdversarialEdgeTests(unittest.TestCase):
         for evidence, ok in (("根拠:job.py:58", True), ("evidence:job.py:58", True),
                              ("Makefile:12", True), ("Dockerfile:3", True),
                              ("Ticket ABC:123", False), ("see ratio:3", False), ("v1:2", False),
-                             ("https://h.example:443/x", False)):
+                             ("https://h.example:443/x", False), ("BUILD:12", True),
+                             ("WORKSPACE:4", True), ("CODEOWNERS:7", True)):
             with self.subTest(evidence=evidence):
-                self.assertEqual(bool(findings.EVIDENCE_LINE.search(evidence)), ok)
+                self.assertEqual(findings.cites_line(evidence), ok)
+
+    def test_extensionless_file_from_the_finding_location_counts(self):
+        self.assertTrue(findings.cites_line("server:9 swallows the error", ["bin/server:9"]))
+        self.assertTrue(findings.cites_line("bin/server:9", "bin/server:9"))
+        self.assertFalse(findings.cites_line("server:9", ["api/app.py:3"]))
 
     def test_collision_ignores_whitespace_and_location_shape(self):
         existing = finding("A-001", "High", location=["worker/refunds/job.py:58"])

@@ -96,7 +96,7 @@ class EvidenceTokenTests(unittest.TestCase):
         for evidence, ok in (("https://example.com:443/x", False), ("(job.py:58)", True),
                              ("see `job.py:58`", True), (r"C:\repo\a.py:3", True)):
             with self.subTest(evidence=evidence):
-                self.assertEqual(bool(findings.EVIDENCE_LINE.search(evidence)), ok)
+                self.assertEqual(findings.cites_line(evidence), ok)
 
 
 if __name__ == "__main__":

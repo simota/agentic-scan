@@ -53,9 +53,10 @@ be byte-identical to what `render.py` produces from the current
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
-  (a path with a `.`, `/` or `\`, or a build file such as `Makefile`, then a
-  line from 1: `job.py:58`, `根拠:job.py:58`, `Makefile:12`; not `ABC:123`,
-  `10:30` or a URL's port)
+  (a path with a `.`, `/` or `\`, a build file such as `Makefile`, `BUILD` or
+  `CODEOWNERS`, or a path or file name from the finding's own `location`, then
+  a line from 1: `job.py:58`, `根拠:job.py:58`, `BUILD:12`, `server:9` beside
+  `bin/server:9`; not `ABC:123`, `10:30` or a URL's port)
 
 ## Writing the file
 
@@ -82,8 +83,10 @@ Merge semantics:
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 - A complete finding (every required field) sent with an ID that already holds
-  a finding with a different `title` and `location` is refused as an ID
-  collision: two review units numbered the same ID. Each unit numbers in its
+  a finding with a different `title` or `location` is refused as an ID
+  collision: two review units numbered the same ID, or a different finding at
+  the same place. To correct a title or location, send only the changed fields
+  (`{"findings": [{"id": "A-003", "title": "…"}]}`). Each unit numbers in its
   own block (`A-101`…, `A-201`…); `renumber` compacts them
 
 ## Correcting the record

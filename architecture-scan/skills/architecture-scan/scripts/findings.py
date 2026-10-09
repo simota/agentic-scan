@@ -16,8 +16,9 @@ A `null` value removes an optional key from `meta`, a finding or a rule, and
 entries by id (`{"rules": ["R-05"]}`) before the fragment's own items are
 appended. A finding is never removed: a wrong one is marked `FalsePositive` or
 `NotApplicable` with evidence, as SKILL.md requires.
-A complete finding whose ID already holds a finding with another title and
-location is refused as an ID collision.
+A complete finding whose ID already holds a finding with another title or
+location is refused as an ID collision; a correction sends only the fields
+that change.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
 
@@ -85,15 +86,17 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
-# A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
-# A path token: it starts after a blank, opening punctuation or a label's
-# colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port is not a
-# line. It has a `.`, `/` or `\` (or names a build file such as `Makefile`), so
-# `ABC:123` or `ratio:3` is not one. A Windows drive (`C:\repo\a.py:3`) is allowed.
+# A `path:line` candidate: it starts after a blank, opening punctuation or a
+# label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
+# is not a line; it has a letter (`10:30` is not one) and a line from 1. A
+# Windows drive (`C:\repo\a.py:3`) is allowed. `cites_line` decides whether the
+# token is a path.
 EVIDENCE_LINE = re.compile(
     r"(?<![^\s(\[{'\"`,;:])(?!//)"
-    r"(?:[A-Za-z]:)?(?=[^\s:]*(?:[./\\]|file:))[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*",
-    re.IGNORECASE)
+    r"(?P<path>(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*):[1-9][0-9]*")
+# Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
+EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
+                 "VERSION", "MODULE.bazel"}
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -197,6 +200,33 @@ def validate_finding(f, where):
         _text(ref.get("url"), f"{where}.references[{i}].url")
         if "title" in ref and not isinstance(ref["title"], str):
             raise SchemaError(f"{where}.references[{i}].title: must be a string")
+
+
+def _location_paths(locations):
+    """Each location's path and its file name, e.g. `bin/server` and `server`."""
+    paths = set()
+    for loc in locations if isinstance(locations, list) else [locations]:
+        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
+        if match:
+            path = loc[:match.start(1) - 1]
+            paths |= {path, re.split(r"[/\\]", path)[-1]}
+    return paths
+
+
+def cites_line(evidence, locations=()):
+    """True when evidence names a file and a line, e.g. `job.py:58` or `BUILD:12`.
+
+    A token is a path when it has a `.`, `/` or `\`, names a build file
+    (`Makefile`, `CODEOWNERS`), or is a path or file name from the finding's own
+    locations (`server:9` beside `bin/server:9`). `ABC:123` or `ratio:3` is not.
+    """
+    known = _location_paths(locations)
+    for match in EVIDENCE_LINE.finditer(evidence):
+        path = match["path"]
+        if (re.search(r"[./\\]", path) or path.lower().endswith("file")
+                or path in EXTENSIONLESS or path in known):
+            return True
+    return False
 
 
 def _validate_perspectives(records, where):
@@ -596,7 +626,7 @@ def contract_problems(out, allow=()):
             elif verdict in ("Valid", "Likely") and status not in ("violated", "partly read"):
                 problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
                                 f"{status}, not violated or partly read")
-        if verdict in DEFINITIVE and not EVIDENCE_LINE.search(evidence):
+        if verdict in DEFINITIVE and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
         if verdict in EXCLUDED:
             continue
@@ -606,8 +636,10 @@ def contract_problems(out, allow=()):
         if f["severity"] in ("High", "Medium"):
             # SKILL.md: never report a High or Medium finding that was not traced.
             if verdict == "Unverified":
+                # Severity is graded apart from confidence, so it is never the remedy.
                 problems.append(f"{f['id']}: an Unverified {f['severity']} finding was not "
-                                "traced; trace it to a verdict, or lower its severity")
+                                "traced; trace it end to end and record the verdict "
+                                "(Valid, Likely or Unlikely) with its evidence")
             elif not evidence.strip():
                 problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence "
                                 "naming what the trace found")

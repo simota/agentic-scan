@@ -80,7 +80,7 @@ class RenderEdgeTests(unittest.TestCase):
         for trigger in ("www.", "http:", "HTTPS:", "ftp:", "@"):
             self.assertNotIn(trigger, rendered)
         self.assertIn("www&#46;example.com/x", rendered)
-        self.assertIn("bob&#64;example.com", rendered)
+        self.assertIn("bob&#64;<!-- -->example.com", rendered)
         self.assertEqual(render.markdown_inline("`http://x`"), render.markdown_code("http://x"))
 
     def test_excluded_findings_have_their_own_filter(self):

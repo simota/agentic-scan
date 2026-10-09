@@ -31,11 +31,13 @@ only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
 any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
-definition) and cannot form a link, image or autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard); a blank optional
+definition) and cannot form a link, image, autolink (a bare URL, `www.` or
+an e-mail address stays plain text, as in the dashboard) or `$` math; a blank optional
 field gets no row. The dashboard filters excluded findings separately from the
 severities, matching the counts; backslashes are shown as written
-(`docs\adr`), so they never escape a delimiter.
+(`docs\adr`), so they never escape a delimiter. The one exception is a
+backslash directly before a backtick, which is the author's escape: `` \` ``
+shows a literal backtick and no backslash.
 Both outputs are written to temporary files first and replace the previous
 pair only once both are complete.
 Exit codes: `0` written, `1` an output could not be written (the previous files
@@ -51,7 +53,9 @@ be byte-identical to what `render.py` produces from the current
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
-  (a token with a letter, then a line from 1: `job.py:58`, `Makefile:12`)
+  (a path with a `.`, `/` or `\`, or a build file such as `Makefile`, then a
+  line from 1: `job.py:58`, `根拠:job.py:58`, `Makefile:12`; not `ABC:123`,
+  `10:30` or a URL's port)
 
 ## Writing the file
 
@@ -92,7 +96,11 @@ Never edit `findings.json` by hand; every correction is a fragment:
 - `remove` deletes exact items from the string lists before the fragment's own
   items are appended, so one fragment replaces an item: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
-  An item that is not recorded is refused, so a typo cannot pass silently
+  It also deletes a spurious ledger entry by id: `{"remove": {"rules":
+  ["R-05"]}}`. An item that is not recorded is refused, so a typo cannot pass
+  silently
+- A finding is never removed (SKILL.md, *Never*): a wrong one is marked
+  `FalsePositive`, a duplicate `NotApplicable`, each with evidence
 - A wrong value is replaced by sending the key again; nested `validation` and
   `analysis` objects are replaced whole
 
@@ -108,7 +116,9 @@ without gaps. Every whole-word mention of an old ID in the record's prose
 (`title`, `trace`, `evidence`, `next_steps`, `decisions`…) is rewritten in the
 same pass. Literal values keep theirs: `meta`, every `location`, reference
 `url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
-ticket or an argument). A token such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
+ticket or an argument). In prose, a token such as `JIRA-A-001` and a path
+segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
+text (`A-001を`) is rewritten. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds or regrades a finding, then render.
 
@@ -123,7 +133,8 @@ again and re-render.
 Merge and renumber hold an exclusive lock on the record's directory from
 reading the record to replacing it, so review units may merge at the same
 time without losing each other's findings. Where the lock is unavailable
-(Windows has no `fcntl`), run merges one at a time.
+(Windows has no `fcntl`; a directory that can be written but not read warns
+on stderr), run merges one at a time.
 
 The existing record is validated before merging, then the combined record is
 validated after each fragment. A refused batch writes nothing, even if earlier

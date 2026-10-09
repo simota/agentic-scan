@@ -110,14 +110,13 @@ def review_method(doc, lang):
 
 # Inside `<code>` GFM still parses inline syntax, so these are encoded; the rest
 # of a path or command (`/`, `.`, `:`, `-`) stays readable in the raw file.
-CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<>&|!\t"}
+CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<>&|!$\t"}
 
 
 def markdown_code(value):
     """Keep a literal command or code span intact, even with backticks."""
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
-    literal = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};",
-                           value.translate(CODE_LITERAL))
+    literal = disarm_autolinks(value.translate(CODE_LITERAL))
     # Runs of spaces and edge spaces would collapse or be trimmed.
     literal = re.sub(r"^ +| {2,}| +$", lambda m: "&#32;" * len(m[0]), literal)
     literal = literal.replace("\n", "<br>")
@@ -129,11 +128,23 @@ def markdown_code(value):
 AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
 # What GFM turns into a link without brackets: a scheme's colon, `www.`, and
 # the `@` of an e-mail address. Encoding the last character disarms each.
-AUTOLINK = re.compile(r"(?i)\b(?:https?|ftp|mailto|xmpp):|\bwww\.|@")
+# No `\b`: GFM also links a scheme or `www.` right after a word character
+# (`_https://x`, `参照https://x`).
+AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
+
+
+def disarm_autolinks(text):
+    """Encode one character of each autolink trigger.
+
+    cmark-gfm finds e-mail addresses after entities are decoded, so the `@`
+    also gets an empty comment, which no autolinker reads through.
+    """
+    text = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", text)
+    return text.replace("@", "&#64;<!-- -->")
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
-           ord("|"): "&#124;"}
+           ord("|"): "&#124;", ord("$"): "&#36;"}  # `$` opens math on GitHub and in pandoc
 
 
 def markdown_inline(value):
@@ -148,8 +159,7 @@ def markdown_inline(value):
         part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
                       escape(part, quote=False))
         part = AFTER_BACKSLASH.sub(lambda m: f"&#{ord(m[0])};", part)
-        part = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", part)
-        return part.translate(LITERAL).replace("\n", "<br>")
+        return disarm_autolinks(part.translate(LITERAL)).replace("\n", "<br>")
 
     parts, end = [], 0
     # An odd backslash prefix escapes the opening backtick; delimiter lengths match.

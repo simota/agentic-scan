@@ -5,6 +5,7 @@ from pathlib import Path
 import shutil
 import tempfile
 import unittest
+import unittest.mock
 from contextlib import redirect_stderr, redirect_stdout
 
 from test_architecture_scan import complete_doc, finding, findings, render
@@ -88,3 +89,61 @@ class RenderReadabilityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AdversarialEdgeTests(unittest.TestCase):
+    def test_ids_beside_japanese_text_are_mentions_but_path_segments_are_not(self):
+        mapping = {"A-001": "A-002", "A-002": "A-001"}
+        rewrite = lambda text: findings._rewrite_ids(text, mapping)  # noqa: E731
+        self.assertEqual(rewrite("A-001を先に修正し、指摘A-002の対応"), "A-002を先に修正し、指摘A-001の対応")
+        self.assertEqual(rewrite("(A-001), A-001. A-001's"), "(A-002), A-002. A-002's")
+        for literal in ("docs/A-001.md:3", r"adr\A-001.md", "dir/A-001/x", "A-001.md"):
+            self.assertEqual(rewrite(literal), literal)
+
+    def test_evidence_after_a_label_counts_and_bare_words_do_not(self):
+        for evidence, ok in (("根拠:job.py:58", True), ("evidence:job.py:58", True),
+                             ("Makefile:12", True), ("Dockerfile:3", True),
+                             ("Ticket ABC:123", False), ("see ratio:3", False), ("v1:2", False),
+                             ("https://h.example:443/x", False)):
+            with self.subTest(evidence=evidence):
+                self.assertEqual(bool(findings.EVIDENCE_LINE.search(evidence)), ok)
+
+    def test_collision_ignores_whitespace_and_location_shape(self):
+        existing = finding("A-001", "High", location=["worker/refunds/job.py:58"])
+        resent = finding("A-001", "High", title="Refund job writes invoices directly  ",
+                         location="worker/refunds/job.py:58")
+        self.assertFalse(findings._collides(existing, resent))
+
+    def test_a_spurious_rule_is_removed_by_id(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "x", "source": "baseline",
+                             "status": "holds"})
+        findings.merge(doc, {"remove": {"rules": ["R-02"]}}, "f")
+        self.assertEqual([r["id"] for r in doc["rules"]], ["R-01"])
+        for removals in ({"rules": ["R-09"]}, {"findings": ["A-001"]}):
+            with self.subTest(removals=removals):
+                with self.assertRaises(findings.SchemaError):
+                    findings.merge(complete_doc(), {"remove": removals}, "f")
+
+    def test_unreadable_directory_merges_unlocked_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as d:
+            target, fragment = Path(d) / "findings.json", Path(d) / "f.json"
+            fragment.write_text(json.dumps({"limitations": ["x"]}), encoding="utf-8")
+            real_open = findings.os.open
+
+            def deny_directories(path, flags, *args):
+                if Path(path).is_dir():
+                    raise PermissionError(13, "Permission denied", str(path))
+                return real_open(path, flags, *args)
+
+            err = io.StringIO()
+            with unittest.mock.patch.object(findings.os, "open", deny_directories), \
+                    redirect_stdout(io.StringIO()), redirect_stderr(err):
+                self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 0)
+            self.assertIn("cannot lock", err.getvalue())
+            self.assertEqual(findings.read_json(target)["limitations"], ["x"])
+
+    def test_dollar_signs_cannot_open_math(self):
+        rendered = render.markdown_inline("$HOME/$USER and ${X}")
+        self.assertNotIn("$", rendered)
+        self.assertNotIn("$", render.markdown_code("echo $HOME"))

@@ -12,8 +12,10 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 A `null` value removes an optional key from `meta`, a finding or a rule, and
-`remove` (`{"next_steps": ["exact text"]}`) deletes list items before the
-fragment's own items are appended, so any recorded mistake can be corrected.
+`remove` deletes list items (`{"next_steps": ["exact text"]}`) or ledger
+entries by id (`{"rules": ["R-05"]}`) before the fragment's own items are
+appended. A finding is never removed: a wrong one is marked `FalsePositive` or
+`NotApplicable` with evidence, as SKILL.md requires.
 A complete finding whose ID already holds a finding with another title and
 location is refused as an ID collision.
 FINDINGS is created when absent. The merged record must pass the schema check
@@ -84,10 +86,14 @@ FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
-# It starts after a blank or opening punctuation, so the port in
-# `https://host:443` is not one; a Windows drive (`C:\repo\a.py:3`) is allowed.
+# A path token: it starts after a blank, opening punctuation or a label's
+# colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port is not a
+# line. It has a `.`, `/` or `\` (or names a build file such as `Makefile`), so
+# `ABC:123` or `ratio:3` is not one. A Windows drive (`C:\repo\a.py:3`) is allowed.
 EVIDENCE_LINE = re.compile(
-    r"(?<![^\s(\[{'\"`,;])(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
+    r"(?<![^\s(\[{'\"`,;:])(?!//)"
+    r"(?:[A-Za-z]:)?(?=[^\s:]*(?:[./\\]|file:))[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*",
+    re.IGNORECASE)
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -268,6 +274,10 @@ def _apply(target, updates, required, where):
     return target
 
 
+def _same_location(a, b):
+    return (a if isinstance(a, list) else [a]) == (b if isinstance(b, list) else [b])
+
+
 def _collides(existing, record):
     """A complete record unlike the finding that holds its ID: another unit's finding.
 
@@ -275,8 +285,9 @@ def _collides(existing, record):
     marks a different finding; a correction sends only the fields that change.
     """
     return (all(key in record for key in FINDING_REQUIRED)
-            and (record["title"] != existing.get("title")
-                 or record["location"] != existing.get("location")))
+            and (" ".join(str(record["title"]).split())
+                 != " ".join(str(existing.get("title", "")).split())
+                 or not _same_location(record["location"], existing.get("location"))))
 
 
 def _merge_records(current, incoming, where, required):
@@ -301,11 +312,20 @@ def _merge_records(current, incoming, where, required):
 def _remove_items(doc, removals, where):
     if not isinstance(removals, dict):
         raise SchemaError(f"{where}: must be an object of list names")
-    unknown = set(removals) - set(LISTS)
+    unknown = set(removals) - set(LISTS) - {"rules"}
     if unknown:
-        raise SchemaError(f"{where}: only {', '.join(LISTS)} can be removed from, not "
-                          f"{sorted(unknown)}")
+        raise SchemaError(f"{where}: only rules and {', '.join(LISTS)} can be removed from, "
+                          f"not {sorted(unknown)} (a finding is never removed: mark it "
+                          "FalsePositive or NotApplicable with evidence)")
     for key, values in removals.items():
+        if key == "rules":
+            # A spurious ledger entry, by id; check then catches a finding citing it.
+            for rid in _list(values, f"{where}.rules"):
+                ids = [r.get("id") for r in doc.get("rules", [])]
+                if rid not in ids:
+                    raise SchemaError(f"{where}.rules: {rid!r} is not recorded")
+                del doc["rules"][ids.index(rid)]
+            continue
         for value in _list(values, f"{where}.{key}"):
             if value not in doc.get(key, []):
                 raise SchemaError(f"{where}.{key}: {value!r} is not recorded")
@@ -395,8 +415,10 @@ def _atomic_write_all(files):
             temporary.unlink(missing_ok=True)
 
 
-# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`.
-ID_MENTION = re.compile(r"(?<![\w-])A-[0-9]{3}(?![\w-])")
+# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`,
+# nor a path segment (`docs/A-001.md`). ASCII word characters only, so an ID
+# next to Japanese text (`A-001を`) is still a mention.
+ID_MENTION = re.compile(r"(?<![\w/\\-])A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
 def _first_location(f):
@@ -456,7 +478,13 @@ def _exclusive(target):
     if fcntl is None:
         yield
         return
-    fd = os.open(directory, os.O_RDONLY)
+    try:
+        fd = os.open(directory, os.O_RDONLY)
+    except PermissionError:
+        # A directory that can be written but not read cannot be locked.
+        print(f"warning: cannot lock {directory}; run merges one at a time", file=sys.stderr)
+        yield
+        return
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield

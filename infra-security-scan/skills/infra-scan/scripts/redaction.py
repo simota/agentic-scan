@@ -43,6 +43,11 @@ def _secret_field(line):
     return next(_secret_fields(line), None)
 
 
+def is_secret_name(name):
+    """A key or variable name that conventionally holds a secret."""
+    return _secret_field(name + ":") is not None
+
+
 def has_escaped_secret_keys(text, docs):
     """Omit parsed JSON/YAML whose escaped keys defeat raw-line redaction.
 

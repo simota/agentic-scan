@@ -31,6 +31,7 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import sys
 import tempfile
 
@@ -197,10 +198,24 @@ def apply(record, fragment):
                 current.append(item)
 
 
+def file_mode(path):
+    """Keep an existing file's mode; give a new one the umask default, not mkstemp's 0600."""
+    try:
+        return stat.S_IMODE(path.stat().st_mode)
+    except FileNotFoundError:
+        umask = os.umask(0)
+        os.umask(umask)
+        return 0o666 & ~umask
+
+
 def write_atomic(path, data):
     path = Path(path)
+    if path.is_symlink():
+        raise OSError(f"{path} is a symlink; refusing to replace it")
+    mode = file_mode(path)
     fd, tmp = tempfile.mkstemp(prefix=".findings.", suffix=".json", dir=path.parent)
     try:
+        os.chmod(tmp, mode)
         with os.fdopen(fd, "w", encoding="utf-8") as fh:
             json.dump(data, fh, ensure_ascii=False, indent=2)
             fh.write("\n")
@@ -243,6 +258,9 @@ def main(argv=None):
     except render.SchemaError as e:
         for problem in e.problems:
             print(f"schema: {problem}", file=sys.stderr)
+        return 2
+    except OSError as e:
+        print(f"cannot write {a.findings}: {e.strerror or e}", file=sys.stderr)
         return 2
     print(f"merged {len(a.fragments)} fragment(s) into {a.findings}: "
           f"{len(merged.get('findings', []))} findings, {len(merged.get('attack_paths', []))} attack paths")

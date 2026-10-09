@@ -32,7 +32,7 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import (has_escaped_secret_keys, has_structured_secrets, redact,
+from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
                        redact_json_values, redact_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
@@ -457,6 +457,30 @@ def hcl_declares_sensitive(text):
     return False
 
 
+HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key)"?\s*[=:]\s*"([^"\n]*)"')
+HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?value"?\s*[=:]')
+
+
+def hcl_has_paired_secret(text):
+    """Name/value pairs (env blocks, jsonencode lists) and secret-named variables.
+
+    Line redaction sees `value = "..."`, not that its sibling `name` is
+    DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
+    """
+    from iac_scan import parse_hcl
+    lines = text.split("\n")
+    for n, line in enumerate(lines):
+        for match in HCL_NAME.finditer(line):
+            if is_secret_name(match.group(1)) and any(
+                    HCL_VALUE.search(near) for near in lines[max(0, n - 5):n + 6]):
+                return True
+    for block in parse_hcl(text):
+        if block.type == "variable" and block.labels and "default" in block.attrs and \
+                is_secret_name(block.labels[0]):
+            return True
+    return False
+
+
 def hcl_module_sensitive(directory):
     """Conservatively include declarations inherited through override files.
 
@@ -513,7 +537,7 @@ def source_lines(path):
                 syntax = "hcl"
                 # Sensitivity belongs to the block, not to the default/value
                 # line. Only a known false declaration permits an excerpt.
-                if hcl_declares_sensitive(text):
+                if hcl_declares_sensitive(text) or hcl_has_paired_secret(text):
                     return None
         if has_escaped_secret_keys(text, docs) or any(has_structured_secrets(doc) for doc in docs):
             return None

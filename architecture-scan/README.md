@@ -80,8 +80,11 @@ python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists 
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
-gapless `A-NNN` IDs in severity order, every perspective recorded, and nonempty
-`checked_ok` and `limitations`. It checks shape, not whether a finding is true.
+gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
+`checked_ok` and `limitations`, cited rules that exist, evidence on every High
+and Medium finding, and a dashboard and report that match the current
+`findings.json` byte for byte (re-render after the last merge). It checks
+shape and consistency, not whether a finding is true.
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report covering several).

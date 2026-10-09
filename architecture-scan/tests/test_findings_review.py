@@ -190,8 +190,8 @@ class FindingsReviewTests(unittest.TestCase):
         for fragment in (first, second):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 0)
-        for name in ("report.md", "dashboard.html"):
-            (self.tmp / name).write_text("previous output", encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(render.main([str(target), "--out", str(self.tmp)]), 0)
         self.assertEqual(findings.contract_problems(self.tmp, ["first.json", "second.json"]), [])
 
 

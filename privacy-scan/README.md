@@ -44,7 +44,9 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   results, commitments and coverage notes, for e-mail addresses (including
   quoted, Unicode and address-literal forms, outside reserved example domains)
   and runs of 12 or more digits, even with repeated spaces, tabs or non-breaking
-  spaces. Use field names and placeholders throughout the record
+  spaces. Reference URLs are also checked after decoding their components once;
+  accepted URLs keep their original spelling. Use field names and placeholders
+  throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
 
@@ -58,6 +60,10 @@ make unlink
 ```
 
 Then invoke `privacy-scan` (or `/privacy-scan`).
+
+Install paths supplied through environment variables preserve literal dollar
+signs. Command-line Make assignments retain Make's usual `$$` escaping for a
+literal `$`.
 
 ## Outputs
 
@@ -85,6 +91,9 @@ It checks shape, not whether a finding is true.
 
 The scripts reject text that cannot be encoded as UTF-8 and stage output bytes
 before replacing files, so encoding or staging failures preserve existing results.
+Rendering also refuses output paths that resolve to the input record or to each
+other, before writing any files. Other destination symlinks retain their links
+and update their target files.
 Reports retain the recorded review method even with zero findings, and the
 dashboard preserves line breaks and indentation in analysis commands.
 

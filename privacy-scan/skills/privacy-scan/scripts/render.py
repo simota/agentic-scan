@@ -346,7 +346,8 @@ def main(argv=None):
     out = Path(args.out)
     try:
         out.mkdir(parents=True, exist_ok=True)
-        write_utf8_files({out / "report.md": markdown, out / "dashboard.html": html})
+        write_utf8_files({out / "report.md": markdown, out / "dashboard.html": html},
+                         protected_paths=(args.findings,))
     except (OSError, UnicodeError) as exc:
         print(f"write failed: could not save reports ({type(exc).__name__})", file=sys.stderr)
         return 1

@@ -27,6 +27,9 @@ before replacing existing files. Encoding or staging failures preserve the previ
 outputs and remove staging files. Each final replacement is atomic; replacing
 multiple output files is not a single transaction.
 Existing destination symlinks are retained and their target files are updated.
+Before staging, the renderer rejects output paths that resolve to the input
+record or to each other. A rejected collision preserves the input, existing
+outputs and links.
 
 ## Writing the file
 
@@ -65,6 +68,12 @@ spaces, tabs, non-breaking spaces or hyphens between digits.
 Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
 for inspection; accepted text retains its original spelling. Name fields and
 use placeholders.
+
+Reference URLs are checked both as supplied and after one percent-decoding pass
+over their parsed components. Query names and values also receive form decoding
+(`+` means a space). A URL that cannot be parsed is checked after one decoding
+pass over the whole string. These checks use temporary copies; accepted URLs
+retain their original spelling, and decoding is not recursive.
 
 Only the fields documented below are accepted, at every object level: `meta`,
 findings, validation, analysis, references, commitments and perspectives.

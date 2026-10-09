@@ -31,11 +31,13 @@ PYTHON  ?= python3
 AGENT   ?= claude codex agy
 PROJECT ?=
 
+# Empty or unset overrides use the default configuration directory.
+CLAUDE_DIR := $(or $(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
 CODEX_HOME ?= $(HOME)/.codex
 AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
 
 # Each host contributes two literal shell arguments: its guard and skills dir.
-tgt_claude := $(call shell_quote,$(HOME)/.claude) $(call shell_quote,$(HOME)/.claude/skills)
+tgt_claude := $(call shell_quote,$(CLAUDE_DIR)) $(call shell_quote,$(CLAUDE_DIR)/skills)
 tgt_codex  := $(call shell_quote,$(CODEX_HOME)) $(call shell_quote,$(CODEX_HOME)/skills)
 tgt_agy    := $(call shell_quote,$(AGY_HOME)) $(call shell_quote,$(AGY_HOME)/skills)
 

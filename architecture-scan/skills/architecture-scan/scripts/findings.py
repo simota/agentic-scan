@@ -18,13 +18,16 @@ FINDINGS is created when absent. The merged record must pass the schema check
 record is complete, IDs are gapless in severity order and every perspective in
 `reference/perspectives.md` is recorded.
 
-Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
-contract failed (reasons on stderr).
+Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
+failed (reasons on stderr).
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
+import secrets
+import stat
 import sys
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
@@ -70,10 +73,12 @@ def read_json(path):
 
     try:
         doc = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-        # Escaped lone surrogates parse as JSON but cannot be written as UTF-8.
-        json.dumps(doc, ensure_ascii=False).encode("utf-8")
+        # Reject lone surrogates and non-finite numbers, including float overflow.
+        json.dumps(doc, ensure_ascii=False, allow_nan=False).encode("utf-8")
         return doc
-    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+    except SchemaError:
+        raise
+    except (OSError, ValueError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -166,8 +171,8 @@ def validate(doc, complete=False):
     meta = doc.get("meta", {})
     if not isinstance(meta, dict):
         raise SchemaError("meta: must be an object")
-    if complete:
-        for key in META_REQUIRED:
+    for key in META_REQUIRED:
+        if complete or key in meta:
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
@@ -244,6 +249,33 @@ def merge(doc, fragment, where):
     return doc
 
 
+def _atomic_write(target, data):
+    # Follow symlinks as write_bytes did, preserving the link itself.
+    target = target.resolve()
+    try:
+        # Check write access without truncating the existing record.
+        with target.open("r+b") as current:
+            mode = stat.S_IMODE(os.fstat(current.fileno()).st_mode)
+    except FileNotFoundError:
+        mode = None
+    while True:
+        temporary = target.parent / f".findings-{secrets.token_hex(16)}.tmp"
+        try:
+            # Exclusive creation retains the normal 0666 & umask for new files.
+            stream = temporary.open("xb")
+        except FileExistsError:
+            continue
+        break
+    try:
+        with stream:
+            if mode is not None:
+                temporary.chmod(mode)
+            stream.write(data)
+        os.replace(temporary, target)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
@@ -253,12 +285,12 @@ def cmd_merge(args):
             merge(doc, read_json(path), path)
             # Each fragment must leave a valid record, even in a batch.
             validate(doc)
-        # Encode before opening the target so invalid Unicode cannot truncate it.
-        data = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
-    except (SchemaError, UnicodeError) as exc:
+        # Serialize before staging any output.
+        data = (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
+        _atomic_write(target, data)
+    except (OSError, ValueError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
-    target.write_bytes(data)
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "
           f"{len(doc.get('findings', []))} finding(s)")
     return 0

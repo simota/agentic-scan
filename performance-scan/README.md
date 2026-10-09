@@ -75,6 +75,28 @@ Run all merges to the same `findings.json` sequentially through one REPORT
 coordinator. Parallel reviewers write fragments in scratch for that coordinator
 to merge. Atomic replacement does not detect concurrent updates.
 
+### Script behaviour
+
+- **Inputs.** The existing record, every fragment, the render input and the
+  checked record must be regular files (symbolic links to them are allowed).
+  Named pipes, devices and shell process substitution are refused before
+  reading. Member names are compared after decoding escapes (`"id"` and
+  `"\u0069d"` collide); ordinary strings containing `NaN` or `Infinity` are
+  fine.
+- **Merging.** The record is validated before and after every fragment, UTF-8
+  encoded in full, written to a temporary file beside the destination and then
+  atomically replaced; encoding or write failures leave the record unchanged.
+  Existing permission bits and symbolic links are preserved and a new record
+  starts private (0600).
+- **Rendering.** Both outputs are encoded, staged and backed up before either
+  destination is replaced. A failed replacement restores what was already
+  replaced; if that also fails, the error names the retained recovery copy.
+  Permission bits and symbolic links are preserved and new outputs start
+  private. This is not a transaction for concurrent writers and does not
+  survive forced termination or a crash mid-replace.
+- **Checking.** Required outputs must be readable, nonempty regular files;
+  symbolic links to such files are allowed.
+
 | Output | What it is |
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |

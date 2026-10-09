@@ -12,40 +12,19 @@ python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
-output could not be encoded or saved, `2` the input is unreadable, is not valid
-UTF-8 JSON, exceeds Python's parsing limits, or does not match the shape
-(the field is named for shape errors).
-`findings.py check` exits `1` and lists contract
-violations; a path that is not a directory is reported as such. Both scripts
-exit `2` on a command-line usage error. Required outputs must be readable, nonempty regular files;
-symbolic links to such files are allowed. The check validates the record and
-file structure, not whether rendered text is current or a finding is true.
+filterable) and `<out>/report.md`. Exit codes: `0` written; `1` an output could
+not be written (fix the destination); `2` the input or command line is wrong
+(the message names the file and, for shape errors, the field). `findings.py`
+exits `1` when a merge is refused or `check` finds violations (one per line on
+stderr) and `2` on a usage error. `check` validates structure, not whether
+rendered text is current or a finding is true.
 
-All JSON inputs must be regular files, including an existing merge target and
-each fragment. Symbolic links to regular files are allowed. Named pipes
-(FIFOs), devices and shell process substitution are refused before reading;
-write their contents to a regular JSON file first. A refused input leaves
-existing records and reports unchanged.
-
-JSON object member names must be unique at every nesting level, including
-after decoding escapes (for example, `"id"` and `"\u0069d"` are the same name).
-Repeated names are refused before schema validation so no value is silently
-discarded. Nonstandard numeric constants (`NaN`, `Infinity`, `-Infinity`) and
-numbers that overflow Python's finite floating-point range (such as `1e400`)
-are also refused; they must not be persisted as nonstandard JSON. Ordinary
-strings containing these tokens are allowed. These input rules apply to the
-existing record, every merge fragment, rendering and the contract check.
-Updates in separate fragments still follow the merge semantics below.
-
-Rendering encodes both outputs and finishes temporary files and recovery
-copies before replacing either destination. A handled replacement error
-restores outputs already replaced; if restoration also fails, the error names
-the retained recovery copy. Existing permission bits and symbolic links are
-preserved, and new outputs start with private permissions. Destination
-directories must be writable. Run renders sequentially: this is not a
-transaction for concurrent readers or writers, and does not guarantee recovery
-after forced termination or a system crash.
+Inputs are strict UTF-8 JSON in regular files (symbolic links to them are
+fine): unique member names at every level, no `NaN`/`Infinity`, no number
+beyond the float range. Write piped or generated content to a regular file
+first. A refused command changes no record or report; run merges and renders
+one at a time. How the scripts read, stage and replace files is described in
+the README (*Script behaviour*).
 
 ## Writing the file
 
@@ -59,10 +38,14 @@ python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-001.json
 python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
 ```
 
-One REPORT coordinator runs all merges to the same `findings.json`
-sequentially. Parallel reviewers write fragments in scratch for that coordinator
-to merge. Atomic replacement does not detect concurrent updates; one merge can
-overwrite another's changes.
+- Write one to five findings per fragment; the first fragment carries `meta`.
+- One REPORT coordinator runs all merges to the same `findings.json`, one at a
+  time; parallel reviewers write fragments in scratch for that coordinator.
+  Merges are not safe to run concurrently: one can overwrite another's changes.
+- Reviewers label findings in their scratch notes with temporary IDs
+  (`U<unit>-<n>`) and never put `perspectives` in fragments. After VERIFY the
+  coordinator assigns the final `P-NNN` in severity order and writes each
+  finding fragment once with that ID, so no merge has to renumber.
 
 Merge semantics:
 
@@ -80,33 +63,15 @@ Merge semantics:
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
-Every merge validates the existing record before applying fragments, then
-validates the combined record; a refused merge writes nothing. Before combining
-records, each fragment entry in `findings`, `budgets` and `perspectives` must be
-an object with a nonblank string `id` (`findings` and `budgets`) or `name`
-(`perspectives`). Known IDs still allow partial updates as described above.
-Existing and combined records require unique finding IDs, budget IDs and
-perspective names.
-Within a fragment, repeated perspective names still replace the whole entry
-in order, so the last entry wins.
-Each finding must be complete in the fragment that first adds it: the record is
-validated after every fragment, not only once per command.
-A merge never removes a key, so an update that turns a finding into a
+A refused merge writes nothing. Each finding must be complete in the fragment
+that first adds it (the record is validated after every fragment), and every
+entry in `findings`, `budgets` and `perspectives` needs a nonblank `id` or
+`name`. A merge never removes a key, so an update that turns a finding into a
 different one keeps its old optional fields (`measurement`, `contrast`,
-`budget`, `step`, `references`). Reuse an ID only for the same root cause; to
-renumber, build a fresh `findings.json` from fragments that already carry the
-final IDs.
-
-Partial records may omit required metadata during merges. When present,
-`meta.project`, `scope`, `date`, `assessor` and `lang` must be nonblank strings;
-`lang` must be `ja` or `en`. Both the existing and combined records are checked,
-so an invalid metadata update is refused before it can replace the record.
-
-Merges finish UTF-8 encoding and write a temporary file beside the destination
-before replacing it. Encoding or write failures leave the existing record
-unchanged. Existing file permissions and symbolic links are preserved; a new
-record starts with private permissions. The destination directory must be
-writable for the replacement.
+`budget`, `step`, `references`): reuse an ID only for the same root cause, and
+renumber by building a fresh `findings.json` from fragments with the final IDs.
+While merging, `meta` may be partial, but any `project`, `scope`, `date`,
+`assessor` or `lang` present must be a nonblank string (`lang`: `ja` or `en`).
 
 ## Shape
 

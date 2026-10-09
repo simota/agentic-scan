@@ -1,6 +1,6 @@
 ---
 name: performance-scan
-description: "Static performance review of an application's own source: maps hot paths, workloads and data volumes, then checks N+1 and unbounded queries, indexes, complexity, memory, blocking I/O, caching, pools, payloads, front-end bundle and rendering, jobs and config. Outputs a dashboard and a report. Read-only. Use to find bottlenecks or scalability risks, or to list what to check."
+description: "Static, read-only performance review of an application's own source. Use to find bottlenecks, slow pages, endpoints or jobs, or scalability risks, or to list what to check. Maps hot paths and data volumes, then checks N+1 and unbounded queries, indexes, complexity, memory, blocking I/O, caching, pools, payloads, front-end bundles and jobs. Outputs a dashboard and a report."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -26,8 +26,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Confirm scope in one line.** The repository is the requester's, the review
   is static, and no deployed system receives load. If the request implies a
   load test or profiling, see the measurement row in *Decide first*
-- **Name the workloads before tracing handlers** (skim them for frequency hints such as polling intervals and schedules): interactive requests (per
-  screen or API call), API clients and integrations, background jobs and
+- **Name the workloads before tracing handlers** (a quick skim for frequency
+  hints such as polling intervals and schedules is fine): interactive requests
+  (per screen or API call), API clients and integrations, background jobs and
   schedules, imports and exports, startup and deploy. A cost is only a problem
   relative to how often and how latency-sensitively it is paid
 - **Name the scale drivers**: what grows — rows per tenant, items per order,
@@ -46,7 +47,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Item | Fixed choice |
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
-| Review units | Group the workload inventory by domain: one unit per domain plus one cross-cutting unit (DB and HTTP client setup, middleware, caching layer, runtime and build config). With fewer than about 15 entry points, one unit plus the cross-cutting unit is enough. A ledger entry belongs to every unit that has a path paying it: each unit writes rows only for its own paths, and the coordinator sets the entry's status from all units' rows. Each unit first hunts the budget ledger entries it owns, then sweeps every applicable perspective once over the unit. A unit closes only when its close-check matches (`reference/budgets.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
+| Review units | One unit per domain plus one cross-cutting unit (one domain unit when there are fewer than about 15 entry points). Each unit hunts the ledger entries it owns, sweeps every applicable perspective once, and closes only when its close-check matches. Ownership, subagents and the close-check: `reference/budgets.md` §4 |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
@@ -54,7 +55,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). Reviewers never put `perspectives` in their fragments (a later entry replaces an earlier one whole); they keep per-unit notes in scratch, and the coordinator writes one entry per perspective combining every unit. One REPORT coordinator runs all merges to the same `findings.json` sequentially; parallel reviewers write scratch fragments only. Reviewers label findings in their notes with temporary IDs (`U<unit>-<n>`); after VERIFY the coordinator assigns the final `P-NNN` in severity order and writes the finding fragments once with those IDs, so no later merge has to renumber. Atomic replacement does not detect concurrent updates |
+| Writing the record | Only through JSON fragments written with the host's file-write tool into scratch and merged by `scripts/findings.py merge`, never a shell heredoc, `echo`/`printf` redirection or a generated script. One REPORT coordinator runs every merge, one at a time; reviewers write fragments only, with temporary IDs and no `perspectives`. Fragment rules: `reference/findings-schema.md` *Writing the file* |
 | Read-only | Read, search and run this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
 
 | Severity | When |
@@ -105,10 +106,9 @@ High; duplicated side effects from user retries go to `decisions`.
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
 | `dashboard.html` | Self-contained dashboard: counts, filterable findings, budgets, perspective coverage |
-| `report.md` | The written assessment: scope, findings, budgets, coverage, sound items, limitations, next steps |
+| `report.md` | Counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, sound items, limitations, decisions, next steps |
 
-Skip the files when only a checklist was asked for. Render them in the
-requester's language (`--lang ja|en`).
+Skip the files when only a checklist was asked for.
 
 ## Decide first
 
@@ -153,7 +153,6 @@ requester's language (`--lang ja|en`).
   endpoints
 - Never: state a latency, throughput or memory figure that was not measured.
   Write the cost model instead ("2N+1 queries"), and label any estimate as one
-- Never: report a High or Medium finding you have not traced end to end yourself
 - Never: delete a finding judged false — mark it `FalsePositive` or
   `NotApplicable` with evidence so the exclusion is visible. A lead falsified
   before it reached any fragment goes to `checked_ok` instead

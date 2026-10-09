@@ -80,7 +80,14 @@ in the cross-cutting unit, and domain units cite those rows:
   middleware) count only with their `path:line`
 - *Verdict*: `holds`, `violated`, or `lead` (needs VERIFY)
 
-## 4. Close-check per review unit
+## 4. Review units and close-check
+
+Group the workload inventory by domain, plus one cross-cutting unit (DB and
+HTTP client setup, middleware, caching layer, runtime and build config). A
+ledger entry belongs to every unit that has a path paying it: each unit writes
+rows only for its own paths, and the coordinator sets the entry's status from
+all units' rows. With subagents, one reviewer per unit; without, the same units
+sequentially. Reviewer notes stay in scratch.
 
 A unit closes when, for every owned entry, rows = the sum over its paths of
 max(1, drivers that path iterates); every

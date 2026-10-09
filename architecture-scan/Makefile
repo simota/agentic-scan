@@ -120,6 +120,9 @@ check: test ## verify the skill is self-contained and internally consistent
 	  done; \
 	done); \
 	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
+	for template in issue.ja.md issue.en.md report.ja.md report.en.md; do \
+	  [ -f $(QSKILL)/templates/"$$template" ] || { echo "MISS required templates/$$template is missing or not a regular file" >&2; fail=1; }; \
+	done; \
 	for f in $(QSKILL)/reference/*.md; do \
 	  [ -e "$$f" ] || continue; b=$$(basename "$$f"); \
 	  grep -q "$$b" $(QSKILL)/SKILL.md || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \

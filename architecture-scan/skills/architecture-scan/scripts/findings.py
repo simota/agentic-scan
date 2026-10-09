@@ -60,8 +60,16 @@ class SchemaError(ValueError):
 
 
 def read_json(path):
+    def unique_object(pairs):
+        obj = {}
+        for key, value in pairs:
+            if key in obj:
+                raise SchemaError(f"{path}: duplicate object key {key!r}")
+            obj[key] = value
+        return obj
+
     try:
-        doc = json.loads(Path(path).read_text(encoding="utf-8"))
+        doc = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         # Escaped lone surrogates parse as JSON but cannot be written as UTF-8.
         json.dumps(doc, ensure_ascii=False).encode("utf-8")
         return doc
@@ -91,7 +99,7 @@ def validate_finding(f, where):
     for key in FINDING_REQUIRED:
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
-    if not FINDING_ID.match(str(f["id"])):
+    if not FINDING_ID.fullmatch(str(f["id"])):
         raise SchemaError(f"{where}.id: {f['id']!r} must look like A-001")
     for key in TEXT_FIELDS:
         _text(f[key], f"{where}.{key}")
@@ -175,7 +183,7 @@ def validate(doc, complete=False):
     rule_ids = set()
     for i, r in enumerate(_list(doc.get("rules", []), "rules")):
         where = f"rules[{i}]"
-        if not isinstance(r, dict) or not RULE_ID.match(str(r.get("id"))):
+        if not isinstance(r, dict) or not RULE_ID.fullmatch(str(r.get("id"))):
             raise SchemaError(f"{where}.id: must look like R-01")
         if r["id"] in rule_ids:
             raise SchemaError(f"{where}.id: duplicate {r['id']}")

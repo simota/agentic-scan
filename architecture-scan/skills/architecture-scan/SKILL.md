@@ -1,6 +1,6 @@
 ---
 name: architecture-scan
-description: "Static review of an application's design: maps modules, dependencies, data ownership and change hotspots, then checks layering, boundaries, coupling, cohesion, domain model, consistency, failure handling, contracts, config, testability and operability. Outputs a dashboard and a report. Read-only. Use to find design problems or structural risks, or to list what to check."
+description: "Read-only architecture review of your own app: maps modules, dependencies, data ownership and hotspots, then checks layering, boundaries, coupling, cohesion, consistency, failure handling, contracts, config, testability and operability. Outputs a dashboard and a report. Use for design audits, dependency cycles or structural risks. Not for security, performance or refactoring."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -46,7 +46,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Item | Fixed choice |
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
-| Review units | One unit per top-level module, bounded context or service, plus one cross-cutting unit (shared kernel, framework setup, config, error handling, persistence infrastructure). Each unit first hunts the rules ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/rules.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
+| Review units | One unit per top-level module, bounded context or service, plus one cross-cutting unit (shared kernel, framework setup, config, error handling, persistence infrastructure). Each unit first hunts the rules ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/rules.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Each unit numbers its fragments in its own block (unit 1 `A-101`…, unit 2 `A-201`…) so no two units write the same ID; merge refuses a complete finding whose ID holds a different one. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location or per design decision. The same boundary violated from ten call sites is one finding that lists them in `trace`; problems needing different fixes are separate findings |
 | IDs | `A-001`… numbered without gaps in severity order (then path). No other prefixes. Number fragments in any order; `scripts/findings.py renumber` restores the order and rewrites ID mentions before rendering. After it, use only the new IDs it prints |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
@@ -55,7 +55,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Effort | When the effort runs short, close units in risk order (core flows and change hotspots first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (module map, ledger, trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
 | Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`) |
-| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
+| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository (the only exception is GUARD, with explicit permission) |
 
 | Severity | When |
 |---|---|
@@ -65,8 +65,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Info | A design note with no demonstrated defect or change cost |
 
 Each further condition the code does not control lowers severity one level. An
-`Environment-dependent` finding is graded as if its stated condition holds, and
-names that condition (e.g. "if the queue delivers at least once").
+`Environment-dependent` finding names its condition (e.g. "if the queue
+delivers at least once"), and that condition counts as one the code does not
+control: a High-class risk that needs it is Medium.
 
 ## Phases
 
@@ -76,7 +77,7 @@ names that condition (e.g. "if the queue delivers at least once").
 | CHECKLIST | Ledger first: each rule with its source and every module or path that must keep it. Then the perspectives that apply, keeping only hunt steps no ledger entry covers; attach early suspicions marked unverified | `reference/rules.md`, `reference/perspectives.md`, `reference/report.md` |
 | REVIEW | One pass (or one reviewer) per review unit. For each owned rule, trace every edge or path that must keep it with one trace row per edge: from `path:line` → to `path:line`, which rule, verdict. Every control cell names the enforcing mechanism (an import-lint contract, a module's public interface, a repository that is the only writer, a transaction wrapper) at `path:line`, or `NONE` / `N/A` / `UNKNOWN` with a reason — never "the framework separates it". Then the writer-backward pass (every write to a core table maps to a row), then sweep every applicable perspective's hunt steps | `reference/rules.md`, `reference/perspectives.md` |
 | VERIFY | Record evidence-linked reach, consequence, mitigations and change cost; try to falsify each claim (a facade that routes all calls, an outbox, an idempotency key, a test that pins the rule); keep runtime and organisational unknowns explicit | `reference/validation.md` |
-| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out> --lang <ja or en>`; pass `scripts/findings.py check <out>`; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added or regraded, render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md` |
 | GUARD *(on request)* | With explicit permission, add a fitness function to the repo's own suite that encodes a rule — an import or layer contract, a cycle check, a single-writer check, a contract test — and show it fails on the current violation and passes after the fix | `reference/validation.md` |
 
 ## Outputs
@@ -88,8 +89,8 @@ names that condition (e.g. "if the queue delivers at least once").
 | `dashboard.html` | Self-contained dashboard: counts, filterable findings, design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
-Skip the files when only a checklist was asked for. Render them in the
-requester's language (`--lang ja|en`).
+Skip the files when only a checklist was asked for. Set `meta.lang` to the
+requester's language (`ja` or `en`); render uses it, and `check` requires it.
 
 ## Decide first
 
@@ -106,7 +107,7 @@ requester's language (`--lang ja|en`).
 | A pattern is merely unfamiliar or not to taste | Not a finding. Record it only if it causes a defect, a change cost or an inconsistency the history shows |
 | The requester wants a dependency graph or metrics | Run an already-installed, read-only analysis tool on the local checkout, name it before running, and record tool, command and result in `analysis`. Never install packages into the audited repository |
 | Asked to lock a rule in or confirm a fix | GUARD: a fitness function in the repo's own suite, red on the current violation and green after the fix |
-| The host cannot run a second, independent reviewer | Record that in `limitations`; High findings stay `Likely` unless the reporting agent traced them end to end. Never invent a second reviewer |
+| The host cannot run a second, independent reviewer | Record that in `limitations`. A High finding may be `Valid` once the reporting agent has traced it end to end; until then it is not reported (see *Never*). Never invent a second reviewer |
 | Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several. Filing or sending is the requester's step |
 
 ## Always / Never
@@ -127,7 +128,8 @@ requester's language (`--lang ja|en`).
 - Always: say what static reading cannot show — runtime topology, delivery
   semantics of the deployed broker, team ownership, the roadmap, data actually
   present
-- Never: edit source, configs or dependencies during the review
+- Never: edit source, configs or dependencies during the review (GUARD, after
+  the review and with explicit permission, adds only the fitness function)
 - Never: report preference as a defect ("should use hexagonal architecture",
   "too many files") without a demonstrated defect, change cost or inconsistency
 - Never: recommend a rewrite as a fix direction. Name the smallest change that

@@ -8,7 +8,7 @@ Render with (paths relative to this skill's directory):
 
 ```
 python3 scripts/findings.py renumber <out>/findings.json
-python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
+python3 scripts/render.py <out>/findings.json --out <out>
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
@@ -34,8 +34,7 @@ are kept), `2` the record does not match the shape (the field is named).
 `findings.py check` exits `1` and lists every contract violation. All three
 required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
-`findings.json` (in either language, both from one rendering) — re-render after
-the last merge. It also requires:
+`findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
 - every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` or `Likely`
   finding not excluded cites a rule recorded as `violated` or `partly read`
@@ -68,6 +67,27 @@ Merge semantics:
   within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
+- A complete finding (every required field) sent with an ID that already holds
+  a finding with a different `title` and `location` is refused as an ID
+  collision: two review units numbered the same ID. Each unit numbers in its
+  own block (`A-101`…, `A-201`…); `renumber` compacts them
+
+## Correcting the record
+
+Never edit `findings.json` by hand; every correction is a fragment:
+
+- `null` removes an optional key: `{"findings": [{"id": "A-003", "analysis":
+  null}]}`, `{"meta": {"method": null}}`, `{"rules": [{"id": "R-02", "reason":
+  null}]}`. A required key cannot be removed; replace its value instead
+- `remove` deletes exact items from the string lists before the fragment's own
+  items are appended, so one fragment replaces an item: `{"remove":
+  {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
+  An item that is not recorded is refused, so a typo cannot pass silently
+- A wrong value is replaced by sending the key again; nested `validation` and
+  `analysis` objects are replaced whole
+
+When `check` fails: correct the record with a fragment, `renumber` if a
+finding was added or regraded, render, and check again.
 
 ## Numbering
 
@@ -140,7 +160,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
       "impact": "Expected (R-01): every invoice change goes through billing. Actual: refunded invoices keep the pre-refund tax amount",
       "rule": "R-01",
       "fix": "Call BillingService.adjust() from the refund job instead of updating the table",
-      "guard": "CI search fails on writes to invoices outside api/billing/",
+      "guard": "R-01: CI search fails on writes to invoices outside api/billing/",
       "validation": {"verdict": "Valid", "method": "static",
                      "evidence": "job.py:58 raw UPDATE; no call to billing in worker/refunds/"},
       "status": "Open"
@@ -160,7 +180,8 @@ record. Existing permission bits and symbolic-link destinations are retained.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.method` | Optional string: one phrase naming the reading and each read-only tool or history window, e.g. `Static review; git log 12 months; import-linter`. Shown verbatim in both outputs in place of the generic static/analysed note |
 | `findings[].id` | `A-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |

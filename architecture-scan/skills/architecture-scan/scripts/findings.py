@@ -11,6 +11,11 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
+A `null` value removes an optional key from `meta`, a finding or a rule, and
+`remove` (`{"next_steps": ["exact text"]}`) deletes list items before the
+fragment's own items are appended, so any recorded mistake can be corrected.
+A complete finding whose ID already holds a finding with another title and
+location is refused as an ID collision.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
 
@@ -25,7 +30,8 @@ record is complete, IDs are gapless in severity order, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings carry evidence, definitive evidence cites a `path:line`, and
-both rendered files match what `render.py` produces from the current record.
+both rendered files match what `render.py` produces from the current record
+in `meta.lang`.
 
 Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
 failed (reasons on stderr).
@@ -62,6 +68,7 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
+RULE_REQUIRED = ("id", "statement", "source", "status")
 TEXT_FIELDS = ("title", "scenario", "blast_radius", "trace", "impact", "fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
@@ -240,30 +247,68 @@ def validate(doc, complete=False):
             _text(value, f"{key}[{i}]")
 
 
-def _merge_records(current, incoming, where):
+def _apply(target, updates, required, where):
+    """Update target key by key; a null value removes an optional key."""
+    for key, value in updates.items():
+        if value is not None:
+            target[key] = value
+        elif key in required:
+            raise SchemaError(f"{where}.{key}: required; null removes only optional keys")
+        else:
+            target.pop(key, None)
+    return target
+
+
+def _collides(existing, record):
+    """A complete record unlike the finding that holds its ID: another unit's finding."""
+    return (all(key in record for key in FINDING_REQUIRED)
+            and record["title"] != existing.get("title")
+            and record["location"] != existing.get("location"))
+
+
+def _merge_records(current, incoming, where, required):
     for records in (current, incoming):
         ids = [r.get("id") if isinstance(r, dict) else None for r in _list(records, where)]
         if any(not isinstance(fid, str) for fid in ids) or len(set(ids)) != len(ids):
             raise SchemaError(f"{where}: every record needs a unique string id")
     index = {r["id"]: r for r in current}
     for record in incoming:
-        if record["id"] in index:
-            index[record["id"]].update(record)
+        rid = record["id"]
+        if rid in index:
+            if required is FINDING_REQUIRED and _collides(index[rid], record):
+                raise SchemaError(
+                    f"{where}: {rid} already holds {index[rid].get('title')!r}; give the new "
+                    f"finding another ID, or send only the fields that change")
+            _apply(index[rid], record, required, f"{where}.{rid}")
         else:
-            current.append(dict(record))
-            index[record["id"]] = current[-1]
+            current.append(_apply({}, record, required, f"{where}.{rid}"))
+            index[rid] = current[-1]
+
+
+def _remove_items(doc, removals, where):
+    if not isinstance(removals, dict):
+        raise SchemaError(f"{where}: must be an object of list names")
+    unknown = set(removals) - set(LISTS)
+    if unknown:
+        raise SchemaError(f"{where}: only {', '.join(LISTS)} can be removed from, not "
+                          f"{sorted(unknown)}")
+    for key, values in removals.items():
+        for value in _list(values, f"{where}.{key}"):
+            if value not in doc.get(key, []):
+                raise SchemaError(f"{where}.{key}: {value!r} is not recorded")
+            doc[key].remove(value)
 
 
 def merge(doc, fragment, where):
     if not isinstance(fragment, dict):
         raise SchemaError(f"{where}: must be an object")
-    unknown = set(fragment) - TOP_KEYS
+    unknown = set(fragment) - TOP_KEYS - {"remove"}
     if unknown:
         raise SchemaError(f"{where}: unknown keys {sorted(unknown)}")
     if "meta" in fragment:
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
-        doc.setdefault("meta", {}).update(fragment["meta"])
+        _apply(doc.setdefault("meta", {}), fragment["meta"], META_REQUIRED, f"{where}.meta")
     for key in ("findings", "rules", "perspectives"):
         if key not in fragment:
             continue
@@ -274,7 +319,10 @@ def merge(doc, fragment, where):
             doc[key] = [q for q in doc.get(key, []) if q.get("name") not in names]
             doc[key].extend(fragment[key])
         else:
-            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}")
+            required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
+            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
+    if "remove" in fragment:
+        _remove_items(doc, fragment["remove"], f"{where}.remove")
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):
@@ -489,7 +537,7 @@ def contract_problems(out, allow=()):
 
 
 def _stale_outputs(out, doc, unusable):
-    """Name each rendered output that render.py would not produce from doc."""
+    """Name each output that render.py would not produce from doc in meta.lang."""
     names = ("report.md", "dashboard.html")
     if any(name in unusable for name in names):
         return []
@@ -497,16 +545,11 @@ def _stale_outputs(out, doc, unusable):
         current = {name: (out / name).read_bytes() for name in names}
     except OSError as exc:
         return [f"rendered output cannot be read: {exc}"]
-    renderer = _renderer()
-    stale = set(names)
-    for lang in ("ja", "en"):
-        # Both files must come from one rendering, in one language.
-        expected = renderer.rendered_outputs(doc, lang)
-        mismatched = {name for name in names if current[name] != expected[name]}
-        if len(mismatched) < len(stale):
-            stale = mismatched
-    return [f"{name} is not rendered from the current findings.json "
-            "(re-run scripts/render.py)" for name in sorted(stale)]
+    lang = doc["meta"]["lang"]
+    expected = _renderer().rendered_outputs(doc, lang)
+    return [f"{name} is not rendered from the current findings.json in meta.lang {lang} "
+            "(re-run scripts/render.py without --lang)"
+            for name in names if current[name] != expected[name]]
 
 
 def _renderer():

@@ -50,8 +50,19 @@ class FindingsReviewTests(unittest.TestCase):
         findings.validate(doc, complete=True)
         findings.validate({})
 
+    def test_null_references_remove_the_optional_key(self):
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [{"url": "https://example.com"}]
+        target = self.write_json("findings.json", doc)
+        fragment = self.write_json("fragment.json", {
+            "findings": [{"id": "A-001", "references": None}],
+        })
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 0)
+        self.assertNotIn("references", findings.read_json(target)["findings"][0])
+
     def test_invalid_reference_merge_preserves_existing_record(self):
-        for value in ({}, "", None, 1):
+        for value in ({}, "", 1):
             with self.subTest(value=value):
                 target = self.write_json("findings.json", complete_doc())
                 before = target.read_bytes()

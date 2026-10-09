@@ -69,7 +69,7 @@ builds from JSON fragments rather than heredocs:
 ```sh
 python3 skills/architecture-scan/scripts/findings.py merge out/findings.json frag-001.json
 python3 skills/architecture-scan/scripts/findings.py renumber out/findings.json  # severity, then path
-python3 skills/architecture-scan/scripts/render.py out/findings.json --out out --lang ja
+python3 skills/architecture-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
 python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists each violation
 ```
 

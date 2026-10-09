@@ -1,6 +1,8 @@
 <!--
 Reports design findings to the owner, a tech lead or a manager. One report can carry several findings.
 Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
+Counts are the first line of report.md: excluded verdicts (FalsePositive, NotApplicable) are not counted.
+"Of which Valid" counts that severity's findings with verdict Valid; n_likely and n_unverified count verdicts.
 
 Before sending:
 - Each finding states a defect or a change cost backed by evidence, not a preference

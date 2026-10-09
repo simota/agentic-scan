@@ -30,7 +30,7 @@
       "impact": "Expected (R-01): every invoice change goes through billing. Actual: refunded invoices keep the pre-refund tax amount",
       "rule": "R-01",
       "fix": "Call BillingService.adjust() from the refund job instead of updating the table",
-      "guard": "CI search fails on writes to invoices outside api/billing/",
+      "guard": "R-01: CI search fails on writes to invoices outside api/billing/",
       "validation": {"verdict": "Valid", "method": "static", "evidence": "job.py:58 raw UPDATE; no call to billing in worker/refunds/"},
       "status": "Open"
     },
@@ -49,7 +49,7 @@
       "impact": "Expected (R-03): one effect per message. Actual: stock drifts low on every redelivery, if the broker delivers at least once",
       "rule": "R-03",
       "fix": "Use the dedup helper keyed on the message ID, in the same transaction as the decrement",
-      "guard": "Test delivers the same shipment message twice and asserts one decrement",
+      "guard": "R-03: test delivers the same shipment message twice and asserts one decrement",
       "validation": {"verdict": "Likely", "method": "static", "evidence": "shipment.py:31 has no dedup; broker delivery semantics not in the repository"},
       "status": "Open"
     },
@@ -68,7 +68,7 @@
       "impact": "Expected (R-02): domain code is persistence-free. Actual: discount rules can only be tested with a database",
       "rule": "R-02",
       "fix": "Pass a coupon repository into the discount function",
-      "guard": "Add api.pricing.domain to the import-linter layers contract",
+      "guard": "R-02: add api.pricing.domain to the import-linter layers contract",
       "validation": {"verdict": "Valid", "method": "analysed", "evidence": "discounts.py:3"},
       "analysis": {"tool": "import-linter", "command": "lint-imports", "result": "1 broken contract: api.pricing.domain -> db"},
       "status": "Open"
@@ -81,7 +81,7 @@
     {"name": "Domain model and data ownership", "status": "applied", "note": "DM1 via R-01; DM2-DM4 applied"},
     {"name": "Consistency and transactions", "status": "applied", "note": "TX2 via R-03; TX1, TX3, TX4 applied"},
     {"name": "Failure handling", "status": "applied", "note": "FH1-FH3 applied"},
-    {"name": "API and event contracts", "status": "not checked", "note": "AC1 via R-04 not checked; GraphQL out of scope"},
+    {"name": "API and event contracts", "status": "not checked", "note": "AC1 via R-04, AC2-AC3 not checked: GraphQL resolvers out of scope; needs the resolvers and schema read"},
     {"name": "Configuration and environment", "status": "applied", "note": "CF1-CF3 applied"},
     {"name": "Testability", "status": "applied", "note": "TS1-TS3 applied"},
     {"name": "Operability", "status": "applied", "note": "OP1-OP3 applied"},

@@ -113,8 +113,14 @@ perspective is in brackets.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| SP1 | Sensitive categories stored in plain text where commitments or the named regulation require encryption or tokenisation | Models for sensitive fields; encryption helpers; IaC | Field-level encryption or tokenisation at `path:line`, or storage encryption cited in IaC — because a database dump exposes plain fields |
+| SP1 | Sensitive categories stored in plain text where commitments or the named regulation require encryption or tokenisation | Models for sensitive fields; encryption helpers; IaC | Encryption or tokenisation at `path:line` protects the data and access path named by the commitment; trace database reads and logical exports separately from storage encryption — because encryption layers protect different access paths |
 | SP2 | Keys and access: one key for everything, keys next to data, broad database credentials | Key management config | Separate keys per purpose, managed outside the database — because the key decides who can read |
+
+Accept storage encryption when the commitment requires protection of data at
+rest. Where it also requires protection from database readers or plaintext
+logical exports, trace those paths and their controls. For example,
+[Azure SQL TDE](https://learn.microsoft.com/en-us/azure/azure-sql/database/transparent-data-encryption-tde-overview?view=azuresql)
+decrypts pages for reads and does not encrypt the contents of a BACPAC export.
 
 ### Client-side tracking (CT) [CONSENT]
 
@@ -128,8 +134,16 @@ perspective is in brackets.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| ID1 | "Anonymised" data that is pseudonymous: hashed emails or phones, stable IDs, quasi-identifiers (postcode, birth date, gender) kept together | Anonymisation code, exports for analytics or partners | Identifiers removed or replaced with keyed, rotated pseudonyms, and quasi-identifiers generalised — because a hash of an email is a stable identifier |
+| ID1 | "Anonymised" data that is pseudonymous: hashed emails or phones, stable IDs, quasi-identifiers (postcode, birth date, gender) kept together | Anonymisation code, exports for analytics or partners | The claimed loss of linkability is supported for each recipient after checking identifiers, quasi-identifiers, available keys, mappings and candidate identities; otherwise `UNKNOWN` — because keyed or rotated pseudonyms can still be matched to a subject |
 | ID2 | Emails or government IDs used as primary keys or join keys across systems | Schemas and integration payloads | Internal opaque IDs, personal values kept as attributes — because a key spreads to every table and system |
+
+Treat keyed, rotated identifiers as pseudonymisation unless the claimed loss
+of linkability is separately supported. A holder of a retained key and
+candidate emails can recompute `HMAC(key, email)` and match exported rows
+within that key's period. Generalising quasi-identifiers does not remove that
+match. [HMAC-based pseudonymisation](https://docs.cloud.google.com/sensitive-data-protection/docs/pseudonymization)
+preserves record relationships for the same key; assess each recipient's
+available information and leave unobserved linkability controls `UNKNOWN`.
 
 ### Non-production and derived copies (NP) [CONTAIN]
 

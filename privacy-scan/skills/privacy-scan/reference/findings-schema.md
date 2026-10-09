@@ -34,7 +34,8 @@ Merge semantics:
 - `findings` and `commitments` match by `id`: a known record is updated key by
   key (so a later fragment can add just `validation` to `PV-003`), a new one is
   appended. Duplicate IDs within one fragment are refused
-- `perspectives` match by `name` and replace the whole entry
+- `perspectives` match by `name` and replace the whole entry. Duplicate names
+  within one fragment are refused; a later fragment can still replace an entry
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
@@ -46,6 +47,17 @@ top-level text lists, is checked for e-mail addresses (other than
 `.invalid` domains) and runs of 12 or more digits, including space- or
 hyphen-separated digits and numbers next to punctuation. Name fields and use
 placeholders.
+
+Only the fields documented below are accepted, at every object level: `meta`,
+findings, validation, analysis, references, commitments and perspectives.
+Unknown fields are refused instead of silently retaining unexamined values in
+`findings.json`. Error messages identify the object or field and its expected
+shape without echoing submitted values or unknown key names.
+
+Record collections and `references` must be JSON arrays. Finding and commitment
+IDs, and perspective names, must each be unique in the combined record. Optional
+text fields must be strings when present; omit an unused field rather than
+setting it to `null` or an object. `inferred`, when present, must be a boolean.
 
 Recognised hexadecimal revisions in `meta.commit` and the line-number suffix
 of a validated `location` are treated as technical identifiers. The location's
@@ -111,6 +123,7 @@ encoded separately; other URL schemes remain visible as text.
 | Field | Rule |
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method |
 | `findings[].id` | `PV-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
@@ -123,7 +136,7 @@ encoded separately; other URL schemes remain visible as text.
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | `{title, url}` |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`, shown in both reports. `family` and `inferred` are optional; `inferred: true` is labelled in both reports |
+| `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`, shown in both reports. `family` (string) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

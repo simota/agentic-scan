@@ -10,7 +10,8 @@ report unless asked.
 ## 1. Stack and versions
 
 - Language runtime, framework, ORM, database, cache, queue, HTTP client,
-  front-end framework and bundler, with versions from lockfiles
+  front-end framework and bundler, with versions from lockfiles (without a
+  lockfile, use the manifest ranges and say so in `limitations`)
 - The execution model: threads per request, process workers, async event loop,
   goroutines, serverless invocations. It decides what "blocking" means and
   which resources are shared between requests
@@ -38,9 +39,11 @@ mechanical:
 |---|---|---|---|---|---|---|---|
 
 - *Kind*: `request`, `page`, `job`, `consumer`, `import`, `export`, `startup`,
-  `cli`, `stream` (WebSocket and streaming endpoints), `webhook`, `watcher`
+  `cli`, `stream` (WebSocket and streaming endpoints), `webhook`, `watcher`,
+  `screen` (a client route or interaction such as typing in a filter; count
+  screens toward the unit-size threshold in `SKILL.md`)
 - *Frequency / sensitivity*: `hot` (every page view, list screens, polling,
-  auth, search, high-volume API), `warm` (regular user actions), `cold`
+  auth, search, high-volume API, per-keystroke or per-scroll client work), `warm` (regular user actions), `cold`
   (admin, one-off, nightly with slack). Infer from the client code, polling
   intervals, schedules and route names; mark the inference
 - *Scale drivers*: every collection whose size the work depends on, with its

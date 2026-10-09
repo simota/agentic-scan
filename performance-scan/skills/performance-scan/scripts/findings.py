@@ -436,7 +436,8 @@ def contract_problems(out, allow=()):
     findings = doc.get("findings", [])
     expected = [f"P-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
-        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}")
+        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}"
+                        " (rebuild findings.json from fragments that carry the final IDs)")
     included = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     for before, after in zip(included, included[1:]):
         if SEVERITIES.index(after["severity"]) < SEVERITIES.index(before["severity"]):

@@ -56,7 +56,7 @@ class CrossReferenceTests(unittest.TestCase):
         doc = complete_doc()
         report = render.render_markdown(doc, "ja")
         self.assertIn("| 範囲 | repo root |", report)
-        self.assertIn("| | 状態 | メモ |", report)
+        self.assertIn("| 観点 | 状態 | メモ |", report)
         self.assertNotIn("| Scope |", report)
         self.assertIn("- **観点:** Database access (DB1)", report)
         del doc["findings"][0]["step"]

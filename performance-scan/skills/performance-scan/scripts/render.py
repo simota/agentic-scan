@@ -49,6 +49,7 @@ LABELS = {
         "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
         "method_row": "Method", "index": "Index", "confidence": "Confidence", "verdict_col": "Verdict",
         "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
+        "item_col": "Item", "value_col": "Value", "perspective_col": "Perspective", "lang": "en",
         "excluded_findings": "Excluded findings",
     },
     "ja": {
@@ -59,7 +60,7 @@ LABELS = {
         "severity": "深刻度", "count": "件数", "all": "すべて", "none": "なし。",
         "location": "場所", "workload": "ワークロード", "scale_driver": "規模の要因",
         "cost_model": "コストモデル", "request": "再現手順", "contrast": "対照",
-        "impact": "何が起きるか", "verdict": "検証判定", "method": "検証の根拠",
+        "impact": "何が起きるか", "verdict": "検証判定", "method": "検証方法",
         "evidence": "根拠", "measurement": "計測", "fix": "修正方針",
         "command": "コマンド", "environment": "実行環境",
         "regression_test": "回帰テスト", "references": "参考", "status": "ステータス",
@@ -72,9 +73,23 @@ LABELS = {
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
         "method_row": "方法", "index": "一覧", "confidence": "確度", "verdict_col": "検証判定",
         "title_col": "タイトル", "location_col": "場所", "findings_col": "引用する検出事項", "budget_col": "バジェット",
+        "item_col": "項目", "value_col": "値", "perspective_col": "観点", "lang": "ja",
         "excluded_findings": "除外した検出事項",
     },
 }
+# Display names for fixed values. Severity, confidence and verdict names stay as
+# written: the templates and the chat summary use them verbatim in both languages.
+VALUE_LABELS = {
+    "ja": {"static": "静的", "measured": "計測", "holds": "維持", "violated": "違反",
+           "partly read": "一部のみ確認", "not checked": "未確認", "applied": "適用",
+           "N/A": "対象外", "Open": "未対応", "Fixed": "修正済み", "Accepted": "許容"},
+}
+
+
+def shown(value, lang):
+    return VALUE_LABELS.get(lang, {}).get(value, value)
+
+
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
           "impact", "budget", "fix", "regression_test")
 
@@ -210,7 +225,7 @@ def budget_cells(budget, labels, findings):
     # Link each ledger entry to the included findings that cite it.
     cited = ", ".join(f["id"] for f in findings
                       if f.get("budget") == budget["id"] and finding_group(f) != "excluded")
-    return (budget["id"], budget["statement"], budget["source"], budget["status"],
+    return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
             inference, budget.get("reason", ""), cited or "—")
 
 
@@ -237,7 +252,7 @@ def markdown_finding(f, t):
     for key in FIELDS:
         if key in f:
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
-    lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
+    lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
     if v.get("evidence"):
         lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
     if "measurement" in f:
@@ -245,7 +260,7 @@ def markdown_finding(f, t):
         lines.append(f"- **{t['measurement']}:** {markdown_text(m['result'])} "
                      f"({markdown_code(m['command'])}, {markdown_text(m['environment'])})")
     if not excluded:
-        lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
+        lines.append(f"- **{t['status']}:** {shown(f.get('status', 'Open'), t['lang'])}")
     for ref in f.get("references", []):
         lines.append(f"- **{t['references']}:** "
                      f"{markdown_link(reference_title(ref), ref['url'])}")
@@ -262,7 +277,7 @@ def render_markdown(doc, lang):
                  + f" · {t['excluded']} {excluded} · "
                  + review_note(findings, t))
     lines += ["", f"{verdicts} · **{incomplete_high}**"]
-    lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
+    lines += ["", f"## {t['scope']}", "", f"| {t['item_col']} | {t['value_col']} |", "|---|---|",
               f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {markdown_cell(meta.get('scope', ''))} |",
               f"| {t['revision']} | {markdown_cell(meta.get('commit') or 'UNKNOWN')} |",
@@ -298,11 +313,12 @@ def render_markdown(doc, lang):
             lines.append("| " + " | ".join(markdown_cell(cell)
                                            for cell in budget_cells(b, t, findings)) + " |")
         lines.append("")
-    lines += [f"## {t['perspectives']}", "", f"| | {t['status_col']} | {t['note']} |", "|---|---|---|"]
+    lines += [f"## {t['perspectives']}", "",
+              f"| {t['perspective_col']} | {t['status_col']} | {t['note']} |", "|---|---|---|"]
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         p = recorded.get(name, {"status": "—", "note": ""})
-        lines.append("| " + " | ".join(markdown_cell(v) for v in (name, p["status"], p["note"])) + " |")
+        lines.append("| " + " | ".join(markdown_cell(v) for v in (name, shown(p["status"], lang), p["note"])) + " |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -376,11 +392,11 @@ def render_html(doc, lang):
                      if group == "excluded" else "")
         step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
-        rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
+        rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
         if v.get("evidence"):
             rows.append((t["evidence"], v["evidence"]))
         if group != "excluded":
-            rows.append((t["status"], f.get("status", "Open")))
+            rows.append((t["status"], shown(f.get("status", "Open"), lang)))
         if "measurement" in f:
             m = f["measurement"]
             rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
@@ -404,12 +420,12 @@ def render_html(doc, lang):
             out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t, findings)) + "</tr>")
         out.append("</tbody></table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th scope='col'></th>"
+    out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th scope='col'>{e(t['perspective_col'])}</th>"
                f"<th scope='col'>{e(t['status_col'])}</th><th scope='col'>{e(t['note'])}</th>"
                "</tr></thead><tbody>")
     for name in PERSPECTIVES:
         p = recorded.get(name, {"status": "—", "note": ""})
-        out.append(f"<tr><td>{e(name)}</td><td>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
+        out.append(f"<tr><td>{e(name)}</td><td>{e(shown(p['status'], lang))}</td><td>{e(p['note'])}</td></tr>")
     out.append("</tbody></table>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])

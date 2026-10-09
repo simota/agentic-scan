@@ -1,6 +1,9 @@
 <!--
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
 各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
+場所は 1 つずつバッククォートで囲み、表のセル内では <br> で区切る。{{request}} は番号ごとに改行する。
+確度が Environment-dependent なら、前提条件としきい値（scale_driver または impact から）と、関連する
+limitations の項目を「未確定事項」に書く。
 step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
 path:line、参考の title が空なら URL をリンク文字列にする。
 
@@ -17,10 +20,10 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 |---|---|
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
-| 確度 | {{confidence}}（Environment-dependent なら、前提となる条件を「未確定事項」に書く） |
+| 確度 | {{confidence}} |
 | 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |
-| 場所 | `{{location}}` |
+| 場所 | {{location}} |
 | 対象リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 

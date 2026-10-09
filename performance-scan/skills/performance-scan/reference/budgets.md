@@ -20,7 +20,9 @@ drivers grow. Derive it from evidence in the repository, strongest first:
 1. **Stated targets** — SLO documents, CI performance budgets, load-test
    thresholds, query-count tests
 2. **Hard limits** — request, job and gateway timeouts; container memory;
-   pool sizes; plan limits; body and upload limits
+   pool sizes; plan limits; body and upload limits. Confirm what a timeout
+   bounds: Node's `server.requestTimeout` and `headersTimeout` bound receiving
+   the request only, and Express has no handler deadline
 3. **The majority of handlers** — if nine list endpoints paginate and one does
    not, the nine state the bound and the one breaks it
 4. **Data model** — caps on child counts, unique constraints, indexes that show
@@ -62,7 +64,10 @@ or `not checked` (with a reason).
 ## 3. Cost-trace rows
 
 For each ledger entry, one row per path that pays it and scale driver that path
-iterates; a path with constant cost gets one row with Driver `none`:
+iterates; a path with constant cost gets one row with Driver `none`. A branch
+inside a handler that costs differently (e.g. key vs session auth) is a separate
+path. Costs paid in shared middleware ("every route through X") get their rows
+in the cross-cutting unit, and domain units cite those rows:
 
 | Entry | Path | Driver | Hops (entry → loop → sink, `path:line`) | Cost | Mitigation | Verdict |
 |---|---|---|---|---|---|---|

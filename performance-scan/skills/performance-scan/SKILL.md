@@ -50,7 +50,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language (`--lang` changes only the labels; finding text stays in the language it was written in). No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language (`--lang` changes the labels and the display names of statuses and methods; finding text stays in the language it was written in). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
@@ -59,8 +59,8 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Severity | When |
 |---|---|
-| High | On a hot path (an interactive request, a frequent API call, a job with a deadline), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime on a hot or warm path |
-| Medium | A High-class growth that needs one condition the code does not control (a large tenant, a missing index that the migrations do not show either way, a feature flag), a bounded cost that, at its cap, violates a ledger budget on a hot path (many sequential outbound calls, multi-megabyte responses, a render that redoes all work per keystroke), uncapped growth on a warm path, or a leak fed only by a cold path |
+| High | On a hot path (an interactive request, a frequent API call, a job with a deadline), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime on a hot or warm path and, at the path's rate, reaches the process limit within the restart or deploy interval (otherwise Medium) |
+| Medium | A High-class growth that needs one condition the code does not control and that is independent of the scale driver's own growth (a missing index that the migrations do not show either way, a feature flag, a deployment setting; a large tenant is not such a condition, because every uncapped driver needs one), a bounded cost that, at its cap, violates a ledger budget on a hot path (many sequential outbound calls, multi-megabyte responses, a render that redoes all work per keystroke), uncapped growth on a warm path, or a leak fed only by a cold path |
 | Low | Inefficiency on a cold path (admin, one-off, startup) that stalls nothing shared, a bounded budget violation on a warm path, a missed cache with small cost, constant-factor waste |
 | Info | A tuning or observability note with no demonstrated cost path |
 
@@ -77,8 +77,14 @@ blocks the event loop of the API is High, not Low.
 
 A defect outside performance found in passing (data crossing tenants, wrong
 results) is not graded with this table: record the performance aspect at its
-table severity, title the defect plainly, and add a `decisions` line routing it
-to security or correctness triage.
+table severity (if it has none, record only the `decisions` line), title the
+defect plainly, and add a `decisions` line routing it to security or
+correctness triage.
+
+A wait that can outlive the caller's deadline (an outbound call with no
+timeout, or a runtime default longer than the gateway's) is graded by what the
+abandoned work holds: a worker, connection or event-loop slot on a hot path is
+High; duplicated side effects from user retries go to `decisions`.
 
 ## Phases
 
@@ -113,11 +119,12 @@ requester's language (`--lang ja|en`).
 | Asked about one slow screen, endpoint or job | Scope the review units to the paths that serve it, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No document states a latency target or limit | Derive the budget from hard limits (timeouts, page-size maxima, body limits; not `inferred`) and, failing those, from existing pagination and the majority of handlers (`inferred: true`, with the bound itself in `decisions`). Hunt it either way (`reference/budgets.md` §1) |
 | The ORM loads relations lazily by default | List every relation accessed inside a loop or a serializer over a collection, and check each for eager loading on that path. This list is the N+1 hunt list |
-| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them. If they form a complete chain (the first revision has no parent) and no matching index appears, cite that as confirmed absence in the repository; the remaining condition is usually table size (`Environment-dependent`, naming the row threshold). Use "the migrations do not show either way" only when the schema history is partial or the schema lives outside the repository, and name the index to confirm |
+| The ORM never loads lazily (e.g. Prisma, Drizzle, Knex) | Hunt explicit queries inside loops and per-item fluent relation calls instead. Prisma batches `findUnique` calls issued in the same tick (e.g. `Promise.all(ids.map(id => findUnique(...)))`) into one query: that is not an N+1 |
+| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them. If they form a complete chain (the first revision has no parent, or the earliest migration creates every table and the schema file matches the migrations) and no matching index appears, cite that as confirmed absence in the repository; the remaining condition is usually table size (`Environment-dependent`, naming the row threshold). Use "the migrations do not show either way" only when the schema history is partial or the schema lives outside the repository, and name the index to confirm |
 | A finding's cost depends on data volume | State the volume at which it matters and where the volume comes from; never present a guess of production size as fact |
 | A cache sits in front of the cost | Check the key, the invalidation, the TTL, the bound on size and what happens on a miss storm. A cache does not mitigate the first request after a miss or expiry (cold cache), nor a shared cost cached under a per-user key |
 | The framework is async or event-loop based | Hunt synchronous blocking calls (file, crypto, synchronous DNS resolution such as `socket.gethostbyname`, sync HTTP or DB clients, CPU-heavy loops) on the loop. One is enough to stall every concurrent request. Check what the framework already offloads (e.g. FastAPI runs sync `def` routes in a threadpool) before reporting |
-| A front end is in the repo | Apply the *Front end* perspective; read the build config and the largest routes. Bundle size from a local build is a measurement and needs the MEASURE go-ahead |
+| A front end is in the repo | Apply the *Front end* perspective; read the build config and the largest routes. Bundle size from a local build is a measurement and needs the MEASURE go-ahead (offer e.g. `vite build` with a bundle visualizer). Statically, a whole import of a heavy library that reaches the entry chunk of a first-load route is Medium; quote no byte counts. Bundler warning thresholds (e.g. Vite `chunkSizeWarningLimit`, webpack `performance.*`) are stated FE budgets, and a raised threshold is cited evidence |
 | The requester wants numbers (latency, throughput, memory) | MEASURE only on their own local or throwaway environment after an explicit go-ahead; never production, never shared environments, never third-party endpoints. Without measurement, report cost models, not milliseconds |
 | Asked to confirm a fix or guard against regression | VERIFY-FIX: a deterministic assertion (query count, call count, allocation or size budget) in the repo's own suite, red before and green after. Prefer counts over wall-clock thresholds, which flake |
 | The host cannot run a second, independent reviewer | Record that in `limitations`. The reporting agent's own end-to-end trace (required for every High and Medium) is then the only review, so a High finding whose trace leaves any link unconfirmed stays `Likely`. Never invent a second reviewer |

@@ -41,7 +41,8 @@
 
 ## 3. 優先して対応すべき検出事項
 
-<!-- 深刻度順。finding ごとにこのブロックを繰り返し、templates/issue.ja.md で登録した issue へリンクする。 -->
+<!-- High と Medium の finding を深刻度順に 1 件ずつこのブロックで書き、Low と Info は ID だけ列挙する。
+templates/issue.ja.md で登録した issue へリンクし、未登録なら「未登録」と書く。 -->
 
 ### {{id}}: {{title}}
 
@@ -51,7 +52,7 @@
 - **コストモデル:** {{cost_model}}
 - **影響:** {{impact}}
 - **修正方針:** {{fix}}
-- **対応 issue:** <issue の URL>
+- **対応 issue:** <issue の URL、または「未登録」>
 
 ## 4. 性能バジェット
 

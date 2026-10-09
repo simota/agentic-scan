@@ -80,6 +80,12 @@ such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds or regrades a finding, then render.
 
+After a renumber, use only the new IDs it printed. Merge matches findings by
+ID alone, so a fragment written earlier that updates `A-002` would change
+whichever finding is `A-002` now; rewrite or discard unmerged fragments before
+merging them. If a finding is added or regraded later, merge it, renumber
+again and re-render.
+
 ## Merge guarantees
 
 The existing record is validated before merging, then the combined record is

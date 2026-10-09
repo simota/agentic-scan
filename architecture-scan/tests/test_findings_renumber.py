@@ -45,6 +45,16 @@ class RenumberTests(unittest.TestCase):
                          [["z.py:9", "a.py:1"], "m.py:1", "a.py:3", "a.py:20", "b.py:1"])
         self.assertIn("A-002 -> A-001", out)
 
+    def test_changed_ids_warn_that_older_fragments_name_old_ids(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("A-001", "Low"), finding("A-002", "High")]
+        self.write(doc)
+        code, _, err = self.run_cli("renumber", str(self.target))
+        self.assertEqual(code, 0)
+        self.assertIn("new IDs", err)
+        self.write(complete_doc())
+        self.assertEqual(self.run_cli("renumber", str(self.target))[2], "")
+
     def test_mentions_are_rewritten_in_one_pass(self):
         doc = complete_doc()
         doc["findings"] = [finding("A-001", "Low"), finding("A-002", "High")]

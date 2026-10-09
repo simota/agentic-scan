@@ -389,8 +389,14 @@ def cmd_renumber(args):
         return 1
     for old, new in sorted(changed.items()):
         print(f"{old} -> {new}")
-    print(f"renumbered {len(changed)} finding(s) in {target}" if changed
-          else f"already in order: {target}")
+    if changed:
+        print(f"renumbered {len(changed)} finding(s) in {target}")
+        # A fragment written before this run still names the old IDs, and merge
+        # would apply it to whichever finding holds that ID now.
+        print("use only the new IDs from here on; rewrite any unmerged fragment first",
+              file=sys.stderr)
+    else:
+        print(f"already in order: {target}")
     return 0
 
 

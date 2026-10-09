@@ -42,7 +42,8 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   controls, and whether the commitment is the app's own
 - **No values** — `findings.py merge` checks report prose, including analysis
   results, commitments and coverage notes, for e-mail addresses (including
-  quoted, Unicode and address-literal forms, outside reserved example domains)
+  quoted, Unicode and address-literal forms, plus header comments and folding
+  whitespace, outside reserved example domains)
   and runs of 12 or more digits, even with repeated spaces, tabs or non-breaking
   spaces. Reference URLs are also checked after decoding their components once;
   accepted URLs keep their original spelling. Use field names and placeholders

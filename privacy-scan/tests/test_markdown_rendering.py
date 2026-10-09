@@ -1,4 +1,5 @@
 """Regression coverage for literal report prose, references and commands."""
+from html import unescape
 import unittest
 
 from test_privacy_scan import complete_doc, render
@@ -57,6 +58,37 @@ class MarkdownRenderingTests(unittest.TestCase):
         self.assertIn("### PV-001 [High][Confirmed] Literal \\#\n", markdown)
         for line in ("- \\- literal", "- \\+ literal", "- 1\\. literal", "- 1\\) literal", "- \\---"):
             self.assertIn(line + "\n", markdown)
+
+    def test_indented_list_prose_keeps_whitespace_without_starting_code_blocks(self):
+        for field in ("checked_ok", "limitations", "decisions", "next_steps"):
+            for lang in ("en", "ja"):
+                for indent in ("    ", "\t", " \t "):
+                    with self.subTest(field=field, lang=lang, indent=repr(indent)):
+                        value = indent + "No <email> reaches logging\nReview <config> & settings."
+                        doc = complete_doc()
+                        doc[field] = [value]
+                        markdown = render.render_markdown(doc, lang)
+                        heading = f"## {render.LABELS[lang][field]}\n\n"
+                        section = markdown.split(heading, 1)[1].split("\n## ", 1)[0].rstrip("\n")
+                        self.assertTrue(section.startswith("- "))
+                        body = section[2:]
+                        # Raw indentation after the list marker can start a code
+                        # block before HTML entities and line breaks are parsed.
+                        self.assertNotRegex(body, r"^[ \t]")
+                        self.assertNotIn("\n", body)
+                        self.assertEqual(unescape(body.replace("<br>", "\n")), value)
+
+    def test_indented_list_markers_remain_literal(self):
+        cases = (("- literal", r"\- literal"), ("+ literal", r"\+ literal"),
+                 ("1. literal", r"1\. literal"), ("1) literal", r"1\) literal"),
+                 ("---", r"\---"))
+        for indent in ("    ", "\t", " \t "):
+            for value, escaped in cases:
+                with self.subTest(indent=repr(indent), value=value):
+                    item = render.markdown_item(indent + value)
+                    self.assertNotRegex(item, r"^[ \t]")
+                    self.assertTrue(item.endswith(escaped))
+                    self.assertEqual(unescape(item[:-len(escaped)]), indent)
 
     def test_reference_label_and_destination_keep_their_content(self):
         doc = complete_doc()

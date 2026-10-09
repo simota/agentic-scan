@@ -41,6 +41,8 @@ LABELS = {
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
+        "commitment_columns": ("ID", "Commitment", "Source", "Status"),
+        "perspective_columns": ("Perspective", "Status", "Note"),
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
@@ -58,6 +60,8 @@ LABELS = {
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
+        "commitment_columns": ("ID", "約束", "出典", "ステータス"),
+        "perspective_columns": ("観点", "ステータス", "メモ"),
     },
 }
 FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "commitment",
@@ -77,6 +81,33 @@ def verdict_summary(findings):
 
 def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
+
+
+def shown(value):
+    """Blank optional strings add no row or label to either report."""
+    return bool(as_text(value).strip())
+
+
+def finding_fields(f):
+    return [(key, f[key]) for key in FIELDS if key in f and shown(f[key])]
+
+
+def revision(meta):
+    commit = meta.get("commit", "")
+    return commit if commit.strip() else "UNKNOWN"
+
+
+def perspective_rows(doc):
+    """List every perspective in the reference order in both reports."""
+    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
+    return [(name, recorded.get(name, {}).get("status", "—"), recorded.get(name, {}).get("note", ""))
+            for name in PERSPECTIVES]
+
+
+def reference_title(ref):
+    """A blank title must not hide the link; fall back to the URL."""
+    title = ref.get("title", "")
+    return title if title.strip() else ref["url"]
 
 
 MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
@@ -138,7 +169,7 @@ def reference_destination(url):
 
 def markdown_reference(ref):
     url = ref["url"]
-    title = ref.get("title", url)
+    title = reference_title(ref)
     label = markdown_text(title)
     destination = reference_destination(url)
     if destination is None:
@@ -148,7 +179,7 @@ def markdown_reference(ref):
 
 def html_reference(ref):
     url = ref["url"]
-    title = ref.get("title", url)
+    title = reference_title(ref)
     label = escape(title)
     destination = reference_destination(url)
     if destination is None:
@@ -188,7 +219,7 @@ def render_markdown(doc, lang):
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               markdown_row((t['project'], meta.get('project', ''))),
               markdown_row((t['scope_row'], meta.get('scope', ''))),
-              markdown_row((t['revision'], meta.get('commit', 'UNKNOWN'))),
+              markdown_row((t['revision'], revision(meta))),
               markdown_row((t['review_method'], method)),
               markdown_row((t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")), ""]
     lines += [f"## {t['findings']}", ""]
@@ -198,11 +229,10 @@ def render_markdown(doc, lang):
         v = f["validation"]
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
         lines.append("")
-        for key in FIELDS:
-            if key in f:
-                lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
+        for key, value in finding_fields(f):
+            lines.append(f"- **{t[key]}:** {markdown_text(value)}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
-        if v.get("evidence"):
+        if shown(v.get("evidence", "")):
             lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
         if "analysis" in f:
             a = f["analysis"]
@@ -213,15 +243,15 @@ def render_markdown(doc, lang):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
     if doc.get("commitments"):
-        lines += [f"## {t['commitments']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
+        lines += [f"## {t['commitments']}", "", markdown_row(t["commitment_columns"]), "|---|---|---|---|"]
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r["source"], status)
             lines.append(markdown_row(cells))
         lines.append("")
-    lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
-    for p in doc.get("perspectives", []):
-        lines.append(markdown_row((p['name'], p['status'], p['note'])))
+    lines += [f"## {t['perspectives']}", "", markdown_row(t["perspective_columns"]), "|---|---|---|"]
+    for row in perspective_rows(doc):
+        lines.append(markdown_row(row))
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -260,6 +290,10 @@ document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d
 """
 
 
+def html_head(columns):
+    return "<thead><tr>" + "".join(f"<th>{escape(c)}</th>" for c in columns) + "</tr></thead>"
+
+
 def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
@@ -277,7 +311,7 @@ def render_html(doc, lang):
     out.append(f"<p><strong>{e(t['verdict_counts'])}:</strong> {e(verdict_summary(findings))}</p>")
     scope_rows = [(t['project'], meta.get('project', '')),
                   (t['scope_row'], meta.get('scope', '')),
-                  (t['revision'], meta.get('commit', 'UNKNOWN')),
+                  (t['revision'], revision(meta)),
                   (t['review_method'], method),
                   (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
     out.append(f"<h2>{e(t['scope'])}</h2><dl>"
@@ -291,9 +325,11 @@ def render_html(doc, lang):
         out.append(f"<p>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
-        rows = [(t[k], f[k]) for k in FIELDS if k in f]
-        rows += [(t["verdict"], f"{v['verdict']} ({v['method']})"), (t["evidence"], v.get("evidence", "")),
-                 (t["status"], f.get("status", "Open"))]
+        rows = [(t[k], value) for k, value in finding_fields(f)]
+        rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
+        if shown(v.get("evidence", "")):
+            rows.append((t["evidence"], v["evidence"]))
+        rows.append((t["status"], f.get("status", "Open")))
         analysis_html = ""
         if "analysis" in f:
             a = f["analysis"]
@@ -309,17 +345,15 @@ def render_html(doc, lang):
                              for ref in f.get("references", []))
                    + "</dl></details>")
     if doc.get("commitments"):
-        out.append(f"<h2>{e(t['commitments'])}</h2><table>")
+        out.append(f"<h2>{e(t['commitments'])}</h2><table>{html_head(t['commitment_columns'])}")
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             out.append(f"<tr><td>{e(r['id'])}</td><td>{e(statement)}</td>"
                        f"<td>{e(r['source'])}</td><td>{e(status)}</td></tr>")
         out.append("</table>")
-    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table>")
-    for name in PERSPECTIVES:
-        p = recorded.get(name, {"status": "—", "note": ""})
-        out.append(f"<tr><td>{e(name)}</td><td>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
+    out.append(f"<h2>{e(t['perspectives'])}</h2><table>{html_head(t['perspective_columns'])}")
+    for row in perspective_rows(doc):
+        out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>")
     out.append("</table>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])

@@ -86,8 +86,11 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 
 `findings.py check` enforces the run contract: exactly these three readable,
 nonempty files, gapless `PV-NNN` IDs in severity order, every perspective
-recorded, nonblank reasons for unchecked commitments, and nonempty `checked_ok`
-and `limitations`.
+recorded, nonblank reasons for unchecked commitments, nonempty `checked_ok`
+and `limitations`, ledger IDs cited by findings present in `commitments`,
+reported findings only under perspectives recorded as `applied`, and both
+reports matching a fresh rendering of the current `findings.json` (re-render
+after every merge).
 It checks shape, not whether a finding is true.
 
 The scripts reject text that cannot be encoded as UTF-8 and stage output bytes

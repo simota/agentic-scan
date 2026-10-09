@@ -15,6 +15,12 @@ python3 scripts/findings.py check <out> [--allow NAME]
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
 is named). `findings.py check` exits `1` and lists every contract violation.
+Besides the shape and numbering rules below, `check` requires that a finding's
+`commitment`, when it is a ledger ID (`C-01`…), exists in `commitments`; that
+every finding not excluded (`FalsePositive`, `NotApplicable`) sits under a
+perspective recorded as `applied`; and that `report.md` and `dashboard.html`
+are both exactly what `render.py` produces from the current `findings.json`
+in one language. Re-render after the last merge.
 All three required outputs must be readable, nonempty files; directories and
 broken links do not qualify.
 
@@ -97,7 +103,10 @@ Report prose is rendered as literal text in Markdown: placeholders such as
 spans that preserve backticks, and HTTP(S) or relative reference links are
 encoded separately; other URL schemes remain visible as text. In the HTML
 dashboard, commands use preformatted code blocks that preserve line breaks and
-indentation.
+indentation. Table headers follow the report language, perspectives are listed
+in the order of `reference/perspectives.md`, blank optional fields add no row,
+a blank reference `title` shows the URL, and a blank `meta.commit` shows
+`UNKNOWN`.
 
 ## Shape
 

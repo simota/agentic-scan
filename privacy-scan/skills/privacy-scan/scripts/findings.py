@@ -15,8 +15,10 @@ FINDINGS is created when absent. The merged record must pass the schema check
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order and every perspective in
-`reference/perspectives.md` is recorded.
+record is complete, IDs are gapless in severity order, every perspective in
+`reference/perspectives.md` is recorded, every ledger ID a finding cites exists,
+every reported finding's perspective is recorded as applied, and both reports
+are the current rendering of `findings.json`.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr).
@@ -35,7 +37,17 @@ from urllib.parse import parse_qsl, unquote, urlsplit
 
 # Keep source-only CLI runs from writing imported helpers into the skill tree.
 sys.dont_write_bytecode = True
-from output_io import write_utf8_files  # noqa: E402
+
+
+def _import_sibling(name):
+    """Import a helper beside this script, even in isolated (-I) or -P runs."""
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    return __import__(name)
+
+
+write_utf8_files = _import_sibling("output_io").write_utf8_files
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
@@ -70,6 +82,7 @@ PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 COMMITMENT_ID = re.compile(r"^C-\d{2,}$")
+COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,}(?![\w-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
@@ -102,6 +115,9 @@ def read_json(path):
         raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
     except (OSError, json.JSONDecodeError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
+    except (ValueError, RecursionError) as exc:
+        # Over-long integers and deep nesting are refused, not tracebacks.
+        raise SchemaError(f"{path}: not usable JSON ({type(exc).__name__})") from None
 
 
 def _utf8(value, where):
@@ -535,10 +551,20 @@ def contract_problems(out, allow=()):
              f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
         problems.append("findings must be numbered in severity order (High first)")
-    recorded = {p["name"] for p in doc.get("perspectives", [])}
+    recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    ledger = {r["id"] for r in doc.get("commitments", [])}
+    for i, f in enumerate(findings):
+        # Ledger IDs are technical identifiers; other prose was checked by validate.
+        for cited in COMMITMENT_REF.findall(f.get("commitment", "")):
+            if cited not in ledger:
+                problems.append(f"findings[{i}].commitment: {cited} is not in the commitments ledger")
+        status = recorded.get(f["category"])
+        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, "applied"):
+            problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
+                            "not applied")
     for i, r in enumerate(doc.get("commitments", [])):
         if r["status"] == "not checked" and not r.get("reason", "").strip():
             problems.append(f"commitments[{i}]: a not-checked commitment needs a nonblank reason")
@@ -546,7 +572,28 @@ def contract_problems(out, allow=()):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
-    return problems
+    return problems + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+
+
+def _stale_outputs(out, doc, skip):
+    """Report rendered outputs that no longer match the record they came from."""
+    names = ("report.md", "dashboard.html")
+    if any(name in skip for name in names):
+        return []
+    render = _import_sibling("render")  # render imports this module, so load it lazily
+
+    try:
+        current = {name: (out / name).read_bytes() for name in names}
+    except OSError:
+        return [f"unreadable output: {name}" for name in names]
+    # Either language is a valid rendering (render.py --lang may override meta.lang).
+    for lang in render.LABELS:
+        expected = {"report.md": render.render_markdown(doc, lang),
+                    "dashboard.html": render.render_html(doc, lang)}
+        if all(current[name] == expected[name].encode("utf-8") for name in names):
+            return []
+    return ["stale outputs: report.md and dashboard.html must both be rendered from the current "
+            "findings.json in one language; re-run scripts/render.py"]
 
 
 def cmd_check(args):

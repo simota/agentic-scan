@@ -152,6 +152,49 @@ class LocationRegressionTests(unittest.TestCase):
                 with self.assertRaises(findings.SchemaError):
                     findings.validate({"findings": [finding(location=location)]})
 
+    def test_long_positive_line_numbers_round_trip_without_changing_locations(self):
+        long_number = "1" * 4301
+        zeros = "0" * 4301
+        locations = [
+            f"src/orders.py:{long_number}",
+            f"src/orders.py:{zeros}1",
+            f"src/orders.py:{long_number}-{long_number}",
+            f"src/orders.py:{long_number}-{'2' * 4301}",
+            f"src/orders.py:9-{long_number}",
+            f"src/orders.py:{zeros}9-10",
+            f"src/orders.py:1-{zeros}1",
+        ]
+        doc = complete_doc()
+        doc["findings"] = [finding(f"P-{i:03d}", location=location)
+                           for i, location in enumerate(locations, 1)]
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / "out"
+            out.mkdir()
+            source = out / "findings.json"
+            fragment = root / "fragment.json"
+            fragment.write_text(json.dumps(doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(source), str(fragment)]), 0)
+                self.assertEqual(render.main([str(source), "--out", str(out)]), 0)
+                self.assertEqual(findings.main(["check", str(out)]), 0)
+            self.assertEqual(json.loads(source.read_text(encoding="utf-8")), doc)
+
+    def test_long_zero_and_descending_line_numbers_are_schema_errors(self):
+        zeros = "0" * 4301
+        locations = {
+            "zero start": f"src/orders.py:{zeros}",
+            "zero end": f"src/orders.py:1-{zeros}",
+            "equal-length descending": f"src/orders.py:{'2' * 4301}-{'1' * 4301}",
+            "shorter end": f"src/orders.py:{'1' * 4302}-{'9' * 4301}",
+            "zero-padded descending": f"src/orders.py:{zeros}2-{zeros}1",
+        }
+        for case, location in locations.items():
+            with self.subTest(case=case):
+                with self.assertRaises(findings.SchemaError) as error:
+                    findings.validate({"findings": [finding(location=location)]})
+                self.assertIn("findings[0].location", str(error.exception))
+
 
 class OptionalFieldRegressionTests(unittest.TestCase):
     def invalid_documents(self):

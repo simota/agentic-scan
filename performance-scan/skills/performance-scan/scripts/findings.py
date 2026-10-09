@@ -25,6 +25,7 @@ Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr).
 """
 import argparse
+import errno
 import json
 import math
 import os
@@ -66,11 +67,26 @@ class SchemaError(ValueError):
 
 
 def resolve_path(path):
-    """Report symlink loops as I/O errors on Python versions that raise RuntimeError."""
+    """Resolve symbolic links, reporting a loop as an I/O error on every Python version.
+
+    Python 3.12 and earlier raise RuntimeError; 3.13+ return the looping link
+    itself, which would otherwise look like an absent file and be replaced.
+    """
     try:
-        return Path(path).resolve()
+        resolved = Path(path).resolve()
     except RuntimeError as exc:
         raise OSError(f"cannot resolve {path}: {exc}") from exc
+    if resolved.is_symlink():
+        raise OSError(errno.ELOOP, f"cannot resolve {path}: symbolic link loop")
+    return resolved
+
+
+def file_mode(path):
+    """Return st_mode, or None when the path does not exist; other errors propagate."""
+    try:
+        return path.stat().st_mode
+    except FileNotFoundError:
+        return None
 
 
 def _unique_object(pairs):
@@ -293,7 +309,8 @@ def merge(doc, fragment, where):
 
 def write_atomic(target, content):
     """Replace a resolved target only after all bytes have been written and closed."""
-    mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    mode = file_mode(target)
+    mode = None if mode is None else stat.S_IMODE(mode)
     temporary = None
     try:
         with tempfile.NamedTemporaryFile(mode="wb", dir=target.parent,
@@ -318,7 +335,7 @@ def cmd_merge(args):
     try:
         # Keep the existing behavior of reading and updating a symlink's destination.
         destination = resolve_path(target)
-        doc = read_json(destination) if destination.exists() else {}
+        doc = read_json(destination) if file_mode(destination) is not None else {}
         validate(doc)
         for path in args.fragments:
             merge(doc, read_json(path), path)

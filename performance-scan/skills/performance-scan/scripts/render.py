@@ -12,7 +12,6 @@ could not be read or decoded, or does not match the schema (reasons on stderr).
 """
 import argparse
 from html import escape
-import json
 import os
 from pathlib import Path
 import re

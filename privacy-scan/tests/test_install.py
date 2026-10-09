@@ -9,6 +9,8 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "privacy-scan"
+MAKE_381 = subprocess.run(["make", "--version"], capture_output=True,
+                          text=True).stdout.startswith("GNU Make 3.81")
 
 
 class InstallTests(unittest.TestCase):
@@ -52,6 +54,14 @@ class InstallTests(unittest.TestCase):
                     options = {"makefile": makefile, "SKILLS_DIR": str(requested)}
 
                     linked = self.run_make(cwd, "link", **options)
+                    if "$" in name and makefile is not None and MAKE_381:
+                        # Make 3.81 expands '$(...)' in -f paths before recording
+                        # them; the Makefile must refuse clearly, never guess.
+                        self.assertNotEqual(linked.returncode, 0)
+                        self.assertIn("GNU Make 3.81", linked.stderr)
+                        self.assertFalse(destination.exists() or destination.is_symlink())
+                        self.assertFalse((cwd / "injected").exists())
+                        continue
                     self.assert_success(linked)
                     self.assertTrue(destination.is_symlink(), linked.stdout + linked.stderr)
                     self.assertEqual(destination.readlink(), source)

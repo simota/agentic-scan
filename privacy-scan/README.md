@@ -65,6 +65,10 @@ make unlink
 
 Then invoke `privacy-scan` (or `/privacy-scan`).
 
+GNU Make 3.81 (the macOS default) drops `$` references from a makefile path
+given with `-f`; with such a checkout path, run `make` from the checkout
+directory instead (the Makefile says so rather than guessing).
+
 Install paths supplied through environment variables preserve literal dollar
 signs. Command-line Make assignments retain Make's usual `$$` escaping for a
 literal `$`.

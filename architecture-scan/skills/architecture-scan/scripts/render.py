@@ -18,7 +18,7 @@ from string import punctuation
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
+from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       read_json, validate)
 
 LABELS = {
@@ -31,6 +31,7 @@ LABELS = {
         "location": "location", "scenario": "scenario", "blast_radius": "blast radius",
         "trace": "trace", "contrast": "contrast", "impact": "what happens", "rule": "rule",
         "fix": "fix direction", "guard": "fitness function", "verdict": "recorded verdict",
+        "verdicts": "Verdict counts",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
         "references": "references", "status": "status", "reason": "Reason",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
@@ -46,6 +47,7 @@ LABELS = {
         "location": "場所", "scenario": "シナリオ", "blast_radius": "影響範囲",
         "trace": "追跡", "contrast": "対照", "impact": "何が起きるか", "rule": "ルール",
         "fix": "修正方針", "guard": "適合性チェック", "verdict": "検証判定",
+        "verdicts": "検証判定別件数",
         "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
         "references": "参考", "status": "ステータス", "reason": "理由",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
@@ -60,6 +62,10 @@ FIELDS = ("location", "scenario", "blast_radius", "trace", "contrast", "impact",
 def counts(findings):
     active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     return {s: sum(f["severity"] == s for f in active) for s in SEVERITIES}, len(findings) - len(active)
+
+
+def verdict_counts(findings):
+    return {v: sum(f["validation"]["verdict"] == v for f in findings) for v in VERDICTS}
 
 
 def as_text(value):
@@ -128,10 +134,13 @@ def render_markdown(doc, lang):
     text = markdown_inline
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
+    by_verdict = verdict_counts(findings)
     lines = [f"# {t['title']}: {text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
                  + text(review_method(doc, lang)))
+    lines += ["", f"{t['verdicts']}: "
+              + " / ".join(f"{v} {by_verdict[v]}" for v in VERDICTS)]
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {cell(meta.get('scope', ''))} |",
@@ -142,7 +151,8 @@ def render_markdown(doc, lang):
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {text(f['title'])}")
+        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}][{v['verdict']}] "
+                     f"{text(f['title'])}")
         lines.append("")
         for key in FIELDS:
             if key in f:
@@ -222,6 +232,7 @@ def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
+    by_verdict = verdict_counts(findings)
     e = html_text
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
@@ -233,6 +244,8 @@ def render_html(doc, lang):
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
+    out.append(f"<p>{e(t['verdicts'])}: "
+               + " / ".join(f"{v} {by_verdict[v]}" for v in VERDICTS) + "</p>")
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
@@ -252,7 +265,8 @@ def render_html(doc, lang):
             rows.append((t["references"], f"{title}: {url}" if title != url else url))
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
+                   f"<span class='muted'>· {e(f['confidence'])} · {e(v['verdict'])} · "
+                   f"{e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows) + "</dl></details>")
     if doc.get("rules"):
         out.append(f"<h2>{e(t['rules'])}</h2><table>")

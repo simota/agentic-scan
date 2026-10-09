@@ -54,6 +54,11 @@ make status
 make unlink
 ```
 
+For Claude Code, `CLAUDE_CONFIG_DIR` selects the global configuration directory
+(default: `~/.claude`), including its `skills` directory. `PROJECT` and
+`SKILLS_DIR` take precedence when an explicit installation destination is given.
+See [Claude Code's directory reference](https://code.claude.com/docs/en/claude-directory).
+
 Then invoke `architecture-scan` (or `/architecture-scan`).
 
 ## Outputs
@@ -71,7 +76,7 @@ python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists 
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity, design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,

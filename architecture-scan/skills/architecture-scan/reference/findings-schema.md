@@ -14,6 +14,8 @@ python3 scripts/findings.py check <out> [--allow NAME]
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. The dashboard preserves line breaks
 in recorded text, including multiline evidence and analysis commands.
+Both outputs show separate counts for each validation verdict and name the
+verdict in every finding heading, including excluded findings.
 Exit codes: `0` written, `2` the record does not match the shape (the field is
 named). `findings.py check`
 exits `1` and lists every contract violation. All three required output paths
@@ -47,9 +49,16 @@ validated after each fragment. A refused batch writes nothing, even if earlier
 fragments were valid. Invalid existing records must be corrected before merging.
 Each finding must be complete in the fragment that first adds it.
 Inputs must be UTF-8, including every string after JSON escapes are decoded.
+JSON numbers must decode to finite values; `NaN`, `Infinity`, `-Infinity`, and
+numeric overflow are rejected rather than written back as nonstandard JSON.
 Duplicate keys within a JSON object are rejected, including nested objects,
 so an earlier value cannot be silently discarded before validation.
 Invalid text is rejected before merge or render opens an output for writing.
+
+Merge writes the encoded record to a temporary file beside the destination,
+then replaces the destination after the write completes. A write or replacement
+error exits `1`, cleans up the temporary file, and preserves the previous
+record. Existing permission bits and symbolic-link destinations are retained.
 
 ## Shape
 
@@ -105,7 +114,7 @@ Invalid text is rejected before merge or render opens an output for writing.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `findings[].id` | `A-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |

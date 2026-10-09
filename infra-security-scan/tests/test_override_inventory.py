@@ -288,8 +288,7 @@ Resources:
         self.assertEqual([(r["address"], r["type"], r["line"]) for r in scan.resources],
                          [("cfn:Bucket", "AWS::S3::Bucket", 7)])
         self.assertEqual(scan.hits, [])
-        self.assertEqual(scan.not_run,
-                         ["cloudformation yaml: rules not applied (no YAML parser): stack.yaml"])
+        self.assertEqual(scan.not_run, [])  # parsed by the YAML subset, so the rules ran
 
     def test_intrinsic_tag_fallback_skips_parameters_and_opaque_nested_templates(self):
         text = '''Parameters:

@@ -43,19 +43,15 @@ import os
 from pathlib import Path
 import posixpath
 import re
-import stat
 import subprocess
 import sys
-import tempfile
 
-from redaction import module_source, split_lines
+from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
+                    unique_object, write_json_atomic)
+from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
 MAX_BYTES = 2 * 1024 * 1024
-# terraform.tfstate, .tfstate.backup and the timestamped backups that
-# `terraform state` subcommands write (terraform.tfstate.1700000000.backup).
-STATE_FILE = re.compile(r"\.tfstate(\.[^/]*)?$")
-SEV_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
 SENSITIVE_PORTS = {
     22: "SSH", 23: "Telnet", 445: "SMB", 1433: "SQL Server", 1521: "Oracle", 2375: "Docker",
     2376: "Docker", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL", 5601: "Kibana",
@@ -1365,7 +1361,7 @@ def handle_terraform(scan, parsed):
             elif b.type == "provider" and b.labels and b not in uncertain:
                 for key in ("access_key", "secret_key", "token", "credentials", "access_token",
                             "client_secret", "client_certificate_password"):
-                    # AWS keys in a provider block are flagged in any form, as before.
+                    # AWS keys in a provider block are flagged in any form.
                     # Other providers often take short-lived tokens from data sources
                     # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
                     # a literal value or a key file read from the repository.
@@ -1560,8 +1556,11 @@ def json_key_lines(text):
     return out
 
 
-def handle_cfn(scan, rel, text, doc):
-    keys = json_key_lines(text)
+def handle_cfn(scan, rel, text, doc, line_of=None):
+    """CloudFormation rules; line_of(logical ID) locates a resource (JSON keys by default)."""
+    if line_of is None:
+        keys = json_key_lines(text)
+        line_of = lambda lid: keys.get((("Resources",), lid), 1)  # noqa: E731
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -1569,7 +1568,7 @@ def handle_cfn(scan, rel, text, doc):
         props = r.get("Properties") or {}
         if not isinstance(props, dict):
             props = {}
-        line = keys.get((("Resources",), lid), 1)
+        line = line_of(lid)
         res = Res(type_, f"cfn:{lid}", rel, line, DictView(props, line))
         scan.add_resource(res, "aws")
         if type_ == "AWS::EC2::SecurityGroup":
@@ -1638,6 +1637,7 @@ def is_gcp_firewall_snapshot(value):
 
 
 def handle_snapshot(scan, rel, text, doc):
+    """The file kind ("snapshot" or "policy") when the document is recognised, else None."""
     keys = json_key_lines(text)
     if isinstance(doc, dict) and isinstance(doc.get("SecurityGroups"), list):
         for index, sg in enumerate(doc["SecurityGroups"]):
@@ -1658,7 +1658,7 @@ def handle_snapshot(scan, rel, text, doc):
         try:
             doc = json.loads(doc["Policy"])
         except ValueError:
-            return False
+            return None
     if isinstance(doc, dict) and "Statement" in doc:
         statements = norm_statements(doc) or []
         raw = doc["Statement"] if isinstance(doc["Statement"], list) else [doc["Statement"]]
@@ -1702,7 +1702,7 @@ def handle_snapshot(scan, rel, text, doc):
                       if isinstance(a, dict)]
             scan.firewall(res, line, fw.get("direction"), fw.get("disabled"), fw.get("sourceRanges"), allows)
         return "snapshot"
-    return False
+    return None
 
 
 class _YamlMap(dict):
@@ -2106,19 +2106,8 @@ def _yaml_kind(rows, doc):
 
 
 def handle_yaml(scan, rel, lines):
-    docs, current = [], []
-    for n, line in enumerate(lines, 1):
-        if not current:
-            # YAML permits a BOM at each document start, not only the file start.
-            line = line.removeprefix("\ufeff")
-        if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
-            docs.append(current)
-            current = []
-        else:
-            current.append((n, line))
-    docs.append(current)
     kinds = set()
-    for rows in docs:
+    for rows in split_yaml_documents(lines):
         parser = _YamlSubset(rows)
         doc, reason = None, None
         try:
@@ -2165,20 +2154,24 @@ def handle_k8s_json(scan, rel, text, doc):
 
 
 def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
+    resources = doc.get("Resources") if isinstance(doc, _YamlMap) else None
+    if isinstance(resources, _YamlMap):
+        # Parsed by the YAML subset (long-form intrinsics such as {"Ref": X}):
+        # the JSON rules apply unchanged. Short-form tags (!Ref) are not parsed.
+        def line_of(lid):  # the Type line, as the tag-tolerant inventory reports it
+            r = resources.get(lid)
+            return r.lines.get("Type", resources.lines[lid]) if isinstance(r, _YamlMap) else resources.lines[lid]
+        handle_cfn(scan, rel, None, doc, line_of=line_of)
+        return
     for lid, type_, line in _cfn_yaml_resources(list(enumerate(lines, start_line)), doc):
         scan.add_resource(Res(type_, f"cfn:{lid}", rel, line), "aws")
-    note = f"cloudformation yaml: rules not applied (no YAML parser): {rel}"
+    note = f"cloudformation yaml: rules not applied (tags or syntax outside the YAML subset): {rel}"
     if note not in scan.not_run:
         scan.not_run.append(note)
 
 
-SECRET_PATTERNS = [
-    ("AWS access key ID", re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b")),
-    ("private key", re.compile(r"-{4,5} ?BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")),
-    ("access token", re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|"
-                                r"glpat-[A-Za-z0-9_-]{20}|xox[abeoprs]-[0-9]{6,}-[A-Za-z0-9-]+|"
-                                r"AIza[0-9A-Za-z_-]{35})")),
-]
+SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})\b")) for label, pattern in CREDENTIAL_SHAPES]
+SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 GENERIC_SECRET = re.compile(
     r'^\s*"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
     r'access_key|private_key))"?\s*=\s*"([^"]*)"', re.IGNORECASE)
@@ -2338,7 +2331,7 @@ def run(root, snapshots=()):
                 elif doc is not None and handle_k8s_json(scan, rel, text, doc):
                     kind = "kubernetes"
                 elif doc is not None:
-                    kind = handle_snapshot(scan, rel, text, doc) or None
+                    kind = handle_snapshot(scan, rel, text, doc)
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
                 scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
@@ -2408,32 +2401,6 @@ def report(scan, root, commit, findings, snapshots=()):
             "backends": scan.backends, "not_run": scan.not_run, "hits": hits, "findings": findings}
 
 
-def atomic_write(path, data):
-    path = Path(path)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        mode = stat.S_IMODE(path.stat().st_mode)
-    except FileNotFoundError:
-        umask = os.umask(0)
-        os.umask(umask)
-        mode = 0o666 & ~umask  # mkstemp would leave 0600
-    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
-    try:
-        os.chmod(tmp, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
-EMPTY_RECORD = ("attack_paths", "findings", "perspectives", "checked_ok", "decisions",
-                "limitations", "next_steps")
-# Match references in prose and Markdown labels, excluding words and filenames.
-# URL ranges are protected separately, including their queries and fragments.
-BASELINE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
 EVIDENCE_URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
 
 
@@ -2578,16 +2545,6 @@ def remap_baseline_references(data, old, new):
                 data["limitations"].append(limitation)
 
 
-def unique_keys(pairs):
-    """Refuse duplicate keys, as findings.py and render.py do; never echo the key."""
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
-
-
 def carry_triage(data, old_by_id, replacements, new, rewrite):
     """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
 
@@ -2614,7 +2571,7 @@ def carry_triage(data, old_by_id, replacements, new, rewrite):
 def merge_into(path, findings, inventory, commit):
     path = Path(path)
     if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
         if not isinstance(data, dict):
             raise ValueError("findings.json must hold a JSON object")
     else:
@@ -2623,7 +2580,7 @@ def merge_into(path, findings, inventory, commit):
     meta = data.setdefault("meta", {})
     if not isinstance(meta, dict):
         raise ValueError("meta must be an object")
-    for key in EMPTY_RECORD:
+    for key in RECORD_LISTS:
         data.setdefault(key, [])
     for key in ("findings", "attack_paths", "limitations"):
         if not isinstance(data[key], list):
@@ -2634,7 +2591,7 @@ def merge_into(path, findings, inventory, commit):
     kept = [f for f in data["findings"] if not (isinstance(f, dict) and str(f.get("id", "")).startswith("I-"))]
     remap_baseline_references(data, old, findings)
     data["findings"] = kept + findings
-    atomic_write(path, data)
+    write_json_atomic(path, data, mkdir=True)
 
 
 def main(argv=None):
@@ -2685,7 +2642,7 @@ def main(argv=None):
     # describing a scan whose inventory was never saved.
     if args.out:
         try:
-            atomic_write(args.out, result)
+            write_json_atomic(args.out, result, mkdir=True)
         except OSError as e:
             print(f"iac_scan: cannot write {args.out}: {e.strerror or e}", file=sys.stderr)
             return 2
@@ -2700,7 +2657,7 @@ def main(argv=None):
             return 2
     counts = {s: sum(f["severity"] == s for f in findings) for s in SEV_RANK}
     print(f"iac_scan: {len(scan.files)} files, {len(scan.resources)} resources, {len(findings)} findings "
-          f"(High {counts['High']}, Medium {counts['Medium']}, Low {counts['Low']}); "
+          f"(High {counts['High']}, Medium {counts['Medium']}, Low {counts['Low']}, Info {counts['Info']}); "
           f"{len(scan.not_run)} not run", file=sys.stderr)
     return 0
 

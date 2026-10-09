@@ -211,7 +211,7 @@ class SchemaHardeningTest(unittest.TestCase):
         data = self.sample()
         data["findings"][7]["validation"] = "Valid"
         with tempfile.TemporaryDirectory() as tmp:
-            problems, _ = contract_check.check(data, tmp, pdf=False)
+            problems = contract_check.check(data, tmp, pdf=False)
         self.assertTrue(problems)
 
 

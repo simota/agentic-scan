@@ -31,26 +31,22 @@ Credential-shaped values are refused in every string saved to the record.
 Finding prose describes the weakness, never an attack: literal exploit strings
 and instance-metadata addresses are refused in those fields.
 
-Exit codes: 0 merged, 1 a fragment was refused (reason on stderr), 2 unreadable
-input or schema error.
+Exit codes: 0 done, 1 refused (a fragment, a removal or a renumbering; reason on
+stderr), 2 unreadable input, schema error or unwritable record.
 """
 import argparse
 import copy
-import json
-import os
 from pathlib import Path
 import re
-import stat
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
+from common import STRING_LISTS as LISTS, write_json_atomic  # noqa: E402
 from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
-LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
 FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
@@ -214,33 +210,6 @@ def apply(record, fragment):
                 current.append(item)
 
 
-def file_mode(path):
-    """Keep an existing file's mode; give a new one the umask default, not mkstemp's 0600."""
-    try:
-        return stat.S_IMODE(path.stat().st_mode)
-    except FileNotFoundError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
-
-
-def write_atomic(path, data):
-    path = Path(path)
-    if path.is_symlink():
-        raise OSError(f"{path} is a symlink; refusing to replace it")
-    mode = file_mode(path)
-    fd, tmp = tempfile.mkstemp(prefix=".findings.", suffix=".json", dir=path.parent)
-    try:
-        os.chmod(tmp, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 def merge(findings_path, fragment_paths):
     path = Path(findings_path)
     record = render.load(path) if path.exists() else render.empty_record()
@@ -255,7 +224,7 @@ def merge(findings_path, fragment_paths):
     if problems:
         raise Refused("\n".join(problems))
     render.validate(merged, partial=True)
-    write_atomic(path, merged)
+    write_json_atomic(path, merged)
     return merged
 
 
@@ -305,7 +274,7 @@ def remove(findings_path, ids):
             raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
                           "(merge a fragment) before removing it")
     render.validate(record, partial=True)
-    write_atomic(path, record)
+    write_json_atomic(path, record)
     return record
 
 
@@ -337,7 +306,7 @@ def renumber(findings_path):
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
         sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))
     render.validate(record, partial=True)
-    write_atomic(path, record)
+    write_json_atomic(path, record)
     return record, {old: new for old, new in mapping.items() if old != new}
 
 

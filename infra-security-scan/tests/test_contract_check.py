@@ -86,6 +86,7 @@ class ContractTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
             code = contract_check.main([str(self.out)])
         self.assertEqual(code, 1)
+        self.assertIn("outputs: assessment.pdf missing", err.getvalue())
 
     def test_extra_file_needs_allow(self):
         (self.out / "README.md").write_text("x", encoding="utf-8")

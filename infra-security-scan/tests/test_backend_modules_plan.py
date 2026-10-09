@@ -97,11 +97,9 @@ class PlanTest(unittest.TestCase):
         for doc in ({"planned_values": "x"}, self.plan([{"address": "a", "type": None, "values": {}}]),
                     self.plan([{"address": "a", "type": "aws_s3_bucket", "values": [1]}])):
             with self.subTest(doc=doc):
-                scan({"plan.json": doc})
+                result = scan({"plan.json": doc})
+                self.assertEqual(result.hits, [])
 
-
-if __name__ == "__main__":
-    unittest.main()
 
 
 class PrecisionTest(unittest.TestCase):
@@ -125,3 +123,7 @@ class PrecisionTest(unittest.TestCase):
                 '  to_port = 22\n  protocol = "tcp"\n  cidr_blocks = ["10.0.0.0/8"]\n'
                 '  ipv6_cidr_blocks = ["::/0"]\n}\n')
         self.assertEqual(hits({"main.tf": text}), [("AWS-NET-001", "main.tf", 7)])
+
+
+if __name__ == "__main__":
+    unittest.main()

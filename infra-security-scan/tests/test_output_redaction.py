@@ -56,7 +56,10 @@ class OutputTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()):
             code = render.main([str(source), "--out", str(out), "--repo", str(self.repo), "--no-pdf"])
         self.assertEqual(code, 0)
-        return [(out / name).read_text(encoding="utf-8") for name in ("dashboard.html", "assessment.html")]
+        # Compare against what a reader sees: a secret containing &, < or a
+        # quote is HTML-escaped in the file and would slip past assertNotIn.
+        return [html.unescape((out / name).read_text(encoding="utf-8"))
+                for name in ("dashboard.html", "assessment.html")]
 
     def excerpt(self, location):
         return render.attach_sources(self.record(location), self.repo)["F-001"]

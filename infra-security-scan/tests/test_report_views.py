@@ -18,7 +18,9 @@ SAMPLE_JA = REPO / "examples" / "findings.sample.ja.json"
 def pages(source, lang):
     with tempfile.TemporaryDirectory() as tmp:
         with contextlib.redirect_stdout(io.StringIO()):
-            assert render.main([str(source), "--out", tmp, "--lang", lang, "--no-pdf"]) == 0
+            code = render.main([str(source), "--out", tmp, "--lang", lang, "--no-pdf"])
+        if code != 0:
+            raise AssertionError(f"render.main returned {code}")
         return [(Path(tmp) / n).read_text(encoding="utf-8") for n in ("dashboard.html", "assessment.html")]
 
 

@@ -15,11 +15,12 @@ inspect before sharing.
 `validate()` is the executable form of reference/findings-schema.md and is
 imported by findings.py and contract_check.py.
 
-Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input
-or schema error (every problem on stderr).
+Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input,
+schema error, refused or unwritable output directory (every problem on stderr).
 """
 import argparse
 import datetime
+import functools
 import html
 import json
 import os
@@ -33,15 +34,15 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
+from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, SEVERITIES, STATE_FILE, STRING_LISTS,
+                    split_yaml_documents, unique_object)
+from iac_scan import _YamlSubset, literal, parse_hcl
+from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
-TOP = {"schema_version", "meta", "inventory", "attack_paths", "findings", "perspectives",
-       "checked_ok", "decisions", "limitations", "next_steps"}
-STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-SEVERITIES = ("High", "Medium", "Low", "Info")
+TOP = {"schema_version", "meta", "inventory", *RECORD_LISTS}
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
 PROVIDERS = ("aws", "gcp", "azure", "kubernetes", "multi")
 VERDICTS = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
@@ -75,7 +76,6 @@ INPUT_KEYS = {"kind", "path", "note"}
 REFERENCE_KEYS = {"title", "url"}
 INVENTORY_KEYS = {"resources", "by_provider", "files", "not_run"}
 BASE_FIELDS = ("title", "location")
-SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
 CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -90,7 +90,17 @@ class SchemaError(Exception):
         super().__init__("; ".join(self.problems))
 
 
+@functools.lru_cache(maxsize=None)
+def _perspective_names():
+    return tuple(_read_perspective_names())
+
+
 def perspective_names():
+    """Canonical names (cached: the file is read once per process)."""
+    return list(_perspective_names())
+
+
+def _read_perspective_names():
     """Canonical names, read from the first table in reference/perspectives.md."""
     names = []
     for line in (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8").splitlines():
@@ -104,16 +114,6 @@ def perspective_names():
 
 def blank(value):
     return not isinstance(value, str) or not value.strip()
-
-
-def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            # Object keys can themselves be credentials. Keep errors safe to log.
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
 
 
 def load(path):
@@ -156,8 +156,7 @@ def location_key(location):
 
 
 def empty_record():
-    return {"schema_version": 1, "meta": {}, "attack_paths": [], "findings": [], "perspectives": [],
-            "checked_ok": [], "decisions": [], "limitations": [], "next_steps": []}
+    return {"schema_version": 1, "meta": {}, **{key: [] for key in RECORD_LISTS}}
 
 
 def validate(data, partial=False):
@@ -483,7 +482,6 @@ def ordered(findings):
     return sorted(findings, key=lambda f: (SEV_RANK.get(f.get("severity"), 9), id_key(f["id"])))
 
 
-BASELINE_ID = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
 
 
 def covered_by(data):
@@ -497,7 +495,7 @@ def covered_by(data):
         if not F_ID.match(str(f.get("id", ""))) or is_excluded(f):
             continue
         evidence = f.get("validation", {}).get("evidence", "")
-        for iid in BASELINE_ID.findall(evidence if isinstance(evidence, str) else ""):
+        for iid in BASELINE_REFERENCE.findall(evidence if isinstance(evidence, str) else ""):
             out.setdefault(iid, []).append(f["id"])
     return out
 
@@ -518,15 +516,13 @@ def counts(data):
 # Terraform names state backups terraform.tfstate.<timestamp>.backup; dotenv
 # files carry an environment suffix (.env.production).
 SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
-                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|\.env\.[^/]*$|\.envrc$|secret|credential|"
+                            + STATE_FILE.pattern + r"|\.env\.[^/]*$|\.envrc$|secret|credential|"
                             r"id_(rsa|dsa|ecdsa|ed25519)|netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
                             r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
 
 
 def hcl_declares_sensitive(text):
     """Only a known false variable/output declaration permits its source."""
-    # Local imports avoid a cycle: the scanner also uses redaction helpers.
-    from iac_scan import literal, parse_hcl
     for block in parse_hcl(text):
         if block.type in ("variable", "output") and "sensitive" in block.attrs:
             raw, _ = block.attrs["sensitive"]
@@ -548,7 +544,6 @@ def hcl_has_paired_secret(text):
     Line redaction sees `value = "..."`, not that its sibling `name` is
     DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
     """
-    from iac_scan import literal, parse_hcl
     # Values Terraform itself treats as secret, wherever their names point.
     if HCL_MARKED_SECRET.search(text):
         return True
@@ -558,7 +553,8 @@ def hcl_has_paired_secret(text):
             if is_secret_name(match.group(1)) and any(
                     HCL_VALUE.search(near) for near in lines[max(0, n - 15):n + 16]):
                 return True
-    pending = list(parse_hcl(text))
+    top = parse_hcl(text)
+    pending = list(top)
     while pending:
         block = pending.pop()
         pending.extend(block.blocks)
@@ -566,7 +562,7 @@ def hcl_has_paired_secret(text):
         names = [literal(block.attrs[k][0]) for k in ("name", "key") if k in block.attrs]
         if "value" in block.attrs and any(not isinstance(x, str) or is_secret_name(x) for x in names):
             return True
-    for block in parse_hcl(text):
+    for block in top:
         if block.type == "variable" and block.labels and "default" in block.attrs and \
                 is_secret_name(block.labels[0]):
             default = literal(block.attrs["default"][0])
@@ -616,16 +612,8 @@ def source_lines(path):
             docs = [json.loads(text, object_pairs_hook=unique_object)]
         elif suffix in (".yaml", ".yml"):
             syntax = "yaml"
-            # Local import avoids a cycle: iac_scan also uses redaction helpers.
-            from iac_scan import _YamlSubset
-            docs, rows = [], []
-            for n, line in enumerate(lines, 1):
-                if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
-                    docs.append(_YamlSubset(rows).parse())
-                    rows = []
-                else:
-                    rows.append((n, line))
-            docs.append(_YamlSubset(rows).parse())
+            # The scanner's document split and YAML subset, so both read the same documents.
+            docs = [_YamlSubset(rows).parse() for rows in split_yaml_documents(lines)]
         else:
             docs = []
             if suffix in (".tf", ".tofu"):
@@ -1155,7 +1143,7 @@ def to_pdf(html_path, pdf_path, failed=None):
     return None
 
 
-def output_problem(out, repo):
+def output_dir_problem(out, repo):
     """Refuse outputs inside the assessed repository or through symlinks."""
     if repo:
         root, target = Path(repo).resolve(), out.resolve()
@@ -1184,17 +1172,20 @@ def main(argv=None):
         return 2
     L = LABELS[a.lang]
     out = Path(a.out)
-    problem = output_problem(out, a.repo)
+    problem = output_dir_problem(out, a.repo)
     if problem:
         print(f"render: {problem}", file=sys.stderr)
         return 2
     sources = attach_sources(data, a.repo) if a.repo else {}
-    out.mkdir(parents=True, exist_ok=True)
-    pdf = out / "assessment.pdf"
-    pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
-    (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
-    assessment = out / "assessment.html"
-    assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
+    pdf, assessment = out / "assessment.pdf", out / "assessment.html"
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
+        (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
+        assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
+    except OSError as e:
+        print(f"render: cannot write {out}: {e.strerror or e}", file=sys.stderr)
+        return 2
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
         failed = []

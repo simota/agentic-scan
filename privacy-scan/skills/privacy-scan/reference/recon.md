@@ -32,7 +32,9 @@ others.
 - *Subjects*: end users, customers' customers, employees, children, visitors,
   third parties named by users
 - *Stored in*: every store — primary database tables, caches, search indexes,
-  file and object storage, analytics warehouse, queues, logs, backups
+  vector stores and embeddings, file and object storage, analytics warehouse,
+  queues, logs, backups, and stores kept by providers (AI assistants and
+  threads, e-mail and messaging providers)
 
 Free-text and file-upload fields are personal data by default.
 
@@ -85,6 +87,8 @@ Record what the later hunt needs (`reference/commitments.md`):
 
 - Privacy policy, terms, consent texts and cookie notices (in the repository,
   in the front end, or in localisation files)
+- App-store privacy declarations and permission purpose strings (privacy
+  manifests, Data safety answers, `Info.plist` and `AndroidManifest.xml`)
 - Retention schedules in docs, config or job definitions
 - Records of processing, data maps, sub-processor lists, DPIAs if present
 - Settings screens that promise behaviour ("we never share", "delete my

@@ -29,7 +29,7 @@ Before filing:
 
 - **Personal data:** {{data}}
 - **Data subjects:** {{subjects}}
-- **Broken commitment:** {{commitment}}
+- **Broken commitment:** {{commitment}} — {{commitments[id].statement}} (source: {{commitments[id].source}}; mark it inferred when `inferred` is true)
 
 ## Flow
 
@@ -65,3 +65,7 @@ Before filing:
 - [ ] The affected feature still works (positive control)
 - [ ] Data already sent or retained before the fix has an owner and a decision (purge, notify, accept)
 - [ ] `status` in findings.json is `Fixed`
+
+---
+
+_Technical finding from a static source review, not a legal opinion._

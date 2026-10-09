@@ -75,8 +75,8 @@ class ReferencePrivacyTests(unittest.TestCase):
             "https://example.invalid/?000000=000000",
             # Encoded plus signs are literal plus signs, not form separators.
             "https://example.invalid/?token=0000%2B0000%2B0000",
-            # Inspect one decode only; a literal %40 is not an at-sign yet.
-            "https://example.invalid/?literal=synthetic%2540privacy-scan.localhost",
+            # Repeated decoding still exempts reserved example domains.
+            "https://example.invalid/?literal=synthetic%2540example.com",
             "https://[broken/%20source",
         )
         for url in urls:

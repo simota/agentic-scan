@@ -73,3 +73,38 @@ class ExemptIdentifierTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class EncodedValueTests(unittest.TestCase):
+    def test_encoded_and_invisibly_split_values_are_refused(self):
+        for value in ("GET /api?email=alice%40corp.com", "alice&#64;corp.com", "alice&#x40;corp.com",
+                      "alice&commat;corp.com", "alice%2540corp.com",
+                      "alice@corp​.com", "alice@​corp.com", "alice@corp⁠.com",
+                      "alice@corp­.com", "4111​1111​1111​1111",
+                      "4111%201111%201111%201111"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [
+            {"url": "https://x.test/?e=alice%2540corp.com"}]
+        with self.assertRaises(findings.SchemaError):
+            findings.validate(doc)
+
+    def test_encoded_placeholders_and_plain_percentages_remain_allowed(self):
+        for value in ("user%40example.com", "100% of requests & 50% of jobs",
+                      "a &amp; b", "&lt;email&gt;", "%ZZ not encoding"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_hex_digests_are_not_digit_runs(self):
+        for value in ("commit 0a1b2c3d4e5f678901234567890abcdef1234567",
+                      "sha256 " + "1234567890123a" + "0" * 50,
+                      "pod-123e4567-e89b-12d3-a456-426614174000",
+                      "123e4567e89b12d3a456426614174000"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+        # Without a hex letter or next to a dash-joined digit, the digits still count.
+        for value in ("0" * 40, "1-123e4567-e89b-12d3-a456-426614174000",
+                      "123e4567-e89b-12d3-a456-426614174000-0"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))

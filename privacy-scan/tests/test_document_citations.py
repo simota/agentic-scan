@@ -37,6 +37,25 @@ class CitationTests(unittest.TestCase):
                          ["templates/report.ja.md", "templates/report.en.md"])
 
 
+class TemplateAndStepTests(unittest.TestCase):
+    def test_language_pairs_use_the_same_placeholders(self):
+        for name in ("issue", "report"):
+            with self.subTest(template=name):
+                found = [sorted(re.findall(r"{{[^}]*}}", (SKILL / "templates" / f"{name}.{lang}.md")
+                                           .read_text(encoding="utf-8")))
+                         for lang in ("ja", "en")]
+                self.assertEqual(found[0], found[1])
+
+    def test_hunt_step_ids_are_unique_within_the_hunt_tables(self):
+        text = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        hunts = text.split("## Hunt steps per perspective", 1)[1].split("## Sound constructs", 1)[0]
+        steps = re.findall(r"^\| ([A-Z]{2}\d+) \|", hunts, re.MULTILINE)
+        self.assertEqual(len(steps), len(set(steps)))
+        for prefix in ("MN", "TP", "EX"):
+            numbers = [int(s[2:]) for s in steps if s.startswith(prefix)]
+            self.assertEqual(numbers, list(range(1, len(numbers) + 1)), prefix)
+
+
 class FrontmatterTests(unittest.TestCase):
     def test_description_is_one_short_line(self):
         text = (SKILL / "SKILL.md").read_text(encoding="utf-8")

@@ -16,7 +16,10 @@ generic rule knows them, so they are written down before the code is judged.
 Strongest first:
 
 1. **Published texts in the repository** — privacy policy, consent texts,
-   cookie notices, settings-screen copy, sub-processor lists
+   cookie notices, settings-screen copy, sub-processor lists, and app-store
+   privacy declarations with permission purpose strings (iOS privacy manifests,
+   Google Play Data safety answers, `Info.plist` and `AndroidManifest.xml`
+   usage descriptions)
 2. **Regulations the requester named** — each requirement phrased as a check
    on the code, with the regulation as source
 3. **Configuration and jobs** — retention TTLs, deletion jobs, consent

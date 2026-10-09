@@ -17,10 +17,10 @@
 
 | 深刻度 | 件数 | うち Valid |
 |---|---|---|
-| High | {{n_high}} | |
-| Medium | {{n_medium}} | |
-| Low | {{n_low}} | |
-| Info | {{n_info}} | |
+| High | {{n_high}} | {{n_high_valid}} |
+| Medium | {{n_medium}} | {{n_medium_valid}} |
+| Low | {{n_low}} | {{n_low_valid}} |
+| Info | {{n_info}} | {{n_info_valid}} |
 
 除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。検証未完了 — Likely: {{n_likely}} 件、Unverified: {{n_unverified}} 件、Unlikely: {{n_unlikely}} 件。
 
@@ -45,8 +45,12 @@
 - **深刻度 / 確度 / 検証判定:** {{severity}} / {{confidence}} / {{validation.verdict}}
 - **場所:** `{{location}}`
 - **個人データ / データ主体:** {{data}} / {{subjects}}
+- **破られている約束:** {{commitment}} — {{commitments[id].statement}}
+- **前提条件（Environment-dependent の場合のみ）:** 深刻度が前提とする設定
 - **影響:** {{impact}}
 - **修正方針:** {{fix}}
+- **再発防止チェック:** {{guard}}
+- **送信・保存済みのデータ:** 担当者と判断（削除・通知・受容）
 - **管理先:** <issue の URL>
 
 ## 4. プライバシー上の約束

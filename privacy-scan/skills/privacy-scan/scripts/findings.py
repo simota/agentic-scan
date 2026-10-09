@@ -28,6 +28,7 @@ prose or evidence containing an e-mail address (other than the reserved
 example domains) or a run of 12 or more digits is refused.
 """
 import argparse
+from html import unescape
 import json
 from pathlib import Path
 import re
@@ -104,16 +105,23 @@ EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|te
 # sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
 LONG_NUMBER = re.compile(
-    r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11,}")
+    r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11}")
 # Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
 # 4-6-5). Groups of at most three digits, as in IP addresses, never match.
 GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
-# ISO dates and UUIDs are technical values; mask them before counting digits
-# so date ranges and identifiers are not mistaken for personal numbers.
+# ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
+# at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
+# mask them before counting digits so they are not mistaken for personal
+# numbers. A UUID next to a dash-joined digit is not masked, so masking cannot
+# split a longer number.
 NOT_PERSONAL_NUMBERS = re.compile(
     r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
-    r"|(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])")
+    r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
+    r"(?![0-9A-Fa-f])(?!-\d)"
+    r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+# Percent and entity decoding passes over prose (covers double encoding).
+DECODE_ROUNDS = 3
 
 
 class SchemaError(ValueError):
@@ -306,9 +314,26 @@ def _no_personal_values(value, where):
         return
     # Keep this guard safe for callers that have not checked the shape yet.
     value = str(value)
+    _scan_personal_values(value, where)
+    # Quoted request lines and markup carry values percent- or entity-encoded
+    # (`%40`, `&#64;`), sometimes twice. Inspect a few decoded copies as well.
+    for _ in range(DECODE_ROUNDS):
+        if "%" not in value and "&" not in value:
+            break
+        decoded = unescape(unquote(value))
+        if decoded == value:
+            break
+        value = decoded
+        _scan_personal_values(value, where)
+
+
+def _scan_personal_values(value, where):
     # Inspect a normalised copy: non-breaking spaces and width variants must
     # not evade the guard, and accepted text must keep its original spelling.
+    # Invisible format characters (zero-width spaces, word joiners, soft
+    # hyphens) are dropped so they cannot split an address or a number.
     value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
+    value = "".join(c for c in value if unicodedata.category(c) != "Cf")
     for domain in _email_domains(value):
         if not EXAMPLE_DOMAINS.search(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")

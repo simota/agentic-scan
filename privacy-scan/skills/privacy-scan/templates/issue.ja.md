@@ -29,7 +29,7 @@
 
 - **個人データ:** {{data}}
 - **データ主体:** {{subjects}}
-- **破られている約束:** {{commitment}}
+- **破られている約束:** {{commitment}} — {{commitments[id].statement}}（根拠: {{commitments[id].source}}。`inferred` が true なら推定と明記）
 
 ## データの流れ
 
@@ -65,3 +65,7 @@
 - [ ] 対象機能が引き続き動作する（positive control）
 - [ ] 修正前に送信・保存済みのデータについて、担当者と方針（削除・通知・受容）が決まった
 - [ ] findings.json の `status` を `Fixed` に更新した
+
+---
+
+_ソースコードの静的レビューによる技術的な指摘であり、法的見解ではない。_

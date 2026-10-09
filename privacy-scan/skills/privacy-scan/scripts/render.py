@@ -121,11 +121,44 @@ def reference_title(ref):
 MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
 
 
-def markdown_text(value):
-    """Keep prose literal inside headings, inline text and table cells."""
+# URLs written in prose. GFM links them automatically but keeps our escape
+# backslashes in the target, so they are written as explicit links instead.
+URL_TOKEN = re.compile(r"(?<![\w.@/])(?:https?://|www\.)[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+URL_TRAILING = ".,;:!?'\"*_~"
+
+
+def _literal(text):
+    return escape(text, quote=False).translate(MARKDOWN_ESCAPES)
+
+
+def _prose_url(url):
+    """Trim trailing punctuation the way GFM does; return '' when nothing is left."""
+    while url and (url[-1] in URL_TRAILING
+                   or (url[-1] == ")" and url.count(")") > url.count("("))):
+        url = url[:-1]
+    return url if re.search(r"[/.][A-Za-z0-9]", url.split("//", 1)[-1][1:] or "") else ""
+
+
+def markdown_text(value, links=True):
+    """Keep prose literal inside headings, inline text and table cells.
+
+    With `links`, URLs become explicit links whose targets keep their spelling.
+    Link labels pass `links=False`, because a link cannot contain another link.
+    """
     text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    parts, pos = [], 0
+    for match in URL_TOKEN.finditer(text) if links else ():
+        url = _prose_url(match.group())
+        if not url:
+            continue
+        parts.append(_literal(text[pos:match.start()]))
+        target = escape(url, quote=False)
+        parts.append(f"[{_literal(url)}](<http://{target}>)" if url.startswith("www.")
+                     else f"<{target}>")
+        pos = match.start() + len(url)
+    parts.append(_literal(text[pos:]))
     # Add our own breaks only after escaping the supplied HTML and Markdown.
-    return escape(text, quote=False).translate(MARKDOWN_ESCAPES).replace("\n", "<br>")
+    return "".join(parts).replace("\n", "<br>")
 
 
 def markdown_cell(value):
@@ -178,10 +211,10 @@ def reference_destination(url):
 def markdown_reference(ref):
     url = ref["url"]
     title = reference_title(ref)
-    label = markdown_text(title)
+    label = markdown_text(title, links=False)
     destination = reference_destination(url)
     if destination is None:
-        return label if title == url else f"{label} — {markdown_text(url)}"
+        return label if title == url else f"{label} — {markdown_text(url, links=False)}"
     return f"[{label}](<{escape(destination, quote=False)}>)"
 
 
@@ -235,7 +268,9 @@ def render_markdown(doc, lang):
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
+        note = f" ({t['excluded']})" if v["verdict"] in EXCLUDED else ""
+        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] "
+                     f"{markdown_text(f['title'])}{note}")
         lines.append("")
         for key, value in finding_fields(f):
             lines.append(f"- **{t[key]}:** {markdown_text(value)}")
@@ -269,7 +304,7 @@ def render_markdown(doc, lang):
 
 
 CSS = """
-:root{--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
+:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
 --high:#b91c1c;--medium:#b45309;--low:#1d4ed8;--info:#57534e}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1917;--fg:#f5f5f4;
 --muted:#a8a29e;--card:#292524;--line:#44403c;--high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}}
@@ -284,9 +319,11 @@ h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 .High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
 details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
 summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
-dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+li{white-space:pre-line}
 pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
-table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
+table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
+td{white-space:pre-line}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 button[aria-pressed="true"]{border-color:var(--fg)}
 """
@@ -294,7 +331,8 @@ button[aria-pressed="true"]{border-color:var(--fg)}
 JS = """
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}));
+let shown=0;document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s;shown+=!d.hidden});
+const empty=document.querySelector('[data-empty]');if(empty)empty.hidden=shown>0;}));
 """
 
 
@@ -310,7 +348,8 @@ def render_html(doc, lang):
     e = lambda v: escape(as_text(v))  # noqa: E731
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
+           f"<title>{e(t['title'])}: {e(meta.get('project', ''))}</title>"
+           f"<style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
            "<div class='cards'>"]
     for s in SEVERITIES:
@@ -328,27 +367,35 @@ def render_html(doc, lang):
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
+               + (f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
+                  if excluded else "")
                + "</p>")
-    if not findings:
-        out.append(f"<p>{e(t['none'])}</p>")
+    # Shown when there are no findings, and by the filter when none match.
+    out.append(f"<p data-empty{'' if not findings else ' hidden'}>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
         rows = [(t[k], value) for k, value in finding_fields(f)]
         rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
         if shown(v.get("evidence", "")):
             rows.append((t["evidence"], v["evidence"]))
-        rows.append((t["status"], f.get("status", "Open")))
         analysis_html = ""
         if "analysis" in f:
             a = f["analysis"]
             analysis_html = (f"<dt>{e(t['analysis'])}</dt><dd>{e(a['result'])} — {e(a['tool'])}:"
                              f"<pre><code>{e(a['command'])}</code></pre></dd>")
-        out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
+        excluded_finding = v["verdict"] in EXCLUDED
+        # Excluded findings are not counted under their severity, so they are
+        # filtered separately and labelled in the summary as well.
+        out.append(f"<details data-sev='{'excluded' if excluded_finding else f['severity']}'>"
+                   f"<summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"· {e(v['verdict'])} <span class='muted'>· {e(f['confidence'])} · "
+                   f"· {e(v['verdict'])}"
+                   + (f" ({e(t['excluded'])})" if excluded_finding else "")
+                   + f" <span class='muted'>· {e(f['confidence'])} · "
                    f"{e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows)
                    + analysis_html
+                   + f"<dt>{e(t['status'])}</dt><dd>{e(f.get('status', 'Open'))}</dd>"
                    + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"
                              for ref in f.get("references", []))
                    + "</dl></details>")

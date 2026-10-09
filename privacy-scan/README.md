@@ -46,9 +46,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   whitespace, outside reserved example domains)
   and runs of 12 or more digits, even with repeated spaces, tabs, non-breaking
   spaces, hyphens or Unicode dashes, or as card-style groups joined by `.`, `/`,
-  `_` or `+` (ISO dates and UUIDs are not counted). Reference URLs are also
-  checked after decoding their components once; accepted URLs keep their
-  original spelling. Use field names and placeholders
+  `_` or `+` (ISO dates, UUIDs and hex digests are not counted). Percent- and
+  entity-encoded forms and invisible format characters are inspected too, and
+  reference URLs are checked after decoding their components; accepted text
+  and URLs keep their original spelling. Use field names and placeholders
   throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)

@@ -17,10 +17,10 @@ Before sending:
 
 | Severity | Count | Of which Valid |
 |---|---|---|
-| High | {{n_high}} | |
-| Medium | {{n_medium}} | |
-| Low | {{n_low}} | |
-| Info | {{n_info}} | |
+| High | {{n_high}} | {{n_high_valid}} |
+| Medium | {{n_medium}} | {{n_medium_valid}} |
+| Low | {{n_low}} | {{n_low_valid}} |
+| Info | {{n_info}} | {{n_info_valid}} |
 
 Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Not yet verified — Likely: {{n_likely}}, Unverified: {{n_unverified}}, Unlikely: {{n_unlikely}}.
 
@@ -45,8 +45,12 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 - **Severity / confidence / verdict:** {{severity}} / {{confidence}} / {{validation.verdict}}
 - **Location:** `{{location}}`
 - **Personal data / subjects:** {{data}} / {{subjects}}
+- **Broken commitment:** {{commitment}} — {{commitments[id].statement}}
+- **Condition (Environment-dependent only):** the setting the grade assumes
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
+- **Guard:** {{guard}}
+- **Data already sent or retained:** owner and decision (purge, notify, accept)
 - **Tracked in:** <issue URL>
 
 ## 4. Commitments

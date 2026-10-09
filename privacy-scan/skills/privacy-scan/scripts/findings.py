@@ -75,8 +75,8 @@ COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
-EMAIL_START = re.compile(
-    r'(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|[^\s"(),:;<>@\[\]\\]+)@')
+EMAIL_MARKERS = re.compile(r'["@]')
+EMAIL_LOCAL_CHAR = re.compile(r'[^\s"(),:;<>@\[\]\\]')
 EMAIL_LITERAL_DOMAIN = re.compile(r"\[[^\[\]\r\n]+\]")
 IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 # IDNA exceptions and join controls (RFC 5892, sections 2.6 and 2.8) can
@@ -146,10 +146,51 @@ def _choice(value, allowed, where):
         raise SchemaError(f"{where}: must be one of {', '.join(allowed)}")
 
 
+def _email_starts(value):
+    """Yield positions after candidate @ signs without rescanning local parts."""
+    if "@" not in value:
+        return
+    quoted = {}
+    if '"' in value:
+        # Work backwards so every quote's closing quote is found once, even
+        # when many escaped quotes could start overlapping candidates. The
+        # two suffix results let a backslash skip exactly one character.
+        next_end = after_next_end = None
+        for pos in range(len(value) - 1, -1, -1):
+            char = value[pos]
+            if char == '"':
+                if next_end is not None and value[next_end + 1:next_end + 2] == "@":
+                    quoted[pos] = next_end + 2
+                end = pos
+            elif char in "\r\n":
+                end = None
+            elif char == "\\":
+                end = after_next_end if value[pos + 1:pos + 2] not in ("\r", "\n") else None
+            else:
+                end = next_end
+            next_end, after_next_end = end, next_end
+    consumed = 0
+    for marker in EMAIL_MARKERS.finditer(value):
+        pos = marker.start()
+        if pos < consumed:
+            continue
+        # A complete quoted local part consumes its internal @ signs. If the
+        # quote does not form a candidate, addresses inside it remain visible.
+        if pos in quoted:
+            consumed = quoted[pos]
+        # For an unquoted local part, its last character suffices to establish
+        # a candidate; rescanning the earlier characters adds no information.
+        elif value[pos] == "@" and pos > consumed and EMAIL_LOCAL_CHAR.fullmatch(value[pos - 1]):
+            consumed = pos + 1
+        else:
+            continue
+        yield consumed
+
+
 def _email_domains(value):
     """Read bracketed literals or complete Unicode domain labels."""
-    for match in EMAIL_START.finditer(value):
-        end = match.end()
+    for start in _email_starts(value):
+        end = start
         literal = EMAIL_LITERAL_DOMAIN.match(value, end)
         if literal:
             # Keep brackets so literal addresses cannot match example domains.
@@ -164,7 +205,7 @@ def _email_domains(value):
                     and unicodedata.category(char)[0] not in "LMN"):
                 break
             end += 1
-        domain = value[match.end():end].rstrip(".")
+        domain = value[start:end].rstrip(".")
         # Malformed trailing labels must not hide a preceding address in prose.
         if "." in domain:
             yield domain

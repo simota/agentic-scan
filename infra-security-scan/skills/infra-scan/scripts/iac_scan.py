@@ -402,7 +402,7 @@ class _Lit:
             if s[self.i] == "]":
                 self.i += 1
                 return out
-            if s.startswith("for ", self.i):
+            if re.match(r"for\s", s[self.i:self.i + 4]):
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             before = self.i
@@ -428,7 +428,7 @@ class _Lit:
             if s[self.i] == "}":
                 self.i += 1
                 return UNKNOWN if unknown_keys else out
-            if s.startswith("for ", self.i):
+            if re.match(r"for\s", s[self.i:self.i + 4]):
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             if s[self.i] == '"':
@@ -485,13 +485,34 @@ class _Lit:
 
 
 def unquote(raw):
-    if re.search(r"(?<![$%])[$%]\{", raw):
-        return UNKNOWN
-    raw = raw.replace("$${", "${").replace("%%{", "%{")
+    """Decode an HCL quoted string; a template (${...} or %{...}) is UNKNOWN.
+
+    Scan left to right: $${ and %%{ are escapes for a literal ${ / %{, so
+    "100%${var.x}" is a literal % followed by an interpolation.
+    """
+    out, i = [], 0
+    while i < len(raw):
+        if raw.startswith(("$${", "%%{"), i):
+            out.append(raw[i + 1:i + 3])
+            i += 3
+        elif raw.startswith(("${", "%{"), i):
+            return UNKNOWN
+        elif raw[i] == "\\" and i + 1 < len(raw):
+            if raw[i + 1] == "U" and re.fullmatch(r"[0-9A-Fa-f]{8}", raw[i + 2:i + 10]):
+                out.append(chr(int(raw[i + 2:i + 10], 16)))
+                i += 10
+                continue
+            out.append(raw[i:i + 2])
+            i += 2
+        else:
+            out.append(raw[i])
+            i += 1
+    text = "".join(out)
     try:
-        return json.loads('"' + raw + '"')
+        # strict=False: a literal tab or CR inside the string is allowed in HCL.
+        return json.loads('"' + text + '"', strict=False)
     except ValueError:
-        return raw
+        return text
 
 
 def literal(raw):
@@ -1767,28 +1788,32 @@ def _yaml_marks(text):
                     i += 2
                     continue
                 quote = None
-        elif c in "\"'" and previous in ("", ":", "[", "{", ",", "-"):
+        elif c in "\"'" and previous in ("", ":", "[", "{", ",", "-") and (
+                i == 0 or text[i - 1] in " \t[{,"):  # a quote opens only at a token start
             quote = c
         else:
             yield i, c, depth
             depth += (c in "[{") - (c in "]}")
-        if not c.isspace():
+        if c not in " \t":
             previous = c
         i += 1
 
 
 def _yaml_comment(text):
     for i, c, _ in _yaml_marks(text):
-        if c == "#" and (i == 0 or text[i - 1].isspace()):
-            return text[:i].rstrip()
-    return text.rstrip()
+        if c == "#" and (i == 0 or text[i - 1] in " \t"):
+            return text[:i].rstrip(" \t")
+    return text.rstrip(" \t")
 
 
 def _yaml_pair(text):
     for i, c, depth in _yaml_marks(text):
-        if c == ":" and depth == 0 and (i + 1 == len(text) or text[i + 1].isspace()):
-            return text[:i].strip(), text[i + 1:].strip()
+        if c == ":" and depth == 0 and (i + 1 == len(text) or text[i + 1] in " \t"):
+            return text[:i].strip(" \t"), text[i + 1:].strip(" \t")
     return None
+
+
+YAML_BREAK = re.compile("[\r\x85\u2028\u2029]")
 
 
 class _YamlFlow:
@@ -1797,7 +1822,8 @@ class _YamlFlow:
         self.text, self.line, self.i = text, line, 0
 
     def ws(self):
-        while self.i < len(self.text) and self.text[self.i].isspace():
+        # YAML whitespace is space and tab; NBSP or a BOM is content.
+        while self.i < len(self.text) and self.text[self.i] in " \t":
             self.i += 1
 
     def take(self, char):
@@ -1852,8 +1878,8 @@ class _YamlFlow:
         while self.i < len(self.text) and not (
                 (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":")):
             self.i += 1
-        word = self.text[start:self.i].strip()
-        if not word or word[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", word):
+        word = self.text[start:self.i].strip(" \t")
+        if not word or word[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", word) or (flow and word.endswith(":")):
             raise ValueError("unsupported YAML scalar, tag or reference")
         if key:
             return word
@@ -1862,7 +1888,7 @@ class _YamlFlow:
             return True
         if word in ("n", "N", "no", "No", "NO", "false", "False", "FALSE", "off", "Off", "OFF"):
             return False
-        if word.lower() in ("null", "~"):
+        if word in ("null", "Null", "NULL", "~"):
             return None
         return word
 
@@ -1889,6 +1915,11 @@ class _YamlSubset:
         while self.i < len(self.rows):
             n, raw = self.rows[self.i]
             self.line = n
+            # YAML (and kubectl) also break lines at a lone CR, NEL and the
+            # Unicode separators. Lines here split on LF only, so a comment
+            # would swallow the "next line"; refuse rather than mis-read.
+            if YAML_BREAK.search(raw):
+                raise ValueError("unsupported line break (lone CR, NEL or U+2028/2029)")
             text = _yaml_comment(raw.lstrip(" "))
             if text and not text.startswith("#"):
                 if text.startswith("\t"):
@@ -1951,6 +1982,8 @@ class _YamlSubset:
             self.i += 1
             text = row[1][1:].lstrip(" ")
             item_indent = indent + len(row[1]) - len(text)
+            if self.is_list(text):
+                raise ValueError("nested sequence on one line")
             if _yaml_pair(text):
                 value = _YamlMap(row[2])
                 self.pair(value, text, item_indent, row[2])

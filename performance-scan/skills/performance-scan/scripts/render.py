@@ -14,7 +14,9 @@ import argparse
 from html import escape
 import json
 from pathlib import Path
+import re
 import sys
+from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
@@ -35,6 +37,8 @@ LABELS = {
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
         "project": "System", "revision": "Revision", "date": "Date / assessor",
+        "source": "Source", "inferred": "Inferred", "reason": "Reason not checked",
+        "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
     },
     "ja": {
         "title": "パフォーマンス診断", "summary": "サマリー", "scope": "対象と方法",
@@ -50,6 +54,8 @@ LABELS = {
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
         "project": "システム", "revision": "リビジョン", "date": "診断日 / 診断者",
+        "source": "出典", "inferred": "推定", "reason": "未確認の理由",
+        "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
     },
 }
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
@@ -65,52 +71,123 @@ def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
+def text_lines(value):
+    return as_text(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+
+
+def markdown_text(value):
+    """Keep record strings literal and keep newlines inside their current block."""
+    def inline(line):
+        line = escape(line, quote=False)
+        line = re.sub(r"([\\`*_\[\]#!~])", r"\\\1", line)
+        # A list value has no static label before it: "- - text", "- 1. text"
+        # and "-     text" would otherwise create nested blocks.
+        line = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", line)
+        line = re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=[ \t]|$)", r"\1\\\2", line)
+        # GFM also recognises bare URLs and email addresses. Only references[]
+        # should create links; character references retain their visible text.
+        line = line.replace("://", "&#58;//").replace("@", "&#64;")
+        line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
+                      flags=re.IGNORECASE)
+        return re.sub(r"^[ \t]+", lambda match: "".join(
+            "&#32;" if char == " " else "&#9;" for char in match.group()), line)
+
+    return "<br>".join(inline(line) for line in text_lines(value))
+
+
+def markdown_cell(value):
+    # An entity cannot become a GFM column separator, including after a backslash.
+    return markdown_text(value).replace("|", "&#124;")
+
+
+def markdown_code(value):
+    """Use a delimiter absent from each command line; code spans consume no data."""
+    def span(line):
+        if not line:
+            return ""
+        fence = "`" * (max((len(run) for run in re.findall(r"`+", line)), default=0) + 1)
+        # CommonMark removes one surrounding space only when both are present
+        # and the span is not entirely spaces. Padding also separates backticks.
+        pad = " " if (line.startswith("`") or line.endswith("`") or
+                      (line.startswith(" ") and line.endswith(" ") and line.strip(" "))) else ""
+        return f"{fence}{pad}{line}{pad}{fence}"
+
+    # A newline inside a code span is normalised to a space by CommonMark.
+    return "<br>".join(span(line) for line in text_lines(value))
+
+
+def markdown_link(title, url):
+    label = markdown_text(title)
+    try:
+        scheme = urlsplit(url).scheme.lower()
+    except ValueError:
+        scheme = None
+    if scheme not in ("", "http", "https", "mailto"):
+        return f"{label} ({markdown_text(url)})"
+    # Keep URL syntax separate from Markdown syntax and from HTML entities.
+    destination = escape(quote(url, safe="/:?#[]@!$&'+,;=%"), quote=False)
+    return f"[{label}](<{destination}>)"
+
+
+def budget_cells(budget, labels):
+    inferred = budget.get("inferred")
+    inference = (labels["inferred_yes"] if inferred is True else
+                 labels["inferred_no"] if inferred is False else "—")
+    return (budget["id"], budget["statement"], budget["source"], budget["status"],
+            inference, budget.get("reason", ""))
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     measured = any(f["validation"]["method"] == "measured" for f in findings)
-    lines = [f"# {t['title']}: {meta.get('project', '')}", ""]
+    lines = [f"# {t['title']}: {markdown_text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
                  + (t["measured_note"] if measured else t["static_note"]))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
-              f"| {t['project']} | {meta.get('project', '')} |",
-              f"| Scope | {meta.get('scope', '')} |",
-              f"| {t['revision']} | {meta.get('commit', 'UNKNOWN')} |",
-              f"| {t['date']} | {meta.get('date', '')} / {meta.get('assessor', '')} |", ""]
+              f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
+              f"| Scope | {markdown_cell(meta.get('scope', ''))} |",
+              f"| {t['revision']} | {markdown_cell(meta.get('commit', 'UNKNOWN'))} |",
+              f"| {t['date']} | {markdown_cell(meta.get('date', ''))} / "
+              f"{markdown_cell(meta.get('assessor', ''))} |", ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {f['title']}")
+        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
         lines.append("")
         for key in FIELDS:
             if key in f:
-                lines.append(f"- **{t[key]}:** {as_text(f[key])}")
+                lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
         if v.get("evidence"):
-            lines.append(f"- **{t['evidence']}:** {v['evidence']}")
+            lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
         if "measurement" in f:
             m = f["measurement"]
-            lines.append(f"- **{t['measurement']}:** {m['result']} (`{m['command']}`, {m['environment']})")
+            lines.append(f"- **{t['measurement']}:** {markdown_text(m['result'])} "
+                         f"({markdown_code(m['command'])}, {markdown_text(m['environment'])})")
         lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
         for ref in f.get("references", []):
-            lines.append(f"- **{t['references']}:** [{ref.get('title', ref['url'])}]({ref['url']})")
+            lines.append(f"- **{t['references']}:** "
+                         f"{markdown_link(ref.get('title', ref['url']), ref['url'])}")
         lines.append("")
     if doc.get("budgets"):
-        lines += [f"## {t['budgets']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
+        headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
+        lines += [f"## {t['budgets']}", "", "| " + " | ".join(headers) + " |",
+                  "|---|---|---|---|---|---|"]
         for b in doc["budgets"]:
-            lines.append(f"| {b['id']} | {b['statement']} | {b['source']} | {b['status']} |")
+            lines.append("| " + " | ".join(markdown_cell(cell) for cell in budget_cells(b, t)) + " |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
     for p in doc.get("perspectives", []):
-        lines.append(f"| {p['name']} | {p['status']} | {p['note']} |")
+        lines.append("| " + " | ".join(markdown_cell(p[key]) for key in ("name", "status", "note")) + " |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
-        lines += [f"- {item}" for item in doc.get(key, [])] or [t["none"]]
+        lines += [f"- {markdown_text(item)}" for item in doc.get(key, [])] or [t["none"]]
         lines.append("")
     return "\n".join(lines)
 
@@ -177,11 +254,13 @@ def render_html(doc, lang):
                    f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows) + "</dl></details>")
     if doc.get("budgets"):
-        out.append(f"<h2>{e(t['budgets'])}</h2><table>")
+        headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
+        out.append(f"<h2>{e(t['budgets'])}</h2><table><thead><tr>"
+                   + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
+                   + "</tr></thead><tbody>")
         for b in doc["budgets"]:
-            out.append(f"<tr><td>{e(b['id'])}</td><td>{e(b['statement'])}</td>"
-                       f"<td>{e(b['source'])}</td><td>{e(b['status'])}</td></tr>")
-        out.append("</table>")
+            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t)) + "</tr>")
+        out.append("</tbody></table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
     out.append(f"<h2>{e(t['perspectives'])}</h2><table>")
     for name in PERSPECTIVES:

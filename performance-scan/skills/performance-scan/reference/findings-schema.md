@@ -95,6 +95,10 @@ Each finding must be complete in the fragment that first adds it.
 
 ## Field rules
 
+String values are plain text, not authored Markdown or HTML. Renderers escape
+them for their output context; use `references[]` for links rather than
+embedding Markdown link syntax in another field.
+
 | Field | Rule |
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
@@ -103,12 +107,12 @@ Each finding must be complete in the fragment that first adds it.
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`DB1`…) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them |
+| `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
 | `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
-| `measurement` | `{environment, command, result}`, nonblank, from an authorised local run |
+| `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}` |
 | `budgets[]` | `id` (`B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs `reason`. `family` and `inferred` are optional |

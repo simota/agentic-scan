@@ -7,15 +7,19 @@ Both outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` follows the
 findings-report shape in `reference/report.md`.
 
-Exit codes: 0 written, 2 the record does not match the schema (the field is
-named on stderr).
+Exit codes: 0 written, 1 an output could not be encoded or saved, 2 the record
+does not match the schema (the field is named on stderr).
 """
 import argparse
 from html import escape
 import json
+import os
 from pathlib import Path
 import re
+import shutil
+import stat
 import sys
+import tempfile
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -345,6 +349,72 @@ def render_html(doc, lang):
     return "".join(out)
 
 
+def write_outputs(outputs):
+    """Stage every output before replacing any, restoring old files on failure."""
+    destinations = [(path.resolve(), content) for path, content in outputs]
+    if len({path for path, _ in destinations}) != len(destinations):
+        raise OSError("report and dashboard must have different destinations")
+    temporary_dirs, prepared, replaced = [], [], []
+    retained = set()
+    try:
+        for target, content in destinations:
+            try:
+                mode = target.stat().st_mode
+            except FileNotFoundError:
+                mode = None
+            if mode is not None and not stat.S_ISREG(mode):
+                raise OSError(f"{target}: output must be a regular file")
+            directory = Path(tempfile.mkdtemp(dir=target.parent,
+                                              prefix=f".{target.name}."))
+            temporary_dirs.append(directory)
+            staged = directory / "new"
+            staged.write_bytes(content)
+            staged.chmod(stat.S_IMODE(mode) if mode is not None else 0o600)
+            backup = None
+            if mode is not None:
+                backup = directory / "previous"
+                # Finish recovery copies too before publishing either output.
+                shutil.copy2(target, backup)
+            prepared.append((target, staged, backup))
+        try:
+            for target, staged, backup in prepared:
+                os.replace(staged, target)
+                replaced.append((target, backup))
+        except BaseException as exc:
+            # Also restore after an interrupt between the two replacements.
+            failures = []
+            for target, backup in reversed(replaced):
+                try:
+                    if backup is None:
+                        target.unlink(missing_ok=True)
+                    else:
+                        os.replace(backup, target)
+                except OSError as restore_error:
+                    detail = f"{target}: {restore_error}"
+                    if backup is not None:
+                        retained.add(backup.parent)
+                        detail += f"; previous output retained at {backup}"
+                    failures.append(detail)
+            if failures:
+                raise OSError(f"{exc}; could not restore outputs: {'; '.join(failures)}") from exc
+            raise
+    finally:
+        unwinding = sys.exc_info()[0] is not None
+        failures = []
+        for directory in temporary_dirs:
+            if directory in retained:
+                continue
+            try:
+                shutil.rmtree(directory)
+            except OSError as exc:
+                failures.append(f"{directory}: {exc}")
+        if failures:
+            message = "could not remove temporary outputs: " + "; ".join(failures)
+            if not unwinding:
+                raise OSError(message)
+            print(f"render: {message}", file=sys.stderr)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("findings")
@@ -359,9 +429,17 @@ def main(argv=None):
         return 2
     lang = args.lang or doc["meta"]["lang"]
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "report.md").write_text(render_markdown(doc, lang), encoding="utf-8")
-    (out / "dashboard.html").write_text(render_html(doc, lang), encoding="utf-8")
+    try:
+        outputs = [(out / "report.md", render_markdown(doc, lang).encode("utf-8")),
+                   (out / "dashboard.html", render_html(doc, lang).encode("utf-8"))]
+        source = Path(args.findings).resolve()
+        if any(path.resolve() == source for path, _ in outputs):
+            raise OSError("an output destination must not replace findings.json")
+        out.mkdir(parents=True, exist_ok=True)
+        write_outputs(outputs)
+    except (OSError, UnicodeError) as exc:
+        print(f"render: {exc}", file=sys.stderr)
+        return 1
     print(f"wrote {out / 'dashboard.html'} and {out / 'report.md'}")
     return 0
 

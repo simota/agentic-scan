@@ -14,12 +14,13 @@
 #   make demo LANG_OUT=en              # English
 
 NAME    := performance-scan
+# PYTHON is an executable name or path, including paths containing spaces.
 PYTHON  ?= python3
 # Make's path functions split on whitespace, even when the filename is quoted.
 shell_quote = '$(subst ','"'"',$(1))'
 # Earlier -f/MAKEFILES entries may precede this file. Select an existing suffix,
 # preserving spaces inside its path instead of taking Make's last whitespace word.
-REPO    := $(shell $(PYTHON) -c 'from pathlib import Path; import sys; \
+REPO    := $(shell $(call shell_quote,$(PYTHON)) -c 'from pathlib import Path; import sys; \
   parts = sys.argv[1].split(" "); paths = (Path(" ".join(parts[i:])) for i in range(len(parts))); \
   print(next(p for p in paths if p.is_file()).resolve().parent)' $(call shell_quote,$(MAKEFILE_LIST)))
 SKILL   := $(REPO)/skills/$(NAME)
@@ -31,7 +32,7 @@ SKILLS_DIR ?=
 CODEX_HOME ?= $(HOME)/.codex
 AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
 
-INSTALL = $(PYTHON) $(call shell_quote,$(REPO)/scripts/install.py) \
+INSTALL = $(call shell_quote,$(PYTHON)) $(call shell_quote,$(REPO)/scripts/install.py) \
   --skill $(call shell_quote,$(SKILL)) --agents $(call shell_quote,$(AGENT)) \
   --project $(call shell_quote,$(PROJECT)) --skills-dir $(call shell_quote,$(SKILLS_DIR)) \
   --claude-home $(call shell_quote,$(HOME)/.claude) \
@@ -64,7 +65,7 @@ status: ## show what is installed, per host
 	@$(INSTALL) status
 
 test: ## run offline regression tests
-	@cd $(call shell_quote,$(REPO)) && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) -m unittest discover -s tests -v
+	@cd $(call shell_quote,$(REPO)) && PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) -m unittest discover -s tests -v
 
 check: test ## verify the skill is self-contained and internally consistent
 	@cd $(call shell_quote,$(REPO)) || exit 1; fail=0; \
@@ -88,17 +89,17 @@ check: test ## verify the skill is self-contained and internally consistent
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
 	for p in $(call shell_quote,$(SKILL))/scripts/*.py $(call shell_quote,$(REPO))/scripts/*.py; do \
 	  [ -e "$$p" ] || continue; \
-	  $(PYTHON) -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$p" \
+	  $(call shell_quote,$(PYTHON)) -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse" >&2; fail=1; }; \
 	done; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  for lang in ja en; do \
-	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/render.py) "$$sample" --out "$$out" --lang $$lang >/dev/null \
+	    PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/render.py) "$$sample" --out "$$out" --lang $$lang >/dev/null \
 	      || { echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
 	  done; \
 	  cp "$$sample" "$$out/findings.json"; \
-	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/findings.py) check "$$out" >/dev/null \
+	  PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/findings.py) check "$$out" >/dev/null \
 	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
 	  rm -f "$$out"/*; \
 	done; \
@@ -107,5 +108,5 @@ check: test ## verify the skill is self-contained and internally consistent
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
-	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/render.py) $(call shell_quote,$(DEMO_INPUT)) \
+	@PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/render.py) $(call shell_quote,$(DEMO_INPUT)) \
 	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))

@@ -214,6 +214,26 @@ class MakefilePathTests(unittest.TestCase):
         self.assertIn("check ok", output)
         self.assertEqual(list(scratch.iterdir()), [])
 
+    def test_spaceful_python_path_for_installer_and_development_targets(self):
+        python = self.root / "python tools" / "python3"
+        python.parent.mkdir()
+        python.symlink_to(sys.executable)
+        variable = f"PYTHON={python}"
+        self.assertIn(str(self.skill), self.run_make("help", variable, external=True))
+        directory = self.root / "custom skills"
+        status = self.run_make("status", variable, f"SKILLS_DIR={directory}", external=True)
+        self.assertIn(str(directory / self.skill.name), status)
+
+        output = self.root / "demo output"
+        self.run_make("demo", variable, f"DEMO_OUT={output}", external=True)
+        self.assertTrue((output / "dashboard.html").is_file())
+        self.assertTrue((output / "report.md").is_file())
+        scratch = self.root / "check scratch"
+        scratch.mkdir()
+        output = self.run_make("check", variable, f"TMPDIR={scratch}", external=True)
+        self.assertIn("check ok", output)
+        self.assertEqual(list(scratch.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -33,7 +33,7 @@ from pathlib import Path
 import re
 import sys
 import unicodedata
-from urllib.parse import parse_qsl, unquote, urlsplit
+from urllib.parse import parse_qsl, unquote, unquote_plus, urlsplit
 
 # Keep source-only CLI runs from writing imported helpers into the skill tree.
 sys.dont_write_bytecode = True
@@ -81,11 +81,12 @@ COMMITMENT_KEYS = {"id", "statement", "source", "status", "family", "inferred", 
 PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
-COMMITMENT_ID = re.compile(r"^C-\d{2,}$")
-COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,}(?![\w-])")
+# Bounded so a long digit run cannot pass as an exempt technical identifier.
+COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
+COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,6}(?![\w-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
-LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
+LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d{1,9}(?:-\d{1,9})?$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL_MARKERS = re.compile(r'["@]')
@@ -99,9 +100,20 @@ IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 IDNA_LABEL_EXTRAS = frozenset("\u00b7\u0375\u05f3\u05f4\u06fd\u06fe\u0f0b\u200c\u200d\u30fb")
 EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|test|invalid)$",
                              re.IGNORECASE)
-# Horizontal Unicode whitespace and hyphens may separate the digits; line
+# Horizontal Unicode whitespace and hyphens, including Unicode dashes, the minus
+# sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
-LONG_NUMBER = re.compile(r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|-)*\d){11,}")
+LONG_NUMBER = re.compile(
+    r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11,}")
+# Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
+# 4-6-5). Groups of at most three digits, as in IP addresses, never match.
+GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
+                            r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
+# ISO dates and UUIDs are technical values; mask them before counting digits
+# so date ranges and identifiers are not mistaken for personal numbers.
+NOT_PERSONAL_NUMBERS = re.compile(
+    r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
+    r"|(?<![0-9A-Fa-f-])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f-])")
 
 
 class SchemaError(ValueError):
@@ -300,7 +312,7 @@ def _no_personal_values(value, where):
     for domain in _email_domains(value):
         if not EXAMPLE_DOMAINS.search(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
-    if LONG_NUMBER.search(value):
+    if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(NOT_PERSONAL_NUMBERS.sub("#", value)):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
 
 
@@ -318,6 +330,7 @@ def _check_reference_url(value, where):
     except ValueError:
         # Malformed references are still displayed as text by the renderer.
         _no_personal_values(unquote(value), where)
+        _no_personal_values(unquote_plus(value), where)
         return
     for part in parts:
         _no_personal_values(unquote(part), where)
@@ -467,10 +480,10 @@ def merge(doc, fragment, where):
         _list(fragment[key], f"{where}.{key}")
         if key == "perspectives":
             _list(doc.get(key, []), key)
-            for records in (doc.get(key, []), fragment[key]):
+            for label, records in ((key, doc.get(key, [])), (f"{where}.{key}", fragment[key])):
                 names = set()
                 for i, p in enumerate(records):
-                    at = f"{where}.{key}[{i}]"
+                    at = f"{label}[{i}]"
                     _object(p, PERSPECTIVE_KEYS, at)
                     _choice(p.get("name"), PERSPECTIVES, f"{at}.name")
                     if p["name"] in names:

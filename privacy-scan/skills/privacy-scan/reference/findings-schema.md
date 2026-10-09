@@ -33,6 +33,9 @@ before replacing existing files. Encoding or staging failures preserve the previ
 outputs and remove staging files. Each final replacement is atomic; replacing
 multiple output files is not a single transaction.
 Existing destination symlinks are retained and their target files are updated.
+Replaced files keep their permissions; newly created files are readable by
+their owner only (`0600`), because the record and reports describe where
+personal data goes.
 Before staging, the renderer rejects output paths that resolve to the input
 record or to each other. A rejected collision preserves the input, existing
 outputs and links.
@@ -70,7 +73,12 @@ top-level text lists, is checked for e-mail addresses (other than
 and Unicode e-mail forms, including complete internationalised domain labels
 and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
-spaces, tabs, non-breaking spaces or hyphens between digits.
+spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
+the katakana prolonged sound mark (`ー`) between digits, and card-style groups
+(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
+UUIDs are not counted as digit runs, so date ranges and identifiers stay
+allowed. Line numbers in `location` have at most nine digits and ledger IDs at
+most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
 Mail-header comments and folding whitespace around the local part, `@` and
 domain are also inspected without changing the saved text.
 Line breaks keep unrelated numbers separate. Only a temporary copy is normalised

@@ -24,6 +24,7 @@ import html
 import json
 import os
 from pathlib import Path
+import posixpath
 import re
 import shutil
 import subprocess
@@ -33,7 +34,7 @@ import time
 from urllib.parse import urlparse
 
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
-                       redact_json_values, redact_lines, split_lines)
+                       redact_json_values, redact_lines, scrub_lines, split_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -53,8 +54,12 @@ INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
 F_ID = re.compile(r"^F-([0-9]{3,})\Z")
 I_ID = re.compile(r"^I-([0-9]{3,})\Z")
 AP_ID = re.compile(r"^AP-([0-9]{2,})\Z")
-LOCATION = re.compile(r"^([^\s:]+):([0-9]+)(?:-([0-9]+))?\Z")
-CITED = re.compile(r"[\w./-]+\.[A-Za-z]\w*:[0-9]+")
+# Repository paths may contain spaces and colons ("env prod/main.tf"); only
+# the trailing :line or :line-line is structure.
+LOCATION = re.compile(r"^(\S(?:.*\S)?):([0-9]+)(?:-([0-9]+))?\Z")
+# A cited edge names a file: a path with an extension, or a known
+# extensionless file such as CODEOWNERS, Makefile or Dockerfile.
+CITED = re.compile(r"(?:[\w./@-]+\.[A-Za-z]\w*|(?:[\w.@-]+/)*(?:CODEOWNERS|[A-Z][A-Za-z]*file)):[0-9]+")
 DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
 # Keys outside these sets are typos or fields no output shows; refuse them
@@ -65,6 +70,10 @@ FINDING_KEYS = {"id", "title", "severity", "confidence", "category", "provider",
                 "detail", "validation"}
 AP_KEYS = {"id", "entry", "target", "status", "edges", "findings", "note"}
 PERSPECTIVE_KEYS = {"name", "status", "note"}
+VALIDATION_KEYS = {"verdict", "evidence"}
+INPUT_KEYS = {"kind", "path", "note"}
+REFERENCE_KEYS = {"title", "url"}
+INVENTORY_KEYS = {"resources", "by_provider", "files", "not_run"}
 BASE_FIELDS = ("title", "location")
 SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
@@ -138,6 +147,14 @@ def location_problem(location):
     return None
 
 
+def location_key(location):
+    """Order path:line numerically within a file: storage.tf:9 before :10."""
+    m = LOCATION.match(location) if isinstance(location, str) else None
+    if not m:
+        return (str(location), 0, 0)
+    return (m.group(1), int(m.group(2)), int(m.group(3) or m.group(2)))
+
+
 def empty_record():
     return {"schema_version": 1, "meta": {}, "attack_paths": [], "findings": [], "perspectives": [],
             "checked_ok": [], "decisions": [], "limitations": [], "next_steps": []}
@@ -183,9 +200,14 @@ def validate(data, partial=False):
             for i, item in enumerate(meta["inputs"]):
                 if not isinstance(item, dict) or item.get("kind") not in INPUT_KINDS or blank(item.get("path")):
                     add(f"meta.inputs[{i}]: needs kind ({'|'.join(INPUT_KINDS)}) and path")
+                elif set(item) - INPUT_KEYS:
+                    add(f"meta.inputs[{i}]: unknown keys {sorted(set(item) - INPUT_KEYS)}; "
+                        "put capture times and other details in note")
 
     if "inventory" in data and not isinstance(data["inventory"], dict):
         add("inventory: must be an object")
+    elif isinstance(data.get("inventory"), dict) and set(data["inventory"]) - INVENTORY_KEYS:
+        add(f"inventory: unknown keys {sorted(set(data['inventory']) - INVENTORY_KEYS)}")
 
     findings = data.get("findings", [])
     if not isinstance(findings, list):
@@ -267,6 +289,8 @@ def validate(data, partial=False):
             if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")):
                 add(f"{where}: references[{i}] needs title and url")
                 continue
+            if set(ref) - REFERENCE_KEYS:
+                add(f"{where}: references[{i}] unknown keys {sorted(set(ref) - REFERENCE_KEYS)}")
             u = urlparse(ref["url"])
             if u.scheme != "https" or not u.hostname or "@" in u.netloc:
                 add(f"{where}: references[{i}] must be an https URL without credentials")
@@ -274,6 +298,8 @@ def validate(data, partial=False):
         if not isinstance(val, dict) or val.get("verdict") not in VERDICTS:
             add(f"{where}: validation.verdict must be one of {', '.join(VERDICTS)}")
         else:
+            if set(val) - VALIDATION_KEYS:
+                add(f"{where}: validation unknown keys {sorted(set(val) - VALIDATION_KEYS)}")
             if "evidence" in val and not isinstance(val["evidence"], str):
                 add(f"{where}: validation.evidence must be a string")
             elif val["verdict"] in NEEDS_EVIDENCE and blank(val.get("evidence")):
@@ -375,6 +401,7 @@ LABELS = {
         "resources_n": "resources", "files_n": "files", "not_run": "Not run",
         "all": "All", "search": "Search", "shown": "shown", "copy": "Copy for LLM", "copied": "Copied",
         "expand": "Details", "active": "active", "excluded_n": "excluded", "unverified_n": "unverified",
+        "covered_n": "covered by review findings", "covered": "Covered by",
         "static_note": "Static review of configuration. No cloud API was called and no deployed resource was contacted.",
         "pdf_missing": "PDF not generated: no headless Chrome or WeasyPrint found.",
         "pdf_failed": "PDF not generated: the PDF engine was found but failed.",
@@ -402,6 +429,7 @@ LABELS = {
         "resources_n": "リソース", "files_n": "ファイル", "not_run": "未実施",
         "all": "すべて", "search": "検索", "shown": "件表示", "copy": "LLM用にコピー", "copied": "コピーしました",
         "expand": "詳細", "active": "有効", "excluded_n": "除外", "unverified_n": "未検証",
+        "covered_n": "検出事項に統合", "covered": "統合先",
         "static_note": "設定の静的レビューです。クラウド API の呼び出しや稼働中リソースへの通信は行っていません。",
         "pdf_missing": "PDF は生成されませんでした（ヘッドレス Chrome / WeasyPrint が見つかりません）。",
         "pdf_failed": "PDF は生成されませんでした（PDF エンジンは見つかりましたが失敗しました）。",
@@ -455,10 +483,32 @@ def ordered(findings):
     return sorted(findings, key=lambda f: (SEV_RANK.get(f.get("severity"), 9), id_key(f["id"])))
 
 
+BASELINE_ID = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
+
+
+def covered_by(data):
+    """{I-ID: [F-IDs]} for baseline hits whose root cause is a review finding.
+
+    reference/validation.md has the root-cause F-* name the I-* in its
+    evidence. Counting both would report one root cause twice.
+    """
+    out = {}
+    for f in data.get("findings", []):
+        if not F_ID.match(str(f.get("id", ""))) or is_excluded(f):
+            continue
+        evidence = f.get("validation", {}).get("evidence", "")
+        for iid in BASELINE_ID.findall(evidence if isinstance(evidence, str) else ""):
+            out.setdefault(iid, []).append(f["id"])
+    return out
+
+
 def counts(data):
-    active = [f for f in data.get("findings", []) if not is_excluded(f)]
+    covered = covered_by(data)
+    findings = data.get("findings", [])
+    active = [f for f in findings if not is_excluded(f) and f.get("id") not in covered]
     c = {s: sum(1 for f in active if f.get("severity") == s) for s in SEVERITIES}
-    c["excluded"] = len(data.get("findings", [])) - len(active)
+    c["excluded"] = sum(1 for f in findings if is_excluded(f))
+    c["covered"] = sum(1 for f in findings if not is_excluded(f) and f.get("id") in covered)
     c["unverified"] = sum(1 for f in active if f.get("validation", {}).get("verdict") == "Unverified")
     return c
 
@@ -468,8 +518,8 @@ def counts(data):
 # Terraform names state backups terraform.tfstate.<timestamp>.backup; dotenv
 # files carry an environment suffix (.env.production).
 SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
-                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|secret|credential|"
-                            r"id_(rsa|dsa|ecdsa|ed25519)|\.netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
+                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|\.env\.[^/]*$|\.envrc$|secret|credential|"
+                            r"id_(rsa|dsa|ecdsa|ed25519)|netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
                             r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
 
 
@@ -485,6 +535,9 @@ def hcl_declares_sensitive(text):
     return False
 
 
+HCL_MARKED_SECRET = re.compile(
+    r'(?<![\w.])sensitive\s*\(|\bephemeral\s*=\s*true\b|"SecureString"|'
+    r'resource\s+"kubernetes_secret(?:_v1)?"')
 HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key)"?\s*[=:]\s*"([^"\n]*)"')
 HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?value"?\s*[=:]')
 
@@ -496,12 +549,23 @@ def hcl_has_paired_secret(text):
     DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
     """
     from iac_scan import literal, parse_hcl
+    # Values Terraform itself treats as secret, wherever their names point.
+    if HCL_MARKED_SECRET.search(text):
+        return True
     lines = text.split("\n")
     for n, line in enumerate(lines):
         for match in HCL_NAME.finditer(line):
             if is_secret_name(match.group(1)) and any(
-                    HCL_VALUE.search(near) for near in lines[max(0, n - 5):n + 6]):
+                    HCL_VALUE.search(near) for near in lines[max(0, n - 15):n + 16]):
                 return True
+    pending = list(parse_hcl(text))
+    while pending:
+        block = pending.pop()
+        pending.extend(block.blocks)
+        # A secret-named parameter or env block with its value anywhere in the block.
+        names = [literal(block.attrs[k][0]) for k in ("name", "key") if k in block.attrs]
+        if "value" in block.attrs and any(not isinstance(x, str) or is_secret_name(x) for x in names):
+            return True
     for block in parse_hcl(text):
         if block.type == "variable" and block.labels and "default" in block.attrs and \
                 is_secret_name(block.labels[0]):
@@ -575,6 +639,9 @@ def source_lines(path):
         lines = redact_lines(lines, syntax=syntax)
         if syntax == "json":
             lines = redact_json_values(text, lines)
+        # Last, broad pass over free text: comments, script bodies, flags,
+        # connection strings and opaque tokens (redaction.scrub_lines).
+        lines = scrub_lines(lines, syntax="hcl" if syntax == "text" else syntax, original=split_lines(text))
     except (ValueError, TypeError, RecursionError):
         return None
     return lines
@@ -592,22 +659,26 @@ def attach_sources(data, repo, context=3):
         if f.get("rule") == "K8S-003":
             match = LOCATION.match(f.get("location", ""))
             if match:
-                secret_manifests.add(match.group(1))
+                secret_manifests.add(posixpath.normpath(match.group(1)))
     for f in data.get("findings", []):
         if f.get("rule") in ("SEC-001", "K8S-003"):
             continue
         m = LOCATION.match(f.get("location", ""))
         if not m:
             continue
-        rel, start = m.group(1), int(m.group(2))
+        rel, start = posixpath.normpath(m.group(1)), int(m.group(2))
         end = int(m.group(3) or start)
-        if rel in secret_manifests or SENSITIVE_NAME.search(rel):
+        # Judge the file that will be opened, not the spelling of the path:
+        # "terraform.tfstate/." names the state file too.
+        if rel in secret_manifests or SENSITIVE_NAME.search(rel) or rel.startswith(("../", "/")) or rel == "..":
             continue
         cand = root / rel
         try:
             if cand.is_symlink() or not cand.is_file():
                 continue
-            cand.resolve().relative_to(root)
+            real = cand.resolve().relative_to(root).as_posix()
+            if real in secret_manifests or SENSITIVE_NAME.search(real):
+                continue
             if cand.suffix.lower() in (".tf", ".tofu") or cand.name.lower().endswith((".tf.json", ".tofu.json")):
                 directory = cand.parent.resolve()
                 directory.relative_to(root)
@@ -676,9 +747,11 @@ def finding_markdown(f, L, lang):
     return "\n".join(lines).strip() + "\n"
 
 
-def detail_dl(f, L, lang, sources):
+def detail_dl(f, L, lang, sources, covered=()):
     rows = [(L["resources"], "<br>".join(f"<code>{esc(r)}</code>" for r in f.get("resources", []))),
             (L["location"], f"<code>{esc(f.get('location'))}</code>")]
+    if covered:
+        rows.append((L["covered"], ", ".join(f'<a href="#{esc(x)}">{esc(x)}</a>' for x in covered)))
     for key in FIELD_ORDER:
         value = field_text(f, key)
         if value:
@@ -817,7 +890,8 @@ var md=JSON.parse(document.getElementById('md').textContent);
 var rows=[].slice.call(document.querySelectorAll('tr.row'));
 var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),q:document.getElementById('f-q')};
 var count=document.getElementById('count');
-var active=rows.filter(function(r){return !r.classList.contains('excluded');}).length;
+function aside(r){return r.classList.contains('excluded')||r.classList.contains('covered');}
+var active=rows.filter(function(r){return !aside(r);}).length;
 function apply(){
   var q=f.q.value.trim().toLowerCase(),n=0,x=0;
   rows.forEach(function(r){
@@ -825,7 +899,7 @@ function apply(){
       (!f.cat.value||r.dataset.cat===f.cat.value)&&(!f.ver.value||r.dataset.ver===f.ver.value)&&
       (!q||r.dataset.text.indexOf(q)>=0);
     r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
-    if(ok){if(r.classList.contains('excluded'))x++;else n++;}
+    if(ok){if(aside(r))x++;else n++;}
   });
   // Match the severity cards: excluded findings are counted on their own.
   count.textContent=n+' / '+active+' '+count.dataset.l+(x?' + '+count.dataset.x+' '+x:'');
@@ -862,6 +936,7 @@ def options(values, L, lang):
 def render_dashboard(data, L, lang, sources):
     meta = data.get("meta", {})
     c = counts(data)
+    covered = covered_by(data)
     fs = ordered(data.get("findings", []))
     md = {f["id"]: finding_markdown(f, L, lang) for f in fs}
     # Escape every markup character: "<!--<script>" in a finding would
@@ -869,7 +944,7 @@ def render_dashboard(data, L, lang, sources):
     md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")
                .replace(">", "\\u003e").replace("&", "\\u0026"))
     banner = " · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES) + \
-        f" — {L['excluded_n']} {c['excluded']}, {L['unverified_n']} {c['unverified']}"
+        f" — {L['excluded_n']} {c['excluded']}, {L['covered_n']} {c['covered']}, {L['unverified_n']} {c['unverified']}"
     cards = "".join(f'<div class="card {s}"><span class="l">{esc(shown(s, lang))}</span><span class="n">{c[s]}</span></div>'
                     for s in SEVERITIES)
     aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or f'<p class="muted">{L["none"]}</p>'
@@ -886,7 +961,7 @@ def render_dashboard(data, L, lang, sources):
             searchable += [f.get(key), shown(f.get(key), lang)]
         searchable += [val, shown(val, lang)]
         text = " ".join(str(x) for x in searchable if x).lower()
-        cls = "row excluded" if is_excluded(f) else "row"
+        cls = "row excluded" if is_excluded(f) else "row covered" if f["id"] in covered else "row"
         rows.append(
             f'<tr class="{cls}" id="{esc(f["id"])}" data-sev="{esc(f.get("severity"))}" data-prov="{esc(f.get("provider"))}" '
             f'data-cat="{esc(f.get("category"))}" data-ver="{esc(val)}" data-text="{esc(text)}">'
@@ -899,7 +974,7 @@ def render_dashboard(data, L, lang, sources):
             f'<td data-l="{L["category"]}">{esc(shown(f.get("category"), lang))}</td>'
             f'<td data-l="{L["confidence"]}">{esc(shown(f.get("confidence"), lang))}</td>'
             f'<td data-l="{L["verdict"]}">{esc(shown(val, lang))}</td></tr>'
-            f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources)}'
+            f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}'
             f'<div class="detail-actions"><button class="copy" type="button" data-id="{esc(f["id"])}" '
             f'data-done="{esc(L["copied"])}">{L["copy"]}</button></div></td></tr>')
     table = "".join(rows) or f'<tr><td colspan="7" class="muted">{L["none"]}</td></tr>'
@@ -931,7 +1006,7 @@ def render_dashboard(data, L, lang, sources):
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
 <label class="search">{L["search"]}<input id="f-q" type="search"></label>
 </div>
-<p class="count" id="count" data-l="{L["shown"]}" data-x="{L["excluded_n"]}" aria-live="polite"></p>
+<p class="count" id="count" data-l="{L["shown"]}" data-x="{L["excluded_n"]} / {L["covered_n"]}" aria-live="polite"></p>
 <div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th>{L["severity"]}</th><th>{L["id"]}</th><th>{L["title"]}</th>
 <th>{L["provider"]}</th><th>{L["category"]}</th><th>{L["confidence"]}</th><th>{L["verdict"]}</th></tr></thead>
 <tbody>{table}</tbody></table></div>
@@ -966,6 +1041,7 @@ dt{font-family:system-ui,sans-serif}
 def render_assessment(data, L, lang, sources, pdf_note=""):
     meta = data.get("meta", {})
     c = counts(data)
+    covered = covered_by(data)
     fs = ordered(data.get("findings", []))
     active = [f for f in fs if not is_excluded(f)]
     excluded = [f for f in fs if is_excluded(f)]
@@ -974,7 +1050,7 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
         return (f'<article class="{cls}" id="{esc(f["id"])}"><h3><span class="badge {esc(f.get("severity"))}">'
                 f'{esc(shown(f.get("severity"), lang))}</span> {esc(f["id"])} {esc(f.get("title"))}</h3>'
                 f'<p class="muted">{esc(shown(f.get("category"), lang))} · {esc(f.get("provider"))} · {esc(shown(f.get("confidence"), lang))}</p>'
-                f'{detail_dl(f, L, lang, sources)}</article>')
+                f'{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}</article>')
 
     by_sev = "".join(
         f'<h3>{esc(shown(s, lang))}</h3>' + "".join(article(f) for f in active if f.get("severity") == s)
@@ -987,7 +1063,8 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
     aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or f'<p class="muted">{L["none"]}</p>'
     sections = [
         (L["summary"], f'<p><strong>{" · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES)}</strong> — '
-                       f'{L["excluded_n"]} {c["excluded"]}, {L["unverified_n"]} {c["unverified"]}</p>'
+                       f'{L["excluded_n"]} {c["excluded"]}, {L["covered_n"]} {c["covered"]}, '
+                       f'{L["unverified_n"]} {c["unverified"]}</p>'
                        f'<table><caption class="muted">{L["counts"]}</caption>{count_rows}</table><p>{L["static_note"]}</p>'
                        + (f'<p class="muted">{esc(pdf_note)}</p>' if pdf_note else "")),
         (L["scope_method"], f"<dl>{meta_rows(data, L, lang)}</dl>"),

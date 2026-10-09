@@ -250,8 +250,14 @@ class RedactionBoundaryTest(unittest.TestCase):
                     self.assertIn("availability_zone", page)
 
     def test_json_public_keylike_strings_and_boolean_values_keep_source(self):
-        texts = [json.dumps({"note": '"password": "visible-configuration"'}, indent=2),
-                 json.dumps({"password": False, "token": None, "public": "visible-configuration"}, indent=2)]
+        # Prose spelling "password": "x" inside a string is scrubbed by the final
+        # pass (redaction.scrub_lines); booleans and null stay visible.
+        prose = json.dumps({"note": '"password": "synthetic-prose-value"'}, indent=2)
+        path = self.write("resource.json", prose)
+        lines = render.source_lines(path)
+        self.assertEqual(len(lines), len(prose.splitlines()))
+        self.assertNotIn("synthetic-prose-value", "\n".join(lines))
+        texts = [json.dumps({"password": False, "token": None, "public": "visible-configuration"}, indent=2)]
         for text in texts:
             with self.subTest(text=text):
                 path = self.write("resource.json", text)

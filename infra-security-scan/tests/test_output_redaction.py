@@ -85,11 +85,17 @@ class SourceRedactionTest(OutputTest):
             json.dumps({"note": '"pass\\u0077ord": "' + value + '"'}),
         ]
         for suffix in ("json", "yaml"):
-            for text in variants:
+            for n, text in enumerate(variants):
                 with self.subTest(suffix=suffix, text=text):
                     self.write("resource." + suffix, text)
                     rows = self.excerpt("resource." + suffix + ":1")
-                    self.assertEqual(rows, [(1, text, True)])
+                    if n == 0:
+                        self.assertEqual(rows, [(1, text, True)])
+                    else:
+                        # A key or prose spelling "pass…" is treated as a secret
+                        # word by the final scrub; the line stays, its value goes.
+                        self.assertEqual([(r[0], r[2]) for r in rows], [(1, True)])
+                        self.assertNotIn(value, rows[0][1])
 
     def test_yaml_apostrophes_do_not_hide_escaped_secret_keys(self):
         value = "synthetic-" + "yaml-escaped-field"
@@ -496,11 +502,23 @@ class CloudFormationSourceRedactionTest(OutputTest):
                 self.assertIsNone(render.source_lines(self.repo / "template.json"))
                 self.assert_source_omitted(self.record("template.json:1"), value)
 
+    def test_default_referenced_by_a_secret_property_is_omitted(self):
+        value = "synthetic-" + "referenced-default"
+        for no_echo in (False, "false"):
+            template = self.template(no_echo, value, False)
+            self.write("template.json", json.dumps(template, indent=2))
+            line = next(n for n, row in enumerate(json.dumps(template, indent=2).splitlines(), 1) if value in row)
+            self.assert_source_omitted(self.record(f"template.json:{line}"), value)
+
     def test_false_noecho_keeps_public_json_and_yaml_excerpts(self):
         value = "visible-configuration"
         for no_echo in (False, "false", "FALSE"):
             for default_first in (False, True):
                 template = self.template(no_echo, value, default_first)
+                # A default feeding MasterUserPassword is a password whatever NoEcho
+                # says (test_default_referenced_by_a_secret_property_is_omitted).
+                props = template["Resources"]["Database"]["Properties"]
+                props["DBName"] = props.pop("MasterUserPassword")
                 variants = [("json", json.dumps(template, indent=indent)) for indent in (None, 2)]
                 variants += [("yaml", self.yaml_text(template, flow)) for flow in (False, True)]
                 for suffix, text in variants:

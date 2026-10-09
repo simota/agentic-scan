@@ -23,9 +23,12 @@ contract failed (reasons on stderr).
 """
 import argparse
 import json
+import os
 from pathlib import Path
 import re
+import stat
 import sys
+import tempfile
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
@@ -152,6 +155,9 @@ def validate(doc, complete=False):
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
     _optional_strings(meta, ("commit",), "meta")
+    for key in ("findings", "budgets", "perspectives"):
+        if not isinstance(doc.get(key, []), list):
+            raise SchemaError(f"{key}: must be a list")
     seen = set()
     for i, f in enumerate(doc.get("findings", [])):
         validate_finding(f, f"findings[{i}]")
@@ -224,17 +230,43 @@ def merge(doc, fragment, where):
     return doc
 
 
+def write_atomic(target, content):
+    """Replace a resolved target only after all bytes have been written and closed."""
+    mode = stat.S_IMODE(target.stat().st_mode) if target.exists() else None
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="wb", dir=target.parent,
+                                         prefix=f".{target.name}.", suffix=".tmp",
+                                         delete=False) as output:
+            temporary = Path(output.name)
+            output.write(content)
+        if mode is not None:
+            temporary.chmod(mode)
+        os.replace(temporary, target)
+        temporary = None
+    finally:
+        if temporary is not None:
+            try:
+                temporary.unlink(missing_ok=True)
+            except OSError as exc:
+                print(f"cleanup: {temporary}: {exc}", file=sys.stderr)
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target) if target.exists() else {}
+        # Keep the existing behavior of reading and updating a symlink's destination.
+        destination = target.resolve()
+        doc = read_json(destination) if destination.exists() else {}
+        validate(doc)
         for path in args.fragments:
             merge(doc, read_json(path), path)
         validate(doc)
-    except SchemaError as exc:
+        content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        write_atomic(destination, content)
+    except (SchemaError, OSError, UnicodeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
-    target.write_text(json.dumps(doc, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "
           f"{len(doc.get('findings', []))} finding(s)")
     return 0

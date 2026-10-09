@@ -19,7 +19,7 @@ import sys
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
+from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       read_json, validate)
 
 LABELS = {
@@ -40,6 +40,8 @@ LABELS = {
         "project": "System", "revision": "Revision", "date": "Date / assessor",
         "source": "Source", "inferred": "Inferred", "reason": "Reason not checked",
         "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
+        "verdict_counts": "Verification counts",
+        "incomplete_high": "High with incomplete verification",
     },
     "ja": {
         "title": "パフォーマンス診断", "summary": "サマリー", "scope": "対象と方法",
@@ -58,6 +60,7 @@ LABELS = {
         "project": "システム", "revision": "リビジョン", "date": "診断日 / 診断者",
         "source": "出典", "inferred": "推定", "reason": "未確認の理由",
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
+        "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
     },
 }
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
@@ -72,6 +75,28 @@ def finding_group(finding):
 def counts(findings):
     groups = [finding_group(f) for f in findings]
     return {s: groups.count(s) for s in SEVERITIES}, groups.count("excluded")
+
+
+def verification_summary(findings, labels):
+    """Use the same included findings as the severity totals, without upgrading verdicts."""
+    by_verdict = {v: 0 for v in VERDICTS if v not in EXCLUDED}
+    incomplete_high = 0
+    for finding in findings:
+        verdict = finding["validation"]["verdict"]
+        if verdict in EXCLUDED:
+            continue
+        by_verdict[verdict] += 1
+        if finding["severity"] == "High" and verdict != "Valid":
+            incomplete_high += 1
+    return (labels["verdict_counts"] + ": "
+            + " / ".join(f"{verdict} {count}" for verdict, count in by_verdict.items()),
+            f"{labels['incomplete_high']} {incomplete_high}")
+
+
+def review_note(findings, labels):
+    # A finding can retain static verification while recording a local measurement.
+    measured = any("measurement" in f for f in findings)
+    return labels["measured_note"] if measured else labels["static_note"]
 
 
 def as_text(value):
@@ -167,11 +192,12 @@ def render_markdown(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    measured = any(f["validation"]["method"] == "measured" for f in findings)
+    verdicts, incomplete_high = verification_summary(findings, t)
     lines = [f"# {t['title']}: {markdown_text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
-                 + (t["measured_note"] if measured else t["static_note"]))
+                 + review_note(findings, t))
+    lines += ["", f"{verdicts} · **{incomplete_high}**"]
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
               f"| Scope | {markdown_cell(meta.get('scope', ''))} |",
@@ -254,6 +280,7 @@ def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
+    verdicts, incomplete_high = verification_summary(findings, t)
     e = html_text
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
@@ -264,6 +291,8 @@ def render_html(doc, lang):
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
+    out.append(f"<p>{e(verdicts)} · <strong>{e(incomplete_high)}</strong></p>"
+               f"<p class='muted'>{e(review_note(findings, t))}</p>")
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)

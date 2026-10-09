@@ -110,19 +110,36 @@ def markdown_code(value):
     return "<br>".join(spans)
 
 
+def reference_destination(url):
+    """Encode supported reference URLs before escaping for an output format."""
+    try:
+        scheme = urlsplit(url).scheme.lower()
+    except ValueError:
+        return None
+    # Unsupported or malformed destinations remain visible as literal text.
+    if scheme not in ("", "http", "https"):
+        return None
+    return quote(url, safe="/:?#[]@!$&'()*+,;=%")
+
+
 def markdown_reference(ref):
     url = ref["url"]
     title = ref.get("title", url)
     label = markdown_text(title)
-    try:
-        scheme = urlsplit(url).scheme.lower()
-    except ValueError:
-        scheme = None
-    # Unsupported or malformed destinations remain visible as literal text.
-    if scheme not in ("", "http", "https"):
+    destination = reference_destination(url)
+    if destination is None:
         return label if title == url else f"{label} — {markdown_text(url)}"
-    destination = escape(quote(url, safe="/:?#[]@!$&'()*+,;=%"), quote=False)
-    return f"[{label}](<{destination}>)"
+    return f"[{label}](<{escape(destination, quote=False)}>)"
+
+
+def html_reference(ref):
+    url = ref["url"]
+    title = ref.get("title", url)
+    label = escape(title)
+    destination = reference_destination(url)
+    if destination is None:
+        return label if title == url else f"{label} — {escape(url)}"
+    return f'<a href="{escape(destination)}">{label}</a>'
 
 
 def commitment_text(record, labels):
@@ -248,7 +265,10 @@ def render_html(doc, lang):
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
-                   + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows) + "</dl></details>")
+                   + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows)
+                   + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"
+                             for ref in f.get("references", []))
+                   + "</dl></details>")
     if doc.get("commitments"):
         out.append(f"<h2>{e(t['commitments'])}</h2><table>")
         for r in doc["commitments"]:

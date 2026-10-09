@@ -1,4 +1,5 @@
-"""Regression checks for public prose validation and optional analysis records."""
+"""Regression checks for record validation, private values and safe merging."""
+import copy
 import io
 import json
 from pathlib import Path
@@ -395,6 +396,198 @@ class AnalysisShapeRegressionTests(unittest.TestCase):
             self.assertIn("findings[0].analysis.tool", stderr.getvalue())
             self.assertNotIn("Traceback", stderr.getvalue())
             self.assertFalse(out.exists())
+
+
+class RecordBoundaryRegressionTests(unittest.TestCase):
+    def assert_rejected_by_commands(self, doc):
+        """Every public entry point must fail without exposing or replacing data."""
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            out = tmp / "output"
+            out.mkdir()
+            target, fragment = out / "findings.json", tmp / "fragment.json"
+            original = json.dumps(complete_doc(), indent=2) + "\n"
+            submitted = json.dumps(doc)
+            target.write_text(original, encoding="utf-8")
+            fragment.write_text(submitted, encoding="utf-8")
+            stdout, stderr = io.StringIO(), io.StringIO()
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 1)
+            self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+            # Direct JSON input must not bypass the same checks or overwrite
+            # previously rendered reports before discovering a malformed field.
+            target.write_text(submitted, encoding="utf-8")
+            previous = {"report.md": "previous report", "dashboard.html": "previous dashboard"}
+            for name, text in previous.items():
+                (out / name).write_text(text, encoding="utf-8")
+            with redirect_stdout(stdout), redirect_stderr(stderr):
+                self.assertEqual(render.main([str(target), "--out", str(out)]), 2)
+                self.assertEqual(findings.main(["check", str(out)]), 1)
+            for name, text in previous.items():
+                self.assertEqual((out / name).read_text(encoding="utf-8"), text)
+            messages = stdout.getvalue() + stderr.getvalue()
+            self.assertNotIn("Traceback", messages)
+            self.assertNotIn(SYNTHETIC_EMAIL, messages)
+            self.assertNotIn(SYNTHETIC_NUMBER, messages)
+            self.assertNotIn("000000000000", messages)
+            self.assertTrue(stderr.getvalue().strip())
+
+    def test_unknown_fields_are_rejected_at_every_object_level(self):
+        objects = (
+            (), ("meta",), ("findings", 0), ("findings", 0, "validation"),
+            ("findings", 0, "analysis"), ("findings", 0, "references", 0),
+            ("commitments", 0), ("perspectives", 0),
+        )
+        for path in objects:
+            for value in (SYNTHETIC_EMAIL, {"captured_value": SYNTHETIC_NUMBER}):
+                with self.subTest(object=path, value=value):
+                    doc = doc_with_optional_prose()
+                    set_value(doc, (*path, "raw_output"), value)
+                    self.assert_rejected_by_commands(doc)
+
+    def test_unknown_key_names_are_not_disclosed_by_errors(self):
+        for path in ((), ("meta",), ("findings", 0), ("findings", 0, "validation"),
+                     ("findings", 0, "analysis"), ("findings", 0, "references", 0),
+                     ("commitments", 0), ("perspectives", 0)):
+            with self.subTest(object=path):
+                doc = doc_with_optional_prose()
+                set_value(doc, (*path, SYNTHETIC_EMAIL), "unexpected field")
+                self.assert_rejected_by_commands(doc)
+
+    def test_invalid_identifiers_enums_and_locations_do_not_echo_values(self):
+        paths = (
+            ("meta", "lang"),
+            *(("findings", 0, key) for key in
+              ("id", "severity", "confidence", "category", "status", "location")),
+            ("findings", 0, "validation", "verdict"),
+            ("findings", 0, "validation", "method"),
+            ("commitments", 0, "id"), ("commitments", 0, "status"),
+            ("perspectives", 0, "name"), ("perspectives", 0, "status"),
+        )
+        for path in paths:
+            for value in (SYNTHETIC_EMAIL, SYNTHETIC_NUMBER):
+                with self.subTest(field=path, value=value):
+                    doc = complete_doc()
+                    set_value(doc, path, value)
+                    self.assert_rejected_by_commands(doc)
+        doc = complete_doc()
+        # A missing line number must not expose the address in a fixture name.
+        doc["findings"][0]["location"] = ["fixtures/" + SYNTHETIC_EMAIL + ".json"]
+        self.assert_rejected_by_commands(doc)
+
+    def test_duplicate_identifiers_are_rejected_without_echoing_them(self):
+        for key, identifier in (("findings", "PV-001"),
+                                ("commitments", "C-000000000000")):
+            with self.subTest(records=key):
+                doc = complete_doc()
+                record = dict(doc[key][0], id=identifier)
+                doc[key] = [record, dict(record)]
+                self.assert_rejected_by_commands(doc)
+
+    def test_duplicate_perspectives_cannot_hide_unchecked_coverage(self):
+        doc = complete_doc()
+        doc["perspectives"].append(dict(doc["perspectives"][0], status="not checked",
+                                        note="The first review unit was not checked"))
+        self.assert_rejected_by_commands(doc)
+
+    def test_collection_fields_require_arrays(self):
+        paths = (("findings",), ("commitments",), ("perspectives",),
+                 ("findings", 0, "references"))
+        for path in paths:
+            for value in (None, {}, SYNTHETIC_EMAIL):
+                with self.subTest(field=path, value=value):
+                    doc = complete_doc()
+                    set_value(doc, path, value)
+                    self.assert_rejected_by_commands(doc)
+
+    def test_non_string_record_identifiers_are_schema_errors(self):
+        for key in ("findings", "commitments"):
+            for value in (None, [SYNTHETIC_EMAIL], {"value": SYNTHETIC_EMAIL}, 1):
+                with self.subTest(records=key, value=value):
+                    doc = complete_doc()
+                    doc[key][0]["id"] = value
+                    self.assert_rejected_by_commands(doc)
+        for value in (None, [SYNTHETIC_EMAIL], {"value": SYNTHETIC_EMAIL}):
+            with self.subTest(perspective_name=value):
+                doc = complete_doc()
+                doc["perspectives"][0]["name"] = value
+                self.assert_rejected_by_commands(doc)
+
+    def test_optional_fields_cannot_carry_unchecked_nested_values(self):
+        paths = (
+            ("meta", "commit"), ("meta", "method"),
+            *(("findings", 0, key) for key in ("contrast", "step", "commitment")),
+            ("findings", 0, "validation", "evidence"),
+            ("findings", 0, "references", 0, "title"),
+            *(("commitments", 0, key) for key in ("family", "inferred", "reason")),
+        )
+        for path in paths:
+            with self.subTest(field=path):
+                doc = doc_with_optional_prose()
+                set_value(doc, path, {"raw_output": SYNTHETIC_EMAIL})
+                self.assert_rejected_by_commands(doc)
+        doc = complete_doc()
+        doc["commitments"][0]["family"] = SYNTHETIC_EMAIL
+        self.assert_rejected_by_commands(doc)
+
+    def test_invalid_existing_record_does_not_crash_or_get_overwritten(self):
+        updates = (
+            (("meta",), {"meta": {"scope": "Updated scope"}}),
+            (("findings",), {"findings": [{"id": "PV-001", "status": "Fixed"}]}),
+            (("commitments",), {"commitments": [{"id": "C-01", "status": "holds"}]}),
+            (("perspectives",), {"perspectives": complete_doc()["perspectives"]}),
+            (("limitations",), {"limitations": ["Deployment was not observed"]}),
+            (("findings", 0, "id"), {"findings": [{"id": "PV-001", "status": "Fixed"}]}),
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            target, fragment = Path(directory) / "findings.json", Path(directory) / "fragment.json"
+            for path, update in updates:
+                with self.subTest(field=path):
+                    doc = complete_doc()
+                    set_value(doc, path, {"value": SYNTHETIC_EMAIL})
+                    original = json.dumps(doc)
+                    target.write_text(original, encoding="utf-8")
+                    fragment.write_text(json.dumps(update), encoding="utf-8")
+                    stderr = io.StringIO()
+                    with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                        self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 1)
+                    self.assertEqual(target.read_text(encoding="utf-8"), original)
+                    self.assertNotIn(SYNTHETIC_EMAIL, stderr.getvalue())
+
+    def test_documented_optional_fields_and_partial_updates_still_work(self):
+        original = complete_doc()
+        perspective = dict(original["perspectives"][0], status="not checked",
+                           note="A deployment setting remains unknown")
+        update = {
+            "meta": {"scope": "Updated scope", "commit": "0" * 40, "method": "Static review"},
+            "findings": [{"id": "PV-001", "status": "Fixed", "contrast": "none",
+                          "commitment": "C-01", "analysis": dict(SAFE_ANALYSIS),
+                          "references": [{"url": "#scope"}]}],
+            "commitments": [{"id": "C-01", "family": "CONTAIN", "inferred": False,
+                             "status": "not checked", "reason": "Deployment was not observed"}],
+            "perspectives": [perspective],
+            "limitations": [original["limitations"][0], "Deployment was not observed"],
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            tmp = Path(directory)
+            out = tmp / "output"
+            out.mkdir()
+            target, first, second = out / "findings.json", tmp / "first.json", tmp / "second.json"
+            first.write_text(json.dumps(original), encoding="utf-8")
+            second.write_text(json.dumps(update), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(target), str(first), str(second)]), 0)
+                self.assertEqual(render.main([str(target), "--out", str(out)]), 0)
+                self.assertEqual(findings.main(["check", str(out)]), 0)
+            merged = json.loads(target.read_text(encoding="utf-8"))
+            expected_finding = copy.deepcopy(original["findings"][0])
+            expected_finding.update(update["findings"][0])
+            self.assertEqual(merged["findings"][0], expected_finding)
+            self.assertEqual(merged["findings"][1], original["findings"][1])
+            self.assertEqual(len(merged["perspectives"]), len(findings.PERSPECTIVES))
+            self.assertEqual(merged["perspectives"][-1], perspective)
+            self.assertEqual(merged["limitations"], update["limitations"])
 
 
 if __name__ == "__main__":

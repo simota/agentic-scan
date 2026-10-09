@@ -1,8 +1,9 @@
-"""Regression checks for report contents and output preservation on failure."""
+"""Regression checks for report contents, references and output preservation on failure."""
 import io
 import json
 from contextlib import redirect_stdout
 from html import escape
+from html.parser import HTMLParser
 from pathlib import Path
 import tempfile
 import unittest
@@ -11,7 +12,24 @@ from unittest.mock import patch
 from test_privacy_scan import complete_doc, render
 
 
-class CommitmentRenderingTests(unittest.TestCase):
+class ParsedHTML(HTMLParser):
+    def __init__(self, source):
+        super().__init__()
+        self.tags = []
+        self.links = []
+        self.text = []
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append(tag)
+        if tag == "a":
+            self.links.append(dict(attrs))
+
+    def handle_data(self, data):
+        self.text.append(data)
+
+
+class ReportRenderingTests(unittest.TestCase):
     def render_outputs(self, doc, lang):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory)
@@ -73,6 +91,90 @@ class CommitmentRenderingTests(unittest.TestCase):
                     self.assertIn("| C-01 | no PII in errors | policy | violated |", outputs["report.md"])
                     self.assertIn("<tr><td>C-01</td><td>no PII in errors</td>"
                                   "<td>policy</td><td>violated</td></tr>", outputs["dashboard.html"])
+
+    def test_references_remain_in_both_outputs_and_languages(self):
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [
+            {"title": "Vendor privacy", "url": "https://example.invalid/privacy"},
+            {"title": "SDK reference", "url": "http://example.invalid/reference"},
+            {"title": "Local policy", "url": "docs/privacy (policy).md#scope"},
+            {"url": "#scope"},
+        ]
+        expected_links = [
+            {"href": "https://example.invalid/privacy"},
+            {"href": "http://example.invalid/reference"},
+            {"href": "docs/privacy%20(policy).md#scope"},
+            {"href": "#scope"},
+        ]
+        for lang, label in (("en", "references"), ("ja", "参考")):
+            with self.subTest(lang=lang):
+                outputs = self.render_outputs(doc, lang)
+                parsed = ParsedHTML(outputs["dashboard.html"])
+                self.assertEqual(parsed.links, expected_links)
+                self.assertEqual(outputs["dashboard.html"].count(f"<dt>{label}</dt>"), 4)
+                for ref in doc["findings"][0]["references"]:
+                    self.assertIn(ref.get("title", ref["url"]), "".join(parsed.text))
+                for reference in (
+                    "[Vendor privacy](<https://example.invalid/privacy>)",
+                    "[SDK reference](<http://example.invalid/reference>)",
+                    "[Local policy](<docs/privacy%20(policy).md#scope>)",
+                    r"[\#scope](<#scope>)",
+                ):
+                    self.assertIn(f"- **{label}:** {reference}", outputs["report.md"])
+
+    def test_reference_title_and_url_cannot_add_html_elements_or_attributes(self):
+        doc = complete_doc()
+        title = '<img src=x onerror=alert(1)> "privacy" & <script>alert(1)</script>'
+        url = 'https://example.invalid/docs?value=" onmouseover="alert(1)&kind=<email>'
+        doc["findings"][0]["references"] = [{"title": title, "url": url}]
+        expected_destination = (
+            "https://example.invalid/docs?value=%22%20onmouseover=%22alert(1)&kind=%3Cemail%3E")
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                outputs = self.render_outputs(doc, lang)
+                parsed = ParsedHTML(outputs["dashboard.html"])
+                self.assertEqual(parsed.links, [{"href": expected_destination}])
+                self.assertNotIn("img", parsed.tags)
+                self.assertEqual(parsed.tags.count("script"), 1)  # The dashboard's fixed script.
+                self.assertIn(title, "".join(parsed.text))
+                self.assertIn(escape(title), outputs["dashboard.html"])
+                self.assertIn(escape(expected_destination), outputs["dashboard.html"])
+                self.assertNotIn("<img", outputs["report.md"])
+                self.assertNotIn("<script>alert(1)</script>", outputs["report.md"])
+
+    def test_unsupported_or_malformed_html_references_stay_visible_without_links(self):
+        urls = (
+            "javascript:alert(1)",
+            "java\nscript:alert(1)",
+            "data:text/html,<script>alert(1)</script>",
+            "file:///private/report.txt",
+            "https://[broken",
+        )
+        for lang, label in (("en", "references"), ("ja", "参考")):
+            for url in urls:
+                with self.subTest(lang=lang, url=url):
+                    doc = complete_doc()
+                    title = "Reference <untrusted>"
+                    doc["findings"][0]["references"] = [{"title": title, "url": url}]
+                    outputs = self.render_outputs(doc, lang)
+                    parsed = ParsedHTML(outputs["dashboard.html"])
+                    self.assertEqual(parsed.links, [])
+                    self.assertEqual(parsed.tags.count("script"), 1)
+                    self.assertNotIn("untrusted", parsed.tags)
+                    self.assertIn(f"{title} — {url}", "".join(parsed.text))
+                    self.assertIn(
+                        f"<dt>{label}</dt><dd>{escape(title)} — {escape(url)}</dd>",
+                        outputs["dashboard.html"],
+                    )
+                    self.assertNotIn("](<", outputs["report.md"])
+
+    def test_unsupported_reference_without_title_keeps_its_url(self):
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [{"url": "javascript:alert(1)"}]
+        outputs = self.render_outputs(doc, "en")
+        self.assertIn("<dt>references</dt><dd>javascript:alert(1)</dd>", outputs["dashboard.html"])
+        self.assertIn("- **references:** javascript:alert(1)\n", outputs["report.md"])
+        self.assertEqual(ParsedHTML(outputs["dashboard.html"]).links, [])
 
 
 class RenderFailureTests(unittest.TestCase):

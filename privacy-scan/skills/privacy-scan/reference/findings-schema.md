@@ -39,10 +39,17 @@ Merge semantics:
   duplicates
 
 Every merge validates the combined record; a refused merge writes nothing.
-Each finding must be complete in the fragment that first adds it. A finding
-whose text or evidence contains an e-mail address (other than `example.com`,
-`example.org`, `example.net` or the `.example`, `.test`, `.invalid` domains) or
-a run of 12 or more digits is refused: name fields, use placeholders.
+Each finding must be complete in the fragment that first adds it. Report
+prose, including analysis results, commitments, perspective notes and the
+top-level text lists, is checked for e-mail addresses (other than
+`example.com`, `example.org`, `example.net` or the `.example`, `.test`,
+`.invalid` domains) and runs of 12 or more digits, including space- or
+hyphen-separated digits and numbers next to punctuation. Name fields and use
+placeholders.
+
+Recognised hexadecimal revisions in `meta.commit` and the line-number suffix
+of a validated `location` are treated as technical identifiers. The location's
+path and other report prose are still checked.
 
 ## Shape
 
@@ -109,9 +116,9 @@ a run of 12 or more digits is refused: name fields, use placeholders.
 | `contrast`, `commitment` | Optional strings: the flow that keeps the commitment; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
-| `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source |
+| `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}` |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`. `family` and `inferred` are optional |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`, shown in both reports. `family` and `inferred` are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

@@ -76,6 +76,7 @@ LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL_START = re.compile(
     r'(?:"(?:[^"\\\r\n]|\\[^\r\n])*"|[^\s"(),:;<>@\[\]\\]+)@')
+EMAIL_LITERAL_DOMAIN = re.compile(r"\[[^\[\]\r\n]+\]")
 IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 # IDNA exceptions and join controls (RFC 5892, sections 2.6 and 2.8) can
 # occur in labels too. Candidate detection need not validate their context.
@@ -145,9 +146,15 @@ def _choice(value, allowed, where):
 
 
 def _email_domains(value):
-    """Read complete Unicode labels without consuming surrounding punctuation."""
+    """Read bracketed literals or complete Unicode domain labels."""
     for match in EMAIL_START.finditer(value):
         end = match.end()
+        literal = EMAIL_LITERAL_DOMAIN.match(value, end)
+        if literal:
+            # Keep brackets so literal addresses cannot match example domains.
+            # This is candidate detection, not IP or SMTP syntax validation.
+            yield literal.group()
+            continue
         while end < len(value):
             char = value[end]
             # Unlike \w, Unicode marks remain part of the current label. Do

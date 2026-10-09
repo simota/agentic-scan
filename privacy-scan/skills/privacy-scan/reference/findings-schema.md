@@ -58,8 +58,10 @@ prose, including analysis results, commitments, perspective notes and the
 top-level text lists, is checked for e-mail addresses (other than
 `example.com`, `example.org`, `example.net` or the `.example`, `.test`,
 `.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
-and Unicode e-mail forms, including complete internationalised domain labels,
-and repeated spaces, tabs, non-breaking spaces or hyphens between digits.
+and Unicode e-mail forms, including complete internationalised domain labels
+and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
+not exempted as reserved example domains. The guard also recognises repeated
+spaces, tabs, non-breaking spaces or hyphens between digits.
 Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
 for inspection; accepted text retains its original spelling. Name fields and
 use placeholders.

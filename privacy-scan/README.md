@@ -138,6 +138,8 @@ make demo    # render the sample into $TMPDIR/privacy-scan-demo (LANG_OUT=en for
 ```
 
 Requirements: Python 3.9+. No third-party packages.
+CI (`.github/workflows/check.yml`) runs `make check` on Python 3.9 and 3.13 on
+Linux, and on macOS (GNU Make 3.81 and BSD tools).
 
 The format follows the sibling `security-scan`, `performance-scan` and
 `architecture-scan` skills (same phases, run contract, verdicts and report

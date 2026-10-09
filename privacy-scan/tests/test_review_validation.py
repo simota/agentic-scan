@@ -18,10 +18,13 @@ def field_name(path):
 
 
 def write_outputs(out, doc=None):
+    """Write a record with the reports rendered from it, as a finished run would."""
     out.mkdir()
-    (out / "findings.json").write_text(json.dumps(doc or complete_doc()), encoding="utf-8")
-    for name in ("report.md", "dashboard.html"):
-        (out / name).write_text("previous output", encoding="utf-8")
+    doc = doc or complete_doc()
+    (out / "findings.json").write_text(json.dumps(doc), encoding="utf-8")
+    lang = doc["meta"]["lang"]
+    (out / "report.md").write_text(render.render_markdown(doc, lang), encoding="utf-8")
+    (out / "dashboard.html").write_text(render.render_html(doc, lang), encoding="utf-8")
 
 
 class UnicodeInputTests(unittest.TestCase):

@@ -122,13 +122,28 @@ class RenderConsistencyTests(unittest.TestCase):
         doc = complete_doc()
         markdown = render.render_markdown(doc, "ja")
         html = render.render_html(doc, "ja")
-        self.assertIn("| ID | 約束 | 出典 | ステータス |", markdown)
+        self.assertIn("| ID | 約束 | 分類 | 出典 | ステータス |", markdown)
         self.assertIn("| 観点 | ステータス | メモ |", markdown)
         self.assertNotIn("| Source |", markdown)
-        self.assertIn("<thead><tr><th>ID</th><th>約束</th><th>出典</th><th>ステータス</th></tr></thead>",
+        self.assertIn("<thead><tr><th>ID</th><th>約束</th><th>分類</th><th>出典</th><th>ステータス</th>"
+                      "</tr></thead>",
                       html)
         self.assertIn("<th>観点</th>", html)
-        self.assertIn("| ID | Commitment | Source | Status |", render.render_markdown(doc, "en"))
+        self.assertIn("| ID | Commitment | Family | Source | Status |",
+                      render.render_markdown(doc, "en"))
+
+    def test_step_and_family_are_shown_in_both_reports(self):
+        doc = complete_doc()
+        doc["commitments"][0]["family"] = "CONTAIN"
+        markdown = render.render_markdown(doc, "en")
+        html = render.render_html(doc, "en")
+        self.assertIn("- **perspective:** Logs, telemetry and errors (LT2)", markdown)
+        self.assertIn("<dt>perspective</dt><dd>Logs, telemetry and errors (LT2)</dd>", html)
+        self.assertIn("| C-01 | no PII in errors | CONTAIN | policy | violated |", markdown)
+        self.assertIn("<td>CONTAIN</td>", html)
+        doc["findings"][0]["step"] = " "
+        self.assertIn("- **perspective:** Logs, telemetry and errors\n",
+                      render.render_markdown(doc, "en"))
 
     def test_perspectives_use_the_reference_order_in_both_reports(self):
         doc = complete_doc()

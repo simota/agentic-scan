@@ -22,7 +22,7 @@
 | Low | {{n_low}} | |
 | Info | {{n_info}} | |
 
-除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。未検証（Unverified）: {{n_unverified}} 件。
+除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。検証未完了 — Likely: {{n_likely}} 件、Unverified: {{n_unverified}} 件、Unlikely: {{n_unlikely}} 件。
 
 ## 2. 対象と方法
 

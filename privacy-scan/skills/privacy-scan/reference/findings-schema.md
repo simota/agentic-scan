@@ -33,6 +33,9 @@ before replacing existing files. Encoding or staging failures preserve the previ
 outputs and remove staging files. Each final replacement is atomic; replacing
 multiple output files is not a single transaction.
 Existing destination symlinks are retained and their target files are updated.
+Replaced files keep their permissions; newly created files are readable by
+their owner only (`0600`), because the record and reports describe where
+personal data goes.
 Before staging, the renderer rejects output paths that resolve to the input
 record or to each other. A rejected collision preserves the input, existing
 outputs and links.
@@ -70,7 +73,12 @@ top-level text lists, is checked for e-mail addresses (other than
 and Unicode e-mail forms, including complete internationalised domain labels
 and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
-spaces, tabs, non-breaking spaces or hyphens between digits.
+spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
+the katakana prolonged sound mark (`ー`) between digits, and card-style groups
+(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
+UUIDs are not counted as digit runs, so date ranges and identifiers stay
+allowed. Line numbers in `location` have at most nine digits and ledger IDs at
+most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
 Mail-header comments and folding whitespace around the local part, `@` and
 domain are also inspected without changing the saved text.
 Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
@@ -142,7 +150,7 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
       "impact": "Expected (C-01): no personal field reaches error tracking. Actual: addresses and phone numbers of affected customers are stored by the error tracking vendor",
       "commitment": "C-01",
       "fix": "Turn PII and request bodies off in api/app.py:22 and reuse the worker's before_send scrubber",
-      "guard": "Test raises an error in checkout with synthetic data and asserts the captured event has no body or user fields",
+      "guard": "Guard for C-01: test raises an error in checkout with synthetic data and asserts the captured event has no body or user fields",
       "validation": {"verdict": "Valid", "method": "static",
                      "evidence": "api/app.py:22 send_default_pii=True, max_request_body_size='always'"},
       "status": "Open"
@@ -168,16 +176,16 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`LT1`…) |
+| `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values |
-| `contrast`, `commitment` | Optional strings: the flow that keeps the commitment; the ledger ID |
+| `contrast`, `commitment` | Strings the schema treats as optional but `SKILL.md` expects on every finding: the flow that keeps the commitment at `path:line` (or `none`); the ledger ID. `check` reports a ledger ID that is not in `commitments` |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
 | `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`; an optional string for other verdicts |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string, shown in both reports) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

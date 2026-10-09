@@ -4,8 +4,10 @@
     python3 render.py FINDINGS --out DIR [--lang ja|en]
 
 Both outputs are derived from the one record; neither adds facts of its own.
-`dashboard.html` is self-contained and works offline. `report.md` follows the
-findings-report shape in `reference/report.md`.
+`dashboard.html` is self-contained and works offline. `report.md` holds the
+scope, counts, findings, commitments, perspective coverage, sound items,
+limitations, decisions and next steps; the chat summary in `reference/report.md`
+is written by the agent, not rendered.
 
 Exit codes: 0 written, 1 an output could not be saved, 2 the record does not
 match the schema (the field is named on stderr).
@@ -41,7 +43,8 @@ LABELS = {
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
-        "commitment_columns": ("ID", "Commitment", "Source", "Status"),
+        "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status"),
+        "perspective": "perspective",
         "perspective_columns": ("Perspective", "Status", "Note"),
     },
     "ja": {
@@ -60,7 +63,8 @@ LABELS = {
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
-        "commitment_columns": ("ID", "約束", "出典", "ステータス"),
+        "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス"),
+        "perspective": "観点",
         "perspective_columns": ("観点", "ステータス", "メモ"),
     },
 }
@@ -89,7 +93,11 @@ def shown(value):
 
 
 def finding_fields(f):
-    return [(key, f[key]) for key in FIELDS if key in f and shown(f[key])]
+    """The perspective (with its hunt step) leads the recorded fields."""
+    step = f.get("step", "")
+    perspective = f"{f['category']} ({step.strip()})" if step.strip() else f["category"]
+    return [("perspective", perspective)] + [(key, f[key]) for key in FIELDS
+                                             if key in f and shown(f[key])]
 
 
 def revision(meta):
@@ -243,10 +251,10 @@ def render_markdown(doc, lang):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
     if doc.get("commitments"):
-        lines += [f"## {t['commitments']}", "", markdown_row(t["commitment_columns"]), "|---|---|---|---|"]
+        lines += [f"## {t['commitments']}", "", markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            cells = (r["id"], statement, r["source"], status)
+            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
             lines.append(markdown_row(cells))
         lines.append("")
     lines += [f"## {t['perspectives']}", "", markdown_row(t["perspective_columns"]), "|---|---|---|"]
@@ -348,8 +356,8 @@ def render_html(doc, lang):
         out.append(f"<h2>{e(t['commitments'])}</h2><table>{html_head(t['commitment_columns'])}")
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            out.append(f"<tr><td>{e(r['id'])}</td><td>{e(statement)}</td>"
-                       f"<td>{e(r['source'])}</td><td>{e(status)}</td></tr>")
+            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
+            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
         out.append("</table>")
     out.append(f"<h2>{e(t['perspectives'])}</h2><table>{html_head(t['perspective_columns'])}")
     for row in perspective_rows(doc):

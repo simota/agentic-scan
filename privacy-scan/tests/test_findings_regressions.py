@@ -478,7 +478,7 @@ class RecordBoundaryRegressionTests(unittest.TestCase):
 
     def test_duplicate_identifiers_are_rejected_without_echoing_them(self):
         for key, identifier in (("findings", "PV-001"),
-                                ("commitments", "C-000000000000")):
+                                ("commitments", "C-999999")):
             with self.subTest(records=key):
                 doc = complete_doc()
                 record = dict(doc[key][0], id=identifier)

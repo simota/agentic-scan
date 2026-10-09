@@ -43,7 +43,7 @@ class MarkdownRenderingTests(unittest.TestCase):
         markdown = render.render_markdown(doc, "en")
         self.assertIn("| Scope | API \\| worker<br>batch<br>footer |", markdown)
         self.assertIn(
-            "| C-01 | No email \\| phone is logged<br>&lt;email&gt; | policy \\| text | violated |",
+            "| C-01 | No email \\| phone is logged<br>&lt;email&gt; |  | policy \\| text | violated |",
             markdown)
         self.assertIn(
             "| Data inventory and minimisation | applied | PC1 \\| PC2<br>follow-up |", markdown)

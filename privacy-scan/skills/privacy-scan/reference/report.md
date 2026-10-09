@@ -28,7 +28,7 @@ Write in the requester's language.
 3. **Findings, by severity** — each as:
 
    ```
-   [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] one-line title
+   PV-NNN [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] one-line title
      location: path:line at the assessed revision
      data: elements by field name and category
      subjects: whose data, and which of them
@@ -48,6 +48,8 @@ Write in the requester's language.
 7. **Files** — link `dashboard.html` and `report.md` rendered from
    `findings.json` (`reference/findings-schema.md`). The output directory holds
    exactly the set named in `SKILL.md` (*Run contract*)
+8. **Scratch** — the path of the scratch directory holding the data map,
+   ledger, flow rows and fragments (`SKILL.md`, *Run contract*)
 
 Use the same verdicts, confidence and verification basis in chat, dashboard
 and report. `findings.json` is the record; every chat finding must exist there.

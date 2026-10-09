@@ -44,9 +44,11 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   results, commitments and coverage notes, for e-mail addresses (including
   quoted, Unicode and address-literal forms, plus header comments and folding
   whitespace, outside reserved example domains)
-  and runs of 12 or more digits, even with repeated spaces, tabs or non-breaking
-  spaces. Reference URLs are also checked after decoding their components once;
-  accepted URLs keep their original spelling. Use field names and placeholders
+  and runs of 12 or more digits, even with repeated spaces, tabs, non-breaking
+  spaces, hyphens or Unicode dashes, or as card-style groups joined by `.`, `/`,
+  `_` or `+` (ISO dates and UUIDs are not counted). Reference URLs are also
+  checked after decoding their components once; accepted URLs keep their
+  original spelling. Use field names and placeholders
   throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
@@ -82,7 +84,7 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
 | `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, commitments, perspective coverage |
-| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, next steps |
+| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,
 nonempty files, gapless `PV-NNN` IDs in severity order, every perspective

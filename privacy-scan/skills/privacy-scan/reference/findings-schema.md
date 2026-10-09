@@ -51,6 +51,11 @@ Recognised hexadecimal revisions in `meta.commit` and the line-number suffix
 of a validated `location` are treated as technical identifiers. The location's
 path and other report prose are still checked.
 
+Report prose is rendered as literal text in Markdown: placeholders such as
+`<email>`, table punctuation and line breaks are preserved. Commands use code
+spans that preserve backticks, and HTTP(S) or relative reference links are
+encoded separately; other URL schemes remain visible as text.
+
 ## Shape
 
 ```json

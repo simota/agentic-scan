@@ -38,8 +38,9 @@ baseline                perspectives         └─ chat summary
   and federation, data protection, compute and workload, Kubernetes, serverless
   and API edge, secrets and keys, logging and detection, resilience and
   recovery, governance and guardrails, pipeline and state, coverage and drift
-- **Baseline** — `scripts/iac_scan.py` parses HCL, plan JSON, CloudFormation
-  JSON, Kubernetes YAML and AWS/GCP snapshot JSON (stdlib only), inventories
+- **Baseline** — `scripts/iac_scan.py` parses HCL (`.tf`, `.tofu`), plan JSON,
+  CloudFormation JSON, Kubernetes YAML and JSON (including `kubectl -o json`
+  exports), standalone IAM policy JSON and AWS/GCP snapshot JSON (stdlib only), inventories
   resources and applies deterministic rules as `I-*` findings to triage
   — Kubernetes supports block maps/lists, single-line flow collections, comments
   and opaque block strings. Unsupported YAML, including anchors, aliases, tags
@@ -53,8 +54,13 @@ baseline                perspectives         └─ chat summary
   — CloudFormation YAML inventories resource definitions under `Resources`,
   excluding parameter types and embedded template text; its baseline rules
   still require JSON input
+  — Terraform JSON (`*.tf.json`), unreadable, binary and deeply nested inputs
+  are listed in `not_run`; UTF-16/32 exports with a BOM are read
+  — on rescan, an `I-*` verdict follows its finding when the rule, file and
+  resources are unchanged
 - **Snapshots** — when deployed state matters, the skill hands the requester
-  read-only export commands to run themselves (`reference/snapshots.md`)
+  read-only export commands to run themselves (`reference/snapshots.md`); the
+  exports join the baseline with `iac_scan.py --snapshots DIR`
 
 ## Install
 

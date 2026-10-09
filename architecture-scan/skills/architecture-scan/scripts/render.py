@@ -146,7 +146,13 @@ def render_markdown(doc, lang):
         lines.append("")
         for key in FIELDS:
             if key in f:
-                lines.append(f"- **{t[key]}:** {text(f[key])}")
+                value = f[key]
+                if key == "location":
+                    paths = value if isinstance(value, list) else [value]
+                    formatted = ", ".join(markdown_code(path) for path in paths)
+                else:
+                    formatted = text(value)
+                lines.append(f"- **{t[key]}:** {formatted}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
         if v.get("evidence"):
             lines.append(f"- **{t['evidence']}:** {text(v['evidence'])}")

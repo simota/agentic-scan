@@ -47,6 +47,8 @@ validated after each fragment. A refused batch writes nothing, even if earlier
 fragments were valid. Invalid existing records must be corrected before merging.
 Each finding must be complete in the fragment that first adds it.
 Inputs must be UTF-8, including every string after JSON escapes are decoded.
+Duplicate keys within a JSON object are rejected, including nested objects,
+so an earlier value cannot be silently discarded before validation.
 Invalid text is rejected before merge or render opens an output for writing.
 
 ## Shape
@@ -109,7 +111,7 @@ Invalid text is rejected before merge or render opens an output for writing.
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`BL1`…) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |

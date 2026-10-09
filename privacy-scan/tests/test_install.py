@@ -1,5 +1,7 @@
 """Offline regression tests for literal install paths and existing entries."""
+import os
 from pathlib import Path
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -10,17 +12,126 @@ SKILL = REPO / "skills" / "privacy-scan"
 
 
 class InstallTests(unittest.TestCase):
-    def run_make(self, cwd, target, **variables):
+    def run_make(self, cwd, target, *, makefile=REPO / "Makefile", env=None, **variables):
         options = {"AGENT": "agy", "PROJECT": "", "SKILLS_DIR": ""}
         options.update(variables)
+        command = ["make", "--no-print-directory"]
+        if makefile is not None:
+            command += ["-f", str(makefile)]
+        command += [target, *[f"{key}={value}" for key, value in options.items()]]
         return subprocess.run(
-            ["make", "--no-print-directory", "-f", str(REPO / "Makefile"), target,
-             *[f"{key}={value}" for key, value in options.items()]],
-            cwd=cwd, capture_output=True, text=True, timeout=10,
+            command,
+            cwd=cwd, env=env, capture_output=True, text=True, timeout=10,
         )
 
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def copy_checkout(self, root, name):
+        checkout = root / name
+        checkout.mkdir()
+        shutil.copyfile(REPO / "Makefile", checkout / "Makefile")
+        source = checkout / "skills" / "privacy-scan"
+        shutil.copytree(SKILL, source)
+        return checkout, source
+
+    def test_checkout_paths_are_literal(self):
+        for name in ("checkout with spaces", "checkout's files", 'checkout "quoted" files',
+                     "checkout $(touch injected) `touch injected`"):
+            for invocation in ("default", "absolute"):
+                with self.subTest(name=name, invocation=invocation), tempfile.TemporaryDirectory() as d:
+                    root = Path(d)
+                    checkout, source = self.copy_checkout(root, name)
+                    requested = root / "host's skills"
+                    requested.mkdir()
+                    destination = requested / "privacy-scan"
+                    cwd = checkout if invocation == "default" else root
+                    makefile = None if invocation == "default" else checkout / "Makefile"
+                    options = {"makefile": makefile, "SKILLS_DIR": str(requested)}
+
+                    linked = self.run_make(cwd, "link", **options)
+                    self.assert_success(linked)
+                    self.assertTrue(destination.is_symlink(), linked.stdout + linked.stderr)
+                    self.assertEqual(destination.readlink(), source)
+                    self.assertTrue((destination / "SKILL.md").is_file())
+                    self.assert_success(self.run_make(cwd, "link", **options))
+                    status = self.run_make(cwd, "status", **options)
+                    self.assert_success(status)
+                    self.assertEqual(status.stdout.strip(), f"symlink  {destination} -> {source}")
+                    self.assert_success(self.run_make(cwd, "unlink", **options))
+                    self.assertFalse(destination.is_symlink())
+                    self.assertFalse((cwd / "injected").exists())
+
+    def test_existing_links_keep_checkout_alias_semantics(self):
+        for invocation in ("default", "absolute_alias"):
+            with self.subTest(invocation=invocation), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                checkout, source = self.copy_checkout(root, "checkout")
+                alias = root / "alias"
+                alias.symlink_to(checkout, target_is_directory=True)
+                requested = root / "skills"
+                requested.mkdir()
+                destination = requested / "privacy-scan"
+                cwd = alias if invocation == "default" else root
+                makefile = None if invocation == "default" else alias / "Makefile"
+                expected = source if invocation == "default" else alias / "skills" / "privacy-scan"
+                options = {"makefile": makefile, "SKILLS_DIR": str(requested),
+                           "env": {**os.environ, "PWD": str(cwd)}}
+
+                # Match the link target created by the original abspath-based installer.
+                destination.symlink_to(expected, target_is_directory=True)
+                self.assert_success(self.run_make(cwd, "link", **options))
+                self.assertEqual(destination.readlink(), expected)
+                self.assert_success(self.run_make(cwd, "unlink", **options))
+                self.assertFalse(destination.is_symlink())
+                self.assert_success(self.run_make(cwd, "link", **options))
+                self.assertEqual(destination.readlink(), expected)
+                self.assertTrue((destination / "SKILL.md").is_file())
+
+    def test_makefile_list_prefixes_do_not_change_source(self):
+        for prefix in ("preload", "include"):
+            with self.subTest(prefix=prefix), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                checkout, source = self.copy_checkout(root, "checkout with spaces")
+                requested = root / "skills"
+                requested.mkdir()
+                options = {"makefile": checkout / "Makefile", "SKILLS_DIR": str(requested)}
+                wrapper = root / "wrapper.mk"
+                if prefix == "preload":
+                    wrapper.write_text("PRELOADED := yes\n", encoding="utf-8")
+                    options["MAKEFILES"] = str(wrapper)
+                else:
+                    escaped = str(checkout / "Makefile").replace(" ", "\\ ")
+                    wrapper.write_text(f"include {escaped}\n", encoding="utf-8")
+                    options["makefile"] = wrapper
+
+                self.assert_success(self.run_make(root, "link", **options))
+                self.assertEqual((requested / "privacy-scan").readlink(), source)
+
+    def test_missing_source_is_refused_before_linking(self):
+        for missing in ("directory", "manifest", "previously linked"):
+            with self.subTest(missing=missing), tempfile.TemporaryDirectory() as d:
+                root = Path(d)
+                checkout, source = self.copy_checkout(root, "checkout's files")
+                requested = root / "skills"
+                requested.mkdir()
+                destination = requested / "privacy-scan"
+                options = {"makefile": checkout / "Makefile", "SKILLS_DIR": str(requested)}
+                if missing == "previously linked":
+                    self.assert_success(self.run_make(root, "link", **options))
+                if missing == "manifest":
+                    (source / "SKILL.md").unlink()
+                else:
+                    shutil.rmtree(source)
+
+                linked = self.run_make(root, "link", **options)
+                self.assertNotEqual(linked.returncode, 0, linked.stdout + linked.stderr)
+                self.assertIn("refusing", linked.stderr)
+                if missing == "previously linked":
+                    self.assertEqual(destination.readlink(), source)
+                    self.assert_success(self.run_make(root, "unlink", **options))
+                self.assertFalse(destination.is_symlink())
+                self.assertFalse(destination.exists())
 
     def check_install_path(self, variable, suffix):
         for name in ("custom skills", "custom's skills"):

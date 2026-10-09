@@ -20,8 +20,11 @@ finding judged false stays in the record with its exclusion and evidence.
 | `NotApplicable` | The flow is dead code, the element is not personal in this context, or a commitment explicitly allows it | Agent or person, with evidence |
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
-`validation.evidence` citing `path:line`. Evidence names fields and locations,
-never values.
+`validation.evidence` citing `path:line`. Evidence names fields, settings and
+locations, never values: paraphrase the code instead of pasting a line, and
+replace any literal from code, fixtures, config or comments with a
+`<placeholder>`. The merge guard catches only e-mail addresses and long digit
+runs; names, street addresses and tokens are on you.
 
 ## Four claims for every finding
 

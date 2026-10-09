@@ -109,7 +109,7 @@ requester's language (`--lang ja|en`).
 | Real personal data appears in the repository (fixtures, seeds, dumps, screenshots) | Report its location and kind only. Never print the values; never copy them into scratch or the record |
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
 | Asked to lock a commitment in or confirm a fix | GUARD: a test in the repo's own suite with synthetic data, red before and green after |
-| The host cannot run a second, independent reviewer | Record that in `limitations`; High findings stay `Likely` unless the reporting agent traced them end to end. Never invent a second reviewer |
+| The host cannot run a second, independent reviewer | Record that in `limitations`; A High finding may be `Valid` only when the reporting agent traced it end to end; otherwise it stays `Likely` or `Unverified`. Never invent a second reviewer |
 | Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several. An open High goes to a private tracker. Filing or sending is the requester's step |
 
 ## Always / Never
@@ -136,7 +136,9 @@ requester's language (`--lang ja|en`).
 - Never: edit source, configs or dependencies during the review
 - Never: send source, findings or data to external services
 - Never: state that the application is or is not compliant with a law
-- Never: report a High or Medium finding you have not traced end to end yourself
+- Never: record a High or Medium finding as `Valid` unless you traced it end to
+  end yourself; an untraced one stays `Likely` or `Unverified` and its evidence
+  names the hop that was not read
 - Never: delete a finding judged false — mark it `FalsePositive` or
   `NotApplicable` with evidence so the exclusion is visible
 

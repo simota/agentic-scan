@@ -56,6 +56,7 @@ perspective is in brackets.
 | MN1 | Fields collected and never used, or used only for a purpose the commitments do not state | Data map (`reference/recon.md` §2) vs readers of each field | Each field has a reader serving a stated purpose — because data never collected cannot leak |
 | MN2 | Over-broad collection: full date of birth for an age check, precise location where city suffices, contact book upload, device permissions requested up front | Forms, mobile permission requests, SDK auto-collection settings | The narrowest form the purpose needs, requested when needed — because precision is risk |
 | MN3 | Free-text fields and uploads that invite sensitive data without handling it as such | Free-text and upload fields | Treated as personal (retention, access, logging) — because users write anything into them |
+| MN4 | Sensitive categories inferred from other data (health or pregnancy from purchases, orientation or religion from behaviour, age from content; scoring and profiling) | ML features, segmentation and scoring code, ad audiences | Inferred attributes are not derived, or are handled as the sensitive category they reveal — because inference creates the data |
 
 ### Purpose and consent (PC) [CONSENT]
 
@@ -91,6 +92,7 @@ perspective is in brackets.
 | TP2 | Third parties absent from the sub-processor list or policy | Manifests, SDK initialisation, outbound hosts vs the commitments | Every recipient is listed — because an undisclosed recipient breaks the promise regardless of payload |
 | TP3 | SDK auto-collection: session replay, automatic form capture, IP and device collection left on | SDK init options | Auto-collection off or masked for personal fields at `path:line` — because SDK defaults collect broadly |
 | TP4 | Customer-configured webhooks or integrations sending other subjects' data | Integration and webhook code | Payload scoped to what the receiving customer may see — because the integration widens the audience |
+| TP5 | AI/LLM providers keeping or training on prompts, files or embeddings, or holding personal data in their own stores (assistants, threads, files, vector stores) | AI client initialisation and request options, upload and embedding calls | Retention and training opt-out set at `path:line` (or `UNKNOWN` in `decisions`), and provider-side objects removed on deletion and listed in exports — because the provider is a store too |
 
 ### Logs, telemetry and errors (LT) [CONTAIN]
 
@@ -108,6 +110,8 @@ perspective is in brackets.
 | EX1 | Responses and views showing other users' personal fields beyond need (full email, phone, address in lists, member directories, comments) | Serializers and templates for multi-user views | An explicit output shape per audience, masked where full values are not needed — because every viewer is a recipient |
 | EX2 | Staff and support tools: unrestricted search, unmasked sensitive fields, impersonation without audit | Admin panels, support tools | Role-scoped access, masking and an audit log at `path:line` — because insiders are recipients too |
 | EX3 | Public or shareable links exposing personal data, guessable IDs on public routes | Share-link and public routes | Unguessable tokens, expiry and minimal content — because a link travels |
+| EX4 | Personal responses cacheable by shared caches or CDNs, or cached under keys without the user or tenant (missing `Cache-Control: private`/`no-store`) | Response header middleware, CDN and edge config, cache decorators | Personal responses are `private` or `no-store`, and cache keys include the subject — because a shared cache serves one user's data to the next |
+| EX5 | Sensitive content in push, SMS or e-mail bodies and subjects (lock screens, shared inboxes, provider logs) | Notification and mail builders | Generic text with the detail behind sign-in — because notifications are shown and stored outside the app |
 
 ### Storage protection (SP) [PROTECT]
 
@@ -126,7 +130,7 @@ decrypts pages for reads and does not encrypt the contents of a BACPAC export.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| CT1 | *(sound constructs)* Third-party scripts, pixels and SDKs loaded or initialised before consent | HTML templates, tag manager setup, app bootstrap | Loaded only after the matching consent category is granted — because loading is already sharing |
+| CT1 | *(sound constructs)* Third-party scripts, pixels and SDKs loaded or initialised before consent | HTML templates, tag manager setup, app bootstrap, mobile SDK initialisation, advertising-ID access vs the tracking-permission prompt | Loaded only after the matching consent category is granted — because loading is already sharing |
 | CT2 | Cookies and local storage set for non-essential purposes before consent; long expiries | Cookie setters, storage writes | Non-essential storage gated on consent with stated expiries — because the commitments name them |
 | CT3 | Personal data kept in client storage (local storage, IndexedDB, mobile preferences) unencrypted or after logout | Client storage writes; logout handlers | Minimal client storage cleared on logout — because shared devices are common |
 
@@ -134,7 +138,7 @@ decrypts pages for reads and does not encrypt the contents of a BACPAC export.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| ID1 | "Anonymised" data that is pseudonymous: hashed emails or phones, stable IDs, quasi-identifiers (postcode, birth date, gender) kept together | Anonymisation code, exports for analytics or partners | The claimed loss of linkability is supported for each recipient after checking identifiers, quasi-identifiers, available keys, mappings and candidate identities; otherwise `UNKNOWN` — because keyed or rotated pseudonyms can still be matched to a subject |
+| ID1 | "Anonymised" data that is pseudonymous: hashed emails or phones, stable IDs, quasi-identifiers (postcode, birth date, gender) kept together | Anonymisation code, exports for analytics or partners | The claimed loss of linkability is supported for each recipient after checking identifiers, quasi-identifiers, available keys, mappings and candidate identities; statically sound only when all identifiers and quasi-identifiers are removed or the data is aggregated; otherwise `UNKNOWN` — because keyed or rotated pseudonyms can still be matched to a subject |
 | ID2 | Emails or government IDs used as primary keys or join keys across systems | Schemas and integration payloads | Internal opaque IDs, personal values kept as attributes — because a key spreads to every table and system |
 
 Treat keyed, rotated identifiers as pseudonymisation unless the claimed loss

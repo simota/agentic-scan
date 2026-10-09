@@ -54,8 +54,9 @@ Families:
 Seed the ledger with one `baseline` entry per family that applies (e.g. `B-01
 QRY baseline: every hot list endpoint issues a constant number of queries`),
 then add app-specific entries. A baseline entry uses `source: "baseline"` plus
-any supporting `path:line` and `inferred: false`; it goes to `decisions` only
-when the code contradicts it. *Status* is `holds`, `violated`, `partly read`
+any supporting `path:line` and `inferred: false`, and is never a decision: code
+that contradicts it is a finding. Only inferred bounds go to `decisions`.
+*Status* is `holds`, `violated`, `partly read`
 or `not checked` (with a reason).
 
 ## 3. Cost-trace rows

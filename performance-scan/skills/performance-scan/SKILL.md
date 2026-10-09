@@ -26,7 +26,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Confirm scope in one line.** The repository is the requester's, the review
   is static, and no deployed system receives load. If the request implies a
   load test or profiling, see the measurement row in *Decide first*
-- **Name the workloads before reading handlers**: interactive requests (per
+- **Name the workloads before tracing handlers** (skim them for frequency hints such as polling intervals and schedules): interactive requests (per
   screen or API call), API clients and integrations, background jobs and
   schedules, imports and exports, startup and deploy. A cost is only a problem
   relative to how often and how latency-sensitively it is paid
@@ -46,15 +46,15 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Item | Fixed choice |
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
-| Review units | Group the workload inventory by domain: one unit per domain plus one cross-cutting unit (DB and HTTP client setup, middleware, caching layer, runtime and build config). Each unit first hunts the budget ledger entries it owns, then sweeps every applicable perspective once over the unit. A unit closes only when its close-check matches (`reference/budgets.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
+| Review units | Group the workload inventory by domain: one unit per domain plus one cross-cutting unit (DB and HTTP client setup, middleware, caching layer, runtime and build config). With fewer than about 15 entry points, one unit plus the cross-cutting unit is enough. A ledger entry belongs to every unit that has a path paying it: each unit writes rows only for its own paths, and the coordinator sets the entry's status from all units' rows. Each unit first hunts the budget ledger entries it owns, then sweeps every applicable perspective once over the unit. A unit closes only when its close-check matches (`reference/budgets.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language (`--lang` changes only the labels; finding text stays in the language it was written in). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). Reviewers never put `perspectives` in their fragments (a later entry replaces an earlier one whole); they keep per-unit notes in scratch, and the coordinator writes one entry per perspective combining every unit. One REPORT coordinator runs all merges to the same `findings.json` sequentially; parallel reviewers write scratch fragments only. Atomic replacement does not detect concurrent updates |
+| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). Reviewers never put `perspectives` in their fragments (a later entry replaces an earlier one whole); they keep per-unit notes in scratch, and the coordinator writes one entry per perspective combining every unit. One REPORT coordinator runs all merges to the same `findings.json` sequentially; parallel reviewers write scratch fragments only. Reviewers label findings in their notes with temporary IDs (`U<unit>-<n>`); after VERIFY the coordinator assigns the final `P-NNN` in severity order and writes the finding fragments once with those IDs, so no later merge has to renumber. Atomic replacement does not detect concurrent updates |
 | Read-only | Read, search and run this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
 
 | Severity | When |
@@ -70,9 +70,15 @@ finding as `Environment-dependent` and name the condition and the threshold at
 which it matters (e.g. "above ~10k rows per tenant"). Confidence does not move
 severity again: the condition has already been counted here.
 
-A stall of a shared resource (event loop, pool, global lock) is graded by the
+A stall or exhaustion of a shared resource (event loop, pool, global lock,
+the memory of a worker process that also serves hot traffic) is graded by the
 workloads that stall, not by the path that causes it: an admin export that
 blocks the event loop of the API is High, not Low.
+
+A defect outside performance found in passing (data crossing tenants, wrong
+results) is not graded with this table: record the performance aspect at its
+table severity, title the defect plainly, and add a `decisions` line routing it
+to security or correctness triage.
 
 ## Phases
 
@@ -107,7 +113,7 @@ requester's language (`--lang ja|en`).
 | Asked about one slow screen, endpoint or job | Scope the review units to the paths that serve it, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No document states a latency target or limit | Derive the budget from hard limits (timeouts, page-size maxima, body limits; not `inferred`) and, failing those, from existing pagination and the majority of handlers (`inferred: true`, with the bound itself in `decisions`). Hunt it either way (`reference/budgets.md` §1) |
 | The ORM loads relations lazily by default | List every relation accessed inside a loop or a serializer over a collection, and check each for eager loading on that path. This list is the N+1 hunt list |
-| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them; if they do not, report `Environment-dependent` and name the index to confirm |
+| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them. If they form a complete chain (the first revision has no parent) and no matching index appears, cite that as confirmed absence in the repository; the remaining condition is usually table size (`Environment-dependent`, naming the row threshold). Use "the migrations do not show either way" only when the schema history is partial or the schema lives outside the repository, and name the index to confirm |
 | A finding's cost depends on data volume | State the volume at which it matters and where the volume comes from; never present a guess of production size as fact |
 | A cache sits in front of the cost | Check the key, the invalidation, the TTL, the bound on size and what happens on a miss storm. A cache does not mitigate the first request after a miss or expiry (cold cache), nor a shared cost cached under a per-user key |
 | The framework is async or event-loop based | Hunt synchronous blocking calls (file, crypto, synchronous DNS resolution such as `socket.gethostbyname`, sync HTTP or DB clients, CPU-heavy loops) on the loop. One is enough to stall every concurrent request. Check what the framework already offloads (e.g. FastAPI runs sync `def` routes in a threadpool) before reporting |
@@ -142,7 +148,8 @@ requester's language (`--lang ja|en`).
   Write the cost model instead ("2N+1 queries"), and label any estimate as one
 - Never: report a High or Medium finding you have not traced end to end yourself
 - Never: delete a finding judged false — mark it `FalsePositive` or
-  `NotApplicable` with evidence so the exclusion is visible
+  `NotApplicable` with evidence so the exclusion is visible. A lead falsified
+  before it reached any fragment goes to `checked_ok` instead
 - Never: recommend a micro-optimisation as a finding when no workload pays the
   cost often enough to matter; record it as Info or leave it out
 

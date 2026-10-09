@@ -40,6 +40,11 @@ class EscapingTests(unittest.TestCase):
     def test_emoji_shortcodes_are_split(self):
         self.assertEqual(render.markdown_text("ratio :100: ok"), "ratio :<!-- -->100: ok")
         self.assertEqual(render.markdown_text("app/x.py:42"), "app/x.py:42")
+        self.assertEqual(render.markdown_text(":white_check_mark:"),
+                         ":<!-- -->white\\_check\\_mark:")
+        doc = complete_doc()
+        doc["findings"][0]["step"] = " "
+        self.assertIn("**perspective:** Database access\n", render.render_markdown(doc, "en"))
 
     def test_dashboard_perspective_table_has_headers_and_no_blank_evidence(self):
         doc = complete_doc()
@@ -47,6 +52,16 @@ class EscapingTests(unittest.TestCase):
         html = render.render_html(doc, "ja")
         self.assertIn("<th scope='col'>状態</th><th scope='col'>メモ</th>", html)
         self.assertEqual(html.count("<dt>evidence</dt>") + html.count("<dt>根拠</dt>"), 1)
+
+
+class RenderMessageTests(unittest.TestCase):
+    def test_schema_errors_name_the_input_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_text("[]", encoding="utf-8")
+            code, _, err = run(render.main, source, "--out", directory)
+            self.assertEqual(code, 2)
+            self.assertEqual(err, f"schema: {source}: top level: must be an object\n")
 
 
 class PermissionTests(unittest.TestCase):
@@ -73,15 +88,34 @@ class ContractTests(unittest.TestCase):
             write_outputs(Path(directory), doc)
             return findings.contract_problems(directory)
 
-    def test_excluded_findings_are_not_ranked_but_included_ones_are(self):
+    def test_excluded_findings_come_last_and_are_not_ranked(self):
+        excluded = {"verdict": "FalsePositive", "method": "static", "evidence": "x.py:1"}
         doc = complete_doc()
-        doc["findings"] = [finding("P-001", "Low", validation={
-            "verdict": "FalsePositive", "method": "static", "evidence": "x.py:1"}),
-            finding("P-002", "High")]
+        doc["findings"] = [finding("P-001", "Low"), finding("P-002", "High", validation=excluded)]
         self.assertEqual(self.problems(doc), [])
-        doc["findings"][0]["validation"] = {"verdict": "Valid", "method": "static", "evidence": "x"}
-        self.assertEqual(self.problems(doc),
-                         ["findings must be numbered in severity order (High first)"])
+        doc["findings"] = [finding("P-001", "Low", validation=excluded), finding("P-002", "High")]
+        self.assertEqual(self.problems(doc), [
+            "P-002: excluded findings (P-001) must be numbered after all others"])
+        doc["findings"] = [finding("P-001", "Low"), finding("P-002", "High")]
+        self.assertEqual(self.problems(doc), [
+            "findings must be numbered in severity order (High first): P-002 (High) follows "
+            "P-001 (Low)"])
+
+    def test_definitive_evidence_suspected_valid_and_holding_budgets(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["evidence"] = "looks fine"
+        doc["findings"][1].update(confidence="Suspected")
+        doc["findings"][0]["budget"] = "B-01"
+        doc["budgets"][0]["status"] = "holds"
+        self.assertEqual(self.problems(doc), [
+            "P-001.validation.evidence: Valid evidence must cite a path:line",
+            "P-002: a Suspected finding cannot be Valid; confirm the code link "
+            "(Confirmed or Environment-dependent) or record Likely",
+            "B-01: status holds, but P-001 is a Valid open violation of it"])
+        doc["findings"][0]["status"] = "Fixed"
+        doc["findings"][0]["validation"]["evidence"] = "C:\\app\\x.py:12 shows it"
+        doc["findings"][1]["validation"]["verdict"] = "Likely"
+        self.assertEqual(self.problems(doc), [])
 
     def test_required_lists_and_unique_ids(self):
         doc = complete_doc()
@@ -131,3 +165,37 @@ class MergeMessageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReportLayoutTests(unittest.TestCase):
+    def test_index_excluded_section_method_and_budget_links(self):
+        doc = complete_doc()
+        doc["meta"]["method"] = "Static review"
+        doc["findings"][0]["budget"] = "B-01"
+        doc["findings"].append(finding("P-003", "High", budget="B-01", validation={
+            "verdict": "NotApplicable", "method": "static", "evidence": "x.py:3"}))
+        report = render.render_markdown(doc, "en")
+        self.assertIn("| Method | Static review |", report)
+        self.assertIn("| ID | Severity | Confidence | Verdict | Title | Location |", report)
+        self.assertIn("| P-003 | High | Confirmed | NotApplicable |", report)
+        findings_part, excluded_part = report.split("## Excluded findings")
+        self.assertNotIn("### P-003", findings_part)
+        self.assertIn("### P-003 [NotApplicable] ", excluded_part)
+        self.assertNotIn("**status:**", excluded_part.split("## Performance budgets")[0])
+        budget = next(line for line in report.splitlines() if line.startswith("| B-01 |"))
+        self.assertTrue(budget.endswith(" | P-001 |"))
+        html = render.render_html(doc, "en")
+        self.assertIn("<td>P-001</td>", html)
+        self.assertEqual(html.count("<dt>status</dt>"), 2)
+
+
+class LanguageNoteTests(unittest.TestCase):
+    def test_overriding_the_record_language_is_noted(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            code, _, err = run(render.main, source, "--out", directory, "--lang", "ja")
+            self.assertEqual(code, 0)
+            self.assertEqual(err, "render: note: labels in ja, but the record's text is in en\n")
+            code, _, err = run(render.main, source, "--out", directory, "--lang", "en")
+            self.assertEqual((code, err), (0, ""))

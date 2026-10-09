@@ -25,7 +25,7 @@ class CrossReferenceTests(unittest.TestCase):
         doc["findings"][1]["budget"] = ""
         self.assertEqual(contract_problems(doc), [])
         doc["findings"][1]["budget"] = "B-99"
-        self.assertEqual(contract_problems(doc), ["P-002.budget: B-99 is not in budgets"])
+        self.assertEqual(contract_problems(doc), ["P-002.budget: 'B-99' is not in budgets"])
 
     def test_check_requires_a_nonblank_reason_for_unchecked_budgets(self):
         doc = complete_doc()

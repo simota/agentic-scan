@@ -103,7 +103,7 @@ class RenderRegressions(unittest.TestCase):
         self.assertEqual(scope.count("|"), 3)
         self.assertIn("API &#124; worker<br>\\# forged scope", scope)
         budget = next(line for line in report.splitlines() if line.startswith("| B-01 |"))
-        self.assertEqual(budget.count("|"), 7)
+        self.assertEqual(budget.count("|"), 8)
         self.assertIn("baseline &#124; tests/query.py:30<br>&#124; forged &#124; row &#124;", budget)
         self.assertIn(r"literal \\&#124; and &amp;lt;", budget)
         self.assertIn(" | violated | ", budget)
@@ -356,7 +356,7 @@ class RenderRegressions(unittest.TestCase):
                 self.assertIn("Supplier API &#124; &lt;latency&gt; is unknown<br>Confirm the contract", report)
                 rows = [line for line in report.splitlines() if line.startswith("| B-")]
                 self.assertEqual(len(rows), len(self.doc["budgets"]))
-                self.assertTrue(all(line.count("|") == 7 for line in rows))
+                self.assertTrue(all(line.count("|") == 8 for line in rows))
                 self.assertIn(f" | {no} | ", rows[0])
                 self.assertIn(" | — | ", rows[1])
                 self.assertIn(f" | {yes} | ", rows[2])
@@ -368,7 +368,7 @@ class RenderRegressions(unittest.TestCase):
                 budgets = {row[0]: row for row in parsed.rows if row and row[0].startswith("B-")}
                 self.assertEqual(budgets["B-01"][4], no)
                 self.assertEqual(budgets["B-02"][4], "—")
-                self.assertEqual(budgets["B-03"][4:], [yes, reason])
+                self.assertEqual(budgets["B-03"][4:6], [yes, reason])
                 self.assertNotIn("<script>bad()</script>", dashboard)
 
 

@@ -20,22 +20,27 @@ Write in the requester's language.
 ## Findings report (chat summary)
 
 1. **First line** — severity counts and review scope; whether the work was
-   static or included authorised local measurements; the `Unverified` and
-   `Likely` counts, highlighting High findings
+   static or included authorised local measurements; the `Likely`,
+   `Unverified` and `Unlikely` counts and how many High findings are not
+   `Valid`
 2. **Evidence line** — assessed revision, what was read, what the reporting
-   agent traced end to end, and what remains environment-unknown (data
-   volumes, deployed indexes and settings)
-3. **Findings, by severity** — each as:
+   agent traced end to end, what remains environment-unknown (data volumes,
+   deployed indexes and settings), and the scratch directory's path
+3. **Findings, by severity** — one line each (`P-NNN`, severity, confidence,
+   verdict, title, location), then the full block below for High findings
+   only; `report.md` carries every block:
 
    ```
-   [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] one-line title
+   P-NNN [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] one-line title
+     perspective: category (hunt step)
      location: path:line at the assessed revision
      workload: who pays it and how often
      scale driver: what grows, and its cap (or "uncapped")
      cost model: formula in the driver
      steps: numbered preconditions (data shape), numbered request shapes
      contrast: the sibling path that keeps the budget, path:line (or "none")
-     expected vs actual: the budget; the cost model and its consequence
+     budget: the ledger ID
+     what happens: expected (the budget) vs actual (the cost model) and its consequence
      recorded verdict / verification: Valid … / static or measured
      fix direction: one line — the bound restored and where
      regression test: at least one deterministic assertion

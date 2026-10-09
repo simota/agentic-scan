@@ -47,6 +47,9 @@ LABELS = {
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
         "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
+        "method_row": "Method", "index": "Index", "confidence": "Confidence", "verdict_col": "Verdict",
+        "title_col": "Title", "location_col": "Location", "findings_col": "Findings",
+        "excluded_findings": "Excluded findings",
     },
     "ja": {
         "title": "パフォーマンス診断", "summary": "サマリー", "scope": "対象と方法",
@@ -67,6 +70,9 @@ LABELS = {
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
+        "method_row": "方法", "index": "一覧", "confidence": "確度", "verdict_col": "検証判定",
+        "title_col": "タイトル", "location_col": "場所", "findings_col": "検出事項",
+        "excluded_findings": "除外した検出事項",
     },
 }
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
@@ -128,7 +134,8 @@ def markdown_text(value):
         # comment splits the text node around "@" instead.
         line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
         # GitHub turns ":name:" into an emoji; split the first colon off the same way.
-        line = re.sub(r":(?=[A-Za-z0-9_+-]+:)", ":<!-- -->", line)
+        # Escaping ran first, so a shortcode may already contain "\_".
+        line = re.sub(r":(?=(?:\\.|[A-Za-z0-9_+-])+:)", ":<!-- -->", line)
         line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
                       flags=re.IGNORECASE)
         return re.sub(r"^[ \t]+", lambda match: "".join(
@@ -196,12 +203,51 @@ def reference_title(ref):
     return title if title.strip() else ref["url"]
 
 
-def budget_cells(budget, labels):
+def budget_cells(budget, labels, findings):
     inferred = budget.get("inferred")
     inference = (labels["inferred_yes"] if inferred is True else
                  labels["inferred_no"] if inferred is False else "—")
+    # Link each ledger entry to the included findings that cite it.
+    cited = ", ".join(f["id"] for f in findings
+                      if f.get("budget") == budget["id"] and finding_group(f) != "excluded")
     return (budget["id"], budget["statement"], budget["source"], budget["status"],
-            inference, budget.get("reason", ""))
+            inference, budget.get("reason", ""), cited or "—")
+
+
+def budget_headers(labels):
+    return ("ID", labels["budget"], labels["source"], labels["status"], labels["inferred"],
+            labels["reason"], labels["findings_col"])
+
+
+def first_location(finding):
+    location = finding["location"]
+    return location[0] if isinstance(location, list) else location
+
+
+def markdown_finding(f, t):
+    """One finding's block; an excluded finding shows its verdict instead of a grade."""
+    v = f["validation"]
+    excluded = finding_group(f) == "excluded"
+    grade = f"[{v['verdict']}]" if excluded else f"[{f['severity']}][{f['confidence']}]"
+    lines = [f"### {f['id']} {grade} {markdown_text(f['title'])}", ""]
+    step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
+    lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
+    for key in FIELDS:
+        if key in f:
+            lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
+    lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
+    if v.get("evidence"):
+        lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
+    if "measurement" in f:
+        m = f["measurement"]
+        lines.append(f"- **{t['measurement']}:** {markdown_text(m['result'])} "
+                     f"({markdown_code(m['command'])}, {markdown_text(m['environment'])})")
+    if not excluded:
+        lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
+    for ref in f.get("references", []):
+        lines.append(f"- **{t['references']}:** "
+                     f"{markdown_link(reference_title(ref), ref['url'])}")
+    return lines + [""]
 
 
 def render_markdown(doc, lang):
@@ -219,37 +265,36 @@ def render_markdown(doc, lang):
               f"| {t['scope_row']} | {markdown_cell(meta.get('scope', ''))} |",
               f"| {t['revision']} | {markdown_cell(meta.get('commit') or 'UNKNOWN')} |",
               f"| {t['date']} | {markdown_cell(meta.get('date', ''))} / "
-              f"{markdown_cell(meta.get('assessor', ''))} |", ""]
-    lines += [f"## {t['findings']}", ""]
-    if not findings:
+              f"{markdown_cell(meta.get('assessor', ''))} |"]
+    if meta.get("method", "").strip():
+        lines.insert(-1, f"| {t['method_row']} | {markdown_cell(meta['method'])} |")
+    lines += ["", f"## {t['findings']}", ""]
+    included = [f for f in findings if finding_group(f) != "excluded"]
+    dropped = [f for f in findings if finding_group(f) == "excluded"]
+    if findings:
+        headers = ("ID", t["severity"], t["confidence"], t["verdict_col"], t["title_col"],
+                   t["location_col"])
+        lines += ["| " + " | ".join(headers) + " |", "|---|---|---|---|---|---|"]
+        for f in findings:
+            lines.append("| " + " | ".join(markdown_cell(cell) for cell in (
+                f["id"], f["severity"], f["confidence"], f["validation"]["verdict"], f["title"],
+                first_location(f))) + " |")
+        lines.append("")
+    if not included:
         lines += [t["none"], ""]
-    for f in findings:
-        v = f["validation"]
-        lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] {markdown_text(f['title'])}")
-        lines.append("")
-        step = f" ({markdown_text(f['step'])})" if f.get("step") else ""
-        lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
-        for key in FIELDS:
-            if key in f:
-                lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
-        lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
-        if v.get("evidence"):
-            lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
-        if "measurement" in f:
-            m = f["measurement"]
-            lines.append(f"- **{t['measurement']}:** {markdown_text(m['result'])} "
-                         f"({markdown_code(m['command'])}, {markdown_text(m['environment'])})")
-        lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
-        for ref in f.get("references", []):
-            lines.append(f"- **{t['references']}:** "
-                         f"{markdown_link(reference_title(ref), ref['url'])}")
-        lines.append("")
+    for f in included:
+        lines += markdown_finding(f, t)
+    if dropped:
+        lines += [f"## {t['excluded_findings']}", ""]
+        for f in dropped:
+            lines += markdown_finding(f, t)
     if doc.get("budgets"):
-        headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
+        headers = budget_headers(t)
         lines += [f"## {t['budgets']}", "", "| " + " | ".join(headers) + " |",
-                  "|---|---|---|---|---|---|"]
+                  "|" + "---|" * len(headers)]
         for b in doc["budgets"]:
-            lines.append("| " + " | ".join(markdown_cell(cell) for cell in budget_cells(b, t)) + " |")
+            lines.append("| " + " | ".join(markdown_cell(cell)
+                                           for cell in budget_cells(b, t, findings)) + " |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "", f"| | {t['status_col']} | {t['note']} |", "|---|---|---|"]
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
@@ -326,12 +371,13 @@ def render_html(doc, lang):
         group = finding_group(f)
         exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                      if group == "excluded" else "")
-        step = f" ({e(f['step'])})" if f.get("step") else ""
+        step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
         rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
         if v.get("evidence"):
             rows.append((t["evidence"], v["evidence"]))
-        rows.append((t["status"], f.get("status", "Open")))
+        if group != "excluded":
+            rows.append((t["status"], f.get("status", "Open")))
         if "measurement" in f:
             m = f["measurement"]
             rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
@@ -347,12 +393,12 @@ def render_html(doc, lang):
                        f"{html_link(reference_title(ref), ref['url'])}</dd>")
         out.append("</dl></details>")
     if doc.get("budgets"):
-        headers = ("ID", t["budget"], t["source"], t["status"], t["inferred"], t["reason"])
+        headers = budget_headers(t)
         out.append(f"<h2>{e(t['budgets'])}</h2><table><thead><tr>"
                    + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
                    + "</tr></thead><tbody>")
         for b in doc["budgets"]:
-            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t)) + "</tr>")
+            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t, findings)) + "</tr>")
         out.append("</tbody></table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
     out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th scope='col'></th>"
@@ -448,12 +494,18 @@ def main(argv=None):
     parser.add_argument("--lang", choices=("ja", "en"))
     args = parser.parse_args(argv)
     try:
-        doc = read_json(args.findings)
-        validate(doc, complete=True)
+        doc = read_json(args.findings)  # Its errors already name the file.
+        try:
+            validate(doc, complete=True)
+        except SchemaError as exc:
+            raise SchemaError(f"{args.findings}: {exc}") from exc
     except SchemaError as exc:
         print(f"schema: {exc}", file=sys.stderr)
         return 2
     lang = args.lang or doc["meta"]["lang"]
+    if lang != doc["meta"]["lang"]:
+        print(f"render: note: labels in {lang}, but the record's text is in "
+              f"{doc['meta']['lang']}", file=sys.stderr)
     out = Path(args.out)
     try:
         outputs = [(out / "report.md", render_markdown(doc, lang).encode("utf-8")),

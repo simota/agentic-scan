@@ -27,15 +27,17 @@ SKILL   := $(REPO)/skills/$(NAME)
 
 # Generic names such as PROJECT are often exported for unrelated tools. Only a
 # command-line or makefile setting may redirect where links are written.
-# (Plain ifeq blocks: macOS still ships GNU Make 3.81, which lacks undefine.)
-ifeq ($(origin AGENT),environment)
-AGENT   := claude codex agy
+# "environment%" also covers make -e ("environment override"), including a -e
+# inherited from a parent make. (Plain conditionals: macOS still ships GNU
+# Make 3.81, which lacks undefine.)
+ifneq ($(filter environment%,$(origin AGENT)),)
+override AGENT := claude codex agy
 endif
-ifeq ($(origin PROJECT),environment)
-PROJECT :=
+ifneq ($(filter environment%,$(origin PROJECT)),)
+override PROJECT :=
 endif
-ifeq ($(origin SKILLS_DIR),environment)
-SKILLS_DIR :=
+ifneq ($(filter environment%,$(origin SKILLS_DIR)),)
+override SKILLS_DIR :=
 endif
 AGENT   ?= claude codex agy
 PROJECT ?=

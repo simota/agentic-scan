@@ -133,9 +133,23 @@ class InstallerTests(unittest.TestCase):
         result, output, errors = self.run_install("link", "--skills-dir", str(directory))
         self.assertEqual(result, 0, errors)
         self.assertIn("already linked", output)
+        # unlink removes only links whose literal target is this skill.
         result, output, errors = self.run_install("unlink", "--skills-dir", str(directory))
         self.assertEqual(result, 0, errors)
-        self.assertFalse(destination.is_symlink())
+        self.assertIn("left     ", output)
+        self.assertTrue(destination.is_symlink())
+
+    def test_an_unusable_skills_dir_on_one_host_links_none(self):
+        for host in self.hosts.values():
+            host.mkdir()
+        (self.hosts["codex"] / "skills").write_text("not a directory", encoding="utf-8")
+        (self.hosts["agy"] / "skills").symlink_to("skills")
+        for agents in ("claude codex", "claude agy"):
+            with self.subTest(agents=agents):
+                result, _, errors = self.run_install("link", "--agents", agents)
+                self.assertEqual(result, 1)
+                self.assertRegex(errors, "not a usable directory|[Ll]oop")
+                self.assertFalse((self.hosts["claude"] / "skills").exists())
 
     def test_missing_source_and_unknown_agent_do_not_create_links(self):
         directory = self.root / "custom skills"
@@ -220,11 +234,14 @@ class MakefilePathTests(unittest.TestCase):
         (home / ".claude").mkdir(parents=True)
         project = self.root / "unrelated project"
         project.mkdir()
-        output = self.run_make("link", f"HOME={home}", environment={
-            "PROJECT": str(project), "SKILLS_DIR": str(project), "AGENT": "unknown"})
-        self.assertEqual((home / ".claude" / "skills" / self.skill.name).readlink(), self.skill)
-        self.assertNotIn(str(project), output)
-        self.assertEqual(list(project.iterdir()), [])
+        environment = {"PROJECT": str(project), "SKILLS_DIR": str(project), "AGENT": "unknown"}
+        for flags in ((), ("-e",)):  # -e makes the environment override the makefile
+            with self.subTest(flags=flags):
+                output = self.run_make(*flags, "link", f"HOME={home}", environment=environment)
+                link = home / ".claude" / "skills" / self.skill.name
+                self.assertEqual(link.readlink(), self.skill)
+                self.assertNotIn(str(project), output)
+                self.assertEqual(list(project.iterdir()), [])
 
     def test_preceding_makefiles_preserve_spaceful_checkout_paths(self):
         settings = self.root / "settings.mk"

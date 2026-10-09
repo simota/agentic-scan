@@ -165,8 +165,8 @@ def validate(doc, complete=False):
     meta = doc.get("meta", {})
     if not isinstance(meta, dict):
         raise SchemaError("meta: must be an object")
-    if complete:
-        for key in META_REQUIRED:
+    for key in META_REQUIRED:
+        if complete or key in meta:
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")

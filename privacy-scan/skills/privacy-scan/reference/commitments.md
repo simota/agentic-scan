@@ -45,8 +45,8 @@ Families:
   store
 - **RIGHTS** — access, export, rectification and deletion reach every store
   and processor holding the subject's data
-- **SHARE** — personal data reaches only the third parties and fields the
-  commitments name
+- **SHARE** — personal data reaches only the third parties, fields and
+  storage or processing locations the commitments name
 - **CONTAIN** — personal data stays out of logs, telemetry, URLs, errors,
   non-production copies and the view of actors who do not need it
 - **PROTECT** — sensitive categories are encrypted, pseudonymised or tokenised

@@ -143,7 +143,7 @@ class ReportRenderingTests(unittest.TestCase):
                 row = next(line for line in markdown.splitlines() if line.startswith("| C-01 |"))
                 self.assertEqual(
                     row,
-                    r"| C-01 | No PII &lt;email&gt; \| storage | docs\\policy.md:3 | "
+                    r"| C-01 | No PII &lt;email&gt; \| storage |  | docs\\policy.md:3 | "
                     r"not checked — reason: Missing IAM permission \| no account access<br>"
                     r"See C:\\config\\\|regions &lt;region&gt; &amp; policy |",
                 )
@@ -156,9 +156,9 @@ class ReportRenderingTests(unittest.TestCase):
             for lang in ("en", "ja"):
                 with self.subTest(inferred=inferred, lang=lang):
                     outputs = self.render_outputs(doc, lang)
-                    self.assertIn("| C-01 | no PII in errors | policy | violated |", outputs["report.md"])
+                    self.assertIn("| C-01 | no PII in errors |  | policy | violated |", outputs["report.md"])
                     self.assertIn("<tr><td>C-01</td><td>no PII in errors</td>"
-                                  "<td>policy</td><td>violated</td></tr>", outputs["dashboard.html"])
+                                  "<td></td><td>policy</td><td>violated</td></tr>", outputs["dashboard.html"])
 
     def test_references_remain_in_both_outputs_and_languages(self):
         doc = complete_doc()

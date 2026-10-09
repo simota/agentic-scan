@@ -51,7 +51,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per data domain (accounts and identity, payments, content and messages, analytics, support, HR…) plus one cross-cutting unit (logging, error tracking, analytics SDKs, backups, config, client-side scripts). Each unit first hunts the commitments ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/commitments.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; gaps needing different fixes are separate findings |
-| IDs | `PV-001`… numbered without gaps in severity order (then path). No other prefixes |
+| IDs | `PV-001`… numbered without gaps in severity order (then path); `FalsePositive` and `NotApplicable` findings may sit anywhere. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
@@ -67,9 +67,10 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Low | Collection beyond need with no further exposure, missing pseudonymisation in internal analytics, identifiers in URLs inside first-party systems, defence-in-depth gaps in storage protection |
 | Info | A note with no demonstrated path to a subject's harm or a broken commitment |
 
-Each further condition the code does not control lowers severity one level. An
-`Environment-dependent` finding is graded as if its stated condition holds, and
-names that condition.
+Grade a gap by the row it would match if every condition it needs held, then
+lower it one level for each condition the code does not control (a High-class
+gap behind one deployment setting is Medium). An `Environment-dependent`
+finding names each such condition; confidence never changes the grade.
 
 ## Phases
 
@@ -117,7 +118,7 @@ requester's language (`--lang ja|en`).
   elements, the data subjects and the flow from source to sink
 - Always: give every finding static reproduction steps — the subject and the
   data they provide, numbered steps of the flow (collection, processing, sink)
-  with `path:line`, the `Contrast:` flow that keeps the commitment, and
+  with `path:line`, the `Contrast:` flow that keeps the commitment (or `none`), and
   expected vs actual naming the violated commitment — a one-line fix direction
   stated as the commitment restored, and at least one guard (`reference/commitments.md` §5)
 - Always: grade **severity** (High / Medium / Low / Info) and **confidence**

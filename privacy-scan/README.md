@@ -82,7 +82,7 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
 | `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, commitments, perspective coverage |
-| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, next steps |
+| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,
 nonempty files, gapless `PV-NNN` IDs in severity order, every perspective

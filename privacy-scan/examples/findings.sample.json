@@ -30,7 +30,7 @@
       "impact": "Expected (C-01): no personal field reaches error tracking. Actual: addresses and phone numbers of affected customers are stored by the error tracking vendor",
       "commitment": "C-01",
       "fix": "Turn PII and request bodies off in api/app.py:22 and reuse the worker's before_send scrubber",
-      "guard": "Test raises an error in checkout with synthetic data (user@example.com) and asserts the captured event has no body or user fields",
+      "guard": "Guard for C-01: test raises an error in checkout with synthetic data (user@example.com) and asserts the captured event has no body or user fields",
       "validation": {"verdict": "Valid", "method": "static", "evidence": "api/app.py:22 send_default_pii=True and request body capture always on"},
       "status": "Open"
     },
@@ -49,7 +49,7 @@
       "impact": "Expected (C-03): analytics only after consent. Actual: every visitor's first page views and identifiers are sent before a choice is made",
       "commitment": "C-03",
       "fix": "Initialise analytics from the consent callback for the analytics category",
-      "guard": "Test renders the app with no consent and asserts the analytics spy recorded no init or event",
+      "guard": "Guard for C-03: test renders the app with no consent and asserts the analytics spy recorded no init or event",
       "validation": {"verdict": "Valid", "method": "static", "evidence": "main.tsx:9 init precedes banner.tsx:30 consent handling"},
       "status": "Open"
     },
@@ -68,7 +68,7 @@
       "impact": "Expected (C-02): every store is cleared within 30 days. Actual: the search index keeps closed customers indefinitely",
       "commitment": "C-02",
       "fix": "Remove the customer document from the search index in the closure path",
-      "guard": "Test closes a synthetic account and asserts the search index returns no document for it",
+      "guard": "Guard for C-02: test closes a synthetic account and asserts the search index returns no document for it",
       "validation": {"verdict": "Valid", "method": "static", "evidence": "close.py:31-45 has no search index call; index writer at api/search/customers.py:12"},
       "status": "Open"
     }

@@ -130,7 +130,7 @@ decrypts pages for reads and does not encrypt the contents of a BACPAC export.
 | CT2 | Cookies and local storage set for non-essential purposes before consent; long expiries | Cookie setters, storage writes | Non-essential storage gated on consent with stated expiries — because the commitments name them |
 | CT3 | Personal data kept in client storage (local storage, IndexedDB, mobile preferences) unencrypted or after logout | Client storage writes; logout handlers | Minimal client storage cleared on logout — because shared devices are common |
 
-### Identifiers and pseudonymisation (ID)
+### Identifiers and pseudonymisation (ID) [CONTAIN]
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
@@ -153,7 +153,7 @@ available information and leave unobserved linkability controls `UNKNOWN`.
 | NP2 | Production-to-staging refresh or debug dumps without masking | Scripts and jobs copying databases | A masking step on every personal field at `path:line` — because staging has weaker controls |
 | NP3 | Personal data loaded into warehouses, ML training sets or LLM prompts without the controls of the source | Pipelines, training scripts, prompt builders | Minimised, pseudonymised and covered by retention and deletion — because a derived copy escapes deletion |
 
-### Location and transfers (LO)
+### Location and transfers (LO) [SHARE]
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|

@@ -1,7 +1,7 @@
 # infra-scan
 
 An agent skill for a **static, read-only security review of cloud
-infrastructure from its configuration** — Terraform / OpenTofu, plan JSON,
+infrastructure from its configuration** — Terraform / OpenTofu (`.tf`, `.tofu`), plan JSON,
 CloudFormation, Kubernetes manifests, and read-only config exports — for AWS and
 GCP (Kubernetes and Azure by checklist). It maps exposure, identity and trust,
 traces attack paths from entry actors to crown-jewel data, and delivers a chat
@@ -73,6 +73,7 @@ Then ask the agent, e.g. "infra-scan で `infra/` を診断して" or
 make test                                  # offline unit tests
 make check                                 # tests + skill self-consistency
 make scan TARGET=../my-infra OUT=$TMPDIR/infra-out   # baseline only
+make scan TARGET=../my-infra SNAPSHOTS=$TMPDIR/exports OUT=$TMPDIR/infra-out  # with exports
 make demo LANG_OUT=ja                      # render the sample report
 ```
 

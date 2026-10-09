@@ -33,7 +33,7 @@ import time
 from urllib.parse import urlparse
 
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
-                       redact_json_values, redact_lines)
+                       redact_json_values, redact_lines, split_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -489,9 +489,9 @@ def hcl_module_sensitive(directory):
     """
     try:
         for sibling in directory.iterdir():
-            if sibling.name.lower().endswith(".tf.json"):
+            if sibling.name.lower().endswith((".tf.json", ".tofu.json")):
                 return True  # Unsupported Terraform JSON can also override sensitivity.
-            if sibling.suffix.lower() != ".tf":
+            if sibling.suffix.lower() not in (".tf", ".tofu"):
                 continue
             if sibling.is_symlink():
                 return True
@@ -512,7 +512,7 @@ def source_lines(path):
     """
     # Match the scanner's BOM handling before checking sensitivity or line numbers.
     text = path.read_text(encoding="utf-8-sig")
-    lines = text.splitlines()
+    lines = split_lines(text)
     suffix = path.suffix.lower()
     syntax = "text"
     try:
@@ -533,7 +533,7 @@ def source_lines(path):
             docs.append(_YamlSubset(rows).parse())
         else:
             docs = []
-            if suffix == ".tf":
+            if suffix in (".tf", ".tofu"):
                 syntax = "hcl"
                 # Sensitivity belongs to the block, not to the default/value
                 # line. Only a known false declaration permits an excerpt.
@@ -577,7 +577,7 @@ def attach_sources(data, repo, context=3):
             if cand.is_symlink() or not cand.is_file():
                 continue
             cand.resolve().relative_to(root)
-            if cand.suffix.lower() == ".tf" or cand.name.lower().endswith(".tf.json"):
+            if cand.suffix.lower() in (".tf", ".tofu") or cand.name.lower().endswith((".tf.json", ".tofu.json")):
                 directory = cand.parent.resolve()
                 directory.relative_to(root)
                 if directory not in hcl_modules:

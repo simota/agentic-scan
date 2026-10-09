@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Inventory infrastructure as code and apply deterministic baseline rules.
 
-    python3 iac_scan.py REPO [--out iac.json] [--into findings.json]
+    python3 iac_scan.py REPO [--snapshots DIR ...] [--out iac.json] [--into findings.json]
 
-Reads, never executes: Terraform/OpenTofu (`*.tf`), Terraform plan JSON
+Reads, never executes: Terraform/OpenTofu (`*.tf`, `*.tofu`), Terraform plan JSON
 (`terraform show -json` output the requester produced), CloudFormation JSON,
 Kubernetes YAML manifests and read-only config snapshots (AWS
 describe-security-groups, a bucket policy, a GCP IAM policy, a GCP firewall
@@ -17,16 +17,25 @@ never produce a hit — precision over completeness. A secret is recorded by
 location and kind only; its value never reaches the output. Benchmark controls
 name the section title only; section numbers vary by edition.
 
+--snapshots adds a directory of exports the requester ran, kept outside the
+repository; its files appear as `@snapshots/<dir>/...` and get no source
+excerpts. Scan the repository and every export directory in one run: each run
+replaces the whole baseline.
 --out writes the inventory (`iac.json`); without it the inventory goes to stdout.
+Neither --out nor --into may point inside REPO or through a symlink.
 --into replaces every `I-*` finding in findings.json (creating it when absent),
 keeps every other finding, and sets `meta.commit` and `inventory`. Attack-path
-references and I-IDs in review evidence follow the same (rule, file) after
-renumbering. Lost references require fresh review of the finding and its paths.
+references, I-IDs in review evidence and I-* triage verdicts follow the same
+(rule, file, resources) after renumbering. Lost references require fresh review
+of the finding and its paths. Terraform JSON (`*.tf.json`) and unreadable,
+binary or deeply nested inputs are listed in `not_run`.
 
 Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.json.
 """
 import argparse
 import bisect
+import codecs
+import copy
 import fnmatch
 import ipaddress
 import json
@@ -38,7 +47,7 @@ import subprocess
 import sys
 import tempfile
 
-from redaction import module_source
+from redaction import module_source, split_lines
 
 SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
 MAX_BYTES = 2 * 1024 * 1024
@@ -1162,7 +1171,7 @@ def terraform_overrides(scan, parsed):
     """Apply native .tf overrides per module before policy resolution and checks."""
     def is_override(rel):
         name = Path(rel).name
-        return name == "override.tf" or name.endswith("_override.tf")
+        return name in ("override.tf", "override.tofu") or name.endswith(("_override.tf", "_override.tofu"))
 
     def header(rel, block):
         alias = HclView(block).get("alias") if block.type == "provider" else None
@@ -1229,6 +1238,12 @@ def terraform_overrides(scan, parsed):
 
 def handle_terraform(scan, parsed):
     """parsed: [(rel, blocks)]. Policy documents first, then rules."""
+    # OpenTofu reads x.tofu instead of x.tf when both exist in one directory.
+    present = {rel for rel, _ in parsed}
+    shadowed = {rel for rel in present if rel.endswith(".tf") and rel[:-3] + ".tofu" in present}
+    for rel in sorted(shadowed):
+        scan.not_run.append(f"OpenTofu reads {rel[:-3]}.tofu instead; not evaluated: {rel}")
+    parsed = [(rel, blocks) for rel, blocks in parsed if rel not in shadowed]
     parsed, uncertain = terraform_overrides(scan, parsed)
 
     def view_of(block, rel):
@@ -1938,7 +1953,7 @@ PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|proj
 
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
-    lines = text.splitlines()
+    lines = split_lines(text)
     for n, line in enumerate(lines, 1):
         for label, pattern in SECRET_PATTERNS:
             if pattern.search(line):
@@ -1965,9 +1980,18 @@ def classify_json(doc):
     return None
 
 
-def walk(root, scan):
+def walk(root, scan, prefix=""):
     entries = []
-    for dirpath, dirnames, filenames in os.walk(root):
+
+    def unreadable(error):
+        where = Path(error.filename) if error.filename else root
+        try:
+            rel = where.relative_to(root).as_posix()
+        except ValueError:
+            rel = str(where)
+        scan.not_run.append(f"unreadable directory, skipped: {prefix}{rel} ({error.strerror or error})")
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=unreadable):
         base = Path(dirpath)
         keep = []
         for d in sorted(dirnames):
@@ -1975,13 +1999,13 @@ def walk(root, scan):
             if d in SKIP_DIRS:
                 continue
             if full.is_symlink():
-                scan.not_run.append(f"symlink skipped: {full.relative_to(root).as_posix()}")
+                scan.not_run.append(f"symlink skipped: {prefix}{full.relative_to(root).as_posix()}")
                 continue
             keep.append(d)
         dirnames[:] = keep
         for f in sorted(filenames):
             full = base / f
-            rel = full.relative_to(root).as_posix()
+            rel = prefix + full.relative_to(root).as_posix()
             if full.is_symlink():
                 scan.not_run.append(f"symlink skipped: {rel}")
             elif full.is_file():
@@ -1989,29 +2013,73 @@ def walk(root, scan):
     return entries
 
 
-def run(root):
+INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml")
+BOMS = ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
+        (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
+
+
+def decode(data):
+    """UTF-8 (with or without BOM), or UTF-16/32 with a BOM, as Windows shells write.
+
+    Returns None for binary or undecodable data.
+    """
+    for bom, codec in BOMS:
+        if data.startswith(bom):
+            try:
+                return data.decode(codec)
+            except UnicodeDecodeError:
+                return None
+    if b"\0" in data:
+        return None
+    try:
+        return data.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        return None
+
+
+SNAPSHOT_PREFIX = "@snapshots/"
+
+
+def snapshot_prefixes(dirs):
+    """Label each export directory so its paths never collide with the repository's."""
+    names = [Path(d).resolve().name or "root" for d in dirs]
+    return [f"{SNAPSHOT_PREFIX}{name}/" if names.count(name) == 1 else f"{SNAPSHOT_PREFIX}{n}-{name}/"
+            for n, name in enumerate(names, 1)]
+
+
+def run(root, snapshots=()):
     root = Path(root)
     scan = Scan(root)
     parsed = []
-    for full, rel in walk(root, scan):
+    entries = walk(root, scan)
+    for directory, prefix in zip(snapshots, snapshot_prefixes(snapshots)):
+        entries += walk(Path(directory), scan, prefix)
+    for full, rel in entries:
         name = full.name
         if STATE_FILE.search(name):
             scan.files.append({"path": rel, "kind": "state"})
             scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "state file in the repository", strong=True)
             continue
-        if full.stat().st_size > MAX_BYTES:
-            scan.not_run.append(f"file too large to scan: {rel}")
-            continue
-        data = full.read_bytes()
-        if b"\0" in data:
-            continue
         try:
-            text = data.decode("utf-8-sig")
-        except UnicodeDecodeError:
-            scan.not_run.append(f"not UTF-8, skipped: {rel}")
+            if full.stat().st_size > MAX_BYTES:
+                scan.not_run.append(f"file too large to scan: {rel}")
+                continue
+            data = full.read_bytes()
+        except OSError as e:
+            scan.not_run.append(f"unreadable, skipped: {rel} ({e.strerror or e})")
+            continue
+        text = decode(data)
+        if text is None:
+            # Binary files are expected; an input the scanner would read is not.
+            if b"\0" not in data:
+                scan.not_run.append(f"not UTF-8, skipped: {rel}")
+            elif name.lower().endswith(INPUT_SUFFIXES):
+                scan.not_run.append(f"binary or not UTF-8, skipped: {rel}")
             continue
         kind = None
-        if name.endswith(".tf"):
+        if name.endswith(".tf.json") or name.endswith(".tofu.json"):
+            scan.not_run.append(f"Terraform JSON syntax not evaluated; review by hand: {rel}")
+        if name.endswith((".tf", ".tofu")):
             kind = "terraform"
             parsed.append((rel, parse_hcl(text)))
         elif name.endswith(".tfvars"):
@@ -2019,6 +2087,9 @@ def run(root):
         elif name.endswith(".json"):
             try:
                 doc = json.loads(text)
+            except RecursionError:
+                doc = None
+                scan.not_run.append(f"JSON nested too deeply, skipped: {rel}")
             except ValueError:
                 doc = None
                 if "planned_values" in text or "AWSTemplateFormatVersion" in text:
@@ -2031,7 +2102,7 @@ def run(root):
             elif doc is not None and handle_snapshot(scan, rel, text, doc):
                 kind = "snapshot"
         elif name.endswith((".yaml", ".yml")):
-            kind = handle_yaml(scan, rel, text.splitlines())
+            kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
         scan_secrets(scan, rel, text, kind)
@@ -2083,9 +2154,11 @@ def inventory_of(scan):
             "files": len(scan.files), "not_run": list(scan.not_run)}
 
 
-def report(scan, root, commit, findings):
+def report(scan, root, commit, findings, snapshots=()):
     hits = [{k: v for k, v in h.items() if k != "strong"} for h in scan.hits]
     return {"tool": "iac_scan", "version": 1, "repo": str(Path(root).resolve()), "commit": commit,
+            "snapshots": {prefix.rstrip("/"): str(Path(d).resolve())
+                          for d, prefix in zip(snapshots, snapshot_prefixes(snapshots))},
             "files": scan.files, "resources": scan.resources, "modules": scan.modules,
             "backends": scan.backends, "not_run": scan.not_run, "hits": hits, "findings": findings}
 
@@ -2160,6 +2233,7 @@ def remap_baseline_references(data, old, new):
                 and all(isinstance(r, str) for r in resources) \
                 and set(resources) <= set(replacement.get("resources", [])):
             replacements[fid] = replacement["id"]
+    carry_triage(data, old_by_id, replacements, new)
 
     def removed_label(fid, evidence=False):
         key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
@@ -2245,10 +2319,41 @@ def remap_baseline_references(data, old, new):
                 data["limitations"].append(limitation)
 
 
+def unique_keys(pairs):
+    """Refuse duplicate keys, as findings.py and render.py do; never echo the key."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON key")
+        result[key] = value
+    return result
+
+
+def carry_triage(data, old_by_id, replacements, new):
+    """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
+
+    Triage lives only in I-*.validation; dropping it on every rescan would
+    silently undo the review. A changed resource set needs fresh triage.
+    """
+    new_by_id = {f["id"]: f for f in new}
+    for fid, new_id in replacements.items():
+        old, current = old_by_id[fid], new_by_id[new_id]
+        validation = old.get("validation")
+        if not isinstance(validation, dict) or validation.get("verdict") in (None, "Unverified"):
+            continue
+        if set(old.get("resources", [])) == set(current.get("resources", [])):
+            current["validation"] = copy.deepcopy(validation)
+        else:
+            note = (f"{new_id} (was {fid}): {validation['verdict']} triage not carried over; "
+                    "affected resources changed. Recheck this baseline finding.")
+            if note not in data["limitations"]:
+                data["limitations"].append(note)
+
+
 def merge_into(path, findings, inventory, commit):
     path = Path(path)
     if path.exists():
-        data = json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_keys)
         if not isinstance(data, dict):
             raise ValueError("findings.json must hold a JSON object")
     else:
@@ -2276,12 +2381,28 @@ def main(argv=None):
     p.add_argument("repo")
     p.add_argument("--out", help="write the inventory here (default: stdout)")
     p.add_argument("--into", help="findings.json whose I-* findings are replaced")
+    p.add_argument("--snapshots", action="append", default=[], metavar="DIR",
+                   help="directory of read-only exports the requester ran, outside the repository; "
+                        "its files are reported as @snapshots/<dir>/... (repeatable)")
     args = p.parse_args(argv)
     root = Path(args.repo)
-    if not root.is_dir():
+    try:
+        readable = root.is_dir() and os.access(root, os.R_OK | os.X_OK)
+    except OSError:
+        readable = False
+    if not readable:
         print(f"iac_scan: {root} is not a readable directory", file=sys.stderr)
         return 2
     resolved = root.resolve()
+    for directory in args.snapshots:
+        if not Path(directory).is_dir():
+            print(f"iac_scan: --snapshots {directory} is not a readable directory", file=sys.stderr)
+            return 2
+        snap = Path(directory).resolve()
+        if snap == resolved or resolved in snap.parents or snap in resolved.parents:
+            print(f"iac_scan: --snapshots {directory} overlaps the repository; keep exports outside it",
+                  file=sys.stderr)
+            return 2
     for option, target in (("--out", args.out), ("--into", args.into)):
         if target is None:
             continue
@@ -2295,21 +2416,27 @@ def main(argv=None):
             print(f"iac_scan: {option} {target} is inside the scanned repository; write it elsewhere",
                   file=sys.stderr)
             return 2
-    scan = run(root)
+    scan = run(root, args.snapshots)
     commit = git_commit(root)
     findings = build_findings(scan.hits)
-    result = report(scan, root, commit, findings)
-    if args.into:
-        try:
-            merge_into(args.into, findings, inventory_of(scan), commit)
-        except (OSError, ValueError) as e:
-            print(f"iac_scan: cannot update {args.into}: {e}", file=sys.stderr)
-            return 2
+    result = report(scan, root, commit, findings, args.snapshots)
+    # Write the inventory first: a failed --out must not leave findings.json
+    # describing a scan whose inventory was never saved.
     if args.out:
-        atomic_write(args.out, result)
+        try:
+            atomic_write(args.out, result)
+        except OSError as e:
+            print(f"iac_scan: cannot write {args.out}: {e.strerror or e}", file=sys.stderr)
+            return 2
     else:
         json.dump(result, sys.stdout, ensure_ascii=False, indent=2)
         sys.stdout.write("\n")
+    if args.into:
+        try:
+            merge_into(args.into, findings, inventory_of(scan), commit)
+        except (OSError, ValueError, RecursionError) as e:
+            print(f"iac_scan: cannot update {args.into}: {e}", file=sys.stderr)
+            return 2
     counts = {s: sum(f["severity"] == s for f in findings) for s in SEV_RANK}
     print(f"iac_scan: {len(scan.files)} files, {len(scan.resources)} resources, {len(findings)} findings "
           f"(High {counts['High']}, Medium {counts['Medium']}, Low {counts['Low']}); "

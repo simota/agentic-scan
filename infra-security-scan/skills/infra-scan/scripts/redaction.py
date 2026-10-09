@@ -31,6 +31,21 @@ PUBLIC_QUERY = {"ref", "depth", "version"}
 SENSITIVITY_MASKS = {"sensitive_values", "before_sensitive", "after_sensitive"}
 
 
+def split_lines(text, keepends=False):
+    """Split on LF (and CRLF) only, as the HCL and JSON line counters do.
+
+    str.splitlines() also breaks on form feeds, vertical tabs and Unicode
+    separators, which would shift every later line number in a report.
+    """
+    lines = text.split("\n")
+    if keepends:
+        lines = [line + "\n" for line in lines[:-1]] + ([lines[-1]] if lines[-1] else [])
+        return lines
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
+
+
 def _secret_fields(line):
     # Qualified YAML/JSON keys can contain slashes. A URL path or query is
     # handled by module_source instead of being mistaken for such a key.
@@ -149,7 +164,7 @@ def redact_json_values(text, lines):
     a closing value and the next secret key may share the same source line.
     """
     starts, offset = [], 0
-    for line in text.splitlines(keepends=True):
+    for line in split_lines(text, keepends=True):
         starts.append(offset)
         offset += len(line)
     decoder = json.JSONDecoder()

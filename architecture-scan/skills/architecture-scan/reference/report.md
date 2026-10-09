@@ -21,9 +21,12 @@ Write in the requester's language.
 
 1. **First line** — severity counts and review scope; whether the work was
    static or included read-only analysis (history, dependency graph); the
-   `Unverified` and `Likely` counts, highlighting High findings
+   `Unverified` and `Likely` counts, highlighting High findings. Severity
+   counts leave out `FalsePositive` and `NotApplicable`, exactly as the first
+   line of `report.md` does
 2. **Evidence line** — assessed revision, what was read, the history window
-   used, what the reporting agent traced end to end, and what remains unknown
+   used, what the reporting agent traced end to end, the scratch directory's
+   path, and what remains unknown
    (runtime topology, delivery semantics, ownership)
 3. **Findings, by severity** — each as:
 

@@ -53,7 +53,17 @@ Families:
 Seed the ledger with one `baseline` entry per family that applies (e.g. `R-01
 LAYER baseline: no cycles between top-level modules`), then add codebase-
 specific entries. *Status* is `holds`, `violated`, `partly read` or `not
-checked` (with a reason).
+checked` (with a reason):
+
+- `violated` — at least one traced edge breaks the rule; it wins over the others
+  even when some edges were not read
+- `holds` — every edge found by search was read, and all keep the rule
+- `partly read` — some edges were not read and none of those read breaks the
+  rule; the count of unread edges goes to `limitations`
+- `not checked` — no edge was read; `reason` says why
+
+A `Valid` or `Likely` finding cites a `violated` or `partly read` rule; `check`
+refuses one that cites a rule recorded as holding or not checked.
 
 ## 3. Trace rows
 

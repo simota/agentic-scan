@@ -143,17 +143,22 @@ class ContractConsistencyTests(unittest.TestCase):
         self.assertEqual(findings.contract_problems(self.out), [])
 
     def test_hand_edited_output_is_named(self):
-        self.build(complete_doc(), "--lang", "ja")
+        self.build(complete_doc())
         report = self.out / "report.md"
         report.write_bytes(report.read_bytes() + b"\nedited\n")
         self.assertEqual([p.split()[0] for p in findings.contract_problems(self.out)],
                          ["report.md"])
 
-    def test_either_language_passes_when_both_outputs_agree(self):
-        for lang in ("ja", "en"):
+    def test_outputs_must_be_in_the_record_language(self):
+        doc = complete_doc()
+        for lang, ok in (("en", True), ("ja", False)):
             with self.subTest(lang=lang):
-                self.build(complete_doc(), "--lang", lang)
-                self.assertEqual(findings.contract_problems(self.out), [])
+                self.build(doc, "--lang", lang)
+                problems = findings.contract_problems(self.out)
+                self.assertEqual(problems == [], ok, problems)
+        doc["meta"]["lang"] = "ja"
+        self.build(doc)
+        self.assertEqual(findings.contract_problems(self.out), [])
 
     def test_missing_output_directory_is_one_clear_problem(self):
         problems = findings.contract_problems(self.out / "absent")
@@ -242,11 +247,13 @@ class RenderConsistencyTests(unittest.TestCase):
         doc["findings"][1]["validation"].update(verdict="FalsePositive", evidence="delegates")
         html = render.render_html(doc, "en")
         self.assertEqual(html.count("class='excluded'"), 1)
-        self.assertIn("<details data-sev='Low' class='excluded'>", html)
+        self.assertIn("<details data-sev='excluded' class='excluded'>", html)
+        self.assertEqual(html.count("<details data-sev='Low'"), 0)
+        self.assertIn("<button data-filter='excluded' aria-pressed='false'>Excluded</button>", html)
 
     def test_list_items_cannot_open_markdown_blocks(self):
         items = {
-            "[Confirmed]: https://evil.example/x": "&#91;Confirmed&#93;: https://evil.example/x",
+            "[Confirmed]: https://evil.example/x": "&#91;Confirmed&#93;: https&#58;//evil.example/x",
             "---": "&#45;--", "***": "&#42;**", "# Not a heading": "&#35; Not a heading",
             "1) numbered": "1&#41; numbered", "12. twelve": "12&#46; twelve",
             "[x] looks done": "&#91;x&#93; looks done", "    indented": "&#32;&#32;&#32;&#32;indented",

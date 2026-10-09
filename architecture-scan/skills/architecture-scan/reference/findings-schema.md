@@ -8,7 +8,7 @@ Render with (paths relative to this skill's directory):
 
 ```
 python3 scripts/findings.py renumber <out>/findings.json
-python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
+python3 scripts/render.py <out>/findings.json --out <out>
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
@@ -24,7 +24,10 @@ only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
 any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
-definition) and cannot form a link or image; backslashes are shown as written
+definition) and cannot form a link, image or autolink (a bare URL, `www.` or
+an e-mail address stays plain text, as in the dashboard); a blank optional
+field gets no row. The dashboard filters excluded findings separately from the
+severities, matching the counts; backslashes are shown as written
 (`docs\adr`), so they never escape a delimiter.
 Both outputs are written to temporary files first and replace the previous
 pair only once both are complete.
@@ -34,8 +37,7 @@ are kept), `2` the record does not match the shape (the field is named).
 `findings.py check` exits `1` and lists every contract violation. All three
 required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
-`findings.json` (in either language, both from one rendering) — re-render after
-the last merge. It also requires:
+`findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
 - every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` or `Likely`
   finding not excluded cites a rule recorded as `violated` or `partly read`
@@ -68,19 +70,53 @@ Merge semantics:
   within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
+- A complete finding (every required field) sent with an ID that already holds
+  a finding with a different `title` and `location` is refused as an ID
+  collision: two review units numbered the same ID. Each unit numbers in its
+  own block (`A-101`…, `A-201`…); `renumber` compacts them
+
+## Correcting the record
+
+Never edit `findings.json` by hand; every correction is a fragment:
+
+- `null` removes an optional key: `{"findings": [{"id": "A-003", "analysis":
+  null}]}`, `{"meta": {"method": null}}`, `{"rules": [{"id": "R-02", "reason":
+  null}]}`. A required key cannot be removed; replace its value instead
+- `remove` deletes exact items from the string lists before the fragment's own
+  items are appended, so one fragment replaces an item: `{"remove":
+  {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
+  An item that is not recorded is refused, so a typo cannot pass silently
+- A wrong value is replaced by sending the key again; nested `validation` and
+  `analysis` objects are replaced whole
+
+When `check` fails: correct the record with a fragment, `renumber` if a
+finding was added or regraded, render, and check again.
 
 ## Numbering
 
 Fragments may assign IDs in the order findings are found. Before rendering,
 `findings.py renumber <out>/findings.json` sorts the findings by severity, then
 by the path and line of their first location, and renames them `A-001`…
-without gaps. Every whole-word mention of an old ID anywhere in the record
-(`trace`, `next_steps`, `decisions`…) is rewritten in the same pass; a token
-such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
+without gaps. Every whole-word mention of an old ID in the record's prose
+(`title`, `trace`, `evidence`, `next_steps`, `decisions`…) is rewritten in the
+same pass. Literal values keep theirs: `meta`, every `location`, reference
+`url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
+ticket or an argument). A token such as `JIRA-A-001` is left alone. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds or regrades a finding, then render.
 
+After a renumber, use only the new IDs it printed. Merge matches findings by
+ID alone, so a fragment written earlier that updates `A-002` would change
+whichever finding is `A-002` now; rewrite or discard unmerged fragments before
+merging them. If a finding is added or regraded later, merge it, renumber
+again and re-render.
+
 ## Merge guarantees
+
+Merge and renumber hold an exclusive lock on the record's directory from
+reading the record to replacing it, so review units may merge at the same
+time without losing each other's findings. Where the lock is unavailable
+(Windows has no `fcntl`), run merges one at a time.
 
 The existing record is validated before merging, then the combined record is
 validated after each fragment. A refused batch writes nothing, even if earlier
@@ -134,7 +170,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
       "impact": "Expected (R-01): every invoice change goes through billing. Actual: refunded invoices keep the pre-refund tax amount",
       "rule": "R-01",
       "fix": "Call BillingService.adjust() from the refund job instead of updating the table",
-      "guard": "CI search fails on writes to invoices outside api/billing/",
+      "guard": "R-01: CI search fails on writes to invoices outside api/billing/",
       "validation": {"verdict": "Valid", "method": "static",
                      "evidence": "job.py:58 raw UPDATE; no call to billing in worker/refunds/"},
       "status": "Open"
@@ -154,7 +190,8 @@ record. Existing permission bits and symbolic-link destinations are retained.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.method` | Optional string: one phrase naming the reading and each read-only tool or history window, e.g. `Static review; git log 12 months; import-linter`. Shown verbatim in both outputs in place of the generic static/analysed note |
 | `findings[].id` | `A-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |

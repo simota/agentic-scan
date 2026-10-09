@@ -11,6 +11,11 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
+A `null` value removes an optional key from `meta`, a finding or a rule, and
+`remove` (`{"next_steps": ["exact text"]}`) deletes list items before the
+fragment's own items are appended, so any recorded mistake can be corrected.
+A complete finding whose ID already holds a finding with another title and
+location is refused as an ID collision.
 FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
 
@@ -25,12 +30,14 @@ record is complete, IDs are gapless in severity order, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings carry evidence, definitive evidence cites a `path:line`, and
-both rendered files match what `render.py` produces from the current record.
+both rendered files match what `render.py` produces from the current record
+in `meta.lang`.
 
 Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
 failed (reasons on stderr).
 """
 import argparse
+from contextlib import contextmanager
 import json
 import os
 from pathlib import Path
@@ -38,6 +45,11 @@ import re
 import secrets
 import stat
 import sys
+
+try:
+    import fcntl
+except ImportError:  # Windows: merges must run one at a time.
+    fcntl = None
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
@@ -62,6 +74,7 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
+RULE_REQUIRED = ("id", "statement", "source", "status")
 TEXT_FIELDS = ("title", "scenario", "blast_radius", "trace", "impact", "fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
@@ -71,7 +84,10 @@ FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A path-like token (it has a letter, so `10:30` is not one) and a line from 1.
-EVIDENCE_LINE = re.compile(r"[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
+# It starts after a blank or opening punctuation, so the port in
+# `https://host:443` is not one; a Windows drive (`C:\repo\a.py:3`) is allowed.
+EVIDENCE_LINE = re.compile(
+    r"(?<![^\s(\[{'\"`,;])(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*:[1-9][0-9]*")
 LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
@@ -240,30 +256,68 @@ def validate(doc, complete=False):
             _text(value, f"{key}[{i}]")
 
 
-def _merge_records(current, incoming, where):
+def _apply(target, updates, required, where):
+    """Update target key by key; a null value removes an optional key."""
+    for key, value in updates.items():
+        if value is not None:
+            target[key] = value
+        elif key in required:
+            raise SchemaError(f"{where}.{key}: required; null removes only optional keys")
+        else:
+            target.pop(key, None)
+    return target
+
+
+def _collides(existing, record):
+    """A complete record unlike the finding that holds its ID: another unit's finding."""
+    return (all(key in record for key in FINDING_REQUIRED)
+            and record["title"] != existing.get("title")
+            and record["location"] != existing.get("location"))
+
+
+def _merge_records(current, incoming, where, required):
     for records in (current, incoming):
         ids = [r.get("id") if isinstance(r, dict) else None for r in _list(records, where)]
         if any(not isinstance(fid, str) for fid in ids) or len(set(ids)) != len(ids):
             raise SchemaError(f"{where}: every record needs a unique string id")
     index = {r["id"]: r for r in current}
     for record in incoming:
-        if record["id"] in index:
-            index[record["id"]].update(record)
+        rid = record["id"]
+        if rid in index:
+            if required is FINDING_REQUIRED and _collides(index[rid], record):
+                raise SchemaError(
+                    f"{where}: {rid} already holds {index[rid].get('title')!r}; give the new "
+                    f"finding another ID, or send only the fields that change")
+            _apply(index[rid], record, required, f"{where}.{rid}")
         else:
-            current.append(dict(record))
-            index[record["id"]] = current[-1]
+            current.append(_apply({}, record, required, f"{where}.{rid}"))
+            index[rid] = current[-1]
+
+
+def _remove_items(doc, removals, where):
+    if not isinstance(removals, dict):
+        raise SchemaError(f"{where}: must be an object of list names")
+    unknown = set(removals) - set(LISTS)
+    if unknown:
+        raise SchemaError(f"{where}: only {', '.join(LISTS)} can be removed from, not "
+                          f"{sorted(unknown)}")
+    for key, values in removals.items():
+        for value in _list(values, f"{where}.{key}"):
+            if value not in doc.get(key, []):
+                raise SchemaError(f"{where}.{key}: {value!r} is not recorded")
+            doc[key].remove(value)
 
 
 def merge(doc, fragment, where):
     if not isinstance(fragment, dict):
         raise SchemaError(f"{where}: must be an object")
-    unknown = set(fragment) - TOP_KEYS
+    unknown = set(fragment) - TOP_KEYS - {"remove"}
     if unknown:
         raise SchemaError(f"{where}: unknown keys {sorted(unknown)}")
     if "meta" in fragment:
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
-        doc.setdefault("meta", {}).update(fragment["meta"])
+        _apply(doc.setdefault("meta", {}), fragment["meta"], META_REQUIRED, f"{where}.meta")
     for key in ("findings", "rules", "perspectives"):
         if key not in fragment:
             continue
@@ -274,7 +328,10 @@ def merge(doc, fragment, where):
             doc[key] = [q for q in doc.get(key, []) if q.get("name") not in names]
             doc[key].extend(fragment[key])
         else:
-            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}")
+            required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
+            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
+    if "remove" in fragment:
+        _remove_items(doc, fragment["remove"], f"{where}.remove")
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):
@@ -344,13 +401,20 @@ def _first_location(f):
     return loc[:match.start(1) - 1], int(match[1])
 
 
-def _rewrite_ids(value, mapping):
+# Literal values that only look like prose: a path, a URL, a command that ran,
+# a rule's source. An `A-001` in them is a file, ticket or argument, not a finding.
+LITERAL_KEYS = {"location", "url", "command", "source"}
+
+
+def _rewrite_ids(value, mapping, key=None):
+    if key in LITERAL_KEYS:
+        return value
     if isinstance(value, str):
         return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
     if isinstance(value, list):
-        return [_rewrite_ids(v, mapping) for v in value]
+        return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):
-        return {k: _rewrite_ids(v, mapping) for k, v in value.items()}
+        return {k: _rewrite_ids(v, mapping, k) for k, v in value.items()}
     return value
 
 
@@ -361,7 +425,8 @@ def renumber(doc):
         SEVERITIES.index(findings[i]["severity"]), _first_location(findings[i]), i))
     mapping = {findings[i]["id"]: f"A-{n:03d}" for n, i in enumerate(order, 1)}
     # One pass over the old text, so A-001 -> A-002 and A-002 -> A-001 do not chain.
-    renamed = _rewrite_ids(doc, mapping)
+    # meta describes the run (its scope may name an earlier run's IDs).
+    renamed = {k: v if k == "meta" else _rewrite_ids(v, mapping) for k, v in doc.items()}
     if findings:
         renamed["findings"] = [renamed["findings"][i] for i in order]
         for f, i in zip(renamed["findings"], order):
@@ -373,39 +438,77 @@ def _serialize(doc):
     return (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
 
 
+@contextmanager
+def _exclusive(target):
+    """Hold an exclusive lock on target's directory from read to replace.
+
+    Two merges started together would otherwise both read the same record and
+    the later replace would drop the other's findings. The lock is on the
+    directory, so no lock file joins the outputs. Without fcntl (Windows), run
+    merges one at a time.
+    """
+    directory = target.resolve().parent
+    directory.mkdir(parents=True, exist_ok=True)
+    if fcntl is None:
+        yield
+        return
+    fd = os.open(directory, os.O_RDONLY)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
 def cmd_renumber(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target)
-        validate(doc)
-        if len(doc.get("findings", [])) > 999:
-            raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
-        doc, changed = renumber(doc)
-        validate(doc)
-        if changed:
-            _atomic_write(target, _serialize(doc))
+        with _exclusive(target):
+            changed = _renumber_file(target)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
+    _report_renumber(target, changed)
+    return 0
+
+
+def _renumber_file(target):
+    doc = read_json(target)
+    validate(doc)
+    if len(doc.get("findings", [])) > 999:
+        raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
+    doc, changed = renumber(doc)
+    validate(doc)
+    if changed:
+        _atomic_write(target, _serialize(doc))
+    return changed
+
+
+def _report_renumber(target, changed):
     for old, new in sorted(changed.items()):
         print(f"{old} -> {new}")
-    print(f"renumbered {len(changed)} finding(s) in {target}" if changed
-          else f"already in order: {target}")
-    return 0
+    if changed:
+        print(f"renumbered {len(changed)} finding(s) in {target}")
+        # A fragment written before this run still names the old IDs, and merge
+        # would apply it to whichever finding holds that ID now.
+        print("use only the new IDs from here on; rewrite any unmerged fragment first",
+              file=sys.stderr)
+    else:
+        print(f"already in order: {target}")
 
 
 def cmd_merge(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target) if target.exists() else {}
-        validate(doc)
-        for path in args.fragments:
-            merge(doc, read_json(path), path)
-            # Each fragment must leave a valid record, even in a batch.
+        with _exclusive(target):
+            doc = read_json(target) if target.exists() else {}
             validate(doc)
-        # Serialize before staging any output.
-        data = _serialize(doc)
-        _atomic_write(target, data)
+            for path in args.fragments:
+                merge(doc, read_json(path), path)
+                # Each fragment must leave a valid record, even in a batch.
+                validate(doc)
+            # Serialize before staging any output.
+            _atomic_write(target, _serialize(doc))
     except (OSError, ValueError, RuntimeError) as exc:
         # RuntimeError: Path.resolve() on a symlink loop before Python 3.13.
         print(f"refused: {exc}", file=sys.stderr)
@@ -483,7 +586,7 @@ def contract_problems(out, allow=()):
 
 
 def _stale_outputs(out, doc, unusable):
-    """Name each rendered output that render.py would not produce from doc."""
+    """Name each output that render.py would not produce from doc in meta.lang."""
     names = ("report.md", "dashboard.html")
     if any(name in unusable for name in names):
         return []
@@ -491,16 +594,11 @@ def _stale_outputs(out, doc, unusable):
         current = {name: (out / name).read_bytes() for name in names}
     except OSError as exc:
         return [f"rendered output cannot be read: {exc}"]
-    renderer = _renderer()
-    stale = set(names)
-    for lang in ("ja", "en"):
-        # Both files must come from one rendering, in one language.
-        expected = renderer.rendered_outputs(doc, lang)
-        mismatched = {name for name in names if current[name] != expected[name]}
-        if len(mismatched) < len(stale):
-            stale = mismatched
-    return [f"{name} is not rendered from the current findings.json "
-            "(re-run scripts/render.py)" for name in sorted(stale)]
+    lang = doc["meta"]["lang"]
+    expected = _renderer().rendered_outputs(doc, lang)
+    return [f"{name} is not rendered from the current findings.json in meta.lang {lang} "
+            "(re-run scripts/render.py without --lang)"
+            for name in names if current[name] != expected[name]]
 
 
 def _renderer():

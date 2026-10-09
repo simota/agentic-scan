@@ -1,6 +1,8 @@
 <!--
 設計上の検出事項を、オーナー、テックリード、管理者に報告するテンプレート。1 通に複数の finding を載せてよい。
 件数と各 finding は findings.json から転記し、ダッシュボードと食い違わないようにする。
+件数は report.md の 1 行目と同じ。除外判定（FalsePositive / NotApplicable）は数えない。
+「うち Valid」はその深刻度で判定が Valid の件数。n_likely と n_unverified は判定ごとの件数。
 
 送る前に確認すること:
 - 各 finding は好みではなく、根拠のある不具合または変更コストを述べている

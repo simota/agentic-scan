@@ -26,6 +26,7 @@ contract failed (reasons on stderr).
 """
 import argparse
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -72,13 +73,36 @@ def resolve_path(path):
         raise OSError(f"cannot resolve {path}: {exc}") from exc
 
 
+def _unique_object(pairs):
+    """Reject ambiguous members before the decoder can discard earlier values."""
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object member: {key!r}")
+        result[key] = value
+    return result
+
+
+def _reject_constant(token):
+    raise ValueError(f"non-finite JSON numeric constant: {token}")
+
+
+def _finite_float(token):
+    value = float(token)
+    if not math.isfinite(value):
+        raise ValueError(f"JSON number exceeds the finite floating-point range: {token}")
+    return value
+
+
 def read_json(path):
-    """Read a regular UTF-8 JSON file, following symbolic links."""
+    """Read unambiguous UTF-8 JSON from a regular file, following symbolic links."""
     try:
         source = Path(path)
         if not stat.S_ISREG(source.stat().st_mode):
             raise ValueError("input must be a regular file")
-        return json.loads(source.read_text(encoding="utf-8"))
+        return json.loads(source.read_text(encoding="utf-8"),
+                          object_pairs_hook=_unique_object,
+                          parse_constant=_reject_constant, parse_float=_finite_float)
     except (OSError, ValueError, RecursionError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 

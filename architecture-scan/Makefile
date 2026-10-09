@@ -28,19 +28,21 @@ tgt_claude := $(HOME)/.claude|$(HOME)/.claude/skills
 tgt_codex  := $(CODEX_HOME)|$(CODEX_HOME)/skills
 tgt_agy    := $(AGY_HOME)|$(AGY_HOME)/skills
 
+# Quote complete paths before shell expansion; only host names are Make lists.
+shell_quote = '$(subst ','"'"',$(1))'
+
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
 ifneq ($(UNKNOWN),)
 $(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
 endif
 
 ifneq ($(SKILLS_DIR),)
-TARGETS := $(SKILLS_DIR)|$(SKILLS_DIR)
+QTARGETS := $(call shell_quote,$(SKILLS_DIR)|$(SKILLS_DIR))
 else ifneq ($(PROJECT),)
-TARGETS := $(PROJECT)|$(PROJECT)/.claude/skills
+QTARGETS := $(call shell_quote,$(PROJECT)|$(PROJECT)/.claude/skills)
 else
-TARGETS := $(sort $(foreach a,$(AGENT),$(tgt_$(a))))
+QTARGETS := $(foreach a,$(sort $(AGENT)),$(call shell_quote,$(tgt_$(a))))
 endif
-QTARGETS := $(foreach t,$(TARGETS),'$(t)')
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 

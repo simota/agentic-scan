@@ -103,16 +103,33 @@ def validate_finding(f, where):
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if v["verdict"] in DEFINITIVE:
         _text(v.get("evidence"), f"{where}.validation.evidence ({v['verdict']} needs evidence)")
-    if v["method"] == "analysed":
-        a = f.get("analysis")
+    if v["method"] == "analysed" and "analysis" not in f:
+        raise SchemaError(f"{where}.analysis: required when validation.method is analysed")
+    if "analysis" in f:
+        a = f["analysis"]
         if not isinstance(a, dict):
-            raise SchemaError(f"{where}.analysis: required when validation.method is analysed")
+            raise SchemaError(f"{where}.analysis: must be an object")
         for key in ("tool", "command", "result"):
             _text(a.get(key), f"{where}.analysis.{key}")
     for i, ref in enumerate(f.get("references", [])):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
         _text(ref.get("url"), f"{where}.references[{i}].url")
+
+
+def _validate_perspectives(records, where):
+    names = set()
+    for i, p in enumerate(records):
+        field = f"{where}[{i}]"
+        if not isinstance(p, dict):
+            raise SchemaError(f"{field}: must be an object")
+        _choice(p.get("name"), PERSPECTIVES, f"{field}.name")
+        if p["name"] in names:
+            raise SchemaError(f"{field}.name: duplicate {p['name']}")
+        names.add(p["name"])
+        _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{field}.status")
+        _text(p.get("note"), f"{field}.note")
+    return names
 
 
 def validate(doc, complete=False):
@@ -143,13 +160,7 @@ def validate(doc, complete=False):
         for key in ("statement", "source"):
             _text(r.get(key), f"{where}.{key}")
         _choice(r.get("status"), RULE_STATUSES, f"{where}.status")
-    for i, p in enumerate(doc.get("perspectives", [])):
-        where = f"perspectives[{i}]"
-        if not isinstance(p, dict):
-            raise SchemaError(f"{where}: must be an object")
-        _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
-        _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{where}.status")
-        _text(p.get("note"), f"{where}.note")
+    _validate_perspectives(doc.get("perspectives", []), "perspectives")
     for key in LISTS:
         values = doc.get(key, [])
         if not isinstance(values, list):
@@ -187,7 +198,7 @@ def merge(doc, fragment, where):
         if not isinstance(fragment[key], list):
             raise SchemaError(f"{where}.{key}: must be a list")
         if key == "perspectives":
-            names = {p.get("name") for p in fragment[key] if isinstance(p, dict)}
+            names = _validate_perspectives(fragment[key], f"{where}.{key}")
             doc[key] = [q for q in doc.get(key, []) if q.get("name") not in names]
             doc[key].extend(fragment[key])
         else:

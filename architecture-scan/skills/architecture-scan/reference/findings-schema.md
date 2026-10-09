@@ -34,7 +34,8 @@ Merge semantics:
 - `findings` and `rules` match by `id`: a known record is updated key by key
   (so a later fragment can add just `validation` to `A-003`), a new one is
   appended. Duplicate IDs within one fragment are refused
-- `perspectives` match by `name` and replace the whole entry
+- `perspectives` match by `name` and replace the whole entry. Duplicate names
+  within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
@@ -106,9 +107,9 @@ Each finding must be complete in the fragment that first adds it.
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
-| `analysis` | `{tool, command, result}`, nonblank, from a read-only local analysis |
+| `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}` |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. `family` and `inferred` are optional |
-| `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
+| `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

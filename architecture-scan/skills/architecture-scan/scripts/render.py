@@ -13,6 +13,8 @@ named on stderr).
 import argparse
 from html import escape
 from pathlib import Path
+import re
+from string import punctuation
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -30,7 +32,7 @@ LABELS = {
         "trace": "trace", "contrast": "contrast", "impact": "what happens", "rule": "rule",
         "fix": "fix direction", "guard": "fitness function", "verdict": "recorded verdict",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
-        "references": "references", "status": "status",
+        "references": "references", "status": "status", "reason": "Reason",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
@@ -45,7 +47,7 @@ LABELS = {
         "trace": "追跡", "contrast": "対照", "impact": "何が起きるか", "rule": "ルール",
         "fix": "修正方針", "guard": "適合性チェック", "verdict": "検証判定",
         "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
-        "references": "参考", "status": "ステータス",
+        "references": "参考", "status": "ステータス", "reason": "理由",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
@@ -64,8 +66,35 @@ def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
+def markdown_table_cell(value):
+    """Keep pipes and line breaks inside a GFM cell, including in code spans."""
+    value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+
+    def text(part):
+        part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
+                      escape(part, quote=False))
+        return (part.replace("\\", "&#92;")
+                .replace("|", "&#124;").replace("\n", "<br>"))
+
+    parts, end = [], 0
+    # An odd backslash prefix escapes the opening backtick; delimiter lengths match.
+    spans = r"(?<![\\`])((?:\\\\)*)(`+)(?!`)(.+?)(?<!`)\2(?!`)"
+    for match in re.finditer(spans, value, re.DOTALL):
+        parts.append(text(value[end:match.start()] + match[1]))
+        code = match[3].replace("\n", " ")
+        if code.startswith(" ") and code.endswith(" ") and code.strip(" "):
+            code = code[1:-1]  # CommonMark code spans trim one surrounding space.
+        # Entities prevent both table splitting and inline Markdown interpretation.
+        literal = code.translate({ord(char): f"&#{ord(char)};" for char in punctuation + " \t"})
+        parts.append(f"<code>{literal}</code>")
+        end = match.end()
+    parts.append(text(value[end:]))
+    return "".join(parts)
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
+    cell = markdown_table_cell
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
     analysed = any(f["validation"]["method"] == "analysed" for f in findings)
@@ -74,10 +103,10 @@ def render_markdown(doc, lang):
                  + f" · {t['excluded']} {excluded} · "
                  + (t["analysed_note"] if analysed else t["static_note"]))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
-              f"| {t['project']} | {meta.get('project', '')} |",
-              f"| {t['scope_row']} | {meta.get('scope', '')} |",
-              f"| {t['revision']} | {meta.get('commit', 'UNKNOWN')} |",
-              f"| {t['date']} | {meta.get('date', '')} / {meta.get('assessor', '')} |", ""]
+              f"| {t['project']} | {cell(meta.get('project', ''))} |",
+              f"| {t['scope_row']} | {cell(meta.get('scope', ''))} |",
+              f"| {t['revision']} | {cell(meta.get('commit', 'UNKNOWN'))} |",
+              f"| {t['date']} | {cell(meta.get('date', ''))} / {cell(meta.get('assessor', ''))} |", ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
@@ -101,11 +130,14 @@ def render_markdown(doc, lang):
     if doc.get("rules"):
         lines += [f"## {t['rules']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
         for r in doc["rules"]:
-            lines.append(f"| {r['id']} | {r['statement']} | {r['source']} | {r['status']} |")
+            status = r["status"]
+            if r.get("reason"):
+                status += f"\n{t['reason']}: {r['reason']}"
+            lines.append(f"| {cell(r['id'])} | {cell(r['statement'])} | {cell(r['source'])} | {cell(status)} |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
     for p in doc.get("perspectives", []):
-        lines.append(f"| {p['name']} | {p['status']} | {p['note']} |")
+        lines.append(f"| {cell(p['name'])} | {cell(p['status'])} | {cell(p['note'])} |")
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         lines += [f"## {t[key]}", ""]
@@ -178,8 +210,11 @@ def render_html(doc, lang):
     if doc.get("rules"):
         out.append(f"<h2>{e(t['rules'])}</h2><table>")
         for r in doc["rules"]:
+            status = e(r["status"])
+            if r.get("reason"):
+                status += f"<br>{e(t['reason'])}: {e(r['reason'])}"
             out.append(f"<tr><td>{e(r['id'])}</td><td>{e(r['statement'])}</td>"
-                       f"<td>{e(r['source'])}</td><td>{e(r['status'])}</td></tr>")
+                       f"<td>{e(r['source'])}</td><td>{status}</td></tr>")
         out.append("</table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
     out.append(f"<h2>{e(t['perspectives'])}</h2><table>")

@@ -24,7 +24,7 @@ from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      read_json, validate)
+                      read_json, resolve_path, validate)
 
 LABELS = {
     "en": {
@@ -351,7 +351,7 @@ def render_html(doc, lang):
 
 def write_outputs(outputs):
     """Stage every output before replacing any, restoring old files on failure."""
-    destinations = [(path.resolve(), content) for path, content in outputs]
+    destinations = [(resolve_path(path), content) for path, content in outputs]
     if len({path for path, _ in destinations}) != len(destinations):
         raise OSError("report and dashboard must have different destinations")
     temporary_dirs, prepared, attempted = [], [], []
@@ -436,8 +436,8 @@ def main(argv=None):
     try:
         outputs = [(out / "report.md", render_markdown(doc, lang).encode("utf-8")),
                    (out / "dashboard.html", render_html(doc, lang).encode("utf-8"))]
-        source = Path(args.findings).resolve()
-        if any(path.resolve() == source for path, _ in outputs):
+        source = resolve_path(args.findings)
+        if any(resolve_path(path) == source for path, _ in outputs):
             raise OSError("an output destination must not replace findings.json")
         out.mkdir(parents=True, exist_ok=True)
         write_outputs(outputs)

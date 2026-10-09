@@ -1,4 +1,4 @@
-"""Regression checks for commitments and references in both report formats."""
+"""Regression checks for report contents, references and output preservation on failure."""
 import io
 import json
 from contextlib import redirect_stdout
@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 import tempfile
 import unittest
+from unittest.mock import patch
 
 from test_privacy_scan import complete_doc, render
 
@@ -174,6 +175,40 @@ class ReportRenderingTests(unittest.TestCase):
         self.assertIn("<dt>references</dt><dd>javascript:alert(1)</dd>", outputs["dashboard.html"])
         self.assertIn("- **references:** javascript:alert(1)\n", outputs["report.md"])
         self.assertEqual(ParsedHTML(outputs["dashboard.html"]).links, [])
+
+
+class RenderFailureTests(unittest.TestCase):
+    def assert_outputs_preserved(self, failed_renderer, existing):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "findings.json"
+            source.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            out = root / "out"
+            previous = {"report.md": b"previous report\n",
+                        "dashboard.html": b"previous dashboard\n"}
+            if existing:
+                out.mkdir()
+                for name, content in previous.items():
+                    (out / name).write_bytes(content)
+            with patch.object(render, failed_renderer,
+                              side_effect=RuntimeError("synthetic rendering failure")):
+                with self.assertRaisesRegex(RuntimeError, "synthetic rendering failure"):
+                    render.main([str(source), "--out", str(out)])
+            for name, content in previous.items():
+                if existing:
+                    self.assertEqual((out / name).read_bytes(), content)
+                else:
+                    self.assertFalse((out / name).exists(), name)
+
+    def test_render_failure_preserves_existing_outputs(self):
+        for failed_renderer in ("render_markdown", "render_html"):
+            with self.subTest(renderer=failed_renderer):
+                self.assert_outputs_preserved(failed_renderer, existing=True)
+
+    def test_render_failure_creates_no_partial_outputs(self):
+        for failed_renderer in ("render_markdown", "render_html"):
+            with self.subTest(renderer=failed_renderer):
+                self.assert_outputs_preserved(failed_renderer, existing=False)
 
 
 if __name__ == "__main__":

@@ -122,8 +122,7 @@ def _choice(value, allowed, where):
 def _no_personal_values(value, where):
     if value is None:
         return
-    # Optional prose can still reach the renderer when its type is malformed.
-    # Inspect its displayed representation as well as ordinary strings.
+    # Keep this guard safe for callers that have not checked the shape yet.
     value = str(value)
     for match in EMAIL.finditer(value):
         if not EXAMPLE_DOMAINS.search(match.group(1)):

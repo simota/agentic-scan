@@ -163,6 +163,199 @@ class PersonalValueRegressionTests(unittest.TestCase):
             self.assertNotIn(SYNTHETIC_EMAIL, stderr.getvalue())
 
 
+class SchemaDiagnosticRegressionTests(unittest.TestCase):
+    def test_rejected_values_stay_out_of_schema_errors(self):
+        paths = (
+            ("meta", "lang"),
+            *(("findings", 0, key) for key in (
+                "id", "severity", "confidence", "category", "status", "location")),
+            ("findings", 0, "validation", "verdict"),
+            ("findings", 0, "validation", "method"),
+            ("commitments", 0, "id"),
+            ("commitments", 0, "status"),
+            ("perspectives", 0, "name"),
+            ("perspectives", 0, "status"),
+        )
+        for path in paths:
+            for value in (SYNTHETIC_EMAIL, SYNTHETIC_NUMBER):
+                with self.subTest(path=path, value=value):
+                    doc = complete_doc()
+                    set_value(doc, path, value)
+                    with self.assertRaises(findings.SchemaError) as raised:
+                        findings.validate(doc, complete=True)
+                    self.assertNotIn(value, str(raised.exception))
+                    self.assertIn(str(path[-1]), str(raised.exception))
+
+    def test_cli_rejections_hide_values_and_unknown_key_names(self):
+        invalid = []
+        for field in ("location", "severity"):
+            doc = complete_doc()
+            doc["findings"][0][field] = SYNTHETIC_EMAIL
+            invalid.append(doc)
+        for key in (SYNTHETIC_EMAIL, SYNTHETIC_NUMBER):
+            doc = complete_doc()
+            doc[key] = "unexpected field"
+            invalid.append(doc)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / "output"
+            out.mkdir()
+            target, fragment = out / "findings.json", root / "fragment.json"
+            original = json.dumps(complete_doc())
+            for name in ("report.md", "dashboard.html"):
+                (out / name).write_text("existing output", encoding="utf-8")
+            for index, doc in enumerate(invalid):
+                with self.subTest(case=index):
+                    target.write_text(original, encoding="utf-8")
+                    fragment.write_text(json.dumps(doc), encoding="utf-8")
+                    stderr = io.StringIO()
+                    with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                        self.assertEqual(findings.main([
+                            "merge", str(target), str(fragment)]), 1)
+                    self.assertEqual(target.read_text(encoding="utf-8"), original)
+                    target.write_text(json.dumps(doc), encoding="utf-8")
+                    with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                        self.assertEqual(render.main([
+                            str(target), "--out", str(out)]), 2)
+                        self.assertEqual(findings.main(["check", str(out)]), 1)
+                    for value in (SYNTHETIC_EMAIL, SYNTHETIC_NUMBER):
+                        self.assertNotIn(value, stderr.getvalue())
+                    self.assertNotIn("Traceback", stderr.getvalue())
+                    for name in ("report.md", "dashboard.html"):
+                        self.assertEqual((out / name).read_text(encoding="utf-8"),
+                                         "existing output")
+
+
+class OptionalShapeRegressionTests(unittest.TestCase):
+    def test_present_optional_prose_must_be_strings(self):
+        paths = (
+            *(("meta", key) for key in (
+                "project", "scope", "date", "assessor", "method", "commit")),
+            *(("findings", 0, key) for key in ("contrast", "commitment", "step")),
+            ("findings", 0, "references", 0, "title"),
+            ("commitments", 0, "reason"),
+            ("commitments", 0, "family"),
+        )
+        for path in paths:
+            for value in (None, False, 42, {}, [], [1]):
+                with self.subTest(path=path, value=value):
+                    doc = doc_with_optional_prose()
+                    set_value(doc, path, value)
+                    with self.assertRaises(findings.SchemaError):
+                        findings.validate(doc)
+
+    def test_evidence_type_is_checked_for_every_verdict(self):
+        for verdict in findings.VERDICTS:
+            for value in (None, 42, {}, [1]):
+                with self.subTest(verdict=verdict, evidence=value):
+                    doc = complete_doc()
+                    doc["findings"][0]["validation"].update(
+                        verdict=verdict, evidence=value)
+                    with self.assertRaises(findings.SchemaError):
+                        findings.validate(doc, complete=True)
+
+    def test_record_collections_must_be_lists(self):
+        paths = (("findings",), ("commitments",), ("perspectives",),
+                 ("findings", 0, "references"))
+        for path in paths:
+            for value in (None, {}, "", 42):
+                with self.subTest(path=path, value=value):
+                    doc = complete_doc()
+                    set_value(doc, path, value)
+                    with self.assertRaises(findings.SchemaError):
+                        findings.validate(doc, complete=True)
+
+    def test_inferred_flag_requires_a_boolean_when_present(self):
+        for value in (None, "true", 1, [], {}):
+            with self.subTest(value=value):
+                doc = complete_doc()
+                doc["commitments"][0]["inferred"] = value
+                with self.assertRaises(findings.SchemaError):
+                    findings.validate(doc, complete=True)
+
+    def test_malformed_merge_keys_are_refused_without_changing_record(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "findings.json"
+            fragment = Path(directory) / "fragment.json"
+            original = json.dumps(complete_doc())
+            for collection, key in (("findings", "id"), ("commitments", "id"),
+                                    ("perspectives", "name")):
+                for value in (None, [], {}):
+                    with self.subTest(collection=collection, value=value):
+                        target.write_text(original, encoding="utf-8")
+                        fragment.write_text(json.dumps({collection: [{key: value}]}),
+                                            encoding="utf-8")
+                        with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                            self.assertEqual(findings.main([
+                                "merge", str(target), str(fragment)]), 1)
+                        self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_malformed_existing_containers_are_refused_before_merging(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory) / "findings.json"
+            fragment = Path(directory) / "fragment.json"
+            for key in ("meta", "findings", "commitments", "perspectives", "checked_ok"):
+                with self.subTest(key=key):
+                    doc = complete_doc()
+                    doc[key] = None
+                    original = json.dumps(doc)
+                    target.write_text(original, encoding="utf-8")
+                    fragment.write_text(json.dumps({key: {} if key == "meta" else []}),
+                                        encoding="utf-8")
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.assertEqual(findings.main([
+                            "merge", str(target), str(fragment)]), 1)
+                    self.assertEqual(target.read_text(encoding="utf-8"), original)
+
+    def test_malformed_evidence_cannot_replace_existing_outputs(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out = root / "output"
+            out.mkdir()
+            target, fragment = out / "findings.json", root / "fragment.json"
+            doc = complete_doc()
+            target.write_text(json.dumps(doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                self.assertEqual(render.main([str(target), "--out", str(out)]), 0)
+                self.assertEqual(findings.main(["check", str(out)]), 0)
+            originals = {name: (out / name).read_bytes() for name in findings.OUTPUTS}
+            validation = {"verdict": "Likely", "method": "static", "evidence": [1]}
+            fragment.write_text(json.dumps({"findings": [
+                {"id": "PV-001", "validation": validation}]}), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 1)
+            self.assertEqual({name: (out / name).read_bytes() for name in originals}, originals)
+            doc["findings"][0]["validation"] = validation
+            target.write_text(json.dumps(doc), encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                self.assertEqual(render.main([str(target), "--out", str(out)]), 2)
+                self.assertEqual(findings.main(["check", str(out)]), 1)
+            self.assertIn("findings[0].validation.evidence", stderr.getvalue())
+            for name in ("report.md", "dashboard.html"):
+                self.assertEqual((out / name).read_bytes(), originals[name])
+
+    def test_optional_strings_and_partial_updates_remain_supported(self):
+        doc = {}
+        findings.merge(doc, {"meta": {"project": "demo"}}, "first fragment")
+        findings.validate(doc)
+        findings.merge(doc, {"findings": [finding()]}, "second fragment")
+        findings.merge(doc, {"findings": [{"id": "PV-001", "contrast": ""}]}, "update")
+        findings.validate(doc)
+        doc = doc_with_optional_prose()
+        doc["meta"].update(commit="", method="")
+        doc["findings"][0].update(contrast="", commitment="", step="")
+        doc["findings"][0]["references"] = [{"url": "https://example.com/privacy"}]
+        doc["commitments"][0].update(reason="", family="", inferred=False)
+        for verdict in ("Likely", "Unverified", "Unlikely"):
+            doc["findings"][0]["validation"] = {"verdict": verdict, "method": "static"}
+            findings.validate(doc, complete=True)
+            doc["findings"][0]["validation"]["evidence"] = ""
+            findings.validate(doc, complete=True)
+            render.render_markdown(doc, "en")
+            render.render_html(doc, "en")
+
+
 class AnalysisShapeRegressionTests(unittest.TestCase):
     def test_present_analysis_is_validated_for_both_methods(self):
         malformed = (None, [], "source-scan", {}, {"tool": "source-scan"},

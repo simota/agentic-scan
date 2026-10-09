@@ -16,6 +16,8 @@ filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
 record does not match the shape (the field is named). `findings.py check`
 exits `1` and lists every contract violation.
 
+Both report contents are generated before either output file is written.
+
 ## Writing the file
 
 Build `findings.json` from fragments, never from a heredoc or a generated
@@ -133,6 +135,7 @@ encoded separately; other URL schemes remain visible as text.
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values |
 | `contrast`, `commitment` | Optional strings: the flow that keeps the commitment; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
+| `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`; an optional string for other verdicts |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |

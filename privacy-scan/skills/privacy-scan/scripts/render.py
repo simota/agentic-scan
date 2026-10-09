@@ -304,10 +304,13 @@ def main(argv=None):
         print(f"schema: {exc}", file=sys.stderr)
         return 2
     lang = args.lang or doc["meta"]["lang"]
+    # Finish both renderers before creating or replacing either output.
+    markdown = render_markdown(doc, lang)
+    html = render_html(doc, lang)
     out = Path(args.out)
     out.mkdir(parents=True, exist_ok=True)
-    (out / "report.md").write_text(render_markdown(doc, lang), encoding="utf-8")
-    (out / "dashboard.html").write_text(render_html(doc, lang), encoding="utf-8")
+    (out / "report.md").write_text(markdown, encoding="utf-8")
+    (out / "dashboard.html").write_text(html, encoding="utf-8")
     print(f"wrote {out / 'dashboard.html'} and {out / 'report.md'}")
     return 0
 

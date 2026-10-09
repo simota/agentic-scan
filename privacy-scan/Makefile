@@ -16,11 +16,14 @@
 # Paths are literal shell arguments, never Make whitespace-separated lists.
 shell_quote = '$(subst ','"'"',$(1))'
 
+# GNU Make 3.81 reads a literal '#' here as a comment, even inside $(shell).
+hash := \#
+
 # This file is the last entry here. Try literal suffixes to skip any preloaded
 # or including makefiles without splitting spaces inside this file's path.
 MAKEFILE_PATH := $(shell path=$(call shell_quote,$(MAKEFILE_LIST)); \
   while [ ! -f "$$path" ]; do \
-    case "$$path" in (*' '*) path=$${path#* };; (*) exit 1;; esac; \
+    case "$$path" in (*' '*) path=$${path$(hash)* };; (*) exit 1;; esac; \
   done; printf '%s\n' "$$path")
 ifeq ($(MAKEFILE_PATH),)
 $(error cannot locate this Makefile from MAKEFILE_LIST)
@@ -44,23 +47,23 @@ PROJECT ?=
 CODEX_HOME ?= $(HOME)/.codex
 AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
 
-tgt_claude := $(HOME)/.claude|$(HOME)/.claude/skills
-tgt_codex  := $(CODEX_HOME)|$(CODEX_HOME)/skills
-tgt_agy    := $(AGY_HOME)|$(AGY_HOME)/skills
+root_claude := $(HOME)/.claude
+root_codex  := $(CODEX_HOME)
+root_agy    := $(AGY_HOME)
 
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
 ifneq ($(UNKNOWN),)
 $(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
 endif
 
-# Quote each complete path pair before the shell sees it. Only host IDs may
-# pass through Make's whitespace-separated list functions.
+# Pass each guard and destination as separate, quoted shell arguments. No
+# delimiter is reserved inside a path; only host IDs enter Make's list functions.
 ifneq ($(SKILLS_DIR),)
-QTARGETS := $(call shell_quote,$(SKILLS_DIR)|$(SKILLS_DIR))
+QTARGETS := $(call shell_quote,$(SKILLS_DIR)) $(call shell_quote,$(SKILLS_DIR))
 else ifneq ($(PROJECT),)
-QTARGETS := $(call shell_quote,$(PROJECT)|$(PROJECT)/.claude/skills)
+QTARGETS := $(call shell_quote,$(PROJECT)) $(call shell_quote,$(PROJECT)/.claude/skills)
 else
-QTARGETS := $(foreach a,$(sort $(AGENT)),$(call shell_quote,$(tgt_$(a))))
+QTARGETS := $(foreach a,$(sort $(AGENT)),$(call shell_quote,$(root_$(a))) $(call shell_quote,$(root_$(a))/skills))
 endif
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
@@ -85,8 +88,9 @@ link: ## symlink the skill into every installed host's skills dir
 	if [ ! -f "$$skill/SKILL.md" ]; then \
 	  echo "refusing $$skill is not a skill directory (missing SKILL.md)" >&2; exit 1; \
 	fi; \
-	for t in $(QTARGETS); do \
-	  guard=$${t%%|*}; dir=$${t##*|}; d="$$dir/$(NAME)"; \
+	set -- $(QTARGETS); \
+	while [ "$$#" -gt 0 ]; do \
+	  guard=$$1; dir=$$2; shift 2; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
 	  if [ -L "$$d" ]; then \
 	    if [ "$$(readlink "$$d")" = "$$skill" ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
@@ -101,18 +105,20 @@ link: ## symlink the skill into every installed host's skills dir
 	echo "invoke it with:  $(NAME)   (or /$(NAME) in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created
-	@skill=$(QSKILL); for t in $(QTARGETS); do \
-	  dir=$${t##*|}; d="$$dir/$(NAME)"; \
+	@skill=$(QSKILL); set -- $(QTARGETS); \
+	while [ "$$#" -gt 0 ]; do \
+	  dir=$$2; shift 2; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = "$$skill" ]; then rm -f "$$d"; echo "unlinked $$d"; \
+	    if [ "$$(readlink "$$d")" = "$$skill" ]; then rm -f "$$d" || exit 1; echo "unlinked $$d"; \
 	    else echo "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
 	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
 	  else echo "absent   $$d"; fi; \
 	done
 
 status: ## show what is installed, per host
-	@for t in $(QTARGETS); do \
-	  guard=$${t%%|*}; dir=$${t##*|}; d="$$dir/$(NAME)"; \
+	@set -- $(QTARGETS); \
+	while [ "$$#" -gt 0 ]; do \
+	  guard=$$1; dir=$$2; shift 2; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - host not installed"; \
 	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink "$$d")"; \
 	  elif [ -d "$$d" ]; then echo "dir      $$d - not a symlink"; \
@@ -165,4 +171,4 @@ check: test ## verify the skill is self-contained and internally consistent
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
-	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(LANG_OUT)
+	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))

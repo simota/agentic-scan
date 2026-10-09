@@ -156,7 +156,7 @@ UNKNOWN = _Unknown()
 
 # ---------------------------------------------------------------- HCL scanning
 
-IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+IDENT = re.compile(r"[^\W\d][\w-]*")  # HCL identifiers are Unicode letters, digits, _ and -
 HEREDOC = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\r?\n")
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 OPEN, CLOSE = "([{", ")]}"
@@ -618,7 +618,8 @@ def provider_of(type_):
 
 # file("policy.json") or file("${path.module}/policy.json"), relative to the module.
 FILE_REF = re.compile(r'^(?:file|templatefile)\(\s*"(?:\$\{path\.module\}/)?([^"$]+)"\s*[,)]')
-DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)\.(?:minified_)?json'
+DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)(?:\[[^\]]*\])?'
+                     r'\.(?:minified_)?json'
                      r'\s*\}?"?$')
 
 
@@ -717,6 +718,7 @@ class Scan:
         self.files, self.resources, self.modules, self.backends = [], [], [], []
         self.not_run, self.hits = [], []
         self.policy_docs = {}
+        self.local_module_dirs = set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
         self.tf_dirs = {}
@@ -801,6 +803,10 @@ class Scan:
                 if entry:
                     entry[1] = True
                     return entry[0]
+            if value is UNKNOWN:
+                line = view.line(attr)
+                self.not_run.append(f"policy document not resolved from the inputs; {attr} checks not run: "
+                                    f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
         return None
 
     def gcp_iam(self, res, role, members, line):
@@ -992,7 +998,9 @@ def check_tf(scan, res):
                          rule.get("from_port"), rule.get("to_port"))
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
-            scan.ingress(res, res.line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
+            # The open range's own line: an override may set it in another file.
+            line = v.line("cidr_blocks") if v.get("cidr_blocks") is not None else v.line("ipv6_cidr_blocks")
+            scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
                          v.get("protocol"), v.get("from_port"), v.get("to_port"))
     elif t == "aws_vpc_security_group_ingress_rule":
         scan.ingress(res, res.line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
@@ -1032,7 +1040,7 @@ def check_tf(scan, res):
             scan.hit("AWS-RDS-001", res, v.line("publicly_accessible"), "publicly_accessible = true")
         # Replicas and restores inherit encryption from their source; Aurora
         # Serverless v1 clusters are always encrypted.
-        inherited = any(v.get(k) is not None for k in (
+        inherited = any(v.get(k) not in (None, "") for k in (
             "replicate_source_db", "snapshot_identifier", "replication_source_identifier"))
         if t != "aws_rds_cluster_instance" and tf_bool(v.get("storage_encrypted")) in (False, None) \
                 and not inherited and v.get("engine_mode") != "serverless":
@@ -1065,7 +1073,7 @@ def check_tf(scan, res):
         if v.get("authorization_type") == "NONE":
             scan.hit("AWS-LAMBDA-001", res, v.line("authorization_type"), "authorization_type = NONE")
     elif t == "aws_lambda_permission":
-        if v.get("principal") == "*" and all(v.get(k) is None for k in
+        if v.get("principal") == "*" and all(v.get(k) in (None, "") for k in
                                              ("source_arn", "source_account", "principal_org_id")):
             scan.hit("AWS-LAMBDA-002", res, v.line("principal"), "principal = * without a source condition")
     elif t == "aws_cloudtrail":
@@ -1076,7 +1084,7 @@ def check_tf(scan, res):
     elif t == "aws_kms_key":
         spec = v.get("customer_master_key_spec") or v.get("key_spec")
         # Keys in a custom key store (CloudHSM or external) cannot rotate automatically.
-        custom_store = v.get("custom_key_store_id") is not None or v.get("xks_key_id") is not None
+        custom_store = v.get("custom_key_store_id") not in (None, "") or v.get("xks_key_id") not in (None, "")
         if spec in (None, "SYMMETRIC_DEFAULT") and not custom_store and \
                 tf_bool(v.get("enable_key_rotation")) in (False, None):
             scan.hit("AWS-KMS-001", res, res.line, "enable_key_rotation not true")
@@ -1188,9 +1196,10 @@ def find_line(text, pattern, default=1):
 
 
 GIT_SOURCE = re.compile(r"^(git::|git@|github\.com/|bitbucket\.org/)|\.git(//|$|\?)")
-REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+\.[a-z]+/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
+REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+(?:\.[a-z]+|:[0-9]+)/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
                              r"(//[^?]+)?$")
-PROD_DIR = re.compile(r"(^|/)(prod|production|prd)(/|$)")
+PINNED_REF = re.compile(r"[0-9a-f]{7,40}|v?[0-9]+(?:\.[0-9]+)*(?:[-+.][0-9A-Za-z.-]+)?")
+PROD_DIR = re.compile(r"(^|/)(prod|production|prd)([-_.][^/]*)?(/|$)", re.IGNORECASE)
 
 
 class _HclLine(int):
@@ -1211,7 +1220,9 @@ def _hcl_source(block, rel):
 
 def _merge_hcl_block(base, override):
     """Terraform's shallow override merge; dynamic blocks retain their uncertainty."""
-    result = Block(base.type, base.labels, override.line, override.end)
+    # The resource stays declared where its base block is; each argument
+    # keeps its own file and line for hits.
+    result = Block(base.type, base.labels, base.line, base.end)
     result.attrs = {**base.attrs, **override.attrs}
 
     def block_type(block):
@@ -1297,7 +1308,7 @@ def terraform_overrides(scan, parsed):
                     base.blocks.extend(old.blocks)
                     entries[other] = None
                 positions[key] = [index]
-            entries[index] = (rel, _merge_hcl_block(base, block))
+            entries[index] = (entries[index][0], _merge_hcl_block(base, block))
     return [(entry[0], [entry[1]]) for entry in entries if entry is not None], uncertain
 
 
@@ -1349,9 +1360,18 @@ def handle_terraform(scan, parsed):
             elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
                 check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
             elif b.type == "module" and b.labels:
+                info["resources"] = True  # a root that only calls modules still holds state
                 handle_module(scan, rel, b, view)
             elif b.type == "provider" and b.labels and b not in uncertain:
-                for key in ("access_key", "secret_key"):
+                for key in ("access_key", "secret_key", "token", "credentials", "access_token",
+                            "client_secret", "client_certificate_password"):
+                    # AWS keys in a provider block are flagged in any form, as before.
+                    # Other providers often take short-lived tokens from data sources
+                    # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
+                    # a literal value or a key file read from the repository.
+                    if key in b.attrs and key not in ("access_key", "secret_key") and not (
+                            isinstance(view.get(key), str) or b.attrs[key][0].lstrip().startswith("file(")):
+                        continue
                     if key in b.attrs:
                         scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
                                  view.line(key), f"{key} set in provider block")
@@ -1377,6 +1397,8 @@ def handle_module(scan, rel, b, view):
     scan.modules.append({"name": name, "source": safe_source,
                          "version": version if isinstance(version, str) else None,
                          "file": rel, "line": b.line})
+    if isinstance(source, str) and source.startswith(("./", "../")):
+        scan.local_module_dirs.add(posixpath.normpath(posixpath.join(str(Path(rel).parent), source.split("//")[0])))
     if not isinstance(source, str) or source.startswith(("./", "../")):
         return
     scan.not_run.append(f"remote module not read: module.{name} ({safe_source}) at {rel}:{b.line}")
@@ -1385,8 +1407,9 @@ def handle_module(scan, rel, b, view):
         m = re.search(r"[?&]ref=([^&]+)", source)
         if not m:
             scan.hit("PS-001", res, view.line("source"), "git source without ?ref=")
-        elif m.group(1) in ("main", "master", "HEAD", "develop", "trunk"):
-            scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is a branch")
+        elif not PINNED_REF.fullmatch(m.group(1)):
+            # Only a commit or a version tag pins the code; anything else may be a branch.
+            scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
     elif REGISTRY_SOURCE.match(source) and version is None:
         scan.hit("PS-001", res, view.line("source"), "registry module without version")
 
@@ -1396,14 +1419,42 @@ def handle_backend(scan, rel, block):
     view = HclView(block)
     scan.backends.append({"type": kind, "file": rel, "line": block.line})
     res = Res("backend", f"terraform.backend.{kind}", rel, block.line)
-    if kind == "s3" and tf_bool(view.get("encrypt")) in (False, None) and view.get("kms_key_id") is None:
-        scan.hit("PS-002", res, block.line, "s3 backend without encrypt = true")
+    if kind == "s3":
+        encrypt, kms = tf_bool(view.get("encrypt")), view.get("kms_key_id")
+        if encrypt is None and not block.attrs:
+            # Partial configuration: settings come from -backend-config.
+            scan.not_run.append("PS-002: s3 backend configured at init (-backend-config); "
+                                f"check the backend config file: {rel}:{block.line}")
+        elif encrypt is None and kms in (None, "") and backend_config_encrypts(scan, rel):
+            pass
+        elif encrypt is False or (encrypt is None and kms in (None, "")):
+            scan.hit("PS-002", res, block.line, "s3 backend without encrypt = true")
     elif kind == "local" and PROD_DIR.search(rel):
         scan.hit("PS-002", res, block.line, "local state for a production directory", "Low")
 
 
+def backend_config_encrypts(scan, rel):
+    """A sibling *.tfbackend or backend*.hcl file that sets encrypt = true."""
+    directory = Path(scan.root) / Path(rel).parent
+    try:
+        candidates = sorted(p for p in directory.iterdir()
+                            if p.is_file() and not p.is_symlink() and
+                            (p.name.endswith(".tfbackend") or re.fullmatch(r"backend.*\.hcl", p.name)))
+        for path in candidates:
+            for line in path.read_text(encoding="utf-8-sig").splitlines():
+                m = re.match(r'\s*encrypt\s*=\s*"?(true|false)"?\s*(?:#.*)?$', line)
+                if m:
+                    return m.group(1) == "true"
+    except (OSError, UnicodeError):
+        return False
+    return False
+
+
 def finish_dirs(scan):
     for d, info in sorted(scan.tf_dirs.items()):
+        # A directory another module calls is a child module, not a root.
+        if d in scan.local_module_dirs:
+            continue
         if info["resources"] and not info["backend"] and PROD_DIR.search(d + "/"):
             scan.hit("PS-002", Res("backend", "terraform.backend.local", info["file"], 1), 1,
                      "no backend in a production root module; state is local", "Low")
@@ -1430,7 +1481,8 @@ def with_plan_unknowns(value, mask):
 
 def handle_plan(scan, rel, text, doc):
     unknowns = {}
-    for resource in doc.get("resource_changes", []) or []:
+    changes = doc.get("resource_changes")
+    for resource in changes if isinstance(changes, list) else []:
         if not isinstance(resource, dict) or not isinstance(resource.get("address"), str) \
                 or "deposed" in resource:
             continue
@@ -1438,12 +1490,24 @@ def handle_plan(scan, rel, text, doc):
         if isinstance(change, dict):
             unknowns[resource["address"]] = change.get("after_unknown")
 
+    # Map decoded addresses to lines once: Terraform escapes <, > and & and
+    # writes non-ASCII raw, so re-encoding an address would not find it.
+    lines = {}
+    for m in re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text):
+        lines.setdefault(json.loads(m.group(1)), text.count("\n", 0, m.start()) + 1)
+
     def walk(module):
+        if not isinstance(module, dict):
+            return
         for r in module.get("resources", []) or []:
             if not isinstance(r, dict) or r.get("mode") == "data":
                 continue
             address, type_ = r.get("address", ""), r.get("type", "")
-            line = find_line(text, r'"address"\s*:\s*' + re.escape(json.dumps(address)))
+            if not isinstance(address, str) or not isinstance(type_, str) or \
+                    not isinstance(r.get("values") or {}, dict):
+                scan.not_run.append(f"plan resource with an unexpected shape skipped: {rel}")
+                continue
+            line = lines.get(address, 1)
             values = with_plan_unknowns(r.get("values") or {}, unknowns.get(address))
             res = Res(type_, address, rel, line, DictView(values, line), rel)
             scan.add_resource(res)
@@ -1451,11 +1515,11 @@ def handle_plan(scan, rel, text, doc):
                 scan.not_run.append(f"plan contains unknown values; affected checks not run: "
                                     f"{address} at {rel}:{line}")
             check_tf(scan, res)
-        for child in module.get("child_modules", []) or []:
-            if isinstance(child, dict):
-                walk(child)
-    root = (doc.get("planned_values") or {}).get("root_module") or {}
-    walk(root)
+        children = module.get("child_modules")
+        for child in children if isinstance(children, list) else []:
+            walk(child)
+    planned = doc.get("planned_values")
+    walk(planned.get("root_module") if isinstance(planned, dict) else None)
 
 
 JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\],\n]')

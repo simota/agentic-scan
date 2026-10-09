@@ -31,6 +31,7 @@ LABELS = {
         "fix": "fix direction", "guard": "guard", "verdict": "recorded verdict",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
         "references": "references", "status": "status",
+        "inferred": "inferred", "not_checked_reason": "reason",
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
@@ -46,6 +47,7 @@ LABELS = {
         "fix": "修正方針", "guard": "再発防止チェック", "verdict": "検証判定",
         "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
         "references": "参考", "status": "ステータス",
+        "inferred": "推定", "not_checked_reason": "未確認の理由",
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
@@ -62,6 +64,22 @@ def counts(findings):
 
 def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
+
+
+def markdown_cell(value):
+    """Keep literal text and line breaks inside one Markdown table cell."""
+    text = escape(as_text(value)).replace("\\", "\\\\").replace("|", "\\|")
+    return text.replace("\r\n", "\n").replace("\r", "\n").replace("\n", "<br>")
+
+
+def commitment_text(record, labels):
+    """Keep recorded qualifications visible in both commitment ledgers."""
+    statement, status = record["statement"], record["status"]
+    if record.get("inferred") is True:
+        statement += f" ({labels['inferred']})"
+    if status == "not checked" and record.get("reason"):
+        status += f" — {labels['not_checked_reason']}: {record['reason']}"
+    return statement, status
 
 
 def render_markdown(doc, lang):
@@ -101,7 +119,9 @@ def render_markdown(doc, lang):
     if doc.get("commitments"):
         lines += [f"## {t['commitments']}", "", "| ID | | Source | Status |", "|---|---|---|---|"]
         for r in doc["commitments"]:
-            lines.append(f"| {r['id']} | {r['statement']} | {r['source']} | {r['status']} |")
+            statement, status = commitment_text(r, t)
+            cells = (r["id"], statement, r["source"], status)
+            lines.append("| " + " | ".join(markdown_cell(value) for value in cells) + " |")
         lines.append("")
     lines += [f"## {t['perspectives']}", "", "| | Status | Note |", "|---|---|---|"]
     for p in doc.get("perspectives", []):
@@ -178,8 +198,9 @@ def render_html(doc, lang):
     if doc.get("commitments"):
         out.append(f"<h2>{e(t['commitments'])}</h2><table>")
         for r in doc["commitments"]:
-            out.append(f"<tr><td>{e(r['id'])}</td><td>{e(r['statement'])}</td>"
-                       f"<td>{e(r['source'])}</td><td>{e(r['status'])}</td></tr>")
+            statement, status = commitment_text(r, t)
+            out.append(f"<tr><td>{e(r['id'])}</td><td>{e(statement)}</td>"
+                       f"<td>{e(r['source'])}</td><td>{e(status)}</td></tr>")
         out.append("</table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
     out.append(f"<h2>{e(t['perspectives'])}</h2><table>")

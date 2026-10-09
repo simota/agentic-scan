@@ -21,10 +21,9 @@ record is complete, IDs are gapless in severity order and every perspective in
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr).
 
-Findings describe where personal data goes, never the data itself: a finding
-whose prose or evidence contains an e-mail address (other than the reserved
-example domains) or a long digit run shaped like a card, account or phone
-number is refused.
+Findings describe where personal data goes, never the data itself: public
+prose or evidence containing an e-mail address (other than the reserved
+example domains) or a run of 12 or more digits is refused.
 """
 import argparse
 import json
@@ -57,13 +56,14 @@ FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "val
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 COMMITMENT_ID = re.compile(r"^C-\d{2,}$")
+COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 LOCATION = re.compile(r"^[^\s:]+(?::\d+(?:-\d+)?)$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|test|invalid)$",
                              re.IGNORECASE)
-LONG_NUMBER = re.compile(r"(?<![\w.:-])\d(?:[ -]?\d){11,18}(?![\w.:-])")
+LONG_NUMBER = re.compile(r"\d(?:[ -]?\d){11,}")
 
 
 class SchemaError(ValueError):
@@ -88,13 +88,22 @@ def _choice(value, allowed, where):
 
 
 def _no_personal_values(value, where):
-    if not isinstance(value, str):
+    if value is None:
         return
+    # Optional prose can still reach the renderer when its type is malformed.
+    # Inspect its displayed representation as well as ordinary strings.
+    value = str(value)
     for match in EMAIL.finditer(value):
         if not EXAMPLE_DOMAINS.search(match.group(1)):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
     if LONG_NUMBER.search(value):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
+
+
+def _check_prose(record, keys, where):
+    """Check the schema's public text without scanning technical identifiers."""
+    for key in keys:
+        _no_personal_values(record.get(key), f"{where}.{key}")
 
 
 def validate_finding(f, where):
@@ -107,10 +116,10 @@ def validate_finding(f, where):
         raise SchemaError(f"{where}.id: {f['id']!r} must look like PV-001")
     for key in TEXT_FIELDS:
         _text(f[key], f"{where}.{key}")
-    for key in (*TEXT_FIELDS, "contrast"):
-        _no_personal_values(f.get(key), f"{where}.{key}")
-    _no_personal_values(f["validation"].get("evidence") if isinstance(f["validation"], dict)
-                        else None, f"{where}.validation.evidence")
+    _check_prose(f, (*TEXT_FIELDS, "contrast", "step"), where)
+    commitment = f.get("commitment")
+    if not isinstance(commitment, str) or not COMMITMENT_ID.fullmatch(commitment):
+        _no_personal_values(commitment, f"{where}.commitment")
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -118,26 +127,33 @@ def validate_finding(f, where):
     locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
-    for loc in locations:
+    for i, loc in enumerate(locations):
         if not isinstance(loc, str) or not LOCATION.match(loc):
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
+        # The parsed line range is technical metadata; the path can hold PII.
+        _no_personal_values(loc.rsplit(":", 1)[0], f"{where}.location[{i}]")
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
+    _check_prose(v, ("evidence",), f"{where}.validation")
     if v["verdict"] in DEFINITIVE:
         _text(v.get("evidence"), f"{where}.validation.evidence ({v['verdict']} needs evidence)")
-    if v["method"] == "analysed":
-        a = f.get("analysis")
+    if v["method"] == "analysed" and "analysis" not in f:
+        raise SchemaError(f"{where}.analysis: required when validation.method is analysed")
+    if "analysis" in f:
+        a = f["analysis"]
         if not isinstance(a, dict):
-            raise SchemaError(f"{where}.analysis: required when validation.method is analysed")
+            raise SchemaError(f"{where}.analysis: must be an object")
         for key in ("tool", "command", "result"):
             _text(a.get(key), f"{where}.analysis.{key}")
+        _check_prose(a, ("tool", "command", "result"), f"{where}.analysis")
     for i, ref in enumerate(f.get("references", [])):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
         _text(ref.get("url"), f"{where}.references[{i}].url")
+        _check_prose(ref, ("title", "url"), f"{where}.references[{i}]")
 
 
 def validate(doc, complete=False):
@@ -155,6 +171,11 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    _check_prose(meta, ("project", "scope", "date", "assessor", "method"), "meta")
+    commit = meta.get("commit")
+    # Numeric hexadecimal revisions are valid too; arbitrary commit prose is not exempt.
+    if not isinstance(commit, str) or not COMMIT_HASH.fullmatch(commit):
+        _no_personal_values(commit, "meta.commit")
     seen = set()
     for i, f in enumerate(doc.get("findings", [])):
         validate_finding(f, f"findings[{i}]")
@@ -168,6 +189,7 @@ def validate(doc, complete=False):
         for key in ("statement", "source"):
             _text(r.get(key), f"{where}.{key}")
         _choice(r.get("status"), COMMITMENT_STATUSES, f"{where}.status")
+        _check_prose(r, ("statement", "source", "reason"), where)
     for i, p in enumerate(doc.get("perspectives", [])):
         where = f"perspectives[{i}]"
         if not isinstance(p, dict):
@@ -175,12 +197,14 @@ def validate(doc, complete=False):
         _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
         _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{where}.status")
         _text(p.get("note"), f"{where}.note")
+        _check_prose(p, ("note",), where)
     for key in LISTS:
         values = doc.get(key, [])
         if not isinstance(values, list):
             raise SchemaError(f"{key}: must be a list")
         for i, value in enumerate(values):
             _text(value, f"{key}[{i}]")
+            _no_personal_values(value, f"{key}[{i}]")
 
 
 def _merge_records(current, incoming, where):

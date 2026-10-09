@@ -40,9 +40,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence,
   checked against four claims: reach, the data that actually arrives,
   controls, and whether the commitment is the app's own
-- **No values** — `findings.py merge` refuses finding text containing e-mail
-  addresses (outside reserved example domains) or long digit runs, so the
-  record never carries personal data
+- **No values** — `findings.py merge` checks report prose, including analysis
+  results, commitments and coverage notes, for e-mail addresses (outside
+  reserved example domains) and runs of 12 or more digits. Use field names
+  and placeholders throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
 

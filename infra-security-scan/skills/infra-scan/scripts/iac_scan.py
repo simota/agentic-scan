@@ -73,7 +73,7 @@ RULES = {
                    ["CIS AWS Foundations — S3 Block Public Access is enabled"], "CWE-200"),
     "AWS-S3-002": ("S3 public access block leaves a protection off", "Medium", "Data protection",
                    "aws", ["CIS AWS Foundations — S3 Block Public Access is enabled"], "CWE-200"),
-    "AWS-S3-003": ("Resource policy allows any principal without a condition", "High",
+    "AWS-S3-003": ("Resource policy allows any principal without a narrowing condition", "High",
                    "Data protection", "aws", ["CIS AWS Foundations — S3 Block Public Access is enabled"], "CWE-284"),
     "AWS-IAM-001": ("IAM policy grants all actions on all resources", "High",
                     "Identity and privilege", "aws", ["CIS AWS Foundations — no IAM policy grants full *:* admin privileges"], "CWE-250"),
@@ -156,7 +156,7 @@ UNKNOWN = _Unknown()
 # ---------------------------------------------------------------- HCL scanning
 
 IDENT = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
-HEREDOC = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_]*)[ \t]*\r?\n")
+HEREDOC = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\r?\n")
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 OPEN, CLOSE = "([{", ")]}"
 
@@ -615,7 +615,8 @@ def provider_of(type_):
 
 # ---------------------------------------------------------------- policies
 
-DOC_REF = re.compile(r'^"?(?:\$\{)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)\.json\}?"?$')
+DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)\.(?:minified_)?json'
+                     r'\s*\}?"?$')
 
 
 def norm_statements(doc):
@@ -639,6 +640,9 @@ def norm_statements(doc):
                 principals.extend((kind, x) for x in aslist(ids))
         elif p is not None:
             principals.append((UNKNOWN, UNKNOWN))
+        if "NotPrincipal" in st:
+            # Allow + NotPrincipal grants everyone except the named principals.
+            principals.append(("*", "*"))
         cond = st.get("Condition")
         conds = []
         if isinstance(cond, dict):
@@ -670,6 +674,8 @@ def doc_statements(view):
         principals = []
         for p in st.blocks("principals"):
             principals.extend((p.get("type"), x) for x in aslist(p.get("identifiers")))
+        if st.blocks("not_principals"):
+            principals.append(("*", "*"))  # everyone except the named principals
         conds = [(c.get("test"), c.get("variable"), aslist(c.get("values")))
                  for c in st.blocks("condition")]
         out.append({"effect": "Allow" if effect is None else effect,
@@ -756,9 +762,9 @@ class Scan:
 
     def resource_policy(self, res, stmts, line):
         for st in stmts or []:
-            if st["effect"] == "Allow" and not st["conditions"] and \
+            if st["effect"] == "Allow" and not narrowing(st["conditions"]) and \
                     any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
-                self.hit("AWS-S3-003", res, line, "Allow to Principal * without a condition")
+                self.hit("AWS-S3-003", res, line, "Allow to Principal * without a narrowing condition")
 
     def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001"):
         open_from = world_cidrs(cidrs)
@@ -807,6 +813,8 @@ class Scan:
         if not open_from:
             return
         for proto, ports in allows:
+            if isinstance(proto, (str, int)) and not isinstance(proto, bool):
+                proto = str(proto).lower()
             if proto == "all":
                 spans = [(0, 65535)]
             elif proto in ("tcp", "6"):
@@ -824,6 +832,22 @@ class Scan:
                 self.hit("GCP-NET-001", res, line,
                          f"ingress from {open_from[0]} to {', '.join(sorted(set(found))[:5])}")
                 return
+
+
+# Condition keys that hold for any caller, so they do not narrow Principal "*".
+# Unknown keys count as narrowing: precision over completeness.
+OPEN_CONDITION_KEYS = {
+    "aws:securetransport", "aws:currenttime", "aws:epochtime", "aws:requestedregion",
+    "aws:referer", "aws:useragent", "aws:multifactorauthpresent", "s3:tlsversion",
+    "s3:signatureversion", "s3:signatureage", "s3:authtype", "s3:x-amz-content-sha256",
+    "s3:x-amz-server-side-encryption", "s3:x-amz-server-side-encryption-aws-kms-key-id",
+    "s3:x-amz-acl", "s3:prefix", "s3:delimiter", "s3:max-keys",
+}
+
+
+def narrowing(conditions):
+    return any(not isinstance(key, str) or key.lower() not in OPEN_CONDITION_KEYS
+               for _, key, _ in conditions)
 
 
 def world_cidrs(values):
@@ -926,6 +950,7 @@ def github_trust_gap(st):
 
 ADMIN_ARN = re.compile(r"\Aarn:[a-z0-9-]+:iam::aws:policy/AdministratorAccess\Z")
 GCP_IAM = re.compile(r"^google_\w+_iam_(member|binding)$")
+GCP_IAM_POLICY = re.compile(r"^google_\w+_iam_policy$")
 DEFAULT_SA = re.compile(r"-compute@developer\.gserviceaccount\.com$")
 SSL_MODES = ("ENCRYPTED_ONLY", "TRUSTED_CLIENT_CERTIFICATE_REQUIRED")
 
@@ -949,7 +974,7 @@ def tf_bool(value):
 
 def check_tf(scan, res):
     t, v = res.type, res.view
-    if t == "aws_security_group":
+    if t in ("aws_security_group", "aws_default_security_group"):
         for rule in v.blocks("ingress"):
             scan.ingress(res, rule.line(), aslist(rule.get("cidr_blocks")) +
                          aslist(rule.get("ipv6_cidr_blocks")), rule.get("protocol"),
@@ -994,12 +1019,19 @@ def check_tf(scan, res):
     elif t in ("aws_db_instance", "aws_rds_cluster", "aws_rds_cluster_instance"):
         if tf_bool(v.get("publicly_accessible")) is True:
             scan.hit("AWS-RDS-001", res, v.line("publicly_accessible"), "publicly_accessible = true")
+        # Replicas and restores inherit encryption from their source; Aurora
+        # Serverless v1 clusters are always encrypted.
+        inherited = any(v.get(k) is not None for k in (
+            "replicate_source_db", "snapshot_identifier", "replication_source_identifier"))
         if t != "aws_rds_cluster_instance" and tf_bool(v.get("storage_encrypted")) in (False, None) \
-                and v.get("replicate_source_db") is None:
+                and not inherited and v.get("engine_mode") != "serverless":
             scan.hit("AWS-RDS-002", res, v.line("storage_encrypted"), "storage_encrypted not true")
     elif t in ("aws_instance", "aws_launch_template"):
         opts = v.blocks("metadata_options")
-        if not opts:
+        if not opts and t == "aws_instance" and v.blocks("launch_template"):
+            scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
+                                f"template: {res.file}:{res.line} ({res.address})")
+        elif not opts:
             scan.hit("AWS-EC2-001", res, res.line, "no metadata_options; IMDSv1 allowed")
         else:
             endpoint = opts[0].get("http_endpoint")
@@ -1032,7 +1064,9 @@ def check_tf(scan, res):
             scan.hit("AWS-CT-001", res, res.line, "not true: " + ", ".join(off))
     elif t == "aws_kms_key":
         spec = v.get("customer_master_key_spec") or v.get("key_spec")
-        if spec in (None, "SYMMETRIC_DEFAULT") and \
+        # Keys in a custom key store (CloudHSM or external) cannot rotate automatically.
+        custom_store = v.get("custom_key_store_id") is not None or v.get("xks_key_id") is not None
+        if spec in (None, "SYMMETRIC_DEFAULT") and not custom_store and \
                 tf_bool(v.get("enable_key_rotation")) in (False, None):
             scan.hit("AWS-KMS-001", res, res.line, "enable_key_rotation not true")
     elif t == "aws_eks_cluster":
@@ -1049,6 +1083,17 @@ def check_tf(scan, res):
     elif GCP_IAM.match(t):
         members = [v.get("member")] if v.get("member") is not None else aslist(v.get("members"))
         scan.gcp_iam(res, v.get("role"), members, v.line("role"))
+    elif GCP_IAM_POLICY.match(t):
+        data = v.get("policy_data")
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except ValueError:
+                data = None
+        if isinstance(data, dict) and isinstance(data.get("bindings"), list):
+            for b in data["bindings"]:
+                if isinstance(b, dict):
+                    scan.gcp_iam(res, b.get("role"), aslist(b.get("members")), v.line("policy_data"))
     elif t == "google_iam_policy":
         for b in v.blocks("binding"):
             scan.gcp_iam(res, b.get("role"), aslist(b.get("members")), b.line())
@@ -1065,6 +1110,9 @@ def check_tf(scan, res):
             scan.hit("GCP-GCS-001", res, res.line, "; ".join(gaps))
     elif t == "google_sql_database_instance":
         for settings in v.blocks("settings"):
+            if not settings.blocks("ip_configuration"):
+                # Omitted ip_configuration: a public IPv4 address without required TLS.
+                scan.hit("GCP-SQL-001", res, settings.line(), "public IP without required TLS (defaults)", "Low")
             for ipc in settings.blocks("ip_configuration"):
                 open_from = world_cidrs([n.get("value") for n in ipc.blocks("authorized_networks")])
                 if open_from:
@@ -1079,7 +1127,7 @@ def check_tf(scan, res):
     elif t in ("google_compute_instance", "google_compute_instance_template"):
         for sa in v.blocks("service_account"):
             email = sa.get("email")
-            if email is None or (isinstance(email, str) and DEFAULT_SA.search(email)):
+            if email is None or email == "default" or (isinstance(email, str) and DEFAULT_SA.search(email)):
                 scopes = lower_strs(aslist(sa.get("scopes")))
                 full = any(s.endswith("cloud-platform") for s in scopes)
                 scan.hit("GCP-GCE-001", res, sa.line(),
@@ -1098,8 +1146,13 @@ def check_tf(scan, res):
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
         private = v.blocks("private_cluster_config")
         private_endpoint = tf_bool(private[0].get("enable_private_endpoint")) if private else None
-        if not v.blocks("master_authorized_networks_config") and private_endpoint in (False, None):
+        authorized = v.blocks("master_authorized_networks_config")
+        if not authorized and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
+        elif private_endpoint in (False, None):
+            open_from = world_cidrs([c.get("cidr_block") for cfg in authorized for c in cfg.blocks("cidr_blocks")])
+            if open_from:
+                scan.hit("GCP-GKE-001", res, authorized[0].line(), f"authorized networks include {open_from[0]}")
         if not v.blocks("workload_identity_config"):
             # Autopilot always enables Workload Identity. The default mode is
             # Standard, but an unresolved mode does not establish a gap.
@@ -1124,7 +1177,8 @@ def find_line(text, pattern, default=1):
 
 
 GIT_SOURCE = re.compile(r"^(git::|git@|github\.com/|bitbucket\.org/)|\.git(//|$|\?)")
-REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+\.[a-z]+/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+$")
+REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+\.[a-z]+/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
+                             r"(//[^?]+)?$")
 PROD_DIR = re.compile(r"(^|/)(prod|production|prd)(/|$)")
 
 
@@ -1279,7 +1333,7 @@ def handle_terraform(scan, parsed):
                 res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
                 scan.add_resource(res)
                 info["resources"] = True
-                if b not in uncertain:
+                if b not in uncertain and not never_created(view):
                     check_tf(scan, res)
             elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
                 check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
@@ -1297,6 +1351,12 @@ def handle_terraform(scan, parsed):
                         info["backend"] = True
                     if inner.type == "backend" and inner.labels:
                         handle_backend(scan, getattr(inner.line, "file", rel), inner)
+
+
+def never_created(view):
+    """A literal count = 0 or an empty literal for_each creates no instance."""
+    count, for_each = view.get("count"), view.get("for_each")
+    return to_int(count) == 0 if count is not None else for_each in ({}, [])
 
 
 def handle_module(scan, rel, b, view):
@@ -1387,7 +1447,44 @@ def handle_plan(scan, rel, text, doc):
     walk(root)
 
 
+JSON_TOKEN = re.compile(r'"(?:\\.|[^"\\])*"|[{}\[\],\n]')
+
+
+def json_key_lines(text):
+    """Map (path to the enclosing object, key) to the key's line in valid JSON.
+
+    A path is the keys and list indexes from the root. Searching the whole
+    text for a key would also match the same spelling in a value or in a
+    different object (a Ref to a logical ID, a referenced security group).
+    """
+    out, stack, line, expect_key = {}, [], 1, False
+    for m in JSON_TOKEN.finditer(text):
+        token = m.group()
+        if token == "\n":
+            line += 1
+        elif token[0] == '"':
+            if stack and stack[-1][0] == "{" and expect_key:
+                key = json.loads(token)
+                stack[-1][1] = key
+                out.setdefault((tuple(entry[1] for entry in stack[:-1]), key), line)
+                expect_key = False
+        elif token == "{":
+            stack.append(["{", None])
+            expect_key = True
+        elif token == "[":
+            stack.append(["[", 0])
+        elif token in "}]":
+            stack.pop()
+        elif token == "," and stack:
+            if stack[-1][0] == "{":
+                expect_key = True
+            else:
+                stack[-1][1] += 1
+    return out
+
+
 def handle_cfn(scan, rel, text, doc):
+    keys = json_key_lines(text)
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -1395,7 +1492,7 @@ def handle_cfn(scan, rel, text, doc):
         props = r.get("Properties") or {}
         if not isinstance(props, dict):
             props = {}
-        line = find_line(text, re.escape(json.dumps(lid)) + r"\s*:")
+        line = keys.get((("Resources",), lid), 1)
         res = Res(type_, f"cfn:{lid}", rel, line, DictView(props, line))
         scan.add_resource(res, "aws")
         if type_ == "AWS::EC2::SecurityGroup":
@@ -1409,7 +1506,9 @@ def handle_cfn(scan, rel, text, doc):
                 scan.hit("AWS-S3-001", res, line, f"AccessControl = {props['AccessControl']}")
             pab = props.get("PublicAccessBlockConfiguration")
             if isinstance(pab, dict):
-                off = [k for k, val in pab.items() if val is False or val == "false"]
+                # Omitted flags default to false, as in Terraform.
+                off = [k for k in ("BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls",
+                                   "RestrictPublicBuckets") if pab.get(k) in (False, "false", None)]
                 if off:
                     scan.hit("AWS-S3-002", res, line, "off: " + ", ".join(off))
         elif type_ == "AWS::S3::BucketPolicy":
@@ -1423,10 +1522,17 @@ def handle_cfn(scan, rel, text, doc):
                     scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
             if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(props.get("ManagedPolicyArns"))):
                 scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
-        elif type_ == "AWS::RDS::DBInstance":
+        elif type_ in ("AWS::RDS::DBInstance", "AWS::RDS::DBCluster"):
             if props.get("PubliclyAccessible") in (True, "true"):
                 scan.hit("AWS-RDS-001", res, line, "PubliclyAccessible = true")
-            if props.get("StorageEncrypted") in (False, "false", None) and "SourceDBInstanceIdentifier" not in props:
+            # Aurora instances take encryption from their cluster; replicas,
+            # restores and Serverless v1 clusters from their source or engine.
+            inherited = {"SourceDBInstanceIdentifier", "DBClusterIdentifier", "DBSnapshotIdentifier",
+                         "SnapshotIdentifier", "SourceDBClusterIdentifier", "ReplicationSourceIdentifier",
+                         "SourceDBInstanceAutomatedBackupsArn"} & props.keys()
+            if type_ == "AWS::RDS::DBCluster":
+                inherited = (inherited - {"DBClusterIdentifier"}) or props.get("EngineMode") == "serverless"
+            if props.get("StorageEncrypted") in (False, "false", None) and not inherited:
                 scan.hit("AWS-RDS-002", res, line, "StorageEncrypted not true")
         elif type_ == "AWS::Lambda::Url":
             if props.get("AuthType") == "NONE":
@@ -1455,12 +1561,13 @@ def is_gcp_firewall_snapshot(value):
 
 
 def handle_snapshot(scan, rel, text, doc):
+    keys = json_key_lines(text)
     if isinstance(doc, dict) and isinstance(doc.get("SecurityGroups"), list):
-        for sg in doc["SecurityGroups"]:
+        for index, sg in enumerate(doc["SecurityGroups"]):
             if not isinstance(sg, dict):
                 continue
             gid = str(sg.get("GroupId", ""))
-            line = find_line(text, r'"GroupId"\s*:\s*' + re.escape(json.dumps(gid)))
+            line = keys.get((("SecurityGroups", index), "GroupId"), 1)
             res = Res("aws_security_group", f"snapshot:{gid}", rel, line)
             scan.add_resource(res, "aws")
             for perm in aslist(sg.get("IpPermissions")):
@@ -1476,22 +1583,35 @@ def handle_snapshot(scan, rel, text, doc):
         except ValueError:
             return False
     if isinstance(doc, dict) and "Statement" in doc:
-        res = Res("resource_policy", f"snapshot:{Path(rel).name}", rel, 1)
-        scan.add_resource(res, "aws")
-        scan.resource_policy(res, norm_statements(doc), find_line(text, r'"Statement"'))
+        statements = norm_statements(doc) or []
+        line = keys.get(((), "Statement"), find_line(text, r'"Statement"'))
+        if not any(st["principals"] for st in statements):
+            # An identity policy document, e.g. read by file() from Terraform.
+            res = Res("iam_policy_document", f"policy:{Path(rel).name}", rel, line)
+            scan.add_resource(res, "aws")
+            scan.identity_policy(res, statements, line)
+        elif any(matches_action(st, action) is True for st in statements
+                 for action in ("sts:AssumeRole", "sts:AssumeRoleWithWebIdentity", "sts:AssumeRoleWithSAML")):
+            res = Res("iam_trust_policy", f"policy:{Path(rel).name}", rel, line)
+            scan.add_resource(res, "aws")
+            scan.trust_policy(res, statements, line)
+        else:
+            res = Res("resource_policy", f"snapshot:{Path(rel).name}", rel, line)
+            scan.add_resource(res, "aws")
+            scan.resource_policy(res, statements, line)
         return True
     if isinstance(doc, dict) and isinstance(doc.get("bindings"), list):
         res = Res("google_project_iam_policy", f"snapshot:{Path(rel).name}", rel, 1)
         scan.add_resource(res, "gcp")
-        for b in doc["bindings"]:
+        for index, b in enumerate(doc["bindings"]):
             if isinstance(b, dict) and isinstance(b.get("role"), str):
-                line = find_line(text, r'"role"\s*:\s*' + re.escape(json.dumps(b["role"])))
+                line = keys.get((("bindings", index), "role"), 1)
                 scan.gcp_iam(res, b["role"], aslist(b.get("members")), line)
         return True
     if isinstance(doc, list) and doc and all(is_gcp_firewall_snapshot(x) for x in doc):
-        for fw in doc:
+        for index, fw in enumerate(doc):
             name = str(fw.get("name", ""))
-            line = find_line(text, r'"name"\s*:\s*' + re.escape(json.dumps(name)))
+            line = keys.get(((index,), "name"), 1)
             res = Res("google_compute_firewall", f"snapshot:{name}", rel, line)
             scan.add_resource(res, "gcp")
             allows = [(a.get("IPProtocol"), a.get("ports")) for a in aslist(fw.get("allowed"))
@@ -1682,7 +1802,13 @@ class _YamlSubset:
         if not pair:
             raise ValueError("unsupported mapping or multiline plain scalar")
         key, value = pair
-        result.put(_YamlFlow(key, line).parse(), self.entry(value, indent, line), line)
+        # Keys stay strings: a label named y, on or null is not a boolean or None.
+        parser = _YamlFlow(key, line)
+        name = parser.value(key=True)
+        parser.ws()
+        if parser.i != len(parser.text):
+            raise ValueError("unsupported trailing scalar content")
+        result.put(name, self.entry(value, indent, line), line)
 
     def mapping(self, indent, result):
         while (row := self.peek()) and row[0] == indent and not self.is_list(row[1]):

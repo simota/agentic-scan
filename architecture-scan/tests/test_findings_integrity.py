@@ -117,9 +117,9 @@ class FindingsIntegrityTests(unittest.TestCase):
                 self.assertIn(name, errors.getvalue())
 
     def test_explicitly_allowed_extra_directory_remains_valid(self):
-        self.write_json("findings.json", complete_doc())
-        for name in ("report.md", "dashboard.html"):
-            (self.tmp / name).write_text("previous output", encoding="utf-8")
+        target = self.write_json("findings.json", complete_doc())
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(render.main([str(target), "--out", str(self.tmp)]), 0)
         (self.tmp / "notes").mkdir()
         self.assertEqual(findings.contract_problems(self.tmp, ["notes"]), [])
 

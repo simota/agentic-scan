@@ -13,13 +13,29 @@ python3 scripts/findings.py check <out> [--allow NAME]
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. The dashboard preserves line breaks
-in recorded text, including multiline evidence and analysis commands.
-Both outputs show separate counts for each validation verdict and name the
-verdict in every finding heading, including excluded findings.
-Exit codes: `0` written, `2` the record does not match the shape (the field is
-named). `findings.py check`
-exits `1` and lists every contract violation. All three required output paths
-must be files.
+in recorded text, including multiline evidence and analysis commands; its
+Content-Security-Policy allows only its own inline style and script, so it
+fetches nothing. Both outputs show separate counts for each validation verdict,
+name the verdict and perspective (with the hunt step) of every finding,
+including excluded findings, and list the perspectives in the order of
+`reference/perspectives.md`, marking any not recorded. References become links
+only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
+any other scheme is shown as literal text. Recorded text cannot open a Markdown
+block (heading, list, rule, code block, link definition) in `report.md`.
+Each output is replaced only once completely written.
+Exit codes: `0` written, `1` an output could not be written (the previous files
+are kept), `2` the record does not match the shape (the field is named).
+
+`findings.py check` exits `1` and lists every contract violation. All three
+required output paths must be files, and `report.md` and `dashboard.html` must
+be byte-identical to what `render.py` produces from the current
+`findings.json` (in either language, both from one rendering) — re-render after
+the last merge. It also requires:
+
+- every nonblank `findings[].rule` to name a `rules[].id`
+- every finding not excluded to sit under a perspective recorded as `applied`
+- every High and Medium finding not excluded to carry `validation.evidence`
+- `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
 
 ## Writing the file
 
@@ -38,7 +54,9 @@ Merge semantics:
 - `meta` updates key by key
 - `findings` and `rules` match by `id`: a known record is updated key by key
   (so a later fragment can add just `validation` to `A-003`), a new one is
-  appended. Duplicate IDs within one fragment are refused
+  appended. Nested objects (`validation`, `analysis`) replace whole, so a
+  fragment that updates `validation` carries all of its fields. Duplicate IDs
+  within one fragment are refused
 - `perspectives` match by `name` and replace the whole entry. Duplicate names
   within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
@@ -55,8 +73,9 @@ Duplicate keys within a JSON object are rejected, including nested objects,
 so an earlier value cannot be silently discarded before validation.
 Invalid text is rejected before merge or render opens an output for writing.
 
-Merge writes the encoded record to a temporary file beside the destination,
-then replaces the destination after the write completes. A write or replacement
+Merge creates the destination's directory when needed, writes the encoded
+record to a temporary file beside the destination, flushes it to disk, then
+replaces the destination. A write or replacement
 error exits `1`, cleans up the temporary file, and preserves the previous
 record. Existing permission bits and symbolic-link destinations are retained.
 
@@ -119,16 +138,16 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`BL1`…) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
+| `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category` |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
+| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |
 | `meta.commit`, `validation.evidence`, `references[].title`, `rules[].reason` | Strings when present. Empty values and omission are allowed except where a nonblank value is required by the verdict or run contract |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
-| `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. `family` and `inferred` are optional |
+| `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

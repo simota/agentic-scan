@@ -15,8 +15,11 @@ FINDINGS is created when absent. The merged record must pass the schema check
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order and every perspective in
-`reference/perspectives.md` is recorded.
+record is complete, IDs are gapless in severity order, every perspective in
+`reference/perspectives.md` is recorded, every cited rule exists, no finding
+outside the excluded verdicts sits under a perspective not applied, High and
+Medium findings carry evidence, definitive evidence cites a `path:line`, and
+both rendered files match what `render.py` produces from the current record.
 
 Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
 failed (reasons on stderr).
@@ -46,6 +49,9 @@ PERSPECTIVES = (
     "Testability", "Operability", "Duplication and consistency of patterns",
     "Dependencies and evolution",
 )
+# Hunt step prefixes, in PERSPECTIVES order (reference/perspectives.md).
+STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
+RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -53,9 +59,12 @@ TEXT_FIELDS = ("title", "scenario", "blast_radius", "trace", "impact", "fix", "g
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
-FINDING_ID = re.compile(r"^A-\d{3}$")
-RULE_ID = re.compile(r"^R-\d{2,}$")
-LOCATION = re.compile(r"[^\r\n]+:\d+(?:-\d+)?")
+# ASCII digits only: `\d` would also accept other scripts' digits.
+FINDING_ID = re.compile(r"A-[0-9]{3}")
+RULE_ID = re.compile(r"R-[0-9]{2,}")
+STEP_ID = re.compile(r"([A-Z]{2})[1-9][0-9]*")
+EVIDENCE_LINE = re.compile(r"\S:[0-9]+")
+LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 
 class SchemaError(ValueError):
@@ -119,8 +128,20 @@ def validate_finding(f, where):
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
-        if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
+        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
+        if not match:
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
+        start, end = int(match[1]), int(match[2] or match[1])
+        if not 1 <= start <= end:
+            raise SchemaError(f"{where}.location: {loc!r} needs lines from 1, start <= end")
+    if "step" in f:
+        step = STEP_ID.fullmatch(f["step"]) if isinstance(f["step"], str) else None
+        if not step or step[1] not in STEP_PREFIXES:
+            raise SchemaError(f"{where}.step: {f['step']!r} must be a hunt step ID like DM1")
+        expected = STEP_PREFIXES[PERSPECTIVES.index(f["category"])]
+        if step[1] != expected:
+            raise SchemaError(f"{where}.step: {f['step']} is not a {f['category']} step "
+                              f"({expected}…)")
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
@@ -198,6 +219,10 @@ def validate(doc, complete=False):
         _choice(r.get("status"), RULE_STATUSES, f"{where}.status")
         if "reason" in r and not isinstance(r["reason"], str):
             raise SchemaError(f"{where}.reason ({r['id']}): must be a string")
+        if "family" in r:
+            _choice(r["family"], RULE_FAMILIES, f"{where}.family")
+        if "inferred" in r and not isinstance(r["inferred"], bool):
+            raise SchemaError(f"{where}.inferred ({r['id']}): must be true or false")
     _validate_perspectives(doc.get("perspectives", []), "perspectives")
     for key in LISTS:
         values = _list(doc.get(key, []), key)
@@ -252,6 +277,7 @@ def merge(doc, fragment, where):
 def _atomic_write(target, data):
     # Follow symlinks as write_bytes did, preserving the link itself.
     target = target.resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
     try:
         # Check write access without truncating the existing record.
         with target.open("r+b") as current:
@@ -271,6 +297,9 @@ def _atomic_write(target, data):
             if mode is not None:
                 temporary.chmod(mode)
             stream.write(data)
+            stream.flush()
+            # The replacement must never expose a record that is not yet on disk.
+            os.fsync(stream.fileno())
         os.replace(temporary, target)
     finally:
         temporary.unlink(missing_ok=True)
@@ -288,7 +317,8 @@ def cmd_merge(args):
         # Serialize before staging any output.
         data = (json.dumps(doc, ensure_ascii=False, indent=2, allow_nan=False) + "\n").encode("utf-8")
         _atomic_write(target, data)
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RuntimeError) as exc:
+        # RuntimeError: Path.resolve() on a symlink loop before Python 3.13.
         print(f"refused: {exc}", file=sys.stderr)
         return 1
     print(f"merged {len(args.fragments)} fragment(s) into {target}: "
@@ -299,8 +329,13 @@ def cmd_merge(args):
 def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
+    if not out.is_dir():
+        return [f"output directory does not exist or is not a directory: {out}"]
+    try:
+        present = {p.name for p in out.iterdir()}
+    except OSError as exc:
+        return [f"output directory cannot be listed: {exc}"]
     problems = []
-    present = {p.name for p in out.iterdir()} if out.is_dir() else set()
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
@@ -323,10 +358,24 @@ def contract_problems(out, allow=()):
              f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
         problems.append("findings must be numbered in severity order (High first)")
-    recorded = {p["name"] for p in doc.get("perspectives", [])}
+    recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    rule_ids = {r["id"] for r in doc.get("rules", [])}
+    for f in findings:
+        if f.get("rule", "").strip() and f["rule"] not in rule_ids:
+            problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
+        verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
+        if verdict in DEFINITIVE and not EVIDENCE_LINE.search(evidence):
+            problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
+        if verdict in EXCLUDED:
+            continue
+        if recorded.get(f["category"], "applied") != "applied":
+            problems.append(f"{f['id']}: category {f['category']} is recorded as "
+                            f"{recorded[f['category']]}, not applied")
+        if f["severity"] in ("High", "Medium") and not evidence.strip():
+            problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence")
     for r in doc.get("rules", []):
         if r["status"] == "not checked":
             reason = r.get("reason")
@@ -336,7 +385,36 @@ def contract_problems(out, allow=()):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
-    return problems
+    return problems + _stale_outputs(out, doc, not_files | (OUTPUTS - present))
+
+
+def _stale_outputs(out, doc, unusable):
+    """Name each rendered output that render.py would not produce from doc."""
+    names = ("report.md", "dashboard.html")
+    if any(name in unusable for name in names):
+        return []
+    try:
+        current = {name: (out / name).read_bytes() for name in names}
+    except OSError as exc:
+        return [f"rendered output cannot be read: {exc}"]
+    renderer = _renderer()
+    stale = set(names)
+    for lang in ("ja", "en"):
+        # Both files must come from one rendering, in one language.
+        expected = renderer.rendered_outputs(doc, lang)
+        mismatched = {name for name in names if current[name] != expected[name]}
+        if len(mismatched) < len(stale):
+            stale = mismatched
+    return [f"{name} is not rendered from the current findings.json "
+            "(re-run scripts/render.py)" for name in sorted(stale)]
+
+
+def _renderer():
+    here = str(Path(__file__).resolve().parent)
+    if here not in sys.path:
+        sys.path.insert(0, here)
+    import render
+    return render
 
 
 def cmd_check(args):

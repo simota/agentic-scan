@@ -38,8 +38,15 @@ Merge semantics:
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
 
-Every merge validates the combined record; a refused merge writes nothing.
+Every merge validates the existing record before applying fragments, then
+validates the combined record; a refused merge writes nothing.
 Each finding must be complete in the fragment that first adds it.
+
+Merges finish UTF-8 encoding and write a temporary file beside the destination
+before replacing it. Encoding or write failures leave the existing record
+unchanged. Existing file permissions and symbolic links are preserved; a new
+record starts with private permissions. The destination directory must be
+writable for the replacement.
 
 ## Shape
 
@@ -102,6 +109,7 @@ embedding Markdown link syntax in another field.
 | Field | Rule |
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only); omission or an empty string is allowed |
+| `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
 | `findings[].id` | `P-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |

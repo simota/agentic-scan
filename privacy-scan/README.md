@@ -42,9 +42,9 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   controls, and whether the commitment is the app's own
 - **No values** — `findings.py merge` checks report prose, including analysis
   results, commitments and coverage notes, for e-mail addresses (including
-  quoted and Unicode forms, outside reserved example domains) and runs of
-  12 or more digits, even with repeated spaces, tabs or non-breaking spaces.
-  Use field names and placeholders throughout the record
+  quoted, Unicode and address-literal forms, outside reserved example domains)
+  and runs of 12 or more digits, even with repeated spaces, tabs or non-breaking
+  spaces. Use field names and placeholders throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
 

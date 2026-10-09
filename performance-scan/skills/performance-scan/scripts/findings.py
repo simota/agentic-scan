@@ -218,6 +218,36 @@ def validate_finding(f, where):
         _optional_strings(ref, ("title",), f"{where}.references[{i}]")
 
 
+def validate_budget(b, where, seen):
+    """Check one budget; seen collects the IDs of the budgets before it."""
+    if (not isinstance(b, dict) or not isinstance(b.get("id"), str)
+            or not BUDGET_ID.fullmatch(b["id"])):
+        raise SchemaError(f"{where}.id: must look like B-01")
+    if b["id"] in seen:
+        raise SchemaError(f"{where}.id: duplicate {b['id']}")
+    seen.add(b["id"])
+    for key in ("statement", "source"):
+        _text(b.get(key), f"{where}.{key}")
+    if "inferred" in b and not isinstance(b["inferred"], bool):
+        raise SchemaError(f"{where}.inferred: must be a boolean")
+    _optional_strings(b, ("reason",), where)
+    if "family" in b:
+        _choice(b["family"], BUDGET_FAMILIES, f"{where}.family")
+    _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
+
+
+def validate_perspective(p, where, seen):
+    """Check one perspective; seen collects the names of the perspectives before it."""
+    if not isinstance(p, dict):
+        raise SchemaError(f"{where}: must be an object")
+    _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
+    if p["name"] in seen:
+        raise SchemaError(f"{where}.name: duplicate {p['name']}")
+    seen.add(p["name"])
+    _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{where}.status")
+    _text(p.get("note"), f"{where}.note")
+
+
 def validate(doc, complete=False):
     """Raise SchemaError when doc does not match reference/findings-schema.md."""
     if not isinstance(doc, dict):
@@ -252,32 +282,10 @@ def validate(doc, complete=False):
         seen.add(f["id"])
     seen = set()
     for i, b in enumerate(doc.get("budgets", [])):
-        where = f"budgets[{i}]"
-        if (not isinstance(b, dict) or not isinstance(b.get("id"), str)
-                or not BUDGET_ID.fullmatch(b["id"])):
-            raise SchemaError(f"{where}.id: must look like B-01")
-        if b["id"] in seen:
-            raise SchemaError(f"{where}.id: duplicate {b['id']}")
-        seen.add(b["id"])
-        for key in ("statement", "source"):
-            _text(b.get(key), f"{where}.{key}")
-        if "inferred" in b and not isinstance(b["inferred"], bool):
-            raise SchemaError(f"{where}.inferred: must be a boolean")
-        _optional_strings(b, ("reason",), where)
-        if "family" in b:
-            _choice(b["family"], BUDGET_FAMILIES, f"{where}.family")
-        _choice(b.get("status"), BUDGET_STATUSES, f"{where}.status")
+        validate_budget(b, f"budgets[{i}]", seen)
     seen = set()
     for i, p in enumerate(doc.get("perspectives", [])):
-        where = f"perspectives[{i}]"
-        if not isinstance(p, dict):
-            raise SchemaError(f"{where}: must be an object")
-        _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
-        if p["name"] in seen:
-            raise SchemaError(f"{where}.name: duplicate {p['name']}")
-        seen.add(p["name"])
-        _choice(p.get("status"), PERSPECTIVE_STATUSES, f"{where}.status")
-        _text(p.get("note"), f"{where}.note")
+        validate_perspective(p, f"perspectives[{i}]", seen)
     for key in LISTS:
         values = doc.get(key, [])
         if not isinstance(values, list):
@@ -308,6 +316,15 @@ def _merge_records(current, incoming, key, where):
             index[record[key]] = current[-1]
 
 
+def _replace_perspectives(doc, incoming, where):
+    """A perspective is replaced whole: drop the recorded one of that name, then append."""
+    for i, p in enumerate(incoming):
+        name = _record_identity(p, "name", f"{where}[{i}]")
+        doc.setdefault("perspectives", [])
+        doc["perspectives"] = [q for q in doc["perspectives"] if q.get("name") != name]
+        doc["perspectives"].append(p)
+
+
 def merge(doc, fragment, where):
     if not isinstance(fragment, dict):
         raise SchemaError(f"{where}: must be an object")
@@ -318,18 +335,14 @@ def merge(doc, fragment, where):
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
         doc.setdefault("meta", {}).update(fragment["meta"])
-    for key, match in (("findings", "id"), ("budgets", "id"), ("perspectives", "name")):
+    for key in ("findings", "budgets", "perspectives"):
         if key in fragment:
             if not isinstance(fragment[key], list):
                 raise SchemaError(f"{where}.{key}: must be a list")
             if key == "perspectives":
-                for i, p in enumerate(fragment[key]):
-                    name = _record_identity(p, match, f"{where}.{key}[{i}]")
-                    doc.setdefault(key, [])
-                    doc[key] = [q for q in doc[key] if q.get("name") != name]
-                    doc[key].append(p)
+                _replace_perspectives(doc, fragment[key], f"{where}.{key}")
             else:
-                _merge_records(doc.setdefault(key, []), fragment[key], match, f"{where}.{key}")
+                _merge_records(doc.setdefault(key, []), fragment[key], "id", f"{where}.{key}")
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):
@@ -394,16 +407,9 @@ def cmd_merge(args):
     return 0
 
 
-def contract_problems(out, allow=()):
-    """Return the run-contract violations for an output directory."""
-    out = Path(out)
+def _output_problems(out, present, allow):
+    """Return the problems with the directory's entries and the readable outputs."""
     problems = []
-    try:
-        if not out.is_dir():
-            return [f"not a directory: {out}"]
-        present = {p.name for p in out.iterdir()}
-    except OSError as exc:
-        return [f"cannot inspect output directory: {out}: {exc}"]
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
@@ -424,16 +430,12 @@ def contract_problems(out, allow=()):
             problems.append(f"unreadable output: {name}: {exc}")
             continue
         readable.add(name)
-    if "findings.json" not in readable:
-        return problems
-    try:
-        doc = read_json(out / "findings.json")
-        validate(doc, complete=True)
-        # A "\ud800" escape decodes to a lone surrogate that render cannot encode.
-        json.dumps(doc, ensure_ascii=False).encode("utf-8")
-    except (SchemaError, UnicodeError) as exc:
-        return problems + [f"findings.json: {exc}"]
-    findings = doc.get("findings", [])
+    return problems, readable
+
+
+def _order_problems(findings):
+    """IDs are gapless, included findings run High first and excluded ones come last."""
+    problems = []
     expected = [f"P-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}"
@@ -453,6 +455,13 @@ def contract_problems(out, allow=()):
             problems.append(f"{f['id']}: excluded findings ({seen_excluded}) must be numbered "
                             "after all others")
             break
+    return problems
+
+
+def _record_problems(doc):
+    """Evidence, perspective coverage, budget cross-references and required lists."""
+    problems = []
+    findings = doc.get("findings", [])
     for f in findings:
         v = f["validation"]
         if v["verdict"] in DEFINITIVE and not cites_location(v["evidence"]):
@@ -486,6 +495,28 @@ def contract_problems(out, allow=()):
     return problems
 
 
+def contract_problems(out, allow=()):
+    """Return the run-contract violations for an output directory."""
+    out = Path(out)
+    try:
+        if not out.is_dir():
+            return [f"not a directory: {out}"]
+        present = {p.name for p in out.iterdir()}
+    except OSError as exc:
+        return [f"cannot inspect output directory: {out}: {exc}"]
+    problems, readable = _output_problems(out, present, allow)
+    if "findings.json" not in readable:
+        return problems
+    try:
+        doc = read_json(out / "findings.json")
+        validate(doc, complete=True)
+        # A "\ud800" escape decodes to a lone surrogate that render cannot encode.
+        json.dumps(doc, ensure_ascii=False).encode("utf-8")
+    except (SchemaError, UnicodeError) as exc:
+        return problems + [f"findings.json: {exc}"]
+    return problems + _order_problems(doc.get("findings", [])) + _record_problems(doc)
+
+
 def cmd_check(args):
     problems = contract_problems(args.out, args.allow)
     for problem in problems:
@@ -502,11 +533,13 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    m.set_defaults(func=cmd_merge)
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
+    c.set_defaults(func=cmd_check)
     args = parser.parse_args(argv)
-    return cmd_merge(args) if args.cmd == "merge" else cmd_check(args)
+    return args.func(args)
 
 
 if __name__ == "__main__":

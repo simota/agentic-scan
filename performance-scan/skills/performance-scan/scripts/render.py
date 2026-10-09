@@ -24,15 +24,15 @@ from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      read_json, resolve_path, validate)
+                      file_mode, read_json, resolve_path, validate)
 
 LABELS = {
     "en": {
-        "title": "Performance assessment", "summary": "Summary", "scope": "Scope and method",
+        "title": "Performance assessment", "scope": "Scope and method",
         "findings": "Findings", "budgets": "Performance budgets", "perspectives": "Perspective coverage",
         "checked_ok": "Checked and sound", "limitations": "What could not be checked",
         "decisions": "Decisions for a human", "next_steps": "Next steps", "excluded": "Excluded",
-        "severity": "Severity", "count": "Count", "all": "All", "none": "None.",
+        "severity": "Severity", "all": "All", "none": "None.",
         "location": "location", "workload": "workload", "scale_driver": "scale driver",
         "cost_model": "cost model", "request": "steps", "contrast": "contrast",
         "impact": "what happens", "verdict": "recorded verdict", "method": "verification",
@@ -47,17 +47,17 @@ LABELS = {
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
         "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
-        "method_row": "Method", "index": "Index", "confidence": "Confidence", "verdict_col": "Verdict",
+        "method_row": "Method", "confidence": "Confidence", "verdict_col": "Verdict",
         "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
         "item_col": "Item", "value_col": "Value", "perspective_col": "Perspective", "lang": "en",
         "excluded_findings": "Excluded findings",
     },
     "ja": {
-        "title": "パフォーマンス診断", "summary": "サマリー", "scope": "対象と方法",
+        "title": "パフォーマンス診断", "scope": "対象と方法",
         "findings": "検出事項", "budgets": "性能バジェット", "perspectives": "観点のカバレッジ",
         "checked_ok": "確認して問題なかった項目", "limitations": "確認できなかったこと",
         "decisions": "人が判断すべき事項", "next_steps": "次の作業", "excluded": "除外",
-        "severity": "深刻度", "count": "件数", "all": "すべて", "none": "なし。",
+        "severity": "深刻度", "all": "すべて", "none": "なし。",
         "location": "場所", "workload": "ワークロード", "scale_driver": "規模の要因",
         "cost_model": "コストモデル", "request": "再現手順", "contrast": "対照",
         "impact": "何が起きるか", "verdict": "検証判定", "method": "検証方法",
@@ -71,7 +71,7 @@ LABELS = {
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
-        "method_row": "方法", "index": "一覧", "confidence": "確度", "verdict_col": "検証判定",
+        "method_row": "方法", "confidence": "確度", "verdict_col": "検証判定",
         "title_col": "タイトル", "location_col": "場所", "findings_col": "引用する検出事項", "budget_col": "バジェット",
         "item_col": "項目", "value_col": "値", "perspective_col": "観点", "lang": "ja",
         "excluded_findings": "除外した検出事項",
@@ -92,11 +92,16 @@ def shown(value, lang):
 
 FIELDS = ("location", "workload", "scale_driver", "cost_model", "request", "contrast",
           "impact", "budget", "fix", "regression_test")
+LIST_SECTIONS = ("checked_ok", "limitations", "decisions", "next_steps")
+
+
+def is_excluded(finding):
+    return finding["validation"]["verdict"] in EXCLUDED
 
 
 def finding_group(finding):
     """Use the same groups for summary counts and dashboard filters."""
-    return "excluded" if finding["validation"]["verdict"] in EXCLUDED else finding["severity"]
+    return "excluded" if is_excluded(finding) else finding["severity"]
 
 
 def counts(findings):
@@ -109,9 +114,9 @@ def verification_summary(findings, labels):
     by_verdict = {v: 0 for v in VERDICTS if v not in EXCLUDED}
     incomplete_high = 0
     for finding in findings:
-        verdict = finding["validation"]["verdict"]
-        if verdict in EXCLUDED:
+        if is_excluded(finding):
             continue
+        verdict = finding["validation"]["verdict"]
         by_verdict[verdict] += 1
         if finding["severity"] == "High" and verdict != "Valid":
             incomplete_high += 1
@@ -224,7 +229,7 @@ def budget_cells(budget, labels, findings):
                  labels["inferred_no"] if inferred is False else "—")
     # Link each ledger entry to the included findings that cite it.
     cited = ", ".join(f["id"] for f in findings
-                      if f.get("budget") == budget["id"] and finding_group(f) != "excluded")
+                      if f.get("budget") == budget["id"] and not is_excluded(f))
     return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
             inference, budget.get("reason", ""), cited or "—")
 
@@ -232,6 +237,16 @@ def budget_cells(budget, labels, findings):
 def budget_headers(labels):
     return ("ID", labels["budget_col"], labels["source"], labels["status_col"], labels["inferred"],
             labels["reason"], labels["findings_col"])
+
+
+def perspective_rows(doc, lang):
+    """One row per known perspective, recorded or not, in the reference order."""
+    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
+    rows = []
+    for name in PERSPECTIVES:
+        p = recorded.get(name, {"status": "—", "note": ""})
+        rows.append((name, shown(p["status"], lang), p["note"]))
+    return rows
 
 
 def first_location(finding):
@@ -244,7 +259,7 @@ def first_location(finding):
 def markdown_finding(f, t):
     """One finding's block; an excluded finding shows its verdict instead of a grade."""
     v = f["validation"]
-    excluded = finding_group(f) == "excluded"
+    excluded = is_excluded(f)
     grade = f"[{v['verdict']}]" if excluded else f"[{f['severity']}][{f['confidence']}]"
     lines = [f"### {f['id']} {grade} {markdown_text(f['title'])}", ""]
     step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
@@ -267,6 +282,12 @@ def markdown_finding(f, t):
     return lines + [""]
 
 
+def markdown_table(headers, rows):
+    """GFM table lines; headers and cells are already Markdown."""
+    return (["| " + " | ".join(headers) + " |", "|" + "---|" * len(headers)]
+            + ["| " + " | ".join(row) + " |" for row in rows])
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
@@ -277,28 +298,29 @@ def render_markdown(doc, lang):
                  + f" · {t['excluded']} {excluded} · "
                  + review_note(findings, t))
     lines += ["", f"{verdicts} · **{incomplete_high}**"]
-    lines += ["", f"## {t['scope']}", "", f"| {t['item_col']} | {t['value_col']} |", "|---|---|",
-              f"| {t['project']} | {markdown_cell(meta.get('project', ''))} |",
-              f"| {t['scope_row']} | {markdown_cell(meta.get('scope', ''))} |",
-              f"| {t['revision']} | {markdown_cell(meta.get('commit') or 'UNKNOWN')} |",
-              f"| {t['date']} | {markdown_cell(meta.get('date', ''))} / "
-              f"{markdown_cell(meta.get('assessor', ''))} |"]
+    scope = [(t["project"], markdown_cell(meta.get("project", ""))),
+             (t["scope_row"], markdown_cell(meta.get("scope", ""))),
+             (t["revision"], markdown_cell(meta.get("commit") or "UNKNOWN"))]
     if meta.get("method", "").strip():
-        lines.insert(-1, f"| {t['method_row']} | {markdown_cell(meta['method'])} |")
+        scope.append((t["method_row"], markdown_cell(meta["method"])))
+    scope.append((t["date"], f"{markdown_cell(meta.get('date', ''))} / "
+                             f"{markdown_cell(meta.get('assessor', ''))}"))
+    lines += ["", f"## {t['scope']}", ""]
+    lines += markdown_table((t["item_col"], t["value_col"]), scope)
     lines += ["", f"## {t['findings']}", ""]
-    included = [f for f in findings if finding_group(f) != "excluded"]
-    dropped = [f for f in findings if finding_group(f) == "excluded"]
     if findings:
         headers = ("ID", t["severity"], t["confidence"], t["verdict_col"], t["title_col"],
                    t["location_col"])
-        lines += ["| " + " | ".join(headers) + " |", "|---|---|---|---|---|---|"]
-        for f in findings:
-            lines.append("| " + " | ".join(markdown_cell(cell) for cell in (
-                f["id"], f["severity"], f["confidence"], f["validation"]["verdict"], f["title"],
-                first_location(f))) + " |")
+        lines += markdown_table(headers, [
+            [markdown_cell(cell) for cell in (f["id"], f["severity"], f["confidence"],
+                                              f["validation"]["verdict"], f["title"],
+                                              first_location(f))]
+            for f in findings])
         lines.append("")
-    if not findings:
+    else:
         lines += [t["none"], ""]
+    included = [f for f in findings if not is_excluded(f)]
+    dropped = [f for f in findings if is_excluded(f)]
     for f in included:
         lines += markdown_finding(f, t)
     if dropped:
@@ -306,21 +328,17 @@ def render_markdown(doc, lang):
         for f in dropped:
             lines += markdown_finding(f, t)
     if doc.get("budgets"):
-        headers = budget_headers(t)
-        lines += [f"## {t['budgets']}", "", "| " + " | ".join(headers) + " |",
-                  "|" + "---|" * len(headers)]
-        for b in doc["budgets"]:
-            lines.append("| " + " | ".join(markdown_cell(cell)
-                                           for cell in budget_cells(b, t, findings)) + " |")
+        lines += [f"## {t['budgets']}", ""]
+        lines += markdown_table(budget_headers(t), [
+            [markdown_cell(cell) for cell in budget_cells(b, t, findings)]
+            for b in doc["budgets"]])
         lines.append("")
-    lines += [f"## {t['perspectives']}", "",
-              f"| {t['perspective_col']} | {t['status_col']} | {t['note']} |", "|---|---|---|"]
-    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    for name in PERSPECTIVES:
-        p = recorded.get(name, {"status": "—", "note": ""})
-        lines.append("| " + " | ".join(markdown_cell(v) for v in (name, shown(p["status"], lang), p["note"])) + " |")
+    lines += [f"## {t['perspectives']}", ""]
+    lines += markdown_table((t["perspective_col"], t["status_col"], t["note"]),
+                            [[markdown_cell(cell) for cell in row]
+                             for row in perspective_rows(doc, lang)])
     lines.append("")
-    for key in ("checked_ok", "limitations", "decisions", "next_steps"):
+    for key in LIST_SECTIONS:
         lines += [f"## {t[key]}", ""]
         lines += [f"- {markdown_text(item)}" for item in doc.get(key, [])] or [t["none"]]
         lines.append("")
@@ -360,6 +378,49 @@ document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d
 """
 
 
+def html_table(headers, rows):
+    e = html_text
+    return ("<table><thead><tr>"
+            + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
+            + "</tr></thead><tbody>"
+            + "".join("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>"
+                      for row in rows)
+            + "</tbody></table>")
+
+
+def html_finding(f, t):
+    """One finding's <details>; an excluded finding shows its verdict instead of a status."""
+    e, lang = html_text, t["lang"]
+    v = f["validation"]
+    group = finding_group(f)
+    excluded = is_excluded(f)
+    exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
+                 if excluded else "")
+    step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
+    rows = [(t[k], f[k]) for k in FIELDS if k in f]
+    rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
+    if v.get("evidence"):
+        rows.append((t["evidence"], v["evidence"]))
+    if not excluded:
+        rows.append((t["status"], shown(f.get("status", "Open"), lang)))
+    if "measurement" in f:
+        m = f["measurement"]
+        rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
+    out = [f"<details data-sev='{group}'><summary><span class='{f['severity']}'>"
+           f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
+           f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
+           f"{exclusion}</summary><dl>"]
+    out += [f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows]
+    if "measurement" in f:
+        out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"
+                   f"{e(f['measurement']['command'])}</code></pre></dd>")
+    for ref in f.get("references", []):
+        out.append(f"<dt>{e(t['references'])}</dt><dd>"
+                   f"{html_link(reference_title(ref), ref['url'])}</dd>")
+    out.append("</dl></details>")
+    return "".join(out)
+
+
 def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
@@ -385,49 +446,15 @@ def render_html(doc, lang):
                + "</p>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
-    for f in findings:
-        v = f["validation"]
-        group = finding_group(f)
-        exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
-                     if group == "excluded" else "")
-        step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
-        rows = [(t[k], f[k]) for k in FIELDS if k in f]
-        rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
-        if v.get("evidence"):
-            rows.append((t["evidence"], v["evidence"]))
-        if group != "excluded":
-            rows.append((t["status"], shown(f.get("status", "Open"), lang)))
-        if "measurement" in f:
-            m = f["measurement"]
-            rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
-        out.append(f"<details data-sev='{group}'><summary><span class='{f['severity']}'>"
-                   f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-                   f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>{exclusion}</summary><dl>"
-                   + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows))
-        if "measurement" in f:
-            out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"
-                       f"{e(f['measurement']['command'])}</code></pre></dd>")
-        for ref in f.get("references", []):
-            out.append(f"<dt>{e(t['references'])}</dt><dd>"
-                       f"{html_link(reference_title(ref), ref['url'])}</dd>")
-        out.append("</dl></details>")
+    out += [html_finding(f, t) for f in findings]
     if doc.get("budgets"):
-        headers = budget_headers(t)
-        out.append(f"<h2>{e(t['budgets'])}</h2><table><thead><tr>"
-                   + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
-                   + "</tr></thead><tbody>")
-        for b in doc["budgets"]:
-            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t, findings)) + "</tr>")
-        out.append("</tbody></table>")
-    recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th scope='col'>{e(t['perspective_col'])}</th>"
-               f"<th scope='col'>{e(t['status_col'])}</th><th scope='col'>{e(t['note'])}</th>"
-               "</tr></thead><tbody>")
-    for name in PERSPECTIVES:
-        p = recorded.get(name, {"status": "—", "note": ""})
-        out.append(f"<tr><td>{e(name)}</td><td>{e(shown(p['status'], lang))}</td><td>{e(p['note'])}</td></tr>")
-    out.append("</tbody></table>")
-    for key in ("checked_ok", "limitations", "decisions", "next_steps"):
+        out.append(f"<h2>{e(t['budgets'])}</h2>"
+                   + html_table(budget_headers(t),
+                                [budget_cells(b, t, findings) for b in doc["budgets"]]))
+    out.append(f"<h2>{e(t['perspectives'])}</h2>"
+               + html_table((t["perspective_col"], t["status_col"], t["note"]),
+                            perspective_rows(doc, lang)))
+    for key in LIST_SECTIONS:
         items = doc.get(key, [])
         out.append(f"<h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
@@ -445,10 +472,7 @@ def write_outputs(outputs):
     retained = set()
     try:
         for target, content in destinations:
-            try:
-                mode = target.stat().st_mode
-            except FileNotFoundError:
-                mode = None
+            mode = file_mode(target)
             if mode is not None and not stat.S_ISREG(mode):
                 raise OSError(f"{target}: output must be a regular file")
             directory = Path(tempfile.mkdtemp(dir=target.parent,

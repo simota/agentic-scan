@@ -66,6 +66,15 @@ def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
+def review_method(doc, lang):
+    """Keep the recorded scope of analysis, including runs with no findings."""
+    if doc["meta"].get("method"):
+        return str(doc["meta"]["method"])
+    analysed = any(f["validation"]["method"] == "analysed" or "analysis" in f
+                   for f in doc.get("findings", []))
+    return LABELS[lang]["analysed_note" if analysed else "static_note"]
+
+
 def markdown_table_cell(value):
     """Keep pipes and line breaks inside a GFM cell, including in code spans."""
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
@@ -97,11 +106,10 @@ def render_markdown(doc, lang):
     cell = markdown_table_cell
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    analysed = any(f["validation"]["method"] == "analysed" for f in findings)
     lines = [f"# {t['title']}: {meta.get('project', '')}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
-                 + (t["analysed_note"] if analysed else t["static_note"]))
+                 + review_method(doc, lang))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               f"| {t['project']} | {cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {cell(meta.get('scope', ''))} |",
@@ -185,7 +193,8 @@ def render_html(doc, lang):
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
            f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', 'UNKNOWN'))} · "
-           f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
+           f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p>",
+           f"<p class='muted'>{e(review_method(doc, lang))}</p><div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
@@ -203,6 +212,9 @@ def render_html(doc, lang):
         if "analysis" in f:
             a = f["analysis"]
             rows.append((t["analysis"], f"{a['result']} — {a['tool']}: {a['command']}"))
+        for ref in f.get("references", []):
+            title, url = ref.get("title", ref["url"]), ref["url"]
+            rows.append((t["references"], f"{title}: {url}" if title != url else url))
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"

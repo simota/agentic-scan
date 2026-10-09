@@ -31,6 +31,7 @@ from pathlib import Path
 import re
 import sys
 import unicodedata
+from urllib.parse import parse_qsl, unquote, urlsplit
 
 # Keep source-only CLI runs from writing imported helpers into the skill tree.
 sys.dont_write_bytecode = True
@@ -190,6 +191,24 @@ def _check_prose(record, keys, where):
         _no_personal_values(record.get(key), f"{where}.{key}")
 
 
+def _check_reference_url(value, where):
+    """Inspect raw and decoded URL values without changing the saved spelling."""
+    _no_personal_values(value, where)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        # Malformed references are still displayed as text by the renderer.
+        _no_personal_values(unquote(value), where)
+        return
+    for part in parts:
+        _no_personal_values(unquote(part), where)
+    # Query values also use '+' for spaces. Decode the original query once;
+    # keep its names and values separate so unrelated numbers are not joined.
+    for name, item in parse_qsl(parts.query, keep_blank_values=True):
+        _no_personal_values(name, where)
+        _no_personal_values(item, where)
+
+
 def validate_finding(f, where):
     _object(f, FINDING_KEYS, where)
     for key in FINDING_REQUIRED:
@@ -239,7 +258,8 @@ def validate_finding(f, where):
         _object(ref, REFERENCE_KEYS, f"{where}.references[{i}]")
         _text(ref.get("url"), f"{where}.references[{i}].url")
         _optional_strings(ref, ("title",), f"{where}.references[{i}]")
-        _check_prose(ref, ("title", "url"), f"{where}.references[{i}]")
+        _check_prose(ref, ("title",), f"{where}.references[{i}]")
+        _check_reference_url(ref["url"], f"{where}.references[{i}].url")
 
 
 def validate(doc, complete=False):

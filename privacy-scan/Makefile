@@ -16,6 +16,10 @@
 # Paths are literal shell arguments, never Make whitespace-separated lists.
 shell_quote = '$(subst ','"'"',$(1))'
 
+# Environment paths are already literal; only Make assignments need expansion.
+# The filter also matches the "environment override" origin used by make -e.
+path_value = $(if $(filter environment,$(origin $(1))),$(value $(1)),$($(1)))
+
 # GNU Make 3.81 reads a literal '#' here as a comment, even inside $(shell).
 hash := \#
 
@@ -44,12 +48,14 @@ PYTHON  ?= python3
 AGENT   ?= claude codex agy
 PROJECT ?=
 
-CODEX_HOME ?= $(HOME)/.codex
-AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
+CODEX_HOME ?= $(call path_value,HOME)/.codex
+AGY_HOME   ?= $(call path_value,HOME)/.gemini/antigravity-cli
 
-root_claude := $(HOME)/.claude
-root_codex  := $(CODEX_HOME)
-root_agy    := $(AGY_HOME)
+root_claude := $(call path_value,HOME)/.claude
+root_codex  := $(call path_value,CODEX_HOME)
+root_agy    := $(call path_value,AGY_HOME)
+project_path := $(call path_value,PROJECT)
+skills_dir_path := $(call path_value,SKILLS_DIR)
 
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
 ifneq ($(UNKNOWN),)
@@ -58,10 +64,10 @@ endif
 
 # Pass each guard and destination as separate, quoted shell arguments. No
 # delimiter is reserved inside a path; only host IDs enter Make's list functions.
-ifneq ($(SKILLS_DIR),)
-QTARGETS := $(call shell_quote,$(SKILLS_DIR)) $(call shell_quote,$(SKILLS_DIR))
-else ifneq ($(PROJECT),)
-QTARGETS := $(call shell_quote,$(PROJECT)) $(call shell_quote,$(PROJECT)/.claude/skills)
+ifneq ($(skills_dir_path),)
+QTARGETS := $(call shell_quote,$(skills_dir_path)) $(call shell_quote,$(skills_dir_path))
+else ifneq ($(project_path),)
+QTARGETS := $(call shell_quote,$(project_path)) $(call shell_quote,$(project_path)/.claude/skills)
 else
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(call shell_quote,$(root_$(a))) $(call shell_quote,$(root_$(a))/skills))
 endif

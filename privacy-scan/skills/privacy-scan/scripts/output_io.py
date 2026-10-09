@@ -8,10 +8,14 @@ import stat
 from tempfile import NamedTemporaryFile
 
 
-def write_utf8_files(outputs):
-    """Write a mapping of paths to text, cleaning up staging files on failure."""
+def write_utf8_files(outputs, *, protected_paths=()):
+    """Stage text outputs, refusing aliases of other outputs or protected files."""
     # Encode every output before opening any file, including temporary files.
     encoded = [(Path(path), text.encode("utf-8")) for path, text in outputs.items()]
+    try:
+        used_paths = {Path(path).resolve() for path in protected_paths}
+    except RuntimeError:
+        raise OSError("protected file cannot be resolved") from None
     destinations = []
     for path, content in encoded:
         # Match write_text's symlink behavior while replacing the target atomically.
@@ -19,6 +23,9 @@ def write_utf8_files(outputs):
             path = path.resolve()
         except RuntimeError:
             raise OSError("output destination cannot be resolved") from None
+        if path in used_paths:
+            raise OSError("output destination aliases another output or protected file")
+        used_paths.add(path)
         try:
             metadata = path.stat()
         except FileNotFoundError:

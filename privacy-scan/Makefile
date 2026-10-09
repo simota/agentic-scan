@@ -31,7 +31,9 @@ hash := \#
 
 # This file is the last entry here. Try literal suffixes to skip any preloaded
 # or including makefiles without splitting spaces inside this file's path.
-MAKEFILE_PATH := $(shell path=$(call shell_quote,$(MAKEFILE_LIST)); \
+# GNU Make 3.81 keeps MAKEFILE_LIST as a recursive variable, so a '$' in a
+# makefile path would be expanded on reference; $(value) reads it literally.
+MAKEFILE_PATH := $(shell path=$(call shell_quote,$(value MAKEFILE_LIST)); \
   while [ ! -f "$$path" ]; do \
     case "$$path" in (*' '*) path=$${path$(hash)* };; (*) exit 1;; esac; \
   done; printf '%s\n' "$$path")

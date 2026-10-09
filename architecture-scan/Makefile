@@ -39,16 +39,15 @@ tgt_claude := $(call shell_quote,$(HOME)/.claude) $(call shell_quote,$(HOME)/.cl
 tgt_codex  := $(call shell_quote,$(CODEX_HOME)) $(call shell_quote,$(CODEX_HOME)/skills)
 tgt_agy    := $(call shell_quote,$(AGY_HOME)) $(call shell_quote,$(AGY_HOME)/skills)
 
-UNKNOWN := $(filter-out claude codex agy,$(AGENT))
-ifneq ($(UNKNOWN),)
-$(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
-endif
-
 ifneq ($(SKILLS_DIR),)
 QTARGETS := $(call shell_quote,$(SKILLS_DIR)) $(call shell_quote,$(SKILLS_DIR))
 else ifneq ($(PROJECT),)
 QTARGETS := $(call shell_quote,$(PROJECT)) $(call shell_quote,$(PROJECT)/.claude/skills)
 else
+UNKNOWN := $(filter-out claude codex agy,$(AGENT))
+ifneq ($(UNKNOWN),)
+$(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
+endif
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(tgt_$(a)))
 endif
 
@@ -91,7 +90,7 @@ unlink: ## remove the symlinks this Makefile created
 	while [ "$$#" -gt 0 ]; do \
 	  dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = $(QSKILL) ]; then rm -f "$$d"; echo "unlinked $$d"; \
+	    if [ "$$(readlink "$$d")" = $(QSKILL) ]; then rm -f "$$d" || exit 1; echo "unlinked $$d"; \
 	    else echo "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
 	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
 	  else echo "absent   $$d"; fi; \

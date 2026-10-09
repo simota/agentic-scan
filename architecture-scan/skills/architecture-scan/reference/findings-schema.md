@@ -14,7 +14,8 @@ python3 scripts/findings.py check <out> [--allow NAME]
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
 record does not match the shape (the field is named). `findings.py check`
-exits `1` and lists every contract violation.
+exits `1` and lists every contract violation. All three required output paths
+must be files.
 
 ## Writing the file
 
@@ -41,6 +42,8 @@ Merge semantics:
 
 Every merge validates the combined record; a refused merge writes nothing.
 Each finding must be complete in the fragment that first adds it.
+Inputs must be UTF-8, including every string after JSON escapes are decoded.
+Invalid text is rejected before merge or render opens an output for writing.
 
 ## Shape
 
@@ -106,10 +109,11 @@ Each finding must be complete in the fragment that first adds it.
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
+| `meta.commit`, `validation.evidence`, `references[].title`, `rules[].reason` | Strings when present. Empty values and omission are allowed except where a nonblank value is required by the verdict or run contract |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
-| `references[]` | `{title, url}` |
+| `references[]` | Objects with a required nonblank string `url` and optional string `title` |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. `family` and `inferred` are optional |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

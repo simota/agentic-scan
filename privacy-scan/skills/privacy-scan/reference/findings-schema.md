@@ -12,11 +12,17 @@ python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. Exit codes: `0` written, `2` the
-record does not match the shape (the field is named). `findings.py check`
-exits `1` and lists every contract violation.
+filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
+output could not be saved, `2` the record does not match the shape (the field
+is named). `findings.py check` exits `1` and lists every contract violation,
+including required outputs that are directories or broken links instead of files.
 
-Both report contents are generated before either output file is written.
+Both report contents are generated and UTF-8 encoded before writing starts.
+The scripts stage all output bytes in temporary files alongside their destinations
+before replacing existing files. Encoding or staging failures preserve the previous
+outputs and remove staging files. Each final replacement is atomic; replacing
+multiple output files is not a single transaction.
+Existing destination symlinks are retained and their target files are updated.
 
 ## Writing the file
 
@@ -42,7 +48,8 @@ Merge semantics:
   duplicates
 
 Every merge validates the combined record; a refused merge writes nothing.
-Each finding must be complete in the fragment that first adds it. Report
+Each finding must be complete in the fragment that first adds it. Strings must
+be valid UTF-8 text; unpaired Unicode surrogates are refused before saving. Report
 prose, including analysis results, commitments, perspective notes and the
 top-level text lists, is checked for e-mail addresses (other than
 `example.com`, `example.org`, `example.net` or the `.example`, `.test`,
@@ -68,7 +75,9 @@ path and other report prose are still checked.
 Report prose is rendered as literal text in Markdown: placeholders such as
 `<email>`, table punctuation and line breaks are preserved. Commands use code
 spans that preserve backticks, and HTTP(S) or relative reference links are
-encoded separately; other URL schemes remain visible as text.
+encoded separately; other URL schemes remain visible as text. In the HTML
+dashboard, commands use preformatted code blocks that preserve line breaks and
+indentation.
 
 ## Shape
 
@@ -125,13 +134,13 @@ encoded separately; other URL schemes remain visible as text.
 | Field | Rule |
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
-| `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method |
+| `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
 | `findings[].id` | `PV-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`LT1`…) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values |
 | `contrast`, `commitment` | Optional strings: the flow that keeps the commitment; the ledger ID |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
@@ -140,6 +149,6 @@ encoded separately; other URL schemes remain visible as text.
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs `reason`, shown in both reports. `family` (string) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

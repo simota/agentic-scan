@@ -7,8 +7,8 @@ Both outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` follows the
 findings-report shape in `reference/report.md`.
 
-Exit codes: 0 written, 2 the record does not match the schema (the field is
-named on stderr).
+Exit codes: 0 written, 1 an output could not be saved, 2 the record does not
+match the schema (the field is named on stderr).
 """
 import argparse
 from html import escape
@@ -17,9 +17,12 @@ import re
 import sys
 from urllib.parse import quote, urlsplit
 
+# Importing the local helpers must not write bytecode into the skill tree.
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
                       read_json, validate)
+from output_io import write_utf8_files  # noqa: E402
 
 LABELS = {
     "en": {
@@ -32,7 +35,7 @@ LABELS = {
         "flow": "flow", "contrast": "contrast", "impact": "what happens", "commitment": "commitment",
         "fix": "fix direction", "guard": "guard", "verdict": "recorded verdict",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
-        "references": "references", "status": "status",
+        "references": "references", "status": "status", "review_method": "Review method",
         "inferred": "inferred", "not_checked_reason": "reason",
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
@@ -48,7 +51,7 @@ LABELS = {
         "flow": "データの流れ", "contrast": "対照", "impact": "何が起きるか", "commitment": "約束",
         "fix": "修正方針", "guard": "再発防止チェック", "verdict": "検証判定",
         "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
-        "references": "参考", "status": "ステータス",
+        "references": "参考", "status": "ステータス", "review_method": "診断方法",
         "inferred": "推定", "not_checked_reason": "未確認の理由",
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
@@ -152,19 +155,29 @@ def commitment_text(record, labels):
     return statement, status
 
 
+def review_method(meta, findings, labels):
+    """Prefer the recorded assessment method, including reviews with no findings."""
+    method = meta.get("method", "")
+    if method.strip():
+        return method
+    analysed = any(f["validation"]["method"] == "analysed" for f in findings)
+    return labels["analysed_note"] if analysed else labels["static_note"]
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
-    analysed = any(f["validation"]["method"] == "analysed" for f in findings)
+    method = review_method(meta, findings, t)
     lines = [f"# {t['title']}: {markdown_text(meta.get('project', ''))}", ""]
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
-                 + (t["analysed_note"] if analysed else t["static_note"]))
+                 + markdown_text(method))
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               markdown_row((t['project'], meta.get('project', ''))),
               markdown_row((t['scope_row'], meta.get('scope', ''))),
               markdown_row((t['revision'], meta.get('commit', 'UNKNOWN'))),
+              markdown_row((t['review_method'], method)),
               markdown_row((t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")), ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
@@ -222,6 +235,7 @@ h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
 summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
 dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 button[aria-pressed="true"]{border-color:var(--fg)}
@@ -238,16 +252,24 @@ def render_html(doc, lang):
     t = LABELS[lang]
     meta, findings = doc["meta"], doc.get("findings", [])
     by_sev, excluded = counts(findings)
+    method = review_method(meta, findings, t)
     e = lambda v: escape(as_text(v))  # noqa: E731
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
-           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', 'UNKNOWN'))} · "
-           f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
+           "<div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
+    scope_rows = [(t['project'], meta.get('project', '')),
+                  (t['scope_row'], meta.get('scope', '')),
+                  (t['revision'], meta.get('commit', 'UNKNOWN')),
+                  (t['review_method'], method),
+                  (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
+    out.append(f"<h2>{e(t['scope'])}</h2><dl>"
+               + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
+               + "</dl>")
     out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
@@ -259,13 +281,16 @@ def render_html(doc, lang):
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
         rows += [(t["verdict"], f"{v['verdict']} ({v['method']})"), (t["evidence"], v.get("evidence", "")),
                  (t["status"], f.get("status", "Open"))]
+        analysis_html = ""
         if "analysis" in f:
             a = f["analysis"]
-            rows.append((t["analysis"], f"{a['result']} — {a['tool']}: {a['command']}"))
+            analysis_html = (f"<dt>{e(t['analysis'])}</dt><dd>{e(a['result'])} — {e(a['tool'])}:"
+                             f"<pre><code>{e(a['command'])}</code></pre></dd>")
         out.append(f"<details data-sev='{f['severity']}'><summary><span class='{f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows)
+                   + analysis_html
                    + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"
                              for ref in f.get("references", []))
                    + "</dl></details>")
@@ -308,9 +333,12 @@ def main(argv=None):
     markdown = render_markdown(doc, lang)
     html = render_html(doc, lang)
     out = Path(args.out)
-    out.mkdir(parents=True, exist_ok=True)
-    (out / "report.md").write_text(markdown, encoding="utf-8")
-    (out / "dashboard.html").write_text(html, encoding="utf-8")
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        write_utf8_files({out / "report.md": markdown, out / "dashboard.html": html})
+    except (OSError, UnicodeError) as exc:
+        print(f"write failed: could not save reports ({type(exc).__name__})", file=sys.stderr)
+        return 1
     print(f"wrote {out / 'dashboard.html'} and {out / 'report.md'}")
     return 0
 

@@ -420,6 +420,15 @@ DISPLAY = {
         "FalsePositive": "誤検知", "NotApplicable": "対象外",
         "open": "成立", "blocked": "遮断", "unknown": "不明",
         "Applied": "実施", "N/A": "該当なし", "Not checked": "未確認",
+        # Perspective names from reference/perspectives.md and meta.inputs kinds.
+        "Network exposure": "ネットワーク露出", "Identity and privilege": "アイデンティティと権限",
+        "Trust and federation": "信頼とフェデレーション", "Data protection": "データ保護",
+        "Compute and workload": "コンピュートとワークロード", "Kubernetes": "Kubernetes",
+        "Serverless and API edge": "サーバーレスと API エッジ", "Secrets and keys": "シークレットと鍵",
+        "Logging and detection": "ログと検知", "Resilience and recovery": "回復性と復旧",
+        "Governance and guardrails": "ガバナンスとガードレール", "Pipeline and state": "パイプラインと state",
+        "Coverage and drift": "カバレッジとドリフト",
+        "iac": "IaC", "plan": "プラン JSON", "snapshot": "スナップショット", "manifest": "マニフェスト",
     },
 }
 
@@ -638,22 +647,32 @@ def field_text(f, key):
 
 
 def finding_markdown(f, L, lang):
+    """Single-line fields as one list, then each multi-line field under its own heading."""
     lines = [L["md_intro"], "", f"## {f['id']} {f.get('title', '')}", ""]
-    lines.append(f"- {L['severity']}: {f.get('severity')} / {L['confidence']}: {f.get('confidence')}")
-    lines.append(f"- {L['category']}: {f.get('category')} / {L['provider']}: {f.get('provider')}")
+    lines.append(f"- {L['severity']}: {shown(f.get('severity'), lang)} / "
+                 f"{L['confidence']}: {shown(f.get('confidence'), lang)}")
+    lines.append(f"- {L['category']}: {shown(f.get('category'), lang)} / {L['provider']}: {f.get('provider')}")
     lines.append(f"- {L['location']}: `{f.get('location')}`")
     lines.append(f"- {L['resources']}: " + ", ".join(f"`{r}`" for r in f.get("resources", [])))
+    if f.get("attack_paths"):
+        lines.append(f"- {L['attack_paths']}: " + ", ".join(f["attack_paths"]))
+    if is_excluded(f):
+        lines.append(f"- {L['excluded']}")
+    blocks = []
     for key in FIELD_ORDER:
         value = field_text(f, key)
         if value:
             if "\n" in str(value):
-                lines += ["", f"### {L[key]}", "", str(value)]
+                blocks += ["", f"### {L[key]}", "", str(value)]
             else:
                 lines.append(f"- {L[key]}: {value}")
+    lines += blocks
     val = f.get("validation", {})
-    lines += ["", f"### {L['verdict']}", "", f"{val.get('verdict')}: {val.get('evidence', '')}".rstrip(": ")]
-    for ref in f.get("references", []):
-        lines.append(f"- [{ref.get('title') or ref['url']}]({ref['url']})")
+    verdict = shown(val.get("verdict"), lang)
+    lines += ["", f"### {L['verdict']}", "", f"{verdict}: {val['evidence']}" if val.get("evidence") else verdict]
+    if f.get("references"):
+        lines += ["", f"### {L['references']}", ""]
+        lines += [f"- [{ref.get('title') or ref['url']}]({ref['url']})" for ref in f["references"]]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -697,13 +716,13 @@ def list_block(items, L):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>"
 
 
-def meta_rows(data, L):
+def meta_rows(data, L, lang="en"):
     meta = data.get("meta", {})
     rows = [(L[k], esc(meta.get(k))) for k in ("project", "scope", "date", "assessor", "method", "commit")
             if meta.get(k)]
     if meta.get("inputs"):
         rows.append((L["inputs"], "<br>".join(
-            f'{esc(i.get("kind"))}: <code>{esc(i.get("path"))}</code>' + (f' — {esc(i["note"])}' if i.get("note") else "")
+            f'{esc(shown(i.get("kind"), lang))}: <code>{esc(i.get("path"))}</code>' + (f' — {esc(i["note"])}' if i.get("note") else "")
             for i in meta["inputs"])))
     inv = data.get("inventory")
     if inv:
@@ -725,6 +744,7 @@ TOKENS = """
 :root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--text:#1b1b1b;--muted:#5b5b5b;--line:#dcd9d2;--soft:#ecebe5;--high:#9b1c1c;--medium:#8a5300;--low:#24476e;--info:#5b5b5b;--accent:#1f4f7a;--ok:#2d6a3e}
 @media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#16171a;--panel:#1f2024;--text:#ece9e2;--muted:#b0aba2;--line:#38383c;--soft:#2a2b30;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b0aba2;--accent:#9cc3ec;--ok:#9fd3ad}}
 :root[data-theme="dark"]{color-scheme:dark;--bg:#16171a;--panel:#1f2024;--text:#ece9e2;--muted:#b0aba2;--line:#38383c;--soft:#2a2b30;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b0aba2;--accent:#9cc3ec;--ok:#9fd3ad}
+@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light;--bg:#fff;--panel:#fff;--text:#1b1b1b;--muted:#5b5b5b;--line:#dcd9d2;--soft:#ecebe5;--high:#9b1c1c;--medium:#8a5300;--low:#24476e;--info:#5b5b5b;--accent:#1f4f7a;--ok:#2d6a3e}}
 """
 
 BASE_CSS = """
@@ -743,6 +763,7 @@ dt{color:var(--muted);font-size:12px}dd{margin:0;white-space:pre-wrap;min-width:
 .ap{border-top:2px solid var(--line);padding:12px 0}.ap.st-open{border-top-color:var(--high)}.ap.st-blocked{border-top-color:var(--ok)}.ap.st-unknown{border-top-color:var(--medium)}
 .ap-head{display:flex;gap:10px;align-items:center}.ap-route{font-weight:650;margin:6px 0}
 .edges{margin:6px 0;padding-left:22px}.edges li{margin:2px 0}
+@media print{.snippet{white-space:pre-wrap;overflow:visible}}
 """
 
 DASH_CSS = """
@@ -764,7 +785,7 @@ h1{font-size:clamp(24px,3.4vw,34px);margin:20px 0 4px;line-height:1.25}h2{font-s
 .tablewrap{border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text)}
 table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
 th{font-size:11px;letter-spacing:.05em;color:var(--muted)}
-tr.excluded td{opacity:.6}
+tr.excluded td{color:var(--muted)}tr.excluded .toggle{text-decoration:line-through}
 .toggle{border:0;background:none;padding:0;text-align:left;font-weight:650;width:100%}.toggle:hover{background:none;color:var(--accent)}
 .loc{display:block;font-size:11px;color:var(--muted)}
 tr.detail>td{background:var(--soft);padding:14px 18px}
@@ -780,7 +801,7 @@ thead{display:none}table,tbody,tr,td{display:block}tr.row{display:grid;grid-temp
 tr.row td{border:0;padding:0}tr.row td.t{grid-column:1/-1}td[data-l]:before{content:attr(data-l);display:block;font-size:10px;color:var(--muted)}
 dl{grid-template-columns:1fr}dd{margin-bottom:6px}}
 @media screen{tr[hidden]{display:none!important}}
-@media print{.tools,.filters,.detail-actions{display:none}tr.detail{display:table-row!important}}
+@media print{.tools,.filters,.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
 """
 
 DASH_JS = r"""
@@ -796,17 +817,27 @@ var md=JSON.parse(document.getElementById('md').textContent);
 var rows=[].slice.call(document.querySelectorAll('tr.row'));
 var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),q:document.getElementById('f-q')};
 var count=document.getElementById('count');
+var active=rows.filter(function(r){return !r.classList.contains('excluded');}).length;
 function apply(){
-  var q=f.q.value.trim().toLowerCase(),n=0;
+  var q=f.q.value.trim().toLowerCase(),n=0,x=0;
   rows.forEach(function(r){
     var ok=(!f.sev.value||r.dataset.sev===f.sev.value)&&(!f.prov.value||r.dataset.prov===f.prov.value)&&
       (!f.cat.value||r.dataset.cat===f.cat.value)&&(!f.ver.value||r.dataset.ver===f.ver.value)&&
       (!q||r.dataset.text.indexOf(q)>=0);
     r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
-    if(ok)n++;
+    if(ok){if(r.classList.contains('excluded'))x++;else n++;}
   });
-  count.textContent=n+' / '+rows.length+' '+count.dataset.l;
+  // Match the severity cards: excluded findings are counted on their own.
+  count.textContent=n+' / '+active+' '+count.dataset.l+(x?' + '+count.dataset.x+' '+x:'');
 }
+function reveal(){
+  var el=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  if(!el||!el.classList.contains('row'))return;
+  if(el.hidden){Object.keys(f).forEach(function(k){f[k].value='';});apply();}
+  var b=el.querySelector('.toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();
+  el.scrollIntoView({block:'start'});
+}
+window.addEventListener('hashchange',reveal);
 Object.keys(f).forEach(function(k){f[k].addEventListener('input',apply);});
 document.querySelectorAll('.toggle').forEach(function(b){b.addEventListener('click',function(){
   var open=b.getAttribute('aria-expanded')==='true';b.setAttribute('aria-expanded',String(!open));
@@ -817,8 +848,8 @@ document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,fallback);}else fallback();
   function fallback(){var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){}ta.remove();}
 });});
-if(location.hash){var el=document.getElementById(location.hash.slice(1));if(el&&el.classList.contains('row')){el.querySelector('.toggle').click();}}
 apply();
+reveal();
 })();
 """
 
@@ -845,28 +876,37 @@ def render_dashboard(data, L, lang, sources):
     rows = []
     for f in fs:
         val = f.get("validation", {}).get("verdict", "")
-        text = " ".join(str(x) for x in (f.get("id"), f.get("title"), f.get("location"), " ".join(f.get("resources", [])),
-                                         f.get("rule", ""), f.get("category"))).lower()
+        val_raw = f.get("validation", {})
+        searchable = [f.get("id"), f.get("title"), f.get("location"), " ".join(f.get("resources", [])),
+                      f.get("rule", ""), f.get("cwe", ""), " ".join(f.get("controls", [])),
+                      " ".join(f.get("attack_paths", [])), val_raw.get("evidence", "")]
+        searchable += [f.get(k, "") for k in FIELD_ORDER if isinstance(f.get(k), str)]
+        # Canonical and displayed spellings: "High" and "高" both match.
+        for key in ("severity", "confidence", "category", "provider"):
+            searchable += [f.get(key), shown(f.get(key), lang)]
+        searchable += [val, shown(val, lang)]
+        text = " ".join(str(x) for x in searchable if x).lower()
         cls = "row excluded" if is_excluded(f) else "row"
         rows.append(
             f'<tr class="{cls}" id="{esc(f["id"])}" data-sev="{esc(f.get("severity"))}" data-prov="{esc(f.get("provider"))}" '
             f'data-cat="{esc(f.get("category"))}" data-ver="{esc(val)}" data-text="{esc(text)}">'
             f'<td data-l="{L["severity"]}"><span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span></td>'
             f'<td data-l="{L["id"]}">{esc(f["id"])}</td>'
-            f'<td class="t"><button class="toggle" type="button" aria-expanded="false">{esc(f.get("title"))}</button>'
+            f'<td class="t"><button class="toggle" type="button" aria-expanded="false" '
+            f'aria-controls="{esc(f["id"])}-detail">{esc(f.get("title"))}</button>'
             f'<span class="loc">{esc(f.get("location"))}</span></td>'
             f'<td data-l="{L["provider"]}">{esc(f.get("provider"))}</td>'
-            f'<td data-l="{L["category"]}">{esc(f.get("category"))}</td>'
+            f'<td data-l="{L["category"]}">{esc(shown(f.get("category"), lang))}</td>'
             f'<td data-l="{L["confidence"]}">{esc(shown(f.get("confidence"), lang))}</td>'
             f'<td data-l="{L["verdict"]}">{esc(shown(val, lang))}</td></tr>'
-            f'<tr class="detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources)}'
+            f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources)}'
             f'<div class="detail-actions"><button class="copy" type="button" data-id="{esc(f["id"])}" '
             f'data-done="{esc(L["copied"])}">{L["copy"]}</button></div></td></tr>')
     table = "".join(rows) or f'<tr><td colspan="7" class="muted">{L["none"]}</td></tr>'
     names = perspective_names()
     present = {p.get("name"): p for p in data.get("perspectives", [])}
     persp = "".join(
-        f'<div class="persp"><strong>{esc(n)}</strong><span class="st">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span>'
+        f'<div class="persp"><strong>{esc(shown(n, lang))}</strong><span class="st">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span>'
         f'<p>{esc(present.get(n, {}).get("note", ""))}</p></div>' for n in names)
     used = lambda key: sorted({f.get(key) for f in fs if f.get(key)})
     lists = "".join(f'<section><h2>{L[k]}</h2>{list_block(data.get(k, []), L)}</section>' for k in STRING_LISTS)
@@ -891,11 +931,12 @@ def render_dashboard(data, L, lang, sources):
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
 <label class="search">{L["search"]}<input id="f-q" type="search"></label>
 </div>
-<p class="count" id="count" data-l="{L["shown"]}"></p>
+<p class="count" id="count" data-l="{L["shown"]}" data-x="{L["excluded_n"]}" aria-live="polite"></p>
 <div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th>{L["severity"]}</th><th>{L["id"]}</th><th>{L["title"]}</th>
 <th>{L["provider"]}</th><th>{L["category"]}</th><th>{L["confidence"]}</th><th>{L["verdict"]}</th></tr></thead>
 <tbody>{table}</tbody></table></div>
 <h2>{L["perspectives"]}</h2><div class="coverage">{persp}</div>
+<h2>{L["scope_method"]}</h2><dl>{meta_rows(data, L, lang)}</dl>
 <div class="lists">{lists}</div>
 <footer class="footer">{L["static_note"]}</footer>
 </main>
@@ -915,7 +956,8 @@ h3{margin:18px 0 4px;break-after:avoid}
 table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
 th{font-family:system-ui,sans-serif;font-size:9pt;color:var(--muted)}
 .finding{break-inside:avoid-page;border-top:1px solid var(--line);padding-top:6px}
-.finding.excluded{opacity:.75}
+.finding.excluded h3{text-decoration:line-through;text-decoration-thickness:1px}
+.ap{break-inside:avoid-page}
 dt{font-family:system-ui,sans-serif}
 @media print{body{max-width:none;padding:0;background:#fff;color:#000}a{color:inherit}}
 """
@@ -931,7 +973,7 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
     def article(f, cls="finding"):
         return (f'<article class="{cls}" id="{esc(f["id"])}"><h3><span class="badge {esc(f.get("severity"))}">'
                 f'{esc(shown(f.get("severity"), lang))}</span> {esc(f["id"])} {esc(f.get("title"))}</h3>'
-                f'<p class="muted">{esc(f.get("category"))} · {esc(f.get("provider"))} · {esc(shown(f.get("confidence"), lang))}</p>'
+                f'<p class="muted">{esc(shown(f.get("category"), lang))} · {esc(f.get("provider"))} · {esc(shown(f.get("confidence"), lang))}</p>'
                 f'{detail_dl(f, L, lang, sources)}</article>')
 
     by_sev = "".join(
@@ -939,7 +981,7 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
         for s in SEVERITIES if any(f.get("severity") == s for f in active)) or f'<p class="muted">{L["none"]}</p>'
     excl = "".join(article(f, "finding excluded") for f in excluded) or f'<p class="muted">{L["none"]}</p>'
     present = {p.get("name"): p for p in data.get("perspectives", [])}
-    persp = "".join(f'<tr><td>{esc(n)}</td><td>{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</td>'
+    persp = "".join(f'<tr><td>{esc(shown(n, lang))}</td><td>{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</td>'
                     f'<td>{esc(present.get(n, {}).get("note", ""))}</td></tr>' for n in perspective_names())
     count_rows = "".join(f'<tr><td class="{s}">{esc(shown(s, lang))}</td><td>{c[s]}</td></tr>' for s in SEVERITIES)
     aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or f'<p class="muted">{L["none"]}</p>'
@@ -948,7 +990,7 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
                        f'{L["excluded_n"]} {c["excluded"]}, {L["unverified_n"]} {c["unverified"]}</p>'
                        f'<table><caption class="muted">{L["counts"]}</caption>{count_rows}</table><p>{L["static_note"]}</p>'
                        + (f'<p class="muted">{esc(pdf_note)}</p>' if pdf_note else "")),
-        (L["scope_method"], f"<dl>{meta_rows(data, L)}</dl>"),
+        (L["scope_method"], f"<dl>{meta_rows(data, L, lang)}</dl>"),
         (L["attack_paths"], aps),
         (L["findings"], by_sev),
         (L["excluded"], excl),

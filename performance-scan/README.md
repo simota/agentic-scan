@@ -84,8 +84,9 @@ to merge. Atomic replacement does not detect concurrent updates.
 
 `findings.py check` enforces the run contract: exactly these three readable,
 nonempty files (valid symbolic links are allowed),
-gapless `P-NNN` IDs in severity order, every perspective recorded, and nonempty
-`checked_ok` and `limitations`. It checks shape, not whether rendered text is
+gapless `P-NNN` IDs in severity order, every perspective recorded, each
+finding's `budget` naming a ledger entry, a reason for every `not checked`
+budget, and nonempty `checked_ok` and `limitations`. It checks shape, not whether rendered text is
 current or a finding is true.
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root

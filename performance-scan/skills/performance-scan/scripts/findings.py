@@ -7,10 +7,12 @@
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
 `meta` is merged key by key; `findings` and `budgets` records are matched by
-`id`, a known record updated key by key and a new one appended; `perspectives` are matched by `name` and replaced whole; the string lists (`checked_ok`,
+`id`, a known record updated key by key and a new one appended; `perspectives`
+are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
-FINDINGS is created when absent. The merged record must pass the schema check
-(`reference/findings-schema.md`) before anything is written.
+FINDINGS is created when absent. The record must pass the schema check
+(`reference/findings-schema.md`) after every fragment before anything is
+written. A merge never removes a key.
 Run merges to the same FINDINGS sequentially; atomic replacement does not
 detect concurrent updates.
 

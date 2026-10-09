@@ -18,7 +18,7 @@
     "resources": 142,
     "files": 37,
     "by_provider": {"aws": 98, "gcp": 44},
-    "not_run": ["CloudFormation YAML: no YAML parser available (none present)"]
+    "not_run": ["Terraform dynamic block not evaluated; affected checks not run: envs/prod/aws/sg.tf:20"]
   },
   "attack_paths": [
     {
@@ -60,7 +60,9 @@
       ],
       "findings": ["F-003"],
       "note": "Blocked at the database: publicly_accessible = false and private subnets only."
-    }
+    },
+    {"id": "AP-04", "entry": "Internet", "target": "Customer exports (google_storage_bucket.exports)", "status": "open", "edges": ["Internet → GCS bucket acme-customer-exports via the public storage endpoint (envs/prod/gcp/storage.tf:3)", "allUsers holds roles/storage.objectViewer (envs/prod/gcp/storage.tf:27)"], "findings": ["F-001"], "note": ""},
+    {"id": "AP-05", "entry": "Internet", "target": "GKE prod control plane (google_container_cluster.prod)", "status": "unknown", "edges": ["Internet → public cluster endpoint (envs/prod/gcp/gke.tf:9)", "Authorized networks from var.admin_cidrs (envs/prod/gcp/variables.tf:4)"], "findings": ["F-004"], "note": "UNKNOWN: the prod value of var.admin_cidrs is not in the repository"}
   ],
   "findings": [
     {
@@ -81,6 +83,7 @@
       "controls": ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"],
       "cwe": "CWE-200",
       "references": [{"title": "Public access prevention", "url": "https://cloud.google.com/storage/docs/public-access-prevention"}],
+      "attack_paths": ["AP-04"],
       "validation": {"verdict": "Valid", "evidence": "Binding and bucket read end to end at the cited lines; no org policy or VPC-SC perimeter in the inputs."}
     },
     {
@@ -142,6 +145,7 @@
       "regression": "Policy test: master_authorized_networks_config never contains 0.0.0.0/0; variable validation rejects it.",
       "controls": ["CIS GKE — control plane authorized networks are enabled"],
       "cwe": "CWE-284",
+      "attack_paths": ["AP-05"],
       "validation": {"verdict": "Likely", "evidence": "The variable value lives in the pipeline; requested from the owner."}
     },
     {
@@ -159,7 +163,7 @@
       "impact": "Expected: api reads only its own secrets. Actual: a compromise of api yields every secret, including the database master credential.",
       "fix": "Scope the statement to arn:aws:secretsmanager:*:*:secret:prod/api/* and add resource policies on crown-jewel secrets.",
       "regression": "Policy test: no task role policy grants secretsmanager:GetSecretValue with Resource \"*\".",
-      "controls": ["CIS AWS Foundations — users receive permissions only through groups"],
+      "controls": ["AWS Foundational Security Best Practices — IAM policies do not allow wildcard actions on services"],
       "cwe": "CWE-250",
       "attack_paths": ["AP-01"],
       "validation": {"verdict": "Valid", "evidence": "Role, policy and attachment read at the cited lines; no permission boundary on the role."}
@@ -185,7 +189,7 @@
     },
     {
       "id": "I-001",
-      "title": "Security group allows SSH from 0.0.0.0/0",
+      "title": "Security group allows internet ingress to an admin or data port",
       "severity": "High",
       "confidence": "Suspected",
       "category": "Network exposure",
@@ -193,24 +197,28 @@
       "resources": ["aws_security_group.bastion"],
       "location": "envs/staging/aws/bastion.tf:12",
       "rule": "AWS-NET-001",
+      "controls": ["CIS AWS Foundations — no security group allows 0.0.0.0/0 to admin ports", "CIS AWS Foundations — no security group allows ::/0 to admin ports"],
+      "cwe": "CWE-284",
       "detail": "ingress from_port 22 to_port 22 cidr_blocks 0.0.0.0/0",
       "validation": {"verdict": "Likely", "evidence": "Staging bastion has a public IP; the bastion role is read-only in staging."}
     },
     {
       "id": "I-002",
-      "title": "Instance allows IMDSv1",
+      "title": "Instance metadata service does not require IMDSv2",
       "severity": "Medium",
       "confidence": "Suspected",
       "category": "Compute and workload",
       "provider": "aws",
       "resources": ["aws_instance.bastion"],
       "location": "envs/staging/aws/bastion.tf:30",
-      "rule": "AWS-CMP-001",
+      "rule": "AWS-EC2-001",
+      "controls": ["CIS AWS Foundations — EC2 metadata service requires IMDSv2"],
+      "cwe": "CWE-918",
       "validation": {"verdict": "Valid", "evidence": "envs/staging/aws/bastion.tf:30 has no metadata_options and the instance has a public IP; the bastion role is read-only, so no path to a crown jewel."}
     },
     {
       "id": "I-003",
-      "title": "Basic role roles/editor bound to the default compute service account",
+      "title": "Basic role roles/owner or roles/editor granted",
       "severity": "Medium",
       "confidence": "Suspected",
       "category": "Identity and privilege",
@@ -218,6 +226,8 @@
       "resources": ["google_project_iam_member.default_sa_editor"],
       "location": "envs/prod/gcp/iam.tf:5",
       "rule": "GCP-IAM-002",
+      "controls": ["CIS GCP Foundation — service accounts hold no admin or basic roles"],
+      "cwe": "CWE-250",
       "validation": {"verdict": "Valid", "evidence": "Every VM without its own service account inherits editor on acme-prod."}
     }
   ],
@@ -226,7 +236,7 @@
     {"name": "Identity and privilege", "status": "Applied", "note": "IP1–IP5; F-005, I-003"},
     {"name": "Trust and federation", "status": "Applied", "note": "TF1–TF5; F-002 via AP-02"},
     {"name": "Data protection", "status": "Applied", "note": "DP1–DP5; F-001"},
-    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4; I-002 not yet triaged"},
+    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4; I-002 valid, no path to a crown jewel"},
     {"name": "Kubernetes", "status": "Applied", "note": "K81–K85 on GKE prod; F-004. No manifests in the repository"},
     {"name": "Serverless and API edge", "status": "N/A", "note": "No functions, function URLs or API gateways in the inputs"},
     {"name": "Secrets and keys", "status": "Applied", "note": "SK1–SK4; no literals found"},
@@ -253,6 +263,6 @@
   "next_steps": [
     "Fix F-002 first: it gives any GitHub user admin of the shared account",
     "Remove the public binding in F-001 and enforce public access prevention org-wide",
-    "Triage I-002"
+    "Require IMDSv2 on aws_instance.bastion (I-002)"
   ]
 }

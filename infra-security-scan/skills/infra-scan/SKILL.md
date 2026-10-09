@@ -88,10 +88,10 @@ summary.
 | Phase | Do | Reference |
 |---|---|---|
 | RECON | Inventory: providers, environments, accounts/projects, every resource with its address and `path:line`; module and provider versions; the state backend and the pipeline that applies it. Build the exposure map (what the internet reaches), the identity map (who can assume or impersonate what, with which permissions) and the trust map (cross-account, federation, CI/CD). Run `scripts/iac_scan.py`. Name the crown jewels | `reference/recon.md`, `reference/snapshots.md` |
-| CHECKLIST | Attack-path hypotheses first: for each crown jewel, each entry actor that might reach it. Then the perspectives that apply, keeping only hunt steps no path covers | `reference/attack-paths.md`, `reference/perspectives.md` |
-| REVIEW | One pass per review unit. Trace every hypothesis edge by edge — network reachability, then identity, then the resource policy on the target — each edge citing the resource and `path:line` that allows or blocks it, or `UNKNOWN` with what would decide it. Then sweep every applicable perspective with the provider catalogs; triage every `I-*` | `reference/attack-paths.md`, `reference/perspectives.md`, `reference/aws.md`, `reference/gcp.md`, `reference/kubernetes.md` |
+| CHECKLIST | Attack-path hypotheses first: for each crown jewel, each entry actor that might reach it. Then the perspectives that apply, keeping only hunt steps no path covers. A checklist-only request ends here with the checklist deliverable in chat: no `findings.json` merge, render or `contract_check.py` | `reference/attack-paths.md`, `reference/perspectives.md`, `reference/report.md` |
+| REVIEW | One pass per review unit. Trace every hypothesis edge by edge — network reachability, then identity, then the resource policy on the target — each edge citing the resource and `path:line` that allows or blocks it, or `UNKNOWN` with what would decide it. Then sweep every applicable perspective with the provider catalogs; triage every `I-*` | `reference/attack-paths.md`, `reference/perspectives.md`, `reference/aws.md`, `reference/gcp.md`, `reference/kubernetes.md`, `reference/validation.md` |
 | VERIFY | For each finding: reachability, preconditions, compensating controls (org policy, SCP, permission boundary, VPC Service Controls, network policy, a WAF) and impact, each `supported` / `contradicted` / `unknown`; try to falsify it. Separate what the IaC declares from what is deployed | `reference/validation.md` |
-| REPORT | Merge fragments, render with `scripts/render.py --repo <assessed-repo>`, pass `scripts/contract_check.py`, then the chat summary | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Merge fragments, `scripts/findings.py renumber <out>/findings.json`, render with `scripts/render.py <out>/findings.json --out <out> --lang <ja\|en> --repo <assessed-repo>`, pass `scripts/contract_check.py <out>`, then the chat summary. If no PDF engine is available, run `contract_check.py <out> --no-pdf` and say so in `limitations` and the chat summary | `reference/findings-schema.md`, `reference/report.md`, `reference/attack-paths.md`, `reference/perspectives.md`, `reference/snapshots.md` |
 
 ## Decide first
 
@@ -110,7 +110,8 @@ summary.
 ## Always / Never
 
 - Always: anchor every finding to `path:line` and a resource address, and name
-  the entry actor and the attack path (`AP-*`) it belongs to
+  the entry actor and the attack path (`AP-*`) it belongs to — or, for a
+  defense-in-depth finding on no path, say so in `actor`
 - Always: give every `F-*` an attack path as numbered edges (network, identity,
   resource policy), the contrast (a sibling resource configured soundly, or
   "none"), a one-line fix as the boundary restored, a policy-as-code assertion

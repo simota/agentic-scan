@@ -80,14 +80,15 @@ Then ask the agent, e.g. "infra-scan で `infra/` を診断して" or
 ```sh
 make test                                  # offline unit tests
 make check                                 # tests + skill self-consistency
-make scan TARGET=../my-infra OUT=$TMPDIR/infra-out   # baseline only
-make scan TARGET=../my-infra SNAPSHOTS=$TMPDIR/exports OUT=$TMPDIR/infra-out  # with exports
+make scan TARGET=../my-infra OUT=/tmp/infra-out   # baseline only; OUT outside TARGET
+make scan TARGET=../my-infra SNAPSHOTS=/tmp/exports OUT=/tmp/infra-out  # with exports
 make demo LANG_OUT=ja                      # render the sample report
 ```
 
 Python 3.10+, standard library only. PDF output uses headless Chrome / Chromium
-(`CHROME=/path/to/chrome` to override) and is skipped with a warning if none is
-found.
+(`CHROME=/path/to/chrome` to override), or WeasyPrint when no Chrome is found,
+and is skipped with a warning if neither works; then run
+`contract_check.py OUT --no-pdf`.
 
 ## Layout
 

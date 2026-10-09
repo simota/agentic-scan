@@ -40,9 +40,10 @@ class TerraformOverrideTest(ScanFiles):
 ''',
         })
         self.assertEqual([(r["address"], r["file"], r["line"]) for r in scan.resources],
-                         [("aws_security_group_rule.ssh", "override.tf", 1)])
+                         [("aws_security_group_rule.ssh", "main.tf", 1)])
+        # The resource stays where it is declared; the hit is the overriding range.
         self.assertEqual([(h["rule"], h["file"], h["line"]) for h in scan.hits],
-                         [("AWS-NET-001", "override.tf", 1)])
+                         [("AWS-NET-001", "override.tf", 2)])
         self.assertEqual(scan.not_run, [])
         # Source-carrying line numbers must remain ordinary JSON numbers.
         json.dumps(iac_scan.report(scan, Path("."), "unknown", iac_scan.build_findings(scan.hits)))
@@ -78,7 +79,7 @@ class TerraformOverrideTest(ScanFiles):
             "z_override.tf": 'resource "aws_ebs_volume" "disk" { encrypted = true }\n',
         })
         self.assertEqual(len(scan.resources), 1)
-        self.assertEqual(scan.resources[0]["file"], "z_override.tf")
+        self.assertEqual(scan.resources[0]["file"], "z-main.tf")
         self.assertEqual(scan.hits, [])
 
     def test_overrides_do_not_change_other_resources_or_module_directories(self):

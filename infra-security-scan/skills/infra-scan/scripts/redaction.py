@@ -51,7 +51,9 @@ def _secret_fields(line):
     # handled by module_source instead of being mistaken for such a key.
     urls = [match.span() for match in URL.finditer(line)]
     return (match for match in SECRET_FIELD.finditer(line)
-            if not any(start <= match.start() < end for start, end in urls))
+            if not any(start <= match.start() < end for start, end in urls)
+            # http_tokens = "optional" is IMDS evidence, not a token.
+            and not PUBLIC_WORDS.fullmatch(match.group().rstrip(":= \t\"'").lstrip("\"'")))
 
 
 def _secret_field(line):
@@ -59,8 +61,27 @@ def _secret_field(line):
 
 
 def is_secret_name(name):
-    """A key or variable name that conventionally holds a secret."""
-    return _secret_field(name + ":") is not None
+    """A key or variable name that conventionally holds a secret (DB_PASS, admin_pw too)."""
+    probe = PUBLIC_WORDS.sub("_", name)  # http_tokens, authorization_type
+    return _secret_field(probe + ":") is not None or CREDENTIAL_WORD.search(probe) is not None
+
+
+def _secret_refs(value, secret=False):
+    """CloudFormation parameters referenced (Ref, Fn::Sub) under secret-named keys."""
+    refs = set()
+    if isinstance(value, dict):
+        for key, item in value.items():
+            inner = secret or (isinstance(key, str) and is_secret_name(key))
+            if inner and key == "Ref" and isinstance(item, str):
+                refs.add(item)
+            elif inner and key == "Fn::Sub" and isinstance(item, (str, list)):
+                text = item if isinstance(item, str) else item[0] if item and isinstance(item[0], str) else ""
+                refs.update(re.findall(r"\$\{([A-Za-z0-9]+)\}", text))
+            refs |= _secret_refs(item, inner)
+    elif isinstance(value, list):
+        for item in value:
+            refs |= _secret_refs(item, secret)
+    return refs
 
 
 def has_escaped_secret_keys(text, docs):
@@ -111,6 +132,16 @@ def has_structured_secrets(value):
     """
     if isinstance(value, list):
         return any(has_structured_secrets(item) for item in value)
+    if isinstance(value, str):
+        # JSON held in a string: kubectl's last-applied-configuration
+        # annotation, an embedded policy or task definition.
+        text = value.strip()
+        if text[:1] in ("{", "[") and len(text) > 1:
+            try:
+                return has_structured_secrets(json.loads(text))
+            except (ValueError, RecursionError):
+                return False
+        return False
     if not isinstance(value, dict):
         return False
     if "sensitive" in value and value["sensitive"] is not False:
@@ -123,6 +154,32 @@ def has_structured_secrets(value):
     no_echo = value.get("NoEcho", False)
     if no_echo is not False and not (isinstance(no_echo, str) and no_echo.lower() == "false"):
         return True
+    # A CloudFormation parameter default is secret when a secret-named
+    # property can Ref it; the parameter's own name need not say so.
+    params = value.get("Parameters")
+    if isinstance(params, dict):
+        refs = _secret_refs({k: v for k, v in value.items() if k != "Parameters"})
+        if any(isinstance(params.get(name), dict) and "Default" in params[name] for name in refs):
+            return True
+    # Container flags: args: ["--password", "x"], command: ["sh", "-c", "mysql -p..."].
+    for key in ("args", "command", "Command", "EntryPoint", "entryPoint"):
+        items = value.get(key)
+        if not isinstance(items, list):
+            continue
+        texts = [item for item in items if isinstance(item, str)]
+        # A secret-named flag (--db-password, --token=...), or a database
+        # client given its password inline (mysql -pX).
+        if any(re.match(r"-{1,2}\S", item) and is_secret_name(item.split("=")[0]) for item in texts):
+            return True
+        if any(re.search(r"\b(?:mysql|mysqldump|mariadb|psql|mongo|mongosh|redis-cli)\b", item) for item in texts) \
+                and any(re.search(r"(?:^|\s)-p\S", item) for item in texts):
+            return True
+    # Plan JSON variables, configuration defaults and output changes put the
+    # name one level above the value: "admin_pw": {"value": "..."}.
+    for key, item in value.items():
+        if isinstance(key, str) and isinstance(item, dict) and is_secret_name(key) and \
+                {"value", "default", "constant_value", "Default", "after", "before"} & item.keys():
+            return True
     if value.get("kind") == "SecretList":
         return True  # Typed list items may omit their own kind: Secret.
     if value.get("kind") == "Secret" and any(key in value for key in ("data", "stringData")):
@@ -135,7 +192,7 @@ def has_structured_secrets(value):
         for label in ("name", "key"):
             if label in keys:
                 name = value[keys[label]]
-                if not isinstance(name, str) or _secret_field(name + ":"):
+                if not isinstance(name, str) or is_secret_name(name):
                     return True
     if "env" in value and value["env"] is not None:
         entries = value["env"]
@@ -145,7 +202,7 @@ def has_structured_secrets(value):
         # from line redaction. Env strings such as "var.password" are literal
         # values, so Terraform's SAFE_VALUE reference exception does not apply.
         if isinstance(entries, dict) and any(
-                not isinstance(name, str) or _secret_field(name + ":") for name in entries):
+                not isinstance(name, str) or is_secret_name(name) for name in entries):
             return True
         if isinstance(entries, list) and any(
                 not isinstance(entry, dict) or ("value" in entry and "name" not in entry)
@@ -347,3 +404,169 @@ def redact_lines(lines, *, syntax="hcl"):
             heredoc = start_heredoc
         result.append("[redacted]" if hidden else redact(line, syntax=syntax))
     return result
+
+
+# ---------------------------------------------------------------- excerpt scrub
+#
+# Key-based redaction above recognises secrets by the field that holds them.
+# Excerpts also carry free text: comments, script bodies, flags, connection
+# strings and names in neighbouring lines. This last pass is deliberately
+# broad: an excerpt that loses a value is acceptable, a leaked value is not.
+
+# Secret words bounded by non-letters: db_pass, DB_PASS, admin_pw, STRIPE_SK,
+# client-key-data, Authorization; not bypass, disk, authorized_networks or
+# aws_secretsmanager (the trailing letters continue the word).
+SECRET_WORD = re.compile(
+    r"(?i)(?<![a-z])((?:pg|db|my|admin|root|user|app|master)?pass(?:word|wd|phrase)?|pwd|pw|"
+    r"secrets?|tokens?|auth(?:orization)?|user[-_]?data(?:[-_]base64)?|startup[-_]?script|custom[-_]?data|"
+    r"credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|bearer|sk|"
+    r"tls\.key|ssh[-_]?key)(?![a-z])")
+# Public spellings that contain a secret word but name no secret.
+PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|"
+                          r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
+                          r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
+                          r"(?:secret|token|auth)[\w-]{0,64}\.(?:arn|id|name)\b")
+# The subset that names a credential value, used to judge a whole document
+# (name/value pairs, plan variables). "auth-service" or "user_data" in a
+# name says nothing about its value, so those words only scrub single lines.
+CREDENTIAL_WORD = re.compile(
+    r"(?i)(?<![a-z])((?:pg|db|my|admin|root|user|app|master)?pass(?:word|wd|phrase)?|pwd|pw|"
+    r"secrets?|tokens?|credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|"
+    r"bearer|sk|tls\.key|ssh[-_]?key)(?![a-z])")
+MAX_SCRUB = 2000  # longer lines (minified JSON) are hidden whole: linear time, nothing to read
+STRUCTURE = re.compile(r'^\s*(?:resource|data|module|variable|output|provider|dynamic)\b[^=]*\{\s*$|'
+                       r'^\s*(?:kind|type|Type)\s*:\s*"?[\w:.-]+"?\s*,?\s*$')
+SAFE_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?(?:true|false|null|none|NONE|AWS_IAM|IAM|CUSTOM|JWT|'
+                       r'COGNITO_USER_POOLS|[0-9]+)"?\s*,?\s*$')
+ENTROPY = re.compile(r"[A-Za-z0-9+_-]{16,}")
+# Cloud resource IDs and ARNs are long and mixed but name no secret.
+RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
+                         r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17}|[a-z0-9-]+_[a-z0-9_]+", re.IGNORECASE)
+# Linear alternatives: userinfo without a slash, possibly with an escaped
+# quote or a space inside (postgres://app:a\"b@db, postgres://app:a b@db).
+URL_USERINFO = re.compile(r"://[^/\s\"'@]*(?:\\\"[^/\s\"'@]*)*@|://[^/\"'@]*\s[^/\"'@]*@")
+BARE_USERINFO = re.compile(r'(?<=["\'\s=])([\w.%+-]+):([^"\'\s@/]+)@(?=[\w.-]+[:/"\'\s]|[\w.-]+$)')
+SHELL_PASSWORD = re.compile(r"(?<!\S)(--password[= ]|--pass[= ]|--token[= ])(?=\S)(\S+)")
+DB_CLIENT = re.compile(r"\b(?:mysql|mysqldump|mariadb|psql|mongo|mongosh|redis-cli)\b")
+CLIENT_PASSWORD = re.compile(r"(?<!\S)(-p|-P|-a)(?=\S)(\S+)")
+SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
+WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
+UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
+PUTTY = re.compile(r"PuTTY-User-Key-File-\d|^\s*Private-Lines:", re.IGNORECASE)
+
+
+def _high_entropy(token):
+    """Random-looking: mixed case with digits, long hex, or long letter-digit runs.
+
+    Names such as my-bucket-2024-prod or k8s-node-group-v2 stay readable.
+    """
+    if RESOURCE_ID.fullmatch(token):
+        return False
+    upper = any(c.isupper() for c in token)
+    lower = any(c.islower() for c in token)
+    digits = sum(c.isdigit() for c in token)
+    letters = sum(c.isalpha() for c in token)
+    return (upper and lower and digits >= 1) or re.fullmatch(r"[0-9a-fA-F]{32,}", token) is not None or (
+        len(token) >= 24 and digits >= 4 and letters >= 4 and "-" not in token and "_" not in token)
+
+
+def _entropy(match):
+    # A commit pinned with ?ref= is evidence (PS-001), not a secret.
+    if match.string[max(0, match.start() - 4):match.start()] == "ref=":
+        return match.group()
+    return "[redacted]" if _high_entropy(match.group()) else match.group()
+
+
+# IAM member prefixes name an identity, not credentials (user:alice@example.com).
+MEMBER_PREFIX = {"user", "group", "serviceaccount", "domain", "principal", "principalset", "deleted"}
+
+
+def scrub_line(line, syntax="hcl"):
+    if line == "[redacted]" or not line.strip():
+        return line
+    if len(line) > MAX_SCRUB:
+        return "[redacted]"
+    line = WEBHOOK.sub("[redacted]", line)
+    line = URL_USERINFO.sub("://[redacted]@", line)
+    line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
+                             else m.group(1) + ":[redacted]@", line)
+    line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere
+        line = CLIENT_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
+    line = ENTROPY.sub(_entropy, line)
+    decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
+    probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), decoded)
+    match = SECRET_WORD.search(probe)
+    if match and not STRUCTURE.match(line):
+        if decoded != line:
+            return line[:len(line) - len(line.lstrip())] + "[redacted]"
+        # Keep the whole key (authorization_type) and judge only its value.
+        end = match.end() + len(re.match(r"[\w.-]*[\"']?", line[match.end():]).group())
+        rest = line[end:]
+        value = re.sub(r"^\s*[:=]\s*", "", rest)
+        # Complete Terraform references name no value; "[redacted]" is ours.
+        public = SAFE_TAIL.fullmatch(rest) or value.strip() == "[redacted]" or (
+            syntax == "hcl" and SAFE_VALUE.fullmatch(value))
+        if re.search(r"[A-Za-z0-9]", rest) and not public:
+            line = line[:end] + " [redacted]"
+    return line
+
+
+def scrub_lines(lines, syntax="hcl", original=None):
+    """Hide script and text bodies, comments, secret-word lines and opaque tokens.
+
+    Heredoc and YAML block-scalar bodies are hidden unless they hold JSON (an
+    inline policy document), whose lines are scrubbed one by one.
+    """
+    out = []
+    heredoc = block = None
+    putty = False
+    original = lines if original is None else original
+    for line, source in zip(lines, original):
+        if putty:
+            out.append("[redacted]")
+            putty = not re.match(r"\s*Private-MAC:", line)
+            continue
+        if PUTTY.search(line):
+            out.append("[redacted]")
+            putty = True
+            continue
+        # Structure (terminators, indentation) comes from the source line; an
+        # earlier pass may already have replaced the text with "[redacted]".
+        if heredoc is not None:
+            term, opaque = heredoc
+            if source.strip() == term:
+                heredoc = None
+                out.append(line)
+            elif opaque is None and source.strip():
+                heredoc = (term, not source.lstrip().startswith(("{", "[")))
+                out.append("[redacted]" if heredoc[1] else scrub_line(line, "json"))
+            else:
+                out.append("[redacted]" if opaque else scrub_line(line, "json") if line.strip() else line)
+            continue
+        if block is not None:
+            indent, opaque = block
+            current = len(source) - len(source.lstrip())
+            if not source.strip():
+                out.append(line)
+                continue
+            if current > indent:
+                if opaque is None:
+                    opaque = not source.lstrip().startswith(("{", "["))
+                    block = (indent, opaque)
+                out.append("[redacted]" if opaque else scrub_line(line, "json"))
+                continue
+            block = None
+        out.append(scrub_line(line, syntax))
+        # Openers come from the source: an earlier pass may have replaced
+        # "password = trimspace(<<EOF" with "password = [redacted]".
+        line = source
+        if line.lstrip().startswith(("#", "//")):
+            continue  # an opener inside a comment opens nothing
+        start = re.search(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$", line)
+        if syntax == "hcl" and start:
+            heredoc = (start.group(1), None)
+        elif syntax == "yaml" and re.search(r"(?:^|:\s|-\s)\s*[|>][1-9+-]*\s*(?:#.*)?$", line):
+            block = (len(line) - len(line.lstrip()), None)
+    return out

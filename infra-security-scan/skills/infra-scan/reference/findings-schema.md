@@ -5,8 +5,20 @@ re-rendered. **Reader:** the agent running the skill and anyone editing the
 renderer. `scripts/render.py` (`validate`) is the executable form of this file.
 
 `findings.json` is the single source for the dashboard, the assessment and the
-chat summary. It is written only through `scripts/findings.py merge` (fragments)
-and `scripts/iac_scan.py --into` (`I-*` findings and `meta.commit`).
+chat summary. It is written only through `scripts/findings.py` (`merge` for
+fragments, `remove` and `renumber` for review IDs) and `scripts/iac_scan.py
+--into` (`I-*` findings and `meta.commit`).
+
+- A fragment updates a known record key by key; a key set to `null` is removed
+  (e.g. `"condition": null` after a finding becomes `Confirmed`)
+- `findings.py remove <out>/findings.json F-007 AP-03` deletes review findings or
+  attack paths and the ID lists that point at them
+- `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
+  severity order, then location, rewriting attack-path links and F-IDs in text;
+  run it once every review finding is merged
+- A fragment may set an `I-*` finding's `validation` and `confidence`, nothing else
+- An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
+  covered by that finding and counted once
 
 ## Top level
 
@@ -87,7 +99,7 @@ digits; the sequence continues through `AP-100` and beyond.
 | `impact` | F-* | Expected vs actual, and the bounded impact |
 | `fix` | F-* | One line: the boundary restored and where it goes |
 | `regression` | F-* | A policy-as-code assertion of the secure state |
-| `controls` | no | Benchmark and section title, e.g. `CIS AWS Foundations — S3 Block Public Access is enabled`; add the section number only from the edition the requester uses |
+| `controls` | no | List of strings: benchmark and section title, e.g. `["CIS AWS Foundations — S3 Block Public Access is enabled"]`; add the section number only from the edition the requester uses |
 | `cwe` | no | `CWE-` and a number, e.g. `CWE-284` |
 | `attack_paths` | no | `AP-*` IDs this finding is an edge of |
 | `condition` | Environment-dependent | The unverified setting the grade assumes |

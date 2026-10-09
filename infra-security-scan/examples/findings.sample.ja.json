@@ -18,7 +18,7 @@
     "resources": 142,
     "files": 37,
     "by_provider": {"aws": 98, "gcp": 44},
-    "not_run": ["CloudFormation YAML: YAML パーサがないため未解析（該当ファイルなし）"]
+    "not_run": ["Terraform dynamic block not evaluated; affected checks not run: envs/prod/aws/sg.tf:20"]
   },
   "attack_paths": [
     {
@@ -60,7 +60,9 @@
       ],
       "findings": ["F-003"],
       "note": "DB 側で遮断: publicly_accessible = false かつプライベートサブネットのみ。"
-    }
+    },
+    {"id": "AP-04", "entry": "インターネット", "target": "顧客エクスポート（google_storage_bucket.exports）", "status": "open", "edges": ["インターネット → 公開ストレージエンドポイント経由でバケット acme-customer-exports（envs/prod/gcp/storage.tf:3）", "allUsers に roles/storage.objectViewer（envs/prod/gcp/storage.tf:27）"], "findings": ["F-001"], "note": ""},
+    {"id": "AP-05", "entry": "インターネット", "target": "GKE 本番コントロールプレーン（google_container_cluster.prod）", "status": "unknown", "edges": ["インターネット → 公開クラスタエンドポイント（envs/prod/gcp/gke.tf:9）", "承認済みネットワークは var.admin_cidrs から（envs/prod/gcp/variables.tf:4）"], "findings": ["F-004"], "note": "不明: var.admin_cidrs の本番値がリポジトリにない"}
   ],
   "findings": [
     {
@@ -81,6 +83,7 @@
       "controls": ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"],
       "cwe": "CWE-200",
       "references": [{"title": "Public access prevention", "url": "https://cloud.google.com/storage/docs/public-access-prevention"}],
+      "attack_paths": ["AP-04"],
       "validation": {"verdict": "Valid", "evidence": "記載行でバインディングとバケットを通しで確認。入力内に組織ポリシーや VPC-SC 境界はない。"}
     },
     {
@@ -142,6 +145,7 @@
       "regression": "ポリシーテスト: master_authorized_networks_config に 0.0.0.0/0 が含まれず、変数の validation が拒否する。",
       "controls": ["CIS GKE — control plane authorized networks are enabled"],
       "cwe": "CWE-284",
+      "attack_paths": ["AP-05"],
       "validation": {"verdict": "Likely", "evidence": "変数の値はパイプライン側にある。所有者に確認を依頼済み。"}
     },
     {
@@ -159,7 +163,7 @@
       "impact": "期待: api は自分のシークレットのみ読める。実際: api が侵害されると DB マスター認証情報を含む全シークレットが漏れる。",
       "fix": "ステートメントを arn:aws:secretsmanager:*:*:secret:prod/api/* に限定し、重要なシークレットにリソースポリシーを付ける。",
       "regression": "ポリシーテスト: タスクロールのポリシーが Resource \"*\" で secretsmanager:GetSecretValue を付与しない。",
-      "controls": ["CIS AWS Foundations — users receive permissions only through groups"],
+      "controls": ["AWS Foundational Security Best Practices — IAM policies do not allow wildcard actions on services"],
       "cwe": "CWE-250",
       "attack_paths": ["AP-01"],
       "validation": {"verdict": "Valid", "evidence": "記載行でロール・ポリシー・アタッチを確認。ロールに permission boundary はない。"}
@@ -185,7 +189,7 @@
     },
     {
       "id": "I-001",
-      "title": "Security group allows SSH from 0.0.0.0/0",
+      "title": "Security group allows internet ingress to an admin or data port",
       "severity": "High",
       "confidence": "Suspected",
       "category": "Network exposure",
@@ -193,24 +197,28 @@
       "resources": ["aws_security_group.bastion"],
       "location": "envs/staging/aws/bastion.tf:12",
       "rule": "AWS-NET-001",
+      "controls": ["CIS AWS Foundations — no security group allows 0.0.0.0/0 to admin ports", "CIS AWS Foundations — no security group allows ::/0 to admin ports"],
+      "cwe": "CWE-284",
       "detail": "ingress from_port 22 to_port 22 cidr_blocks 0.0.0.0/0",
       "validation": {"verdict": "Likely", "evidence": "staging の踏み台はパブリック IP を持つ。踏み台のロールは staging の読み取り専用。"}
     },
     {
       "id": "I-002",
-      "title": "Instance allows IMDSv1",
+      "title": "Instance metadata service does not require IMDSv2",
       "severity": "Medium",
       "confidence": "Suspected",
       "category": "Compute and workload",
       "provider": "aws",
       "resources": ["aws_instance.bastion"],
       "location": "envs/staging/aws/bastion.tf:30",
-      "rule": "AWS-CMP-001",
+      "rule": "AWS-EC2-001",
+      "controls": ["CIS AWS Foundations — EC2 metadata service requires IMDSv2"],
+      "cwe": "CWE-918",
       "validation": {"verdict": "Valid", "evidence": "envs/staging/aws/bastion.tf:30 に metadata_options がなく、インスタンスはパブリック IP を持つ。bastion のロールは読み取り専用で、重要資産への経路はない。"}
     },
     {
       "id": "I-003",
-      "title": "Basic role roles/editor bound to the default compute service account",
+      "title": "Basic role roles/owner or roles/editor granted",
       "severity": "Medium",
       "confidence": "Suspected",
       "category": "Identity and privilege",
@@ -218,6 +226,8 @@
       "resources": ["google_project_iam_member.default_sa_editor"],
       "location": "envs/prod/gcp/iam.tf:5",
       "rule": "GCP-IAM-002",
+      "controls": ["CIS GCP Foundation — service accounts hold no admin or basic roles"],
+      "cwe": "CWE-250",
       "validation": {"verdict": "Valid", "evidence": "専用サービスアカウントを持たない VM はすべて acme-prod の editor を継承する。"}
     }
   ],
@@ -226,7 +236,7 @@
     {"name": "Identity and privilege", "status": "Applied", "note": "IP1–IP5。F-005, I-003"},
     {"name": "Trust and federation", "status": "Applied", "note": "TF1–TF5。AP-02 経由で F-002"},
     {"name": "Data protection", "status": "Applied", "note": "DP1–DP5。F-001"},
-    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4。I-002 は未トリアージ"},
+    {"name": "Compute and workload", "status": "Applied", "note": "CW1–CW4。I-002 は妥当（重要資産への経路なし）"},
     {"name": "Kubernetes", "status": "Applied", "note": "GKE prod に K81–K85。F-004。リポジトリにマニフェストなし"},
     {"name": "Serverless and API edge", "status": "N/A", "note": "入力に関数・関数 URL・API ゲートウェイがない"},
     {"name": "Secrets and keys", "status": "Applied", "note": "SK1–SK4。リテラルのシークレットなし"},
@@ -253,6 +263,6 @@
   "next_steps": [
     "最初に F-002 を修正: 任意の GitHub ユーザーが shared アカウントの管理者になれる",
     "F-001 の公開バインディングを削除し、組織全体で公開アクセス防止を強制する",
-    "I-002 をトリアージする"
+    "aws_instance.bastion で IMDSv2 を必須にする（I-002）"
   ]
 }

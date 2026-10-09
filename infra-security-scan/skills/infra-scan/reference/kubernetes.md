@@ -9,16 +9,19 @@ Review rendered manifests where possible. If only a chart is present, read
 templates together with `values.yaml` and each environment's values file; a
 value set only at install time is `UNKNOWN`.
 
-| Perspective | Look at | Unsound |
+The first column is the `category` to record (an exact perspective name from
+`reference/perspectives.md`) and the hunt step.
+
+| Perspective (step) | Look at | Unsound |
 |---|---|---|
-| Kubernetes — RBAC | `ClusterRoleBinding`, `RoleBinding`, `ClusterRole` | `cluster-admin` to a broad subject; subjects `system:authenticated`, `system:unauthenticated`, `system:anonymous`; verbs `*`, `escalate`, `bind`, `impersonate`; `secrets` `get`/`list` cluster-wide; `pods/exec` broadly |
-| Kubernetes — pod security | `securityContext`, pod spec | `privileged: true`, `allowPrivilegeEscalation` not false, `hostPath` (especially `/`, `/var/run/docker.sock`, `/var/run/containerd`), `hostNetwork`, `hostPID`, `hostIPC`, added `SYS_ADMIN` / `NET_ADMIN`, `runAsUser: 0`, no `readOnlyRootFilesystem` |
-| Kubernetes — admission | Namespace labels `pod-security.kubernetes.io/enforce`, Kyverno / Gatekeeper policies | No enforce label on workload namespaces, or `privileged` level |
-| Kubernetes — network | `NetworkPolicy` | No default-deny in namespaces holding crown jewels; `ingress: [{}]` (allow all) |
-| Serverless and API edge | `Service` type `LoadBalancer` / `NodePort`, `Ingress`, Gateway API | Admin or internal service exposed; missing TLS; annotations making an internal LB public |
-| Secrets and keys | `kind: Secret` with `data` / `stringData` in the repo; env values; mounted service-account tokens | Committed secret material (base64 is not encryption); `automountServiceAccountToken` left on for pods that do not call the API |
-| Trust and federation | ServiceAccount annotations `eks.amazonaws.com/role-arn`, `iam.gke.io/gcp-service-account` | Mapping to a privileged cloud role; trust not pinned to namespace and service account |
-| Compute and workload | Image references | `:latest` or no digest for production workloads; images from unowned registries |
+| Kubernetes (K82, RBAC) | `ClusterRoleBinding`, `RoleBinding`, `ClusterRole` | `cluster-admin` to a broad subject; subjects `system:authenticated`, `system:unauthenticated`, `system:anonymous`; verbs `*`, `escalate`, `bind`, `impersonate`; `secrets` `get`/`list` cluster-wide; `pods/exec` broadly |
+| Kubernetes (K83, pod security) | `securityContext`, pod spec | `privileged: true`, `allowPrivilegeEscalation` not false, `hostPath` (especially `/`, `/var/run/docker.sock`, `/var/run/containerd`), `hostNetwork`, `hostPID`, `hostIPC`, added `SYS_ADMIN` / `NET_ADMIN`, `runAsUser: 0`, no `readOnlyRootFilesystem` |
+| Kubernetes (K83, admission) | Namespace labels `pod-security.kubernetes.io/enforce`, Kyverno / Gatekeeper policies | No enforce label on workload namespaces, or `privileged` level |
+| Kubernetes (K84, network policy) | `NetworkPolicy` | No default-deny in namespaces holding crown jewels; `ingress: [{}]` (allow all) |
+| Network exposure (NE3) | `Service` type `LoadBalancer` / `NodePort`, `Ingress`, Gateway API | Admin or internal service exposed; missing TLS; annotations making an internal LB public |
+| Secrets and keys (SK1) | `kind: Secret` with `data` / `stringData` in the repo; env values; mounted service-account tokens | Committed secret material (base64 is not encryption); `automountServiceAccountToken` left on for pods that do not call the API |
+| Kubernetes (K85, workload identity) | ServiceAccount annotations `eks.amazonaws.com/role-arn`, `iam.gke.io/gcp-service-account` | Mapping to a privileged cloud role; trust not pinned to namespace and service account |
+| Compute and workload (CW4) | Image references | `:latest` or no digest for production workloads; images from unowned registries |
 
 Managed-cluster settings (endpoint exposure, legacy auth, workload identity,
 node identity) are in `reference/aws.md` (EKS) and `reference/gcp.md` (GKE).

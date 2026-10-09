@@ -20,7 +20,8 @@ Write in the requester's language.
 1. **First line** — severity counts, open attack paths, scope (accounts /
    projects / environments), and that the review was static from configuration
 2. **Evidence line** — inputs read (IaC at commit, plan JSON, snapshots with
-   capture time), what was re-read, what stays unknown
+   capture time), what was re-read, what stays unknown, the scratch directory
+   used, and any step the host refused (with what was done instead)
 3. **Open attack paths** — `AP-nn` entry → jewel, with the findings that open it
 4. **Findings, by severity**:
 
@@ -43,7 +44,8 @@ Write in the requester's language.
    trusts to keep or remove, guardrails to confirm outside the inputs
 7. **Next step** — the fix order (open High paths first, then the edge shared by
    most paths)
-8. **Files** — link `dashboard.html` and `assessment.pdf`
+8. **Files** — link `dashboard.html` and `assessment.pdf` (or say the PDF was
+   not generated, as `limitations` does)
 
 Keep the chat, dashboard and PDF consistent: all are views of `findings.json`.
 Re-rendering invalidates the previous `assessment.pdf`, including with

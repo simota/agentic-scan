@@ -2,19 +2,28 @@
 """Merge finding fragments into findings.json without writing ad-hoc scripts.
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
+    python3 findings.py remove FINDINGS ID [ID ...]
+    python3 findings.py renumber FINDINGS
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It may hold:
 
 - `meta` — merged key by key; `commit` is refused (it comes from iac_scan.py)
 - `findings`, `attack_paths` — matched by `id`: a known record is updated key
-  by key, a new one appended. `I-*` findings belong to iac_scan.py: a fragment
-  may only update an existing one's `validation`
+  by key (a key set to null is removed), a new one appended. `I-*` findings
+  belong to iac_scan.py: a fragment may only update an existing one's
+  `validation` and `confidence`
 - `perspectives` — matched by `name`, replaced whole
 - `checked_ok`, `decisions`, `limitations`, `next_steps` — appended without
   duplicates
 
 `schema_version` and `inventory` are refused. FINDINGS is created when absent.
+
+`remove` deletes `F-*` findings or `AP-*` attack paths (never `I-*`) and the
+ID lists that point at them. `renumber` gives `F-*` findings the IDs F-001…
+in severity order, then location, and rewrites every reference to them
+(attack-path lists and standalone F-IDs in text). Run it once all review
+findings are merged.
 The merged record must pass render.py's schema check (meta completeness is
 checked at render time) before anything is written; the write is atomic.
 
@@ -46,8 +55,10 @@ ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
 FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
 PAYLOAD = re.compile(
-    r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+['\d]|union\s+select|"
-    r"(?:\.\./){2,}|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
+    # Narrow shapes only: relative module paths (../../modules/app) and
+    # quoted names joined by "and"/"or" are ordinary infrastructure prose.
+    r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
+    r"(?:\.\./){3,}|(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
     r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
     r"metadata\.google\.internal",
@@ -146,8 +157,9 @@ def fragment_problems(fragment, name, record):
             if key == "findings" and rid.startswith("I-"):
                 if rid not in existing:
                     problems.append(f"{name}: {rid}: I-* findings come only from iac_scan.py")
-                elif set(rec) - {"id", "validation"}:
-                    problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's validation")
+                elif set(rec) - {"id", "validation", "confidence"}:
+                    problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's "
+                                    "validation and confidence")
     for p in fragment.get("perspectives", []):
         if not isinstance(p, dict) or not isinstance(p.get("name"), str):
             problems.append(f"{name}: perspectives entries need a name")
@@ -177,12 +189,16 @@ def apply(record, fragment):
         current = record.setdefault(key, [])
         index = {r.get("id"): r for r in current if isinstance(r, dict)}
         for rec in fragment.get(key, []):
-            if rec["id"] in index:
-                index[rec["id"]].update(copy.deepcopy(rec))
-            else:
-                new = copy.deepcopy(rec)
-                current.append(new)
-                index[rec["id"]] = new
+            target = index.get(rec["id"])
+            if target is None:
+                target = {}
+                current.append(target)
+                index[rec["id"]] = target
+            for field, value in rec.items():
+                if value is None:
+                    target.pop(field, None)  # null removes a stale key
+                else:
+                    target[field] = copy.deepcopy(value)
     persp = record.setdefault("perspectives", [])
     for p in fragment.get("perspectives", []):
         for i, old in enumerate(persp):
@@ -243,14 +259,110 @@ def merge(findings_path, fragment_paths):
     return merged
 
 
+F_REFERENCE = re.compile(r"(?<![\w/.-])F-[0-9]{3,}(?![\w-])")
+
+
+def record_strings(record):
+    """(where, text) for every string in findings, attack paths, perspectives and lists."""
+    def walk(value, where):
+        if isinstance(value, str):
+            yield where, value
+        elif isinstance(value, list):
+            for item in value:
+                yield from walk(item, where)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                yield from walk(item, f"{where}.{key}")
+    for key in ("findings", "attack_paths", "perspectives"):
+        for item in record.get(key, []):
+            if isinstance(item, dict):
+                yield from walk(item, str(item.get("id") or item.get("name") or key))
+    for key in LISTS:
+        yield from walk(record.get(key, []), key)
+
+
+def remove(findings_path, ids):
+    path = Path(findings_path)
+    record = copy.deepcopy(render.load(path))
+    for rid in ids:
+        if not (render.F_ID.match(rid) or render.AP_ID.match(rid)):
+            raise Refused(f"{rid}: only F-* findings and AP-* attack paths can be removed; "
+                          "I-* findings belong to iac_scan.py")
+        key = "findings" if rid.startswith("F-") else "attack_paths"
+        before = len(record.get(key, []))
+        record[key] = [r for r in record.get(key, []) if not (isinstance(r, dict) and r.get("id") == rid)]
+        if len(record[key]) == before:
+            raise Refused(f"{rid}: no such record")
+        link, owner = ("findings", "attack_paths") if key == "findings" else ("attack_paths", "findings")
+        for other in record.get(owner, []):
+            if isinstance(other, dict) and isinstance(other.get(link), list) and rid in other[link]:
+                other[link] = [x for x in other[link] if x != rid]
+        # Prose mentioning the removed ID would later name whichever record
+        # takes its number; make the author reword it first.
+        pattern = re.compile(r"(?<![\w/.-])" + re.escape(rid) + r"(?![\w-])")
+        mentions = sorted({where for where, text in record_strings(record) if pattern.search(text)})
+        if mentions:
+            raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
+                          "(merge a fragment) before removing it")
+    render.validate(record, partial=True)
+    write_atomic(path, record)
+    return record
+
+
+def renumber(findings_path):
+    """F-001… in severity order, then location; references follow in one pass."""
+    path = Path(findings_path)
+    record = copy.deepcopy(render.load(path))
+    render.validate(record, partial=True)
+    fs = [f for f in record["findings"] if render.F_ID.match(f["id"])]
+    order = sorted(fs, key=lambda f: (render.SEV_RANK[f["severity"]], render.location_key(f["location"]),
+                                      render.id_key(f["id"])))
+    mapping = {f["id"]: f"F-{n:03d}" for n, f in enumerate(order, 1)}
+    stale = sorted({m.group() for _, text in record_strings(record) for m in F_REFERENCE.finditer(text)
+                    if m.group() not in mapping})
+    if stale:
+        raise Refused(f"text mentions {', '.join(stale)}, which no longer exist; reword before renumbering")
+
+    def rewrite(value):
+        if isinstance(value, str):
+            return F_REFERENCE.sub(lambda m: mapping.get(m.group(), m.group()), value)
+        if isinstance(value, list):
+            return [rewrite(x) for x in value]
+        if isinstance(value, dict):
+            return {k: rewrite(v) for k, v in value.items()}
+        return value
+
+    for key in ("findings", "attack_paths", "perspectives", *LISTS):
+        record[key] = rewrite(record.get(key, []))
+    record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
+        sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))
+    render.validate(record, partial=True)
+    write_atomic(path, record)
+    return record, {old: new for old, new in mapping.items() if old != new}
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     sub = p.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into FINDINGS")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    r = sub.add_parser("remove", help="remove F-* findings or AP-* attack paths and links to them")
+    r.add_argument("findings")
+    r.add_argument("ids", nargs="+")
+    n = sub.add_parser("renumber", help="renumber F-* findings in severity order, then location")
+    n.add_argument("findings")
     a = p.parse_args(argv)
     try:
+        if a.cmd == "remove":
+            remove(a.findings, a.ids)
+            print(f"removed {', '.join(a.ids)} from {a.findings}")
+            return 0
+        if a.cmd == "renumber":
+            _, changed = renumber(a.findings)
+            print(f"renumbered {len(changed)} finding(s) in {a.findings}"
+                  + "".join(f"\n  {old} -> {new}" for old, new in sorted(changed.items(), key=lambda x: render.id_key(x[0]))))
+            return 0
         merged = merge(a.findings, a.fragments)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)

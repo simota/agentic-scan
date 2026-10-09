@@ -71,12 +71,15 @@ Do not export `secrets`.
   `@snapshots/<dir>/<file>` and never excerpted in the reports
 - `iac_scan.py` applies its rules to snapshot shapes it recognises
   (`SecurityGroups`, IAM policy `bindings`, firewall lists, bucket policy
-  `Statement`); others are read by hand
+  `Statement`, and Kubernetes objects or `List`s from `kubectl … -o json`);
+  others are read by hand
+- Record a snapshot's capture time in its `meta.inputs[].note`; an input
+  entry holds only `kind`, `path` and `note`
 - Exports saved by Windows PowerShell (`>` writes UTF-16) are read; other
   encodings are listed in `not_run`
 - Match each snapshot resource to an IaC resource by ID, name or tag. Unmatched
   snapshot resources are drift (perspective *Coverage and drift*, CD2) and are
   reviewed like any other resource
-- A snapshot shows one moment. Record its capture time in `meta.inputs`
+- A snapshot shows one moment; its capture time goes in `meta.inputs[].note`
 - A finding confirmed by a snapshot but absent from the IaC is still a
   finding; its fix includes bringing the resource under IaC

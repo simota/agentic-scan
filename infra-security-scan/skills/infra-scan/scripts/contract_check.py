@@ -26,14 +26,6 @@ F_ID = render.F_ID
 FORBIDDEN = re.compile(r"\.tfstate(\.[^/]*)?$|\.tfvars(\.json)?$")
 
 
-def location_key(location):
-    """Order path:line numerically within a file: storage.tf:9 before :10."""
-    m = render.LOCATION.match(location) if isinstance(location, str) else None
-    if not m:
-        return (str(location), 0, 0)
-    return (m.group(1), int(m.group(2)), int(m.group(3) or m.group(2)))
-
-
 def output_problem(path):
     """Catch placeholders: an output must hold what its producer writes."""
     if path.is_symlink() or not path.is_file():
@@ -73,7 +65,7 @@ def check(data, out_dir, pdf=True, allow=()):
     numbers = [int(F_ID.match(f["id"]).group(1)) for f in by_id]
     if numbers != list(range(1, len(fs) + 1)):
         add(f"F-*: IDs must run F-001..F-{len(fs):03d} without gaps; found {[f['id'] for f in by_id]}")
-    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9), location_key(f.get("location"))))
+    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9), render.location_key(f.get("location"))))
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "
             + ", ".join(f"{f['id']}={f.get('severity')}@{f.get('location')}" for f in expected))

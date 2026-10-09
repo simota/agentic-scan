@@ -4,7 +4,7 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make scan      baseline IaC scan of TARGET (+ SNAPSHOTS dirs) into OUT (iac.json + findings.json)
+#   make scan      baseline IaC scan of TARGET (+ SNAPSHOTS dirs, space-separated) into OUT
 #   make demo      render examples/findings.sample.json into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
@@ -16,6 +16,10 @@
 
 NAME    := infra-scan
 REPO    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+# make splits words on spaces; refuse instead of acting on a truncated path.
+ifneq ($(word 2,$(REPO)),)
+$(error the repository path contains a space; move or symlink it to a path without spaces)
+endif
 SKILL   := $(REPO)/skills/$(NAME)
 PYTHON  ?= python3
 
@@ -42,6 +46,8 @@ else
 TARGETS := $(sort $(foreach a,$(AGENT),$(tgt_$(a))))
 endif
 QTARGETS := $(foreach t,$(TARGETS),'$(t)')
+SPACED   := $(strip $(foreach v,HOME PROJECT SKILLS_DIR CODEX_HOME AGY_HOME,$(if $(word 2,$($(v))),$(v))))
+NOSPACE  = $(if $(SPACED),echo "paths with spaces are not supported: $(SPACED)" >&2; exit 2;)
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
@@ -62,7 +68,7 @@ help: ## list targets
 	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT NO_PDF TARGET OUT SNAPSHOTS"
 
 link: ## symlink the skill into every installed host's skills dir
-	@n=0; \
+	@$(NOSPACE) n=0; \
 	for t in $(QTARGETS); do \
 	  guard=$${t%%|*}; dir=$${t##*|}; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
@@ -79,7 +85,7 @@ link: ## symlink the skill into every installed host's skills dir
 	echo "invoke it with:  infra-scan   (or /infra-scan in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created
-	@for t in $(QTARGETS); do \
+	@$(NOSPACE) for t in $(QTARGETS); do \
 	  dir=$${t##*|}; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
 	    if [ "$$(readlink "$$d")" = "$(SKILL)" ]; then rm -f "$$d"; echo "unlinked $$d"; \
@@ -89,7 +95,7 @@ unlink: ## remove the symlinks this Makefile created
 	done
 
 status: ## show what is installed, per host
-	@for t in $(QTARGETS); do \
+	@$(NOSPACE) for t in $(QTARGETS); do \
 	  guard=$${t%%|*}; dir=$${t##*|}; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - host not installed"; \
 	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink "$$d")"; \
@@ -141,7 +147,8 @@ check: test ## verify the skill is self-contained and internally consistent
 
 scan: ## baseline IaC scan of TARGET into OUT (iac.json + findings.json); never calls a cloud
 	@[ -n "$(TARGET)" ] && [ -n "$(OUT)" ] || { echo "usage: make scan TARGET=/path/to/iac-repo OUT=/new/output/dir" >&2; exit 2; }
-	@mkdir -p "$(OUT)" && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" "$(TARGET)" \
+	@# iac_scan.py refuses OUT inside TARGET before creating anything.
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" "$(TARGET)" \
 	  $(foreach d,$(SNAPSHOTS),--snapshots '$(d)') --out "$(OUT)/iac.json" --into "$(OUT)/findings.json"
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + PDF)

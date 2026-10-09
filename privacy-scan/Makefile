@@ -20,6 +20,12 @@ shell_quote = '$(subst ','"'"',$(1))'
 # The filter also matches the "environment override" origin used by make -e.
 path_value = $(if $(filter environment,$(origin $(1))),$(value $(1)),$($(1)))
 
+# A link is ours when it names this skill, or reaches the same physical directory
+# through another spelling of the checkout (an alias path or a symlinked parent).
+# Recipes define it with: $(ours_fn)
+ours_fn = ours() { [ "$$(readlink "$$1")" = "$$skill" ] || \
+  { [ -d "$$1" ] && [ "$$(CDPATH= cd -P -- "$$1" && pwd -P)" = "$$(CDPATH= cd -P -- "$$skill" && pwd -P)" ]; }; }
+
 # GNU Make 3.81 reads a literal '#' here as a comment, even inside $(shell).
 hash := \#
 
@@ -75,7 +81,7 @@ endif
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
-DEMO_OUT ?= $(or $(TMPDIR),/tmp)/$(NAME)-demo
+DEMO_OUT ?= $(or $(call path_value,TMPDIR),/tmp)/$(NAME)-demo
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
@@ -91,37 +97,37 @@ help: ## list targets
 	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT"
 
 link: ## symlink the skill into every installed host's skills dir
-	@skill=$(QSKILL); n=0; \
+	@skill=$(QSKILL); n=0; $(ours_fn); \
 	if [ ! -f "$$skill/SKILL.md" ]; then \
-	  echo "refusing $$skill is not a skill directory (missing SKILL.md)" >&2; exit 1; \
+	  printf '%s\n' "refusing $$skill is not a skill directory (missing SKILL.md)" >&2; exit 1; \
 	fi; \
 	set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  guard=$$1; dir=$$2; shift 2; \
 	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
-	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
+	  if [ ! -d "$$guard" ]; then printf '%s\n' "skip     $$d - $$guard does not exist"; continue; fi; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = "$$skill" ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
-	    echo "refusing $$d is a symlink to $$(readlink "$$d") - resolve it, then re-run" >&2; exit 1; \
+	    if ours "$$d"; then printf '%s\n' "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
+	    printf '%s\n' "refusing $$d is a symlink to $$(readlink "$$d") - resolve it, then re-run" >&2; exit 1; \
 	  elif [ -e "$$d" ]; then \
-	    echo "refusing $$d exists and is not a symlink - move it aside first" >&2; exit 1; \
+	    printf '%s\n' "refusing $$d exists and is not a symlink - move it aside first" >&2; exit 1; \
 	  fi; \
 	  mkdir -p "$$dir" && ln -s "$$skill" "$$d" || exit 1; \
-	  echo "linked   $$d -> $$skill"; n=$$((n+1)); \
+	  printf '%s\n' "linked   $$d -> $$skill"; n=$$((n+1)); \
 	done; \
-	if [ $$n -eq 0 ]; then echo "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
-	echo "invoke it with:  $(NAME)   (or /$(NAME) in a slash-command harness)"
+	if [ $$n -eq 0 ]; then printf '%s\n' "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
+	printf '%s\n' "invoke it with:  $(NAME)   (or /$(NAME) in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created
-	@skill=$(QSKILL); set -- $(QTARGETS); \
+	@skill=$(QSKILL); $(ours_fn); set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  dir=$$2; shift 2; \
 	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink "$$d")" = "$$skill" ]; then rm -f "$$d" || exit 1; echo "unlinked $$d"; \
-	    else echo "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
-	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
-	  else echo "absent   $$d"; fi; \
+	    if ours "$$d"; then rm -f "$$d" || exit 1; printf '%s\n' "unlinked $$d"; \
+	    else printf '%s\n' "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
+	  elif [ -e "$$d" ]; then printf '%s\n' "left     $$d - not a symlink"; \
+	  else printf '%s\n' "absent   $$d"; fi; \
 	done
 
 status: ## show what is installed, per host
@@ -129,11 +135,11 @@ status: ## show what is installed, per host
 	while [ "$$#" -gt 0 ]; do \
 	  guard=$$1; dir=$$2; shift 2; \
 	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
-	  if [ ! -d "$$guard" ]; then echo "skip     $$d - host not installed"; \
-	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink "$$d")"; \
-	  elif [ -d "$$d" ]; then echo "dir      $$d - not a symlink"; \
-	  elif [ -e "$$d" ]; then echo "file     $$d - not a skill directory"; \
-	  else echo "absent   $$d"; fi; \
+	  if [ ! -d "$$guard" ]; then printf '%s\n' "skip     $$d - host not installed"; \
+	  elif [ -L "$$d" ]; then printf '%s\n' "symlink  $$d -> $$(readlink "$$d")"; \
+	  elif [ -d "$$d" ]; then printf '%s\n' "dir      $$d - not a symlink"; \
+	  elif [ -e "$$d" ]; then printf '%s\n' "file     $$d - not a skill directory"; \
+	  else printf '%s\n' "absent   $$d"; fi; \
 	done
 
 test: ## run offline regression tests
@@ -144,41 +150,42 @@ check: test ## verify the skill is self-contained and internally consistent
 	misses=$$( \
 	for f in $(DOCS); do \
 	  grep -ohE '`(reference|scripts|templates)/[A-Za-z][A-Za-z0-9._-]*`' "$$f" | tr -d '`' | sort -u | while read -r ref; do \
-	    [ -f $(QSKILL)/"$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
+	    [ -f $(QSKILL)/"$$ref" ] || printf '%s\n' "MISS $$f cites $$ref, which does not exist"; \
 	  done; \
 	done); \
-	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
+	if [ -n "$$misses" ]; then printf '%s\n' "$$misses" >&2; fail=1; fi; \
 	for f in $(QSKILL)/reference/*.md; do \
 	  [ -e "$$f" ] || continue; b=$$(basename "$$f"); \
-	  grep -q "$$b" $(QSKILL)/SKILL.md || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
-	  head -10 "$$f" | grep -q '\*\*Read when:\*\*' || { echo "MISS reference/$$b has no **Read when:** header" >&2; fail=1; }; \
+	  grep -q "$$b" $(QSKILL)/SKILL.md || { printf '%s\n' "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
+	  head -10 "$$f" | grep -q '\*\*Read when:\*\*' || { printf '%s\n' "MISS reference/$$b has no **Read when:** header" >&2; fail=1; }; \
 	done; \
-	head -1 $(QSKILL)/SKILL.md | grep -qx -- '---' || { echo "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \
-	sed -n '2,8p' $(QSKILL)/SKILL.md | grep -q '^name: $(NAME)$$' || { echo "MISS SKILL.md frontmatter has no 'name: $(NAME)' line" >&2; fail=1; }; \
+	head -1 $(QSKILL)/SKILL.md | grep -qx -- '---' || { printf '%s\n' "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \
+	sed -n '2,8p' $(QSKILL)/SKILL.md | grep -q '^name: $(NAME)$$' || { printf '%s\n' "MISS SKILL.md frontmatter has no 'name: $(NAME)' line" >&2; fail=1; }; \
 	d=$$(sed -n 's/^description: //p' $(QSKILL)/SKILL.md | head -1 | wc -c); \
-	[ "$$d" -le 400 ] || { echo "MISS description is $$d chars; listings truncate well before that" >&2; fail=1; }; \
+	[ "$$d" -le 400 ] || { printf '%s\n' "MISS description is $$d chars; listings truncate well before that" >&2; fail=1; }; \
 	if grep -nE '`[^`]*\.\./' $(DOCS) >&2; then \
-	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
+	  printf '%s\n' "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
 	for p in $(QSKILL)/scripts/*.py; do \
 	  [ -e "$$p" ] || continue; \
 	  $(PYTHON) -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$p" \
-	    || { echo "MISS $$p does not parse" >&2; fail=1; }; \
+	    || { printf '%s\n' "MISS $$p does not parse" >&2; fail=1; }; \
 	done; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  for lang in ja en; do \
 	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py "$$sample" --out "$$out" --lang $$lang >/dev/null \
-	      || { echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
+	      || { printf '%s\n' "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
 	  done; \
 	  cp "$$sample" "$$out/findings.json"; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py check "$$out" >/dev/null \
-	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
+	    || { printf '%s\n' "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
 	  rm -f "$$out"/*; \
 	done; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
+	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
-	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
-	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py \
+	  --out=$(call shell_quote,$(call path_value,DEMO_OUT)) --lang=$(call shell_quote,$(LANG_OUT)) \
+	  -- $(call shell_quote,$(call path_value,DEMO_INPUT))

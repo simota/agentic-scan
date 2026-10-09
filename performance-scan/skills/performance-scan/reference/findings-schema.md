@@ -74,6 +74,11 @@ Within a fragment, repeated perspective names still replace the whole entry
 in order, so the last entry wins.
 Each finding must be complete in the fragment that first adds it.
 
+Partial records may omit required metadata during merges. When present,
+`meta.project`, `scope`, `date`, `assessor` and `lang` must be nonblank strings;
+`lang` must be `ja` or `en`. Both the existing and combined records are checked,
+so an invalid metadata update is refused before it can replace the record.
+
 Merges finish UTF-8 encoding and write a temporary file beside the destination
 before replacing it. Encoding or write failures leave the existing record
 unchanged. Existing file permissions and symbolic links are preserved; a new

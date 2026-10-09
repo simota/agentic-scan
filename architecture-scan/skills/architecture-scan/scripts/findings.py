@@ -71,6 +71,12 @@ def _text(value, where):
         raise SchemaError(f"{where}: must be a nonblank string")
 
 
+def _list(value, where):
+    if not isinstance(value, list):
+        raise SchemaError(f"{where}: must be a list")
+    return value
+
+
 def _choice(value, allowed, where):
     if value not in allowed:
         raise SchemaError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
@@ -86,6 +92,9 @@ def validate_finding(f, where):
         raise SchemaError(f"{where}.id: {f['id']!r} must look like A-001")
     for key in TEXT_FIELDS:
         _text(f[key], f"{where}.{key}")
+    for key in ("contrast", "rule"):
+        if key in f and not isinstance(f[key], str):
+            raise SchemaError(f"{where}.{key}: must be a string")
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -111,7 +120,7 @@ def validate_finding(f, where):
             raise SchemaError(f"{where}.analysis: must be an object")
         for key in ("tool", "command", "result"):
             _text(a.get(key), f"{where}.analysis.{key}")
-    for i, ref in enumerate(f.get("references", [])):
+    for i, ref in enumerate(_list(f.get("references", []), f"{where}.references")):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
         _text(ref.get("url"), f"{where}.references[{i}].url")
@@ -119,7 +128,7 @@ def validate_finding(f, where):
 
 def _validate_perspectives(records, where):
     names = set()
-    for i, p in enumerate(records):
+    for i, p in enumerate(_list(records, where)):
         field = f"{where}[{i}]"
         if not isinstance(p, dict):
             raise SchemaError(f"{field}: must be an object")
@@ -147,32 +156,37 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    if "method" in meta and not isinstance(meta["method"], str):
+        raise SchemaError("meta.method: must be a string")
     seen = set()
-    for i, f in enumerate(doc.get("findings", [])):
+    for i, f in enumerate(_list(doc.get("findings", []), "findings")):
         validate_finding(f, f"findings[{i}]")
         if f["id"] in seen:
             raise SchemaError(f"findings[{i}].id: duplicate {f['id']}")
         seen.add(f["id"])
-    for i, r in enumerate(doc.get("rules", [])):
+    rule_ids = set()
+    for i, r in enumerate(_list(doc.get("rules", []), "rules")):
         where = f"rules[{i}]"
         if not isinstance(r, dict) or not RULE_ID.match(str(r.get("id"))):
             raise SchemaError(f"{where}.id: must look like R-01")
+        if r["id"] in rule_ids:
+            raise SchemaError(f"{where}.id: duplicate {r['id']}")
+        rule_ids.add(r["id"])
         for key in ("statement", "source"):
             _text(r.get(key), f"{where}.{key}")
         _choice(r.get("status"), RULE_STATUSES, f"{where}.status")
     _validate_perspectives(doc.get("perspectives", []), "perspectives")
     for key in LISTS:
-        values = doc.get(key, [])
-        if not isinstance(values, list):
-            raise SchemaError(f"{key}: must be a list")
+        values = _list(doc.get(key, []), key)
         for i, value in enumerate(values):
             _text(value, f"{key}[{i}]")
 
 
 def _merge_records(current, incoming, where):
-    ids = [r.get("id") if isinstance(r, dict) else None for r in incoming]
-    if None in ids or len(set(ids)) != len(ids):
-        raise SchemaError(f"{where}: every record needs a unique id")
+    for records in (current, incoming):
+        ids = [r.get("id") if isinstance(r, dict) else None for r in _list(records, where)]
+        if any(not isinstance(fid, str) for fid in ids) or len(set(ids)) != len(ids):
+            raise SchemaError(f"{where}: every record needs a unique string id")
     index = {r["id"]: r for r in current}
     for record in incoming:
         if record["id"] in index:
@@ -257,8 +271,10 @@ def contract_problems(out, allow=()):
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
     for r in doc.get("rules", []):
-        if r["status"] == "not checked" and "reason" not in r:
-            problems.append(f"{r['id']}: a not-checked rule needs a reason")
+        if r["status"] == "not checked":
+            reason = r.get("reason")
+            if not isinstance(reason, str) or not reason.strip():
+                problems.append(f"{r['id']}: a not-checked rule needs a nonblank string reason")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

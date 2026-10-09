@@ -64,6 +64,7 @@ endif
 
 # Pass each guard and destination as separate, quoted shell arguments. No
 # delimiter is reserved inside a path; only host IDs enter Make's list functions.
+# Recipes prefix leading-hyphen paths with ./ before passing them to utilities.
 ifneq ($(skills_dir_path),)
 QTARGETS := $(call shell_quote,$(skills_dir_path)) $(call shell_quote,$(skills_dir_path))
 else ifneq ($(project_path),)
@@ -96,7 +97,8 @@ link: ## symlink the skill into every installed host's skills dir
 	fi; \
 	set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
-	  guard=$$1; dir=$$2; shift 2; d="$$dir/$(NAME)"; \
+	  guard=$$1; dir=$$2; shift 2; \
+	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
 	  if [ -L "$$d" ]; then \
 	    if [ "$$(readlink "$$d")" = "$$skill" ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
@@ -113,7 +115,8 @@ link: ## symlink the skill into every installed host's skills dir
 unlink: ## remove the symlinks this Makefile created
 	@skill=$(QSKILL); set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
-	  dir=$$2; shift 2; d="$$dir/$(NAME)"; \
+	  dir=$$2; shift 2; \
+	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
 	    if [ "$$(readlink "$$d")" = "$$skill" ]; then rm -f "$$d" || exit 1; echo "unlinked $$d"; \
 	    else echo "left     $$d - points at $$(readlink "$$d"), not this repo"; fi; \
@@ -124,7 +127,8 @@ unlink: ## remove the symlinks this Makefile created
 status: ## show what is installed, per host
 	@set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
-	  guard=$$1; dir=$$2; shift 2; d="$$dir/$(NAME)"; \
+	  guard=$$1; dir=$$2; shift 2; \
+	  case "$$dir" in (-*) dir="./$$dir";; esac; d="$$dir/$(NAME)"; \
 	  if [ ! -d "$$guard" ]; then echo "skip     $$d - host not installed"; \
 	  elif [ -L "$$d" ]; then echo "symlink  $$d -> $$(readlink "$$d")"; \
 	  elif [ -d "$$d" ]; then echo "dir      $$d - not a symlink"; \

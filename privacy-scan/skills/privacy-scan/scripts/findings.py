@@ -77,7 +77,9 @@ LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d+(?:-\d+)?$")
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL_MARKERS = re.compile(r'["@]')
 EMAIL_LOCAL_CHAR = re.compile(r'[^\s"(),:;<>@\[\]\\]')
-EMAIL_LITERAL_DOMAIN = re.compile(r"\[[^\[\]\r\n]+\]")
+EMAIL_LITERAL_DOMAIN = re.compile(r"\[(?:[^\[\]\r\n]|(?:\r\n|\n)[ \t])+\]")
+EMAIL_FWS = re.compile(r"[ \t]+|(?:\r\n|\n)[ \t]+")
+EMAIL_COMMENT_MARKERS = re.compile(r"[()\\\r\n]")
 IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 # IDNA exceptions and join controls (RFC 5892, sections 2.6 and 2.8) can
 # occur in labels too. Candidate detection need not validate their context.
@@ -146,10 +148,58 @@ def _choice(value, allowed, where):
         raise SchemaError(f"{where}: must be one of {', '.join(allowed)}")
 
 
-def _email_starts(value):
-    """Yield positions after candidate @ signs without rescanning local parts."""
-    if "@" not in value:
-        return
+def _email_fold(value, pos):
+    """A header line continues only when the next line begins with space/tab."""
+    if value[pos:pos + 2] == "\r\n":
+        pos += 1
+    return value[pos:pos + 1] == "\n" and value[pos + 1:pos + 2] in (" ", "\t")
+
+
+def _email_cfws(value):
+    """Index complete comments and folding whitespace in linear passes.
+
+    Only email-candidate boundaries use these jumps. Comments stay in the
+    original text, so mailboxes inside them are still inspected, and unrelated
+    prose and digit runs are never joined. The stack handles nested comments
+    without recursion; cached boundary jumps avoid rescanning comment chains.
+    """
+    spans = {m.start(): m.end() for m in EMAIL_FWS.finditer(value)}
+    stack = []
+    escaped_until = 0
+    for marker in EMAIL_COMMENT_MARKERS.finditer(value):
+        pos = marker.start()
+        if pos < escaped_until:
+            continue
+        char = value[pos]
+        if char == "(":
+            stack.append(pos)
+        elif char == ")":
+            if stack:
+                spans[stack.pop()] = pos + 1
+        elif char == "\\":
+            if stack:
+                if value[pos + 1:pos + 2] in ("\r", "\n"):
+                    stack.clear()
+                else:
+                    escaped_until = pos + 2
+        elif not _email_fold(value, pos):
+            # An ordinary line boundary cannot extend a comment or address.
+            stack.clear()
+    starts = {end: start for start, end in spans.items()}
+    before, after = {}, {}
+    for pos in range(len(value) + 1):
+        if pos in starts:
+            start = starts[pos]
+            before[pos] = before.get(start, start)
+    for pos in range(len(value) - 1, -1, -1):
+        if pos in spans:
+            end = spans[pos]
+            after[pos] = after.get(end, end)
+    return before, after
+
+
+def _email_starts(value, before, after):
+    """Yield domain starts without rescanning local parts or adjacent CFWS."""
     quoted = {}
     if '"' in value:
         # Work backwards so every quote's closing quote is found once, even
@@ -159,37 +209,49 @@ def _email_starts(value):
         for pos in range(len(value) - 1, -1, -1):
             char = value[pos]
             if char == '"':
-                if next_end is not None and value[next_end + 1:next_end + 2] == "@":
-                    quoted[pos] = next_end + 2
+                if next_end is not None:
+                    at = after.get(next_end + 1, next_end + 1)
+                    if value[at:at + 1] == "@":
+                        quoted[pos] = (next_end + 1, at)
                 end = pos
             elif char in "\r\n":
-                end = None
+                end = next_end if _email_fold(value, pos) else None
             elif char == "\\":
                 end = after_next_end if value[pos + 1:pos + 2] not in ("\r", "\n") else None
             else:
                 end = next_end
             next_end, after_next_end = end, next_end
     consumed = 0
+    quoted_ats = set()
     for marker in EMAIL_MARKERS.finditer(value):
         pos = marker.start()
         if pos < consumed:
             continue
-        # A complete quoted local part consumes its internal @ signs. If the
-        # quote does not form a candidate, addresses inside it remain visible.
+        # Suppress only @ signs inside a complete quoted local part, never
+        # those in its trailing comments. Handle the outer @ just once.
         if pos in quoted:
-            consumed = quoted[pos]
+            consumed, at = quoted[pos]
+            quoted_ats.add(at)
         # For an unquoted local part, its last character suffices to establish
         # a candidate; rescanning the earlier characters adds no information.
-        elif value[pos] == "@" and pos > consumed and EMAIL_LOCAL_CHAR.fullmatch(value[pos - 1]):
-            consumed = pos + 1
+        elif value[pos] == "@" and pos not in quoted_ats:
+            local_end = before.get(pos, pos)
+            # Earlier @ signs may belong to trailing comments, so their
+            # positions must not invalidate the local part before that CFWS.
+            if not local_end or not EMAIL_LOCAL_CHAR.fullmatch(value[local_end - 1]):
+                continue
+            at = pos
         else:
             continue
-        yield consumed
+        yield after.get(at + 1, at + 1)
 
 
 def _email_domains(value):
     """Read bracketed literals or complete Unicode domain labels."""
-    for start in _email_starts(value):
+    if "@" not in value:
+        return
+    before, after = _email_cfws(value)
+    for start in _email_starts(value, before, after):
         end = start
         literal = EMAIL_LITERAL_DOMAIN.match(value, end)
         if literal:

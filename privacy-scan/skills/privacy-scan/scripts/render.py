@@ -99,10 +99,13 @@ def markdown_row(values):
 
 
 def markdown_item(value):
-    """Prevent a literal list marker from starting a nested list or rule."""
+    """Keep leading whitespace and list markers from starting Markdown blocks."""
     text = markdown_text(value)
     text = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", text)
-    return re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=\s|$)", r"\1\\\2", text)
+    text = re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=\s|$)", r"\1\\\2", text)
+    # Character references preserve spaces and tabs without making the list
+    # body an indented code block. Add them after escaping supplied markup.
+    return re.sub(r"^[ \t]+", lambda match: "".join(f"&#{ord(c)};" for c in match[0]), text)
 
 
 def markdown_code(value):

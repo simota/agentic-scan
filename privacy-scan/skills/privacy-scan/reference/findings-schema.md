@@ -65,6 +65,8 @@ and Unicode e-mail forms, including complete internationalised domain labels
 and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
 spaces, tabs, non-breaking spaces or hyphens between digits.
+Mail-header comments and folding whitespace around the local part, `@` and
+domain are also inspected without changing the saved text.
 Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
 for inspection; accepted text retains its original spelling. Name fields and
 use placeholders.

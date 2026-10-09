@@ -2,11 +2,13 @@
 import io
 import json
 from pathlib import Path
+import subprocess
+import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_performance_scan import complete_doc, finding, findings, render
+from test_performance_scan import SKILL, complete_doc, finding, findings, render
 
 
 MEASUREMENT = {
@@ -14,6 +16,44 @@ MEASUREMENT = {
     "command": "python3 tests/query_count.py",
     "result": "query count is 3 for both 1 and 50 orders",
 }
+
+
+class JsonReadRegressionTests(unittest.TestCase):
+    def test_read_json_reports_invalid_utf8_as_a_schema_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_bytes(b"\xff")
+            with self.assertRaises(findings.SchemaError) as error:
+                findings.read_json(source)
+            self.assertIn(str(source), str(error.exception))
+            self.assertIn("utf-8", str(error.exception))
+
+    def test_render_cli_rejects_invalid_utf8_without_writing_or_a_traceback(self):
+        for existing in (False, True):
+            with self.subTest(existing=existing), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                source = root / "findings.json"
+                source.write_bytes(b"\xff")
+                out = root / "out"
+                originals = {"report.md": b"Previous report", "dashboard.html": b"Previous dashboard"}
+                if existing:
+                    out.mkdir()
+                    for name, content in originals.items():
+                        (out / name).write_bytes(content)
+                result = subprocess.run(
+                    [sys.executable, str(SKILL / "scripts" / "render.py"),
+                     str(source), "--out", str(out)],
+                    capture_output=True, text=True, check=False)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("schema:", result.stderr)
+                self.assertIn(str(source), result.stderr)
+                self.assertIn("utf-8", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                if existing:
+                    for name, content in originals.items():
+                        self.assertEqual((out / name).read_bytes(), content)
+                else:
+                    self.assertFalse(out.exists())
 
 
 class MeasurementRegressionTests(unittest.TestCase):

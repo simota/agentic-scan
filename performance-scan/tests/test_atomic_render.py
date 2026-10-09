@@ -121,6 +121,31 @@ class AtomicRenderTests(unittest.TestCase):
                 self.assert_render_failure(result, errors)
                 self.assertIn("dashboard publish refused", errors)
 
+    def test_interrupt_after_publish_restores_existing_or_absent_outputs(self):
+        for existing in (True, False):
+            for interrupt_after in (1, 2):
+                with self.subTest(existing=existing, interrupt_after=interrupt_after), \
+                        tempfile.TemporaryDirectory() as d:
+                    source, out, _ = self.prepare(Path(d), existing)
+                    original = self.snapshot(out)
+                    real_replace = os.replace
+                    published = []
+
+                    def interrupt_after_publish(source, destination):
+                        result = real_replace(source, destination)
+                        if len(published) < interrupt_after:
+                            published.append(Path(destination).read_bytes())
+                            if len(published) == interrupt_after:
+                                raise KeyboardInterrupt("publish interrupted")
+                        return result
+
+                    with patch("os.replace", side_effect=interrupt_after_publish), \
+                            self.assertRaisesRegex(KeyboardInterrupt, "publish interrupted"):
+                        self.run_render(source, out)
+                    self.assertEqual(len(published), interrupt_after)
+                    self.assertTrue(all(b"Updated project" in content for content in published))
+                    self.assert_unchanged(out, original)
+
     def test_unencodable_text_preserves_existing_or_absent_outputs(self):
         for existing in (True, False):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory() as d:

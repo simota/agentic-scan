@@ -48,7 +48,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | Group the workload inventory by domain: one unit per domain plus one cross-cutting unit (DB and HTTP client setup, middleware, caching layer, runtime and build config). Each unit first hunts the budget ledger entries it owns, then sweeps every applicable perspective once over the unit. A unit closes only when its close-check matches (`reference/budgets.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
-| IDs | `P-001`… numbered without gaps in severity order (then path), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
+| IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |

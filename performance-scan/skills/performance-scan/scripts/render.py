@@ -8,7 +8,8 @@ Both outputs are derived from the one record; neither adds facts of its own.
 findings-report shape in `reference/report.md`.
 
 Exit codes: 0 written, 1 an output could not be encoded or saved, 2 an input
-could not be read or decoded, or does not match the schema (reasons on stderr).
+could not be read or decoded, or does not match the schema, or a command-line
+usage error (reasons on stderr).
 """
 import argparse
 from html import escape
@@ -126,6 +127,8 @@ def markdown_text(value):
         # cmark-gfm decodes entities before matching emails, so an empty
         # comment splits the text node around "@" instead.
         line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
+        # GitHub turns ":name:" into an emoji; split the first colon off the same way.
+        line = re.sub(r":(?=[A-Za-z0-9_+-]+:)", ":<!-- -->", line)
         line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
                       flags=re.IGNORECASE)
         return re.sub(r"^[ \t]+", lambda match: "".join(
@@ -262,11 +265,12 @@ def render_markdown(doc, lang):
 
 
 CSS = """
-:root{--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
+:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
 --high:#b91c1c;--medium:#b45309;--low:#1d4ed8;--info:#57534e}
 @media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1917;--fg:#f5f5f4;
 --muted:#a8a29e;--card:#292524;--line:#44403c;--high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}}
-:root[data-theme="dark"]{--bg:#1c1917;--fg:#f5f5f4;--muted:#a8a29e;--card:#292524;--line:#44403c;
+:root[data-theme="light"]{color-scheme:light}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#1c1917;--fg:#f5f5f4;--muted:#a8a29e;--card:#292524;--line:#44403c;
 --high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
 main{max-width:1040px;margin:0 auto;padding:24px 16px}
@@ -278,7 +282,7 @@ h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 a{color:var(--low)}
 details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
 summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
-dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
+dt{color:var(--muted)}dd{margin:0}h1,summary,p,dd,td,li{overflow-wrap:anywhere}
 h1,summary,p,dd,td,li{white-space:pre-wrap}
 pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
@@ -324,8 +328,10 @@ def render_html(doc, lang):
                      if group == "excluded" else "")
         step = f" ({e(f['step'])})" if f.get("step") else ""
         rows = [(t[k], f[k]) for k in FIELDS if k in f]
-        rows += [(t["verdict"], f"{v['verdict']} ({v['method']})"), (t["evidence"], v.get("evidence", "")),
-                 (t["status"], f.get("status", "Open"))]
+        rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
+        if v.get("evidence"):
+            rows.append((t["evidence"], v["evidence"]))
+        rows.append((t["status"], f.get("status", "Open")))
         if "measurement" in f:
             m = f["measurement"]
             rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
@@ -349,11 +355,13 @@ def render_html(doc, lang):
             out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in budget_cells(b, t)) + "</tr>")
         out.append("</tbody></table>")
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table>")
+    out.append(f"<h2>{e(t['perspectives'])}</h2><table><thead><tr><th scope='col'></th>"
+               f"<th scope='col'>{e(t['status_col'])}</th><th scope='col'>{e(t['note'])}</th>"
+               "</tr></thead><tbody>")
     for name in PERSPECTIVES:
         p = recorded.get(name, {"status": "—", "note": ""})
         out.append(f"<tr><td>{e(name)}</td><td>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
-    out.append("</table>")
+    out.append("</tbody></table>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])
         out.append(f"<h2>{e(t[key])}</h2>"

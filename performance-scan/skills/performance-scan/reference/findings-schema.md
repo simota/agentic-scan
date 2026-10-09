@@ -17,7 +17,8 @@ output could not be encoded or saved, `2` the input is unreadable, is not valid
 UTF-8 JSON, exceeds Python's parsing limits, or does not match the shape
 (the field is named for shape errors).
 `findings.py check` exits `1` and lists contract
-violations. Required outputs must be readable, nonempty regular files;
+violations; a path that is not a directory is reported as such. Both scripts
+exit `2` on a command-line usage error. Required outputs must be readable, nonempty regular files;
 symbolic links to such files are allowed. The check validates the record and
 file structure, not whether rendered text is current or a finding is true.
 
@@ -167,7 +168,7 @@ embedding Markdown link syntax in another field.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
-| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…). Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` does not rank them) |
+| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` does not rank them) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |

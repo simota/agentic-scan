@@ -23,7 +23,7 @@ IDs are gapless in severity order and every perspective in
 `reference/perspectives.md` is recorded.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
-contract failed (reasons on stderr).
+contract failed (reasons on stderr), 2 a command-line usage error.
 """
 import argparse
 import errno
@@ -224,7 +224,13 @@ def validate(doc, complete=False):
             raise SchemaError(f"{key}: must be a list")
     seen = set()
     for i, f in enumerate(doc.get("findings", [])):
-        validate_finding(f, f"findings[{i}]")
+        try:
+            validate_finding(f, f"findings[{i}]")
+        except SchemaError as exc:
+            # After a merge the index is the combined record's, not the fragment's.
+            if isinstance(f, dict) and isinstance(f.get("id"), str):
+                raise SchemaError(f"{exc} (finding {_show(f['id'])})") from exc
+            raise
         if f["id"] in seen:
             raise SchemaError(f"findings[{i}].id: duplicate {f['id']}")
         seen.add(f["id"])
@@ -313,7 +319,12 @@ def merge(doc, fragment, where):
             if not isinstance(fragment[key], list):
                 raise SchemaError(f"{where}.{key}: must be a list")
             target = doc.setdefault(key, [])
-            target.extend(v for v in fragment[key] if v not in target)
+            seen = set(target)  # A list scan per item made large merges quadratic.
+            for i, value in enumerate(fragment[key]):
+                _text(value, f"{where}.{key}[{i}]")
+                if value not in seen:
+                    seen.add(value)
+                    target.append(value)
     return doc
 
 
@@ -346,7 +357,10 @@ def cmd_merge(args):
         # Keep the existing behavior of reading and updating a symlink's destination.
         destination = resolve_path(target)
         doc = read_json(destination) if file_mode(destination) is not None else {}
-        validate(doc)
+        try:
+            validate(doc)
+        except SchemaError as exc:
+            raise SchemaError(f"{target}: {exc}") from exc
         for path in args.fragments:
             merge(doc, read_json(path), path)
             # Validate per fragment: a finding must be complete where it first appears.
@@ -369,7 +383,9 @@ def contract_problems(out, allow=()):
     out = Path(out)
     problems = []
     try:
-        present = {p.name for p in out.iterdir()} if out.is_dir() else set()
+        if not out.is_dir():
+            return [f"not a directory: {out}"]
+        present = {p.name for p in out.iterdir()}
     except OSError as exc:
         return [f"cannot inspect output directory: {out}: {exc}"]
     for name in sorted(OUTPUTS - present):

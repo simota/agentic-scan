@@ -32,8 +32,8 @@ Since the assessment: Fixed {{n_fixed}}, Accepted {{n_accepted}} (included in th
 |---|---|
 | System | {{meta.project}} |
 | Scope | {{meta.scope}} |
-| Revision | {{meta.commit}} |
-| Method | {{meta.method}} |
+| Revision | {{meta.commit}} | <!-- UNKNOWN when meta.commit is absent, as report.md shows it -->
+| Method | {{meta.method}} | <!-- without meta.method, copy the method line under report.md's title -->
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 No code was changed and the application was not run.
@@ -41,8 +41,9 @@ No code was changed and the application was not run.
 
 ## 3. Findings to act on first
 
-<!-- The High and Medium findings, in severity order; repeat the block per finding and link the issue filed
-from templates/issue.en.md. Low and Info stay in the attached report.md. -->
+<!-- The High and Medium findings whose verdict is not FalsePositive or NotApplicable, in severity order;
+repeat the block per finding and link the issue filed from templates/issue.en.md. Low and Info stay in the
+attached report.md. -->
 
 ### {{id}}: {{title}}
 
@@ -56,7 +57,8 @@ from templates/issue.en.md. Low and Info stay in the attached report.md. -->
 
 ## 4. Design rules
 
-<!-- rules[]: each rule, its source and status. Inferred rules are questions for the owner. -->
+<!-- rules[]: each rule, its source and status. Inferred rules are questions for the owner; a baseline
+entry (source `baseline…`) is a general family rule, not a question. -->
 - 
 
 ## 5. Checked and sound

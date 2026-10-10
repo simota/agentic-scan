@@ -18,6 +18,7 @@ from html import escape
 from pathlib import Path
 import re
 import sys
+import unicodedata
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
@@ -65,6 +66,7 @@ LABELS = {
         "category": "perspective", "id": "ID", "statement": "Rule", "source": "Source",
         "rule_status": "Status", "perspective": "Perspective", "note": "Note",
         "not_recorded": "not recorded", "inferred": "inferred, to confirm",
+        "baseline": "baseline",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
@@ -83,7 +85,7 @@ LABELS = {
         "references": "参考", "status": "ステータス", "reason": "理由",
         "category": "観点", "id": "ID", "statement": "ルール", "source": "出典",
         "rule_status": "状態", "perspective": "観点", "note": "メモ",
-        "not_recorded": "未記録", "inferred": "推定・要確認",
+        "not_recorded": "未記録", "inferred": "推定・要確認", "baseline": "ベースライン",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
@@ -147,10 +149,24 @@ AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=>?@^_{-~]")
 AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 
 
-# An `@` after anything but a blank, opening punctuation or a tag's `>`. A `;`
-# is not safe: it usually ends an entity this renderer wrote (`a&#95;@x.com`),
-# which cmark-gfm decodes back into the local part before it autolinks.
-EMAIL_AT = re.compile(r"(?<=[^\s(\[{'\"`,:>])@")
+# An `@` is disarmed unless what precedes it cannot end an e-mail local part
+# in any renderer: a blank, an opening bracket or quote, `,` or `:` (as in
+# `@scope/pkg`, `(@Version`), or punctuation outside ASCII (`。@Transactional`,
+# `（@Version`). Everything else is disarmed: letters and digits in any script
+# (pandoc reads them all), a combining mark (pandoc composes it into the letter
+# before), the `;` that ends an entity this renderer wrote (`a&#95;@x.com`,
+# decoded back into the local part before cmark-gfm autolinks), and the rest of
+# ASCII punctuation, which other autolinkers accept (`a=@x.com`).
+EMAIL_AT = re.compile(r"(?<=(.))@", re.DOTALL)
+NOT_LOCAL_PART = set(" \t\r\n([{'\"`,:")
+
+
+def _disarm_at(match):
+    before = match[1]
+    if before in NOT_LOCAL_PART or before.isspace() or (
+            ord(before) > 127 and unicodedata.category(before)[0] in "PSZ"):
+        return "@"
+    return "&#64;<!-- -->"
 
 
 def disarm_autolinks(text):
@@ -162,7 +178,7 @@ def disarm_autolinks(text):
     `@decorator`) has no local part, cannot be an address, and stays readable.
     """
     text = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", text)
-    return EMAIL_AT.sub("&#64;<!-- -->", text)
+    return EMAIL_AT.sub(_disarm_at, text)
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
@@ -255,8 +271,18 @@ def rule_id(rule):
     return f"{rule['id']} · {rule['family']}" if rule.get("family") else rule["id"]
 
 
+# `baseline` or `baseline; shared/db.py:12 …`, not a file such as `baselines/x.md`.
+BASELINE_SOURCE = re.compile(r"\s*baseline(?![\w./-])", re.IGNORECASE)
+
+
 def rule_statement(rule, lang):
-    """An inferred rule is a question for the requester (reference/rules.md §1)."""
+    """An inferred rule is a question for the requester (reference/rules.md §1).
+
+    A baseline entry is inferred too, but states a general family rule, not
+    this codebase's intent, so it is labelled as such and asks nothing.
+    """
+    if BASELINE_SOURCE.match(rule["source"]):
+        return f"{rule['statement']} ({LABELS[lang]['baseline']})"
     if rule.get("inferred") is True:
         return f"{rule['statement']} ({LABELS[lang]['inferred']})"
     return rule["statement"]
@@ -502,7 +528,8 @@ def rendered_outputs(doc, lang):
 
 def main(argv=None):
     safe_output()
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("findings")
     parser.add_argument("--out", required=True)
     parser.add_argument("--lang", choices=("ja", "en"))

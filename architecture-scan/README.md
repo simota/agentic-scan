@@ -57,6 +57,8 @@ make unlink
 For Claude Code, `CLAUDE_CONFIG_DIR` selects the global configuration directory
 (default: `~/.claude`), including its `skills` directory. `PROJECT` and
 `SKILLS_DIR` take precedence when an explicit installation destination is given.
+`AGENT`, `PROJECT` and `SKILLS_DIR` are read from the `make` command line only,
+so a variable of the same name exported by your shell never redirects the install.
 See [Claude Code's directory reference](https://code.claude.com/docs/en/claude-directory).
 
 Then invoke `architecture-scan` (or `/architecture-scan`).
@@ -70,7 +72,7 @@ builds from JSON fragments rather than heredocs:
 python3 skills/architecture-scan/scripts/findings.py merge out/findings.json frag-001.json
 python3 skills/architecture-scan/scripts/findings.py renumber out/findings.json  # severity, then path
 python3 skills/architecture-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
-python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists each violation
+python3 skills/architecture-scan/scripts/findings.py check out --repo /path/to/assessed/checkout   # exit 1 lists each violation
 python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  # n_* for the report template
 ```
 
@@ -82,9 +84,10 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
-gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
+gapless `A-NNN` IDs in severity order (excluded verdicts last), every perspective recorded, nonempty
 `checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
-recorded as violated, a `Likely` one violated or partly read), traced and evidenced
+recorded as violated, a `Likely` one violated or partly read), every violated rule
+cited by a Valid or Likely finding and no reason left on a closed rule, traced and evidenced
 High and Medium findings, and a dashboard and
 report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape

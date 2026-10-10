@@ -64,7 +64,7 @@ def complete_doc() -> dict:
         "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
                  "assessor": "test", "lang": "en"},
         "rules": [{"id": "R-01", "statement": "one writer", "source": "adr", "status": "violated"}],
-        "findings": [finding(), finding("A-002", "Low")],
+        "findings": [finding(rule="R-01"), finding("A-002", "Low")],
         "perspectives": [{"name": n, "status": "applied", "note": "applied"}
                          for n in findings.PERSPECTIVES],
         "checked_ok": ["no cycles"],

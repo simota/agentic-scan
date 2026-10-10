@@ -16,7 +16,9 @@
 #   make demo LANG_OUT=en              # English
 #
 # Paths may hold spaces and quotes. A `$` in a path is expanded by make before
-# the shell sees it, so such a path must be written as `$$`.
+# the shell sees it, so such a path must be written as `$$`. PYTHON is a
+# command, not a path: `PYTHON=python3.12` or `PYTHON="uv run python"`; put an
+# interpreter whose path holds spaces on PATH instead.
 
 # Quote complete paths before shell expansion; only host names are Make lists.
 shell_quote = '$(subst ','"'"',$(1))'
@@ -35,6 +37,18 @@ PYTHON  ?= python3
 
 AGENT   ?= claude codex agy
 PROJECT ?=
+
+# These names are generic enough that a shell may already export them (a cloud
+# PROJECT id, a direnv SKILLS_DIR), so only the command line narrows the install.
+ifeq ($(origin AGENT),environment)
+override AGENT := claude codex agy
+endif
+ifeq ($(origin PROJECT),environment)
+override PROJECT :=
+endif
+ifeq ($(origin SKILLS_DIR),environment)
+override SKILLS_DIR :=
+endif
 
 # Empty or unset overrides use the default configuration directory.
 CLAUDE_DIR := $(or $(CLAUDE_CONFIG_DIR),$(HOME)/.claude)

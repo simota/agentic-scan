@@ -32,8 +32,8 @@
 |---|---|
 | システム | {{meta.project}} |
 | 範囲 | {{meta.scope}} |
-| リビジョン | {{meta.commit}} |
-| 方法 | {{meta.method}} |
+| リビジョン | {{meta.commit}} | <!-- meta.commit がないときは report.md と同じく UNKNOWN -->
+| 方法 | {{meta.method}} | <!-- meta.method がないときは report.md のタイトル直下の方法の行を転記する -->
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
 コードの変更やアプリケーションの実行はしていない。
@@ -41,8 +41,8 @@
 
 ## 3. 優先して対応すべき検出事項
 
-<!-- High と Medium の finding を深刻度順に載せる。finding ごとにこのブロックを繰り返し、templates/issue.ja.md で
-登録した issue へリンクする。Low と Info は添付の report.md に任せる。 -->
+<!-- 判定が FalsePositive / NotApplicable でない High と Medium の finding を深刻度順に載せる。finding ごとに
+このブロックを繰り返し、templates/issue.ja.md で登録した issue へリンクする。Low と Info は添付の report.md に任せる。 -->
 
 ### {{id}}: {{title}}
 
@@ -56,7 +56,8 @@
 
 ## 4. 設計ルール
 
-<!-- rules[]: 各ルール、その出典と状態。推定（inferred）のルールはオーナーへの確認事項。 -->
+<!-- rules[]: 各ルール、その出典と状態。推定（inferred）のルールはオーナーへの確認事項。ベースライン（source が
+baseline で始まる）は一般的なファミリーのルールで、確認事項ではない。 -->
 - 
 
 ## 5. 確認して問題なかった項目

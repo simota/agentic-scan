@@ -4,11 +4,13 @@
 節（finding に references がないときの「参考」など）は見出しごと削除する。
 - {{location}}: location ごとにコードスパンにし、読点で区切る
 - （{{step}}）: finding に step がないときは括弧ごと削除する
-- {{rule}}: ID のあとに、rules[] の同じ id のエントリから statement と source を書く
+- {{rule}}: ID ごとに、rules[] の同じ id のエントリから statement と source を書く
 - {{trace}}: 番号付きの手順を 1 行に 1 つずつ書く
 - 未確定事項: 対応するフィールドはない。静的な読解で確定できなかった条件を書く
 
 登録前に確認すること:
+- FalsePositive / NotApplicable の finding は登録しない
+- Likely / Unverified / Unlikely の finding を確定した事実として書かない。追跡できた範囲と、未確定の点（未確定事項）を書く
 - 好みではなく、不具合または変更コストを書く。ルールの出典（ADR、lint 設定、多数派のパターン）を示す
 - ソース抜粋はリポジトリと同じ機密区分になる。issue の閲覧範囲がリポジトリより広いなら貼らない
 -->

@@ -17,7 +17,7 @@ Render with (paths relative to this skill's directory):
 ```
 python3 scripts/findings.py renumber <out>/findings.json
 python3 scripts/render.py <out>/findings.json --out <out>
-python3 scripts/findings.py check <out> [--allow NAME]
+python3 scripts/findings.py check <out> --repo <checkout> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
@@ -34,8 +34,9 @@ any other scheme, or any URL containing a control or bidirectional character,
 is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard; an `@` that starts
-a word, such as `@scope/pkg`, is left as written) or `$` math. A `>` stays
+an e-mail address stays plain text, as in the dashboard; an `@` after a
+blank, a bracket, a quote or non-ASCII punctuation, such as `@scope/pkg` or
+`。@Transactional`, is left as written) or `$` math. A `>` stays
 as written (`a -> b`) except where it would start a quote.
 Backslashes are shown as written (`docs\adr`), so they never escape a
 delimiter; the one exception in `report.md` is a backslash directly before a
@@ -62,9 +63,14 @@ required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
 `findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
-- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` finding
-  not excluded cites a rule recorded as `violated`, a `Likely` one a rule
-  recorded as `violated` or `partly read`
+- every ID in a nonblank `findings[].rule` to name a `rules[].id`; a `Valid`
+  finding not excluded cites rules recorded as `violated`, a `Likely` one
+  rules recorded as `violated` or `partly read`
+- every `violated` rule to be cited in the `rule` of a `Valid` or `Likely`
+  finding; one root cause that breaks several rules lists them all
+  (`"rule": "R-01, R-02"`). A rule ID in a trace cites nothing
+- no `reason` on a `holds` or `violated` rule: a provisional `not checked`
+  reason is sent back as `"reason": null` with the final status
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
@@ -77,7 +83,14 @@ be byte-identical to what `render.py` produces from the current
   `ABC:123`, `10:30`, `v1.2:3`, a URL's port or a host and port ending in
   `.com`, `.net`, `.io`, `.internal` or `.localhost`, such as
   `db.internal:5432`. Dotfiles and names such as `Dockerfile.dev` or
-  `Makefile.local` count as files)
+  `Makefile.local` count as files). A duplicate's `NotApplicable` evidence
+  may instead be only the name of the reported finding it repeats, with
+  nothing else (`Duplicate of A-004`, `重複: A-004`)
+
+With `--repo <checkout>` (a checkout of the assessed revision), `check` also
+refuses a `location` whose file is missing or outside that checkout, or
+whose line is past the file's end; it catches a path typed from memory, not a line a few rows off, so the
+trace still reads each line it cites.
 
 ## Writing the file
 
@@ -128,7 +141,9 @@ Never edit `findings.json` by hand; every correction is a fragment:
   `assessor` and `lang`, which merge otherwise lets a fragment omit) cannot be
   removed; replace its value instead
 - `remove` deletes exact items from the string lists before the fragment's own
-  items are appended, so one fragment replaces an item: `{"remove":
+  items are added, and those items take the place of the first one removed
+  (these lists are ordered: `next_steps` is the order of work), so one
+  fragment replaces an item in place: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
   It also deletes a spurious ledger entry by id: `{"remove": {"rules":
   ["R-05"]}}`. An item that is not recorded is refused, so a typo cannot pass
@@ -249,20 +264,20 @@ record. Existing permission bits and symbolic-link destinations are retained.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `meta.method` | Optional string: one phrase naming the reading and each read-only tool or history window, e.g. `Static review; git log 12 months; import-linter`. Shown verbatim in both outputs in place of the generic static/analysed note |
-| `findings[].id` | `A-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
+| `findings[].id` | `A-001`…, gapless, numbered in severity order, excluded verdicts after the rest (`renumber` orders both) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM5`, not `DM9`) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
-| `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
+| `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID, or several separated by commas (`R-01, R-02`) |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |
 | `meta.commit`, `validation.evidence`, `references[].title`, `rules[].reason` | Strings when present. Empty values and omission are allowed except where a nonblank value is required by the verdict or run contract |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
-| `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
+| `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`, a `partly read` one may carry it, and `check` refuses it on `holds` or `violated` (send `"reason": null` with the final status). Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (required nonblank: steps applied, steps left out with reasons). A perspective is replaced by sending it again, never removed |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional. Items in all four lists are nonblank strings |

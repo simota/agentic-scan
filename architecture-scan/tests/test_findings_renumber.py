@@ -78,7 +78,7 @@ class RenumberTests(unittest.TestCase):
 
     def test_fixes_an_out_of_order_run_so_check_passes(self):
         doc = complete_doc()
-        doc["findings"] = [finding("A-001", "Low"), finding("A-002", "High")]
+        doc["findings"] = [finding("A-001", "Low"), finding("A-002", "High", rule="R-01")]
         doc["next_steps"] = ["Fix A-002"]
         self.write(doc)
         with redirect_stdout(io.StringIO()):

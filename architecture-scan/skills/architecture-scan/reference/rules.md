@@ -51,8 +51,10 @@ Families:
   dropped on a core flow
 - **CONTRACT** — external APIs and events are separate from internal models
   and evolve compatibly
-- **SEAM** — time, randomness, I/O and vendors are reachable through a seam
-  where the code needs to be tested or replaced
+- **SEAM** — time, randomness, I/O, configuration and vendors are reachable
+  through a seam where the code needs to be tested or replaced (a rule on how
+  config is read, such as "settings come only from `config/settings.py`",
+  belongs here)
 
 Seed the ledger with one `baseline` entry per family that applies (e.g. `R-01
 LAYER baseline: no cycles between top-level modules`), then add codebase-
@@ -69,11 +71,12 @@ checked` (with a reason):
   rule; the count of unread edges goes to `limitations`
 - `not checked` — no edge was read; `reason` says why
 
-A `Valid` finding that cites a rule cites one recorded as `violated` (it is a
-traced break, so the rule cannot be merely `partly read`); a `Likely` one may
-cite a `violated` or `partly read` rule. `check` refuses anything else. The
-ledger describes the assessed revision: after a fix, the rule stays
-`violated` and the finding's `status` becomes `Fixed`. A defect claim may cite no codebase rule at all
+Every rule a `Valid` finding cites is recorded as `violated` (it is a traced
+break, so the rule cannot be merely `partly read`); a `Likely` one may cite
+`violated` or `partly read` rules. Every `violated` rule is cited by a `Valid`
+or `Likely` finding's `rule`. `check` refuses anything else. The ledger
+describes the assessed revision: after a fix, the rule stays `violated` and
+the finding's `status` becomes `Fixed`. A defect claim may cite no codebase rule at all
 (`reference/validation.md`, claim 4); it then names its family's `baseline`
 entry when the ledger has one.
 
@@ -115,7 +118,8 @@ Each finding carries:
   "none"
 - `impact` — expected (the rule) vs actual, and the bounded consequence:
   the defect it allows, or the change cost the history shows
-- `rule` — the ledger ID
+- `rule` — the ledger ID, or every ID the root cause breaks, separated by
+  commas (`R-01, R-02`): each `violated` rule must be cited by some finding
 - `fix` — one line: the rule restored and the smallest change that does it
   (move the write behind the owner's API at `path:line`, add an outbox, invert
   the dependency with an interface in the domain)

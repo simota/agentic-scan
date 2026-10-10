@@ -196,7 +196,8 @@ class FindingsReviewTests(unittest.TestCase):
 
     def test_not_checked_reason_can_be_added_in_a_later_fragment(self):
         target = self.write_json("findings.json", complete_doc())
-        first = self.write_json("first.json", {"rules": [{"id": "R-01", "status": "not checked"}]})
+        first = self.write_json("first.json", {"rules": [{"id": "R-01", "status": "not checked"}],
+                                               "findings": [{"id": "A-001", "rule": None}]})
         second = self.write_json("second.json", {"rules": [{"id": "R-01", "reason": "No access"}]})
         for fragment in (first, second):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):

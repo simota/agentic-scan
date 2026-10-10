@@ -4,11 +4,14 @@ Copy each {{field}} from the field of the same name in findings.json. Delete opt
 section whose only content is empty (e.g. References when the finding has none).
 - {{location}}: one code span per location, comma-separated
 - ({{step}}): drop the parentheses when the finding has no step
-- {{rule}}: the ID, then the statement and source from the rules[] entry with that id
+- {{rule}}: each ID, then the statement and source from the rules[] entry with that id
 - {{trace}}: keep the numbered steps, one per line
 - Open questions: no field holds them; write the conditions static reading could not settle
 
 Before filing:
+- Never file a FalsePositive or NotApplicable finding
+- A Likely, Unverified or Unlikely finding is not written as an established fact: say what was traced and
+  what is still open (Open questions)
 - State the defect or change cost, not a preference. Link the rule's source (ADR, lint config, majority pattern)
 - Source excerpts carry the repository's confidentiality. Leave them out when the issue is
   visible to more people than the repository

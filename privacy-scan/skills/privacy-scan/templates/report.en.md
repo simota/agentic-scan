@@ -46,7 +46,7 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 - **Location:** `{{location}}`
 - **Personal data / subjects:** {{data}} / {{subjects}}
 - **Broken commitment:** {{commitment}} — {{commitments[id].statement}}
-- **Condition (Environment-dependent only):** the setting the grade assumes
+- **Conditions (Environment-dependent only):** {{conditions}}
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
 - **Guard:** {{guard}}
@@ -55,7 +55,7 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 
 ## 4. Commitments
 
-<!-- commitments[]: each commitment, its source and status. Inferred commitments are questions for the owner. -->
+<!-- commitments[]: id, statement, family, source and status, with the reason whenever one is recorded (required for not checked); mark inferred ones, which are questions for the owner. -->
 - 
 
 ## 5. Checked and sound

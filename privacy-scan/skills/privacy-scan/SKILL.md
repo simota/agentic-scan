@@ -51,19 +51,19 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per data domain (accounts and identity, payments, content and messages, analytics, support, HR…) plus one cross-cutting unit (logging, error tracking, analytics SDKs, backups, config, client-side scripts). Each unit first hunts the commitments ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/commitments.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. `check` refuses two reported findings with the same first `location` |
-| IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this); `FalsePositive` and `NotApplicable` findings may sit anywhere. No other prefixes |
+| IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this and rewrites `PV-NNN` references in prose and lists); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in risk order (sensitive categories, third-party flows and deletion first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (data map, ledger, flow rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). To correct a record, write a new fragment with just the changed keys; after a severity changes, run `scripts/findings.py renumber <out>/findings.json`, which reorders IDs by severity, then path, and rewrites `PV-NNN` references in prose. The merge refuses text containing e-mail addresses or long digit runs: name fields and use placeholders |
+| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). To correct a finding, write a fragment with its `id` and only the changed keys. After the last merge, run `scripts/findings.py renumber <out>/findings.json` (*IDs* row), then render. Renumbering changes IDs, so read them back from `findings.json` before writing any later fragment. The merge refuses e-mail addresses and long digit runs: name fields and use placeholders (`reference/findings-schema.md`) |
 | Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
 
 | Severity | When |
 |---|---|
 | High | Personal data — any sensitive category, or broad personal data of many subjects — reaches a party or place the commitments exclude (an undisclosed third party or SDK, an external log or error service, another user or tenant, a public URL), is processed on a core flow without a consent the commitments require (tracking before opt-in, marketing without opt-in), or survives a deletion or account-closure path in a primary store (the store holding the authoritative copy of that element, whatever its kind: a file store is primary for uploaded photos) |
-| Medium | A High-class gap that needs one condition the code does not control (a deployment region, a setting, an SDK option, a log level in production), ordinary personal data kept beyond a stated retention period, a deletion or export path that misses a secondary store (a copy: cache, search index, analytics warehouse, derived files), or real personal data copied into non-production use |
+| Medium | A High-class gap lowered one level (see below), personal data kept beyond a stated retention period (High when a sensitive category in a primary store), a deletion or export path that misses a secondary store (a copy: cache, search index, analytics warehouse, derived files), or real personal data copied into non-production use |
 | Low | Collection beyond need with no further exposure, missing pseudonymisation in internal analytics, identifiers in URLs inside first-party systems, defence-in-depth gaps in storage protection |
 | Info | A note with no demonstrated path to a subject's harm or a broken commitment |
 
@@ -73,10 +73,12 @@ gap behind one deployment setting is Medium). The configuration a feature needs
 to work at all — an SDK's DSN or API key, a service endpoint, a credential read
 from the environment — is not such a condition: grade as if it is present. Only
 a setting that would have to differ from what the code evidently intends (a log
-level, an SDK option, a region) counts. An `Environment-dependent` finding
+level, an SDK option, a region) counts. A default committed to the repository
+(a config or IaC variable default) is what the code intends. An `Environment-dependent` finding
 records each such condition in `conditions`; confidence never changes the grade.
 Exposure bounded to a short window by the code itself (a revoked link cached
-for minutes, a log kept for hours) also lowers the grade one level.
+for minutes, a local log kept for hours) also lowers the grade one level; an
+external log or error service keeps its own copy, so it is never bounded this way.
 
 ## Phases
 
@@ -86,7 +88,7 @@ for minutes, a log kept for hours) also lowers the grade one level.
 | CHECKLIST | Ledger first: each commitment with its source and every flow that must keep it. Then the perspectives that apply, keeping only hunt steps no ledger entry covers; attach early suspicions marked unverified | `reference/commitments.md`, `reference/perspectives.md`, `reference/report.md` |
 | REVIEW | One pass (or one reviewer) per review unit. For each owned commitment, trace every flow that must keep it with one flow row per data element and sink: source `path:line` → transformations → sink `path:line`. Every control cell names the mechanism — a consent check, a redaction filter, a field allow-list, a retention job, a deletion cascade, an SDK option — at `path:line`, or `NONE` / `N/A` / `UNKNOWN` with a reason — never "the vendor handles it". Then the sink-backward pass (every log call, analytics event, outbound client and export near personal fields maps to a row), then sweep every applicable perspective's hunt steps | `reference/commitments.md`, `reference/perspectives.md` |
 | VERIFY | Record evidence-linked reach, data, mitigations and impact; try to falsify each claim (a scrubber on the logger, a consent gate upstream, a retention job, a DPA listing the processor); keep deployment settings and vendor configuration outside the repository explicit | `reference/validation.md` |
-| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; render with `scripts/render.py <out>/findings.json --out <out> --lang <ja or en>` after the last merge; pass `scripts/findings.py check <out>`, which also refuses stale reports; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; after the last merge run `scripts/findings.py renumber <out>/findings.json`, then render with `scripts/render.py <out>/findings.json --out <out> --lang <ja or en>`; pass `scripts/findings.py check <out>`, which also refuses stale reports; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md` |
 | GUARD *(on request)* | With explicit permission, add a check to the repo's own suite that keeps a commitment — a test that the logger redacts named fields, that deletion removes the subject from every store, that an SDK is not initialised before consent, that an export contains every store — red before the fix and green after, using synthetic data only | `reference/validation.md` |
 
 ## Outputs
@@ -96,7 +98,7 @@ for minutes, a log kept for hours) also lowers the grade one level.
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
 | `dashboard.html` | Self-contained dashboard: counts, filterable findings, commitments, perspective coverage |
-| `report.md` | The written assessment: scope, findings, commitments, coverage, sound items, limitations, next steps |
+| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions, next steps |
 
 Skip the files when only a checklist was asked for. Render them in the
 requester's language (`--lang ja|en`).
@@ -109,14 +111,15 @@ requester's language (`--lang ja|en`).
 | Asked to check, audit or scan privacy or data protection | All five phases |
 | Asked about one feature, SDK or data flow | Scope the review units to the flows it touches, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No privacy policy or retention rule is in the repository | Infer the commitments from consent UI texts, settings screens, retention jobs and the majority of flows; mark them `inferred`, hunt them anyway, and put each in `decisions`. Ask for the published policy if the requester can share it |
+| The app processes personal data on behalf of its customers (a processor: B2B SaaS, a DPA in the repo) | Take commitments from the DPA, the customer-facing privacy terms and the sub-processor list; owe them to the customer. Add `INSTRUCT` entries (`reference/commitments.md` §2). Consent is usually the customer's to collect, so record `Purpose and consent` steps that do not apply as N/A with that reason; deletion and export reach every store when the customer instructs them. Use of customer data for the app's own purposes (analytics, training, warehousing) beyond the DPA is a finding |
 | A regulation is named | Add its requirements as commitments with the regulation as source, phrased as checks on the code (e.g. "deletion reaches every store holding the subject's data"). Never state that the app is or is not compliant |
 | A third party receives data | Record exactly which fields reach it, from where and when (before or after consent). Whether a contract or DPA covers it is `UNKNOWN` unless the repository says so; put it in `decisions` |
 | The commitments promise a control or feature the code does not have (a settings screen, an opt-out, an export) | Treat the commitment as violated on every flow it governs and report the missing mechanism as the finding; say in `flow` where it was searched for |
-| The data reaching a sink depends on runtime values (log level, SDK options set by environment, region) | Report as `Environment-dependent` and name the setting in `conditions` |
+| The data reaching a sink depends on a setting that would have to differ from what the code evidently intends (log level, an SDK option, region), not on the DSN, key or endpoint the feature needs | Report as `Environment-dependent`, name the setting in `conditions` and lower the grade one level (*Severity*) |
 | Real personal data appears in the repository (fixtures, seeds, dumps, screenshots) | Report its location and kind only. Never print the values; never copy them into scratch or the record |
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
 | Asked to lock a commitment in or confirm a fix | GUARD: a test in the repo's own suite with synthetic data, red before and green after |
-| The host cannot run a second, independent reviewer | Record that in `limitations`; A High finding may be `Valid` only when the reporting agent traced it end to end; otherwise it stays `Likely` or `Unverified`. Never invent a second reviewer |
+| The host cannot run a second, independent reviewer | Record that in `limitations`; the *Never* rule on `Valid` still applies. Never invent a second reviewer |
 | Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several. An open High goes to a private tracker. Filing or sending is the requester's step |
 
 ## Always / Never
@@ -165,7 +168,8 @@ requester's language (`--lang ja|en`).
 
 ## Done when
 
-`scripts/findings.py check <out>` passes, every flow carrying a sensitive
+After the last merge, `scripts/findings.py renumber`, `scripts/render.py` and
+then `scripts/findings.py check <out>` pass in that order, every flow carrying a sensitive
 category or reaching a third party has been read, every commitments ledger
 entry has a status (holds on all flows, violated, partly read, or not checked
 with the reason), every review unit's close-check matches with zero blank

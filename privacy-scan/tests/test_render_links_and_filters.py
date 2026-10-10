@@ -9,10 +9,11 @@ from test_privacy_scan import complete_doc, findings, render
 class ProseUrlTests(unittest.TestCase):
     def test_prose_urls_become_links_that_keep_their_spelling(self):
         cases = {
-            "see https://example.com/x_y.": "see <https://example.com/x_y>.",
-            "(https://example.com/a?b=1&c=2#d_e)": "(<https://example.com/a?b=1&amp;c=2#d_e>)",
+            "see https://example.com/x_y.": "see [https://example.com/x\\_y](<https://example.com/x_y>).",
+            "(https://example.com/a?b=1&c=2#d_e)":
+                "([https://example.com/a?b=1&amp;c=2\\#d\\_e](<https://example.com/a?b=1&amp;c=2#d_e>))",
             "www.example.com/a_b, ok": "[www.example.com/a\\_b](<http://www.example.com/a_b>), ok",
-            "go https://e.com/a|b": "go <https://e.com/a>\\|b",
+            "go https://e.com/a|b": "go [https://e.com/a](<https://e.com/a>)\\|b",
             "http:// alone": "http:// alone",
             "javascript:alert(1)": "javascript:alert(1)",
         }
@@ -26,7 +27,8 @@ class ProseUrlTests(unittest.TestCase):
                          "[https://example.com/a\\_b](<https://example.com/a_b>)")
 
     def test_list_items_starting_with_a_url_stay_list_items(self):
-        self.assertEqual(render.markdown_item("https://example.com/a"), "<https://example.com/a>")
+        self.assertEqual(render.markdown_item("https://example.com/a"),
+                         "[https://example.com/a](<https://example.com/a>)")
 
 
 class ExcludedFindingTests(unittest.TestCase):

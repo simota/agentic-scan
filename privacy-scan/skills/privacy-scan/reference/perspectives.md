@@ -23,7 +23,7 @@ values of `perspectives[].name` and `findings[].category`.
 | Exposure to other actors | Do other users, tenants, staff and public links see only what they need? |
 | Storage protection | Are sensitive categories encrypted, tokenised or pseudonymised where required? |
 | Client-side tracking | Do cookies, storage and third-party scripts in the client respect consent? |
-| Identifiers and pseudonymisation | Are identifiers kept out of URLs and shared datasets, and is "anonymised" data really unlinkable? |
+| Identifiers and pseudonymisation | Are identifiers kept out of shared datasets, and is "anonymised" data really unlinkable? (Identifiers in URLs are LT4.) |
 | Non-production and derived copies | Is real personal data kept out of seeds, fixtures, staging, training sets and warehouses without controls? |
 | Location and transfers | Do storage and processing locations match what the commitments state? |
 
@@ -61,7 +61,7 @@ perspective is in brackets.
 | MN3 | Free-text fields and uploads that invite sensitive data without handling it as such | Free-text and upload fields | Treated as personal (retention, access, logging) — because users write anything into them |
 | MN4 | Sensitive categories inferred from other data (health or pregnancy from purchases, orientation or religion from behaviour, age from content; scoring and profiling) | ML features, segmentation and scoring code, ad audiences | Inferred attributes are not derived, or are handled as the sensitive category they reveal — because inference creates the data |
 
-### Purpose and consent (PC) [CONSENT]
+### Purpose and consent (PC) [CONSENT, INSTRUCT]
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
@@ -75,7 +75,7 @@ perspective is in brackets.
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
 | RD1 | *(sound constructs)* No retention for an element the commitments give a period for; jobs that exist but skip stores | Retention jobs and TTLs vs the data map's stores | A job or TTL per store at `path:line`; deleting by day or month bucket, so data may outlive the period by at most one bucket, is sound — because a period kept in one store and not another is not kept |
-| RD2 | *(sound constructs)* Account deletion that leaves data: soft delete only, related tables not cascaded, files, caches, search indexes, analytics, queues, third parties not reached | Deletion handlers and cascades vs the data map | Every store holding the element is reached or anonymised, at `path:line` — because one forgotten store keeps the subject identifiable |
+| RD2 | *(sound constructs)* Account deletion that leaves data: soft delete only, related tables not cascaded, files, caches, search indexes, vector stores and embeddings, warehouse copies, analytics, queues, third parties not reached; a bulk delete that skips per-object delete hooks (e.g. a queryset delete that never removes stored files) | Deletion handlers and cascades vs the data map | Every store holding the element is reached or anonymised, at `path:line` — because one forgotten store keeps the subject identifiable |
 | RD3 | Backups and logs outliving stated periods | Backup and log retention config | Retention configured within the stated period, or the commitment names the exception — because backups are stores too |
 
 ### Data subject rights (DR) [RIGHTS]
@@ -115,6 +115,7 @@ perspective is in brackets.
 | EX3 | Public or shareable links exposing personal data, guessable IDs on public routes | Share-link and public routes | Unguessable tokens, expiry and minimal content — because a link travels |
 | EX4 | Personal responses cacheable by shared caches or CDNs, or cached under keys without the user or tenant (missing `Cache-Control: private`/`no-store`) | Response header middleware, CDN and edge config, cache decorators | Personal responses are `private` or `no-store`, and cache keys include the subject — because a shared cache serves one user's data to the next |
 | EX5 | Sensitive content in push, SMS or e-mail bodies and subjects (lock screens, shared inboxes, provider logs) | Notification and mail builders | Generic text with the detail behind sign-in — because notifications are shown and stored outside the app |
+| EX6 | Tenant or owner scoping bypassed outside the main data layer: raw SQL, a second database, search and vector-store queries (RAG retrieval), caches keyed without the tenant, background jobs using an unscoped manager, lookups by e-mail across tenants | Raw queries, retrieval and search clients, cache keys, task code using unscoped managers | Every query outside the scoped data layer filters by tenant or owner at `path:line`, and the filter is mandatory, not optional — because one unscoped path serves another customer's data |
 
 ### Storage protection (SP) [PROTECT]
 
@@ -158,7 +159,7 @@ available information and leave unobserved linkability controls `UNKNOWN`.
 |---|---|---|---|
 | NP1 | Real personal data in seeds, fixtures, snapshots, test data or documentation (report location and kind only) | Seed and fixture files, test snapshots, docs | Synthetic data — because the repository is copied to every developer and CI |
 | NP2 | Production-to-staging refresh or debug dumps without masking | Scripts and jobs copying databases | A masking step on every personal field at `path:line` — because staging has weaker controls |
-| NP3 | Personal data loaded into warehouses, ML training sets or LLM prompts without the controls of the source | Pipelines, training scripts, prompt builders | Minimised, pseudonymised and covered by retention and deletion — because a derived copy escapes deletion |
+| NP3 | Personal data loaded into warehouses, ML training sets or LLM prompts without the controls of the source | Pipelines, training scripts, prompt builders; append-only delta loads and every model built on them (dbt and the like); a keyed pseudonym next to the same subject's plaintext in one row | Minimised, pseudonymised and covered by retention and deletion — because a derived copy escapes deletion |
 
 ### Location and transfers (LO) [SHARE]
 
@@ -181,5 +182,5 @@ list to grep for: find this stack's equivalent and confirm its configuration.
 | RD2 | A deletion path that walks the data map: cascades or explicit deletes per table, file deletion, cache and search index purge, warehouse deletion, processor deletion API calls; anonymisation where deletion is impossible | `user.is_active = False` only; deleting the user row while orders, messages and files keep the name and email; "deletion" that leaves the search index | The remaining store keeps the subject identifiable |
 | TP1 | Payloads built from an explicit field list (e.g. a dedicated DTO for the provider; `pick(user, ["id","plan"])`); prompts built from selected fields with personal values removed | Sending the whole ORM object or request body (e.g. `json=user.__dict__`, `JSON.stringify(user)`); free text sent to an AI API without minimisation | Every field added later is sent too |
 | LT1 | A filter or formatter that redacts named fields and patterns on every handler and logger the record passes through (e.g. Python `logging.Filter` on each handler, `structlog` processors, pino `redact` paths, Logback masking); request logging without bodies | Redaction at some call sites only; a filter on one handler while a framework default handler (or a root handler reached by propagation) writes unfiltered; a parent-logger filter, which does not run for records propagated from child loggers; `logger.info(f"user {user}")` with a `__repr__` that prints email; request body logging in production config | One unredacted path writes the data to every log destination |
-| LT2 | Error tracker options with request-body and PII collection off and a scrubbing hook (e.g. Sentry `send_default_pii=False` with `before_send` removing personal fields; data scrubbing rules configured in the repo) | Default options with user context set from the full user object; local variables capture on; breadcrumbs recording form inputs | Error context is shipped to a third party |
+| LT2 | Error tracker options with request-body and PII collection off and a scrubbing hook (e.g. Sentry `send_default_pii=False` with `before_send` removing personal fields; data scrubbing rules configured in the repo) | Default options with user context set from the full user object; local variables capture on; breadcrumbs recording form inputs | Error context is shipped to a third party. Read the whole hook before calling it incomplete: scrubbing of frame variables, extras and breadcrumbs often sits further down, and every process that initialises the SDK (web, workers, cron) needs its own check |
 | CT1 | Scripts injected only after consent for their category (e.g. a consent manager gating tags; dynamic `import()` after `consent.granted`); server-side tagging that strips identifiers | Tags hard-coded in the HTML head; a consent banner rendered after the analytics script already ran; `defer` mistaken for gating | Loading the script already shares data |

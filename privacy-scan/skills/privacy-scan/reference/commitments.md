@@ -52,6 +52,10 @@ Families:
   storage or processing locations the commitments name
 - **CONTAIN** — personal data stays out of logs, telemetry, URLs, errors,
   non-production copies and the view of actors who do not need it
+- **INSTRUCT** — when the app is a processor: personal data is processed only
+  on the customer's documented instructions (no own-purpose analytics,
+  training or warehousing beyond what the contract allows), only through the
+  listed sub-processors, and returned or deleted when the customer asks
 - **PROTECT** — sensitive categories are encrypted, pseudonymised or tokenised
   where the commitments or the named regulation require
 

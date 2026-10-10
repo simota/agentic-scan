@@ -121,11 +121,11 @@ class ReportRenderingTests(unittest.TestCase):
         doc = complete_doc()
         reason = "Deployment <region> & policy configuration is unavailable"
         doc["commitments"][0].update(status="not checked", reason=reason)
-        for lang, label in (("en", "reason"), ("ja", "未確認の理由")):
+        for lang, status, label in (("en", "not checked", "reason"), ("ja", "未確認", "理由")):
             outputs = self.render_outputs(doc, lang)
             for name, output in outputs.items():
                 with self.subTest(lang=lang, output=name):
-                    expected = f"not checked — {label}: {reason}"
+                    expected = f"{status} — {label}: {reason}"
                     self.assertIn(escape(expected), output)
                     self.assertNotIn("<region>", output)
 
@@ -153,12 +153,14 @@ class ReportRenderingTests(unittest.TestCase):
             doc = complete_doc()
             if inferred is not None:
                 doc["commitments"][0]["inferred"] = inferred
-            for lang in ("en", "ja"):
+            for lang, status in (("en", "violated"), ("ja", "違反")):
                 with self.subTest(inferred=inferred, lang=lang):
                     outputs = self.render_outputs(doc, lang)
-                    self.assertIn("| C-01 | no PII in errors |  | policy | violated |", outputs["report.md"])
+                    self.assertIn(f"| C-01 | no PII in errors |  | policy | {status} |",
+                                  outputs["report.md"])
                     self.assertIn("<tr><td>C-01</td><td>no PII in errors</td>"
-                                  "<td></td><td>policy</td><td>violated</td></tr>", outputs["dashboard.html"])
+                                  f"<td></td><td>policy</td><td>{status}</td></tr>",
+                                  outputs["dashboard.html"])
 
     def test_references_remain_in_both_outputs_and_languages(self):
         doc = complete_doc()

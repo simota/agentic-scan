@@ -107,10 +107,11 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # Pipfile) or a well-known all-caps file. Other all-caps words (TTL, TIMEOUT,
 # MAX_CONNECTIONS) are settings; any other extensionless root file is cited
 # with ./ (./NOTES:3).
-FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[^\W\d_][^/\\]*"
-                        r"|.*[^\W\d_].*[/\\][0-9]+"
-                        r"|.*\.[A-Za-z][A-Za-z0-9]*"
-                        r"|(?:GNU)?makefile|[A-Z][a-z]*file"
+# Checked by _file_shaped with string operations, not one regex: nested
+# unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
+LETTER = re.compile(r"[^\W\d_]")
+EXTENSION = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
                         r"|MAINTAINERS|NOTICE|COPYING|INSTALL|SECURITY|TODO")
@@ -132,13 +133,24 @@ def _is_host(name):
     return labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name == name.lower())
 
 
+def _file_shaped(path):
+    """True when path has a directory part, an extension or a root-file name."""
+    normalised = path.replace("\\", "/")
+    directory, slash, last = normalised.rpartition("/")
+    if slash:
+        return bool(LETTER.search(last)) or (last.isdigit() and last.isascii()
+                                             and bool(LETTER.search(directory)))
+    _, dot, extension = last.rpartition(".")
+    return bool(dot and EXTENSION.fullmatch(extension)) or bool(ROOT_FILE.fullmatch(last))
+
+
 def _rejection(path):
     """Why a path:line candidate is not a file position, or None when it is one."""
     if "//" in path:
         return "a URL"
     if _is_host(path):
         return "a host:port"
-    if not FILE_SHAPE.fullmatch(path) or path in NOT_FILES:
+    if not _file_shaped(path) or path in NOT_FILES:
         return "not a file name (a setting, number or word)"
     if ABBREVIATION.fullmatch(path):
         return "an abbreviation such as N/A or I/O, not a file"
@@ -161,7 +173,7 @@ def citation_rejections(text):
 def cites_location(text):
     """True when text names a file position, not a URL, a host:port, a time or a ratio.
 
-    The path must look like a file (see FILE_SHAPE), so prose such as
+    The path must look like a file (see _file_shaped), so prose such as
     "timeout:30" or "上限：100" does not count. A service name such as
     redis:6379 does not either; an extensionless file must be written with its
     directory (src/main:40) unless its name is conventional (BUILD:10).

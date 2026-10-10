@@ -123,6 +123,10 @@ class CitationTests(unittest.TestCase):
         started = time.monotonic()
         self.assertFalse(findings.cites_location("a" * 200000))
         self.assertTrue(findings.cites_location("a" * 200000 + " views.py:3"))
+        for token in ("a" * 200000 + ":1", "a/" * 100000 + ":1", "a." * 100000 + ":1",
+                      "A" * 200000 + "/1:1", "設" * 200000 + ":1"):
+            findings.cites_location(token)
+            findings.citation_rejections(token)
         self.assertLess(time.monotonic() - started, 2)
 
 

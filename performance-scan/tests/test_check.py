@@ -130,7 +130,7 @@ class CitationTests(unittest.TestCase):
                      "001_init.sql:4", ".5:1", "~1.5:1",
                      "SMTP/2:1", "SSH/2.0:22", "https/1.1:200", "tls/1.3:1", "Ssh/2.0:22", "TLSv1.3:443", "SSH-2.0:22", "tls_v1.2:1", "HTTP2:1", "SSLv3:1", "TLSv1.3-draft28:1", "HTTP/3-draft-29:1",
                      "SSH-2.0-OpenSSH_9.6:22", "TLSv1.2+:1", "SFTP/3.0:22", "SMB/3.1.1:445", "RDP/10.0:3389",
-                     "nfs/4.1:2049", "XYZ/2.0:1", "SMB2:445", "OData/4.0:1", "Stomp/1.2:1", "CoAP/1.0:1", "src/.:3", "src/..:3", "./..:3", "src\\..:3", "..:3", "src/:3"]
+                     "nfs/4.1:2049", "XYZ/2.0:1", "SMB2:445", "OData/4.0:1", "Stomp/1.2:1", "CoAP/1.0:1", "stomp/1.2:1", "coap/1.0:1", "odata/4.0:1", "rtmp/1.0:1", "src/.:3", "src/..:3", "./..:3", "src\\..:3", "..:3", "src/:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:

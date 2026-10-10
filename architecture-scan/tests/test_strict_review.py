@@ -19,6 +19,12 @@ class RenumberJoinTests(unittest.TestCase):
         rewrite = lambda text: findings._rewrite_ids(text, mapping)  # noqa: E731
         self.assertEqual(rewrite("Fix A-002/A-001 together"), "Fix A-001/A-002 together")
         self.assertEqual(rewrite("A-002-A-001 range"), "A-001-A-002 range")
+        three = {"A-001": "A-003", "A-002": "A-001", "A-003": "A-004", "A-004": "A-002"}
+        self.assertEqual(findings._rewrite_ids("A-001-A-002-A-003 and A-001/A-002/A-003/A-004",
+                                               three),
+                         "A-003-A-001-A-004 and A-003/A-001/A-004/A-002")
+        self.assertEqual(findings._rewrite_ids("A-001-A-002-A-003.md", three),
+                         "A-001-A-002-A-003.md")
         for literal in ("docs/A-001.md", "JIRA-A-001", "A-001/notes", "x-A-001", "A-001-x",
                         "A-001-A-002.md", "A-001/A-002/", "foo/A-001/A-002 bar",
                         "JIRA-A-001-A-002"):
@@ -116,9 +122,17 @@ class EvidenceHostTests(unittest.TestCase):
                              ("Dockerfile.dev:3", True), ("Containerfile.dev:1", True),
                              (".env.local:3", True), ("Makefile.local:2", True),
                              ("docker-compose.local:2", True), ("Service.svc:4", True),
-                             ("notes.org:3", True), ("api.example.io:443", False)):
+                             ("notes.org:3", True), ("api.example.io:443", False),
+                             ("README.com:443", False), ("Dockerfile.com:443", False),
+                             ("notafile.internal:443", False), (".env.com:3", False),
+                             ("src/README.com:3", True)):
             with self.subTest(evidence=evidence):
                 self.assertEqual(findings.cites_line(evidence), ok)
+
+
+class HostInLocationTests(unittest.TestCase):
+    def test_a_host_like_name_from_the_finding_location_still_counts(self):
+        self.assertTrue(findings.cites_line("README.com:4", ["README.com:4"]))
 
 
 class ProtocolRelativeTests(unittest.TestCase):

@@ -260,21 +260,26 @@ def _location_paths(locations):
 def cites_line(evidence, locations=()):
     """True when evidence names a file and a line, e.g. `job.py:58` or `BUILD:12`.
 
-    A token is a path when it has a `.`, `/` or `\\`, names a build file
-    (`Makefile`, `CODEOWNERS`), or is a path or file name from the finding's own
-    locations (`server:9` beside `bin/server:9`). `ABC:123` or `ratio:3` is not.
+    A path or file name from the finding's own locations always counts
+    (`server:9` beside `bin/server:9`). Otherwise a bare name ending in a host
+    suffix is a host and port (`db.internal:5432`, `README.com:443`) and never
+    counts; then a path with `/` or `\\`, a dotfile, a build or project file
+    (`Makefile`, `CODEOWNERS`, `Dockerfile.dev`) or a name with a file extension
+    does. `ABC:123`, `ratio:3` and `v1.2:3` do not.
     """
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
-        name = re.split(r"[/\\]", path)[-1]
-        stem = name.split(".")[0]
-        if (path in known or re.search(r"[/\\]", path) and not path.startswith("//")
-                or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
-                or stem in EXTENSIONLESS or stem.lower().endswith("file")):
+        if path in known:
             return True
-        extension = FILE_EXTENSION.search(path)
-        if extension and extension[1].lower() not in HOST_SUFFIXES:
+        has_dir = re.search(r"[/\\]", path) and not path.startswith("//")
+        name = re.split(r"[/\\]", path)[-1]
+        extension = FILE_EXTENSION.search(name)
+        if not has_dir and extension and extension[1].lower() in HOST_SUFFIXES:
+            continue  # a host and port, whatever its first label looks like
+        stem = name.split(".")[0]
+        if (has_dir or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
+                or stem in EXTENSIONLESS or stem.lower().endswith("file") or extension):
             return True
     return False
 
@@ -499,17 +504,13 @@ def _atomic_write_all(files):
             temporary.unlink(missing_ok=True)
 
 
-# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`,
-# nor a path segment (`docs/A-001.md`). ASCII word characters only, so an ID
-# next to Japanese text (`A-001を`) is still a mention.
-ID_MENTION = re.compile(
-    # Joined to another ID by `/` or `-` (`A-002/A-001`, `A-002-A-001`) is still
-    # a mention; joined to anything else that way is part of a path or token.
-    # The joined ID must itself stand free, so `A-001-A-002.md`, `A-001/A-002/`
-    # and `JIRA-A-001-A-002` stay whole.
-    r"(?:(?<=(?<![\w/\\-])A-[0-9]{3}[/-])|(?<![\w/\\-]))A-[0-9]{3}"
-    r"(?:(?=[/-]A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9]))|(?![\w/\\-]|\.[A-Za-z0-9]))",
-    re.ASCII)
+# A run of IDs standing free in prose: one ID, or several joined by `/` or `-`
+# (`A-002/A-001`, `A-001-A-002-A-003`). Every ID in a run is a mention. A run
+# touching a word, path or ticket (`docs/A-001.md`, `JIRA-A-001`,
+# `A-001-A-002.md`) is not prose and stays whole. ASCII word characters only,
+# so a run beside Japanese text (`A-001を`) is still a mention.
+ID_RUN = re.compile(
+    r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
 def _first_location(f):
@@ -526,7 +527,8 @@ def _rewrite_ids(value, mapping, key=None):
     if key in LITERAL_KEYS:
         return value
     if isinstance(value, str):
-        return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
+        return ID_RUN.sub(lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]),
+                                             run[0]), value)
     if isinstance(value, list):
         return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):

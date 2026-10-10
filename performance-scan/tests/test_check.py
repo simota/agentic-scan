@@ -95,6 +95,7 @@ class CitationTests(unittest.TestCase):
                  "src/設定:12", "Program.CS:20", "index.PY:4", "Taskfile:1", "Pipfile:2",
                  "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10",
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
+                 "foo.1:3", "Dockerfile.22.04:2", "python3.11:3",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -109,7 +110,7 @@ class CitationTests(unittest.TestCase):
                      # Ambiguous without a directory: written as a host, read as one.
                      "settings.local:3", "app.test:5",
                      "TTL:300", "MAX_CONNECTIONS:100 is below the worker count", "TTL：300 なので問題なし",
-                     "Read/write ratio 1.5:1", "v1.2.3:4", "python3.11:3", "N/A:1", "I/O:5 per request",
+                     "Read/write ratio 1.5:1", "v1.2.3:4", "N/A:1", "I/O:5 per request",
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "golang.org/x/sync:1",
                      "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",

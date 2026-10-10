@@ -99,18 +99,15 @@ AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "exampl
 # abbreviation; ./a, /a, a/b and src/a are files.
 ABBREVIATION = re.compile(r"[A-Z][/\\][A-Z]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
-# A file name has a directory part whose last segment holds a letter, in any
-# script (src/main, src/設定, src/a, ./CHANGELOG), or a numeric name under a
-# lettered directory (fixtures/123, testdata/1; not HTTP/1.1 or 1/2, and _rejection
-# refuses N/A and I/O), an extension with a letter (not 1.5 or v1.2.3), or a
-# conventional extensionless root name: a capitalised *file (Makefile, Taskfile,
-# Pipfile) or a well-known all-caps file. Other all-caps words (TTL, TIMEOUT,
-# MAX_CONNECTIONS) are settings; any other extensionless root file is cited
-# with ./ (./NOTES:3).
-# Checked by _file_shaped with string operations, not one regex: nested
+# A citation names a file by shape, deliberately loosely: a directory part
+# (src/a, fixtures/123, ./NOTES), a dot with something after it (views.py,
+# foo.1, Dockerfile.22.04, .env) or a conventional extensionless root name.
+# Refused: numbers, versions, ratios and times (12:30, 1.5:1, v1.2.3:4, 1/2:3),
+# protocol versions (HTTP/1.1), URLs, hosts and bare words (timeout:30, TTL:300).
+# Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
-LETTER = re.compile(r"[^\W\d_]")
-EXTENSION = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
+DOTTED_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)+")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
@@ -134,14 +131,14 @@ def _is_host(name):
 
 
 def _file_shaped(path):
-    """True when path has a directory part, an extension or a root-file name."""
-    normalised = path.replace("\\", "/")
-    directory, slash, last = normalised.rpartition("/")
+    """True when path has a directory part, a dotted suffix or a root-file name."""
+    if NUMERIC.fullmatch(path):
+        return False
+    directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
-        return bool(LETTER.search(last)) or (last.isdigit() and last.isascii()
-                                             and bool(LETTER.search(directory)))
-    _, dot, extension = last.rpartition(".")
-    return bool(dot and EXTENSION.fullmatch(extension)) or bool(ROOT_FILE.fullmatch(last))
+        return bool(last) and not DOTTED_NUMBER.fullmatch(last)
+    _, dot, suffix = last.rpartition(".")
+    return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))
 
 
 def _rejection(path):

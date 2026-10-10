@@ -288,7 +288,7 @@ def markdown_finding(f, t):
             # Code spans keep paths copyable (no snake\_case escapes) and inert.
             locations = f[key] if isinstance(f[key], list) else [f[key]]
             lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
-        elif key in f:
+        elif str(f.get(key, "")).strip():  # optional contrast/budget may be blank
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
     if v.get("evidence"):
@@ -323,7 +323,7 @@ def render_markdown(doc, lang):
     lines += ["", f"{verdicts} · **{incomplete_high}**"]
     scope = [(t["project"], markdown_cell(meta.get("project", ""))),
              (t["scope_row"], markdown_cell(meta.get("scope", ""))),
-             (t["revision"], markdown_cell(meta.get("commit") or "UNKNOWN"))]
+             (t["revision"], markdown_cell(meta.get("commit", "").strip() or "UNKNOWN"))]
     if meta.get("method", "").strip():
         scope.append((t["method_row"], markdown_cell(meta["method"])))
     scope.append((t["date"], f"{markdown_cell(meta.get('date', ''))} / "
@@ -420,7 +420,7 @@ def html_finding(f, t):
     exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                  if excluded else "")
     step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
-    rows = [(t[k], f[k]) for k in FIELDS if k in f]
+    rows = [(t[k], f[k]) for k in FIELDS if str(f.get(k, "")).strip()]
     rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
     if v.get("evidence"):
         rows.append((t["evidence"], v["evidence"]))
@@ -454,7 +454,7 @@ def render_html(doc, lang):
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
-           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit') or 'UNKNOWN')} · "
+           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
            + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
            + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
     for s in SEVERITIES:

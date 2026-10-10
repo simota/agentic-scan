@@ -142,5 +142,16 @@ class StrictJsonTests(unittest.TestCase):
             self.assertEqual(code, 0, errors)
 
 
+
+class HugeIntegerTests(unittest.TestCase):
+    def test_integers_beyond_the_float_range_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "x.json"
+            source.write_text('{"meta": {"n": 1' + "0" * 400 + '}}', encoding="utf-8")
+            with self.assertRaisesRegex(findings.SchemaError, "finite floating-point range"):
+                findings.read_json(source)
+            source.write_text('{"meta": {"n": 12345678901234567890}}', encoding="utf-8")
+            self.assertEqual(findings.read_json(source)["meta"]["n"], 12345678901234567890)
+
 if __name__ == "__main__":
     unittest.main()

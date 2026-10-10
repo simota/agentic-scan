@@ -219,6 +219,16 @@ def _reject_constant(token):
     raise ValueError(f"non-finite JSON numeric constant: {token}")
 
 
+def _finite_int(token):
+    value = int(token)
+    try:
+        float(value)
+    except OverflowError:
+        raise ValueError(f"JSON number exceeds the finite floating-point range: "
+                         f"{token[:20]}...") from None
+    return value
+
+
 def _finite_float(token):
     value = float(token)
     if not math.isfinite(value):
@@ -234,7 +244,8 @@ def read_json(path):
             raise ValueError("input must be a regular file")
         return json.loads(source.read_text(encoding="utf-8"),
                           object_pairs_hook=_unique_object,
-                          parse_constant=_reject_constant, parse_float=_finite_float)
+                          parse_constant=_reject_constant, parse_float=_finite_float,
+                          parse_int=_finite_int)
     except (OSError, ValueError, RecursionError) as exc:
         raise SchemaError(f"{path}: {exc}") from exc
 

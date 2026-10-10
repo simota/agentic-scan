@@ -181,6 +181,16 @@ class InstallerTests(unittest.TestCase):
                 self.assertRegex(errors, "not a usable directory|[Ll]oop")
                 self.assertFalse((self.hosts["claude"] / "skills").exists())
 
+    def test_messages_name_what_was_searched_and_refuse_an_empty_agent(self):
+        missing = self.root / "no such dir"
+        result, _, errors = self.run_install("link", "--skills-dir", str(missing))
+        self.assertEqual(result, 1)
+        self.assertIn(f"no skills directory found for: {missing}", errors)
+        for action in ("link", "status", "unlink"):
+            result, _, errors = self.run_install(action, "--agents", "")
+            self.assertEqual(result, 1, action)
+            self.assertIn("AGENT is empty", errors)
+
     def test_missing_source_and_unknown_agent_do_not_create_links(self):
         directory = self.root / "custom skills"
         directory.mkdir()

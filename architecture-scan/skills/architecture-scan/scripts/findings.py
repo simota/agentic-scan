@@ -638,7 +638,8 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
                        r"|(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:urn):)")
 
 
-# A bare e-mail address: an RFC 5322 dot-atom local part, `@`, a dotted domain.
+# A bare e-mail address: an RFC 5322 dot-atom local part, `@`, a domain (one
+# label, `@mailhost`, or several).
 # It starts only where a run of local-part characters starts, so a long run
 # with no address in it is read once, not once per character. The address is
 # ASCII on purpose: Japanese prose has no blanks between words, so a non-ASCII
@@ -646,7 +647,7 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
 # (`A-001の担当はowner@example.com`, `owner@example.comに連絡してA-001を直す`)
 # and hide the mention in it.
 EMAIL = re.compile(r"((?<![A-Za-z0-9!#$%&'*+/=?^_`{|}~.-])[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+"
-                   r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+                   r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)")
 
 
 def _url_spans(text):
@@ -1009,6 +1010,18 @@ def _renderer():
     return render
 
 
+def _count_lines(file):
+    """Lines in file, ending at LF, CRLF or a lone CR, as editors count them."""
+    count, last = 0, b""
+    with file.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            count += chunk.count(b"\n") + chunk.count(b"\r") - chunk.count(b"\r\n")
+            if last == b"\r" and chunk[:1] == b"\n":
+                count -= 1  # a CRLF split across two chunks
+            last = chunk[-1:]
+    return count + (last not in (b"", b"\n", b"\r"))
+
+
 def location_problems(doc, repo):
     """Name each finding location whose file or line is not in the checkout."""
     repo = Path(repo)
@@ -1028,11 +1041,7 @@ def location_problems(doc, repo):
                         raise FileNotFoundError(path)
                     if not resolved.is_file():
                         raise FileNotFoundError(path)
-                    count, last = 0, b""
-                    with file.open("rb") as stream:
-                        for chunk in iter(lambda: stream.read(1 << 20), b""):
-                            count, last = count + chunk.count(b"\n"), chunk[-1:]
-                    lines[path] = count + (last not in (b"", b"\n"))
+                    lines[path] = _count_lines(resolved)
                 # ValueError: a NUL in the path; RuntimeError: a symlink loop
                 # before Python 3.13.
                 except (OSError, ValueError, RuntimeError):

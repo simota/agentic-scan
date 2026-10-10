@@ -220,6 +220,19 @@ class RepoCheckTests(Workspace):
                                 "--allow", "checkout", "--repo", self.tmp / "nowhere")
         self.assertIn("not a directory", err)
 
+    def test_lines_end_at_lf_crlf_or_a_lone_cr(self):
+        for data, lines in ((b"a\rb\rc", 3), (b"a\r\nb\r\n", 2), (b"a\nb", 2), (b"", 0),
+                            (b"a\r", 1), (b"\r\n" * 3, 3)):
+            with self.subTest(data=data):
+                path = self.tmp / "f.py"
+                path.write_bytes(data)
+                self.assertEqual(findings._count_lines(path), lines)
+
+    def test_a_crlf_split_across_chunks_is_one_line_end(self):
+        path = self.tmp / "big.py"
+        path.write_bytes(b"x" * ((1 << 20) - 1) + b"\r\n" + b"y\r\n")
+        self.assertEqual(findings._count_lines(path), 2)
+
     def test_a_missing_file_is_named(self):
         doc = complete_doc()
         problems = findings.location_problems(doc, self.tmp)
@@ -304,6 +317,7 @@ class ReviewRegressionTests(Workspace):
                                 "owner!A-001!tag@example.com, A-001%y@a.example and A-003"),
                                ("Fix A-001+ follow-up, then @A-001", "Fix A-003+ follow-up, then @A-003"),
                                ("A-001の担当はowner@example.com", "A-003の担当はowner@example.com"),
+                               ("owner+A-001@mailhost and A-001", "owner+A-001@mailhost and A-003"),
                                ("owner@example.comに連絡してA-001を直す",
                                 "owner@example.comに連絡してA-003を直す")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)

@@ -548,5 +548,15 @@ class CodexTwelfthReviewTest(unittest.TestCase):
         self.assertIn("K8S-002", [h["rule"] for h in together.hits])
 
 
+class CodexThirteenthReviewTest(unittest.TestCase):
+    def test_yaml_parameter_default_secret(self):
+        template = ("AWSTemplateFormatVersion: '2010-09-09'\nParameters:\n  DbUser:\n    Type: String\n"
+                    f"  DbPassword:\n    Type: String\n    NoEcho: true\n    Default: {SECRET}\n"
+                    "Resources:\n  Topic:\n    Type: AWS::SNS::Topic\n")
+        result = scan({"template.yaml": template})
+        self.assertEqual([(h["detail"], h["line"]) for h in result.hits],
+                         [("literal default for parameter DbPassword", 5)])
+
+
 if __name__ == "__main__":
     unittest.main()

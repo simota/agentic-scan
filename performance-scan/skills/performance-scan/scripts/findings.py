@@ -70,16 +70,32 @@ class SchemaError(ValueError):
     pass
 
 
+# Final labels that mark a dotted name as a host rather than a file name.
+HOST_SUFFIXES = frozenset(("com", "net", "org", "io", "dev", "app", "cloud", "co", "jp",
+                           "local", "localdomain", "internal", "lan", "example", "test",
+                           "invalid", "arpa"))
+IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
+
+
+def _is_host(name):
+    """True for localhost, an IPv4 address or a dotted name ending in a host suffix."""
+    if "/" in name or "\\" in name:
+        return False
+    return (name.lower() == "localhost" or bool(IPV4.fullmatch(name))
+            or ("." in name and name.rsplit(".", 1)[1].lower() in HOST_SUFFIXES))
+
+
 def cites_location(text):
-    """True when text names a file position, not a URL port, a time or a ratio."""
+    """True when text names a file position, not a URL, a host:port, a time or a ratio.
+
+    Any other path is accepted, including extensionless names such as BUILD:10.
+    A bare service name (redis:6379) cannot be told apart from such a file.
+    """
     for match in CITATION.finditer(text):
         path = match.group(1)
-        if "//" in path or path.isdigit():
+        if "//" in path or path.isdigit() or _is_host(path):
             continue
-        # A file has an extension, a directory part, or a conventional name (Makefile).
-        if (re.search(r"\.[A-Za-z0-9]+$", path) or "/" in path or "\\" in path
-                or re.fullmatch(r"[A-Z][A-Za-z]*file", path)):
-            return True
+        return True
     return False
 
 

@@ -85,10 +85,12 @@ class CrossReferenceTests(unittest.TestCase):
 class CitationTests(unittest.TestCase):
     def test_evidence_must_name_a_file_position(self):
         cites = ["app/orders/views.py:18 lacks prefetch", "app/orders/views.py#L18",
-                 "views.py：18", "C:\\app\\x.py:12", "Makefile:12 sets -O0", "src/main:40"]
+                 "views.py：18", "C:\\app\\x.py:12", "Makefile:12 sets -O0", "src/main:40",
+                 "BUILD:10 declares the target", "WORKSPACE:7", "config/app.local/settings.py:3"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
                      "measured locally at 12:30", "ratio 1:10", "redis at localhost:6379",
-                     "views.py line 18"]
+                     "views.py line 18", "pool size read from db.prod.example.com:5432",
+                     "10.0.0.5:5432 is the replica", "cache.internal:11211"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:

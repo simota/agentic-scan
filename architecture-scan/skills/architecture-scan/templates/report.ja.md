@@ -24,6 +24,7 @@
 | Info | {{n_info}} | {{n_info_valid}} |
 
 除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。可能性が高い（Likely）: {{n_likely}} 件。未検証（Unverified）: {{n_unverified}} 件。可能性が低い（Unlikely）: {{n_unlikely}} 件。
+診断後の対応: 修正済み（Fixed）{{n_fixed}} 件、受容（Accepted）{{n_accepted}} 件（上の件数は診断時点のリビジョンのもので、これらを含む）。
 
 ## 2. 対象と方法
 
@@ -36,6 +37,7 @@
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
 コードの変更やアプリケーションの実行はしていない。
+<!-- GUARD を実施した場合は上の文を差し替え、追加した適合性チェック、その置き場所、修正を適用したかを書く。 -->
 
 ## 3. 優先して対応すべき検出事項
 
@@ -45,7 +47,7 @@
 ### {{id}}: {{title}}
 
 - **深刻度 / 確度 / 検証判定:** {{severity}} / {{confidence}} / {{validation.verdict}}
-- **場所:** `{{location}}`
+- **場所:** {{location}} <!-- location ごとにコードスパンにし、読点で区切る -->
 - **シナリオ / 影響範囲:** {{scenario}} / {{blast_radius}}
 - **何が起きるか:** {{impact}}
 - **修正方針:** {{fix}}

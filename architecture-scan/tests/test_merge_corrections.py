@@ -92,9 +92,18 @@ class MergeCorrectionTests(unittest.TestCase):
         same = finding("A-001", "Medium")
         self.assertEqual(self.merge({"findings": [same]})[0], 0)
         self.assertEqual(self.merge({"findings": [{"id": "A-001", "title": "Sharper"}]})[0], 0)
-        self.assertEqual(self.merge({"findings": [{"id": "A-001", "title": "x",
-                                                   "location": "y.py:1"}]})[0], 0)
+        self.assertEqual(self.merge({"findings": [{"id": "A-001", "title": "x"}]})[0], 0)
+        self.assertEqual(self.merge({"findings": [{"id": "A-001", "location": "y.py:1"}]})[0], 0)
         self.assertEqual(self.record()["findings"][0]["title"], "x")
+
+    def test_a_partial_record_changing_title_and_location_is_another_finding(self):
+        before = self.target.read_bytes()
+        code, err = self.merge({"findings": [{"id": "A-001", "title": "Other unit's finding",
+                                              "location": "web/cache.py:9", "trace": "t",
+                                              "impact": "i"}]})
+        self.assertEqual(code, 1)
+        self.assertIn("already holds", err)
+        self.assertEqual(self.target.read_bytes(), before)
 
 
 if __name__ == "__main__":

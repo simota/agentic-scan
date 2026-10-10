@@ -84,6 +84,7 @@ LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 RULE_REQUIRED = ("id", "statement", "source", "status")
+ALLOWED_RULE_STATUS = {"Valid": ("violated",), "Likely": ("violated", "partly read")}
 # Every key the schema knows in a record that is rendered. A typo such as
 # `contrats` is refused instead of being kept and never shown. `meta` stays
 # open for run context the outputs do not show.
@@ -370,15 +371,21 @@ def _same_location(a, b):
 
 
 def _collides(existing, record):
-    """A complete record unlike the finding that holds its ID: another unit's finding.
+    """A record unlike the finding that holds its ID: another unit's finding.
 
-    Two findings can share a location, so either a new title or a new location
-    marks a different finding; a correction sends only the fields that change.
+    Two findings can share a location, so in a complete record either a new
+    title or a new location marks a different finding. A partial record that
+    changes both title and location is another finding too, even with a field
+    missing; a correction changes one of them at a time.
     """
-    return (all(key in record for key in FINDING_REQUIRED)
-            and (" ".join(str(record["title"]).split())
-                 != " ".join(str(existing.get("title", "")).split())
-                 or not _same_location(record["location"], existing.get("location"))))
+    if "title" not in record or "location" not in record:
+        return False
+    new_title = (" ".join(str(record["title"]).split())
+                 != " ".join(str(existing.get("title", "")).split()))
+    new_location = not _same_location(record["location"], existing.get("location"))
+    if all(key in record for key in FINDING_REQUIRED):
+        return new_title or new_location
+    return new_title and new_location
 
 
 def _merge_records(current, incoming, where, required):
@@ -561,7 +568,7 @@ def _serialize(doc):
 
 
 @contextmanager
-def _exclusive(target):
+def _exclusive(target, create=True):
     """Hold an exclusive lock on target's directory from read to replace.
 
     Two merges started together would otherwise both read the same record and
@@ -571,8 +578,10 @@ def _exclusive(target):
     """
     directory = target.resolve().parent
     # The directory is never removed again: a merge may already hold it open,
-    # waiting for the lock, and would then lock a deleted directory.
-    directory.mkdir(parents=True, exist_ok=True)
+    # waiting for the lock, and would then lock a deleted directory. Only merge
+    # creates it; renumber on a mistyped path leaves nothing behind.
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
     yield from _locked(directory)
 
 
@@ -597,7 +606,9 @@ def _locked(directory):
 def cmd_renumber(args):
     target = Path(args.findings)
     try:
-        with _exclusive(target):
+        if not target.is_file():
+            raise SchemaError(f"{target}: no such record")
+        with _exclusive(target, create=False):
             changed = _renumber_file(target)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
@@ -677,6 +688,10 @@ def template_counts(doc):
     for verdict in ("Likely", "Unverified", "Unlikely"):
         counts[f"n_{verdict.lower()}"] = sum(f["validation"]["verdict"] == verdict
                                              for f in findings)
+    # The record describes the assessed revision, so a fixed finding still
+    # counts above; these say how many of them have since been closed.
+    for status in ("Fixed", "Accepted"):
+        counts[f"n_{status.lower()}"] = sum(f.get("status") == status for f in active)
     return counts
 
 
@@ -739,9 +754,11 @@ def contract_problems(out, allow=()):
             status = rule_status.get(f["rule"])
             if status is None:
                 problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
-            elif verdict in ("Valid", "Likely") and status not in ("violated", "partly read"):
+            elif verdict in ("Valid", "Likely") and status not in ALLOWED_RULE_STATUS[verdict]:
+                # A Valid finding is a traced break, so its rule is violated; a
+                # Likely one may still sit on a rule whose edges were partly read.
                 problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
-                                f"{status}, not violated or partly read")
+                                f"{status}, not {' or '.join(ALLOWED_RULE_STATUS[verdict])}")
         if verdict in DEFINITIVE and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
         if verdict in EXCLUDED:

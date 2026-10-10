@@ -121,7 +121,7 @@ def review_method(doc, lang):
 
 # Inside `<code>` GFM still parses inline syntax, so these are encoded; the rest
 # of a path or command (`/`, `.`, `:`, `-`) stays readable in the raw file.
-CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<>&|!$\t"}
+CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<&|!$\t"}
 
 
 def markdown_code(value):
@@ -136,7 +136,7 @@ def markdown_code(value):
 
 # Backslashes are literal (paths such as `docs\\adr`), so the punctuation after
 # one loses its escape and is encoded instead; `&<>` are already entities.
-AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
+AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=>?@^_{-~]")
 # What GFM turns into a link without brackets: a scheme's colon, `www.`, and
 # the `@` of an e-mail address. Encoding the last character disarms each.
 # No `\b`: GFM also links a scheme or `www.` right after a word character
@@ -176,7 +176,9 @@ def markdown_inline(value):
 
     def text(part):
         part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
-                      escape(part, quote=False))
+                      # `>` stays readable (`a -> b`): without `<` it opens
+                      # no tag, and block_safe stops it quoting a list item.
+                      escape(part, quote=False).replace("&gt;", ">"))
         part = AFTER_BACKSLASH.sub(lambda m: f"&#{ord(m[0])};", part)
         return disarm_autolinks(part.translate(LITERAL)).replace("\n", "<br>")
 
@@ -201,7 +203,7 @@ def markdown_inline(value):
 # `- ` bullet, even `--` makes a rule. `*em*` or `~~struck~~` at the start is inline, not
 # a block, so it is left alone.
 BLOCK_START = re.compile(
-    r"([ \t]*)(#|=|\[|-|[*+_](?=[ \t]|$)|([*_])(?=(?:[ \t]*\3){2,}[ \t]*$)|~~~|```"
+    r"([ \t]*)(#|=|>|\[|-|[*+_](?=[ \t]|$)|([*_])(?=(?:[ \t]*\3){2,}[ \t]*$)|~~~|```"
     r"|[0-9]{1,9}[.)])?")
 
 

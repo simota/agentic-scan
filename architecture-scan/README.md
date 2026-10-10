@@ -83,8 +83,8 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 
 `findings.py check` enforces the run contract: exactly these three files,
 gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
-`checked_ok` and `limitations`, cited rules that exist (a `Valid` or `Likely`
-finding cites one recorded as violated or partly read), traced and evidenced
+`checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
+recorded as violated, a `Likely` one violated or partly read), traced and evidenced
 High and Medium findings, and a dashboard and
 report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape
@@ -126,7 +126,7 @@ tests/                         offline tests for the scripts and the documents
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, sample renders in ja/en and passes the run contract
-make demo    # render the sample into $TMPDIR/architecture-scan-demo (LANG_OUT=en for English)
+make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
 ```
 
 Requirements: Python 3.9+. No third-party packages.

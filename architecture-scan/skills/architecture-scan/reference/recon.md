@@ -34,7 +34,11 @@ read-only tool — name it first and record it). For each edge: from, to, count
 of import sites, an example `path:line`. In TypeScript and JavaScript count
 `import type`, re-exports (`export … from`), dynamic `import()` and
 `require()`, and resolve `tsconfig` `paths` aliases and each package's
-`exports` map before deciding which module an import reaches. Then flag:
+`exports` map before deciding which module an import reaches. In Go,
+`go list -f '{{.ImportPath}} -> {{join .Imports " "}}' ./...` gives the graph
+(add `-test` and read `XTestImports` for `package x_test`; check `//go:build`
+variants); run it with `GOFLAGS=-mod=readonly GOPROXY=off` so it fetches
+nothing. Then flag:
 
 - **Cycles** between modules or layers
 - **Upward edges** — domain or application code importing presentation,
@@ -45,7 +49,10 @@ of import sites, an example `path:line`. In TypeScript and JavaScript count
 
 Also record the edges no import statement shows: DI container wiring and
 component scan, string or dynamic imports (`importlib`, `require(name)`),
-decorator or annotation route registration, plugin entry points. An edge that
+decorator or annotation route registration, plugin entry points, and
+structural interfaces: in Go a type satisfies an interface without naming it,
+so a callee that declares an interface matching its caller's methods, wired
+back in `main` or `cmd/`, is an edge from callee to caller. An edge that
 cannot be resolved statically gets `UNKNOWN` in its *Control* cell, with what
 would decide it.
 
@@ -69,7 +76,9 @@ autoflush), bulk updates that bypass hooks (`QuerySet.update()`,
 triggers and procedures, migrations and backfills, admin panels and management
 commands. In Node, the forms are an ORM's write calls (Prisma `update`,
 `upsert`, `$executeRaw`; TypeORM `save`, `QueryBuilder.update()`; Knex
-`update`, `insert`) and raw driver calls (`pool.query`, `client.query`).
+`update`, `insert`) and raw driver calls (`pool.query`, `client.query`). In
+Go: `database/sql` `Exec`/`ExecContext`, pgx `Exec`/`CopyFrom`, sqlx, gorm
+`Save`/`Updates`/`Create`, and the files sqlc generates.
 Search for each form and record the hit count.
 
 A store with writers in more than one module, or with rules enforced in some

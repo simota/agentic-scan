@@ -95,7 +95,7 @@ Worked examples:
 | REVIEW | One pass (or one reviewer) per review unit. For each owned rule, trace every edge or path that must keep it with one trace row per edge: from `path:line` → to `path:line`, which rule, verdict. Every control cell names the enforcing mechanism (an import-lint contract, a module's public interface, a repository that is the only writer, a transaction wrapper) at `path:line`, or `NONE` / `N/A` / `UNKNOWN` with a reason — never "the framework separates it". Then the writer-backward pass (every write to a core table maps to a row), then sweep every applicable perspective's hunt steps | `reference/rules.md`, `reference/perspectives.md`, `reference/findings-schema.md` |
 | VERIFY | Record evidence-linked reach, consequence, mitigations and change cost; try to falsify each claim (a facade that routes all calls, an outbox, an idempotency key, a test that pins the rule); keep runtime and organisational unknowns explicit | `reference/validation.md` |
 | REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added or regraded, render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md`, `reference/rules.md` §5, `reference/perspectives.md` |
-| GUARD *(on request)* | With explicit permission, add a fitness function to the repo's own suite that encodes a rule — an import or layer contract, a cycle check, a single-writer check, a contract test — and show it fails on the current violation and passes after the fix | `reference/validation.md` |
+| GUARD *(on request)* | With explicit permission, add a fitness function to the repo's own suite that encodes a rule — an import or layer contract, a cycle check, a single-writer check, a contract test — and show it fails on the current violation. Show it passing after the fix on a scratch copy with the smallest fix applied; apply the fix in the repository itself only with separate permission for that. Record it per `reference/validation.md` (*Fitness functions*), then merge, render and check again | `reference/validation.md` |
 
 ## Outputs
 
@@ -147,7 +147,8 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
   semantics of the deployed broker, team ownership, the roadmap, data actually
   present
 - Never: edit source, configs or dependencies during the review (GUARD, after
-  the review and with explicit permission, adds only the fitness function)
+  the review and with explicit permission, adds the fitness function; a fix
+  needs its own permission, and is otherwise shown on a scratch copy)
 - Never: report preference as a defect ("should use hexagonal architecture",
   "too many files") without a demonstrated defect, change cost or inconsistency
 - Never: recommend a rewrite as a fix direction. Name the smallest change that

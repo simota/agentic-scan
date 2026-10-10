@@ -35,7 +35,8 @@ literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
 an e-mail address stays plain text, as in the dashboard; an `@` that starts
-a word, such as `@scope/pkg`, is left as written) or `$` math.
+a word, such as `@scope/pkg`, is left as written) or `$` math. A `>` stays
+as written (`a -> b`) except where it would start a quote.
 Backslashes are shown as written (`docs\adr`), so they never escape a
 delimiter; the one exception in `report.md` is a backslash directly before a
 backtick, the author's escape: `` \` `` shows a literal backtick and no
@@ -61,8 +62,9 @@ required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
 `findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
-- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` or `Likely`
-  finding not excluded cites a rule recorded as `violated` or `partly read`
+- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` finding
+  not excluded cites a rule recorded as `violated`, a `Likely` one a rule
+  recorded as `violated` or `partly read`
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium

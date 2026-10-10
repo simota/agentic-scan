@@ -4,7 +4,7 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make demo      render examples/findings.sample.json into $(DEMO_OUT)
+#   make demo      render examples/findings.sample.json into DEMO_OUT (default: a new mktemp dir)
 #   make test      run the offline regression tests
 #   make help      list the targets
 #
@@ -38,8 +38,8 @@ PROJECT ?=
 
 # Empty or unset overrides use the default configuration directory.
 CLAUDE_DIR := $(or $(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
-CODEX_HOME ?= $(HOME)/.codex
-AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
+CODEX_HOME := $(or $(CODEX_HOME),$(HOME)/.codex)
+AGY_HOME   := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
 
 # Each host contributes two literal shell arguments: its guard and skills dir.
 tgt_claude := $(call shell_quote,$(CLAUDE_DIR)) $(call shell_quote,$(CLAUDE_DIR)/skills)
@@ -63,7 +63,9 @@ endif
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
-DEMO_OUT ?= $(or $(TMPDIR),/tmp)/$(NAME)-demo
+# Empty: a new private directory per run (a fixed name in a shared /tmp could
+# hold another user's symlink, and render writes through symlinks).
+DEMO_OUT ?=
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
@@ -174,5 +176,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
-	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
-	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))
+	@out=$(call shell_quote,$(DEMO_OUT)); \
+	if [ -z "$$out" ]; then out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-demo.XXXXXX") || exit 1; fi; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
+	  --out "$$out" --lang $(call shell_quote,$(LANG_OUT))

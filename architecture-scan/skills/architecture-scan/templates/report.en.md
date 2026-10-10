@@ -24,6 +24,7 @@ Before sending:
 | Info | {{n_info}} | {{n_info_valid}} |
 
 Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}. Unlikely: {{n_unlikely}}.
+Since the assessment: Fixed {{n_fixed}}, Accepted {{n_accepted}} (included in the counts above, which describe the assessed revision).
 
 ## 2. Scope and method
 
@@ -36,6 +37,7 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. 
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 No code was changed and the application was not run.
+<!-- If GUARD ran, replace the sentence above: name the fitness function added, where it lives, and whether a fix was applied. -->
 
 ## 3. Findings to act on first
 
@@ -45,7 +47,7 @@ from templates/issue.en.md. Low and Info stay in the attached report.md. -->
 ### {{id}}: {{title}}
 
 - **Severity / confidence / verdict:** {{severity}} / {{confidence}} / {{validation.verdict}}
-- **Location:** `{{location}}`
+- **Location:** {{location}} <!-- one code span per location, comma-separated -->
 - **Scenario / blast radius:** {{scenario}} / {{blast_radius}}
 - **What happens:** {{impact}}
 - **Fix direction:** {{fix}}

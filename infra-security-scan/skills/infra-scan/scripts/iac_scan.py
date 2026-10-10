@@ -2055,7 +2055,7 @@ def terragrunt_remote_state(scan, d):
             return False
         text = unit.read_text(encoding="utf-8-sig")
         # Its own block, or remote_state = local.common.remote_state from read_terragrunt_config.
-        if TERRAGRUNT_BACKEND.search(text) or re.search(r"^\s*remote_state\s*=", text, re.M):
+        if TERRAGRUNT_BACKEND.search(text) or "remote_state" in top_level_attributes(text):
             return True
         # Only include blocks inherit configuration; read_terragrunt_config in locals does not.
         includes = "\n".join(m.group() for m in re.finditer(r'^\s*include\b[^{\n]*\{[^}]*\}', text, re.M))
@@ -2071,6 +2071,18 @@ def terragrunt_remote_state(scan, d):
     except (OSError, UnicodeError):
         return False
     return False
+
+
+def top_level_attributes(text):
+    """Names assigned outside every block (brace depth 0), ignoring strings and comments."""
+    names, depth = set(), 0
+    for line in text.splitlines():
+        code = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
+        code = re.sub(r"(?:#|//).*", "", code)
+        if depth == 0 and (m := re.match(r"\s*([A-Za-z_][\w-]*)\s*=(?!=)", code)):
+            names.add(m.group(1))
+        depth = max(0, depth + code.count("{") - code.count("}"))
+    return names
 
 
 TERRAGRUNT_BACKEND = re.compile(r'^\s*(?:remote_state\s*\{|generate\s*"backend"\s*\{)', re.M)
@@ -2399,6 +2411,12 @@ def cfn_shared(scan, res, type_, props, line):
             scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
 
 
+def is_intrinsic(value):
+    """A CloudFormation value computed by an intrinsic function ({"Fn::If": ...}, {"Ref": ...})."""
+    return isinstance(value, dict) and any(isinstance(k, str) and (k.startswith("Fn::") or k in ("Ref", "Condition"))
+                                           for k in value)
+
+
 def sam_merge(inherited, own):
     """SAM's Globals merge: maps merge key by key (recursively), lists keep the
     global entries first, and otherwise the function's value wins."""
@@ -2418,13 +2436,16 @@ def cfn_instance(scan, res, type_, props, line):
     data = props.get("LaunchTemplateData") if type_ == "AWS::EC2::LaunchTemplate" else props
     if not isinstance(data, dict):
         return
+    if type_ == "AWS::EC2::LaunchTemplate" and is_intrinsic(data):
+        scan.not_run.append(f"AWS-EC2-001, AWS-EBS-001: LaunchTemplateData is not a literal; checks not run: "
+                            f"{res.file}:{line} ({res.address})")
+        return
     for mapping in aslist(data.get("BlockDeviceMappings")):
         ebs = mapping.get("Ebs") if isinstance(mapping, dict) else None
         if isinstance(ebs, dict) and ebs.get("Encrypted") in (False, "false"):
             scan.hit("AWS-EBS-001", res, line, "BlockDeviceMappings Ebs.Encrypted = false")
     opts = props.get("MetadataOptions") if type_ == "AWS::EC2::Instance" else data.get("MetadataOptions")
-    if isinstance(opts, dict) and any(isinstance(k, str) and (k.startswith("Fn::") or k in ("Ref", "Condition"))
-                                      for k in opts):
+    if is_intrinsic(opts):
         # The whole options map comes from an intrinsic (Fn::If ...): unresolved.
         scan.not_run.append(f"AWS-EC2-001: MetadataOptions is not a literal; check not run: {res.file}:{line} "
                             f"({res.address})")
@@ -3412,7 +3433,7 @@ SECRET_NAME_VALUE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
 # Container environment entries: { name = "DB_PASSWORD", value = "..." }, also
 # split over two lines and in jsonencode()d container definitions.
 NAME_VALUE = re.compile(r'(?i)"?\bname"?\s*[:=]\s*"([^"]+)"\s*,?\s*"?value"?\s*[:=]\s*"([^"]*)"')
-NAME_ONLY = re.compile(r'(?i)^\s*"?name"?\s*[:=]\s*"([^"]+)"\s*,?\s*$')
+NAME_ONLY = re.compile(r'(?i)^\s*"?name"?\s*[:=]\s*"([^"]+)"\s*,?\s*(?:(?:#|//).*)?$')
 VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
 
 

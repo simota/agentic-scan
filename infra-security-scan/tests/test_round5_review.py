@@ -324,5 +324,35 @@ class CodexSixthReviewTest(unittest.TestCase):
         self.assertNotIn("PS-002", [h["rule"] for h in result.hits])
 
 
+class CodexSeventhReviewTest(unittest.TestCase):
+    def test_comment_after_secret_name(self):
+        result = scan({"e.tf": f'''resource "kubernetes_deployment" "d" {{
+  env {{
+    name  = "DB_PASSWORD" # application credential
+    value = "{SECRET}"
+  }}
+  env {{
+    name  = "API_TOKEN" // ci token
+    value = "{SECRET}"
+  }}
+}}
+'''})
+        self.assertEqual(sorted(h["detail"] for h in result.hits),
+                         ["literal value for API_TOKEN", "literal value for DB_PASSWORD"])
+
+    def test_remote_state_inside_a_block_is_not_a_backend(self):
+        app = 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'
+        nested = 'locals {\n  remote_state = read_terragrunt_config("other.hcl")\n}\n'
+        result = scan({"prod/app/terragrunt.hcl": nested, "prod/app/main.tf": app})
+        self.assertIn("PS-002", [h["rule"] for h in result.hits])
+
+    def test_intrinsic_launch_template_data_is_unresolved(self):
+        template = {"Resources": {"Lt": {"Type": "AWS::EC2::LaunchTemplate", "Properties": {"LaunchTemplateData": {
+            "Fn::If": ["Strict", {"MetadataOptions": {"HttpTokens": "required"}}, {"ImageId": "ami-1"}]}}}}}
+        result = scan({"t.json": template})
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "LaunchTemplateData is not a literal" in n], result.not_run)
+
+
 if __name__ == "__main__":
     unittest.main()

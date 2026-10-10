@@ -2044,7 +2044,7 @@ def terragrunt_remote_state(scan, d):
             return True
         names = set(re.findall(r'find_in_parent_folders\(\s*"([^"/]+)"\s*\)', text))
         if re.search(r"find_in_parent_folders\(\s*\)", text):
-            names |= {"terragrunt.hcl", "root.hcl"}
+            names.add("terragrunt.hcl")  # the no-argument form finds terragrunt.hcl only
         candidates = [p / name for p in unit.parent.parents if p == root or root in p.parents for name in names]
         candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', text)]
         for candidate in candidates:
@@ -2399,6 +2399,13 @@ def cfn_instance(scan, res, type_, props, line):
         ebs = mapping.get("Ebs") if isinstance(mapping, dict) else None
         if isinstance(ebs, dict) and ebs.get("Encrypted") in (False, "false"):
             scan.hit("AWS-EBS-001", res, line, "BlockDeviceMappings Ebs.Encrypted = false")
+    opts = props.get("MetadataOptions") if type_ == "AWS::EC2::Instance" else data.get("MetadataOptions")
+    if isinstance(opts, dict) and any(isinstance(k, str) and (k.startswith("Fn::") or k in ("Ref", "Condition"))
+                                      for k in opts):
+        # The whole options map comes from an intrinsic (Fn::If ...): unresolved.
+        scan.not_run.append(f"AWS-EC2-001: MetadataOptions is not a literal; check not run: {res.file}:{line} "
+                            f"({res.address})")
+        return
     if type_ == "AWS::EC2::Instance" and not isinstance(props.get("MetadataOptions"), dict):
         # Without its own MetadataOptions an instance takes them from a launch template.
         template = props.get("LaunchTemplate")
@@ -3390,24 +3397,26 @@ VALUE_NAME = re.compile(r'(?i)"?\bvalue"?\s*[:=]\s*"([^"]*)"\s*,?\s*"?name"?\s*[
 
 
 def env_pair(lines, i):
-    """(name, value) of an environment entry whose name is on line i: on one line in
-    either order, or as attributes of one block in any order (HCL order is free)."""
+    """(name, value, entry text) of an environment entry whose name is on line i: on
+    one line in either order, or as attributes of one block in any order (HCL order
+    is free). The entry text is that line, or the block's attribute lines between
+    its braces, so a sibling entry's attributes never count."""
     line = lines[i]
     if (m := NAME_VALUE.search(line)):
-        return m.group(1), m.group(2)
+        return m.group(1), m.group(2), line
     if (m := VALUE_NAME.search(line)):
-        return m.group(2), m.group(1)
+        return m.group(2), m.group(1), line
     name = NAME_ONLY.match(line)
     if not name:
         return None
-    # Neighbouring attribute lines of the same entry, up to its braces.
-    for step in (1, -1):
-        j = i + step
-        while 0 <= j < len(lines) and j - i in range(-6, 7) and not re.search(r"[{}\[\]]", lines[j]):
-            if (value := VALUE_ONLY.match(lines[j])):
-                return name.group(1), value.group(1)
-            j += step
-    return None
+    lo = hi = i
+    while lo > 0 and i - lo < 6 and not re.search(r"[{}\[\]]", lines[lo - 1]):
+        lo -= 1
+    while hi + 1 < len(lines) and hi - i < 6 and not re.search(r"[{}\[\]]", lines[hi + 1]):
+        hi += 1
+    entry = lines[lo:hi + 1]
+    value = next((m for raw in entry if (m := VALUE_ONLY.match(raw))), None)
+    return (name.group(1), value.group(1), "\n".join(entry)) if value else None
 
 
 def mock_lines(lines):
@@ -3437,9 +3446,8 @@ def scan_secrets(scan, rel, text, kind):
             continue
         pair = env_pair(lines, n - 1)
         if pair:
-            name, value = pair
-            # The whole entry: CodeBuild writes type = "PARAMETER_STORE" after the value.
-            entry = "\n".join(lines[max(0, n - 4):n + 3])
+            name, value, entry = pair
+            # The entry's own type: CodeBuild writes type = "PARAMETER_STORE" after the value.
             if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \
                     and not FLAG_VALUE.fullmatch(value.strip()) and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")

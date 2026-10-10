@@ -218,5 +218,37 @@ resource "aws_ecs_task_definition" "t" {{
         self.assertEqual(found(scan({"t.json": template})), [("AWS-EC2-001", "cfn:Old", "Medium")])
 
 
+class CodexThirdReviewTest(unittest.TestCase):
+    def test_reference_type_belongs_to_its_own_entry(self):
+        result = scan({"cb.tf": f'''resource "aws_codebuild_project" "p" {{
+  environment {{
+    environment_variable {{
+      name  = "DB_PASSWORD"
+      value = "{SECRET}"
+    }}
+    environment_variable {{ name = "NPM_TOKEN", value = "/ci/npm", type = "PARAMETER_STORE" }}
+  }}
+}}
+'''})
+        self.assertEqual([h["detail"] for h in result.hits], ["literal value for DB_PASSWORD"])
+
+    def test_no_argument_include_finds_terragrunt_hcl_only(self):
+        unit = 'include {\n  path = find_in_parent_folders()\n}\n'
+        backend = 'remote_state {\n  backend = "s3"\n  config = {\n    encrypt = true\n  }\n}\n'
+        app = 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'
+        stray = scan({"root.hcl": backend, "terragrunt.hcl": "locals {}\n",
+                      "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
+        self.assertIn("PS-002", [h["rule"] for h in stray.hits])
+        parent = scan({"terragrunt.hcl": backend, "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
+        self.assertNotIn("PS-002", [h["rule"] for h in parent.hits])
+
+    def test_intrinsic_metadata_options_are_unresolved(self):
+        template = {"Resources": {"Vm": {"Type": "AWS::EC2::Instance", "Properties": {"MetadataOptions": {
+            "Fn::If": ["Strict", {"HttpTokens": "required"}, {"HttpEndpoint": "disabled"}]}}}}}
+        result = scan({"t.json": template})
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "MetadataOptions is not a literal" in n])
+
+
 if __name__ == "__main__":
     unittest.main()

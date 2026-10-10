@@ -16,7 +16,7 @@ that: for each crown jewel, each entry actor, the chain of edges between them.
 |---|---|
 | Internet | Network reach to any public address; no credentials |
 | Any cloud principal | Credentials for *some* AWS account or Google account (`allAuthenticatedUsers`, `Principal: "*"` with no org condition) |
-| Organization member | Any identity in the organization, e.g. a developer's read-only role |
+| Organization member | Any identity in the organization, e.g. a developer's read-only role or console access |
 | CI identity | A workflow run in a repository the trust policy accepts — including forks and other repositories if the condition is loose |
 | Third party | A vendor account named in a trust or resource policy |
 | Compromised workload | Code execution on one VM, container or function, and the identity and metadata it holds |
@@ -96,7 +96,8 @@ or `checked_ok`. A relevant guardrail outside the inputs remains `UNKNOWN`.
 - Severity comes from the actor at the start and the jewel at the end
   (`SKILL.md` severity table), not from the rule an edge breaks
 - Each edge the attacker does not control alone (a compromised workload, a
-  specific repository, a guardrail state not in the inputs) lowers one level
+  specific repository, an enabling setting not visible in the inputs) lowers
+  one level; a blocking guardrail that was not read is not such an edge
 - Confidence: `Confirmed` when every edge is read in the inputs;
   `Environment-dependent` when one edge depends on a stated setting outside
   them (`condition` names it); `Suspected` when an edge was inferred

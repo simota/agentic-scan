@@ -7,7 +7,10 @@ renderer. `scripts/render.py` (`validate`) is the executable form of this file.
 `findings.json` is the single source for the dashboard, the assessment and the
 chat summary. It is written only through `scripts/findings.py` (`merge` for
 fragments, `remove` and `renumber` for review IDs) and `scripts/iac_scan.py
---into` (`I-*` findings and `meta.commit`).
+--into`. A rescan replaces the `I-*` findings, `meta.commit` and `inventory`,
+keeps the triage of unchanged `I-*`, rewrites `I-*` IDs in `F-*` evidence, and
+when a cited baseline finding is gone marks the `F-*` `Unverified`, sets its
+attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 
 - A fragment updates a known record key by key; a key set to `null` is removed
   (e.g. `"condition": null` after a finding becomes `Confirmed`)
@@ -20,8 +23,8 @@ fragments, `remove` and `renumber` for review IDs) and `scripts/iac_scan.py
   (required with `Environment-dependent`), nothing else
 - `findings.py status <out>/findings.json` lists untriaged `I-*` findings and
   references to IDs that do not exist; `contract_check.py` fails on the latter (a
-  standalone `F-NNN` or `AP-NN` in prose is read as a record ID; cite another
-  tracker's keys in a URL or as `#AP-123`)
+  standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
+  another tracker's keys in a URL, in `references`, or as `#AP-123`)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once
 
@@ -86,6 +89,16 @@ denied — name it in `note`), or `unknown` (an edge is `UNKNOWN`; name it).
 Every finding ID listed must exist. IDs start at `AP-01`, with at least two
 digits; the sequence continues through `AP-100` and beyond.
 
+| Field | Required | Content |
+|---|---|---|
+| `id` | yes | `AP-01`… |
+| `entry` | yes | The entry actor (`reference/attack-paths.md` §1) |
+| `target` | yes | The crown jewel, with its resource address |
+| `status` | yes | `open`, `blocked`, `unknown` |
+| `edges` | yes | Non-empty list of edges, each with `path:line` |
+| `findings` | no | `F-*` / `I-*` IDs on this path |
+| `note` | `blocked`, `unknown` | The denying or unknown edge |
+
 ## findings
 
 | Field | Required | Content |
@@ -104,8 +117,8 @@ digits; the sequence continues through `AP-100` and beyond.
 | `impact` | F-* | Expected vs actual, and the bounded impact |
 | `fix` | F-* | One line: the boundary restored and where it goes |
 | `regression` | F-* | A policy-as-code assertion of the secure state |
-| `controls` | no | List of strings: benchmark and section title, e.g. `["CIS AWS Foundations — S3 Block Public Access is enabled"]`; add the section number only from the edition the requester uses |
-| `cwe` | no | `CWE-` and a number, e.g. `CWE-284` |
+| `controls` | F-*, where one applies | List of strings: benchmark and section title, e.g. `["CIS AWS Foundations — S3 Block Public Access is enabled"]`; add the section number only from the edition the requester uses |
+| `cwe` | F-*, where one applies | `CWE-` and a number, e.g. `CWE-284` |
 | `attack_paths` | no | `AP-*` IDs this finding is an edge of |
 | `condition` | Environment-dependent | The unverified setting the grade assumes |
 | `references` | no | `[{"title": "...", "url": "https://..."}]`; both required, https only, no credentials |

@@ -106,5 +106,7 @@ For each, name the resource address and where it lives:
 
 What sits above the account: SCPs and RCPs, GCP organization policies, VPC
 Service Controls perimeters, Azure Policy, permission boundaries, Kubernetes
-admission policies. If they are not in the inputs, say so — findings that a
-guardrail might block become `Environment-dependent`.
+admission policies. If they are not in the inputs, say so once in
+`limitations` and grade as if they were absent; a finding becomes
+`Environment-dependent` on a guardrail only when one is known to exist and
+would decide it (`SKILL.md`).

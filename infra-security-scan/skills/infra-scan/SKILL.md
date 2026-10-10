@@ -37,8 +37,8 @@ judged by where they lead, not by the rule they break.
   authenticated principal of the cloud (`allAuthenticatedUsers`, any AWS
   account), any principal in the organization, each CI/CD identity, each third
   party with a trust relationship, a compromised workload (VM, pod, function),
-  and a developer with read-only console access. Most serious findings are one of
-  these reaching something it should not
+  and a tenant of a shared cluster (`reference/attack-paths.md` §1). Most
+  serious findings are one of these reaching something it should not
 - **Name the crown jewels**: the data stores and capabilities whose exposure or
   takeover hurts most — customer data stores, secrets managers and KMS keys,
   organization or project admin, the IaC state and the pipeline that applies it,
@@ -53,7 +53,7 @@ judged by where they lead, not by the rule they break.
 | Independence | Never read another assessment's outputs unless the request is to merge or compare them |
 | Inputs | IaC and manifests from the repository; plan JSON (`terraform show -json`) and config snapshots only when the requester supplies them (`reference/snapshots.md`). This skill never runs `terraform plan`, `apply`, `init`, a cloud CLI or an SDK call; the requester runs exports themselves |
 | Review units | One unit per environment × provider (e.g. `prod/aws`, `prod/gcp`), plus one cross-cutting unit (organization guardrails, CI/CD and state, cross-account and cross-cloud trust). Each unit first traces the attack paths to the crown jewels it holds, then sweeps every applicable perspective once |
-| Baseline | `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json` runs first (add `--snapshots <dir>` for supplied exports; one run covers every input, since each run replaces the baseline). It inventories resources and applies deterministic baseline rules, producing `I-*` findings. Never hand-write, merge or split `I-*`; review each one in its `validation` |
+| Baseline | `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json` runs first (add `--snapshots <dir>` for supplied exports and plan JSON kept outside the repository; one run covers every input, since each run replaces the baseline). It inventories resources and applies deterministic baseline rules, producing `I-*` findings. Never hand-write, merge or split `I-*`; review each one in its `validation` |
 | Granularity | One finding per root cause, i.e. per fix location (a module, a policy document, a shared security group). The same flaw instantiated in several environments is one finding listing every resource address |
 | IDs | `F-001`… for findings from review, numbered without gaps in severity order (then path); `I-*` only from `iac_scan.py`; attack paths `AP-01`…; use at least three digits for finding IDs and two for attack paths; compare ID numbers numerically, including beyond `999` / `99` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
@@ -61,7 +61,7 @@ judged by where they lead, not by the rule they break.
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | When the budget runs short, close units in risk order (production, internet-reachable paths and crown jewels first). `limitations` names the units, resources and attack paths not reached |
 | Scratch | A new, empty directory outside both the repository and the output directory (Claude Code: the scratchpad directory). Name it in the chat summary |
-| Writing the record | Never build `findings.json` with a heredoc, `echo` redirection, `python -c` or a generated script. Write each batch of one to five review findings as a JSON fragment with the file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. `I-*` verdicts may go in one fragment together; `scripts/findings.py status <out>/findings.json` lists what is still untriaged or unresolved. Use provisional `F-*` IDs while writing and run `findings.py renumber` once, after the last merge |
+| Writing the record | Never build `findings.json` with a heredoc, `echo` redirection, `python -c` or a generated script. Write each batch of one to five review findings as a JSON fragment with the file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. A finding and an attack path that list each other go in the same `merge` call (or add the link in a later fragment): a link to a record not yet merged is refused. `I-*` verdicts may go in one fragment together; `scripts/findings.py status <out>/findings.json` lists what is still untriaged or unresolved. Use provisional `F-*` IDs while writing and run `findings.py renumber` once, after the last merge |
 | Read-only | Write nothing inside the assessed repository. Never copy a state file, a `.tfvars` with secrets or a snapshot containing secret values into the output directory |
 
 | Severity | When |
@@ -123,8 +123,8 @@ summary.
 - Always: give every `F-*` an attack path as numbered edges (network, identity,
   resource policy), the contrast (a sibling resource configured soundly, or
   "none"), a one-line fix as the boundary restored, a policy-as-code assertion
-  that would catch a regression, and the closest benchmark control (CIS, the
-  provider's foundational benchmark) and CWE
+  that would catch a regression, and, where one applies, the closest benchmark
+  control (CIS, the provider's foundational benchmark) and CWE
 - Always: grade severity and confidence (Confirmed / Environment-dependent /
   Suspected) separately; Confirmed means every edge was read in the inputs
 - Always: list what was checked and found sound, and every perspective as

@@ -5,7 +5,7 @@
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
 #   make scan      baseline IaC scan of TARGET (+ SNAPSHOTS dirs, space-separated) into OUT
-#   make demo      render examples/findings.sample.json into $(DEMO_OUT)
+#   make demo      render the LANG_OUT sample in examples/ into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
@@ -18,7 +18,7 @@ NAME    := infra-scan
 REPO    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 # make splits words on spaces; refuse instead of acting on a truncated path.
 ifneq ($(word 2,$(REPO)),)
-$(error the repository path contains a space; move or symlink it to a path without spaces)
+$(error the repository path contains a space; symlink it to a path without spaces and run make -f /that/path/Makefile)
 endif
 SKILL   := $(REPO)/skills/$(NAME)
 PYTHON  ?= python3
@@ -34,8 +34,10 @@ tgt_codex  := $(CODEX_HOME)|$(CODEX_HOME)/skills
 tgt_agy    := $(AGY_HOME)|$(AGY_HOME)/skills
 
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
+ifeq ($(SKILLS_DIR)$(PROJECT),)
 ifneq ($(UNKNOWN),)
 $(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
+endif
 endif
 
 ifneq ($(SKILLS_DIR),)
@@ -81,7 +83,7 @@ link: ## symlink the skill into every installed host's skills dir
 	  mkdir -p "$$dir" && ln -s "$(SKILL)" "$$d" || exit 1; \
 	  echo "linked   $$d -> $(SKILL)"; n=$$((n+1)); \
 	done; \
-	if [ $$n -eq 0 ]; then echo "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
+	if [ $$n -eq 0 ]; then echo "nothing linked - $(if $(SKILLS_DIR)$(PROJECT),$(firstword $(subst |, ,$(TARGETS))) does not exist,no skills directory found for: $(AGENT))" >&2; exit 1; fi; \
 	echo "invoke it with:  infra-scan   (or /infra-scan in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created
@@ -111,15 +113,18 @@ check: test ## verify the skill is self-contained and internally consistent
 	@cd "$(REPO)" || exit 1; fail=0; \
 	misses=$$( \
 	for f in $(DOCS); do \
-	  grep -ohE '`(reference|scripts)/[A-Za-z][A-Za-z0-9._-]*`' "$$f" | tr -d '`' | sort -u | while read -r ref; do \
-	    [ -f "$(SKILL)/$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
+	  grep -ohE '`[^`]+`' "$$f" | grep -oE '(^|[^A-Za-z0-9_./-])(reference|scripts|templates)/[A-Za-z][A-Za-z0-9._<>-]*' \
+	    | sed -E 's/^[^rst]//' | sort -u | while read -r ref; do \
+	    for r in $$(case "$$ref" in *'<lang>'*) echo "$$ref" | sed 's/<lang>/ja/'; echo "$$ref" | sed 's/<lang>/en/';; *) echo "$$ref";; esac); do \
+	      [ -f "$(SKILL)/$$r" ] || echo "MISS $$f cites $$r, which does not exist"; \
+	    done; \
 	  done; \
 	done); \
 	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
 	for f in "$(SKILL)"/reference/*.md; do \
 	  [ -e "$$f" ] || continue; b=$$(basename "$$f"); \
-	  grep -q "$$b" "$(SKILL)/SKILL.md" || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
-	  head -10 "$$f" | grep -q '\*\*Read when:\*\*' || { echo "MISS reference/$$b has no **Read when:** header" >&2; fail=1; }; \
+	  grep -qF "reference/$$b" "$(SKILL)/SKILL.md" || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
+	  awk 'NF && !/^# / { exit !/^\*\*Read when:\*\*/ }' "$$f" || { echo "MISS reference/$$b does not start with a **Read when:** line" >&2; fail=1; }; \
 	done; \
 	head -1 "$(SKILL)/SKILL.md" | grep -qx -- '---' || { echo "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \
 	sed -n '2,8p' "$(SKILL)/SKILL.md" | grep -q '^name: $(NAME)$$' || { echo "MISS SKILL.md frontmatter has no 'name: $(NAME)' line" >&2; fail=1; }; \
@@ -139,8 +144,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	done; \
 	rm -rf "$$out"; \
 	scan=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-scan.XXXXXX") || exit 1; \
-	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" tests/fixtures --out "$$scan/iac.json" >/dev/null \
-	  || { echo "MISS iac_scan.py fails on tests/fixtures" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" tests/fixtures --out "$$scan/iac.json" >/dev/null 2>"$$scan/err" \
+	  || { cat "$$scan/err" >&2; echo "MISS iac_scan.py fails on tests/fixtures" >&2; fail=1; }; \
 	rm -rf "$$scan"; \
 	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, iac_scan runs"; \
 	exit $$fail

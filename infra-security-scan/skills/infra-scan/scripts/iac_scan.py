@@ -3,9 +3,10 @@
 
     python3 iac_scan.py REPO [--snapshots DIR ...] [--out iac.json] [--into findings.json]
 
-Reads, never executes: Terraform/OpenTofu (`*.tf`, `*.tofu`), Terraform plan JSON
-(`terraform show -json` output the requester produced), CloudFormation JSON,
-Kubernetes YAML manifests and read-only config snapshots (AWS
+Reads, never executes: Terraform/OpenTofu (`*.tf`, `*.tofu`, `*.tfvars[.json]`),
+Terraform plan JSON (`terraform show -json` output the requester produced),
+CloudFormation and SAM templates (JSON, YAML, `.template`), `terragrunt.hcl`,
+Kubernetes manifests and read-only config snapshots (AWS
 describe-security-groups, a bucket policy, a GCP IAM policy, a GCP firewall
 list). It never runs terraform, a cloud CLI or an SDK, and never follows
 symlinks.
@@ -27,10 +28,14 @@ Neither --out nor --into may point inside REPO or through a symlink.
 keeps every other finding, and sets `meta.commit` and `inventory`. Attack-path
 references, I-IDs in review evidence and I-* triage verdicts follow the same
 (rule, file, resources) after renumbering. Lost references require fresh review
-of the finding and its paths. Terraform JSON (`*.tf.json`) and unreadable,
-binary or deeply nested inputs are listed in `not_run`.
+of the finding and its paths. Inputs read only in part or not at all (Terraform
+JSON, Kustomize, Helm templates, Serverless, Pulumi, other HCL, export shapes
+without rules) and unreadable, binary or deeply nested inputs are listed in
+`not_run`.
 
-Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.json.
+Exit codes: 0 scanned (hits do not change it); 2 unreadable REPO, --snapshots
+directory or findings.json, a --snapshots directory overlapping REPO, or an
+--out/--into path inside REPO, through a symlink or not writable.
 """
 import argparse
 import bisect

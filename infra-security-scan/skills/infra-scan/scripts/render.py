@@ -4,8 +4,8 @@
     python3 render.py FINDINGS --out DIR [--lang ja|en] [--no-pdf] [--repo REPO]
 
 Writes DIR/dashboard.html (interactive, self-contained), DIR/assessment.html
-(the formal, print-oriented report) and DIR/assessment.pdf (headless Chrome;
-set CHROME to choose the binary). With --repo, each finding's `path:line` is
+(the formal, print-oriented report) and DIR/assessment.pdf (headless Chrome,
+set CHROME to choose the binary; WeasyPrint is the fallback). With --repo, each finding's `path:line` is
 embedded as a short source excerpt; state files, variable files and
 secret-looking files are never read, and lines that look like they assign a
 secret are redacted. JSON/YAML with sensitive metadata, secret environment
@@ -109,6 +109,8 @@ def _read_perspective_names():
     names = []
     for line in (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8").splitlines():
         if not line.startswith("|"):
+            if names:
+                break  # the end of the first table
             continue
         cells = [c.strip() for c in line.strip().strip("|").split("|")]
         if len(cells) == 2 and cells[0] not in ("Perspective", "") and not set(cells[0]) <= set("-: "):

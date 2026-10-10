@@ -3,7 +3,8 @@
 **Read when:** REVIEW of a unit with Google Cloud resources. Terraform
 `google` / `google-beta` resource types are listed.
 
-Benchmark citations name the benchmark, its edition and the section title (e.g.
+Benchmark citations name the benchmark and the section title, with the edition
+only when the requester names one (e.g.
 `CIS Google Cloud Platform Foundation v3.0 — Ensure that Cloud Storage bucket is
 not anonymously or publicly accessible`). Copy control numbers only from the
 edition the requester uses.

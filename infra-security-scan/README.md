@@ -31,7 +31,7 @@ baseline                perspectives         └─ chat summary
 - **Attack paths** (`reference/attack-paths.md`) — the core difference from a
   rule scanner. For each crown jewel and each entry actor (internet, any cloud
   principal, organization member, CI identity, third party, compromised
-  workload) the path is traced edge by edge — network, assume/impersonate,
+  workload, cluster tenant) the path is traced edge by edge — network, assume/impersonate,
   permission, resource policy, credential, escalation — and recorded as open,
   blocked or unknown
 - **Thirteen perspectives** — network exposure, identity and privilege, trust

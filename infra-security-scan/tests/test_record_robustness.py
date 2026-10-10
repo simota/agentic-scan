@@ -168,5 +168,20 @@ class RecordRobustnessTest(unittest.TestCase):
         self.assertTrue(render.SENSITIVE_NAME.search("deploy/.htpasswd"))
 
 
+class PerspectiveNameTest(unittest.TestCase):
+    def test_rule_categories_are_perspective_names(self):
+        names = set(render.perspective_names())
+        self.assertEqual(len(names), len(render.perspective_names()))
+        for rule, (_, _, category, *_rest) in iac_scan.RULES.items():
+            self.assertIn(category, names, rule)
+
+    def test_only_the_first_table_names_perspectives(self):
+        text = (render.SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        first = text.index("\n| ")
+        end = text.index("\n\n", first)
+        rows = [line for line in text[first:end].splitlines() if line.startswith("|")][2:]
+        self.assertEqual(render.perspective_names(), [r.strip("|").split("|")[0].strip() for r in rows])
+
+
 if __name__ == "__main__":
     unittest.main()

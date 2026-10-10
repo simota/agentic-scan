@@ -9,8 +9,9 @@ Agent skill for static security review of cloud infrastructure configuration
 - `make test` runs the unit tests; `make check` runs them plus the skill
   consistency checks — run `make check` before committing
 - `reference/findings-schema.md` and `scripts/render.py` (`validate`) must
-  change together; the perspective names in `reference/perspectives.md` are
-  read at runtime by `render.py` and `contract_check.py`
+  change together; the perspective names in the first table of
+  `reference/perspectives.md` are read at runtime by `render.py` and
+  `contract_check.py`, and every category in `iac_scan.RULES` must be one of them
 - Fixtures under `tests/fixtures/` are deliberately insecure configuration.
   Never put a realistic credential in them; tests build credential-shaped
   strings at runtime

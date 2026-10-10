@@ -108,7 +108,9 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # protocol versions (HTTP/1.1), URLs, hosts and bare words (timeout:30, TTL:300).
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
-NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
+# Digits only: a v-prefixed root name is a version (VERSION_START below), but
+# under a directory it is a path (v8/123, V1/2).
+NUMERIC = re.compile(r"[0-9][0-9./\\]*")
 # A root-level name that starts with a digit, or with v or V and a digit
 # (1!2.3, 1.2.3.post1, 2.0b3, 5.0.0.BUILD-SNAPSHOT, v1!2.3, v2rc1.post2), is a
 # number or version, whatever follows: version syntaxes cannot be listed

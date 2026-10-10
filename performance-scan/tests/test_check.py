@@ -97,7 +97,7 @@ class CitationTests(unittest.TestCase):
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
                  "foo.1:3", "Dockerfile.22.04:2", "python3.11:3", "docker/22.04:3",
                  "fixtures/1.5:3", "src/1.2:3", "./2.0.txt:3", "docs/1.2.py:4",
-                 "db/001_init.sql:4", "./v8.json:2", "lib/v8.json:2", "V1_1__init.sql:3", "DB/123:4", "./HTTP/2:3", "ws/2:3", "ip/4:1", "SQL/001:3", "SQL\\001:3",
+                 "db/001_init.sql:4", "./v8.json:2", "lib/v8.json:2", "V1_1__init.sql:3", "DB/123:4", "./HTTP/2:3", "v8/123:4", "V1/2:4", "ws/2:3", "ip/4:1", "SQL/001:3", "SQL\\001:3",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]

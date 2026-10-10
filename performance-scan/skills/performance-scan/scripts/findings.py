@@ -174,8 +174,14 @@ def _product_version(name):
     separator, number = match.group(1), match.group(2)
     if not separator and number.count(".") < 2:
         return False
-    _, dot, extension = name[match.end():].rpartition(".")
-    return not (dot and extension[:1].isalpha() and not QUALIFIER.fullmatch(extension))
+    return not _has_extension(name[match.end():])
+
+
+def _has_extension(name):
+    """True when name ends in a letter-led suffix that is not a version
+    qualifier (.js, .tar.gz; not .post1 or .RELEASE)."""
+    _, dot, extension = name.rpartition(".")
+    return bool(dot and extension[:1].isalpha() and not QUALIFIER.fullmatch(extension))
 
 
 def _protocol_version(path):
@@ -203,8 +209,9 @@ def _file_shaped(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
-        # A scoped package spec (@scope/pkg@1.2.3) is not a file.
-        if directory.startswith("@") and "/" not in directory and PACKAGE_VERSION.search(last):
+        # A package or module spec (@scope/pkg@1.2.3, golang.org/x/sync@v0.17.0)
+        # is not a file unless it ends in an extension (vendor/lodash@4.17.21.tgz).
+        if PACKAGE_VERSION.search(last) and not _has_extension(last):
             return False
         # . and .. name directories, not files (src/..:3).
         return last not in ("", ".", "..")

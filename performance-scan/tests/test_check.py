@@ -91,7 +91,7 @@ class CitationTests(unittest.TestCase):
                  ".env.local:3", ".env.example:1 sets DATABASE_POOL_SIZE=5", "Dockerfile.dev:12",
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
                  "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
-                 "internal/store/orders.go:42", "go.sum:10", "orders.go:42:7", "analysis.R:3",
+                 "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",

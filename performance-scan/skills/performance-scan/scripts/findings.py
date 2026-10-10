@@ -93,10 +93,11 @@ HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", 
 AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # A file name has a directory part whose last segment holds a letter (src/main,
-# not N/A, I/O or HTTP/1.1), an extension with a letter (not 1.5 or v1.2.3), or a
+# src/a; not HTTP/1.1, and _rejection refuses N/A and I/O, whose segments are all
+# single characters), an extension with a letter (not 1.5 or v1.2.3), or a
 # conventional extensionless name. All-caps words in general (TTL, MAX_CONNECTIONS)
 # are settings, not files.
-FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[A-Za-z][^/\\]*(?<=[^/\\]{2})"
+FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[A-Za-z][^/\\]*"
                         r"|.*\.[A-Za-z][A-Za-z0-9]*"
                         r"|(?:GNU)?[Mm]akefile|(?:Docker|Container|Gem|Proc|Rake|Jenkins|Vagrant|Brew"
                         r"|Pod|Fast|Just|Earth|Tilt|Guard|Cap|Berks|Snake)file"
@@ -122,6 +123,9 @@ def _rejection(path):
         return "a host:port"
     if not FILE_SHAPE.fullmatch(path):
         return "not a file name (a setting, number or word)"
+    segments = path.replace("\\", "/").split("/")
+    if len(segments) > 1 and all(len(segment) <= 1 for segment in segments):
+        return "an abbreviation such as N/A or I/O, not a file"
     first, _, rest = path.replace("\\", "/").partition("/")
     last = path.replace("\\", "/").rsplit("/", 1)[-1]
     if rest and "." not in last and _is_host(first):

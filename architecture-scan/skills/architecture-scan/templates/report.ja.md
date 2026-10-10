@@ -1,8 +1,8 @@
 <!--
 設計上の検出事項を、オーナー、テックリード、管理者に報告するテンプレート。1 通に複数の finding を載せてよい。
 件数と各 finding は findings.json から転記し、ダッシュボードと食い違わないようにする。
-件数は report.md のタイトル直下の件数行と同じ。除外判定（FalsePositive / NotApplicable）は数えない。
-「うち Valid」はその深刻度で判定が Valid の件数。n_likely と n_unverified は判定ごとの件数。
+{{n_*}} の値はすべて `python3 scripts/findings.py counts <out>/findings.json` の出力から転記する。
+数え方は report.md のタイトル直下の件数行と同じで、除外判定（FalsePositive / NotApplicable）は数えない。
 
 送る前に確認すること:
 - 各 finding は好みではなく、根拠のある不具合または変更コストを述べている
@@ -18,12 +18,12 @@
 
 | 深刻度 | 件数 | うち Valid |
 |---|---|---|
-| High | {{n_high}} | |
-| Medium | {{n_medium}} | |
-| Low | {{n_low}} | |
-| Info | {{n_info}} | |
+| High | {{n_high}} | {{n_high_valid}} |
+| Medium | {{n_medium}} | {{n_medium_valid}} |
+| Low | {{n_low}} | {{n_low_valid}} |
+| Info | {{n_info}} | {{n_info_valid}} |
 
-除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。可能性が高い（Likely）: {{n_likely}} 件。未検証（Unverified）: {{n_unverified}} 件。
+除外（FalsePositive / NotApplicable）: {{n_excluded}} 件。可能性が高い（Likely）: {{n_likely}} 件。未検証（Unverified）: {{n_unverified}} 件。可能性が低い（Unlikely）: {{n_unlikely}} 件。
 
 ## 2. 対象と方法
 
@@ -39,7 +39,8 @@
 
 ## 3. 優先して対応すべき検出事項
 
-<!-- 深刻度順。finding ごとにこのブロックを繰り返し、templates/issue.ja.md で登録した issue へリンクする。 -->
+<!-- High と Medium の finding を深刻度順に載せる。finding ごとにこのブロックを繰り返し、templates/issue.ja.md で
+登録した issue へリンクする。Low と Info は添付の report.md に任せる。 -->
 
 ### {{id}}: {{title}}
 

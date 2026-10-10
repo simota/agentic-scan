@@ -3,6 +3,7 @@
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
+    python3 findings.py counts FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -27,6 +28,9 @@ location, and renames them `A-001`… without gaps. Every whole-word mention of
 an old ID in the record's prose is rewritten in the same pass, so `next_steps`
 and traces keep pointing at the same finding; `meta`, locations, URLs,
 commands and rule sources keep theirs.
+
+`counts` prints the `n_*` values the report templates use, one `name=value`
+per line, counted as report.md counts them (excluded verdicts apart).
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -659,6 +663,35 @@ def cmd_merge(args):
     return 0
 
 
+def template_counts(doc):
+    """The `{{n_*}}` values of templates/report.*.md, counted as report.md counts."""
+    findings = doc.get("findings", [])
+    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    counts = {}
+    for severity in SEVERITIES:
+        same = [f for f in active if f["severity"] == severity]
+        counts[f"n_{severity.lower()}"] = len(same)
+        counts[f"n_{severity.lower()}_valid"] = sum(f["validation"]["verdict"] == "Valid"
+                                                    for f in same)
+    counts["n_excluded"] = len(findings) - len(active)
+    for verdict in ("Likely", "Unverified", "Unlikely"):
+        counts[f"n_{verdict.lower()}"] = sum(f["validation"]["verdict"] == verdict
+                                             for f in findings)
+    return counts
+
+
+def cmd_counts(args):
+    try:
+        doc = read_json(args.findings)
+        validate(doc)
+    except SchemaError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    for name, value in template_counts(doc).items():
+        print(f"{name}={value}")
+    return 0
+
+
 def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
@@ -793,11 +826,14 @@ def main(argv=None):
     m.add_argument("fragments", nargs="+")
     r = sub.add_parser("renumber", help="order findings by severity and path, IDs gapless")
     r.add_argument("findings")
+    n = sub.add_parser("counts", help="print the n_* values the report templates use")
+    n.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
+            "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

@@ -137,14 +137,20 @@ AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
 AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 
 
+# An `@` after anything but a blank, opening punctuation or a tag's `>`.
+EMAIL_AT = re.compile(r"(?<=[^\s(\[{'\"`,;:>])@")
+
+
 def disarm_autolinks(text):
     """Encode one character of each autolink trigger.
 
-    cmark-gfm finds e-mail addresses after entities are decoded, so the `@`
-    also gets an empty comment, which no autolinker reads through.
+    cmark-gfm finds e-mail addresses after entities are decoded, so an `@` with
+    a local part before it (`bob@example.com`) also gets an empty comment,
+    which no autolinker reads through. An `@` that starts a word (`@scope/pkg`,
+    `@decorator`) has no local part, cannot be an address, and stays readable.
     """
     text = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", text)
-    return text.replace("@", "&#64;<!-- -->")
+    return EMAIL_AT.sub("&#64;<!-- -->", text)
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",

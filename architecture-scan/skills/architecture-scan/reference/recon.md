@@ -31,7 +31,10 @@ report unless asked.
 
 Build the module-level import graph from import statements (or an installed
 read-only tool — name it first and record it). For each edge: from, to, count
-of import sites, an example `path:line`. Then flag:
+of import sites, an example `path:line`. In TypeScript and JavaScript count
+`import type`, re-exports (`export … from`), dynamic `import()` and
+`require()`, and resolve `tsconfig` `paths` aliases and each package's
+`exports` map before deciding which module an import reaches. Then flag:
 
 - **Cycles** between modules or layers
 - **Upward edges** — domain or application code importing presentation,
@@ -64,7 +67,10 @@ Hibernate entity mutated inside a transaction with no `save`, SQLAlchemy
 autoflush), bulk updates that bypass hooks (`QuerySet.update()`,
 `update_all`), cascades, model callbacks and signals, raw SQL, database
 triggers and procedures, migrations and backfills, admin panels and management
-commands. Search for each form and record the hit count.
+commands. In Node, the forms are an ORM's write calls (Prisma `update`,
+`upsert`, `$executeRaw`; TypeORM `save`, `QueryBuilder.update()`; Knex
+`update`, `insert`) and raw driver calls (`pool.query`, `client.query`).
+Search for each form and record the hit count.
 
 A store with writers in more than one module, or with rules enforced in some
 writers and not others, is a lead. Shared databases between deployable units

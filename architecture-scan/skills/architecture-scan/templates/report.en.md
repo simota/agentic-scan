@@ -1,8 +1,8 @@
 <!--
 Reports design findings to the owner, a tech lead or a manager. One report can carry several findings.
 Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
-Counts are the counts line under report.md's title: excluded verdicts (FalsePositive, NotApplicable) are not counted.
-"Of which Valid" counts that severity's findings with verdict Valid; n_likely and n_unverified count verdicts.
+Every {{n_*}} value comes from `python3 scripts/findings.py counts <out>/findings.json`, counted as the
+counts line under report.md's title: excluded verdicts (FalsePositive, NotApplicable) are not counted.
 
 Before sending:
 - Each finding states a defect or a change cost backed by evidence, not a preference
@@ -18,12 +18,12 @@ Before sending:
 
 | Severity | Count | Of which Valid |
 |---|---|---|
-| High | {{n_high}} | |
-| Medium | {{n_medium}} | |
-| Low | {{n_low}} | |
-| Info | {{n_info}} | |
+| High | {{n_high}} | {{n_high_valid}} |
+| Medium | {{n_medium}} | {{n_medium_valid}} |
+| Low | {{n_low}} | {{n_low_valid}} |
+| Info | {{n_info}} | {{n_info_valid}} |
 
-Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}.
+Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Likely: {{n_likely}}. Unverified: {{n_unverified}}. Unlikely: {{n_unlikely}}.
 
 ## 2. Scope and method
 
@@ -39,7 +39,8 @@ No code was changed and the application was not run.
 
 ## 3. Findings to act on first
 
-<!-- In severity order; repeat the block per finding and link the issue filed from templates/issue.en.md. -->
+<!-- The High and Medium findings, in severity order; repeat the block per finding and link the issue filed
+from templates/issue.en.md. Low and Info stay in the attached report.md. -->
 
 ### {{id}}: {{title}}
 

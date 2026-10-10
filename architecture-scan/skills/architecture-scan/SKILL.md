@@ -80,6 +80,11 @@ Worked examples:
   core flow is High
 - "Changes often" means top-decile churn in the history window, or at least
   three comparable changes in it
+- A derived copy that a core write path leaves stale (TX5) is High when nothing
+  bounds the staleness, Medium when a TTL or a periodic rebuild bounds it
+- A client contract that has already drifted and renders or sends wrong data on
+  a core flow (AC2) is High, like a duplicated rule that has diverged; drift
+  not yet visible in behaviour is Medium
 
 ## Phases
 
@@ -108,7 +113,7 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 
 | Situation | How to proceed |
 |---|---|
-| Asked "what should we check" or "list the items" | RECON and CHECKLIST only, then stop and deliver the checklist |
+| Asked "what should we check" or "list the items" | RECON and CHECKLIST only, then stop and deliver the checklist: a short form in chat, and the full ledger and perspective sections in `<scratch>/checklist.md` when they are long, named in chat |
 | Asked to review, audit or scan the design or architecture | All five phases |
 | Asked about one module, feature or planned change | Scope the review units to the modules the change touches, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No document states the intended architecture | Infer the rules from the directory structure, import-lint config, framework conventions and the majority of modules; mark them `inferred` in the ledger, hunt them anyway, and put each rule in `decisions` |
@@ -121,7 +126,7 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 | The requester wants a dependency graph or metrics | Run an already-installed, read-only analysis tool on the local checkout, name it before running, and record tool, command and result in `analysis`. Never install packages into the audited repository |
 | Asked to lock a rule in or confirm a fix | GUARD: a fitness function in the repo's own suite, red on the current violation and green after the fix |
 | The host cannot run a second, independent reviewer | Record that in `limitations`. A High finding may be `Valid` once the reporting agent has traced it end to end; until then it is not reported (see *Never*). Never invent a second reviewer |
-| Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several. Filing or sending is the requester's step |
+| Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several, its `{{n_*}}` counts from `scripts/findings.py counts <out>/findings.json`. Filing or sending is the requester's step |
 
 ## Always / Never
 

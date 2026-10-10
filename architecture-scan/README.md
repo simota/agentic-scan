@@ -71,6 +71,7 @@ python3 skills/architecture-scan/scripts/findings.py merge out/findings.json fra
 python3 skills/architecture-scan/scripts/findings.py renumber out/findings.json  # severity, then path
 python3 skills/architecture-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
 python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists each violation
+python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  # n_* for the report template
 ```
 
 | Output | What it is |

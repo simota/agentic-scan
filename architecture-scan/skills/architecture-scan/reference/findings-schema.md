@@ -34,7 +34,8 @@ any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard) or `$` math.
+an e-mail address stays plain text, as in the dashboard; an `@` that starts
+a word, such as `@scope/pkg`, is left as written) or `$` math.
 Backslashes are shown as written (`docs\adr`), so they never escape a
 delimiter; the one exception in `report.md` is a backslash directly before a
 backtick, the author's escape: `` \` `` shows a literal backtick and no

@@ -67,8 +67,14 @@ checked` (with a reason):
   rule; the count of unread edges goes to `limitations`
 - `not checked` — no edge was read; `reason` says why
 
-A `Valid` or `Likely` finding cites a `violated` or `partly read` rule; `check`
-refuses one that cites a rule recorded as holding or not checked.
+A `Valid` or `Likely` finding that cites a rule cites one recorded as
+`violated` or `partly read`; `check` refuses one that cites a rule recorded as
+holding or not checked. A defect claim may cite no codebase rule at all
+(`reference/validation.md`, claim 4); it then names its family's `baseline`
+entry when the ledger has one.
+
+In a checklist deliverable nothing has been hunted yet: the Status column reads
+`to trace`, and no `findings.json` is written.
 
 ## 3. Trace rows
 

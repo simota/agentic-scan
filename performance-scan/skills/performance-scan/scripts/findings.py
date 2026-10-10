@@ -126,9 +126,11 @@ PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # Spring-5.3.20.RELEASE, 1.0.Final).
 QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
                        r"|build-snapshot|milestone|m|sr|cr|[ab])[0-9]*", re.IGNORECASE)
-# Before - or _ the name may hold digits (log4j-2.17.1); without a separator it
-# is letters only, so python3.11 splits as python + 3.11.
-PRODUCT_VERSION = re.compile(r"[^\W\d_](?:[^\W_]*([-_])|[^\W\d_]*)([0-9]+(?:\.[0-9]+)+)")
+# Before - or _ the name may hold digits and . + # (log4j-2.17.1, Node.js-20.11.0,
+# .NET-8.0.0); without a separator it is letters only, so python3.11 splits as
+# python + 3.11.
+PRODUCT_VERSION = re.compile(r"(?:\.?[^\W\d_](?:[^\W_]|[.+#])*([-_])|[^\W\d_]+)"
+                             r"([0-9]+(?:\.[0-9]+)+)")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,

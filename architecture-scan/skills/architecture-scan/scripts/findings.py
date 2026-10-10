@@ -93,6 +93,7 @@ FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "val
                     *TEXT_FIELDS)
 FINDING_KEYS = {*FINDING_REQUIRED, "contrast", "rule", "step", "status", "analysis", "references"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
+TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
@@ -107,8 +108,15 @@ EVIDENCE_LINE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*):[1-9][0-9]*")
 # Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
-                 "VERSION", "MODULE.bazel"}
-LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
+                 "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
+                 "CONTRIBUTING"}
+# A file extension starts with a letter; `v1.2` and `e.g.` have none. A token
+# ending in a host suffix (`db.internal`, `api.example.com`) is a host:port.
+FILE_EXTENSION = re.compile(r"\.([A-Za-z][A-Za-z0-9_+-]{0,15})$")
+HOST_SUFFIXES = {"com", "net", "org", "io", "dev", "app", "cloud", "internal", "local",
+                 "localhost", "lan", "corp", "co", "jp", "uk", "de", "cn", "svc"}
+# At most nine digits per line number, so `int()` never meets a huge value.
+LOCATION = re.compile(r"[^\r\n]+:([0-9]{1,9})(?:-([0-9]{1,9}))?")
 
 
 class SchemaError(ValueError):
@@ -146,7 +154,8 @@ def read_json(path):
         return doc
     except SchemaError:
         raise
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # RecursionError: nesting too deep for the parser, e.g. a hand edit.
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -256,8 +265,11 @@ def cites_line(evidence, locations=()):
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
-        if (re.search(r"[./\\]", path) or path.lower().endswith("file")
-                or path in EXTENSIONLESS or path in known):
+        if (path in known or path in EXTENSIONLESS or path.lower().endswith("file")
+                or re.search(r"[/\\]", path) and not path.startswith("//")):
+            return True
+        extension = FILE_EXTENSION.search(path)
+        if extension and extension[1].lower() not in HOST_SUFFIXES:
             return True
     return False
 
@@ -485,7 +497,11 @@ def _atomic_write_all(files):
 # An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`,
 # nor a path segment (`docs/A-001.md`). ASCII word characters only, so an ID
 # next to Japanese text (`A-001を`) is still a mention.
-ID_MENTION = re.compile(r"(?<![\w/\\-])A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
+ID_MENTION = re.compile(
+    # Joined to another ID by `/` or `-` (`A-002/A-001`, `A-002-A-001`) is still
+    # a mention; joined to anything else that way is part of a path or token.
+    r"(?:(?<=A-[0-9]{3}[/-])|(?<![\w/\\-]))A-[0-9]{3}"
+    r"(?:(?=[/-]A-[0-9]{3}(?![\w]))|(?![\w/\\-]|\.[A-Za-z0-9]))", re.ASCII)
 
 
 def _first_location(f):
@@ -605,8 +621,12 @@ def _merge_all(doc, fragments):
     validate(doc)
     for path in fragments:
         merge(doc, read_json(path), path)
-        # Each fragment must leave a valid record, even in a batch.
-        validate(doc)
+        # Each fragment must leave a valid record, even in a batch; name the
+        # fragment that broke it.
+        try:
+            validate(doc)
+        except SchemaError as exc:
+            raise SchemaError(f"{path}: {exc}") from exc
     return doc
 
 
@@ -642,7 +662,11 @@ def contract_problems(out, allow=()):
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        if TEMPORARY.fullmatch(name):
+            problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
+                            "write; delete it once no merge or render is running")
+        else:
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
     for name in sorted(not_files):
         problems.append(f"output is not a file: {name}")
@@ -741,7 +765,15 @@ def cmd_check(args):
     return 0
 
 
+def safe_output():
+    """Print paths that are not valid UTF-8 (`o\\xff/`) instead of crashing after the work."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+
+
 def main(argv=None):
+    safe_output()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into findings.json")

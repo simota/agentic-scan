@@ -28,7 +28,8 @@ fetches nothing. Both outputs show separate counts for each validation verdict,
 name the verdict and perspective (with the hunt step) of every finding,
 including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
-only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths);
+only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
+never `//host` or `\\host`, which name another host);
 any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
@@ -63,10 +64,12 @@ be byte-identical to what `render.py` produces from the current
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
   finding is not reported)
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
-  (a path with a `.`, `/` or `\`, a build file such as `Makefile`, `BUILD` or
-  `CODEOWNERS`, or a path or file name from the finding's own `location`, then
-  a line from 1: `job.py:58`, `根拠:job.py:58`, `BUILD:12`, `server:9` beside
-  `bin/server:9`; not `ABC:123`, `10:30` or a URL's port)
+  (a path with a `/` or `\`, a file with an extension, a build or project file
+  such as `Makefile`, `BUILD`, `CODEOWNERS` or `README`, or a path or file name
+  from the finding's own `location`, then a line from 1: `job.py:58`,
+  `根拠:job.py:58`, `BUILD:12`, `server:9` beside `bin/server:9`; not
+  `ABC:123`, `10:30`, `v1.2:3`, a URL's port or a host and port such as
+  `db.internal:5432`)
 
 ## Writing the file
 
@@ -139,7 +142,8 @@ same pass. Literal values keep theirs: `meta`, every `location`, reference
 `url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
 ticket or an argument). In prose, a token such as `JIRA-A-001` and a path
 segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
-text (`A-001を`) is rewritten. It prints each rename, leaves an ordered
+text (`A-001を`) or joined to another ID (`A-002/A-001`, `A-002-A-001`) is
+rewritten. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds or regrades a finding, then render.
 
@@ -150,6 +154,10 @@ merging them. If a finding is added or regraded later, merge it, renumber
 again and re-render.
 
 ## Merge guarantees
+
+A refused batch names the fragment that broke the record. A merge or render
+killed mid-write can leave a `.findings-<hex>.tmp` file beside the record;
+`check` names it, and it is deleted once no merge or render is running.
 
 Merge and renumber hold an exclusive lock on the record's directory from
 reading the record to replacing it, so review units may merge at the same

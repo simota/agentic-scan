@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      _atomic_write_all, as_locations, read_json, validate)
+                      _atomic_write_all, as_locations, read_json, safe_output, validate)
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -40,7 +40,10 @@ def is_safe_link(url):
     """
     if re.search(r"[\x00-\x1f\x7f]", url):
         return False
-    return is_web_url(url) or not SCHEME.match(url.lstrip(" "))
+    stripped = url.lstrip(" ")
+    if stripped.startswith(("//", "\\\\")):
+        return False  # protocol-relative or UNC: another host, not a relative path
+    return is_web_url(url) or not SCHEME.match(stripped)
 
 
 LABELS = {
@@ -177,12 +180,13 @@ def markdown_inline(value):
 
 
 # Leading whitespace (indented code) and the markers that open a block when
-# they start a line: a heading, a list bullet (`*`, `+`, `-` before a blank), a
-# rule (three of `*`, `_` or `-`), a setext line, a fence, a link definition or
-# task box, an ordered item. `*em*` or `~~struck~~` at the start is inline, not
+# they start a line: a heading, a list bullet (`*` or `+` before a blank), a
+# rule (three of `*` or `_`), a setext line, a fence, a link definition or task
+# box, an ordered item. A leading `-` is always encoded: with the item's own
+# `- ` bullet, even `--` makes a rule. `*em*` or `~~struck~~` at the start is inline, not
 # a block, so it is left alone.
 BLOCK_START = re.compile(
-    r"([ \t]*)(#|=|\[|[*+_-](?=[ \t]|$)|([*_-])(?=(?:[ \t]*\3){2,}[ \t]*$)|~~~|```"
+    r"([ \t]*)(#|=|\[|-|[*+_](?=[ \t]|$)|([*_])(?=(?:[ \t]*\3){2,}[ \t]*$)|~~~|```"
     r"|[0-9]{1,9}[.)])?")
 
 
@@ -464,6 +468,7 @@ def rendered_outputs(doc, lang):
 
 
 def main(argv=None):
+    safe_output()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("findings")
     parser.add_argument("--out", required=True)

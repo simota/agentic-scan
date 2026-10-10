@@ -126,10 +126,11 @@ PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # Spring-5.3.20.RELEASE, 1.0.Final).
 QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
                        r"|build-snapshot|milestone|m|sr|cr|[ab])[0-9]*", re.IGNORECASE)
-# Before - or _ the name may hold digits and . + # (log4j-2.17.1, Node.js-20.11.0,
-# .NET-8.0.0); without a separator it is letters only, so python3.11 splits as
+# Before the - or _ that precedes the number, the name may hold digits, . + #
+# and further - or _ (log4j-2.17.1, Node.js-20.11.0, .NET-8.0.0,
+# python-dateutil-2.8.2); without a separator it is letters only, so python3.11 splits as
 # python + 3.11.
-PRODUCT_VERSION = re.compile(r"(?:\.?[^\W\d_](?:[^\W_]|[.+#])*([-_])|[^\W\d_]+)"
+PRODUCT_VERSION = re.compile(r"(?:\.?[^\W\d_](?:[^\W_]|[.+#]|[-_](?!\d))*([-_])|[^\W\d_]+)"
                              r"([0-9]+(?:\.[0-9]+)+)")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
@@ -140,9 +141,9 @@ MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # told from a directory only by this list (stomp/1.2 vs db/1.5).
 PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|S?FTPS?|SMTPS?|IMAPS?|POP3?|SIP|RTSP"
                       r"|AMQP|MQTT|SOCKS|SSH|SNMP|LDAPS?|SMB|CIFS|NFS|RDP|NNTP|XMPP|IRC|WEBDAV"
-                      r"|GRPC|STOMP|COAPS?|ODATA|RTMPS?|AMQPS|MQTTS|WAMP|XMLRPC|JSONRPC)(?:[/\\]|[-_]?v?)[0-9]+(?:\.[0-9]+)*",
+                      r"|GRPC|STOMP|COAPS?|ODATA|RTMPS?|AMQPS|MQTTS|WAMP|XML-?RPC|JSON-?RPC)(?:[/\\]|[-_]?v?)[0-9]+(?:\.[0-9]+)*",
                       re.IGNORECASE)
-CAPS_PROTOCOL = re.compile(r"[A-Z][A-Za-z]+[/\\][0-9]+(?:\.[0-9]+)+")
+CAPS_PROTOCOL = re.compile(r"[A-Z][A-Za-z]+(?:-[A-Za-z]+)*[/\\][0-9]+(?:\.[0-9]+)+")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"

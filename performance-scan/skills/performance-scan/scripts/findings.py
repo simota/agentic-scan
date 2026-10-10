@@ -114,6 +114,34 @@ def _is_host(name):
             and (labels[-1] in HOST_SUFFIXES or labels[-1] in AMBIGUOUS_HOST_SUFFIXES))
 
 
+def _rejection(path):
+    """Why a path:line candidate is not a file position, or None when it is one."""
+    if "//" in path:
+        return "a URL"
+    if _is_host(path):
+        return "a host:port"
+    if not FILE_SHAPE.fullmatch(path):
+        return "not a file name (a setting, number or word)"
+    first, _, rest = path.replace("\\", "/").partition("/")
+    last = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if rest and "." not in last and _is_host(first):
+        return "a module or host path, not a file"
+    stem, dot, ext = last.rpartition(".")
+    # Go and Java selectors (time.Second, json.Marshal, sql.DB) look like a file
+    # with a capitalised extension; real ones are one letter (.R, .C) or come
+    # with an upper-case stem (README.MD).
+    if (dot and stem and "/" not in path and "\\" not in path and ext[:1].isupper()
+            and len(ext) > 1 and any(c.islower() for c in stem)):
+        return "a code identifier, not a file"
+    return None
+
+
+def citation_rejections(text):
+    """The path:line candidates in text that do not name a file, with the reason."""
+    return [(match.group(0), reason) for match in CITATION.finditer(text)
+            for reason in [_rejection(match.group(1))] if reason]
+
+
 def cites_location(text):
     """True when text names a file position, not a URL, a host:port, a time or a ratio.
 
@@ -122,12 +150,7 @@ def cites_location(text):
     redis:6379 does not either; an extensionless file must be written with its
     directory (src/main:40) unless its name is conventional (BUILD:10).
     """
-    for match in CITATION.finditer(text):
-        path = match.group(1)
-        if "//" in path or _is_host(path) or not FILE_SHAPE.fullmatch(path):
-            continue
-        return True
-    return False
+    return any(_rejection(match.group(1)) is None for match in CITATION.finditer(text))
 
 
 def resolve_path(path):
@@ -524,8 +547,10 @@ def _record_problems(doc):
     for f in findings:
         v = f["validation"]
         if v["verdict"] in DEFINITIVE and not cites_location(v["evidence"]):
+            rejected = "; ".join(f"{_show(candidate, 40)} is {reason}" for candidate, reason
+                                 in citation_rejections(v["evidence"])[:3])
             problems.append(f"{f['id']}.validation.evidence: {v['verdict']} evidence must "
-                            "cite a path:line")
+                            "cite a path:line" + (f" ({rejected})" if rejected else ""))
         if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
             problems.append(f"{f['id']}: a Suspected finding cannot be Valid; confirm the "
                             "code link (Confirmed or Environment-dependent) or record Likely")

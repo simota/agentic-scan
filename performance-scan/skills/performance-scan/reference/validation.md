@@ -72,7 +72,9 @@ Static support can establish a finding when every claim is supported. Label it
   throwaway environment, with synthetic data. Never production, staging,
   shared environments or third-party endpoints; stub external services
 - Prefer deterministic counts (queries, calls, allocations, bytes) over
-  wall-clock time. If time is measured, vary N at least three sizes and report
+  wall-clock time. Labelled examples: a query-count assertion or a test DB
+  callback; Python `django_assert_num_queries`; Go `testing.AllocsPerRun`, `go test
+  -bench -benchmem`, `sqlmock` or a GORM callback for query counts, `goleak`. If time is measured, vary N at least three sizes and report
   the growth, not one number
 - A local measurement on synthetic data does not prove production behaviour;
   keep the production condition in the finding as `Environment-dependent` when

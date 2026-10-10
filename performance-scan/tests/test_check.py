@@ -90,7 +90,9 @@ class CitationTests(unittest.TestCase):
                  "BUILD:10 declares the target", "WORKSPACE:7", "config/app.local/settings.py:3",
                  ".env.local:3", ".env.example:1 sets DATABASE_POOL_SIZE=5", "Dockerfile.dev:12",
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
-                 "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
+                 "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
+                 "internal/store/orders.go:42", "go.sum:10", "orders.go:42:7", "analysis.R:3",
+                 "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
                      "measured locally at 12:30", "ratio 1:10", "redis at localhost:6379",
@@ -105,7 +107,9 @@ class CitationTests(unittest.TestCase):
                      "TTL:300", "MAX_CONNECTIONS:100 is below the worker count", "TTL：300 なので問題なし",
                      "Read/write ratio 1.5:1", "v1.2.3:4", "python3.11:3", "N/A:1", "I/O:5 per request",
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
-                     "MAX_ROWS:100", "HTTP:200", "Profile:2"]
+                     "MAX_ROWS:100", "HTTP:200", "Profile:2", "time.Second:30 is the effective wait",
+                     "sql.DB:4", "json.Marshal:1", "runtime.GOMAXPROCS:4", "golang.org/x/sync:1",
+                     "github.com/foo/bar:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -151,6 +155,23 @@ class StaleReasonTests(unittest.TestCase):
         self.assertNotIn("API latency unknown", render.render_html(doc, "en"))
         doc["budgets"][0]["status"] = "not checked"
         self.assertIn("API latency unknown", render.render_markdown(doc, "en"))
+
+
+class CitationMessageTests(unittest.TestCase):
+    def test_check_names_each_rejected_candidate(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["evidence"] = "GOMAXPROCS:8 and time.Second:30 apply"
+        problem = next(p for p in contract_problems(doc) if p.startswith("P-001.validation"))
+        self.assertIn("'GOMAXPROCS:8' is not a file name", problem)
+        self.assertIn("'time.Second:30' is a code identifier", problem)
+
+    def test_budgets_named_in_impact_are_cited_by_that_finding(self):
+        doc = complete_doc()
+        doc["budgets"].append({"id": "B-02", "statement": "s", "source": "x", "status": "violated"})
+        doc["findings"][1]["impact"] = "Also violates B-02 (and not B-020)"
+        row = next(line for line in render.render_markdown(doc, "en").splitlines()
+                   if line.startswith("| B-02 |"))
+        self.assertTrue(row.endswith(" | P-002 |"), row)
 
 if __name__ == "__main__":
     unittest.main()

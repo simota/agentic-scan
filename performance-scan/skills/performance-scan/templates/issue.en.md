@@ -1,6 +1,8 @@
 <!--
 Files one finding as one issue (one root cause = one fix location = one issue).
-Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty.
+Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty,
+and a whole section (heading included) when all of it is empty, e.g. References with no references.
+Wrap code identifiers in backticks (`*sql.Tx`, `order_items`) so Markdown keeps * and _ literal.
 Write each location in backticks, separated by <br> in the table cell; split {{request}} into one line
 per numbered step. If confidence is Environment-dependent, name the condition and threshold
 (from scale_driver or impact) under Open questions, with the related limitations items.
@@ -43,7 +45,8 @@ Before filing:
 
 **Contrast (the path that keeps the budget):** {{contrast}}
 
-<!-- List every affected entry point here; the same root cause stays in one issue. -->
+<!-- List every affected entry point here; the same root cause stays in one issue. For a stalled
+shared resource, name the workload that causes the stall and the workloads that wait on it. -->
 
 ## Evidence
 

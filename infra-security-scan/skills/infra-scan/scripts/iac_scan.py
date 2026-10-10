@@ -1160,9 +1160,10 @@ def tf_bool(value):
 
 def bucket_key(view, address=None):
     """What names a bucket across resources: aws_s3_bucket.x for a reference to
-    it (.id, .bucket), else the literal bucket name."""
+    it (.id, .bucket), with its literal instance key when counted
+    (aws_s3_bucket.x[0], aws_s3_bucket.x["logs"]), else the literal bucket name."""
     raw = (view.raw("bucket") or "").strip() if hasattr(view, "raw") else ""
-    ref = re.fullmatch(r"(aws_s3_bucket\.[\w-]+)\.(?:id|bucket)", raw)
+    ref = re.fullmatch(r'(aws_s3_bucket\.[\w-]+(?:\[(?:\d+|"[^"\\]*")\])?)\.(?:id|bucket)', raw)
     if ref:
         return ref.group(1)
     if address:

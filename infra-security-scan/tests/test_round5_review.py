@@ -558,5 +558,30 @@ class CodexThirteenthReviewTest(unittest.TestCase):
                          [("literal default for parameter DbPassword", 5)])
 
 
+class CodexFourteenthReviewTest(unittest.TestCase):
+    def test_password_quoted_apart_from_the_user(self):
+        rest = "Sup3r" + "Secret"
+        for line in (f'curl -u admin:"pfx {rest}" https://host', f"curl -u admin:'pfx {rest}' https://host",
+                     f'curl -u admin:pfx"a {rest}" https://host', f'docker login -p pfx"a {rest}" registry'):
+            self.assertNotIn(rest, redaction.scrub_line(line, "shell"), line)
+
+    def test_indexed_bucket_reference_meets_its_public_access_block(self):
+        base = ('resource "aws_s3_bucket" "b" {{\n  count = 1\n  bucket = "data"\n}}\n'
+                'resource "aws_s3_bucket_acl" "a" {{\n  bucket = {ref}\n  acl = "public-read"\n}}\n'
+                'resource "aws_s3_bucket_public_access_block" "p" {{\n  bucket = {ref}\n'
+                '  ignore_public_acls = true\n}}\n')
+        plain = 'resource "aws_s3_bucket" "b" {\n  bucket = "data"\n}\n' \
+                'resource "aws_s3_bucket_acl" "a" {\n  bucket = aws_s3_bucket.b.id\n  acl = "public-read"\n}\n' \
+                'resource "aws_s3_bucket_public_access_block" "p" {\n  bucket = aws_s3_bucket.b.id\n' \
+                '  ignore_public_acls = true\n}\n'
+
+        def severities(text):
+            return {h["severity"] for h in scan({"s.tf": text}).hits if h["rule"] == "AWS-S3-001"}
+        self.assertEqual(severities(base.format(ref="aws_s3_bucket.b[0].id")), severities(plain))
+        mismatched = base.format(ref="aws_s3_bucket.b[0].id").replace(
+            "bucket = aws_s3_bucket.b[0].id\n  ignore", "bucket = aws_s3_bucket.b[1].id\n  ignore")
+        self.assertNotEqual(severities(mismatched), severities(plain))
+
+
 if __name__ == "__main__":
     unittest.main()

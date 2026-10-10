@@ -473,7 +473,8 @@ UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
 # Option and value may be attached (-uadmin:pw), spaced, or separate exec-form
 # list elements ("-u", "admin:pw"). A numeric uid:gid (docker -u 1000:1000) is no password.
 OPTION_GAP = r"""(?:\s+|=|["']\s*,\s*)?\\?["']?"""
-USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,\\]+:)(?=[^\s"'\\])([^\s"',\]\\]+)""")
+USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,\\]+:)"""
+                           r"""("[^"\s,][^"]*"?|'[^'\s,][^']*'?|(?=[^\s"'\\])[^\s"',\]\\]+)""")
 # Tools that take a password as an option's value; docker/podman only for login
 # (their -p elsewhere maps ports).
 TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|smbclient|mysqladmin|"
@@ -556,18 +557,23 @@ def _closing_quote(line, quote, start):
 
 
 def _shell_word_end(line, start, end):
-    """End of the unquoted shell word holding line[start:end]: a backslash escapes
-    the next character (admin:pfx\\ secret is one argument), so the word runs
-    on through escaped spaces."""
-    i = start
-    while i < len(line) and (i < end or line[i] not in " \t\"'"):
-        if line[i] == "\\" and i + 1 < len(line):
+    """End of the unquoted shell word holding line[start:end]. A backslash escapes
+    the next character (admin:pfx\\ secret is one argument), and a quoted part
+    joined to the word continues it (admin:pfx"a secret"). A quote that is never
+    closed on the line ends the word: it closes a string the word sits in."""
+    i, n = start, len(line)
+    while i < n and (i < end or line[i] not in " \t,]"):
+        c = line[i]
+        if c == "\\" and i + 1 < n:
             i += 2
-        elif i >= end and line[i] in ",]":
-            break
+        elif c in "\"'" and i >= end:
+            close = _closing_quote(line, c, i + 1)
+            if close == -1:
+                break
+            i = close + 1
         else:
             i += 1
-    return max(end, min(i, len(line)))
+    return max(end, i)
 
 
 def _redact_values(pattern, line, group, keep=lambda m: False):

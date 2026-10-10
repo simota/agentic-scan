@@ -91,7 +91,8 @@ class CitationTests(unittest.TestCase):
                  ".env.local:3", ".env.example:1 sets DATABASE_POOL_SIZE=5", "Dockerfile.dev:12",
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
                  "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
-                 "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7", "orders.go:42:7", "analysis.R:3",
+                 "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7",
+                 "src/設定:12", "Program.CS:20", "index.PY:4", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
@@ -108,7 +109,7 @@ class CitationTests(unittest.TestCase):
                      "Read/write ratio 1.5:1", "v1.2.3:4", "python3.11:3", "N/A:1", "I/O:5 per request",
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "time.Second:30 is the effective wait",
-                     "sql.DB:4", "json.Marshal:1", "runtime.GOMAXPROCS:4", "golang.org/x/sync:1",
+                     "json.Marshal:1", "http.DefaultClient:5", "runtime.GOMAXPROCS:4", "golang.org/x/sync:1",
                      "github.com/foo/bar:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)

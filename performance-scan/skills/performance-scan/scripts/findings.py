@@ -92,12 +92,13 @@ HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", 
                            "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
 AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
-# A file name has a directory part whose last segment holds a letter (src/main,
+# A file name has a directory part whose last segment holds a letter, in any
+# script (src/main, src/設定,
 # src/a; not HTTP/1.1, and _rejection refuses N/A and I/O, whose segments are all
 # single characters), an extension with a letter (not 1.5 or v1.2.3), or a
 # conventional extensionless name. All-caps words in general (TTL, MAX_CONNECTIONS)
 # are settings, not files.
-FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[A-Za-z][^/\\]*"
+FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[^\W\d_][^/\\]*"
                         r"|.*\.[A-Za-z][A-Za-z0-9]*"
                         r"|(?:GNU)?[Mm]akefile|(?:Docker|Container|Gem|Proc|Rake|Jenkins|Vagrant|Brew"
                         r"|Pod|Fast|Just|Earth|Tilt|Guard|Cap|Berks|Snake)file"
@@ -131,11 +132,12 @@ def _rejection(path):
     if rest and "." not in last and _is_host(first):
         return "a module or host path, not a file"
     stem, dot, ext = last.rpartition(".")
-    # Go and Java selectors (time.Second, json.Marshal, sql.DB) look like a file
-    # with a capitalised extension; real ones are one letter (.R, .C) or come
-    # with an upper-case stem (README.MD).
+    # Go and Java selectors (time.Second, json.Marshal, runtime.GOMAXPROCS) look
+    # like a file with a capitalised extension. Real extensions are not
+    # CamelCase and stay short when upper-cased (Program.CS, index.PY, README.MD);
+    # a short all-caps selector such as sql.DB cannot be told apart and counts.
     if (dot and stem and "/" not in path and "\\" not in path and ext[:1].isupper()
-            and len(ext) > 1 and any(c.islower() for c in stem)):
+            and (any(c.islower() for c in ext) or len(ext) > 5)):
         return "a code identifier, not a file"
     return None
 

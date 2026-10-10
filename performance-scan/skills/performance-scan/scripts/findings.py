@@ -127,7 +127,7 @@ PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # Short ones that are also real extensions (.m, .a, .el, .deb) need a number.
 QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
                        r"|build-snapshot|milestone|amzn|ubuntu|sles|mga|svn)[0-9_]*"
-                       r"|(?:m|a|b|sr|cr|el|fc|deb|git)[0-9][0-9_]*", re.IGNORECASE)
+                       r"|(?:m|a|b|sr|cr|sp|hf|ea|u|p|r|el|fc|deb|git)[0-9][0-9_]*", re.IGNORECASE)
 EXTENSION = re.compile(r"[^\W\d_][^\W_]{0,4}")
 # Before the - or _ that precedes the number, the name may hold digits, . + #
 # and further - or _ (log4j-2.17.1, Node.js-20.11.0, .NET-8.0.0,

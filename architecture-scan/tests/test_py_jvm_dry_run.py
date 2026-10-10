@@ -304,7 +304,9 @@ class ReviewRegressionTests(Workspace):
                                ("mailto:a@x.example?subject=A-001 A-001",
                                 "mailto:a@x.example?subject=A-001 A-003"),
                                ("参照https://x/A-001。A-001", "参照https://x/A-001。A-003"),
-                               ("Fix:A-001 first", "Fix:A-003 first")):
+                               ("Fix:A-001 first", "Fix:A-003 first"),
+                               ("A-001@example.com, owner+A-001@x.example, x@A-001.example; A-001",
+                                "A-001@example.com, owner+A-001@x.example, x@A-001.example; A-003")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)
 
     def test_a_url_ends_before_japanese_punctuation(self):

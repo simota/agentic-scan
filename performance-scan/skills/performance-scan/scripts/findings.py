@@ -109,7 +109,13 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
 NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
-VERSION = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z.]+)?")
+# A version with optional prerelease or build metadata, in SemVer or compact
+# form (v1.2.3-rc.1+build.5, 1.2.3rc1), or with a Maven-style qualifier
+# (5.3.20.RELEASE, 1.0.Final). Any other dotted suffix after the numbers is a
+# file extension (2.0.txt, 1.2.py).
+VERSION = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+"
+                     r"(?:\.(?:RELEASE|Final|FINAL|GA|SNAPSHOT|M[0-9]+|RC[0-9]+|CR[0-9]+))?"
+                     r"(?:(?:[-+]|(?=[A-Za-z]))[0-9A-Za-z.+-]*)?")
 PROTOCOL = re.compile(r"[A-Z]+[/\\][0-9]+(?:\.[0-9]+)*")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"

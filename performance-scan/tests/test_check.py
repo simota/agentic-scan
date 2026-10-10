@@ -96,7 +96,7 @@ class CitationTests(unittest.TestCase):
                  "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10",
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
                  "foo.1:3", "Dockerfile.22.04:2", "python3.11:3", "docker/22.04:3",
-                 "fixtures/1.5:3", "src/1.2:3",
+                 "fixtures/1.5:3", "src/1.2:3", "2.0.txt:3", "1.2.py:4",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -115,7 +115,9 @@ class CitationTests(unittest.TestCase):
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "golang.org/x/sync:1",
                      "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",
-                     "R/W:2", "1/2:3", "HTTP/2:200", "TLS/1.3:1", "v1.2.3-rc1:4", "1.2.3-beta:4"]
+                     "R/W:2", "1/2:3", "HTTP/2:200", "TLS/1.3:1", "v1.2.3-rc1:4", "1.2.3-beta:4",
+                     "v1.2.3+build.5:4", "v1.2.3-rc.1+build.5:4", "1.2.3rc1:4", "2.0b3:1", "5.3.20.RELEASE:1",
+                     "1.0.Final:2", "1.0-SNAPSHOT:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:

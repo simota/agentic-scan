@@ -24,7 +24,7 @@
 | 確度 | {{confidence}}（Environment-dependent なら、前提となる条件を「未確定事項」に書く） |
 | 検証判定 | {{validation.verdict}}（検証方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |
-| 場所 | `{{location}}` |
+| 場所 | {{location}} |
 | 対象リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 

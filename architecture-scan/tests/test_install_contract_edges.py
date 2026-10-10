@@ -1,5 +1,4 @@
 """Check that the package gate requires every localized filing template."""
-import os
 from pathlib import Path
 import shlex
 import shutil

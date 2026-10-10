@@ -17,6 +17,13 @@ class ScopedPackageTests(unittest.TestCase):
         self.assertIn("&#64;<!-- -->", render.markdown_inline("mail bob@example.com"))
         self.assertIn("&#64;<!-- -->", render.markdown_code("ssh deploy@host"))
 
+    def test_an_at_after_an_entity_this_renderer_wrote_is_disarmed(self):
+        # cmark-gfm decodes `&#95;` back into the address's local part.
+        for code in ("loc_@example.com:12", "a*@example.com"):
+            self.assertIn("&#64;<!-- -->", render.markdown_code(code), code)
+        for text in ("www.@example.com", "a\\.@example.com", "mailto:@example.com"):
+            self.assertIn("&#64;<!-- -->", render.markdown_inline(text), text)
+
 
 class TemplateCountTests(unittest.TestCase):
     def test_counts_print_every_template_placeholder(self):

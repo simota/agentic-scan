@@ -14,6 +14,16 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("d.open=true", render.JS)
         self.assertIn("@media print{[data-filter]{display:none}}", render.CSS)
 
+    def test_printing_hides_the_empty_message_and_restores_collapsed_findings(self):
+        self.assertIn("if(m)m.hidden=true", render.JS)
+        self.assertIn("shut.forEach(d=>{d.open=false})", render.JS)
+
+    def test_the_tab_title_shows_bidi_controls_too(self):
+        doc = complete_doc()
+        doc["meta"]["project"] = "acme\u202eloc.exe"
+        title = re.search(r"<title>(.*?)</title>", render.render_html(doc, "en"))[1]
+        self.assertIn("[U+202E]", title)
+
     def test_a_filter_with_no_match_has_a_message(self):
         html = render.render_html(complete_doc(), "en")
         self.assertIn("<p data-empty hidden>None.</p>", html)

@@ -683,7 +683,7 @@ def template_counts(doc):
 def cmd_counts(args):
     try:
         doc = read_json(args.findings)
-        validate(doc)
+        validate(doc, complete=True)
     except SchemaError as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1

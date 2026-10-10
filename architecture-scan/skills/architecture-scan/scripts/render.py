@@ -144,8 +144,10 @@ AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=?@^_{-~]")
 AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 
 
-# An `@` after anything but a blank, opening punctuation or a tag's `>`.
-EMAIL_AT = re.compile(r"(?<=[^\s(\[{'\"`,;:>])@")
+# An `@` after anything but a blank, opening punctuation or a tag's `>`. A `;`
+# is not safe: it usually ends an entity this renderer wrote (`a&#95;@x.com`),
+# which cmark-gfm decodes back into the local part before it autolinks.
+EMAIL_AT = re.compile(r"(?<=[^\s(\[{'\"`,:>])@")
 
 
 def disarm_autolinks(text):
@@ -379,9 +381,11 @@ const m=document.querySelector('[data-empty]');if(m)m.hidden=n>0;};
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
 show(b.dataset.filter);}));
-addEventListener('beforeprint',()=>document.querySelectorAll('details[data-sev]').forEach(d=>{
-d.hidden=false;d.open=true}));
-addEventListener('afterprint',()=>show(document.querySelector('[aria-pressed="true"]').dataset.filter));
+let shut=[];addEventListener('beforeprint',()=>{shut=[];
+document.querySelectorAll('details[data-sev]').forEach(d=>{if(!d.open)shut.push(d);d.hidden=false;d.open=true});
+const m=document.querySelector('[data-empty]');if(m)m.hidden=true;});
+addEventListener('afterprint',()=>{shut.forEach(d=>{d.open=false});
+show(document.querySelector('[aria-pressed="true"]').dataset.filter);});
 """
 
 
@@ -418,7 +422,7 @@ def render_html(doc, lang):
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{escape(t['title'])}: {escape(' '.join(meta.get('project', '').split()))}</title>"
+           f"<title>{escape(t['title'])}: {escape(' '.join(as_text(meta.get('project', '')).split()))}</title>"
            f"<style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
            f"<p class='muted'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "

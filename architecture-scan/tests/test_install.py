@@ -1,5 +1,4 @@
 """Exercise installation targets only inside temporary directories."""
-import os
 from pathlib import Path
 import shutil
 import subprocess

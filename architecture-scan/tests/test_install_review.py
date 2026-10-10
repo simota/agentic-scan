@@ -1,5 +1,4 @@
 """Keep install and demo targets usable from literal checkout paths."""
-import os
 from pathlib import Path
 import shutil
 import subprocess

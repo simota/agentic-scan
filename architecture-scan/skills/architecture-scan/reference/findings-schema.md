@@ -83,11 +83,12 @@ be byte-identical to what `render.py` produces from the current
   `.com`, `.net`, `.io`, `.internal` or `.localhost`, such as
   `db.internal:5432`. Dotfiles and names such as `Dockerfile.dev` or
   `Makefile.local` count as files). A duplicate's `NotApplicable` evidence
-  may instead name the reported finding it repeats (`Duplicate of A-004`)
+  may instead name the reported finding it repeats (`Duplicate of A-004`,
+  `A-004 の重複`)
 
 With `--repo <checkout>` (a checkout of the assessed revision), `check` also
-refuses a `location` whose file is missing or whose line is past the file's
-end; it catches a path typed from memory, not a line a few rows off, so the
+refuses a `location` whose file is missing or outside that checkout, or
+whose line is past the file's end; it catches a path typed from memory, not a line a few rows off, so the
 trace still reads each line it cites.
 
 ## Writing the file

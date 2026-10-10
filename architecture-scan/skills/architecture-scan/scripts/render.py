@@ -18,6 +18,7 @@ from html import escape
 from pathlib import Path
 import re
 import sys
+import unicodedata
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
@@ -152,9 +153,18 @@ AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 # digit (in any script, as pandoc's autolinker reads them), `.`, `+`, `-`,
 # `_`, or the `;` that ends an entity this renderer wrote (`a&#95;@x.com`),
 # which cmark-gfm decodes back into the local part before it autolinks.
-# After a blank or punctuation (`（@Version`, `。@Transactional`) there is no
-# local part, so the `@` stays as written.
-EMAIL_AT = re.compile(r"(?<=[\w.+\-;])@")
+# A combining mark counts too: pandoc composes `e` + U+0301 into a letter of
+# the local part. After a blank or punctuation (`（@Version`, `。@Transactional`)
+# there is no local part, so the `@` stays as written.
+EMAIL_AT = re.compile(r"(?<=(.))@", re.DOTALL)
+LOCAL_PART_END = re.compile(r"[\w.+\-;]")
+
+
+def _disarm_at(match):
+    before = match[1]
+    if LOCAL_PART_END.match(before) or unicodedata.category(before).startswith("M"):
+        return "&#64;<!-- -->"
+    return "@"
 
 
 def disarm_autolinks(text):
@@ -166,7 +176,7 @@ def disarm_autolinks(text):
     `@decorator`) has no local part, cannot be an address, and stays readable.
     """
     text = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", text)
-    return EMAIL_AT.sub("&#64;<!-- -->", text)
+    return EMAIL_AT.sub(_disarm_at, text)
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
@@ -259,13 +269,17 @@ def rule_id(rule):
     return f"{rule['id']} · {rule['family']}" if rule.get("family") else rule["id"]
 
 
+# `baseline` or `baseline; shared/db.py:12 …`, not a file such as `baselines/x.md`.
+BASELINE_SOURCE = re.compile(r"\s*baseline(?![\w./-])", re.IGNORECASE)
+
+
 def rule_statement(rule, lang):
     """An inferred rule is a question for the requester (reference/rules.md §1).
 
     A baseline entry is inferred too, but states a general family rule, not
     this codebase's intent, so it is labelled as such and asks nothing.
     """
-    if rule["source"].strip().lower().startswith("baseline"):
+    if BASELINE_SOURCE.match(rule["source"]):
         return f"{rule['statement']} ({LABELS[lang]['baseline']})"
     if rule.get("inferred") is True:
         return f"{rule['statement']} ({LABELS[lang]['inferred']})"

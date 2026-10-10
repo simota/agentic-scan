@@ -223,6 +223,67 @@ class EmailAtTests(unittest.TestCase):
         self.assertNotIn("<a ", html)
 
 
+class ReviewRegressionTests(Workspace):
+    """Defects the review of this round's own diff found."""
+
+    def test_a_rule_named_beside_japanese_text_is_cited(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
+        doc["findings"][0]["trace"] += "、ルールR-02にも違反する"
+        self.assertEqual(self.problems(doc), [])
+
+    def test_a_label_before_a_path_starting_with_a_digit_still_cites_it(self):
+        for evidence in ("根拠:20240101_create_orders.rb:12", "確認:1_init.sql:3",
+                         "根拠:3rd_party/client.py:40"):
+            with self.subTest(evidence=evidence):
+                self.assertTrue(findings.cites_line(evidence))
+
+    def test_a_url_ends_before_japanese_punctuation(self):
+        mapping = {"A-001": "A-003", "A-003": "A-001"}
+        for text, expected in (("詳細は https://example.com/x。A-001と同根",
+                                "詳細は https://example.com/x。A-003と同根"),
+                               ("（https://example.com/x）A-001と同根",
+                                "（https://example.com/x）A-003と同根")):
+            self.assertEqual(findings._rewrite_ids(text, mapping), expected)
+
+    def test_an_empty_file_has_a_line_one_and_nothing_outside_the_checkout_counts(self):
+        repo = self.tmp / "checkout"
+        (repo / "pkg").mkdir(parents=True)
+        (repo / "pkg" / "__init__.py").write_bytes(b"")
+        (self.tmp / "outside.py").write_text("x\n" * 9, encoding="utf-8")
+        (repo / "link.py").symlink_to(self.tmp / "outside.py")
+        doc = complete_doc()
+        doc["findings"][0]["location"] = ["pkg/__init__.py:1"]
+        doc["findings"][1]["location"] = ["../outside.py:1", "link.py:1", "pkg:1"]
+        problems = findings.location_problems(doc, repo)
+        self.assertEqual([p.split(": ")[1] for p in problems],
+                         ["location ../outside.py:1", "location link.py:1", "location pkg:1"])
+
+    def test_an_at_after_a_combining_mark_is_disarmed(self):
+        for text in ("jose\u0301@example.com", "\u30ab\u3099@example.com"):
+            with self.subTest(text=repr(text)):
+                self.assertIn("&#64;<!-- -->", render.markdown_inline(text))
+
+    def test_only_a_baseline_source_is_a_baseline(self):
+        for source, baseline in (("baseline", True), ("Baseline; shared/db.py:12", True),
+                                 ("baselines/ownership.md:4", False),
+                                 ("baseline_config.yaml:12", False)):
+            with self.subTest(source=source):
+                rule = {"statement": "s", "source": source, "inferred": True}
+                self.assertEqual(render.rule_statement(rule, "en").endswith("(baseline)"),
+                                 baseline)
+
+    def test_only_a_stated_duplicate_skips_the_line_citation(self):
+        doc = complete_doc()
+        for evidence, ok in (("A-001 の重複", True), ("duplicates A-001", True),
+                             ("Not a duplicate; unlike A-001 this module is legacy", False),
+                             ("see docs/A-001.md", False)):
+            with self.subTest(evidence=evidence):
+                doc["findings"][1]["validation"] = {"verdict": "NotApplicable",
+                                                    "method": "static", "evidence": evidence}
+                self.assertEqual(self.problems(doc) == [], ok)
+
+
 class CommandLineTests(unittest.TestCase):
     def test_help_carries_the_whole_usage(self):
         for script, needle in (("findings.py", "Exit codes"), ("render.py", "Exit codes")):

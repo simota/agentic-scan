@@ -84,7 +84,11 @@ PERSPECTIVES = (
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
-RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])")
+# `Duplicate of A-004`, `duplicates A-004`, `A-004 の重複`, `重複: A-004`.
+DUPLICATE_OF = re.compile(r"(?i)(?:duplicates?(?: of)?|重複[:：]?)\s*(A-[0-9]{3})(?![\w-])"
+                          r"|(?<![\w/-])(A-[0-9]{3})\s*の重複", re.ASCII)
+# ASCII word characters only, so `R-02にも` beside Japanese text is a mention.
+RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])", re.ASCII)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -110,13 +114,13 @@ RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
 # label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
-# is not a line; it has a letter (`10:30` is not one, which `cites_line`
-# checks) and a line from 1. A Windows drive (`C:\repo\a.py:3`) is allowed.
+# is not a line; it has a letter (`10:30` is not one) and a line from 1. A Windows drive (`C:\repo\a.py:3`) is allowed.
 # The path is taken whole in a lookahead, so the regex never backtracks into
 # it, and is bounded, so a long list of names in evidence stays linear.
 EVIDENCE_LINE = re.compile(
     r"(?<![^\s(\[{'\"`,;:])(?!//)"
-    r"(?=(?P<path>(?:[A-Za-z]:)?[^\s:]{1,1024}))(?P=path):[1-9][0-9]*")
+    r"(?=(?P<path>(?:[A-Za-z]:)?(?=[^\s:]{0,1023}[A-Za-z])[^\s:]{1,1024}))(?P=path)"
+    r":[1-9][0-9]*")
 # Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
@@ -292,8 +296,6 @@ def cites_line(evidence, locations=()):
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
-        if not re.search(r"[A-Za-z]", path):
-            continue
         if path in known:
             return True
         has_dir = re.search(r"[/\\]", path) and not path.startswith("//")
@@ -577,7 +579,9 @@ ID_RUN = re.compile(
     r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
-PROSE_URL = re.compile(r"((?<![\w+.-])[A-Za-z][A-Za-z0-9+.-]*://\S+)")
+# ASCII URL characters only, so `…/x。A-001と` ends the URL at `。`.
+PROSE_URL = re.compile(r"((?<![\w+.-])[A-Za-z][A-Za-z0-9+.-]*://"
+                       r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)")
 
 
 def _first_location(f):
@@ -835,7 +839,7 @@ def contract_problems(out, allow=()):
         # A duplicate's evidence is the reported finding that keeps it, whose
         # own evidence cites the line; renumber rewrites the ID with the rest.
         duplicate = verdict == "NotApplicable" and any(
-            m in kept for m in re.findall(r"A-[0-9]{3}", evidence))
+            (m[1] or m[2]) in kept for m in DUPLICATE_OF.finditer(evidence))
         if verdict in DEFINITIVE and not duplicate and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line"
                             + (" (or, for a duplicate, the finding it repeats)"
@@ -914,6 +918,7 @@ def location_problems(doc, repo):
     repo = Path(repo)
     if not repo.is_dir():
         return [f"--repo: not a directory: {repo}"]
+    root = repo.resolve()
     problems, lines = [], {}
     for f in doc.get("findings", []):
         for loc in as_locations(f["location"]):
@@ -921,7 +926,11 @@ def location_problems(doc, repo):
             file = repo / path
             if path not in lines:
                 try:
-                    if not file.is_file():
+                    resolved = file.resolve()
+                    # A location names a file of the assessed checkout, never one outside it.
+                    if resolved != root and root not in resolved.parents:
+                        raise FileNotFoundError(path)
+                    if not resolved.is_file():
                         raise FileNotFoundError(path)
                     count, last = 0, b""
                     with file.open("rb") as stream:
@@ -932,7 +941,7 @@ def location_problems(doc, repo):
                     lines[path] = None
             if lines[path] is None:
                 problems.append(f"{f['id']}: location {loc}: no such file in {repo}")
-            elif max(start, end) > lines[path]:
+            elif max(start, end) > max(lines[path], 1):  # line 1 of an empty file
                 problems.append(f"{f['id']}: location {loc}: line {max(start, end)} is past "
                                 f"the end of {path} ({lines[path]} lines)")
     return problems

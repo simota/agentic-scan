@@ -72,7 +72,7 @@ builds from JSON fragments rather than heredocs:
 python3 skills/architecture-scan/scripts/findings.py merge out/findings.json frag-001.json
 python3 skills/architecture-scan/scripts/findings.py renumber out/findings.json  # severity, then path
 python3 skills/architecture-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
-python3 skills/architecture-scan/scripts/findings.py check out --repo .   # exit 1 lists each violation
+python3 skills/architecture-scan/scripts/findings.py check out --repo /path/to/assessed/checkout   # exit 1 lists each violation
 python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  # n_* for the report template
 ```
 
@@ -87,7 +87,7 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
 `checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
 recorded as violated, a `Likely` one violated or partly read), every violated rule
-cited by a finding, traced and evidenced
+cited by a finding and no reason left on a closed rule, traced and evidenced
 High and Medium findings, and a dashboard and
 report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape

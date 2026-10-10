@@ -43,20 +43,24 @@ own module mode, which reads `vendor/` when the repository has one.
 In Python, count function-level imports as well as top-level ones (a
 function-level import is the usual way around a circular `ImportError`, so it
 often *is* the cycle), treat imports under `if TYPE_CHECKING:` as type-only,
-and resolve relative imports and `__init__` re-exports. `lint-imports` or
-`pydeps --show-deps --no-output` give the graph when installed; otherwise a
-stdlib `ast` walk over the checkout, kept in scratch and run with `python3 -I`,
-is read-only analysis too (record it as `analysis`).
+and resolve relative imports and `__init__` re-exports. `pydeps --show-deps
+--no-output` prints the graph when installed, and `lint-imports --no-cache`
+checks the repository's own contracts (without `--no-cache` it writes a cache
+into the checkout); otherwise a stdlib `ast` walk over the checkout, kept in
+scratch and run with `python3 -I`, is read-only analysis too (record it as
+`analysis`).
 
 On the JVM, module edges come from `project(":x")` in `settings.gradle(.kts)`
 and `build.gradle(.kts)`, or `<module>` and `<dependency>` in `pom.xml`;
 package edges from `import` and `import static` lines plus fully qualified
-names in code and in JPQL strings. `jdeps -verbose:package` reads only jars
-already built. Gradle and Maven run the repository's build scripts and write
-caches into it, so they are not read-only analysis: run one only with
-permission, offline and with its caches in scratch (`--offline
---project-cache-dir <scratch>/gradle -g <scratch>/gradle-home`, or `-o
--Dmaven.repo.local=<scratch>/m2`), and never a build, compile or test task.
+names in code and in JPQL strings. `jdeps -verbose:package` reads compiled
+classes that already exist (class directories or jars); it builds nothing.
+Gradle and Maven run the repository's build scripts, and Gradle compiles
+`buildSrc` and included builds into the checkout, so they are not read-only
+analysis: run one only with permission, on a copy of the checkout in scratch,
+offline with the user's existing caches (`gradle --offline -q projects`, `mvn
+-o dependency:tree`; an empty cache cannot resolve plugins offline), and never
+a build, compile or test task.
 
 Then flag:
 

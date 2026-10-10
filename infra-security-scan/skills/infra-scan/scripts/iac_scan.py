@@ -843,7 +843,7 @@ class Scan:
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
-        self.k8s_bindings, self.k8s_wildcard_roles = [], set()
+        self.k8s_bindings, self.k8s_wildcard_roles = [], {}  # role key: directories defining it
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
         self.gcp_policy_data = {}
@@ -1209,18 +1209,20 @@ def org_policy_enforced(scan, constraint, res):
                                      scan.project_orgs.get(project) in policies["orgs"]):
         return True
     # A project policy covers a bucket of the same project: the same literal, both
-    # omitted (the provider's default project), or the same unresolved expression.
+    # omitted under one provider configuration, or the same unresolved expression.
     here = {p for d, p in policies["dirs"] if d == res.dir}
-    scope = project_scope(res.view, "project") if res.view else None
+    scope = project_scope(res.view, "project") if res.view else ("provider", "default")
     return scope in here and scope != ("expr", None)
 
 
 def project_scope(view, attr):
-    """A project as written: its literal ID, None when omitted, or ("expr", text)
-    for an unresolved reference (var.project, "projects/${var.project}")."""
+    """A project as written: its literal ID, ("provider", alias) when omitted, or
+    ("expr", text) for an unresolved reference (var.project, "projects/${var.project}")."""
     value = view.get(attr)
     if value is None:
-        return None
+        # The provider's default project: one per provider configuration (google.other).
+        provider = provider_key(view)
+        return ("provider", provider if "." in provider else "default")
     if isinstance(value, str):
         return value.removeprefix("projects/") if attr == "parent" else value
     raw = view.raw(attr)
@@ -1594,8 +1596,13 @@ def check_tf(scan, res):
         authorized = v.blocks("master_authorized_networks_config")
         ip_endpoints = [ip for cfg in v.blocks("control_plane_endpoints_config")
                         for ip in cfg.blocks("ip_endpoints_config")]
-        if ip_endpoints and all(tf_bool(ip.get("enabled")) is False for ip in ip_endpoints):
+        ip_states = [tf_bool(ip.get("enabled")) for ip in ip_endpoints]
+        if ip_endpoints and all(state is False for state in ip_states):
             pass  # DNS-based endpoint only: no IP endpoint to authorize networks for
+        elif not authorized and ip_endpoints and all(state in (False, UNKNOWN) for state in ip_states):
+            line = ip_endpoints[0].line("enabled")
+            scan.not_run.append("GCP-GKE-001: unknown ip_endpoints_config.enabled and no authorized networks; "
+                                f"check not run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
         elif not authorized and private_endpoint is UNKNOWN and private[0].known_present:
             line = private[0].line("enable_private_endpoint")
             scan.not_run.append("GCP-GKE-001: unknown enable_private_endpoint and no authorized networks; check "
@@ -3156,13 +3163,27 @@ def contains_key(value, key, depth=8):
     return False
 
 
+def same_tree(a, b):
+    """Two directories on one path (one holds the other): the same set of manifests,
+    unlike sibling trees such as dev/ and prod/ that may target different clusters."""
+    return a == b or not a or not b or a.startswith(b + "/") or b.startswith(a + "/")
+
+
 def finish_k8s(scan):
-    """Bindings to roles that grant * on *, wherever in the inputs the role is."""
+    """Bindings to roles that grant * on *, defined in the binding's directory tree.
+    A role of that name only in a sibling tree (dev/ for a prod/ binding) may be
+    another cluster's: recorded as unresolved instead."""
     for res, kind, namespace, role_kind, role_name, line in scan.k8s_bindings:
         key = (role_kind, namespace if role_kind == "Role" else None, role_name)
-        if key in scan.k8s_wildcard_roles:
+        dirs = scan.k8s_wildcard_roles.get(key, set())
+        here = posixpath.dirname(res.file)
+        if any(same_tree(here, d) for d in dirs):
             severity = "Medium" if kind == "RoleBinding" else None
             scan.hit("K8S-002", res, line, f"binds {role_kind} {role_name}, which grants * on *", severity)
+        elif dirs:
+            scan.not_run.append(f"K8S-002: {role_kind} {role_name} grants * on * in {', '.join(sorted(dirs))}, "
+                                f"another tree than the binding; check it is the same cluster: {res.file}:{line} "
+                                f"({res.address})")
 
 
 def _check_k8s(scan, rel, doc, fallback_kind=None):
@@ -3226,7 +3247,8 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         for rule in aslist(doc.get("rules")):
             if isinstance(rule, dict) and "*" in aslist(rule.get("verbs")) and "*" in aslist(rule.get("resources")) \
                     and "*" in aslist(rule.get("apiGroups")):
-                scan.k8s_wildcard_roles.add((kind, namespace if kind == "Role" else None, name))
+                scan.k8s_wildcard_roles.setdefault((kind, namespace if kind == "Role" else None, name), set()).add(
+                    posixpath.dirname(rel))
     if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
     if kind == "Secret":

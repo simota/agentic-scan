@@ -505,5 +505,48 @@ class CodexEleventhReviewTest(unittest.TestCase):
         self.assertNotEqual(severities(base.format(count="  count = var.n\n")), severities(base.format(count="")))
 
 
+class CodexTwelfthReviewTest(unittest.TestCase):
+    def test_omitted_project_scopes_keep_the_provider_alias(self):
+        policy = 'resource "google_project_organization_policy" "p" {\n  provider = google.secure\n' \
+                 '  constraint = "storage.uniformBucketLevelAccess"\n  boolean_policy {\n    enforced = true\n  }\n}\n'
+        bucket = 'resource "google_storage_bucket" "b" {{\n  provider = {provider}\n' \
+                 '  uniform_bucket_level_access = false\n  public_access_prevention = "enforced"\n}}\n'
+        other = scan({"g.tf": policy + bucket.format(provider="google.other")})
+        self.assertEqual([h["rule"] for h in other.hits], ["GCP-GCS-001"])
+        same = scan({"g.tf": policy + bucket.format(provider="google.secure")})
+        self.assertEqual(same.hits, [])
+
+    def test_unknown_ip_endpoint_state_is_not_run(self):
+        result = scan({"c.tf": '''resource "google_container_cluster" "c" {
+  remove_default_node_pool = true
+  initial_node_count = 1
+  workload_identity_config {
+    workload_pool = "p.svc.id.goog"
+  }
+  control_plane_endpoints_config {
+    ip_endpoints_config {
+      enabled = var.enable_ip_endpoint
+    }
+  }
+}
+'''})
+        self.assertNotIn("GCP-GKE-001", [h["rule"] for h in result.hits])
+        self.assertTrue([n for n in result.not_run if "ip_endpoints_config.enabled" in n], result.not_run)
+
+    def test_rbac_roles_correlate_within_one_tree(self):
+        role = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRole",
+                "metadata": {"name": "custom-admin"},
+                "rules": [{"apiGroups": ["*"], "resources": ["*"], "verbs": ["*"]}]}
+        binding = {"apiVersion": "rbac.authorization.k8s.io/v1", "kind": "ClusterRoleBinding",
+                   "metadata": {"name": "ops"},
+                   "roleRef": {"apiGroup": "rbac.authorization.k8s.io", "kind": "ClusterRole", "name": "custom-admin"},
+                   "subjects": [{"kind": "Group", "name": "ops"}]}
+        apart = scan({"dev/role.json": role, "prod/binding.json": binding})
+        self.assertNotIn("K8S-002", [h["rule"] for h in apart.hits])
+        self.assertTrue([n for n in apart.not_run if "custom-admin" in n], apart.not_run)
+        together = scan({"k8s/role.json": role, "k8s/rbac/binding.json": binding})
+        self.assertIn("K8S-002", [h["rule"] for h in together.hits])
+
+
 if __name__ == "__main__":
     unittest.main()

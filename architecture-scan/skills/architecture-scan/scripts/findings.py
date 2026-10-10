@@ -539,17 +539,10 @@ def _exclusive(target):
     merges one at a time.
     """
     directory = target.resolve().parent
-    created = not directory.exists()
+    # The directory is never removed again: a merge may already hold it open,
+    # waiting for the lock, and would then lock a deleted directory.
     directory.mkdir(parents=True, exist_ok=True)
-    try:
-        yield from _locked(directory)
-    finally:
-        if created and not target.exists():
-            # A refused first merge leaves no empty output directory behind.
-            try:
-                directory.rmdir()
-            except OSError:
-                pass
+    yield from _locked(directory)
 
 
 def _locked(directory):
@@ -607,16 +600,23 @@ def _report_renumber(target, changed):
         print(f"already in order: {target}")
 
 
+def _merge_all(doc, fragments):
+    validate(doc)
+    for path in fragments:
+        merge(doc, read_json(path), path)
+        # Each fragment must leave a valid record, even in a batch.
+        validate(doc)
+    return doc
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
+        if not target.resolve().parent.exists():
+            # Refuse a bad first batch before creating the output directory.
+            _merge_all({}, args.fragments)
         with _exclusive(target):
-            doc = read_json(target) if target.exists() else {}
-            validate(doc)
-            for path in args.fragments:
-                merge(doc, read_json(path), path)
-                # Each fragment must leave a valid record, even in a batch.
-                validate(doc)
+            doc = _merge_all(read_json(target) if target.exists() else {}, args.fragments)
             # Serialize before staging any output.
             _atomic_write(target, _serialize(doc))
     except (OSError, ValueError, RuntimeError) as exc:

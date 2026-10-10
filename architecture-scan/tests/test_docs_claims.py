@@ -59,6 +59,15 @@ class RefusedMergeTests(unittest.TestCase):
                 self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 1)
             self.assertFalse(target.parent.exists())
 
+    def test_the_lock_never_removes_the_directory_it_locked(self):
+        # Another merge may hold the directory open while waiting for the lock.
+        with tempfile.TemporaryDirectory() as d:
+            target = Path(d) / "new" / "findings.json"
+            with self.assertRaises(RuntimeError):
+                with findings._exclusive(target):
+                    raise RuntimeError("refused while holding the lock")
+            self.assertTrue(target.parent.is_dir())
+
 
 class RenderClaimTests(unittest.TestCase):
     def test_emphasis_at_the_start_of_a_list_item_is_kept(self):

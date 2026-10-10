@@ -53,6 +53,10 @@ def output_problem(path):
     return None
 
 
+# What a fragment may set on an I-* finding (findings.py); the rest is the scanner's.
+REVIEW_FIELDS = {"validation", "confidence", "condition", "severity"}
+
+
 def baseline_problems(data, iac_path):
     """Every I-* must be the one iac_scan.py wrote with this inventory, and no more."""
     try:
@@ -63,14 +67,15 @@ def baseline_problems(data, iac_path):
         return []
 
     def key(f):
-        resources = f.get("resources") if isinstance(f.get("resources"), list) else []
-        # Severity is the reviewer's to grade by where the hit leads.
-        return (f.get("id"), f.get("rule"), f.get("location"), tuple(sorted(str(r) for r in resources)))
-    record = {key(f) for f in data.get("findings", []) if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")}
-    scanned = {key(f) for f in iac["findings"] if isinstance(f, dict)}
+        # Everything the scanner wrote; the fields a fragment may set are the reviewer's.
+        return json.dumps({k: v for k, v in f.items() if k not in REVIEW_FIELDS}, sort_keys=True, default=str)
+    record = {str(f.get("id")): key(f) for f in data.get("findings", [])
+              if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")}
+    scanned = {str(f.get("id")): key(f) for f in iac["findings"] if isinstance(f, dict)}
     problems = []
     if record != scanned:
-        ids = sorted({k[0] for k in record ^ scanned}, key=lambda i: render.id_key(i) if render.I_ID.match(str(i)) else ("", 0))
+        ids = sorted({i for i in record.keys() | scanned.keys() if record.get(i) != scanned.get(i)},
+                     key=lambda i: render.id_key(i) if render.I_ID.match(i) else ("", 0))
         problems.append(f"I-*: differ from iac.json ({', '.join(map(str, ids[:10]))}); I-* come only from one "
                         "iac_scan.py run with both --out and --into")
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}

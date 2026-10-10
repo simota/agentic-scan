@@ -140,5 +140,36 @@ resource "aws_iam_role_policy_attachment" "x" {
             self.assertEqual(redaction.scrub_line(line, "yaml"), line)
 
 
+class CodexReviewTest(unittest.TestCase):
+    def test_flag_like_prefix_is_still_a_secret(self):
+        template = {"Resources": {"Db": {"Type": "AWS::RDS::DBInstance", "Properties": {
+            "MasterUserPassword": "12345" + "abcSECRET", "StorageEncrypted": True}}}}
+        self.assertEqual([r for r, _, _ in found(scan({"t.json": template}))], ["SEC-001"])
+
+    def test_sam_globals_merge_maps(self):
+        template = {"Transform": "AWS::Serverless-2016-10-31",
+                    "Globals": {"Function": {"Environment": {"Variables": {"DB_PASSWORD": SECRET}}}},
+                    "Resources": {"Fn": {"Type": "AWS::Serverless::Function", "Properties": {
+                        "Environment": {"Variables": {"MODE": "prod"}}}}}}
+        self.assertEqual([r for r, _, _ in found(scan({"t.json": template}))], ["SEC-001"])
+        self.assertEqual(iac_scan.sam_merge({"a": {"x": 1, "y": 2}, "b": 1}, {"a": {"y": 3}}),
+                         {"a": {"x": 1, "y": 3}, "b": 1})
+
+    def test_contract_compares_every_scanner_field(self):
+        data = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+        baseline = [dict(f) for f in data["findings"] if f["id"].startswith("I-")]
+        with tempfile.TemporaryDirectory() as out:
+            (Path(out) / "iac.json").write_text(json.dumps({"tool": "iac_scan", "commit": data["meta"].get("commit"),
+                                                            "findings": baseline}), encoding="utf-8")
+            self.assertEqual(contract_check.baseline_problems(data, Path(out) / "iac.json"), [])
+            # A reviewer may grade and triage...
+            data["findings"][[f["id"] for f in data["findings"]].index(baseline[0]["id"])]["severity"] = "Info"
+            self.assertEqual(contract_check.baseline_problems(data, Path(out) / "iac.json"), [])
+            # ...but not rewrite what the scanner found.
+            data["findings"][[f["id"] for f in data["findings"]].index(baseline[0]["id"])]["detail"] = "forged"
+            problems = contract_check.baseline_problems(data, Path(out) / "iac.json")
+            self.assertTrue(problems and baseline[0]["id"] in problems[0], problems)
+
+
 if __name__ == "__main__":
     unittest.main()

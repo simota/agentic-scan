@@ -2251,7 +2251,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         if not isinstance(props, dict):
             props = {}
         if type_ == "AWS::Serverless::Function" and isinstance(globals_, dict):
-            props = {**globals_, **props}  # SAM Globals; a function's own value wins
+            props = sam_merge(globals_, props)  # SAM Globals; a function's own value wins
         line = line_of(lid)
         res = Res(type_, f"cfn:{lid}", rel, line, DictView(props, line))
         scan.add_resource(res, "aws")
@@ -2366,6 +2366,14 @@ def cfn_shared(scan, res, type_, props, line):
             scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
 
 
+def sam_merge(inherited, own):
+    """SAM's Globals merge: maps merge key by key (recursively), the function's value wins."""
+    out = dict(inherited)
+    for key, value in own.items():
+        out[key] = sam_merge(out[key], value) if isinstance(out.get(key), dict) and isinstance(value, dict) else value
+    return out
+
+
 def cfn_instance(scan, res, type_, props, line):
     """AWS-EC2-001 and AWS-EBS-001 for launch templates and instances."""
     data = props.get("LaunchTemplateData") if type_ == "AWS::EC2::LaunchTemplate" else props
@@ -2411,7 +2419,7 @@ def cfn_secrets(scan, res, props, line):
     """SEC-001 for literal strings under secret-named properties or Name/Value pairs."""
     def literal_secret(value):
         return isinstance(value, str) and not value.startswith("{{resolve:") and \
-            not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.match(value.strip())
+            not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.fullmatch(value.strip())
 
     found = []
     stack = [props]

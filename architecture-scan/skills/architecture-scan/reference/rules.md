@@ -52,7 +52,10 @@ Families:
 
 Seed the ledger with one `baseline` entry per family that applies (e.g. `R-01
 LAYER baseline: no cycles between top-level modules`), then add codebase-
-specific entries. *Status* is `holds`, `violated`, `partly read` or `not
+specific entries. A baseline entry has no document to cite: its `source` is
+`baseline`, followed by the module or config that already keeps it when one
+does (e.g. `baseline; shared/db.py:12 wraps every write`), and it is
+`inferred`. *Status* is `holds`, `violated`, `partly read` or `not
 checked` (with a reason):
 
 - `violated` — at least one traced edge breaks the rule; it wins over the others

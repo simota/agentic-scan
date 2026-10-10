@@ -91,8 +91,7 @@ class MergeCorrectionTests(unittest.TestCase):
     def test_resending_or_correcting_the_same_finding_is_not_a_collision(self):
         same = finding("A-001", "Medium")
         self.assertEqual(self.merge({"findings": [same]})[0], 0)
-        retitled = finding("A-001", "Medium", title="Sharper title")
-        self.assertEqual(self.merge({"findings": [retitled]})[0], 0)
+        self.assertEqual(self.merge({"findings": [{"id": "A-001", "title": "Sharper"}]})[0], 0)
         self.assertEqual(self.merge({"findings": [{"id": "A-001", "title": "x",
                                                    "location": "y.py:1"}]})[0], 0)
         self.assertEqual(self.record()["findings"][0]["title"], "x")

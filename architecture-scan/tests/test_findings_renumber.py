@@ -1,6 +1,7 @@
 """`findings.py renumber`: severity-then-path order without hand-editing the record."""
 import io
 import json
+import os
 from pathlib import Path
 import shutil
 import subprocess
@@ -104,8 +105,10 @@ class RenumberTests(unittest.TestCase):
         shutil.rmtree(scripts / "__pycache__", ignore_errors=True)
         for args in (["render.py", str(self.target), "--out", str(self.tmp)],
                      ["findings.py", "check", str(self.tmp)]):
+            # make test sets PYTHONDONTWRITEBYTECODE; the scripts must not rely on it.
+            env = {k: v for k, v in os.environ.items() if k != "PYTHONDONTWRITEBYTECODE"}
             subprocess.run([sys.executable, str(scripts / args[0]), *args[1:]],
-                           capture_output=True, check=True, timeout=30)
+                           capture_output=True, check=True, timeout=30, env=env)
         self.assertFalse((scripts / "__pycache__").exists())
 
 

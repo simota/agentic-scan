@@ -110,6 +110,11 @@ class ContractConsistencyTests(unittest.TestCase):
                                           validation={"verdict": "Unverified", "method": "static"})
                 self.build(doc)
                 problems = findings.contract_problems(self.out)
+                self.assertTrue(any("A-001" in p and "Unverified" in p and "trace" in p
+                                    for p in problems), problems)
+                doc["findings"][0]["validation"] = {"verdict": "Likely", "method": "static"}
+                self.build(doc)
+                problems = findings.contract_problems(self.out)
                 self.assertTrue(any("A-001" in p and "evidence" in p for p in problems), problems)
         doc = complete_doc()
         doc["findings"][1]["validation"] = {"verdict": "Unverified", "method": "static"}
@@ -189,7 +194,7 @@ class RenderConsistencyTests(unittest.TestCase):
     def test_table_headers_are_localized_in_both_outputs(self):
         doc = complete_doc()
         markdown = render.render_markdown(doc, "ja")
-        self.assertIn("| ID | ルール | 根拠 | 状態 |", markdown)
+        self.assertIn("| ID | ルール | 出典 | 状態 |", markdown)
         self.assertIn("| 観点 | 状態 | メモ |", markdown)
         self.assertNotIn("| Source |", markdown)
         html = render.render_html(doc, "ja")

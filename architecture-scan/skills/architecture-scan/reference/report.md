@@ -26,7 +26,8 @@ Write in the requester's language.
    line of `report.md` does
 2. **Evidence line** — assessed revision, what was read, the history window
    used, what the reporting agent traced end to end, the scratch directory's
-   path, and what remains unknown
+   path (these come from scratch notes, not the record), and what remains
+   unknown
    (runtime topology, delivery semantics, ownership)
 3. **Findings, by severity** — each as:
 

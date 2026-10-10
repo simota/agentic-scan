@@ -122,6 +122,8 @@ VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
 # A package spec puts a dotted version after @ or an operator (react@18.2.0,
 # pkg@v1.2.3, python==1.2.3); a scale suffix such as icon@2x.png is a file.
 PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
+VERSION_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)+")
+WORD = re.compile(r"[^\W_]+")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
@@ -154,6 +156,19 @@ def _is_host(name):
     if labels[-1] in HOST_SUFFIXES:
         return True
     return labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name == name.lower())
+
+
+def _product_version(name):
+    """True for a word followed by a version: Python-3.12.1, OpenSSL_3.0.0, or
+    version1.2.3 (three or more parts when nothing separates them, so python3.11
+    and Dockerfile.22.04 stay files). String operations keep this linear."""
+    head = name.rstrip("0123456789.")
+    tail = name[len(head):]
+    if not head or not VERSION_NUMBER.fullmatch(tail):
+        return False
+    if head[-1] in "-_":
+        return bool(WORD.fullmatch(head[:-1]))
+    return tail.count(".") >= 2 and bool(WORD.fullmatch(head))
 
 
 def _protocol_version(path):
@@ -189,7 +204,7 @@ def _file_shaped(path):
     # A root-level name needs a letter (.5, ~1.5 and 1/2-like tokens are numbers).
     if (VERSION_START.match(last) and not MIGRATION.match(last)) or not LETTER.search(last):
         return False
-    if PACKAGE_VERSION.search(last):
+    if PACKAGE_VERSION.search(last) or _product_version(last):
         return False
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))

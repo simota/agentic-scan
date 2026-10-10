@@ -104,6 +104,20 @@ class SchemaError(ValueError):
     pass
 
 
+def as_locations(value):
+    """A finding's `location`, a string or a list, as a list."""
+    return value if isinstance(value, list) else [value]
+
+
+def split_location(loc):
+    """`path:line` or `path:start-end` as (path, start, end); None if not one."""
+    match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
+    if not match:
+        return None
+    start = int(match[1])
+    return loc[:match.start(1) - 1], start, int(match[2] or start)
+
+
 def read_json(path):
     def unique_object(pairs):
         obj = {}
@@ -158,14 +172,14 @@ def validate_finding(f, where):
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
     _choice(f.get("status", "Open"), STATUSES, f"{where}.status")
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    locations = as_locations(f["location"])
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
-        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
-        if not match:
+        parts = split_location(loc)
+        if not parts:
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
-        start, end = int(match[1]), int(match[2] or match[1])
+        _, start, end = parts
         if not 1 <= start <= end:
             raise SchemaError(f"{where}.location: {loc!r} needs lines from 1, start <= end")
     if "step" in f:
@@ -205,11 +219,8 @@ def validate_finding(f, where):
 def _location_paths(locations):
     """Each location's path and its file name, e.g. `bin/server` and `server`."""
     paths = set()
-    for loc in locations if isinstance(locations, list) else [locations]:
-        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
-        if match:
-            path = loc[:match.start(1) - 1]
-            paths |= {path, re.split(r"[/\\]", path)[-1]}
+    for parts in filter(None, map(split_location, as_locations(locations))):
+        paths |= {parts[0], re.split(r"[/\\]", parts[0])[-1]}
     return paths
 
 
@@ -305,7 +316,7 @@ def _apply(target, updates, required, where):
 
 
 def _same_location(a, b):
-    return (a if isinstance(a, list) else [a]) == (b if isinstance(b, list) else [b])
+    return as_locations(a) == as_locations(b)
 
 
 def _collides(existing, record):
@@ -452,9 +463,8 @@ ID_MENTION = re.compile(r"(?<![\w/\\-])A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9])", re
 
 
 def _first_location(f):
-    loc = f["location"][0] if isinstance(f["location"], list) else f["location"]
-    match = LOCATION.fullmatch(loc)
-    return loc[:match.start(1) - 1], int(match[1])
+    path, start, _ = split_location(as_locations(f["location"])[0])
+    return path, start
 
 
 # Literal values that only look like prose: a path, a URL, a command that ran,

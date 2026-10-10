@@ -21,7 +21,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      _atomic_write_all, read_json, validate)
+                      _atomic_write_all, as_locations, read_json, validate)
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -281,7 +281,7 @@ def render_markdown(doc, lang):
             if filled(f, key):
                 value = f[key]
                 if key == "location":
-                    paths = value if isinstance(value, list) else [value]
+                    paths = as_locations(value)
                     formatted = ", ".join(markdown_code(path) for path in paths)
                 else:
                     formatted = text(value)

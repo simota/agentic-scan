@@ -84,12 +84,23 @@ class WorkflowTest(unittest.TestCase):
         exports = {"sg.json": {"SecurityGroups": [{"GroupId": "sg-1", "Description": "owner alice@example.com"}]},
                    "iam.json": {"bindings": [{"role": "roles/viewer", "members": ["user:alice@example.com"]}],
                                 "etag": "BwX"},
-                   "pods.json": {"apiVersion": "v1", "kind": "List", "items": []}}
+                   "pods.json": {"apiVersion": "v1", "kind": "List", "items": [],
+                                 "metadata": {"resourceVersion": ""}},
+                   "role.json": {"Role": {"RoleName": "r", "Arn": "arn:aws:iam::1:role/r"}},
+                   "disk.json": {"name": "d", "selfLink": "https://www.googleapis.com/compute/v1/x"}}
         for name, doc in exports.items():
             with self.subTest(name=name):
                 path = self.repo / name
                 path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
                 self.assertIsNone(render.source_lines(path))
+
+    def test_hand_written_configuration_keeps_its_excerpts(self):
+        for name, doc in (("lifecycle.json", {"Rules": [{"ID": "expire", "Status": "Enabled"}]}),
+                          ("list.json", {"apiVersion": "v1", "kind": "List", "items": []})):
+            with self.subTest(name=name):
+                path = self.repo / name
+                path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
+                self.assertIsNotNone(render.source_lines(path))
 
     def test_every_baseline_title_has_a_japanese_title(self):
         for rule, (title, *_rest) in iac_scan.RULES.items():

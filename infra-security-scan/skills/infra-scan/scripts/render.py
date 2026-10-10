@@ -148,7 +148,8 @@ def location_problem(location):
     return None
 
 
-RECORD_REFERENCE = re.compile(r"(?<![\w/.-])(?:F-[0-9]{3,}|AP-[0-9]{2,})(?![\w-])")
+# Not after "/", ".", "=", "#", "?" or "&": an ID inside a URL or query is not a reference.
+RECORD_REFERENCE = re.compile(r"(?<![\w/.=#?&-])(?:F-[0-9]{3,}|AP-[0-9]{2,})(?![\w-])")
 
 
 def dangling_references(data):

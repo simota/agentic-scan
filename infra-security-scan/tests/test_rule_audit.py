@@ -200,3 +200,66 @@ class VulnerableCodeIsCaughtTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewRegressionTest(unittest.TestCase):
+    """Precision fixes must not hide real issues (found by a review of this branch)."""
+
+    def test_unrelated_policy_with_the_same_name_is_still_admin(self):
+        files = {"modules/boundary/main.tf": ('resource "aws_iam_policy" "this" {\n  policy = jsonencode({Statement = [\n'
+                                              '    {Effect = "Allow", Action = "*", Resource = "*"}]})\n}\n'
+                                              'resource "aws_iam_role" "r" {\n  assume_role_policy = "{}"\n'
+                                              '  permissions_boundary = aws_iam_policy.this.arn\n}\n'),
+                 "modules/admin/main.tf": ('resource "aws_iam_policy" "this" {\n  policy = jsonencode({Statement = [\n'
+                                           '    {Effect = "Allow", Action = "*", Resource = "*"}]})\n}\n'
+                                           'output "arn" {\n  value = aws_iam_policy.this.arn\n}\n')}
+        hits = [(h["rule"], h["file"]) for h in scan(files).hits]
+        self.assertEqual(hits, [("AWS-IAM-001", "modules/admin/main.tf")])
+
+    def test_boundary_also_attached_elsewhere_is_admin(self):
+        text = ('resource "aws_iam_policy" "admin" {\n  policy = jsonencode({Statement = [\n'
+                '    {Effect = "Allow", Action = "*", Resource = "*"}]})\n}\n'
+                'resource "aws_iam_role" "r" {\n  assume_role_policy = "{}"\n'
+                '  permissions_boundary = aws_iam_policy.admin.arn\n}\n'
+                'module "x" {\n  source = "./x"\n  custom_role_policy_arns = [aws_iam_policy.admin.arn]\n}\n')
+        self.assertIn("AWS-IAM-001", rules({"main.tf": text}))
+
+    def test_non_literal_cloudformation_type_is_skipped(self):
+        result = scan({"t.json": cfn({"X": {"Type": ["AWS::S3::Bucket"]}})})
+        self.assertTrue(any("non-literal Type" in n for n in result.not_run))
+
+    def test_long_tokens_and_mixed_example_lines(self):
+        texts = ['note = "glpat-' + "a1B2" * 7 + '"\n',
+                 'keys = ["AKIA' + 'IOSFODNN7EXAMPLE", "AKIA' + "Q7" * 8 + '"]\n']
+        for text in texts:
+            with self.subTest(text=text[:12]):
+                self.assertIn("SEC-001", rules({"main.tf": text}))
+
+    def test_bare_secret_key_with_a_passphrase_is_still_a_secret(self):
+        text = ('resource "github_repository_webhook" "w" {\n  configuration {\n'
+                '    secret = "correct-horse-battery-staple"\n  }\n}\n')
+        self.assertIn("SEC-001", rules({"main.tf": text}))
+
+    def test_service_agent_exemption_is_narrow(self):
+        mixed = ('resource "google_project_iam_binding" "b" {\n  project = "p"\n  role = "roles/editor"\n'
+                 '  members = ["user:contractor@example.com", "serviceAccount:1@cloudservices.gserviceaccount.com"]\n}\n')
+        self.assertIn("GCP-IAM-002", rules({"main.tf": mixed}))
+        build = ('resource "google_project_iam_member" "m" {\n  project = "p"\n  role = "roles/owner"\n'
+                 '  member = "serviceAccount:1@cloudbuild.gserviceaccount.com"\n}\n')
+        self.assertIn("GCP-IAM-002", rules({"main.tf": build}))
+        agent_owner = build.replace("cloudbuild", "cloudservices")
+        self.assertIn("GCP-IAM-002", rules({"main.tf": agent_owner}))
+
+    def test_vpc_opensearch_domain_policy_is_not_public(self):
+        text = ('resource "aws_opensearch_domain" "d" {\n  vpc_options {\n    subnet_ids = ["s"]\n  }\n'
+                '  access_policies = jsonencode({Statement = [{Effect = "Allow", Principal = {AWS = "*"},\n'
+                '    Action = "es:*", Resource = "*"}]})\n}\n')
+        self.assertEqual(rules({"main.tf": text}), [])
+
+    def test_project_level_prevention_covers_only_its_module(self):
+        files = {"project-a/main.tf": ('resource "google_project_organization_policy" "p" {\n  project = "a"\n'
+                                       '  constraint = "storage.publicAccessPrevention"\n'
+                                       '  boolean_policy {\n    enforced = true\n  }\n}\n'),
+                 "project-b/main.tf": ('resource "google_storage_bucket" "b" {\n'
+                                       '  uniform_bucket_level_access = true\n}\n')}
+        self.assertEqual(rules(files), ["GCP-GCS-001"])

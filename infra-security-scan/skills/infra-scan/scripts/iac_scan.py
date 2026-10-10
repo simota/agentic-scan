@@ -54,7 +54,7 @@ from urllib.parse import unquote as url_unquote
 
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
+from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, shape_problems, split_yaml_documents,
                     sub_references, unique_object, write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
@@ -823,6 +823,7 @@ class Scan:
         # enforced storage org policies.
         self.gcs_org_policies, self.orgs_seen = {}, set()
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
+        self.s3_blocks = {}  # (dir, bucket key or "*" for the account): flags turned on
         self.k8s_bindings, self.k8s_wildcard_roles = [], set()
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
@@ -878,11 +879,15 @@ class Scan:
             elif gap:
                 self.hit("AWS-IAM-004", res, line, gap)
 
-    def resource_policy(self, res, stmts, line):
+    def resource_policy(self, res, stmts, line, neutralised=None):
         for st in stmts or []:
             if st["effect"] == "Allow" and not narrowing(st["conditions"]) and \
                     any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
-                self.hit("AWS-S3-003", res, line, "Allow to Principal * without a narrowing condition")
+                detail = "Allow to Principal * without a narrowing condition"
+                if neutralised:
+                    self.hit("AWS-S3-003", res, line, f"{detail}; {neutralised}", "Low")
+                else:
+                    self.hit("AWS-S3-003", res, line, detail)
 
     def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001"):
         open_from = world_cidrs(cidrs)
@@ -1132,6 +1137,32 @@ def tf_bool(value):
     return UNKNOWN
 
 
+def bucket_key(view, address=None):
+    """What names a bucket across resources: aws_s3_bucket.x for a reference to
+    it (.id, .bucket), else the literal bucket name."""
+    raw = (view.raw("bucket") or "").strip() if hasattr(view, "raw") else ""
+    ref = re.fullmatch(r"(aws_s3_bucket\.[\w-]+)\.(?:id|bucket)", raw)
+    if ref:
+        return ref.group(1)
+    if address:
+        return address
+    value = view.get("bucket")
+    return value if isinstance(value, str) else None
+
+
+def s3_block(scan, res, flag):
+    """A note when a public access block in the module turns flag on for this bucket."""
+    keys = {bucket_key(res.view, res.address if res.type == "aws_s3_bucket" else None)}
+    if res.type == "aws_s3_bucket" and isinstance(res.view.get("bucket"), str):
+        keys.add(res.view.get("bucket"))
+    for key in keys - {None}:
+        if flag in scan.s3_blocks.get((res.dir, key), ()):
+            return f"neutralised by {flag} in the bucket's public access block"
+    if flag in scan.s3_blocks.get((res.dir, "*"), ()):
+        return f"neutralised by {flag} in the account public access block"
+    return None
+
+
 def without_block(text, name):
     """text with every `name { ... }` block removed (braces counted)."""
     while (m := re.search(rf"\b{name}\s*\{{", text)):
@@ -1274,16 +1305,25 @@ def check_tf(scan, res):
         scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
                      v.get("from_port"), v.get("to_port"))
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
+        # A public access block on the same bucket makes S3 ignore public ACLs:
+        # still a misconfiguration, but defence in depth rather than exposure.
+        blocked = s3_block(scan, res, "ignore_public_acls")
+        def acl_hit(line, detail):
+            if blocked:
+                scan.hit("AWS-S3-001", res, line, f"{detail}; {blocked}", "Low")
+            else:
+                scan.hit("AWS-S3-001", res, line, detail)
         if v.get("acl") in ("public-read", "public-read-write", "authenticated-read"):
-            scan.hit("AWS-S3-001", res, v.line("acl"), f"acl = {v.get('acl')}")
+            acl_hit(v.line("acl"), f"acl = {v.get('acl')}")
         grants = v.blocks("grant") + [g for policy in v.blocks("access_control_policy") for g in policy.blocks("grant")]
         for grant in grants:
             uris = [grant.get("uri")] + [grantee.get("uri") for grantee in grant.blocks("grantee")]
             group = next((u for u in uris if isinstance(u, str) and PUBLIC_GROUP.search(u)), None)
             if group:
-                scan.hit("AWS-S3-001", res, grant.line(), f"grant to {group.rsplit('/', 1)[-1]}")
+                acl_hit(grant.line(), f"grant to {group.rsplit('/', 1)[-1]}")
         if t == "aws_s3_bucket" and v.get("policy") is not None:
-            scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"))
+            scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"),
+                                 s3_block(scan, res, "restrict_public_buckets"))
     elif t in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block"):
         flags = ("block_public_acls", "block_public_policy", "ignore_public_acls",
                  "restrict_public_buckets")
@@ -1291,7 +1331,8 @@ def check_tf(scan, res):
         if off:
             scan.hit("AWS-S3-002", res, res.line, "off: " + ", ".join(off))
     elif t == "aws_s3_bucket_policy":
-        scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"))
+        scan.resource_policy(res, scan.statements(res, "policy"), v.line("policy"),
+                             s3_block(scan, res, "restrict_public_buckets"))
     elif t in ("aws_iam_policy", "aws_iam_role_policy", "aws_iam_user_policy", "aws_iam_group_policy"):
         key = (res.dir, re.sub(r"\[[^\]]*\]", "", res.address))  # module.app.aws_iam_policy.b[0] -> ...b
         if t == "aws_iam_policy" and key in scan.boundary_policies and key not in scan.attached_policies:
@@ -1683,6 +1724,11 @@ def collect_context(scan, d, type_, view, text, defaults=True):
     directory and provider configuration; defaults=False when that cannot be told.
     """
     scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
+    if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block"):
+        key = "*" if type_ == "aws_s3_account_public_access_block" else bucket_key(view)
+        on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
+        if key and on:
+            scan.s3_blocks.setdefault((d, key), set()).update(on)
     if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required" and defaults:
         scan.imds_required_dirs.add((d, provider_key(view)))
     elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None) and defaults:
@@ -3783,9 +3829,9 @@ def remap_baseline_references(data, old, new):
 def carry_triage(data, old_by_id, replacements, new, rewrite):
     """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
 
-    Triage is I-*.validation with the confidence and condition set beside it;
-    dropping it on every rescan would silently undo the review. A changed
-    resource set needs fresh triage.
+    Triage is I-*.validation with the confidence, condition and severity set
+    beside it; dropping it on every rescan would silently undo the review. A
+    changed resource set or a changed hit (detail) needs fresh triage.
     """
     new_by_id = {f["id"]: f for f in new}
     for fid, new_id in replacements.items():
@@ -3793,17 +3839,20 @@ def carry_triage(data, old_by_id, replacements, new, rewrite):
         validation = old.get("validation")
         if not isinstance(validation, dict) or validation.get("verdict") in (None, "Unverified"):
             continue
-        if set(old.get("resources", [])) == set(current.get("resources", [])):
+        same_resources = set(old.get("resources", [])) == set(current.get("resources", []))
+        if same_resources and old.get("detail") == current.get("detail"):
             current["validation"] = copy.deepcopy(validation)
             if isinstance(validation.get("evidence"), str):
                 current["validation"]["evidence"] = rewrite(validation["evidence"])
-            if isinstance(old.get("confidence"), str):
-                current["confidence"] = old["confidence"]
+            for key in ("confidence", "severity"):
+                if isinstance(old.get(key), str):
+                    current[key] = old[key]
             if isinstance(old.get("condition"), str):
                 current["condition"] = rewrite(old["condition"])
         else:
+            changed = "affected resources changed" if not same_resources else "the hit changed"
             note = (f"{new_id} (was {fid}): {validation['verdict']} triage not carried over; "
-                    "affected resources changed. Recheck this baseline finding.")
+                    f"{changed}. Recheck this baseline finding.")
             if note not in data["limitations"]:
                 data["limitations"].append(note)
 
@@ -3812,8 +3861,9 @@ def merge_into(path, findings, inventory, commit):
     path = Path(path)
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
-        if not isinstance(data, dict):
-            raise ValueError("findings.json must hold a JSON object")
+        problems = shape_problems(data)
+        if problems:
+            raise ValueError("; ".join(problems))
     else:
         data = {"schema_version": 1, "meta": {}}
     data.setdefault("schema_version", 1)

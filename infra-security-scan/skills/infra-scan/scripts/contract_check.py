@@ -5,10 +5,12 @@
 
 OUT_DIR holds findings.json and the rendered outputs. The check covers shape
 and provenance only: schema, ID scheme and order, the fields every F-* finding
-carries, a triage verdict (not `Unverified`) on every I-*, every perspective
-recorded once, the inventory written by iac_scan.py, and the exact output file
-set, each output nonempty and of its kind (HTML, iac_scan JSON, %PDF). It
-cannot tell whether a finding is true.
+carries, a verdict other than `Unverified` on every finding, every perspective
+recorded once, references that name existing records, the merge gate's
+credential and exploit-string checks over the whole record, I-* findings and
+meta.commit identical to iac.json, and the exact output file set, each output
+nonempty and of its kind (HTML, iac_scan JSON, %PDF). It cannot tell whether a
+finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """
@@ -62,8 +64,8 @@ def baseline_problems(data, iac_path):
 
     def key(f):
         resources = f.get("resources") if isinstance(f.get("resources"), list) else []
-        return (f.get("id"), f.get("rule"), f.get("location"), f.get("severity"),
-                tuple(sorted(str(r) for r in resources)))
+        # Severity is the reviewer's to grade by where the hit leads.
+        return (f.get("id"), f.get("rule"), f.get("location"), tuple(sorted(str(r) for r in resources)))
     record = {key(f) for f in data.get("findings", []) if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")}
     scanned = {key(f) for f in iac["findings"] if isinstance(f, dict)}
     problems = []
@@ -97,21 +99,13 @@ def check(data, out_dir, pdf=True, allow=()):
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "
             + ", ".join(f"{f['id']}={f.get('severity')}@{f.get('location')}" for f in expected))
-    for f in fs:
-        for key in render.F_FIELDS:
-            if render.blank(f.get(key)):
-                add(f"{f['id']}: {key} required")
-        if not isinstance(f.get("validation"), dict) or "verdict" not in f["validation"]:
-            add(f"{f['id']}: explicit validation.verdict required")
-    for f in findings:
-        fid = str(f.get("id", ""))
-        if not (F_ID.match(fid) or render.I_ID.match(fid)):
-            add(f"{fid}: only F-* and I-* IDs are allowed")
-    # "Done when" requires a verdict on every I-*; Unverified means not triaged.
-    unverified = [str(f.get("id")) for f in findings if str(f.get("id", "")).startswith("I-")
-                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
+    # Required fields, verdicts, ID shapes and path statuses are schema checks
+    # (render.validate above); only what the schema cannot see follows.
+    # "Done when" requires a verdict on every finding; Unverified means not
+    # triaged (I-*) or reopened by a rescan (F-*).
+    unverified = [str(f.get("id")) for f in render.untriaged(data)]
     if unverified:
-        add(f"I-*: {len(unverified)} finding(s) still Unverified; triage each one "
+        add(f"findings: {len(unverified)} still Unverified; triage or recheck each one "
             f"(reference/validation.md): {', '.join(unverified)}")
 
     names = render.perspective_names()
@@ -120,9 +114,6 @@ def check(data, out_dir, pdf=True, allow=()):
         n = recorded.count(name)
         if n != 1:
             add(f"perspectives: {name!r} recorded {n} times; every perspective exactly once")
-    for a in data.get("attack_paths", []):
-        if isinstance(a, dict) and a.get("status") not in render.AP_STATUSES:
-            add(f"{a.get('id')}: attack path status must be open, blocked or unknown")
     for where, rid in render.dangling_references(data):
         add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):

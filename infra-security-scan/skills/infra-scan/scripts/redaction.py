@@ -507,9 +507,15 @@ def _high_entropy(token):
         len(token) >= 24 and digits >= 4 and letters >= 4 and "-" not in token and "_" not in token)
 
 
+DATED_NAME = re.compile(r"[A-Za-z]*-?[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
 def _entropy(match):
     # A commit pinned with ?ref= is evidence (PS-001), not a secret.
     if match.string[max(0, match.start() - 4):match.start()] == "ref=":
+        return match.group()
+    # Date-versioned names are public (AWS::Serverless-2016-10-31, 2012-10-17).
+    if DATED_NAME.fullmatch(match.group()):
         return match.group()
     return "[redacted]" if _high_entropy(match.group()) else match.group()
 

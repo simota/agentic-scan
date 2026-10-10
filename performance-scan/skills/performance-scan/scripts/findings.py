@@ -122,7 +122,9 @@ VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
 # A package spec puts a dotted version after @ or an operator (react@18.2.0,
 # pkg@v1.2.3, python==1.2.3); a scale suffix such as icon@2x.png is a file.
 PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
-PRODUCT_VERSION = re.compile(r"[^\W\d_]+([-_]?)([0-9]+(?:\.[0-9]+)+)")
+# Before - or _ the name may hold digits (log4j-2.17.1); without a separator it
+# is letters only, so python3.11 splits as python + 3.11.
+PRODUCT_VERSION = re.compile(r"[^\W\d_](?:[^\W_]*([-_])|[^\W\d_]*)([0-9]+(?:\.[0-9]+)+)")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,

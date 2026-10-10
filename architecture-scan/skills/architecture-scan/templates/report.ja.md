@@ -1,7 +1,7 @@
 <!--
 設計上の検出事項を、オーナー、テックリード、管理者に報告するテンプレート。1 通に複数の finding を載せてよい。
 件数と各 finding は findings.json から転記し、ダッシュボードと食い違わないようにする。
-件数は report.md の 1 行目と同じ。除外判定（FalsePositive / NotApplicable）は数えない。
+件数は report.md のタイトル直下の件数行と同じ。除外判定（FalsePositive / NotApplicable）は数えない。
 「うち Valid」はその深刻度で判定が Valid の件数。n_likely と n_unverified は判定ごとの件数。
 
 送る前に確認すること:
@@ -46,14 +46,14 @@
 - **深刻度 / 確度 / 検証判定:** {{severity}} / {{confidence}} / {{validation.verdict}}
 - **場所:** `{{location}}`
 - **シナリオ / 影響範囲:** {{scenario}} / {{blast_radius}}
-- **影響:** {{impact}}
+- **何が起きるか:** {{impact}}
 - **修正方針:** {{fix}}
 - **適合性チェック:** {{guard}}
 - **管理先:** <issue の URL>
 
 ## 4. 設計ルール
 
-<!-- rules[]: 各ルール、その根拠と状態。推定（inferred）のルールはオーナーへの確認事項。 -->
+<!-- rules[]: 各ルール、その出典と状態。推定（inferred）のルールはオーナーへの確認事項。 -->
 - 
 
 ## 5. 確認して問題なかった項目

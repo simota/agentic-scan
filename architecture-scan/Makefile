@@ -5,6 +5,8 @@
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
 #   make demo      render examples/findings.sample.json into $(DEMO_OUT)
+#   make test      run the offline regression tests
+#   make help      list the targets
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
@@ -141,7 +143,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
 	for p in $(QSKILL)/scripts/*.py; do \
 	  [ -e "$$p" ] || continue; \
-	  $(PYTHON) -W error -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$$p" \
+	  $(PYTHON) -W error -c 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \
 	done; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \

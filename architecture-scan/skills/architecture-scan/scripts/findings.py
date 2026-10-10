@@ -33,7 +33,8 @@ commands and rule sources keep theirs.
 record is complete, IDs are gapless in severity order, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
-Medium findings carry evidence, definitive evidence cites a `path:line`, and
+Medium findings are traced (not Unverified) and carry evidence, definitive
+evidence cites a `path:line`, and
 both rendered files match what `render.py` produces from the current record
 in `meta.lang`.
 

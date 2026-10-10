@@ -3,7 +3,7 @@
 各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
 
 登録前に確認すること:
-- 好みではなく、不具合または変更コストを書く。ルールの根拠（ADR、lint 設定、多数派のパターン）を示す
+- 好みではなく、不具合または変更コストを書く。ルールの出典（ADR、lint 設定、多数派のパターン）を示す
 - ソース抜粋はリポジトリと同じ機密区分になる。issue の閲覧範囲がリポジトリより広いなら貼らない
 -->
 
@@ -16,7 +16,7 @@
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
 | 確度 | {{confidence}}（Environment-dependent なら、前提となる条件を「未確定事項」に書く） |
-| 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
+| 検証判定 | {{validation.verdict}}（検証方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |
 | 場所 | `{{location}}` |
 | 対象リビジョン | {{meta.commit}} |

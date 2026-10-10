@@ -108,9 +108,9 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # protocol versions (HTTP/1.1), URLs, hosts and bare words (timeout:30, TTL:300).
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
-# Digits only, in any script (1/2, １/２): a v-prefixed root name is a version (VERSION_START below), but
+# Digits only, in any script and with signs (1/2, １/２, -1/2): a v-prefixed root name is a version (VERSION_START below), but
 # under a directory it is a path (v8/123, V1/2).
-NUMERIC = re.compile(r"\d[\d./\\]*")
+NUMERIC = re.compile(r"[-+]?\d(?:[\d.]|[/\\][-+]?)*")
 # A root-level name that starts with a digit, or with v or V and a digit
 # (1!2.3, 1.2.3.post1, 2.0b3, 5.0.0.BUILD-SNAPSHOT, v1!2.3, v2rc1.post2), is a
 # number or version, whatever follows: version syntaxes cannot be listed
@@ -124,9 +124,10 @@ VERSION_START = re.compile(r"[~^=<>!]*[vV]?\d")
 PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # A dotted version qualifier is not a file extension (Python-3.12.1.post1,
 # Spring-5.3.20.RELEASE, 1.0.Final).
+# Short ones that are also real extensions (.m, .a, .el, .deb) need a number.
 QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
-                       r"|build-snapshot|milestone|m|sr|cr|[ab]"
-                       r"|el|fc|amzn|deb|ubuntu|sles|mga|git|svn)[0-9_]*", re.IGNORECASE)
+                       r"|build-snapshot|milestone|amzn|ubuntu|sles|mga|svn)[0-9_]*"
+                       r"|(?:m|a|b|sr|cr|el|fc|deb|git)[0-9][0-9_]*", re.IGNORECASE)
 EXTENSION = re.compile(r"[^\W\d_][^\W_]{0,4}")
 # Before the - or _ that precedes the number, the name may hold digits, . + #
 # and further - or _ (log4j-2.17.1, Node.js-20.11.0, .NET-8.0.0,

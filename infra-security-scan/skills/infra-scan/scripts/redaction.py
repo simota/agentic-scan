@@ -5,9 +5,12 @@ import re
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
 
 
+# The second alternative takes the short spellings (DB_PASS, admin_pw, pwd)
+# only as whole words, so bypass_mode or upwards are not keys of a secret.
 SECRET_FIELD = re.compile(
-    r"(?i)(?<![\w/?&.-])[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
-    r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*[\"']?\s*[:=]")
+    r"(?i)(?<![\w/?&.-])(?:[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
+    r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*|"
+    r"(?:[\w/.-]*[^a-zA-Z\s\"'=:])?(pass(?:phrase)?|pwd|pw)(?:[^a-zA-Z\s\"'=:][\w/.-]*)?)[\"']?\s*[:=]")
 # Known credential formats, labelled for the scanner's SEC-001 detail. The
 # scanner, redaction and the merge gate all build their patterns from these.
 CREDENTIAL_SHAPES = (
@@ -178,6 +181,8 @@ def has_structured_secrets(value):
             return True
         if any(re.search(r"\b(?:mysql|mysqldump|mariadb|psql|mongo|mongosh|redis-cli)\b", item) for item in texts) \
                 and any(re.search(r"(?:^|\s)-p\S", item) for item in texts):
+            return True
+        if any("redis-cli" in item for item in texts) and any(re.search(r"(?:^|\s)-a(?:\s|$)", item) for item in texts):
             return True
     # Plan JSON variables, configuration defaults and output changes put the
     # name one level above the value: "admin_pw": {"value": "..."}.
@@ -454,6 +459,9 @@ BARE_USERINFO = re.compile(r'(?<=["\'\s=])([\w.%+-]+):([^"\'\s@/]+)@(?=[\w.-]+[:
 SHELL_PASSWORD = re.compile(r"(?<!\S)(--password[= ]|--pass[= ]|--token[= ])(?=\S)(\S+)")
 DB_CLIENT = re.compile(r"\b(?:mysql|mysqldump|mariadb|psql|mongo|mongosh|redis-cli)\b")
 CLIENT_PASSWORD = re.compile(r"(?<!\S)(-p|-P|-a)(?=\S)(\S+)")
+# redis-cli -a takes the password as the next argument, also in a JSON or
+# YAML flow list: ["redis-cli", "-a", "x"].
+REDIS_AUTH = re.compile(r"""(?<![\w-])(-a|--pass|--askpass)(["']?\s*,?\s*["']?)([^"'\s,\]]+)""")
 SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
@@ -513,6 +521,8 @@ def scrub_line(line, syntax="hcl"):
         line = PIPED_VALUE.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), line)
     if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere
         line = CLIENT_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+        if "redis-cli" in line:
+            line = REDIS_AUTH.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", line)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)

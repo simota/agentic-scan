@@ -2714,8 +2714,13 @@ def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
 
 SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})")) for label, pattern in CREDENTIAL_SHAPES]
 SECRET_PATTERNS.append(("private key", KEY_BEGIN))
+# The short spellings (db_pass, admin_pw) count only as a whole word, as in
+# redaction's CREDENTIAL_WORD: bypass or compass name no secret.
 SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
-                   r'access_key|private_key))"?')
+                   r'access_key|private_key|credentials?|connection_string|(?<![A-Za-z])(?:pass|pwd|pw)))"?')
+# A key file path or a connection string without a password is no secret.
+NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|pem|p12|key)$"),
+                ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)", re.IGNORECASE)}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
@@ -2757,6 +2762,9 @@ def scan_secrets(scan, rel, text, kind):
             if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
+                continue
+            exempt = next((p for keys, p in NOT_A_SECRET.items() if m.group(1).lower().endswith(keys)), None)
+            if exempt and exempt.search(m.group(2)):
                 continue
             if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")

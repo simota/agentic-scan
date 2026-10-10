@@ -5,18 +5,20 @@ import subprocess
 import tempfile
 import unittest
 
-from test_install import REPO, InstallTests
+import test_install
+from test_install import REPO, clean_environment
 
 
 def make(cwd, *args, env=None):
-    return subprocess.run(["make", "--no-print-directory", *args], cwd=cwd, env=env,
+    return subprocess.run(["make", "--no-print-directory", *args], cwd=cwd,
+                          env=clean_environment(env),
                           capture_output=True, text=True, timeout=30)
 
 
 class AliasTests(unittest.TestCase):
-    run_make = InstallTests.run_make
-    assert_success = InstallTests.assert_success
-    copy_checkout = InstallTests.copy_checkout
+    run_make = test_install.InstallTests.run_make
+    assert_success = test_install.InstallTests.assert_success
+    copy_checkout = test_install.InstallTests.copy_checkout
 
     def test_links_made_through_an_alias_belong_to_the_same_checkout(self):
         with tempfile.TemporaryDirectory() as d:

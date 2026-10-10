@@ -163,7 +163,8 @@ def _protocol_version(path):
     rest = path[match.end():]
     if not rest:
         return True
-    if rest[0] not in "-+_":
+    # A tag stays within one component: http2-tests/README is a path.
+    if rest[0] not in "-+_" or "/" in rest or "\\" in rest:
         return False
     _, dot, extension = rest.rpartition(".")
     return not (dot and extension[:1].isalpha())

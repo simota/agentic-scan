@@ -123,7 +123,8 @@ class ReviewFollowUpTests(unittest.TestCase):
 
     def test_staging_files_beside_symlink_targets_are_found(self):
         with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
+            # check reports resolved paths (on macOS, /var is a link to /private/var).
+            root = Path(directory).resolve()
             out, stored = root / "out", root / "stored [v1]"
             out.mkdir()
             stored.mkdir()

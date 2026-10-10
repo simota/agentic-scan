@@ -141,6 +141,15 @@ class DocumentTests(unittest.TestCase):
         rendered = [en[key] for key in render.FIELDS]
         self.assertEqual([label for label in labels if label in rendered], rendered)
 
+    def test_every_sound_constructs_step_has_a_row_in_its_table(self):
+        text = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        hunts, table = text.split("## Sound constructs", 1)
+        marked = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \| \*\(sound constructs\)\*", hunts, re.MULTILINE))
+        rows = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \|", table, re.MULTILINE))
+        self.assertEqual(marked, rows)
+        # Hunt tables have no sound-constructs rows hiding among them.
+        self.assertNotIn("| Synchronised retries", hunts)
+
     def test_frontmatter(self):
         head = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
         self.assertIn("name: performance-scan", head)

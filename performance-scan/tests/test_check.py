@@ -1,5 +1,6 @@
 """Run-contract rules that ``findings.py check`` enforces beyond the schema."""
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -86,15 +87,30 @@ class CitationTests(unittest.TestCase):
     def test_evidence_must_name_a_file_position(self):
         cites = ["app/orders/views.py:18 lacks prefetch", "app/orders/views.py#L18",
                  "views.py：18", "C:\\app\\x.py:12", "Makefile:12 sets -O0", "src/main:40",
-                 "BUILD:10 declares the target", "WORKSPACE:7", "config/app.local/settings.py:3"]
+                 "BUILD:10 declares the target", "WORKSPACE:7", "config/app.local/settings.py:3",
+                 ".env.local:3", ".env.example:1 sets DATABASE_POOL_SIZE=5", "Dockerfile.dev:12",
+                 "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
+                 "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
                      "measured locally at 12:30", "ratio 1:10", "redis at localhost:6379",
                      "views.py line 18", "pool size read from db.prod.example.com:5432",
-                     "10.0.0.5:5432 is the replica", "cache.internal:11211"]
+                     "10.0.0.5:5432 is the replica", "cache.internal:11211",
+                     "上限：100件のため問題なし", "件数：50", "timeout:30", "pool max:10",
+                     "node:18 image", "N:1 relation", "redis:6379", "postgres.default.svc:5432",
+                     "db.example.co.uk:5432", "api.example.de:443", "api.corp.dev:443",
+                     "example.org:443", "db.dev:5432", "api.app:443",
+                     # Ambiguous without a directory: written as a host, read as one.
+                     "settings.local:3", "app.test:5"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
             self.assertFalse(findings.cites_location(text), text)
+
+    def test_long_evidence_without_a_colon_is_checked_in_linear_time(self):
+        started = time.monotonic()
+        self.assertFalse(findings.cites_location("a" * 200000))
+        self.assertTrue(findings.cites_location("a" * 200000 + " views.py:3"))
+        self.assertLess(time.monotonic() - started, 2)
 
 
 if __name__ == "__main__":

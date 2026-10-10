@@ -13,18 +13,21 @@ python3 scripts/findings.py check <out> [--allow NAME]
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filterable) and `<out>/report.md`. Exit codes: `0` written; `1` an output could
-not be written (fix the destination); `2` the input or command line is wrong
-(the message names the file and, for shape errors, the field). `findings.py`
-exits `1` when a merge is refused or `check` finds violations (one per line on
-stderr) and `2` on a usage error. `check` validates structure, not whether
-rendered text is current or a finding is true.
+not be encoded or written (unencodable text in the record, or a destination
+problem: the destination directory must be writable); `2` the input or command
+line is wrong (the message names the file and, for shape errors, the field).
+`findings.py` exits `1` when a merge is refused or `check` finds violations (one
+per line on stderr; a path that is not a directory is reported as such) and `2`
+on a usage error. `check` requires the three outputs to be readable, nonempty
+regular files (symbolic links to such files are fine) and validates structure,
+not whether rendered text is current or a finding is true.
 
 Inputs are strict UTF-8 JSON in regular files (symbolic links to them are
 fine): unique member names at every level, no `NaN`/`Infinity`, no number
 beyond the float range. Write piped or generated content to a regular file
 first. A refused command changes no record or report; run merges and renders
-one at a time. How the scripts read, stage and replace files is described in
-the README (*Script behaviour*).
+one at a time. Replacements are atomic and keep existing permission bits and
+symbolic links; new files start private.
 
 ## Writing the file
 
@@ -64,9 +67,13 @@ Merge semantics:
   duplicates
 
 A refused merge writes nothing. Each finding must be complete in the fragment
-that first adds it (the record is validated after every fragment), and every
-entry in `findings`, `budgets` and `perspectives` needs a nonblank `id` or
-`name`. A merge never removes a key, so an update that turns a finding into a
+that first adds it (the record's structure is validated after every fragment;
+the cross-field rules of `check`, such as evidence citations and `holds`
+budgets, run only in `check`), and every entry in `findings`, `budgets` and
+`perspectives` must be an object with a nonblank string `id` or `name`. The
+existing and combined records need unique finding IDs, budget IDs and
+perspective names; repeated perspective names within one fragment replace in
+order, so the last one wins. A merge never removes a key, so an update that turns a finding into a
 different one keeps its old optional fields (`measurement`, `contrast`,
 `budget`, `step`, `references`): reuse an ID only for the same root cause, and
 renumber by building a fresh `findings.json` from fragments with the final IDs.
@@ -143,11 +150,11 @@ embedding Markdown link syntax in another field.
 | `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
 | `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `budget` holds exactly one ID, and `check` requires a nonblank `budget` to name an ID in `budgets[]`; name other violated budgets in `impact` |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line` or `path#L42` (a URL, a `host:port` such as `db.example.com:5432`, a time or a ratio does not count; any other path does, including extensionless names such as `BUILD:10`). For other verdicts, `evidence` may be omitted or empty but must be a string when present |
+| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line` or `path#L42` (the path must look like a file: an extension, a directory part, or a conventional name such as `Makefile` or `BUILD`; a URL, a `host:port` such as `db.example.com:5432` or `example.org:443`, a time, a ratio or prose such as `timeout:30` does not count, so write other extensionless files, and lowercase names ending in `.dev`, `.test`, `.local`, `.org` and similar, with their directory, e.g. `bin/server:12`, `config/settings.local:3`). For other verdicts, `evidence` may be omitted or empty but must be a string when present |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
 | `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost; still counted in the totals, with the decision recorded in `decisions`) |
-| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. An omitted or blank `title` uses the URL as the link label |
+| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Only absolute `http(s)` URLs, `mailto:` and relative paths become links; any other URL (including `//host`) is shown as text. An omitted or blank `title` uses the URL as the link label |
 | `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs a nonblank `reason` for `check`, and `check` refuses `holds` while a `Valid` finding that is not `Fixed` names the budget. A present `reason` must be a string (empty allowed while merging). `family` (`QRY`, `SIZE`, `CPLX`, `LAT`, `RES` or `FE`, from `reference/budgets.md` §2) and `inferred` are optional |
 | `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |

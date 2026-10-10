@@ -215,7 +215,7 @@ class MakefilePathTests(unittest.TestCase):
         self.skill = self.repo / "skills" / "performance-scan"
 
     def run_make(self, target, *variables, external=False, preceding=(), preload=None,
-                 environment=None):
+                 environment=None, expect=0):
         args = ["make", "--no-print-directory"]
         for makefile in preceding:
             args += ["-f", str(makefile)]
@@ -234,8 +234,18 @@ class MakefilePathTests(unittest.TestCase):
             cwd=self.root if external else self.repo, env=env,
             text=True, capture_output=True, timeout=30,
         )
-        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        if expect == 0:
+            self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        else:
+            self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
         return result.stdout
+
+    def test_a_failing_suite_fails_test_and_check(self):
+        (self.repo / "tests" / "test_stub.py").write_text(
+            "import unittest\n\n\nclass Failing(unittest.TestCase):\n"
+            "    def test_fails(self):\n        self.fail('expected')\n", encoding="utf-8")
+        self.run_make("test", expect=1)
+        self.assertNotIn("check ok", self.run_make("check", expect=1))
 
     def test_spaceful_checkout_and_skills_dir_link_status_unlink(self):
         directory = self.root / "custom skills"

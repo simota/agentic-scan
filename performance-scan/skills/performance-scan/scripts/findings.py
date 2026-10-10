@@ -62,7 +62,10 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
-CITATION = re.compile(r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
+# The lookbehind starts a match only at the beginning of a run: without it a long
+# run with no colon is retried from every position (quadratic time).
+CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
+                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
@@ -70,30 +73,40 @@ class SchemaError(ValueError):
     pass
 
 
-# Final labels that mark a dotted name as a host rather than a file name.
-HOST_SUFFIXES = frozenset(("com", "net", "org", "io", "dev", "app", "cloud", "co", "jp",
-                           "local", "localdomain", "internal", "lan", "example", "test",
-                           "invalid", "arpa"))
+# Final labels that mark a dotted name as a host rather than a file name. The
+# ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev,
+# README.org): with them, a lowercase two-label name (example.org, db.dev) is a
+# host, while a name with an uppercase letter or a leading dot is a file.
+HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", "eu", "us",
+                           "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
+AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
+# A file name has an extension, a directory part, or a conventional extensionless
+# name: Makefile, Dockerfile, BUILD, WORKSPACE, OWNERS.
+FILE_SHAPE = re.compile(r".*[/\\].*|.*\.[A-Za-z0-9]+|[A-Z][A-Za-z]*file|[A-Z][A-Z0-9_]+")
 
 
 def _is_host(name):
     """True for localhost, an IPv4 address or a dotted name ending in a host suffix."""
-    if "/" in name or "\\" in name:
+    if "/" in name or "\\" in name or name.startswith("."):
         return False
+    labels = name.lower().split(".")
+    ambiguous = labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name.islower())
     return (name.lower() == "localhost" or bool(IPV4.fullmatch(name))
-            or ("." in name and name.rsplit(".", 1)[1].lower() in HOST_SUFFIXES))
+            or (len(labels) > 1 and (labels[-1] in HOST_SUFFIXES or ambiguous)))
 
 
 def cites_location(text):
     """True when text names a file position, not a URL, a host:port, a time or a ratio.
 
-    Any other path is accepted, including extensionless names such as BUILD:10.
-    A bare service name (redis:6379) cannot be told apart from such a file.
+    The path must look like a file (see FILE_SHAPE), so prose such as
+    "timeout:30" or "上限：100" does not count. A service name such as
+    redis:6379 does not either; an extensionless file must be written with its
+    directory (src/main:40) unless its name is conventional (BUILD:10).
     """
     for match in CITATION.finditer(text):
         path = match.group(1)
-        if "//" in path or path.isdigit() or _is_host(path):
+        if "//" in path or _is_host(path) or not FILE_SHAPE.fullmatch(path):
             continue
         return True
     return False

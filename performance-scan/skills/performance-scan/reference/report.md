@@ -5,17 +5,22 @@ Write in the requester's language.
 
 ## Checklist deliverable
 
-- First line: how many budgets were derived, how many perspectives apply, and
-  that suspicions are unverified
-- **Budget ledger first** (`reference/budgets.md` §2): each budget with its
-  source, the paths that pay it and which of them to trace; mark `inferred`
-  bounds as questions for the requester
+- First line: how many budgets were derived, the perspective counts (applied /
+  N/A / not checked), and that suspicions are unverified
+- **Budget ledger first** (`reference/budgets.md` §2, without the *Status*
+  column, which has no meaning before review): each budget with its source, the
+  paths that pay it and which of them to trace; mark `inferred` bounds as
+  questions for the requester
 - Then one section per perspective from `reference/perspectives.md`, most
-  important first, listing only the hunt steps no ledger entry covers; list the
+  important first, listing only the hunt steps no ledger entry covers (a step
+  is covered when an entry of the family in its perspective's heading pays the
+  same paths); list the
   ones judged N/A with a reason
 - Each item: the question, concrete routes/files, and an optional
   `initial note (unverified)`
-- Close with the recommended starting point and one decision for the requester
+- A limitations line: a static plan, nothing traced yet, data volumes unknown
+- Close with the decisions: inferred bounds to confirm first, then one
+  recommended starting point
 
 ## Findings report (chat summary)
 

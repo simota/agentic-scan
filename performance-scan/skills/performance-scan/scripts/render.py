@@ -135,8 +135,16 @@ def as_text(value):
     return ", ".join(value) if isinstance(value, list) else str(value)
 
 
+# C0/C1 controls (except tab and newline) and bidi controls can reorder or hide
+# text (Trojan Source) or drive a terminal that prints report.md; show them as
+# visible escapes instead.
+UNSAFE_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
+                          "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
 def text_lines(value):
-    return as_text(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    return UNSAFE_CHARS.sub(lambda m: f"\\u{ord(m.group()):04x}", text).split("\n")
 
 
 def markdown_text(value):
@@ -186,12 +194,19 @@ def markdown_code(value):
 
 
 def link_destination(url):
-    """Return a URL safe to link, before escaping for Markdown or HTML."""
+    """Return a URL safe to link, before escaping for Markdown or HTML.
+
+    Absolute http(s) URLs with a host, mailto: links and relative paths (e.g. a
+    document beside the report) qualify. A protocol-relative URL does not: opened
+    from file://, //host resolves to a network share (an SMB fetch on Windows).
+    """
     try:
-        scheme = urlsplit(url).scheme.lower()
+        parts = urlsplit(url)
     except ValueError:
         return None
-    if scheme not in ("", "http", "https", "mailto"):
+    scheme = parts.scheme.lower()
+    relative = not scheme and not parts.netloc and not url.lstrip().startswith(("//", "\\"))
+    if not ((scheme in ("http", "https") and parts.netloc) or scheme == "mailto" or relative):
         return None
     return quote(url, safe="/:?#[]@!$&'+,;=%")
 
@@ -265,7 +280,11 @@ def markdown_finding(f, t):
     step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
     lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
     for key in FIELDS:
-        if key in f:
+        if key == "location":
+            # Code spans keep paths copyable (no snake\_case escapes) and inert.
+            locations = f[key] if isinstance(f[key], list) else [f[key]]
+            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
+        elif key in f:
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
     if v.get("evidence"):

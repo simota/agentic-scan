@@ -21,7 +21,7 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
 | 確度 | {{confidence}} |
-| 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
+| 検証判定 | {{validation.verdict}}（検証方法: static は「静的」、measured は「計測」） |
 | 観点 | {{category}}（{{step}}） |
 | 場所 | {{location}} |
 | 対象リビジョン | {{meta.commit}} |

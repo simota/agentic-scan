@@ -96,6 +96,15 @@ to merge. Atomic replacement does not detect concurrent updates.
   survive forced termination or a crash mid-replace.
 - **Checking.** Required outputs must be readable, nonempty regular files;
   symbolic links to such files are allowed.
+- **Untrusted text.** Record strings come from an agent that read an untrusted
+  repository, so both outputs treat them as plain text: HTML is escaped, Markdown
+  syntax, bare URLs, emails and emoji shortcodes are neutralised for GitHub, and
+  control and bidi characters are shown as `\uXXXX`. Only `references[]` link,
+  and only to absolute `http(s)` URLs, `mailto:` or relative paths (never
+  `//host`, which opens a network share from `file://`). Renderers that
+  linkify bare domains (markdown-it with `linkify`, used by the VS Code preview)
+  may still turn names such as `example.com` into links; view `report.md` on
+  GitHub or as plain text when the record's source is untrusted.
 
 | Output | What it is |
 |---|---|

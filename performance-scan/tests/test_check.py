@@ -1,5 +1,6 @@
 """Run-contract rules that ``findings.py check`` enforces beyond the schema."""
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -95,6 +96,12 @@ class CitationTests(unittest.TestCase):
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
             self.assertFalse(findings.cites_location(text), text)
+
+    def test_long_evidence_without_a_colon_is_checked_in_linear_time(self):
+        started = time.monotonic()
+        self.assertFalse(findings.cites_location("a" * 200000))
+        self.assertTrue(findings.cites_location("a" * 200000 + " views.py:3"))
+        self.assertLess(time.monotonic() - started, 2)
 
 
 if __name__ == "__main__":

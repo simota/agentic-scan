@@ -62,7 +62,10 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
-CITATION = re.compile(r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
+# The lookbehind starts a match only at the beginning of a run: without it a long
+# run with no colon is retried from every position (quadratic time).
+CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
+                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 

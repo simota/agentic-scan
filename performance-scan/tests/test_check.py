@@ -130,6 +130,8 @@ class CitationTests(unittest.TestCase):
                      "version1.2.3:4", "Python-3.12.1:2", "OpenSSL_3.0.0:2", "release-2024.01.15:1",
                      "Python-3.12.1rc1:2", "OpenSSL_3.0.0-alpha:2", "version1.2.3+build.5:4",
                      "log4j-2.17.1:4", "OpenSSL3-3.0.0:2", "h2o_2.2.6:1",
+                     "Python-3.12.1.post1:2", "Django-4.2.1.dev1:3", "Spring-5.3.20.RELEASE:4",
+                     "Spring-5.3.20.BUILD-SNAPSHOT:1", "１/２：３", "١/٢:3", "２０２４/１２３:3",
                      "001_init.sql:4", ".5:1", "~1.5:1",
                      "SMTP/2:1", "SSH/2.0:22", "https/1.1:200", "tls/1.3:1", "Ssh/2.0:22", "TLSv1.3:443", "SSH-2.0:22", "tls_v1.2:1", "HTTP2:1", "SSLv3:1", "TLSv1.3-draft28:1", "HTTP/3-draft-29:1",
                      "SSH-2.0-OpenSSH_9.6:22", "TLSv1.2+:1", "SFTP/3.0:22", "SMB/3.1.1:445", "RDP/10.0:3389",

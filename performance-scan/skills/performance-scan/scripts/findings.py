@@ -108,9 +108,9 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # protocol versions (HTTP/1.1), URLs, hosts and bare words (timeout:30, TTL:300).
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
-# Digits only: a v-prefixed root name is a version (VERSION_START below), but
+# Digits only, in any script (1/2, １/２): a v-prefixed root name is a version (VERSION_START below), but
 # under a directory it is a path (v8/123, V1/2).
-NUMERIC = re.compile(r"[0-9][0-9./\\]*")
+NUMERIC = re.compile(r"\d[\d./\\]*")
 # A root-level name that starts with a digit, or with v or V and a digit
 # (1!2.3, 1.2.3.post1, 2.0b3, 5.0.0.BUILD-SNAPSHOT, v1!2.3, v2rc1.post2), is a
 # number or version, whatever follows: version syntaxes cannot be listed
@@ -118,10 +118,14 @@ NUMERIC = re.compile(r"[0-9][0-9./\\]*")
 # (./2.0.txt:3, ./v8.json:2, db/001_init.sql:4). Under a directory, such names count.
 LETTER = re.compile(r"[^\W\d_]")
 # Range operators may lead (~v1.2.3, ^v2.0.0, >=v1.2.3).
-VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
+VERSION_START = re.compile(r"[~^=<>!]*[vV]?\d")
 # A package spec puts a dotted version after @ or an operator (react@18.2.0,
 # pkg@v1.2.3, python==1.2.3); a scale suffix such as icon@2x.png is a file.
 PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
+# A dotted version qualifier is not a file extension (Python-3.12.1.post1,
+# Spring-5.3.20.RELEASE, 1.0.Final).
+QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
+                       r"|build-snapshot|milestone|m|sr|cr|[ab])[0-9]*", re.IGNORECASE)
 # Before - or _ the name may hold digits (log4j-2.17.1); without a separator it
 # is letters only, so python3.11 splits as python + 3.11.
 PRODUCT_VERSION = re.compile(r"[^\W\d_](?:[^\W_]*([-_])|[^\W\d_]*)([0-9]+(?:\.[0-9]+)+)")
@@ -171,7 +175,7 @@ def _product_version(name):
     if not separator and number.count(".") < 2:
         return False
     _, dot, extension = name[match.end():].rpartition(".")
-    return not (dot and extension[:1].isalpha())
+    return not (dot and extension[:1].isalpha() and not QUALIFIER.fullmatch(extension))
 
 
 def _protocol_version(path):

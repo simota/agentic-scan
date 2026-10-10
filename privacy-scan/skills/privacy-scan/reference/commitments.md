@@ -84,8 +84,13 @@ show whether the job or path reaches it.
 A unit closes when: every owned entry has a row for every element and sink
 found by search (record the search and its hit count); every *Control* cell is
 filled (zero blank); every `lead` is resolved into a finding, a `checked_ok`
-line or a `limitations` line. Record the counts (`entries 6, elements 14, rows
-31, blank 0`) in scratch.
+line or a `limitations` line. Record the counts in scratch, one line per unit:
+
+```
+close-check <unit>: entries 6, elements 14, rows 31, blank 0, leads 3 resolved (2 findings, 1 checked_ok), searches 9
+```
+
+A unit with `blank` above zero or an unresolved lead is not closed.
 
 ## 5. From a violated row to a finding
 

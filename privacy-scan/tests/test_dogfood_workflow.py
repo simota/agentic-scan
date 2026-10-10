@@ -21,11 +21,12 @@ class RenumberTests(unittest.TestCase):
     def doc(self):
         doc = complete_doc()
         doc["findings"] = [
-            finding("PV-001", "Low", title="Low first"),
+            finding("PV-001", "Low", title="Low first", location="web/low.py:1"),
             finding("PV-002", "High", title="High second",
                     validation={"verdict": "FalsePositive", "method": "static",
                                 "evidence": "scrubber at app.py:30"}),
-            finding("PV-003", "High", title="High third", impact="Same root as PV-001"),
+            finding("PV-003", "High", title="High third", impact="Same root as PV-001",
+                    location="api/high.py:1"),
         ]
         doc["next_steps"] = ["Fix PV-003, then PV-001; keep PV-002 excluded"]
         return doc
@@ -164,3 +165,65 @@ class DisclaimerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DraftWarningTests(unittest.TestCase):
+    def test_render_warns_about_what_check_will_refuse(self):
+        doc = complete_doc()
+        doc["limitations"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "findings.json"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                self.assertEqual(render.main([str(path), "--out", directory]), 0)
+            self.assertIn("warning: findings.py check will refuse: limitations:", stderr.getvalue())
+            stderr = io.StringIO()
+            doc["limitations"] = ["Not legal advice"]
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                render.main([str(path), "--out", directory])
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_partly_applied_perspectives_may_hold_findings(self):
+        doc = complete_doc()
+        for p in doc["perspectives"]:
+            if p["name"] == doc["findings"][0]["category"]:
+                p.update(status="partly applied", note="LT2 applied; LT3 not reached")
+        findings.validate(doc, complete=True)
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_check_orders_equal_severities_by_path(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("PV-001", "High", location="web/z.py:1"),
+                           finding("PV-002", "High", location="api/a.py:1")]
+        self.assertTrue(any("then by path" in p for p in findings.record_problems(doc)))
+        findings.renumber(doc)
+        self.assertEqual(findings.record_problems(doc), [])
+
+
+class BlindRunTests(unittest.TestCase):
+    """Rules added after a blind run split one fix into two findings and mixed steps."""
+
+    def test_two_reported_findings_cannot_share_a_fix_location(self):
+        doc = complete_doc()
+        doc["findings"][1]["location"] = copy.deepcopy(doc["findings"][0]["location"])
+        self.assertTrue(any("share their first location" in p for p in findings.record_problems(doc)))
+        doc["findings"][1]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_steps_must_belong_to_the_category(self):
+        doc = complete_doc()
+        doc["findings"][0]["category"] = "Identifiers and pseudonymisation"
+        problems = findings.record_problems(doc)
+        self.assertTrue(any(p.startswith("PV-001.step: LT2 is not a step of Identifiers") for p in problems),
+                        problems)
+        doc["findings"][0]["step"] = "ID2"
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_step_prefixes_match_the_reference_headings(self):
+        text = (Path(findings.__file__).parents[1] / "reference" / "perspectives.md").read_text(
+            encoding="utf-8")
+        for name, prefix in findings.STEP_PREFIXES.items():
+            self.assertIn(f"### {name} ({prefix})", text)

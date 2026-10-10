@@ -33,12 +33,50 @@ contract failed (reasons on stderr).
 Findings describe where personal data goes, never the data itself: public
 prose or evidence containing an e-mail address (other than the reserved
 example domains) or a run of 12 or more digits is refused.
+
+Personal-value guard, in full:
+
+Report prose, including analysis results, commitments, perspective notes and the
+top-level text lists, is checked for e-mail addresses (other than
+`example.com`, `example.org`, `example.net` or the `.example`, `.test`,
+`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
+and Unicode e-mail forms, including complete internationalised domain labels
+and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
+not exempted as reserved example domains. The guard also recognises repeated
+spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
+the katakana prolonged sound mark (`ー`) between digits, and card-style groups
+(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
+UUIDs are not counted as digit runs, so date ranges and identifiers stay
+allowed. In a `location` path only, a path segment that starts with a compact
+date-time (`20261009123045_create_users.py`, as timestamped migrations are
+named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
+most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
+Mail-header comments and folding whitespace around the local part, `@` and
+domain are also inspected without changing the saved text.
+Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
+for inspection; accepted text retains its original spelling. Name fields and
+use placeholders.
+
+All checked prose is also inspected after percent-decoding and HTML-entity
+decoding (`%40`, `&#64;`), repeated up to three times so double-encoded values
+are caught, and with invisible format characters (zero-width spaces, word
+joiners, soft hyphens) removed. Hex digests and dashless UUIDs (whole tokens of
+32 or more hex digits containing a letter) are not counted as digit runs.
+
+Reference URLs are checked both as supplied and after percent-decoding their
+parsed components. Query names and values also receive form decoding (`+`
+means a space). A URL that cannot be parsed is checked after decoding the whole
+string. These checks use temporary copies; accepted URLs retain their original
+spelling.
 """
 import argparse
 from html import unescape
 import json
+import os
 from pathlib import Path
 import re
+import signal
+import stat
 import sys
 import unicodedata
 from urllib.parse import parse_qsl, unquote, unquote_plus, urlsplit
@@ -65,7 +103,9 @@ EXCLUDED = ("FalsePositive", "NotApplicable")
 METHODS = ("static", "analysed")
 STATUSES = ("Open", "Fixed", "Accepted")
 COMMITMENT_STATUSES = ("holds", "violated", "partly read", "not checked")
-PERSPECTIVE_STATUSES = ("applied", "N/A", "not checked")
+PERSPECTIVE_STATUSES = ("applied", "partly applied", "N/A", "not checked")
+# A finding may sit under a perspective that was applied in full or in part.
+APPLIED = ("applied", "partly applied")
 PERSPECTIVES = (
     "Data inventory and minimisation", "Purpose and consent", "Retention and deletion",
     "Data subject rights", "Third-party sharing", "Logs, telemetry and errors",
@@ -73,6 +113,10 @@ PERSPECTIVES = (
     "Identifiers and pseudonymisation", "Non-production and derived copies",
     "Location and transfers",
 )
+# Hunt-step prefixes per perspective (reference/perspectives.md headings).
+STEP_PREFIXES = dict(zip(PERSPECTIVES, ("MN", "PC", "RD", "DR", "TP", "LT", "EX", "SP", "CT",
+                                         "ID", "NP", "LO")))
+STEP_ID = re.compile(r"([A-Z]{2})\d+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -142,9 +186,30 @@ class SchemaError(ValueError):
     pass
 
 
+# Records and fragments are small; anything larger is not one of them.
+MAX_INPUT_BYTES = 16 * 1024 * 1024
+
+
+def read_limited(path, limit=MAX_INPUT_BYTES):
+    """Read a regular file of at most `limit` bytes; never block on FIFOs or devices."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise SchemaError(f"{path}: must be a regular file")
+        if info.st_size > limit:
+            raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
+    return data
+
+
 def read_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return json.loads(read_limited(path).decode("utf-8"))
+    except SchemaError:
+        raise
     except UnicodeDecodeError as exc:
         raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
     except (OSError, json.JSONDecodeError) as exc:
@@ -564,10 +629,7 @@ def renumber(doc):
     """
     findings = doc.get("findings", [])
 
-    def path(f):
-        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
-        return location[0].rsplit(":", 1)[0]
-
+    path = _first_path
     # Severity order, then path, as the run contract numbers them.
     active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     ordered = sorted(active, key=lambda f: (SEVERITIES.index(f["severity"]), path(f)))
@@ -641,8 +703,13 @@ def contract_problems(out, allow=()):
         return ["output directory is not readable"]
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
+    staging = _staging_files(out, present)
+    for path in sorted(staging):
+        shown = path.name if path.parent == out.resolve() else str(path)
+        problems.append(f"stale staging file from an interrupted write: {shown} (delete it)")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        if (out / name).resolve() not in staging:
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     unusable = set()
     for name in sorted(OUTPUTS & present):
         path = out / name
@@ -665,17 +732,55 @@ def contract_problems(out, allow=()):
         validate(doc, complete=True)
     except SchemaError as exc:
         return problems + [f"findings.json: {exc}"]
+    return problems + record_problems(doc) + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+
+
+def _staging_files(out, present):
+    """Find leftover staging files beside each output's resolved destination.
+
+    output_io stages `.NAME.<random>.tmp` next to the file it replaces, and a
+    symlinked output is replaced at its target, possibly elsewhere or renamed.
+    """
+    found = set()
+    for name in OUTPUTS:
+        destinations = {out / name}
+        if name in present:
+            try:
+                destinations.add((out / name).resolve())
+            except (OSError, RuntimeError):
+                pass
+        for destination in destinations:
+            prefix = f".{destination.name}."
+            try:
+                # Plain name matching: a target name may contain glob characters.
+                candidates = [path for path in destination.parent.iterdir()
+                              if path.name.startswith(prefix) and path.name.endswith(".tmp")
+                              and len(path.name) > len(prefix) + len(".tmp")]
+            except OSError:
+                continue
+            found.update(path.resolve() for path in candidates if path.is_file())
+    return found
+
+
+def _first_path(f):
+    location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    return location[0].rsplit(":", 1)[0]
+
+
+def record_problems(doc):
+    """Contract violations visible in a schema-valid record alone (no outputs needed)."""
+    problems = []
     findings = doc.get("findings", [])
     expected = [f"PV-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
                         "run scripts/findings.py renumber")
-    ranks = [SEVERITIES.index(f["severity"]) for f in findings if
-             f["validation"]["verdict"] not in EXCLUDED]
+    ranks = [(SEVERITIES.index(f["severity"]), _first_path(f)) for f in findings
+             if f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
         order = ", ".join(f"{f['id']} {f['severity']}" for f in findings
                           if f["validation"]["verdict"] not in EXCLUDED)
-        problems.append(f"findings must be numbered in severity order (High first): {order}; "
+        problems.append(f"findings must be numbered in severity order (High first), then by path: {order}; "
                         "run scripts/findings.py renumber")
     for i, f in enumerate(findings):
         if (f["confidence"] == "Environment-dependent" and f["validation"]["verdict"] not in EXCLUDED
@@ -686,6 +791,23 @@ def contract_problems(out, allow=()):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    first_seen = {}
+    for f in findings:
+        if f["validation"]["verdict"] in EXCLUDED:
+            continue
+        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+        if location[0] in first_seen:
+            problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
+                            "one finding per fix location: merge them or anchor each at its own fix site")
+        first_seen.setdefault(location[0], f["id"])
+        written = f.get("step", "").strip()
+        step = STEP_ID.fullmatch(written)
+        if written and not step:
+            problems.append(f"{f['id']}.step: must be one hunt step ID such as "
+                            f"{STEP_PREFIXES[f['category']]}1, or omitted")
+        elif step and step.group(1) != STEP_PREFIXES[f["category"]]:
+            problems.append(f"{f['id']}.step: {step.group(0)} is not a step of {f['category']} "
+                            f"({STEP_PREFIXES[f['category']]}…); fix the step or the category")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
         # Ledger IDs are technical identifiers; other prose was checked by validate.
@@ -693,7 +815,7 @@ def contract_problems(out, allow=()):
             if cited not in ledger:
                 problems.append(f"findings[{i}].commitment: {cited} is not in the commitments ledger")
         status = recorded.get(f["category"])
-        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, "applied"):
+        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, *APPLIED):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
                             "not applied")
     for i, r in enumerate(doc.get("commitments", [])):
@@ -703,7 +825,7 @@ def contract_problems(out, allow=()):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
-    return problems + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+    return problems
 
 
 def _stale_outputs(out, doc, skip):
@@ -714,7 +836,10 @@ def _stale_outputs(out, doc, skip):
     render = _import_sibling("render")  # render imports this module, so load it lazily
 
     try:
-        current = {name: (out / name).read_bytes() for name in names}
+        current = {name: read_limited(out / name) for name in names}
+    except SchemaError:
+        return ["stale outputs: report.md or dashboard.html is too large to be a rendering "
+                "of findings.json; re-run scripts/render.py"]
     except OSError:
         return [f"unreadable output: {name}" for name in names]
     # Either language is a valid rendering (render.py --lang may override meta.lang).
@@ -737,7 +862,16 @@ def cmd_check(args):
     return 0
 
 
+def prepare_cli():
+    """Let SIGTERM (tool timeouts) run cleanup, and never fail while reporting success."""
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+
+
 def main(argv=None):
+    prepare_cli()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into findings.json")

@@ -50,8 +50,8 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per data domain (accounts and identity, payments, content and messages, analytics, support, HR…) plus one cross-cutting unit (logging, error tracking, analytics SDKs, backups, config, client-side scripts). Each unit first hunts the commitments ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/commitments.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
-| Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; gaps needing different fixes are separate findings |
-| IDs | `PV-001`… numbered without gaps in severity order (then path); `FalsePositive` and `NotApplicable` findings may sit anywhere. No other prefixes |
+| Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. `check` refuses two reported findings with the same first `location` |
+| IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this); `FalsePositive` and `NotApplicable` findings may sit anywhere. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
@@ -62,8 +62,8 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Severity | When |
 |---|---|
-| High | Personal data — any sensitive category, or broad personal data of many subjects — reaches a party or place the commitments exclude (an undisclosed third party or SDK, an external log or error service, another user or tenant, a public URL), is processed on a core flow without a consent the commitments require (tracking before opt-in, marketing without opt-in), or survives a deletion or account-closure path in a primary store |
-| Medium | A High-class gap that needs one condition the code does not control (a deployment region, a setting, an SDK option, a log level in production), ordinary personal data kept beyond a stated retention period, a deletion or export path that misses a secondary store (cache, search index, analytics warehouse, file storage), or real personal data copied into non-production use |
+| High | Personal data — any sensitive category, or broad personal data of many subjects — reaches a party or place the commitments exclude (an undisclosed third party or SDK, an external log or error service, another user or tenant, a public URL), is processed on a core flow without a consent the commitments require (tracking before opt-in, marketing without opt-in), or survives a deletion or account-closure path in a primary store (the store holding the authoritative copy of that element, whatever its kind: a file store is primary for uploaded photos) |
+| Medium | A High-class gap that needs one condition the code does not control (a deployment region, a setting, an SDK option, a log level in production), ordinary personal data kept beyond a stated retention period, a deletion or export path that misses a secondary store (a copy: cache, search index, analytics warehouse, derived files), or real personal data copied into non-production use |
 | Low | Collection beyond need with no further exposure, missing pseudonymisation in internal analytics, identifiers in URLs inside first-party systems, defence-in-depth gaps in storage protection |
 | Info | A note with no demonstrated path to a subject's harm or a broken commitment |
 
@@ -75,6 +75,8 @@ from the environment — is not such a condition: grade as if it is present. Onl
 a setting that would have to differ from what the code evidently intends (a log
 level, an SDK option, a region) counts. An `Environment-dependent` finding
 records each such condition in `conditions`; confidence never changes the grade.
+Exposure bounded to a short window by the code itself (a revoked link cached
+for minutes, a log kept for hours) also lowers the grade one level.
 
 ## Phases
 
@@ -109,6 +111,7 @@ requester's language (`--lang ja|en`).
 | No privacy policy or retention rule is in the repository | Infer the commitments from consent UI texts, settings screens, retention jobs and the majority of flows; mark them `inferred`, hunt them anyway, and put each in `decisions`. Ask for the published policy if the requester can share it |
 | A regulation is named | Add its requirements as commitments with the regulation as source, phrased as checks on the code (e.g. "deletion reaches every store holding the subject's data"). Never state that the app is or is not compliant |
 | A third party receives data | Record exactly which fields reach it, from where and when (before or after consent). Whether a contract or DPA covers it is `UNKNOWN` unless the repository says so; put it in `decisions` |
+| The commitments promise a control or feature the code does not have (a settings screen, an opt-out, an export) | Treat the commitment as violated on every flow it governs and report the missing mechanism as the finding; say in `flow` where it was searched for |
 | The data reaching a sink depends on runtime values (log level, SDK options set by environment, region) | Report as `Environment-dependent` and name the setting in `conditions` |
 | Real personal data appears in the repository (fixtures, seeds, dumps, screenshots) | Report its location and kind only. Never print the values; never copy them into scratch or the record |
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
@@ -167,6 +170,6 @@ category or reaching a third party has been read, every commitments ledger
 entry has a status (holds on all flows, violated, partly read, or not checked
 with the reason), every review unit's close-check matches with zero blank
 cells, every perspective in `reference/perspectives.md` is recorded as applied,
-N/A or not checked, every High and Medium finding has a recorded verdict and
+partly applied, N/A or not checked, every High and Medium finding has a recorded verdict and
 evidence, and the report states its own blind spots and that it is not legal
 advice.

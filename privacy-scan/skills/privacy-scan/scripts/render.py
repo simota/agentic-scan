@@ -23,7 +23,7 @@ from urllib.parse import quote, urlsplit
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      read_json, validate)
+                      prepare_cli, read_json, record_problems, validate)
 from output_io import write_utf8_files  # noqa: E402
 
 LABELS = {
@@ -427,6 +427,7 @@ def render_html(doc, lang):
 
 
 def main(argv=None):
+    prepare_cli()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("findings")
     parser.add_argument("--out", required=True)
@@ -451,6 +452,9 @@ def main(argv=None):
         print(f"write failed: could not save reports ({type(exc).__name__})", file=sys.stderr)
         return 1
     print(f"wrote {out / 'dashboard.html'} and {out / 'report.md'}")
+    # Rendering a draft is allowed; say now what `findings.py check` will refuse.
+    for problem in record_problems(doc):
+        print(f"warning: findings.py check will refuse: {problem}", file=sys.stderr)
     return 0
 
 

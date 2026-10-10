@@ -263,3 +263,42 @@ class ReviewRegressionTest(unittest.TestCase):
                  "project-b/main.tf": ('resource "google_storage_bucket" "b" {\n'
                                        '  uniform_bucket_level_access = true\n}\n')}
         self.assertEqual(rules(files), ["GCP-GCS-001"])
+
+
+class CodexReviewTest(unittest.TestCase):
+    """PR review: context must not cross organizations, providers or hide documents."""
+
+    ORG_POLICY = ('resource "google_org_policy_policy" "pap" {{\n  name = "organizations/{org}/policies/'
+                  'storage.publicAccessPrevention"\n  parent = "organizations/{org}"\n  spec {{\n    rules {{\n'
+                  '      enforce = "TRUE"\n{condition}    }}\n  }}\n}}\n')
+    BUCKET = 'resource "google_storage_bucket" "b" {\n  uniform_bucket_level_access = true\n}\n'
+
+    def test_org_policy_does_not_cover_another_organization(self):
+        files = {"org1/policy.tf": self.ORG_POLICY.format(org=1, condition=""),
+                 "org2/folder.tf": 'resource "google_folder" "f" {\n  parent = "organizations/2"\n}\n',
+                 "org2/bucket.tf": self.BUCKET}
+        self.assertEqual(rules(files), ["GCP-GCS-001"])
+
+    def test_conditional_org_policy_does_not_cover_buckets(self):
+        condition = '      condition {\n        expression = "resource.matchTag(\'env\', \'prod\')"\n      }\n'
+        files = {"policy.tf": self.ORG_POLICY.format(org=1, condition=condition), "bucket.tf": self.BUCKET}
+        self.assertEqual(rules(files), ["GCP-GCS-001"])
+
+    def test_account_defaults_apply_to_their_provider_only(self):
+        text = ('resource "aws_ec2_instance_metadata_defaults" "d" {\n  provider = aws.west\n  http_tokens = "required"\n}\n'
+                'resource "aws_ebs_encryption_by_default" "d" {\n  provider = aws.west\n}\n'
+                'resource "aws_instance" "east" {\n  ami = "ami-1"\n}\n'
+                'resource "aws_ebs_volume" "east" {\n  size = 1\n}\n'
+                'resource "aws_instance" "west" {\n  provider = aws.west\n  ami = "ami-1"\n}\n')
+        hits = sorted((h["rule"], h["address"]) for h in scan({"main.tf": text}).hits)
+        self.assertEqual(hits, [("AWS-EBS-001", "aws_ebs_volume.east"), ("AWS-EC2-001", "aws_instance.east")])
+
+    def test_unicode_break_before_kind_is_reported_not_dropped(self):
+        for brk in ("\x85", " ", " "):
+            with self.subTest(brk=repr(brk)):
+                text = f"# note{brk}apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  hostNetwork: true\n"
+                with tempfile.TemporaryDirectory() as tmp:
+                    Path(tmp, "p.yaml").write_text(text, encoding="utf-8", newline="")
+                    result = iac_scan.run(tmp)
+                self.assertEqual(result.files, [{"path": "p.yaml", "kind": "kubernetes"}])
+                self.assertTrue(any("unsupported line break" in n for n in result.not_run), result.not_run)

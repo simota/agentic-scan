@@ -779,6 +779,7 @@ class Scan:
         # Account- or org-level settings that change what an omitted
         # argument means, per module directory (see collect_context).
         self.imds_required_dirs, self.ebs_default_dirs, self.gcs_pap_dirs = set(), set(), set()
+        self.pap_orgs, self.orgs_seen = set(), set()
         self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
@@ -1191,7 +1192,7 @@ def check_tf(scan, res):
         if not opts and t == "aws_instance" and v.blocks("launch_template"):
             scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
                                 f"template: {res.file}:{res.line} ({res.address})")
-        elif not opts and res.dir in scan.imds_required_dirs:
+        elif not opts and (res.dir, provider_key(v)) in scan.imds_required_dirs:
             pass  # aws_ec2_instance_metadata_defaults requires IMDSv2 for omitted settings
         elif not opts:
             scan.hit("AWS-EC2-001", res, res.line, "no metadata_options; IMDSv1 allowed")
@@ -1212,7 +1213,7 @@ def check_tf(scan, res):
     elif t == "aws_ebs_volume":
         encrypted = tf_bool(v.get("encrypted"))
         # aws_ebs_encryption_by_default encrypts volumes that omit the argument.
-        if encrypted is False or (encrypted is None and res.dir not in scan.ebs_default_dirs
+        if encrypted is False or (encrypted is None and (res.dir, provider_key(v)) not in scan.ebs_default_dirs
                                   and v.get("snapshot_id") in (None, "")):
             scan.hit("AWS-EBS-001", res, v.line("encrypted"), "encrypted not true")
     elif t == "aws_lambda_function_url":
@@ -1276,7 +1277,8 @@ def check_tf(scan, res):
             gaps.append("uniform_bucket_level_access not true")
         pap = v.get("public_access_prevention")
         # "inherited" (the default) is enforced when the org policy in the inputs enforces it.
-        inherited = pap in (None, "inherited") and ("*" in scan.gcs_pap_dirs or res.dir in scan.gcs_pap_dirs)
+        org_wide = bool(scan.pap_orgs) and scan.orgs_seen <= scan.pap_orgs and len(scan.orgs_seen) == 1
+        inherited = pap in (None, "inherited") and (org_wide or res.dir in scan.gcs_pap_dirs)
         if not inherited and (pap is None or (isinstance(pap, str) and pap != "enforced")):
             gaps.append("public_access_prevention not enforced")
         if gaps:
@@ -1473,24 +1475,41 @@ def terraform_overrides(scan, parsed):
 def block_text(block):
     """Every raw argument of a block and its nested blocks, for reference lookups."""
     parts = [f"{key} = {raw}" for key, (raw, _) in block.attrs.items()]
-    parts += [block_text(child) for child in block.blocks]
+    parts += [f"{child.type} {{\n{block_text(child)}\n}}" for child in block.blocks]
     return "\n".join(parts)
 
 
-def collect_context(scan, d, type_, view, text):
-    """Settings elsewhere in the inputs that change what an omitted argument means."""
-    if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required":
-        scan.imds_required_dirs.add(d)
-    elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None):
-        scan.ebs_default_dirs.add(d)
+def provider_key(view):
+    """The provider configuration a resource uses: "aws" or an alias such as "aws.west"."""
+    raw = view.raw("provider") if hasattr(view, "raw") else None
+    return raw.strip().strip('"') if raw else "default"
+
+
+def collect_context(scan, d, type_, view, text, defaults=True):
+    """Settings elsewhere in the inputs that change what an omitted argument means.
+
+    Account defaults are per account and region, so they are keyed by module
+    directory and provider configuration; defaults=False when that cannot be told.
+    """
+    scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
+    if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required" and defaults:
+        scan.imds_required_dirs.add((d, provider_key(view)))
+    elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None) and defaults:
+        scan.ebs_default_dirs.add((d, provider_key(view)))
     elif type_ in ("google_org_policy_policy", "google_organization_policy", "google_folder_organization_policy",
                    "google_project_organization_policy") and "storage.publicAccessPrevention" in text \
-            and re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', text):
-        # An organization-level policy covers every bucket in the inputs; a project
-        # or folder policy only the module that declares it.
+            and re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', text) \
+            and not re.search(r'\bcondition\s*\{|"condition"\s*:\s*\[\s*\{', text):
+        # Only an unconditional rule enforces for every bucket. An organization
+        # policy covers buckets only when the inputs name no other organization;
+        # a project or folder policy covers the module that declares it.
+        org = re.search(r'(?:parent|org_id)"?\s*[:=]\s*"(?:organizations/)?([0-9]+)"', text)
         org_level = type_ == "google_organization_policy" or (
             type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', text))
-        scan.gcs_pap_dirs.add("*" if org_level else d)
+        if org_level and org:
+            scan.pap_orgs.add(org.group(1))
+        elif not org_level:
+            scan.gcs_pap_dirs.add(d)
     if type_ in ("aws_iam_role", "aws_iam_user"):
         for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, "permissions_boundary")):
             scan.boundary_policies.add((d, f"aws_iam_policy.{m.group(1)}"))
@@ -1755,6 +1774,12 @@ def handle_plan(scan, rel, text, doc):
         lines.setdefault(json.loads(m.group(1)), text.count("\n", 0, m.start()) + 1)
 
     plan_config_refs(scan, rel, doc)
+    # planned_values do not say which provider alias a resource uses; with an
+    # aliased AWS provider, account defaults cannot be tied to resources.
+    providers = (doc.get("configuration") or {}).get("provider_config") if isinstance(
+        doc.get("configuration"), dict) else None
+    aliased = isinstance(providers, dict) and any(
+        isinstance(p, dict) and p.get("name") == "aws" and p.get("alias") for p in providers.values())
 
     def walk(module, check):
         if not isinstance(module, dict):
@@ -1771,7 +1796,8 @@ def handle_plan(scan, rel, text, doc):
             values = with_plan_unknowns(r.get("values") or {}, unknowns.get(address))
             if not check:
                 # First pass: account and org settings that change what omitted arguments mean.
-                collect_context(scan, rel, type_, DictView(values, line), json.dumps(values, default=str))
+                collect_context(scan, rel, type_, DictView(values, line), json.dumps(values, default=str),
+                                defaults=not aliased)
                 continue
             res = Res(type_, address, rel, line, DictView(values, line), rel)
             scan.add_resource(res)
@@ -2530,6 +2556,16 @@ def handle_yaml(scan, rel, lines):
         except (ValueError, RecursionError) as exc:
             reason = "nesting too deep" if isinstance(exc, RecursionError) else str(exc)
         kind = _yaml_kind(rows, doc)
+        if not kind and any(YAML_BREAK.search(raw) for _, raw in rows):
+            # A NEL or U+2028 can hide apiVersion/kind inside an LF-delimited
+            # "comment" row. Classify on every YAML line break, then report the
+            # document as unsupported rather than letting it vanish.
+            pieces = [(n, piece) for n, raw in rows for piece in YAML_BREAK.split(raw)]
+            kind = _yaml_kind(pieces, None)
+            if not kind:
+                scan.not_run.append(f"YAML with unsupported line breaks could not be classified; "
+                                    f"review by hand: {rel}:{rows[0][0]}")
+                continue
         if not kind:
             continue
         kinds.add(kind)

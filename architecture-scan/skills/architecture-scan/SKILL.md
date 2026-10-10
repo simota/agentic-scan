@@ -48,14 +48,14 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per top-level module, bounded context or service, plus one cross-cutting unit (shared kernel, framework setup, config, error handling, persistence infrastructure). Each unit first hunts the rules ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/rules.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Each unit numbers its fragments in its own block (unit 1 `A-101`…, unit 2 `A-201`…) so no two units write the same ID; merge refuses a complete finding whose ID holds a different one. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location or per design decision. The same boundary violated from ten call sites is one finding that lists them in `trace`; problems needing different fixes are separate findings |
-| IDs | `A-001`… numbered without gaps in severity order (then path). No other prefixes. Number fragments in any order; `scripts/findings.py renumber` restores the order and rewrites ID mentions before rendering. After it, use only the new IDs it prints |
+| IDs | `A-001`… numbered without gaps in severity order (then path; `renumber` puts excluded verdicts last). No other prefixes. Number fragments in any order; `scripts/findings.py renumber` restores the order and rewrites ID mentions before rendering. After it, use only the new IDs it prints |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in risk order (core flows and change hotspots first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (module map, ledger, trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
-| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. With parallel units, the coordinator (the agent writing the report) merges the first fragment, carrying `meta` and the ledger with provisional statuses; units merge only `findings`; after every unit closes, the coordinator merges each rule's final status and the `perspectives` entries, combining the units' notes, since a perspective entry is replaced whole (`reference/findings-schema.md`) |
-| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository (the only exception is GUARD, with explicit permission) |
+| Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. With parallel units, the coordinator (the agent writing the report) merges the first fragment, carrying `meta` and the ledger with provisional statuses (`not checked` with the `reason` "provisional: traced by unit N"); units merge only `findings`; after every unit closes, the coordinator merges each rule's final status (with `"reason": null` unless it stays `not checked` or `partly read`) and the `perspectives` entries, combining the units' notes, since a perspective entry is replaced whole (`reference/findings-schema.md`) |
+| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records, fragments and read-only analysis scripts run from scratch only; write nothing inside the audited repository (the only exception is GUARD, with explicit permission) |
 
 | Severity | When |
 |---|---|
@@ -69,6 +69,14 @@ Each further condition the code does not control lowers severity one level. An
 delivers at least once"), and that condition counts as one the code does not
 control: a High-class risk that needs it is Medium. The condition lowers the
 severity; the confidence label says only how sure the finding is.
+
+`Environment-dependent` is for deployment and delivery conditions the
+repository does not state (delivery semantics, instance count, client
+retries). A failure that can always happen — a crash or timeout between two
+steps, a commit that fails, a broker or provider that is down — is not one: a
+finding that needs it is `Confirmed` once the path is traced, and the failure
+lowers severity only where the High list does not already assume it (a dual
+write with no recovery is High because it fails exactly then).
 
 Worked examples:
 
@@ -94,7 +102,7 @@ Worked examples:
 | CHECKLIST | Ledger first: each rule with its source and every module or path that must keep it. Then the perspectives that apply, keeping only hunt steps no ledger entry covers; attach early suspicions marked unverified | `reference/rules.md`, `reference/perspectives.md`, `reference/report.md` |
 | REVIEW | One pass (or one reviewer) per review unit. For each owned rule, trace every edge or path that must keep it with one trace row per edge: from `path:line` → to `path:line`, which rule, verdict. Every control cell names the enforcing mechanism (an import-lint contract, a module's public interface, a repository that is the only writer, a transaction wrapper) at `path:line`, or `NONE` / `N/A` / `UNKNOWN` with a reason — never "the framework separates it". Then the writer-backward pass (every write to a core table maps to a row), then sweep every applicable perspective's hunt steps | `reference/rules.md`, `reference/perspectives.md`, `reference/findings-schema.md` |
 | VERIFY | Record evidence-linked reach, consequence, mitigations and change cost; try to falsify each claim (a facade that routes all calls, an outbox, an idempotency key, a test that pins the rule); keep runtime and organisational unknowns explicit | `reference/validation.md` |
-| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added or regraded, render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md`, `reference/rules.md` §5, `reference/perspectives.md` |
+| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out> --repo <checkout>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added or regraded, render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md`, `reference/rules.md` §5, `reference/perspectives.md` |
 | GUARD *(on request)* | With explicit permission, add a fitness function to the repo's own suite that encodes a rule — an import or layer contract, a cycle check, a single-writer check, a contract test — and show it fails on the current violation. Show it passing after the fix on a scratch copy with the smallest fix applied; apply the fix in the repository itself only with separate permission for that. Record it per `reference/validation.md` (*Fitness functions*), then merge, render and check again | `reference/validation.md` |
 
 ## Outputs
@@ -120,13 +128,13 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 | The intended architecture is documented (ADRs, README, diagrams) | The documents are the rules; where code and documents disagree, the disagreement is a finding or a `decisions` item, never silently resolved in either direction |
 | Several deployable services in the repo | One review unit per service; check shared databases, shared libraries carrying domain logic, synchronous call chains and contract versioning between them |
 | Change cost is the claim | Back it with history: co-change counts across the boundary, churn of the hotspot, or the number of files a recent comparable change touched (`git log`, read-only). Without history, confidence is at most `Suspected` |
-| Consistency depends on delivery semantics or deployment | Report as `Environment-dependent` and name the condition (at-least-once delivery, more than one instance, retries in the client). When the repository itself states the condition (broker config, a README or ADR that says "at least once"), it is not uncontrolled: the finding is `Confirmed` and keeps its severity, citing that source |
+| Consistency depends on delivery semantics or deployment | Report as `Environment-dependent` and name the condition (at-least-once delivery, more than one instance, retries in the client). When the repository itself states the condition (broker config such as Celery `task_acks_late` or Kafka `enable.auto.commit=false` with a retrying error handler, a README or ADR that says "at least once"), it is not uncontrolled: the finding is `Confirmed` and keeps its severity, citing that source |
 | Authorization or tenant scoping is in question | Where it is enforced (one owner every path goes through, or a check repeated per call site) is in scope (`DM5`); whether it can be exploited is a security review, so name that in `next_steps` instead of grading it |
 | A pattern is merely unfamiliar or not to taste | Not a finding. Record it only if it causes a defect, a change cost or an inconsistency the history shows |
 | The requester wants a dependency graph or metrics | Run an already-installed, read-only analysis tool on the local checkout, name it before running, and record tool, command and result in `analysis`. Never install packages into the audited repository |
 | Asked to lock a rule in or confirm a fix | GUARD: a fitness function in the repo's own suite, red on the current violation and green after the fix |
 | The host cannot run a second, independent reviewer | Record that in `limitations`. A High finding may be `Valid` once the reporting agent has traced it end to end; until then it is not reported (see *Never*). Never invent a second reviewer |
-| Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several, its `{{n_*}}` counts from `scripts/findings.py counts <out>/findings.json`. Filing or sending is the requester's step |
+| Asked to file findings as issues or write them up for an owner | Draft from `findings.json`: `templates/issue.<lang>.md` per finding (one root cause per issue), `templates/report.<lang>.md` for one report covering several, its `{{n_*}}` counts from `scripts/findings.py counts <out>/findings.json`. Excluded findings (`FalsePositive`, `NotApplicable`) are never filed. Write the drafts in scratch (`<scratch>/drafts/`), not in `<out>`, unless asked; then `check <out> --allow drafts`. Filing or sending is the requester's step |
 
 ## Always / Never
 
@@ -173,7 +181,7 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 
 ## Done when
 
-`scripts/findings.py check <out>` passes, every module on a core flow or change
+`scripts/findings.py check <out> --repo <checkout>` passes, every module on a core flow or change
 hotspot has been read, every rules ledger entry has a status (holds on all
 paths, violated, partly read, or not checked with the reason), every review
 unit's close-check matches with zero blank cells, every perspective in

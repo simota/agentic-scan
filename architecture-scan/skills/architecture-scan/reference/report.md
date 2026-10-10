@@ -9,7 +9,7 @@ Write in the requester's language.
   that suspicions are unverified
 - **Rules ledger first** (`reference/rules.md` §2): each rule with its source,
   the edges or paths that must keep it and which to trace; mark `inferred`
-  rules as questions for the requester
+  rules as questions for the requester (a `baseline` entry is not one)
 - Then one section per perspective from `reference/perspectives.md`, most
   important first, listing only the hunt steps no ledger entry covers; list the
   ones judged N/A with a reason
@@ -45,8 +45,8 @@ Write in the requester's language.
    ```
 
 4. **Checked and sound** — what was examined and held
-5. **Decisions for a human** — inferred rules to confirm, documented intent that
-   the code contradicts, trade-offs to accept
+5. **Decisions for a human** — inferred rules to confirm (not `baseline`
+   entries), documented intent that the code contradicts, trade-offs to accept
 6. **Next step** — the fix order (core-flow defects first, then hotspots), and
    which guards to add so the rules stay kept
 7. **Files** — link `dashboard.html` and `report.md` rendered from

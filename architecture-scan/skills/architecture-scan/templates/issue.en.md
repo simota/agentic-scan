@@ -9,6 +9,9 @@ section whose only content is empty (e.g. References when the finding has none).
 - Open questions: no field holds them; write the conditions static reading could not settle
 
 Before filing:
+- Never file a FalsePositive or NotApplicable finding
+- A Likely, Unverified or Unlikely finding is not written as an established fact: say what was traced and
+  what is still open (Open questions)
 - State the defect or change cost, not a preference. Link the rule's source (ADR, lint config, majority pattern)
 - Source excerpts carry the repository's confidentiality. Leave them out when the issue is
   visible to more people than the repository

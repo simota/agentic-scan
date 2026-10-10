@@ -4,7 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
-    python3 findings.py check OUT_DIR [--allow NAME ...]
+    python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
@@ -15,7 +15,7 @@ are matched by `name` and replaced whole; the string lists (`checked_ok`,
 A `null` value removes an optional key from `meta`, a finding or a rule, and
 `remove` deletes list items (`{"next_steps": ["exact text"]}`) or ledger
 entries by id (`{"rules": ["R-05"]}`) before the fragment's own items are
-appended. A finding is never removed: a wrong one is marked `FalsePositive` or
+added; those items take the place of the first item removed from their list. A finding is never removed: a wrong one is marked `FalsePositive` or
 `NotApplicable` with evidence, as SKILL.md requires.
 A complete finding whose ID already holds a finding with another title or
 location is refused as an ID collision; a correction sends only the fields
@@ -24,7 +24,7 @@ FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
 
 `renumber` orders the findings by severity, then path and line of their first
-location, and renames them `A-001`… without gaps. Every whole-word mention of
+location, excluded verdicts last, and renames them `A-001`… without gaps. Every whole-word mention of
 an old ID in the record's prose is rewritten in the same pass, so `next_steps`
 and traces keep pointing at the same finding; `meta`, locations, URLs,
 commands and rule sources keep theirs.
@@ -35,12 +35,15 @@ per line, counted as report.md counts them (excluded verdicts apart).
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
 record is complete, IDs are gapless in severity order, every perspective in
-`reference/perspectives.md` is recorded, every cited rule exists, no finding
+`reference/perspectives.md` is recorded, every cited rule exists, every
+violated rule is cited (in `rule`, or named in a `trace`) and carries no
+stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
-evidence cites a `path:line`, and
-both rendered files match what `render.py` produces from the current record
-in `meta.lang`.
+evidence cites a `path:line` (a duplicate may name the finding it repeats),
+and both rendered files match what `render.py` produces from the current record
+in `meta.lang`. With `--repo`, each location's file must exist in that
+checkout and its line must be within the file.
 
 Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
 failed (reasons on stderr), 2 the command line is wrong.
@@ -54,6 +57,7 @@ import re
 import secrets
 import stat
 import sys
+import unicodedata
 
 try:
     import fcntl
@@ -80,6 +84,7 @@ PERSPECTIVES = (
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
+RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -105,16 +110,17 @@ RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
 # label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
-# is not a line; it has a letter (`10:30` is not one) and a line from 1. A
-# Windows drive (`C:\repo\a.py:3`) is allowed. `cites_line` decides whether the
-# token is a path.
+# is not a line; it has a letter (`10:30` is not one, which `cites_line`
+# checks) and a line from 1. A Windows drive (`C:\repo\a.py:3`) is allowed.
+# The path is taken whole in a lookahead, so the regex never backtracks into
+# it, and is bounded, so a long list of names in evidence stays linear.
 EVIDENCE_LINE = re.compile(
     r"(?<![^\s(\[{'\"`,;:])(?!//)"
-    r"(?P<path>(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*):[1-9][0-9]*")
+    r"(?=(?P<path>(?:[A-Za-z]:)?[^\s:]{1,1024}))(?P=path):[1-9][0-9]*")
 # Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
-                 "CONTRIBUTING"}
+                 "CONTRIBUTING", "gradlew", "mvnw"}
 # A file extension starts with a letter; `v1.2` and `e.g.` have none. A token
 # ending in an unmistakable host suffix (`db.internal`, `api.example.com`) is a
 # host and port. The list stays short on purpose: refusing a real file
@@ -166,8 +172,19 @@ def read_json(path):
         raise SchemaError(f"{path}: {exc}") from exc
 
 
+# Characters that render as nothing: Hangul and Braille fillers, beside the
+# format, control, separator and unassigned categories `visible` skips.
+BLANK_LOOKING = {"\u115f", "\u1160", "\u2800", "\u3164", "\uffa0"}
+
+
+def visible(value):
+    """True when value shows at least one character (`\u200b` alone does not)."""
+    return any(c not in BLANK_LOOKING and unicodedata.category(c)[0] not in "CZ"
+               for c in value)
+
+
 def _text(value, where):
-    if not isinstance(value, str) or not value.strip():
+    if not isinstance(value, str) or not visible(value):
         raise SchemaError(f"{where}: must be a nonblank string")
 
 
@@ -275,6 +292,8 @@ def cites_line(evidence, locations=()):
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
+        if not re.search(r"[A-Za-z]", path):
+            continue
         if path in known:
             return True
         has_dir = re.search(r"[/\\]", path) and not path.startswith("//")
@@ -325,7 +344,13 @@ def validate(doc, complete=False):
             raise SchemaError(f"meta.{key}: must be a string")
     seen = set()
     for i, f in enumerate(_list(doc.get("findings", []), "findings")):
-        validate_finding(f, f"findings[{i}]")
+        try:
+            validate_finding(f, f"findings[{i}]")
+        except SchemaError as exc:
+            # The index is the merged record's; the ID is what a fragment names.
+            if isinstance(f, dict) and isinstance(f.get("id"), str):
+                raise SchemaError(f"{f['id']}: {exc}") from exc
+            raise
         if f["id"] in seen:
             raise SchemaError(f"findings[{i}].id: duplicate {f['id']}")
         seen.add(f["id"])
@@ -411,6 +436,7 @@ def _merge_records(current, incoming, where, required):
 
 
 def _remove_items(doc, removals, where):
+    """Delete the named items; return, per string list, where the first one stood."""
     if not isinstance(removals, dict):
         raise SchemaError(f"{where}: must be an object of list names")
     unknown = set(removals) - set(LISTS) - {"rules"}
@@ -419,6 +445,7 @@ def _remove_items(doc, removals, where):
                           f"not {sorted(unknown)} (a finding is never removed: mark it "
                           "FalsePositive or NotApplicable with evidence; a perspective "
                           "is replaced, not removed)")
+    slots = {}
     for key, values in removals.items():
         if key == "rules":
             # A spurious ledger entry, by id; check then catches a finding citing it.
@@ -431,7 +458,10 @@ def _remove_items(doc, removals, where):
         for value in _list(values, f"{where}.{key}"):
             if value not in doc.get(key, []):
                 raise SchemaError(f"{where}.{key}: {value!r} is not recorded")
-            doc[key].remove(value)
+            index = doc[key].index(value)
+            slots[key] = min(slots.get(key, index), index)
+            del doc[key][index]
+    return slots
 
 
 def merge(doc, fragment, where):
@@ -444,9 +474,23 @@ def merge(doc, fragment, where):
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
         _apply(doc.setdefault("meta", {}), fragment["meta"], META_REQUIRED, f"{where}.meta")
+    slots = {}
     if "remove" in fragment:
         # First, so one fragment can remove an entry and send its replacement.
-        _remove_items(doc, fragment["remove"], f"{where}.remove")
+        removed = fragment["remove"]
+        if isinstance(removed, dict) and isinstance(removed.get("rules"), list):
+            # A removed rule comes back only as a whole new entry, never as a correction.
+            partial = {r.get("id") for r in fragment["rules"] if isinstance(r, dict)
+                       and isinstance(r.get("id"), str)
+                       and not all(key in r for key in RULE_REQUIRED)} \
+                if isinstance(fragment.get("rules"), list) else set()
+            both = sorted(rid for rid in removed["rules"] if isinstance(rid, str)
+                          and rid in partial)
+            if both:
+                raise SchemaError(f"{where}: {', '.join(both)} is removed, so the rule sent "
+                                  "with that ID must be complete; to correct it, send only "
+                                  "the fields that change and do not remove it")
+        slots = _remove_items(doc, removed, f"{where}.remove")
     for key in ("findings", "rules", "perspectives"):
         if key not in fragment:
             continue
@@ -464,7 +508,13 @@ def merge(doc, fragment, where):
             if not isinstance(fragment[key], list):
                 raise SchemaError(f"{where}.{key}: must be a list")
             target = doc.setdefault(key, [])
-            target.extend(v for v in fragment[key] if v not in target)
+            added = []
+            for v in fragment[key]:
+                if v not in target and v not in added:
+                    added.append(v)
+            # A replacement keeps the removed item's place: these lists are ordered.
+            at = slots.get(key, len(target))
+            target[at:at] = added
     return doc
 
 
@@ -527,6 +577,9 @@ ID_RUN = re.compile(
     r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
+PROSE_URL = re.compile(r"((?<![\w+.-])[A-Za-z][A-Za-z0-9+.-]*://\S+)")
+
+
 def _first_location(f):
     path, start, _ = split_location(as_locations(f["location"])[0])
     return path, start
@@ -541,8 +594,10 @@ def _rewrite_ids(value, mapping, key=None):
     if key in LITERAL_KEYS:
         return value
     if isinstance(value, str):
-        return ID_RUN.sub(lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]),
-                                             run[0]), value)
+        # A URL in prose (`browse?key=A-001`, `#A-001`) is a link, not a mention.
+        return "".join(part if i % 2 else ID_RUN.sub(
+            lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]), run[0]), part)
+            for i, part in enumerate(PROSE_URL.split(value)))
     if isinstance(value, list):
         return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):
@@ -551,9 +606,14 @@ def _rewrite_ids(value, mapping, key=None):
 
 
 def renumber(doc):
-    """Return (doc, mapping): findings in severity then path order, IDs gapless."""
+    """Return (doc, mapping): findings in severity then path order, IDs gapless.
+
+    Excluded findings (FalsePositive, NotApplicable) follow the rest, so a
+    duplicate never takes a number between the findings to act on.
+    """
     findings = doc.get("findings", [])
     order = sorted(range(len(findings)), key=lambda i: (
+        findings[i]["validation"]["verdict"] in EXCLUDED,
         SEVERITIES.index(findings[i]["severity"]), _first_location(findings[i]), i))
     mapping = {findings[i]["id"]: f"A-{n:03d}" for n, i in enumerate(order, 1)}
     # One pass over the old text, so A-001 -> A-002 and A-002 -> A-001 do not chain.
@@ -612,27 +672,31 @@ def cmd_renumber(args):
         if not target.is_file():
             raise SchemaError(f"{target}: no such record")
         with _exclusive(target, create=False):
-            changed = _renumber_file(target)
+            changed, rewritten = _renumber_file(target)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
         return 1
-    _report_renumber(target, changed)
+    _report_renumber(target, changed, rewritten)
     return 0
 
 
 def _renumber_file(target):
+    """Renumber target in place; return (ID mapping, whether the record changed)."""
     doc = read_json(target)
     validate(doc)
     if len(doc.get("findings", [])) > 999:
         raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
-    doc, changed = renumber(doc)
-    validate(doc)
-    if changed:
-        _atomic_write(target, _serialize(doc))
-    return changed
+    renamed, changed = renumber(doc)
+    validate(renamed)
+    # IDs that already hold their final names can still sit in the wrong order
+    # (fragments merged A-004 before A-001), so compare the whole record.
+    rewritten = _serialize(renamed) != _serialize(doc)
+    if rewritten:
+        _atomic_write(target, _serialize(renamed))
+    return changed, rewritten
 
 
-def _report_renumber(target, changed):
+def _report_renumber(target, changed, rewritten):
     for old, new in sorted(changed.items()):
         print(f"{old} -> {new}")
     if changed:
@@ -641,6 +705,8 @@ def _report_renumber(target, changed):
         # would apply it to whichever finding holds that ID now.
         print("use only the new IDs from here on; rewrite any unmerged fragment first",
               file=sys.stderr)
+    elif rewritten:
+        print(f"reordered the findings in {target}; every ID kept its name")
     else:
         print(f"already in order: {target}")
 
@@ -648,7 +714,10 @@ def _report_renumber(target, changed):
 def _merge_all(doc, fragments):
     validate(doc)
     for path in fragments:
-        merge(doc, read_json(path), path)
+        try:
+            merge(doc, read_json(path), "fragment")
+        except SchemaError as exc:
+            raise SchemaError(f"{path}: {exc}") from exc
         # Each fragment must leave a valid record, even in a batch; name the
         # fragment that broke it.
         try:
@@ -751,6 +820,7 @@ def contract_problems(out, allow=()):
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
     rule_status = {r["id"]: r["status"] for r in doc.get("rules", [])}
+    kept = {f["id"] for f in findings if f["validation"]["verdict"] not in EXCLUDED}
     for f in findings:
         verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
         if f.get("rule", "").strip():
@@ -762,8 +832,14 @@ def contract_problems(out, allow=()):
                 # Likely one may still sit on a rule whose edges were partly read.
                 problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
                                 f"{status}, not {' or '.join(ALLOWED_RULE_STATUS[verdict])}")
-        if verdict in DEFINITIVE and not cites_line(evidence, f["location"]):
-            problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
+        # A duplicate's evidence is the reported finding that keeps it, whose
+        # own evidence cites the line; renumber rewrites the ID with the rest.
+        duplicate = verdict == "NotApplicable" and any(
+            m in kept for m in re.findall(r"A-[0-9]{3}", evidence))
+        if verdict in DEFINITIVE and not duplicate and not cites_line(evidence, f["location"]):
+            problems.append(f"{f['id']}: {verdict} evidence must cite path:line"
+                            + (" (or, for a duplicate, the finding it repeats)"
+                               if verdict == "NotApplicable" else ""))
         if verdict in EXCLUDED:
             continue
         if recorded.get(f["category"], "applied") != "applied":
@@ -776,13 +852,28 @@ def contract_problems(out, allow=()):
                 problems.append(f"{f['id']}: an Unverified {f['severity']} finding was not "
                                 "traced; trace it end to end and record the verdict "
                                 "(Valid, Likely or Unlikely) with its evidence")
-            elif not evidence.strip():
+            elif not visible(evidence):
                 problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence "
                                 "naming what the trace found")
+    named = set()
+    for f in findings:
+        if f["validation"]["verdict"] not in EXCLUDED:
+            named.add(f.get("rule", "").strip())
+            named.update(RULE_MENTION.findall(f["trace"]))
     for r in doc.get("rules", []):
+        if r["status"] == "violated" and r["id"] not in named:
+            # The ledger says an edge breaks it, so a finding must say which.
+            problems.append(f"{r['id']}: a violated rule needs a finding that cites it in "
+                            "rule, or names it in trace when its root cause is cited "
+                            "under another rule")
+        if r["status"] in ("holds", "violated") and r.get("reason", "").strip():
+            # Usually a provisional `not checked` reason left behind by the fragment
+            # that closed the rule; it would render under the final status.
+            problems.append(f"{r['id']}: a reason explains a not-checked or partly-read rule; "
+                            f"send \"reason\": null with its final status, {r['status']}")
         if r["status"] == "not checked":
             reason = r.get("reason")
-            if not isinstance(reason, str) or not reason.strip():
+            if not isinstance(reason, str) or not visible(reason):
                 problems.append(f"{r['id']}: a not-checked rule needs a nonblank string reason")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
@@ -818,8 +909,45 @@ def _renderer():
     return render
 
 
+def location_problems(doc, repo):
+    """Name each finding location whose file or line is not in the checkout."""
+    repo = Path(repo)
+    if not repo.is_dir():
+        return [f"--repo: not a directory: {repo}"]
+    problems, lines = [], {}
+    for f in doc.get("findings", []):
+        for loc in as_locations(f["location"]):
+            path, start, end = split_location(loc)
+            file = repo / path
+            if path not in lines:
+                try:
+                    if not file.is_file():
+                        raise FileNotFoundError(path)
+                    count, last = 0, b""
+                    with file.open("rb") as stream:
+                        for chunk in iter(lambda: stream.read(1 << 20), b""):
+                            count, last = count + chunk.count(b"\n"), chunk[-1:]
+                    lines[path] = count + (last not in (b"", b"\n"))
+                except OSError:
+                    lines[path] = None
+            if lines[path] is None:
+                problems.append(f"{f['id']}: location {loc}: no such file in {repo}")
+            elif max(start, end) > lines[path]:
+                problems.append(f"{f['id']}: location {loc}: line {max(start, end)} is past "
+                                f"the end of {path} ({lines[path]} lines)")
+    return problems
+
+
 def cmd_check(args):
     problems = contract_problems(args.out, args.allow)
+    if args.repo is not None:
+        try:
+            doc = read_json(Path(args.out) / "findings.json")
+            validate(doc, complete=True)
+        except (OSError, ValueError):
+            pass  # contract_problems has named it
+        else:
+            problems += location_problems(doc, args.repo)
     for problem in problems:
         print(problem, file=sys.stderr)
     if problems:
@@ -839,7 +967,8 @@ def safe_output():
 
 def main(argv=None):
     safe_output()
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = parser.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
@@ -850,7 +979,11 @@ def main(argv=None):
     n.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
-    c.add_argument("--allow", action="append", default=[])
+    c.add_argument("--allow", action="append", default=[], metavar="NAME",
+                   help="an extra file or directory the requester asked for in OUT")
+    c.add_argument("--repo", metavar="CHECKOUT",
+                   help="also check that each location's file and line exist in this "
+                        "checkout of the assessed revision")
     args = parser.parse_args(argv)
     return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
             "check": cmd_check}[args.cmd](args)

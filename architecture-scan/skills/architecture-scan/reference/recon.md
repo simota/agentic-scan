@@ -38,7 +38,27 @@ of import sites, an example `path:line`. In TypeScript and JavaScript count
 `go list -f '{{.ImportPath}} -> {{join .Imports " "}}' ./...` gives the graph
 (add `-test` and read `XTestImports` for `package x_test`; check `//go:build`
 variants); run it with `GOPROXY=off` so it fetches nothing, and keep Go's
-own module mode, which reads `vendor/` when the repository has one. Then flag:
+own module mode, which reads `vendor/` when the repository has one.
+
+In Python, count function-level imports as well as top-level ones (a
+function-level import is the usual way around a circular `ImportError`, so it
+often *is* the cycle), treat imports under `if TYPE_CHECKING:` as type-only,
+and resolve relative imports and `__init__` re-exports. `lint-imports` or
+`pydeps --show-deps --no-output` give the graph when installed; otherwise a
+stdlib `ast` walk over the checkout, kept in scratch and run with `python3 -I`,
+is read-only analysis too (record it as `analysis`).
+
+On the JVM, module edges come from `project(":x")` in `settings.gradle(.kts)`
+and `build.gradle(.kts)`, or `<module>` and `<dependency>` in `pom.xml`;
+package edges from `import` and `import static` lines plus fully qualified
+names in code and in JPQL strings. `jdeps -verbose:package` reads only jars
+already built. Gradle and Maven run the repository's build scripts and write
+caches into it, so they are not read-only analysis: run one only with
+permission, offline and with its caches in scratch (`--offline
+--project-cache-dir <scratch>/gradle -g <scratch>/gradle-home`, or `-o
+-Dmaven.repo.local=<scratch>/m2`), and never a build, compile or test task.
+
+Then flag:
 
 - **Cycles** between modules or layers
 - **Upward edges** — domain or application code importing presentation,
@@ -52,7 +72,14 @@ component scan, string or dynamic imports (`importlib`, `require(name)`),
 decorator or annotation route registration, plugin entry points, and
 structural interfaces: in Go a type satisfies an interface without naming it,
 so a callee that declares an interface matching its caller's methods, wired
-back in `main` or `cmd/`, is an edge from callee to caller. An edge that
+back in `main` or `cmd/`, is an edge from callee to caller. In Django and
+Celery: signal receivers connected in `AppConfig.ready()` (module A's code runs
+on module B's save), string model references (`ForeignKey("orders.Order")`,
+`apps.get_model`), `include("x.urls")`, `autodiscover_tasks` and
+`send_task("name")`, `transaction.on_commit` callbacks. In Spring: component
+scan (`scanBasePackages`), `@EntityScan`, `ApplicationEventPublisher` to
+`@EventListener` and `@TransactionalEventListener`, `@KafkaListener` topics,
+aspects. An edge that
 cannot be resolved statically gets `UNKNOWN` in its *Control* cell, with what
 would decide it.
 
@@ -78,7 +105,17 @@ commands. In Node, the forms are an ORM's write calls (Prisma `update`,
 `upsert`, `$executeRaw`; TypeORM `save`, `QueryBuilder.update()`; Knex
 `update`, `insert`) and raw driver calls (`pool.query`, `client.query`). In
 Go: `database/sql` `Exec`/`ExecContext`, pgx `Exec`/`CopyFrom`, sqlx, gorm
-`Save`/`Updates`/`Create`, and the files sqlc generates.
+`Save`/`Updates`/`Create`, and the files sqlc generates. In Python: Django
+`save`, `create`, `bulk_create`/`bulk_update`, `get_or_create`/
+`update_or_create`, `QuerySet.update()` with `F()` expressions, `.delete()` and
+its `on_delete` cascades, `connection.cursor().execute` and `.raw()`,
+`RunPython`/`RunSQL` migrations; SQLAlchemy `session.add`/`merge` and
+`session.execute(update(...))`. On the JVM: Spring Data
+`save`/`saveAll`/`delete*`, `@Modifying @Query` (JPQL and native, which skip
+entity callbacks and `@Version`), `JdbcTemplate.update`/`batchUpdate`,
+`EntityManager.persist`/`merge`/`remove`, `createNativeQuery(…).executeUpdate()`,
+jOOQ and MyBatis, `CascadeType`, `@PreUpdate`, Flyway or Liquibase scripts;
+two `@Entity` classes mapped to one table are two writers.
 Search for each form and record the hit count.
 
 A store with writers in more than one module, or with rules enforced in some

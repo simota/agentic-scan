@@ -65,6 +65,7 @@ LABELS = {
         "category": "perspective", "id": "ID", "statement": "Rule", "source": "Source",
         "rule_status": "Status", "perspective": "Perspective", "note": "Note",
         "not_recorded": "not recorded", "inferred": "inferred, to confirm",
+        "baseline": "baseline",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
@@ -83,7 +84,7 @@ LABELS = {
         "references": "参考", "status": "ステータス", "reason": "理由",
         "category": "観点", "id": "ID", "statement": "ルール", "source": "出典",
         "rule_status": "状態", "perspective": "観点", "note": "メモ",
-        "not_recorded": "未記録", "inferred": "推定・要確認",
+        "not_recorded": "未記録", "inferred": "推定・要確認", "baseline": "ベースライン",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
@@ -147,10 +148,13 @@ AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=>?@^_{-~]")
 AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 
 
-# An `@` after anything but a blank, opening punctuation or a tag's `>`. A `;`
-# is not safe: it usually ends an entity this renderer wrote (`a&#95;@x.com`),
+# An `@` after a character an e-mail local part can end with: a letter or
+# digit (in any script, as pandoc's autolinker reads them), `.`, `+`, `-`,
+# `_`, or the `;` that ends an entity this renderer wrote (`a&#95;@x.com`),
 # which cmark-gfm decodes back into the local part before it autolinks.
-EMAIL_AT = re.compile(r"(?<=[^\s(\[{'\"`,:>])@")
+# After a blank or punctuation (`（@Version`, `。@Transactional`) there is no
+# local part, so the `@` stays as written.
+EMAIL_AT = re.compile(r"(?<=[\w.+\-;])@")
 
 
 def disarm_autolinks(text):
@@ -256,7 +260,13 @@ def rule_id(rule):
 
 
 def rule_statement(rule, lang):
-    """An inferred rule is a question for the requester (reference/rules.md §1)."""
+    """An inferred rule is a question for the requester (reference/rules.md §1).
+
+    A baseline entry is inferred too, but states a general family rule, not
+    this codebase's intent, so it is labelled as such and asks nothing.
+    """
+    if rule["source"].strip().lower().startswith("baseline"):
+        return f"{rule['statement']} ({LABELS[lang]['baseline']})"
     if rule.get("inferred") is True:
         return f"{rule['statement']} ({LABELS[lang]['inferred']})"
     return rule["statement"]
@@ -502,7 +512,8 @@ def rendered_outputs(doc, lang):
 
 def main(argv=None):
     safe_output()
-    parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
+    parser = argparse.ArgumentParser(description=__doc__,
+                                     formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("findings")
     parser.add_argument("--out", required=True)
     parser.add_argument("--lang", choices=("ja", "en"))

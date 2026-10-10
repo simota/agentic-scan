@@ -128,7 +128,7 @@ class ContractEdgeTests(unittest.TestCase):
                 doc["rules"][0].update(status=status, reason="scope")
                 doc["findings"][0].update(rule="R-01")
                 doc["findings"][0]["validation"].update(verdict=verdict, evidence="job.py:58")
-                bad = [p for p in self.problems(doc) if "R-01" in p]
+                bad = [p for p in self.problems(doc) if "cites R-01" in p]
                 self.assertEqual(not bad, ok, bad)
 
 

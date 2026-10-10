@@ -20,7 +20,8 @@ finding judged false stays in the record with its exclusion and evidence.
 | `NotApplicable` | The rule does not apply here (dead code, a deliberate documented exception, a module scheduled for removal with a date) | Agent or person, with evidence |
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
-`validation.evidence` citing `path:line`.
+`validation.evidence` citing `path:line`; a duplicate marked `NotApplicable`
+names the reported finding it repeats instead (`Duplicate of A-004`).
 
 ## Four claims for every finding
 
@@ -90,8 +91,11 @@ When the fix was shown only on a scratch copy (the default), the finding stays
 `{"findings": [{"id": "A-001", "guard": "R-01: CI search fails on writes to invoices outside api/billing/ — ci/single_writer_test.py, red at 8ab40fc; passes on a scratch copy with the fix"}]}`.
 The rest of the record still describes the assessed revision (`meta.commit`):
 the rule stays `violated`, and the finding still counts in the headline;
-`scripts/findings.py counts` reports `n_fixed` beside it. Then render and
-check again.
+`scripts/findings.py counts` reports `n_fixed` beside it. Without
+`meta.method`, both outputs say that nothing was changed or run, so the same
+fragment records the GUARD step there too:
+`{"meta": {"method": "Static review; GUARD: ci/single_writer_test.py added for R-01, red at 8ab40fc"}}`.
+Then render and check again.
 
 ## Reporting and limits
 

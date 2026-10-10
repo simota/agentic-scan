@@ -90,7 +90,7 @@
     {"name": "Dependencies and evolution", "status": "applied", "note": "DE1-DE3 applied"}
   ],
   "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)", "Order placement uses a transactional outbox (api/orders/outbox.py:15)"],
-  "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)", "Confirm that failures may never be swallowed on a core flow (R-05 is a baseline)"],
+  "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)"],
   "limitations": ["Broker delivery semantics in production were not observed", "GraphQL resolvers were not read"],
   "next_steps": ["Fix A-001 and add the single-writer check to CI", "Confirm broker semantics, then fix A-002"]
 }

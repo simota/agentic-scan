@@ -51,8 +51,10 @@ Families:
   dropped on a core flow
 - **CONTRACT** — external APIs and events are separate from internal models
   and evolve compatibly
-- **SEAM** — time, randomness, I/O and vendors are reachable through a seam
-  where the code needs to be tested or replaced
+- **SEAM** — time, randomness, I/O, configuration and vendors are reachable
+  through a seam where the code needs to be tested or replaced (a rule on how
+  config is read, such as "settings come only from `config/settings.py`",
+  belongs here)
 
 Seed the ledger with one `baseline` entry per family that applies (e.g. `R-01
 LAYER baseline: no cycles between top-level modules`), then add codebase-

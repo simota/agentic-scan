@@ -48,7 +48,7 @@ class UntracedFindingTests(unittest.TestCase):
         for severity, ok in (("High", False), ("Medium", False), ("Low", True)):
             with self.subTest(severity=severity):
                 doc = complete_doc()
-                doc["findings"] = [finding("A-001", severity)]
+                doc["findings"] = [finding("A-001", severity, rule="R-01")]
                 doc["findings"][0]["validation"] = {"verdict": "Unverified", "method": "static",
                                                     "evidence": "some text"}
                 problems = self.problems(doc)

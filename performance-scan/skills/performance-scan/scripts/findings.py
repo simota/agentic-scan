@@ -238,13 +238,15 @@ def _reject_constant(token):
     raise ValueError(f"non-finite JSON numeric constant: {token}")
 
 
+# Exact: float() rounds integers just above the bound down instead of raising.
+FLOAT_MAX_INT = int(sys.float_info.max)
+
+
 def _finite_int(token):
     value = int(token)
-    try:
-        float(value)
-    except OverflowError:
+    if abs(value) > FLOAT_MAX_INT:
         raise ValueError(f"JSON number exceeds the finite floating-point range: "
-                         f"{token[:20]}...") from None
+                         f"{token[:20]}...")
     return value
 
 

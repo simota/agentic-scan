@@ -272,8 +272,8 @@ class RenderRegressions(unittest.TestCase):
         self.doc["budgets"][1].pop("inferred")
         self.doc["findings"][0]["title"] = "<script>bad()</script>"
         for lang, yes, no, reason_label in (
-            ("en", "Yes — confirm with owner", "No", "Reason not checked"),
-            ("ja", "推定・要確認", "いいえ", "未確認の理由"),
+            ("en", "Yes — confirm with owner", "No", "Reason (partly read or not checked)"),
+            ("ja", "推定・要確認", "いいえ", "未確認・一部確認の理由"),
         ):
             with self.subTest(lang=lang), tempfile.TemporaryDirectory() as directory:
                 out = Path(directory)

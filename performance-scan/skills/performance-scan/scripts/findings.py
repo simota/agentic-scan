@@ -71,7 +71,9 @@ PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
-BUDGET_MENTION = re.compile(r"(?<![\w-])B-[0-9]{2,}(?![\w-])")
+# Budget IDs are ASCII, so only ASCII identifier characters bound a mention;
+# kana or kanji right next to an ID (予算B-02を超過) do not hide it.
+BUDGET_MENTION = re.compile(r"(?<![A-Za-z0-9_-])B-[0-9]{2,}(?![A-Za-z0-9_-])")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
 # The lookbehind starts a match only at the beginning of a run: without it a long
 # run with no colon is retried from every position (quadratic time).
@@ -107,7 +109,8 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
 NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
-DOTTED_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)+")
+VERSION = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+(?:-[0-9A-Za-z.]+)?")
+PROTOCOL = re.compile(r"[A-Z]+[/\\][0-9]+(?:\.[0-9]+)*")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
@@ -132,11 +135,11 @@ def _is_host(name):
 
 def _file_shaped(path):
     """True when path has a directory part, a dotted suffix or a root-file name."""
-    if NUMERIC.fullmatch(path):
+    if NUMERIC.fullmatch(path) or VERSION.fullmatch(path) or PROTOCOL.fullmatch(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
-        return bool(last) and not DOTTED_NUMBER.fullmatch(last)
+        return bool(last)
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))
 
@@ -148,7 +151,8 @@ def _rejection(path):
     if _is_host(path):
         return "a host:port"
     if not _file_shaped(path) or path in NOT_FILES:
-        return "not a file name (a setting, number or word)"
+        return ("not a file name (a setting, number, version or word; write an "
+                "extensionless file with its directory or ./)")
     if ABBREVIATION.fullmatch(path):
         return "an abbreviation such as N/A or I/O, not a file"
     first, _, rest = path.replace("\\", "/").partition("/")

@@ -95,7 +95,8 @@ class CitationTests(unittest.TestCase):
                  "src/設定:12", "Program.CS:20", "index.PY:4", "Taskfile:1", "Pipfile:2",
                  "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10",
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
-                 "foo.1:3", "Dockerfile.22.04:2", "python3.11:3",
+                 "foo.1:3", "Dockerfile.22.04:2", "python3.11:3", "docker/22.04:3",
+                 "fixtures/1.5:3", "src/1.2:3",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -114,7 +115,7 @@ class CitationTests(unittest.TestCase):
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "golang.org/x/sync:1",
                      "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",
-                     "R/W:2", "1/2:3"]
+                     "R/W:2", "1/2:3", "HTTP/2:200", "TLS/1.3:1", "v1.2.3-rc1:4", "1.2.3-beta:4"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -215,6 +216,22 @@ class ImpactBudgetTests(unittest.TestCase):
         doc["findings"][0]["impact"] = "Also violates B-02"
         self.assertEqual(contract_problems(doc),
                          ["B-02: status holds, but P-001 is a Valid, unfixed violation of it"])
+
+
+class JapaneseMentionTests(unittest.TestCase):
+    def test_budget_ids_next_to_japanese_text_are_mentions(self):
+        self.assertEqual(findings.BUDGET_MENTION.findall("予算B-02を超過し、B-01も"), ["B-02", "B-01"])
+        self.assertEqual(findings.BUDGET_MENTION.findall("AB-01 B-01a B-01_x B-001"), ["B-001"])
+        doc = complete_doc()
+        doc["budgets"].append({"id": "B-02", "statement": "s", "source": "x", "status": "holds"})
+        doc["findings"][0]["impact"] = "予算B-02を超過"
+        self.assertEqual(contract_problems(doc),
+                         ["B-02: status holds, but P-001 is a Valid, unfixed violation of it"])
+
+    def test_partly_read_budgets_show_their_reason(self):
+        doc = complete_doc()
+        doc["budgets"][0].update(status="partly read", reason="only the list endpoint was read")
+        self.assertIn("only the list endpoint was read", render.render_markdown(doc, "en"))
 
 if __name__ == "__main__":
     unittest.main()

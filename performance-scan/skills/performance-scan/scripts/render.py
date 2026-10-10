@@ -42,7 +42,7 @@ LABELS = {
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
         "project": "System", "revision": "Revision", "date": "Date / assessor",
-        "source": "Source", "inferred": "Inferred", "reason": "Reason not checked",
+        "source": "Source", "inferred": "Inferred", "reason": "Reason (partly read or not checked)",
         "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
@@ -67,7 +67,7 @@ LABELS = {
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
         "project": "システム", "revision": "リビジョン", "date": "診断日 / 診断者",
-        "source": "出典", "inferred": "推定", "reason": "未確認の理由",
+        "source": "出典", "inferred": "推定", "reason": "未確認・一部確認の理由",
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
@@ -244,11 +244,12 @@ def budget_cells(budget, labels, findings):
                  labels["inferred_no"] if inferred is False else "—")
     # Link each ledger entry to the included findings that cite it.
     # A finding cites its own budget in `budget` and any other it violates in `impact`.
-    mention = re.compile(rf"(?<![\w-]){re.escape(budget['id'])}(?![\w-])")
+    mention = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(budget['id'])}(?![A-Za-z0-9_-])")
     cited = ", ".join(f["id"] for f in findings if not is_excluded(f) and (
         f.get("budget") == budget["id"] or mention.search(f["impact"])))
     return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
-            inference, budget.get("reason", "") if budget["status"] == "not checked" else "",
+            inference, budget.get("reason", "") if budget["status"] in ("partly read", "not checked")
+            else "",
             cited or "—")
 
 

@@ -96,7 +96,7 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 nonempty files, gapless `PV-NNN` IDs in severity order, every perspective
 recorded, nonblank reasons for unchecked commitments, nonempty `checked_ok`
 and `limitations`, ledger IDs cited by findings present in `commitments`,
-reported findings only under perspectives recorded as `applied`, and both
+reported findings only under perspectives recorded as `applied` or `partly applied`, and both
 reports matching a fresh rendering of the current `findings.json` (re-render
 after every merge).
 It checks shape, not whether a finding is true.

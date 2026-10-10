@@ -164,3 +164,38 @@ class DisclaimerTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class DraftWarningTests(unittest.TestCase):
+    def test_render_warns_about_what_check_will_refuse(self):
+        doc = complete_doc()
+        doc["limitations"] = []
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "findings.json"
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            stderr = io.StringIO()
+            with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                self.assertEqual(render.main([str(path), "--out", directory]), 0)
+            self.assertIn("warning: findings.py check will refuse: limitations:", stderr.getvalue())
+            stderr = io.StringIO()
+            doc["limitations"] = ["Not legal advice"]
+            path.write_text(json.dumps(doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                render.main([str(path), "--out", directory])
+            self.assertEqual(stderr.getvalue(), "")
+
+    def test_partly_applied_perspectives_may_hold_findings(self):
+        doc = complete_doc()
+        for p in doc["perspectives"]:
+            if p["name"] == doc["findings"][0]["category"]:
+                p.update(status="partly applied", note="LT2 applied; LT3 not reached")
+        findings.validate(doc, complete=True)
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_check_orders_equal_severities_by_path(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("PV-001", "High", location="web/z.py:1"),
+                           finding("PV-002", "High", location="api/a.py:1")]
+        self.assertTrue(any("then by path" in p for p in findings.record_problems(doc)))
+        findings.renumber(doc)
+        self.assertEqual(findings.record_problems(doc), [])

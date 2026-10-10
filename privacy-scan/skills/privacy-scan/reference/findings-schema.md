@@ -15,11 +15,14 @@ python3 scripts/findings.py check <out> [--allow NAME]
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
-is named). `findings.py check` exits `1` and lists every contract violation.
+is named). `render.py` still renders a draft that `check` would refuse, and
+prints each such problem on stderr as a warning. `findings.py check` exits `1`
+and lists every contract violation.
 Besides the shape and numbering rules below, `check` requires that a finding's
 `commitment`, when it is a ledger ID (`C-01`…), exists in `commitments`; that
 every finding not excluded (`FalsePositive`, `NotApplicable`) sits under a
-perspective recorded as `applied`; and that `report.md` and `dashboard.html`
+perspective recorded as `applied` or `partly applied`; that IDs follow severity,
+then the first location's path; and that `report.md` and `dashboard.html`
 are both exactly what `render.py` produces from the current `findings.json`
 in one language. Re-render after the last merge.
 All three required outputs must be readable, nonempty files; directories and
@@ -205,6 +208,6 @@ long paths and keep line breaks.
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string, shown in both reports) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
-| `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string, shown in both reports; name several families as `CONTAIN, SHARE` when a commitment spans them) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
+| `perspectives[]` | `name` (exact), `status` (`applied`, `partly applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons; for `partly applied`, which steps were not reached) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

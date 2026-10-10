@@ -167,6 +167,6 @@ category or reaching a third party has been read, every commitments ledger
 entry has a status (holds on all flows, violated, partly read, or not checked
 with the reason), every review unit's close-check matches with zero blank
 cells, every perspective in `reference/perspectives.md` is recorded as applied,
-N/A or not checked, every High and Medium finding has a recorded verdict and
+partly applied, N/A or not checked, every High and Medium finding has a recorded verdict and
 evidence, and the report states its own blind spots and that it is not legal
 advice.

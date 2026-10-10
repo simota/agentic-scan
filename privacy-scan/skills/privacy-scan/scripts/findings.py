@@ -65,7 +65,9 @@ EXCLUDED = ("FalsePositive", "NotApplicable")
 METHODS = ("static", "analysed")
 STATUSES = ("Open", "Fixed", "Accepted")
 COMMITMENT_STATUSES = ("holds", "violated", "partly read", "not checked")
-PERSPECTIVE_STATUSES = ("applied", "N/A", "not checked")
+PERSPECTIVE_STATUSES = ("applied", "partly applied", "N/A", "not checked")
+# A finding may sit under a perspective that was applied in full or in part.
+APPLIED = ("applied", "partly applied")
 PERSPECTIVES = (
     "Data inventory and minimisation", "Purpose and consent", "Retention and deletion",
     "Data subject rights", "Third-party sharing", "Logs, telemetry and errors",
@@ -564,10 +566,7 @@ def renumber(doc):
     """
     findings = doc.get("findings", [])
 
-    def path(f):
-        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
-        return location[0].rsplit(":", 1)[0]
-
+    path = _first_path
     # Severity order, then path, as the run contract numbers them.
     active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     ordered = sorted(active, key=lambda f: (SEVERITIES.index(f["severity"]), path(f)))
@@ -665,17 +664,28 @@ def contract_problems(out, allow=()):
         validate(doc, complete=True)
     except SchemaError as exc:
         return problems + [f"findings.json: {exc}"]
+    return problems + record_problems(doc) + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+
+
+def _first_path(f):
+    location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    return location[0].rsplit(":", 1)[0]
+
+
+def record_problems(doc):
+    """Contract violations visible in a schema-valid record alone (no outputs needed)."""
+    problems = []
     findings = doc.get("findings", [])
     expected = [f"PV-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
                         "run scripts/findings.py renumber")
-    ranks = [SEVERITIES.index(f["severity"]) for f in findings if
-             f["validation"]["verdict"] not in EXCLUDED]
+    ranks = [(SEVERITIES.index(f["severity"]), _first_path(f)) for f in findings
+             if f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
         order = ", ".join(f"{f['id']} {f['severity']}" for f in findings
                           if f["validation"]["verdict"] not in EXCLUDED)
-        problems.append(f"findings must be numbered in severity order (High first): {order}; "
+        problems.append(f"findings must be numbered in severity order (High first), then by path: {order}; "
                         "run scripts/findings.py renumber")
     for i, f in enumerate(findings):
         if (f["confidence"] == "Environment-dependent" and f["validation"]["verdict"] not in EXCLUDED
@@ -693,7 +703,7 @@ def contract_problems(out, allow=()):
             if cited not in ledger:
                 problems.append(f"findings[{i}].commitment: {cited} is not in the commitments ledger")
         status = recorded.get(f["category"])
-        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, "applied"):
+        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, *APPLIED):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
                             "not applied")
     for i, r in enumerate(doc.get("commitments", [])):
@@ -703,7 +713,7 @@ def contract_problems(out, allow=()):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
-    return problems + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+    return problems
 
 
 def _stale_outputs(out, doc, skip):

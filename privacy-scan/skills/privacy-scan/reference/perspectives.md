@@ -33,6 +33,9 @@ Rules:
   reason (e.g. `Client-side tracking: N/A — backend service, no client in the repo`)
 - A perspective that could not be checked statically is recorded as `not
   checked` with what would be needed
+- A perspective whose hunt steps were only partly reached (effort ran out, one
+  store was unreadable) is recorded as `partly applied`; the note names the
+  steps not reached
 - Every finding names the perspective that surfaced it in `category`
 - A hunt step covered by a commitments ledger entry cites it (`C-…`) in the
   perspective's `note` instead of being re-run

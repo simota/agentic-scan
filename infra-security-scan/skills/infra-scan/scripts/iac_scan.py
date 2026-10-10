@@ -822,6 +822,7 @@ class Scan:
         # {constraint: {"orgs": org IDs, "dirs": {(dir, project or None)}}} for
         # enforced storage org policies.
         self.gcs_org_policies, self.orgs_seen = {}, set()
+        self.project_folders = {}  # project ID: folder number, from google_project in the inputs
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
@@ -1185,6 +1186,8 @@ def org_policy_enforced(scan, constraint, res):
     if policies["orgs"] and scan.orgs_seen <= policies["orgs"] and len(scan.orgs_seen) == 1:
         return True
     project = res.view.get("project") if res.view else None
+    if isinstance(project, str) and scan.project_folders.get(project) in policies["folders"]:
+        return True
     here = {p for d, p in policies["dirs"] if d == res.dir}
     # A project policy covers a bucket of that project; one whose project is
     # not set in the module may be the provider's default project.
@@ -1738,6 +1741,9 @@ def collect_context(scan, d, type_, view, text, defaults=True):
     """
     if never_created(view):
         return
+    if type_ == "google_project" and isinstance(view.get("project_id"), str) and \
+            isinstance(view.get("folder_id"), str):
+        scan.project_folders[view.get("project_id")] = view.get("folder_id").removeprefix("folders/")
     scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
     if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block") and \
             view.get("count") is None and view.get("for_each") is None:
@@ -1769,9 +1775,14 @@ def collect_context(scan, d, type_, view, text, defaults=True):
             org_level = type_ == "google_organization_policy" or (
                 type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', enforced))
             project = re.search(r'(?:\bproject"?\s*[:=]\s*"|parent"?\s*[:=]\s*"projects/)([a-z][a-z0-9-]*)"', enforced)
-            policies = scan.gcs_org_policies.setdefault(constraint, {"orgs": set(), "dirs": set()})
+            folder = re.search(r'(?:\bfolder"?\s*[:=]\s*"|parent"?\s*[:=]\s*")folders/([0-9]+)"', enforced)
+            policies = scan.gcs_org_policies.setdefault(constraint, {"orgs": set(), "dirs": set(), "folders": set()})
             if org_level and org:
                 policies["orgs"].add(org.group(1))
+            elif folder or type_ == "google_folder_organization_policy":
+                # A folder policy covers only projects shown to be in that folder.
+                if folder:
+                    policies["folders"].add(folder.group(1))
             elif not org_level:
                 policies["dirs"].add((d, project.group(1) if project else None))
     if type_ in ("aws_iam_role", "aws_iam_user"):
@@ -2043,13 +2054,16 @@ def terragrunt_remote_state(scan, d):
         if unit is None or unit.is_symlink():
             return False
         text = unit.read_text(encoding="utf-8-sig")
-        if TERRAGRUNT_BACKEND.search(text):
+        # Its own block, or remote_state = local.common.remote_state from read_terragrunt_config.
+        if TERRAGRUNT_BACKEND.search(text) or re.search(r"^\s*remote_state\s*=", text, re.M):
             return True
-        names = set(re.findall(r'find_in_parent_folders\(\s*"([^"/]+)"\s*\)', text))
-        if re.search(r"find_in_parent_folders\(\s*\)", text):
+        # Only include blocks inherit configuration; read_terragrunt_config in locals does not.
+        includes = "\n".join(m.group() for m in re.finditer(r'^\s*include\b[^{\n]*\{[^}]*\}', text, re.M))
+        names = set(re.findall(r'find_in_parent_folders\(\s*"([^"/]+)"\s*\)', includes))
+        if re.search(r"find_in_parent_folders\(\s*\)", includes):
             names.add("terragrunt.hcl")  # the no-argument form finds terragrunt.hcl only
         candidates = [p / name for p in unit.parent.parents if p == root or root in p.parents for name in names]
-        candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', text)]
+        candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', includes)]
         for candidate in candidates:
             if (candidate == root or root in candidate.parents) and candidate.is_file() and \
                     not candidate.is_symlink() and TERRAGRUNT_BACKEND.search(candidate.read_text(encoding="utf-8-sig")):

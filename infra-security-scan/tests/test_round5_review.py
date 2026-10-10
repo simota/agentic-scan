@@ -302,5 +302,27 @@ resource "google_storage_bucket" "b" {
         self.assertEqual([h["rule"] for h in result.hits], ["GCP-GCS-001"])
 
 
+class CodexSixthReviewTest(unittest.TestCase):
+    BUCKET = 'resource "google_storage_bucket" "b" {\n  project = "proj-x"\n  uniform_bucket_level_access = false\n' \
+             '  public_access_prevention = "enforced"\n}\n'
+    FOLDER = 'resource "google_folder_organization_policy" "f" {\n  folder = "folders/123"\n' \
+             '  constraint = "storage.uniformBucketLevelAccess"\n  boolean_policy {\n    enforced = true\n  }\n}\n'
+
+    def test_folder_policy_covers_only_projects_in_the_folder(self):
+        self.assertEqual([h["rule"] for h in scan({"g.tf": self.BUCKET + self.FOLDER}).hits], ["GCP-GCS-001"])
+        project = 'resource "google_project" "x" {\n  project_id = "proj-x"\n  folder_id = "folders/123"\n}\n'
+        self.assertEqual(scan({"g.tf": self.BUCKET + self.FOLDER + project}).hits, [])
+
+    def test_read_terragrunt_config_is_not_an_include(self):
+        backend = 'remote_state {\n  backend = "s3"\n  config = {\n    encrypt = true\n  }\n}\n'
+        app = 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'
+        read_only = 'locals {\n  common = read_terragrunt_config(find_in_parent_folders("root.hcl"))\n}\n'
+        result = scan({"root.hcl": backend, "prod/app/terragrunt.hcl": read_only, "prod/app/main.tf": app})
+        self.assertIn("PS-002", [h["rule"] for h in result.hits])
+        assigned = read_only + "remote_state = local.common.remote_state\n"
+        result = scan({"root.hcl": backend, "prod/app/terragrunt.hcl": assigned, "prod/app/main.tf": app})
+        self.assertNotIn("PS-002", [h["rule"] for h in result.hits])
+
+
 if __name__ == "__main__":
     unittest.main()

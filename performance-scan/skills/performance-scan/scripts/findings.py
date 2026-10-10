@@ -118,10 +118,10 @@ LETTER = re.compile(r"[^\W\d_]")
 VERSION_START = re.compile(r"[vV]?[0-9]")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
-# Only named protocols: an uppercase directory holding numbered files (DB/123,
-# SQL/001) is a path.
-PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|SMTP|FTP|IMAP|POP|SIP|RTSP|RTP|AMQP"
-                      r"|MQTT|SOCKS|SSH|SNMP|LDAP|NFS|SMB|IP|TCP|UDP|WS)[/\\][0-9]+(?:\.[0-9]+)*")
+# Only named protocols, in any case (HTTP/1.1, tls/1.3): any other directory
+# holding numbered files (DB/123, SQL/001) is a path.
+PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|SMTP|FTP|IMAP|POP3?|SIP|RTSP|AMQP"
+                      r"|MQTT|SOCKS|SSH|SNMP|LDAP)[/\\][0-9]+(?:\.[0-9]+)*", re.IGNORECASE)
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"

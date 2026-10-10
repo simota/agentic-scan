@@ -133,3 +133,19 @@ class FinalReviewTests(unittest.TestCase):
                                             "evidence": "scrubber at app.py:30"}
         doc["findings"][1]["step"] = "ZZ9"
         self.assertTrue(any(p.startswith("PV-002.step") for p in findings.record_problems(doc)))
+
+
+class SeparatorAdjacencyTests(unittest.TestCase):
+    def test_dates_and_uuids_next_to_digits_across_any_separator_are_not_masked(self):
+        for value in ("4111 2026-01-01 1111", "4111–2026-01-01–1111",
+                      "4111\t2026-01-01\t1111", "4111 2026-01-01", "2026-01-01 1111 2222",
+                      "1234 5678 12345678-1234-1234-1234-123456789012"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+
+    def test_ranges_times_and_isolated_values_stay_masked(self):
+        for value in ("2026-10-01 - 2026-10-09", "2026-10-01 – 2026-10-09",
+                      "backup 2024-01-01 120000.sql", "run 123e4567-e89b-12d3-a456-426614174000 ok",
+                      "on 2026-10-09, 1234 accounts"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))

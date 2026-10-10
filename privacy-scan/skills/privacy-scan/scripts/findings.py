@@ -162,21 +162,61 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
 # ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
-# mask them before counting digits so they are not mistaken for personal
-# numbers. A UUID next to a dash-joined digit is not masked, so masking cannot
-# split a longer number.
-NOT_PERSONAL_NUMBERS = re.compile(
-    # A date joined by a hyphen to other digits is not masked (it could split a
-    # longer number), unless those digits are another full date (a range) or a
-    # six-digit time of day.
-    r"(?<!\d)(?:(?<!\d-)|(?<=\d{4}-\d{2}-\d{2}-))"
-    r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
-    r"(?:(?!-\d)|(?=-(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d))"
-    # ... or a time of day (backup-2024-01-01-120000.sql).
-    r"|(?=-(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)(?!-\d)))"
-    r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
-    r"(?![0-9A-Fa-f])(?!-\d)"
-    r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+# they are masked before counting digits so they are not mistaken for personal
+# numbers. A date or UUID is masked only when no digit sits next to it across
+# the separators LONG_NUMBER accepts, so masking cannot split a longer number;
+# a neighbouring full date (a range) or six-digit time of day is allowed.
+DIGIT_SEPARATOR = re.compile(r"[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc]")
+ISO_DATE = re.compile(r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)")
+UUID = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
+HEX_DIGEST = re.compile(r"(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+TIME_OF_DAY = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)")
+
+
+def _past_separators(value, pos, step):
+    """Index after skipping digit separators from pos (backwards when step < 0)."""
+    if step < 0:
+        while pos > 0 and DIGIT_SEPARATOR.fullmatch(value[pos - 1]):
+            pos -= 1
+    else:
+        while pos < len(value) and DIGIT_SEPARATOR.fullmatch(value[pos]):
+            pos += 1
+    return pos
+
+
+def _digit_before(value, pos):
+    pos = _past_separators(value, pos, -1)
+    return pos if pos > 0 and value[pos - 1].isdigit() else None
+
+
+def _digit_after(value, pos):
+    pos = _past_separators(value, pos, 1)
+    return pos if pos < len(value) and value[pos].isdigit() else None
+
+
+def _mask_technical_numbers(value):
+    spans = []
+    dates = list(ISO_DATE.finditer(value))
+    starts, ends = {m.start() for m in dates}, {m.end() for m in dates}
+    for m in dates:
+        before, after = _digit_before(value, m.start()), _digit_after(value, m.end())
+        time = TIME_OF_DAY.match(value, after) if after is not None else None
+        if ((before is None or before in ends)
+                and (after is None or after in starts
+                     or (time and _digit_after(value, time.end()) is None))):
+            spans.append(m.span())
+    for m in UUID.finditer(value):
+        if _digit_before(value, m.start()) is None and _digit_after(value, m.end()) is None:
+            spans.append(m.span())
+    spans += [m.span() for m in HEX_DIGEST.finditer(value)]
+    masked, pos = [], 0
+    for start, end in sorted(spans):
+        if start >= pos:
+            masked.append(value[pos:start] + "#")
+            pos = end
+    return "".join(masked) + value[pos:]
+
+
 # Compact date-times (YYYYMMDDhhmmss) that begin a path segment, as in
 # timestamped migration files. Only `location` paths are exempted this way;
 # in prose such a number could be an account identifier.
@@ -422,7 +462,7 @@ def _scan_personal_values(value, where):
     for domain in _email_domains(value):
         if not EXAMPLE_DOMAINS.search(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
-    if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(NOT_PERSONAL_NUMBERS.sub("#", value)):
+    if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(_mask_technical_numbers(value)):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
 
 

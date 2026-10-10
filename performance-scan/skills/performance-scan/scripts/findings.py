@@ -120,12 +120,15 @@ LETTER = re.compile(r"[^\W\d_]")
 VERSION_START = re.compile(r"[vV]?[0-9]")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
-# Only named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
-# SSH-2.0, HTTP2): any other directory holding numbered files (DB/123, SQL/001)
-# is a path.
-PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|SMTP|FTP|IMAP|POP3?|SIP|RTSP|AMQP"
-                      r"|MQTT|SOCKS|SSH|SNMP|LDAP)(?:[/\\]|[-_]?v?)[0-9]+(?:\.[0-9]+)*",
+# Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
+# SSH-2.0, HTTP2), and any all-caps name with a slash and a dotted number
+# (SMB/3.1.1, RDP/10.0). Other directories holding numbered files (DB/123,
+# SQL/001) are paths.
+PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|S?FTPS?|SMTPS?|IMAPS?|POP3?|SIP|RTSP"
+                      r"|AMQP|MQTT|SOCKS|SSH|SNMP|LDAPS?|SMB|CIFS|NFS|RDP|NNTP|XMPP|IRC|WEBDAV"
+                      r"|GRPC)(?:[/\\]|[-_]?v?)[0-9]+(?:\.[0-9]+)*",
                       re.IGNORECASE)
+CAPS_PROTOCOL = re.compile(r"[A-Z]{2,}[/\\][0-9]+(?:\.[0-9]+)+")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
@@ -150,8 +153,10 @@ def _is_host(name):
 
 def _protocol_version(path):
     """True for a protocol version, bare or with a draft or implementation tag
-    (TLSv1.3, HTTP/3-draft-29, SSH-2.0-OpenSSH_9.6); a tagged name that ends in
-    a letter-led extension is a file (http2-server.go)."""
+    (TLSv1.3, SMB/3.1.1, HTTP/3-draft-29, SSH-2.0-OpenSSH_9.6); a tagged name
+    that ends in a letter-led extension is a file (http2-server.go)."""
+    if CAPS_PROTOCOL.fullmatch(path):
+        return True
     match = PROTOCOL.match(path)
     if not match:
         return False

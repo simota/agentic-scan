@@ -640,12 +640,19 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
                        r"|(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:urn):)")
 
 
+# A bare e-mail address: an RFC 5322 dot-atom local part, `@`, a dotted domain.
+# It starts only where a run of local-part characters starts, so a long run
+# with no address in it is read once, not once per character.
+EMAIL = re.compile(r"((?<![A-Za-z0-9!#$%&'*+/=?^_`{|}~.-])[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+"
+                   r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
+
+
 def _url_spans(text):
-    """Split text into prose and URLs, alternating, prose first.
+    """Split text into prose and literals (URLs, e-mail addresses), alternating.
 
     A URL runs to a blank or to punctuation outside ASCII (`…/x。A-001`,
     `（https://x）A-001`), so an IRI's letters (`?project=案件&key=A-001`) stay
-    inside it.
+    inside it. An address is taken whole (`owner!A-001!tag@example.com`).
     """
     parts, prose = [], 0
     for start in URL_START.finditer(text):
@@ -657,7 +664,10 @@ def _url_spans(text):
             end += 1
         parts += [text[prose:start.start()], text[start.start():end]]
         prose = end
-    return parts + [text[prose:]]
+    parts.append(text[prose:])
+    # Addresses in the prose parts: EMAIL.split alternates prose and address.
+    return [piece for i, part in enumerate(parts)
+            for piece in (EMAIL.split(part) if i % 2 == 0 else [part])]
 
 
 def _first_location(f):

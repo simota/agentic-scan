@@ -290,6 +290,12 @@ class ReviewRegressionTests(Workspace):
             with self.subTest(evidence=evidence):
                 self.assertTrue(findings.cites_line(evidence))
 
+    def test_finding_literals_stays_linear(self):
+        for text in ("a" * 200000, "a" * 100000 + "@", "a!" * 50000 + "@x", "@" * 100000):
+            start = time.monotonic()
+            findings._rewrite_ids(text, {"A-001": "A-002"})
+            self.assertLess(time.monotonic() - start, 2)
+
     def test_an_iri_or_urn_keeps_its_ids(self):
         mapping = {"A-001": "A-003", "A-003": "A-001"}
         for text, expected in (("https://jira.example/?project=案件&key=A-001 and A-001",
@@ -306,7 +312,9 @@ class ReviewRegressionTests(Workspace):
                                ("参照https://x/A-001。A-001", "参照https://x/A-001。A-003"),
                                ("Fix:A-001 first", "Fix:A-003 first"),
                                ("A-001@example.com, owner+A-001@x.example, x@A-001.example; A-001",
-                                "A-001@example.com, owner+A-001@x.example, x@A-001.example; A-003")):
+                                "A-001@example.com, owner+A-001@x.example, x@A-001.example; A-003"),
+                               ("owner!A-001!tag@example.com, A-001%y@a.example and A-001",
+                                "owner!A-001!tag@example.com, A-001%y@a.example and A-003")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)
 
     def test_a_url_ends_before_japanese_punctuation(self):

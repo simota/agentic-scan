@@ -100,8 +100,10 @@ class StatusOutputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "findings.json"
             source.write_text(json.dumps(complete_doc()), encoding="utf-8")
-            out = os.path.join(directory, "out\udcff")
-            env = {**os.environ, "PYTHONIOENCODING": "utf-8:strict", "PYTHONDONTWRITEBYTECODE": "1"}
+            # Every filesystem accepts this name, but a strict ASCII stdout cannot print it
+            # (APFS, for one, refuses non-UTF-8 names such as surrogate escapes).
+            out = os.path.join(directory, "out-\u00e9")
+            env = {**os.environ, "PYTHONIOENCODING": "ascii:strict", "PYTHONDONTWRITEBYTECODE": "1"}
             result = subprocess.run(
                 [sys.executable, str(SKILL / "scripts" / "render.py"), str(source), "--out", out],
                 capture_output=True, env=env, timeout=20)

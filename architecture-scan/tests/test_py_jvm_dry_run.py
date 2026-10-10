@@ -238,6 +238,15 @@ class ReviewRegressionTests(Workspace):
             with self.subTest(evidence=evidence):
                 self.assertTrue(findings.cites_line(evidence))
 
+    def test_an_iri_or_urn_keeps_its_ids(self):
+        mapping = {"A-001": "A-003", "A-003": "A-001"}
+        for text, expected in (("https://jira.example/?project=案件&key=A-001 and A-001",
+                                "https://jira.example/?project=案件&key=A-001 and A-003"),
+                               ("urn:ticket:A-001 for A-001", "urn:ticket:A-001 for A-003"),
+                               ("参照https://x/A-001。A-001", "参照https://x/A-001。A-003"),
+                               ("Fix:A-001 first", "Fix:A-003 first")):
+            self.assertEqual(findings._rewrite_ids(text, mapping), expected)
+
     def test_a_url_ends_before_japanese_punctuation(self):
         mapping = {"A-001": "A-003", "A-003": "A-001"}
         for text, expected in (("詳細は https://example.com/x。A-001と同根",
@@ -292,12 +301,12 @@ class ReviewRegressionTests(Workspace):
 
     def test_only_a_stated_duplicate_skips_the_line_citation(self):
         doc = complete_doc()
-        for evidence, ok in (("A-001 の重複", True), ("Duplicates A-001", True),
-                             ("重複: A-001。同じ書き込み", True),
+        for evidence, ok in (("Duplicates A-001", True), ("Duplicate of A-001. Same writer", True),
+                             ("重複: A-001", True), ("重複：A-001。同じ書き込み", True),
                              ("Not a duplicate; unlike A-001 this module is legacy", False),
                              ("This is not a duplicate of A-001", False),
-                             ("A-001 の重複ではない", False), ("A-001 の重複でない", False),
-                             ("A-001 の重複とは言えない", False), ("A-001 の重複です。", True),
+                             ("Duplicate of A-001 only in part", False),
+                             ("重複: A-001 ではない", False), ("A-001 の重複", False),
                              ("see docs/A-001.md", False)):
             with self.subTest(evidence=evidence):
                 doc["findings"][1]["validation"] = {"verdict": "NotApplicable",

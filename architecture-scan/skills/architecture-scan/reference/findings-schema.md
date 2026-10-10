@@ -84,8 +84,8 @@ be byte-identical to what `render.py` produces from the current
   `.com`, `.net`, `.io`, `.internal` or `.localhost`, such as
   `db.internal:5432`. Dotfiles and names such as `Dockerfile.dev` or
   `Makefile.local` count as files). A duplicate's `NotApplicable` evidence
-  may instead open by naming the reported finding it repeats (`Duplicate of
-  A-004`, `A-004 の重複`)
+  may instead open with a sentence that only names the reported finding it
+  repeats (`Duplicate of A-004.`, `重複: A-004。`)
 
 With `--repo <checkout>` (a checkout of the assessed revision), `check` also
 refuses a `location` whose file is missing or outside that checkout, or

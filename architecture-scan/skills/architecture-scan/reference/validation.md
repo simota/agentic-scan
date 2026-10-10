@@ -21,8 +21,8 @@ finding judged false stays in the record with its exclusion and evidence.
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
 `validation.evidence` citing `path:line`; a duplicate marked `NotApplicable`
-opens instead by naming the reported finding it repeats (`Duplicate of
-A-004`, `A-004 の重複`).
+opens instead with a sentence that only names the reported finding it repeats
+(`Duplicate of A-004.`, `重複: A-004。`).
 
 ## Four claims for every finding
 

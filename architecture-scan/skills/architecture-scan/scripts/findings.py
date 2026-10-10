@@ -84,12 +84,11 @@ PERSPECTIVES = (
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
-# Evidence that opens by stating the duplicate: `Duplicate of A-004`,
-# `Duplicates A-004`, `重複: A-004`, `A-004 の重複` (ending there, or with `です`
-# or `である`, before punctuation). Prose that only mentions one (`not a
-# duplicate of A-001`, `A-001 の重複ではない`, `A-001 の重複とは言えない`) is not.
-DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：]?)\s*(A-[0-9]{3})(?![\w-])"
-                          r"|\s*(A-[0-9]{3})\s*の重複(?:です|である)?(?=$|[\s。、．，.,;:；：])",
+# Evidence whose first sentence states the duplicate and nothing else:
+# `Duplicate of A-004.`, `Duplicates A-004`, `重複: A-004。…`. Anything else in
+# that sentence (`not a duplicate of A-001`, `重複: A-001 ではない`) needs a
+# `path:line` like any other evidence.
+DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*(?:$|[.。;；])",
                           re.ASCII)
 # ASCII word characters only, so `R-02にも` beside Japanese text is a mention.
 RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])", re.ASCII)
@@ -584,8 +583,28 @@ ID_RUN = re.compile(
 
 
 # ASCII URL characters only, so `…/x。A-001と` ends the URL at `。`.
-PROSE_URL = re.compile(r"((?<![\w+.-])[A-Za-z][A-Za-z0-9+.-]*://"
-                       r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+)")
+# Where a URL starts in prose: a scheme with `//`, or `urn:` and `mailto:`.
+URL_START = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:urn|mailto):)")
+
+
+def _url_spans(text):
+    """Split text into prose and URLs, alternating, prose first.
+
+    A URL runs to a blank or to punctuation outside ASCII (`…/x。A-001`,
+    `（https://x）A-001`), so an IRI's letters (`?project=案件&key=A-001`) stay
+    inside it.
+    """
+    parts, prose = [], 0
+    for start in URL_START.finditer(text):
+        if start.start() < prose:
+            continue
+        end = start.end()
+        while end < len(text) and not text[end].isspace() and not (
+                ord(text[end]) > 127 and unicodedata.category(text[end])[0] in "PSZ"):
+            end += 1
+        parts += [text[prose:start.start()], text[start.start():end]]
+        prose = end
+    return parts + [text[prose:]]
 
 
 def _first_location(f):
@@ -605,7 +624,7 @@ def _rewrite_ids(value, mapping, key=None):
         # A URL in prose (`browse?key=A-001`, `#A-001`) is a link, not a mention.
         return "".join(part if i % 2 else ID_RUN.sub(
             lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]), run[0]), part)
-            for i, part in enumerate(PROSE_URL.split(value)))
+            for i, part in enumerate(_url_spans(value)))
     if isinstance(value, list):
         return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):
@@ -843,7 +862,7 @@ def contract_problems(out, allow=()):
         # A duplicate's evidence is the reported finding that keeps it, whose
         # own evidence cites the line; renumber rewrites the ID with the rest.
         duplicate = verdict == "NotApplicable" and any(
-            (m[1] or m[2]) in kept for m in [DUPLICATE_OF.match(evidence)] if m)
+            m[1] in kept for m in [DUPLICATE_OF.match(evidence)] if m)
         if verdict in DEFINITIVE and not duplicate and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line"
                             + (" (or, for a duplicate, the finding it repeats)"

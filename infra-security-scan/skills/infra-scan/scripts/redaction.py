@@ -535,6 +535,26 @@ def _value_quote(line, start):
     return None, start
 
 
+def _closing_quote(line, quote, start):
+    """Index of the quote that closes an argument opened by quote, or -1.
+
+    In a shell, a backslash escapes a double quote (an odd run before it) and
+    nothing escapes a single quote. Inside an HCL string the argument opens with
+    an escaped quote, so exactly one backslash marks its close.
+    """
+    char = quote[-1]
+    for i in range(start, len(line)):
+        if line[i] != char:
+            continue
+        j = i
+        while j > 0 and line[j - 1] == "\\":
+            j -= 1
+        run = i - j
+        if char == "'" or (run == 1 if len(quote) == 2 else run % 2 == 0):
+            return i - len(quote) + 1
+    return -1
+
+
 def _redact_values(pattern, line, group, keep=lambda m: False):
     """Replace each match's value group with [redacted], through its closing quote.
 
@@ -548,7 +568,7 @@ def _redact_values(pattern, line, group, keep=lambda m: False):
         start, end = m.start(group), m.end(group)
         quote, search = _value_quote(line, start)
         if quote:
-            close = line.find(quote, search)
+            close = _closing_quote(line, quote, search)
             end = max(end, len(line) if close == -1 else close)
         out.append(line[pos:start] + "[redacted]")
         pos = end

@@ -2072,11 +2072,11 @@ def terragrunt_remote_state(scan, d):
         if unit is None or unit.is_symlink():
             return False
         text = unit.read_text(encoding="utf-8-sig")
-        # Its own block, or remote_state = local.common.remote_state from read_terragrunt_config.
-        if TERRAGRUNT_BACKEND.search(text) or "remote_state" in top_level_attributes(text):
+        if terragrunt_backend(text):
             return True
         # Only include blocks inherit configuration; read_terragrunt_config in locals does not.
-        includes = "\n".join(m.group() for m in re.finditer(r'^\s*include\b[^{\n]*\{[^}]*\}', text, re.M))
+        code = hcl_code(text)
+        includes = "\n".join(m.group() for m in re.finditer(r'^\s*include\b[^{\n]*\{[^}]*\}', code, re.M))
         names = set(re.findall(r'find_in_parent_folders\(\s*"([^"/]+)"\s*\)', includes))
         if re.search(r"find_in_parent_folders\(\s*\)", includes):
             names.add("terragrunt.hcl")  # the no-argument form finds terragrunt.hcl only
@@ -2084,32 +2084,72 @@ def terragrunt_remote_state(scan, d):
         candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', includes)]
         for candidate in candidates:
             if (candidate == root or root in candidate.parents) and candidate.is_file() and \
-                    not candidate.is_symlink() and TERRAGRUNT_BACKEND.search(candidate.read_text(encoding="utf-8-sig")):
+                    not candidate.is_symlink() and terragrunt_backend(candidate.read_text(encoding="utf-8-sig")):
                 return True
     except (OSError, UnicodeError):
         return False
     return False
 
 
-def hcl_code(text):
-    """HCL text without its comments (#, //, /* */); strings are kept."""
-    text = re.sub(r'"(?:\\.|[^"\\\n])*"|(/\*.*?\*/)', lambda m: "" if m.group(1) else m.group(), text, flags=re.S)
-    return re.sub(r'"(?:\\.|[^"\\\n])*"|((?:#|//)[^\n]*)', lambda m: "" if m.group(1) else m.group(), text)
+HEREDOC_START = re.compile(r"<<-?([A-Za-z_]\w*)\s*$")
 
 
-def top_level_attributes(text):
-    """Names assigned outside every block (brace depth 0), ignoring strings and comments."""
-    names, depth = set(), 0
-    for line in text.splitlines():
-        code = re.sub(r'"(?:\\.|[^"\\])*"', '""', line)
-        code = re.sub(r"(?:#|//).*", "", code)
-        if depth == 0 and (m := re.match(r"\s*([A-Za-z_][\w-]*)\s*=(?!=)", code)):
-            names.add(m.group(1))
+def hcl_code(text, heredocs=False, strings=True):
+    """HCL text without comments (#, //, /* */) and, unless heredocs is set, without
+    heredoc bodies; quoted strings are kept (or emptied to "" without strings), and
+    so is the line count. One linear pass, so hostile input cannot make it slow."""
+    out, tag, in_block = [], None, False
+    for line in text.split("\n"):
+        if tag is not None:
+            if line.strip() == tag:
+                tag = None
+            out.append(line if heredocs else "")
+            continue
+        kept, i, n = [], 0, len(line)
+        while i < n:
+            if in_block:
+                close = line.find("*/", i)
+                if close == -1:
+                    i = n
+                    break
+                in_block, i = False, close + 2
+                continue
+            c = line[i]
+            if c == '"':
+                j = i + 1
+                while j < n and line[j] != '"':
+                    j += 2 if line[j] == "\\" else 1
+                kept.append(line[i:j + 1] if strings else '""')
+                i = j + 1
+            elif c == "#" or line.startswith("//", i):
+                break
+            elif line.startswith("/*", i):
+                in_block, i = True, i + 2
+            else:
+                kept.append(c)
+                i += 1
+        code = "".join(kept)
+        if (m := HEREDOC_START.search(code)):
+            tag = m.group(1)
+            if not heredocs:
+                code = code[:m.start()] + '""'
+        out.append(code)
+    return "\n".join(out)
+
+
+# A backend at the top level: remote_state { ... }, generate "backend" { ... }, or
+# remote_state = local.common.remote_state (read_terragrunt_config).
+TERRAGRUNT_BACKEND = re.compile(r'\s*(?:remote_state\s*\{|generate\s*"backend"\s*\{|remote_state\s*=(?!=))')
+
+
+def terragrunt_backend(text):
+    """A backend declared outside every block, not inside locals, a heredoc or a comment."""
+    depth = 0
+    for line, code in zip(hcl_code(text).split("\n"), hcl_code(text, strings=False).split("\n")):
+        if depth == 0 and TERRAGRUNT_BACKEND.match(line):
+            return True
         depth = max(0, depth + code.count("{") - code.count("}"))
-    return names
-
-
-TERRAGRUNT_BACKEND = re.compile(r'^\s*(?:remote_state\s*\{|generate\s*"backend"\s*\{)', re.M)
+    return False
 
 
 def finish_dirs(scan):
@@ -3508,24 +3548,30 @@ def mock_lines(lines):
     return inside
 
 
+HCL_KINDS = ("terraform", "tfvars", "terragrunt")
+
+
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
     generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
         lambda line: filter(None, [GENERIC_SECRET.match(line)]))
     mocks = mock_lines(lines) if kind == "terragrunt" else set()
+    # Environment entries are read without comments, which may sit beside a name or
+    # mention a reference type; a heredoc's body (container definitions) is kept.
+    code_lines = hcl_code("\n".join(lines), heredocs=True).split("\n") if kind in HCL_KINDS else lines
     for n, line in enumerate(lines, 1):
         for label, pattern in SECRET_PATTERNS:
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
-        if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
+        if kind not in HCL_KINDS or n in mocks:
             continue
-        for name, value, entry in env_pairs(lines, n - 1):
+        for name, value, entry in env_pairs(code_lines, n - 1):
             # The entry's own type: CodeBuild writes type = "PARAMETER_STORE" after the value.
             if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \
                     and not FLAG_VALUE.fullmatch(value.strip()) \
-                    and not SECRET_REFERENCE.search(hcl_code(entry)):
+                    and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
         for m in generic(line):
             if SECRET_NAME_VALUE.match(m.group(2)) and (

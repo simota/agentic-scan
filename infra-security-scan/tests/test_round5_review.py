@@ -412,5 +412,51 @@ class CodexNinthReviewTest(unittest.TestCase):
         self.assertEqual(result.hits, [])
 
 
+class CodexTenthReviewTest(unittest.TestCase):
+    def test_backend_text_inside_a_heredoc_or_comment_is_not_a_backend(self):
+        app = 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'
+        for unit in ('locals {\n  doc = <<EOT\nremote_state { backend = "s3" }\nEOT\n}\n',
+                     'locals {\n  doc = <<-EOT\n    remote_state {\n    EOT\n}\n',
+                     '# remote_state {\n/*\ngenerate "backend" {\n*/\n'):
+            result = scan({"prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
+            self.assertIn("PS-002", [h["rule"] for h in result.hits], unit)
+        real = 'remote_state {\n  backend = "s3"\n  config = {\n    encrypt = true\n  }\n}\n'
+        result = scan({"prod/app/terragrunt.hcl": real, "prod/app/main.tf": app})
+        self.assertNotIn("PS-002", [h["rule"] for h in result.hits])
+
+    def test_escaped_quotes_inside_a_quoted_password(self):
+        rest = "Sup3r" + "Secret"
+        for line in (f'curl -u "admin:pfx \\"quoted\\" {rest}" https://host',
+                     f'command = "curl -u \\"admin:pfx \\\\\\"q\\\\\\" {rest}\\" https://host"'):
+            self.assertNotIn(rest, redaction.scrub_line(line, "shell"), line)
+
+    def test_block_comment_after_secret_name(self):
+        result = scan({"e.tf": f'''resource "kubernetes_deployment" "d" {{
+  env {{
+    name  = "DB_PASSWORD" /* application credential */
+    value = "{SECRET}"
+  }}
+}}
+'''})
+        self.assertEqual([h["detail"] for h in result.hits], ["literal value for DB_PASSWORD"])
+
+    def test_heredoc_environment_entries_are_still_read(self):
+        result = scan({"t.tf": f'''resource "aws_ecs_task_definition" "t" {{
+  container_definitions = <<EOF
+[{{"environment": [{{"name": "DB_PASSWORD", "value": "{SECRET}"}}]}}]
+EOF
+}}
+'''})
+        self.assertIn("literal value for DB_PASSWORD", [h["detail"] for h in result.hits])
+
+    def test_comment_stripping_stays_linear(self):
+        import time
+        for text in ("<<A\n" * 50000, "/*" * 200000, '"\\' * 200000):
+            start = time.monotonic()
+            iac_scan.hcl_code(text)
+            iac_scan.terragrunt_backend(text)
+            self.assertLess(time.monotonic() - start, 5)
+
+
 if __name__ == "__main__":
     unittest.main()

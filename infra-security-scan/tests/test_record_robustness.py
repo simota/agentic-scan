@@ -153,6 +153,19 @@ class RecordRobustnessTest(unittest.TestCase):
         code, out = call(findings.main, "remove", self.record, "F-002")
         self.assertEqual(code, 1, out)  # still named in decisions
 
+    def test_ids_in_file_paths_are_not_references(self):
+        data = self.record_with(findings=[
+            finding("F-001", "Low", "docs/F-001/main.tf:1", fix="see evidence/F-002/notes.md and docs/F-002"),
+            finding("F-002", "High", "a.tf:1")], decisions=["F-002/F-001 share one fix"])
+        self.write(data)
+        code, out = call(findings.main, "renumber", self.record)
+        self.assertEqual(code, 0, out)
+        record = json.loads(self.record.read_text(encoding="utf-8"))
+        low = next(f for f in record["findings"] if f["severity"] == "Low")
+        self.assertEqual((low["location"], low["fix"]),
+                         ("docs/F-001/main.tf:1", "see evidence/F-002/notes.md and docs/F-002"))
+        self.assertEqual(record["decisions"], ["F-001/F-002 share one fix"])
+
     def test_dangling_baseline_references(self):
         data = self.record_with(findings=[finding("F-001", fix="root cause of I-999")],
                                 decisions=["I-077の判定は保留"],

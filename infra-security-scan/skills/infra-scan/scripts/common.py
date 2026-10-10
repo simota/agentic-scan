@@ -27,6 +27,10 @@ BASELINE_REFERENCE = re.compile(ID_BEFORE + r"I-[0-9]{3,}" + ID_AFTER)
 F_REFERENCE = re.compile(ID_BEFORE + r"F-[0-9]{3,}" + ID_AFTER)
 RECORD_REFERENCE = re.compile(ID_BEFORE + r"(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})" + ID_AFTER)
 URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
+# Next to "/", an ID is a reference only beside another ID ("F-002/F-005");
+# otherwise it is a path component (docs/F-001/main.tf).
+_ID_END = re.compile(r"(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})\Z")
+_ID_START = re.compile(r"(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})")
 
 YAML_DOCUMENT_MARK = re.compile(r"(?:---|\.\.\.)(?:\s+#.*)?\s*")
 
@@ -48,16 +52,26 @@ def url_spans(text):
         cursor = end
 
 
+def _is_reference(text, match, spans):
+    start, end = match.span()
+    if any(s <= start < e for s, e in spans):
+        return False
+    if start and text[start - 1] == "/" and not _ID_END.search(text, 0, start - 1):
+        return False
+    return not (text[end:end + 1] == "/" and not _ID_START.match(text, end + 1))
+
+
 def find_references(pattern, text):
-    """Matches of pattern outside URLs."""
+    """Matches of pattern outside URLs and file paths."""
     spans = list(url_spans(text))
-    return [m for m in pattern.finditer(text) if not any(s <= m.start() < e for s, e in spans)]
+    return [m for m in pattern.finditer(text) if _is_reference(text, m, spans)]
 
 
 def sub_references(pattern, text, replace):
-    """pattern.sub outside URLs, in one pass (I-001 -> I-002 and I-002 -> I-003 do not chain)."""
+    """pattern.sub outside URLs and file paths, in one pass (I-001 -> I-002 and
+    I-002 -> I-003 do not chain)."""
     spans = list(url_spans(text))
-    return pattern.sub(lambda m: m.group() if any(s <= m.start() < e for s, e in spans) else replace(m), text)
+    return pattern.sub(lambda m: replace(m) if _is_reference(text, m, spans) else m.group(), text)
 
 
 def unique_object(pairs):

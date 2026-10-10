@@ -2720,7 +2720,9 @@ SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secre
                    r'access_key|private_key|credentials?|connection_string|(?<![A-Za-z])(?:pass|pwd|pw)))"?')
 # A key file path or a connection string without a password is no secret.
 NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|pem|p12|key)$"),
-                ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)", re.IGNORECASE)}
+                # Neither Password=... nor URI userinfo (postgres://user:pass@host).
+                ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)(?!.*://[^/@\s]*:[^/@\s]*@)",
+                                                   re.IGNORECASE)}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,

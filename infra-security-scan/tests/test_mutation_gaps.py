@@ -133,6 +133,7 @@ class RuleRecallTest(unittest.TestCase):
             self.expect("SEC-001", "main.tf", f'locals {{\n  {key} = "{value}"\n}}\n')
         self.expect("SEC-001", "terraform.tfvars", f'db_password = "{value}"\n')
         self.expect("SEC-001", "main.tf", f'locals {{\n  connection_string = "Server=a;Password={value}"\n}}\n')
+        self.expect("SEC-001", "main.tf", f'locals {{\n  connection_string = "postgres://admin:{value}@db/prod"\n}}\n')
         for key, text in (("bypass", value), ("credentials", "keys/account.json"),
                           ("connection_string", "Server=a;Database=b")):
             self.expect("SEC-001", "main.tf", f'locals {{\n  {key} = "{text}"\n}}\n', hit=False)

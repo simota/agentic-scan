@@ -24,7 +24,8 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 - `findings.py status <out>/findings.json` lists untriaged `I-*` findings and
   references to IDs that do not exist; `contract_check.py` fails on the latter (a
   standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
-  another tracker's keys in a URL, in `references`, or as `#AP-123`)
+  another tracker's keys in a URL, in `references`, or as `#AP-123`; an ID used as
+  a path component, as in `docs/F-001/`, is not a reference)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once
 

@@ -32,18 +32,25 @@ any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard) or `$` math; a blank optional
-field gets no row. The dashboard filters excluded findings separately from the
-severities, matching the counts; backslashes are shown as written
-(`docs\adr`), so they never escape a delimiter. The one exception is a
-backslash directly before a backtick, which is the author's escape: `` \` ``
-shows a literal backtick and no backslash.
-Both outputs are written to temporary files first and replace the previous
-pair only once both are complete.
-Exit codes: `0` written, `1` an output could not be written (the previous files
-are kept), `2` the record does not match the shape (the field is named).
+an e-mail address stays plain text, as in the dashboard) or `$` math.
+Backslashes are shown as written (`docs\adr`), so they never escape a
+delimiter; the one exception in `report.md` is a backslash directly before a
+backtick, the author's escape: `` \` `` shows a literal backtick and no
+backslash. The dashboard shows every recorded character verbatim. A blank
+optional field (including a rule's `reason`) gets no row in either output. The
+dashboard filters excluded findings separately from the severities, matching
+the counts.
+Both outputs are written to temporary files first; only when both are written
+are they moved into place, one after the other. A write error therefore keeps
+the previous pair; after any exit `1`, render again before `check`.
+Exit codes: `0` written, `1` an output could not be written, `2` the record
+does not match the shape or cannot be read (the field or file is named), or
+the command line is wrong.
 
-`findings.py check` exits `1` and lists every contract violation. All three
+`findings.py check` exits `1` and lists every contract violation. When
+`findings.json` itself fails the schema, it reports that first error (plus any
+missing or unexpected files) and stops, since the other rules need a valid
+record. All three
 required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
 `findings.json` in `meta.lang` — re-render after the last merge. It also requires:
@@ -52,6 +59,8 @@ be byte-identical to what `render.py` produces from the current
   finding not excluded cites a rule recorded as `violated` or `partly read`
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
+  and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
+  finding is not reported)
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
   (a path with a `.`, `/` or `\`, a build file such as `Makefile`, `BUILD` or
   `CODEOWNERS`, or a path or file name from the finding's own `location`, then
@@ -72,6 +81,10 @@ python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
 
 Merge semantics:
 
+- Every record is checked against the keys the schema knows: an unknown key
+  in a finding, `validation`, `analysis`, a reference, a rule or a perspective
+  (a typo such as `contrats`) is refused rather than kept and never shown.
+  `meta` accepts extra keys for run context the outputs do not show
 - `meta` updates key by key
 - `findings` and `rules` match by `id`: a known record is updated key by key
   (so a later fragment can add just `validation` to `A-003`), a new one is
@@ -87,7 +100,9 @@ Merge semantics:
   collision: two review units numbered the same ID, or a different finding at
   the same place. To correct a title or location, send only the changed fields
   (`{"findings": [{"id": "A-003", "title": "…"}]}`). Each unit numbers in its
-  own block (`A-101`…, `A-201`…); `renumber` compacts them
+  own block (`A-101`…, `A-201`…); `renumber` compacts them. IDs are always
+  `A-` and three digits, so blocks allow nine units of 99 findings each; a
+  unit with more continues in a free block, and a record holds at most 999
 
 ## Correcting the record
 
@@ -95,7 +110,9 @@ Never edit `findings.json` by hand; every correction is a fragment:
 
 - `null` removes an optional key: `{"findings": [{"id": "A-003", "analysis":
   null}]}`, `{"meta": {"method": null}}`, `{"rules": [{"id": "R-02", "reason":
-  null}]}`. A required key cannot be removed; replace its value instead
+  null}]}`. A required key (including `meta.project`, `scope`, `date`,
+  `assessor` and `lang`, which merge otherwise lets a fragment omit) cannot be
+  removed; replace its value instead
 - `remove` deletes exact items from the string lists before the fragment's own
   items are appended, so one fragment replaces an item: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
@@ -228,5 +245,5 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`. Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
-| `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons) |
-| `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |
+| `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (required nonblank: steps applied, steps left out with reasons). A perspective is replaced by sending it again, never removed |
+| `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional. Items in all four lists are nonblank strings |

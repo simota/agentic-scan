@@ -141,8 +141,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
 	for p in $(QSKILL)/scripts/*.py; do \
 	  [ -e "$$p" ] || continue; \
-	  $(PYTHON) -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$p" \
-	    || { echo "MISS $$p does not parse" >&2; fail=1; }; \
+	  $(PYTHON) -W error -c 'import ast,sys; ast.parse(open(sys.argv[1], encoding="utf-8").read(), sys.argv[1])' "$$p" \
+	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \
 	done; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
@@ -151,6 +151,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	      || { echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
 	  done; \
 	  cp "$$sample" "$$out/findings.json"; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py "$$out/findings.json" --out "$$out" >/dev/null \
+	    || { echo "MISS render.py fails on $$sample (meta.lang)" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py check "$$out" >/dev/null \
 	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
 	  rm -f "$$out"/*; \

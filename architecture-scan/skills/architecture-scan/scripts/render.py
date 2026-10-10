@@ -7,8 +7,9 @@ Both outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` follows the
 findings-report shape in `reference/report.md`.
 
-Exit codes: 0 written, 1 an output could not be written, 2 the record does not
-match the schema (the field is named on stderr).
+Exit codes: 0 written, 1 an output could not be written (render again before
+`findings.py check`), 2 the record cannot be read or does not match the schema
+(the file or field is named on stderr), or the command line is wrong.
 """
 import argparse
 import base64
@@ -176,17 +177,24 @@ def markdown_inline(value):
 
 
 # Leading whitespace (indented code) and the markers that open a block when
-# they start a line: heading, list, rule, setext, fence, link definition, task.
-BLOCK_START = re.compile(r"([ \t]*)([#*+=_~`\[-]|[0-9]{1,9}[.)])?")
+# they start a line: a heading, a list bullet (`*`, `+`, `-` before a blank), a
+# rule (three of `*`, `_` or `-`), a setext line, a fence, a link definition or
+# task box, an ordered item. `*em*` or `~~struck~~` at the start is inline, not
+# a block, so it is left alone.
+BLOCK_START = re.compile(
+    r"([ \t]*)(#|=|\[|[*+_-](?=[ \t]|$)|([*_-])(?=(?:[ \t]*\3){2,}[ \t]*$)|~~~|```"
+    r"|[0-9]{1,9}[.)])?")
 
 
 def block_safe(rendered):
     """Keep recorded text from opening a Markdown block where it starts a line."""
     match = BLOCK_START.match(rendered)
     indent, marker = match[1], match[2] or ""
-    if marker:
-        # Encoding the marker's last character is enough to break its syntax.
+    if marker[:1].isdigit():
+        # `12.` stops being an ordered item once its delimiter is encoded.
         marker = marker[:-1] + f"&#{ord(marker[-1])};"
+    elif marker:
+        marker = f"&#{ord(marker[0])};" + marker[1:]
     return "".join(f"&#{ord(char)};" for char in indent) + marker + rendered[match.end():]
 
 
@@ -303,7 +311,7 @@ def render_markdown(doc, lang):
                   "|---|---|---|---|"]
         for r in doc["rules"]:
             status = r["status"]
-            if r.get("reason"):
+            if filled(r, "reason"):
                 status += f"\n{t['reason']}: {r['reason']}"
             lines.append(f"| {cell(rule_id(r))} | {cell(rule_statement(r, lang))} | "
                          f"{cell(r['source'])} | {cell(status)} |")
@@ -429,7 +437,7 @@ def render_html(doc, lang):
                    f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>")
         for r in doc["rules"]:
             status = e(r["status"])
-            if r.get("reason"):
+            if filled(r, "reason"):
                 status += f"<br>{e(t['reason'])}: {e(r['reason'])}"
             out.append(f"<tr><td>{e(rule_id(r))}</td>"
                        f"<td>{e(rule_statement(r, lang))}</td><td>{e(r['source'])}</td>"

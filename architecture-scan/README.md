@@ -82,8 +82,9 @@ python3 skills/architecture-scan/scripts/findings.py check out   # exit 1 lists 
 
 `findings.py check` enforces the run contract: exactly these three files,
 gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
-`checked_ok` and `limitations`, cited rules that exist and are recorded as
-violated, evidence on every High and Medium finding, and a dashboard and
+`checked_ok` and `limitations`, cited rules that exist (a `Valid` or `Likely`
+finding cites one recorded as violated or partly read), traced and evidenced
+High and Medium findings, and a dashboard and
 report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape
 and consistency, not whether a finding is true.

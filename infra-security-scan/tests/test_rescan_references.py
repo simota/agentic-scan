@@ -277,7 +277,7 @@ class RescanReferencesTest(unittest.TestCase):
         data = self.scan()
         self.assertEqual(data["attack_paths"][0]["findings"], [])
         self.assertEqual(data["attack_paths"][0]["status"], "unknown")
-        self.assertIn("unmatched baseline reference I-002", data["attack_paths"][0]["note"])
+        self.assertIn("unmatched baseline number 002", data["attack_paths"][0]["note"])
 
     def test_same_rule_and_file_cannot_redirect_path_to_another_resource(self):
         self.seed_path(self.scan(), "I-001")

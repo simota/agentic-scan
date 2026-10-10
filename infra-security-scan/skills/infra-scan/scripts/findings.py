@@ -13,7 +13,7 @@ shell heredoc or a generated script). It may hold:
 - `findings`, `attack_paths` — matched by `id`: a known record is updated key
   by key (a key set to null is removed), a new one appended. `I-*` findings
   belong to iac_scan.py: a fragment may only update an existing one's
-  `validation` and `confidence`
+  `validation`, `confidence` and `condition`
 - `perspectives` — matched by `name`, replaced whole
 - `checked_ok`, `decisions`, `limitations`, `next_steps` — appended without
   duplicates
@@ -216,7 +216,7 @@ def apply(record, fragment):
 
 def merge(findings_path, fragment_paths):
     path = Path(findings_path)
-    record = render.load(path) if path.exists() else render.empty_record()
+    record = render.load_record(path) if path.exists() else render.empty_record()
     merged = copy.deepcopy(record)
     for frag_path in fragment_paths:
         fragment = render.load(frag_path)
@@ -232,7 +232,10 @@ def merge(findings_path, fragment_paths):
     return merged
 
 
-F_REFERENCE = re.compile(r"(?<![\w/.-])F-[0-9]{3,}(?![\w-])")
+# The same boundaries as render.RECORD_REFERENCE: an ID after "/ . = # ? &"
+# belongs to a URL or another tracker and is neither checked nor rewritten.
+REFERENCE_BEFORE = r"(?<![\w/.=#?&-])"
+F_REFERENCE = re.compile(REFERENCE_BEFORE + r"F-[0-9]{3,}(?![\w-])")
 
 
 def record_strings(record):
@@ -245,7 +248,8 @@ def record_strings(record):
                 yield from walk(item, where)
         elif isinstance(value, dict):
             for key, item in value.items():
-                yield from walk(item, f"{where}.{key}")
+                if key != "references":  # titles and URLs of external documents
+                    yield from walk(item, f"{where}.{key}")
     for key in ("findings", "attack_paths", "perspectives"):
         for item in record.get(key, []):
             if isinstance(item, dict):
@@ -256,7 +260,7 @@ def record_strings(record):
 
 def remove(findings_path, ids):
     path = Path(findings_path)
-    record = copy.deepcopy(render.load(path))
+    record = render.load_record(path)
     for rid in ids:
         if not (render.F_ID.match(rid) or render.AP_ID.match(rid)):
             raise Refused(f"{rid}: only F-* findings and AP-* attack paths can be removed; "
@@ -272,7 +276,7 @@ def remove(findings_path, ids):
                 other[link] = [x for x in other[link] if x != rid]
         # Prose mentioning the removed ID would later name whichever record
         # takes its number; make the author reword it first.
-        pattern = re.compile(r"(?<![\w/.-])" + re.escape(rid) + r"(?![\w-])")
+        pattern = re.compile(REFERENCE_BEFORE + re.escape(rid) + r"(?![\w-])")
         mentions = sorted({where for where, text in record_strings(record) if pattern.search(text)})
         if mentions:
             raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
@@ -285,7 +289,7 @@ def remove(findings_path, ids):
 def renumber(findings_path):
     """F-001… in severity order, then location; references follow in one pass."""
     path = Path(findings_path)
-    record = copy.deepcopy(render.load(path))
+    record = render.load_record(path)
     render.validate(record, partial=True)
     fs = [f for f in record["findings"] if render.F_ID.match(f["id"])]
     order = sorted(fs, key=lambda f: (render.SEV_RANK[f["severity"]], render.location_key(f["location"]),
@@ -302,7 +306,7 @@ def renumber(findings_path):
         if isinstance(value, list):
             return [rewrite(x) for x in value]
         if isinstance(value, dict):
-            return {k: rewrite(v) for k, v in value.items()}
+            return {k: v if k == "references" else rewrite(v) for k, v in value.items()}
         return value
 
     for key in ("findings", "attack_paths", "perspectives", *LISTS):
@@ -317,7 +321,7 @@ def renumber(findings_path):
 
 def status(findings_path):
     """What is left before contract_check: untriaged I-* and dangling references."""
-    record = render.load(findings_path)
+    record = render.load_record(findings_path)
     findings = [f for f in record.get("findings", []) if isinstance(f, dict)]
     open_items = [f for f in findings if str(f.get("id", "")).startswith("I-")
                   and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]

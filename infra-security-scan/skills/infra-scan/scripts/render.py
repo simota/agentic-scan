@@ -36,7 +36,7 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, SEVERITIES, STATE_FILE, STRING_LISTS,
-                    split_yaml_documents, unique_object)
+                    split_yaml_documents, unique_object, write_text_atomic)
 from iac_scan import _YamlSubset, is_export, literal, parse_hcl
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
@@ -53,15 +53,18 @@ AP_STATUSES = ("open", "blocked", "unknown")
 P_STATUSES = ("Applied", "N/A", "Not checked")
 INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
 # ASCII digits and \Z: "$" would accept a trailing newline and \d other scripts' digits.
-F_ID = re.compile(r"^F-([0-9]{3,})\Z")
-I_ID = re.compile(r"^I-([0-9]{3,})\Z")
-AP_ID = re.compile(r"^AP-([0-9]{2,})\Z")
+# Numbering starts at 1; nine digits bound int() well below Python's limit.
+F_ID = re.compile(r"^F-(?!0+\Z)([0-9]{3,9})\Z")
+I_ID = re.compile(r"^I-(?!0+\Z)([0-9]{3,9})\Z")
+AP_ID = re.compile(r"^AP-(?!0+\Z)([0-9]{2,9})\Z")
 # Repository paths may contain spaces and colons ("env prod/main.tf"); only
 # the trailing :line or :line-line is structure.
-LOCATION = re.compile(r"^(\S(?:.*\S)?):([0-9]+)(?:-([0-9]+))?\Z")
+LOCATION = re.compile(r"^(\S(?:.*\S)?):([0-9]{1,9})(?:-([0-9]{1,9}))?\Z")
 # A cited edge names a file: a path with an extension, or a known
 # extensionless file such as CODEOWNERS, Makefile or Dockerfile.
-CITED = re.compile(r"(?:[\w./@-]+\.[A-Za-z]\w*|(?:[\w.@-]+/)*(?:CODEOWNERS|[A-Z][A-Za-z]*file)):[0-9]+")
+# The lookbehind starts a match only at a path's first character: searching
+# from every offset of a long dotted word was quadratic.
+CITED = re.compile(r"(?<![\w./@-])(?:[\w./@-]+\.[A-Za-z]\w*|(?:[\w.@-]+/)*(?:CODEOWNERS|[A-Z][A-Za-z]*file)):[0-9]+")
 DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
 # Keys outside these sets are typos or fields no output shows; refuse them
@@ -117,11 +120,57 @@ def blank(value):
     return not isinstance(value, str) or not value.strip()
 
 
+MAX_DEPTH = 32  # a record nests about six levels; the tools copy and walk it recursively
+
+
+def depth(value):
+    """Nesting depth of parsed JSON, without recursion."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, (dict, list)):
+            deepest = max(deepest, level)
+            stack.extend((x, level + 1) for x in (item.values() if isinstance(item, dict) else item))
+    return deepest
+
+
 def load(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+        data = json.loads(Path(path).read_text(encoding="utf-8"), object_pairs_hook=unique_object)
     except (OSError, UnicodeError, ValueError, RecursionError) as e:
         raise SchemaError(f"{path}: {e}") from None
+    if depth(data) > MAX_DEPTH:
+        raise SchemaError(f"{path}: nested deeper than {MAX_DEPTH} levels")
+    return data
+
+
+def shape_problems(data):
+    """The structure every tool relies on before it reads a record at all."""
+    if not isinstance(data, dict):
+        return ["record: must be a JSON object"]
+    problems = []
+    for key in ("meta", "inventory"):
+        if key in data and not isinstance(data[key], dict):
+            problems.append(f"{key}: must be an object")
+    for key in RECORD_LISTS:
+        if key in data and not isinstance(data[key], list):
+            problems.append(f"{key}: must be a list")
+        elif key in ("findings", "attack_paths", "perspectives"):
+            for n, item in enumerate(data.get(key, [])):
+                if not isinstance(item, dict):
+                    problems.append(f"{key}[{n}]: must be an object")
+                elif key != "perspectives" and not isinstance(item.get("id"), str):
+                    problems.append(f"{key}[{n}]: id must be a string")
+    return problems
+
+
+def load_record(path):
+    """A findings.json whose structure the tools can walk; SchemaError otherwise."""
+    data = load(path)
+    problems = shape_problems(data)
+    if problems:
+        raise SchemaError(problems)
+    return data
 
 
 CWE = re.compile(r"^CWE-[0-9]+\Z")
@@ -137,6 +186,32 @@ def valid_date(value):
     return True
 
 
+def utf8(text):
+    try:
+        text.encode("utf-8")
+    except UnicodeEncodeError:
+        return False
+    return True
+
+
+def all_strings(data):
+    """(top-level key, text) for every key and string value, without recursion.
+
+    Only the top-level key is named: a nested key may itself be a credential.
+    """
+    stack = [(value, str(key)) for key, value in data.items()] if isinstance(data, dict) else []
+    while stack:
+        item, at = stack.pop()
+        if isinstance(item, str):
+            yield at, item
+        elif isinstance(item, list):
+            stack.extend((x, at) for x in item)
+        elif isinstance(item, dict):
+            for key, x in item.items():
+                yield at, str(key)
+                stack.append((x, at))
+
+
 def location_problem(location):
     """path:line or path:line-line, with lines counted from 1."""
     m = LOCATION.match(location)
@@ -149,35 +224,38 @@ def location_problem(location):
 
 
 # Not after "/", ".", "=", "#", "?" or "&": an ID inside a URL or query is not a reference.
-RECORD_REFERENCE = re.compile(r"(?<![\w/.=#?&-])(?:F-[0-9]{3,}|AP-[0-9]{2,})(?![\w-])")
+RECORD_REFERENCE = re.compile(r"(?<![\w/.=#?&-])(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})(?![\w-])")
 
 
 def dangling_references(data):
-    """[(where, ID)] for F-* and AP-* IDs named in prose that no record has.
+    """[(where, ID)] for F-*, AP-* and I-* IDs named in prose that no record has.
 
-    After renumbering or removal, a stale ID would silently name another
-    record. URLs are not prose: an ID after "/" or "." is ignored.
+    After renumbering, removal or a rescan, a stale ID would silently name
+    another record. URLs are not prose: an ID after "/" or "." is ignored, and
+    so are external references. The limitations iac_scan.py writes name
+    baseline IDs from earlier scans on purpose.
     """
     known = {f.get("id") for f in data.get("findings", []) if isinstance(f, dict)}
     known |= {a.get("id") for a in data.get("attack_paths", []) if isinstance(a, dict)}
     out = []
 
-    def walk(value, where):
+    def walk(value, where, baseline=True):
         if isinstance(value, str):
-            out.extend((where, m.group()) for m in RECORD_REFERENCE.finditer(value) if m.group() not in known)
+            out.extend((where, m.group()) for m in RECORD_REFERENCE.finditer(value)
+                       if m.group() not in known and (baseline or not m.group().startswith("I-")))
         elif isinstance(value, list):
             for item in value:
-                walk(item, where)
+                walk(item, where, baseline)
         elif isinstance(value, dict):
             for key, item in value.items():
-                if key != "id":
-                    walk(item, f"{where}.{key}")
+                if key not in ("id", "references"):
+                    walk(item, f"{where}.{key}", baseline)
     for key in ("findings", "attack_paths", "perspectives"):
         for item in data.get(key, []):
             if isinstance(item, dict):
                 walk(item, str(item.get("id") or item.get("name") or key))
     for key in STRING_LISTS:
-        walk(data.get(key, []), key)
+        walk(data.get(key, []), key, baseline=key != "limitations")
     return out
 
 
@@ -236,11 +314,27 @@ def validate(data, partial=False):
                 elif set(item) - INPUT_KEYS:
                     add(f"meta.inputs[{i}]: unknown keys {sorted(set(item) - INPUT_KEYS)}; "
                         "put capture times and other details in note")
+                elif not isinstance(item["path"], str) or not isinstance(item.get("note", ""), str):
+                    add(f"meta.inputs[{i}]: path and note must be strings")
 
     if "inventory" in data and not isinstance(data["inventory"], dict):
         add("inventory: must be an object")
-    elif isinstance(data.get("inventory"), dict) and set(data["inventory"]) - INVENTORY_KEYS:
-        add(f"inventory: unknown keys {sorted(set(data['inventory']) - INVENTORY_KEYS)}")
+    elif isinstance(data.get("inventory"), dict):
+        inv = data["inventory"]
+        if set(inv) - INVENTORY_KEYS:
+            add(f"inventory: unknown keys {sorted(set(inv) - INVENTORY_KEYS)}")
+        for key in ("resources", "files"):
+            if key in inv and (type(inv[key]) is not int or inv[key] < 0):
+                add(f"inventory.{key}: must be a count")
+        if "by_provider" in inv and not (isinstance(inv["by_provider"], dict) and all(
+                type(v) is int for v in inv["by_provider"].values())):
+            add("inventory.by_provider: must map providers to counts")
+        if "not_run" in inv and not (isinstance(inv["not_run"], list) and all(
+                isinstance(x, str) for x in inv["not_run"])):
+            add("inventory.not_run: must be a list of strings")
+    unencodable = sorted({where for where, text in all_strings(data) if not utf8(text)})
+    if unencodable:
+        add(f"record: text with a lone surrogate (not valid UTF-8) in {', '.join(unencodable)}")
 
     findings = data.get("findings", [])
     if not isinstance(findings, list):
@@ -324,8 +418,12 @@ def validate(data, partial=False):
                 continue
             if set(ref) - REFERENCE_KEYS:
                 add(f"{where}: references[{i}] unknown keys {sorted(set(ref) - REFERENCE_KEYS)}")
-            u = urlparse(ref["url"])
-            if u.scheme != "https" or not u.hostname or "@" in u.netloc:
+            try:
+                u = urlparse(ref["url"])
+                hostname = u.hostname
+            except (ValueError, AttributeError):
+                u, hostname = None, None
+            if u is None or u.scheme != "https" or not hostname or "@" in u.netloc:
                 add(f"{where}: references[{i}] must be an https URL without credentials")
         val = f.get("validation")
         if not isinstance(val, dict) or val.get("verdict") not in VERDICTS:
@@ -535,8 +633,13 @@ DISPLAY = {
 }
 
 
+# Bidirectional controls can make a path or ID display as something else.
+BIDI = re.compile("[\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
+
+
 def esc(value):
-    return html.escape("" if value is None else str(value), quote=True)
+    text = html.escape("" if value is None else str(value), quote=True)
+    return BIDI.sub(lambda m: f"[U+{ord(m.group()):04X}]", text)
 
 
 def shown(value, lang):
@@ -593,7 +696,7 @@ def counts(data):
 SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
                             + STATE_FILE.pattern + r"|\.env\.[^/]*$|\.envrc$|secret|credential|"
                             r"id_(rsa|dsa|ecdsa|ed25519)|netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
-                            r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
+                            r"\.dockercfg|(^|/)\.docker/config\.json$|htpasswd|(^|/)g?shadow-?$", re.IGNORECASE)
 
 
 def hcl_declares_sensitive(text):
@@ -1243,7 +1346,7 @@ def main(argv=None):
     p.add_argument("--repo", help="assessed repository root: embeds redacted source excerpts for path:line locations")
     a = p.parse_args(argv)
     try:
-        data = load(a.findings)
+        data = load_record(a.findings)
         validate(data)
     except SchemaError as e:
         for problem in e.problems:
@@ -1257,11 +1360,15 @@ def main(argv=None):
         return 2
     sources = attach_sources(data, a.repo) if a.repo else {}
     pdf, assessment = out / "assessment.pdf", out / "assessment.html"
+    # Build both pages before touching the output directory, so a failure
+    # leaves the previous outputs as they were.
+    dashboard = render_dashboard(data, L, a.lang, sources)
+    page = render_assessment(data, L, a.lang, sources)
     try:
         out.mkdir(parents=True, exist_ok=True)
         pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
-        (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
-        assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
+        write_text_atomic(out / "dashboard.html", dashboard)
+        write_text_atomic(assessment, page)
     except OSError as e:
         print(f"render: cannot write {out}: {e.strerror or e}", file=sys.stderr)
         return 2
@@ -1273,7 +1380,11 @@ def main(argv=None):
             print(f"wrote {pdf} ({engine})")
         else:
             note = L["pdf_failed"] if failed else L["pdf_missing"]
-            assessment.write_text(render_assessment(data, L, a.lang, sources, note), encoding="utf-8")
+            try:
+                write_text_atomic(assessment, render_assessment(data, L, a.lang, sources, note))
+            except OSError as e:
+                print(f"render: cannot write {assessment}: {e.strerror or e}", file=sys.stderr)
+                return 2
             print(f"warning: {note}" + (f" Tried: {', '.join(failed)}" if failed else ""), file=sys.stderr)
     return 0
 

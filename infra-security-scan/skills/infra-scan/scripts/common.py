@@ -56,12 +56,22 @@ def split_yaml_documents(lines):
 
 
 def write_json_atomic(path, data, *, mkdir=False):
-    """Replace path with JSON in one rename, keeping the file's mode.
+    """Replace path with JSON in one rename, keeping the file's mode."""
+    write_text_atomic(path, json.dumps(data, ensure_ascii=False, indent=2) + "\n", mkdir=mkdir)
+
+
+def write_text_atomic(path, text, *, mkdir=False):
+    """Replace path with UTF-8 text in one rename, keeping the file's mode.
 
     A new file gets the umask default rather than mkstemp's 0600. A symlink is
-    refused rather than replaced or written through.
+    refused rather than replaced or written through. Text that cannot be
+    encoded (a lone surrogate) raises OSError before anything is touched.
     """
     path = Path(path)
+    try:
+        data = text.encode("utf-8")
+    except UnicodeEncodeError:
+        raise OSError(f"{path}: text contains a lone surrogate and cannot be written as UTF-8") from None
     if path.is_symlink():
         raise OSError(f"{path} is a symlink; refusing to replace it")
     if mkdir:
@@ -75,9 +85,8 @@ def write_json_atomic(path, data, *, mkdir=False):
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     try:
         os.chmod(tmp, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
+        with os.fdopen(fd, "wb") as fh:
+            fh.write(data)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)

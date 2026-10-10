@@ -64,7 +64,9 @@ def check(data, out_dir, pdf=True, allow=()):
     numbers = [int(F_ID.match(f["id"]).group(1)) for f in by_id]
     if numbers != list(range(1, len(fs) + 1)):
         add(f"F-*: IDs must run F-001..F-{len(fs):03d} without gaps; found {[f['id'] for f in by_id]}")
-    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9), render.location_key(f.get("location"))))
+    # Ties keep ID order: two findings at one location may take either ID.
+    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9),
+                                         render.location_key(f.get("location")), render.id_key(f["id"])))
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "
             + ", ".join(f"{f['id']}={f.get('severity')}@{f.get('location')}" for f in expected))
@@ -126,7 +128,7 @@ def main(argv=None):
     try:
         if not out.is_dir():
             raise render.SchemaError(f"{out}: not a directory")
-        data = render.load(out / "findings.json")
+        data = render.load_record(out / "findings.json")
     except render.SchemaError as e:
         print(f"unreadable: {e}", file=sys.stderr)
         return 2

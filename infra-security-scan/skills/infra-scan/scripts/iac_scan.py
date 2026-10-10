@@ -2774,13 +2774,22 @@ def walk(root, scan, prefix=""):
             if d in SKIP_DIRS:
                 continue
             if full.is_symlink():
-                scan.not_run.append(f"symlink skipped: {prefix}{full.relative_to(root).as_posix()}")
+                shown = full.relative_to(root).as_posix().encode("utf-8", "surrogateescape").decode(
+                    "utf-8", "backslashreplace")
+                scan.not_run.append(f"symlink skipped: {prefix}{shown}")
                 continue
             keep.append(d)
         dirnames[:] = keep
         for f in sorted(filenames):
             full = base / f
             rel = prefix + full.relative_to(root).as_posix()
+            try:
+                rel.encode("utf-8")
+            except UnicodeEncodeError:
+                # Locations and the record are UTF-8; such a path cannot be cited.
+                shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+                scan.not_run.append(f"file name is not UTF-8, skipped: {shown}")
+                continue
             if full.is_symlink():
                 scan.not_run.append(f"symlink skipped: {rel}")
             elif full.is_file():
@@ -3039,17 +3048,16 @@ def remap_baseline_references(data, old, new):
                 and set(resources) <= set(replacement.get("resources", [])):
             replacements[fid] = replacement["id"]
 
-    def removed_label(fid, evidence=False):
+    def removed_label(fid):
         key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
         if key:
             label = f"{key[0]} at {key[1]}"
             if key in new_by_key:
                 label += " (affected resources changed)"
             return label
-        # Do not leave a live-looking I-ID in rewritten evidence: it could be
+        # Do not leave a live-looking I-ID in rewritten text: it could be
         # assigned to an unrelated hit on the next scan.
-        return (f"unmatched baseline number {fid[2:]}" if evidence
-                else f"unmatched baseline reference {fid}")
+        return f"unmatched baseline number {fid[2:]}"
 
     def rewrite_carried(evidence):
         """Renumber I-IDs in carried I-* evidence in one pass, as for F-* below."""
@@ -3061,7 +3069,7 @@ def remap_baseline_references(data, old, new):
                 return fid
             if fid in replacements:
                 return replacements[fid]
-            return f"[removed baseline: {removed_label(fid, evidence=True)}]"
+            return f"[removed baseline: {removed_label(fid)}]"
         return BASELINE_REFERENCE.sub(replace, evidence)
 
     carry_triage(data, old_by_id, replacements, new, rewrite_carried)
@@ -3083,7 +3091,7 @@ def remap_baseline_references(data, old, new):
                 return fid
             if fid in replacements:
                 return replacements[fid]
-            label = removed_label(fid, evidence=True)
+            label = removed_label(fid)
             if label not in removed:
                 removed.append(label)
             return f"[removed baseline: {label}]"

@@ -457,6 +457,13 @@ CLIENT_PASSWORD = re.compile(r"(?<!\S)(-p|-P|-a)(?=\S)(\S+)")
 SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
+# A secret piped into a command that reads it from stdin precedes the keyword
+# (echo X | docker login --password-stdin), so the keyword check misses it.
+STDIN_SINK = re.compile(r"--password-stdin|\bchpasswd\b|\bpasswd\b|--stdin\b")
+PIPED_VALUE = re.compile(r"\b((?:echo|printf)\s+(?:-[a-zA-Z]+\s+)*)([^|\s][^|]*?)(\s*\|)")
+# crypt(3), htpasswd and bcrypt hashes: crackable offline, and their "." and
+# "/" split them into runs too short for the entropy check.
+CRYPT_HASH = re.compile(r"\$(?:1|2[abxy]?|5|6|y|apr1|argon2(?:id|i|d))\$[^\s:'\"]+")
 PUTTY = re.compile(r"PuTTY-User-Key-File-\d|^\s*Private-Lines:", re.IGNORECASE)
 
 
@@ -496,6 +503,9 @@ def scrub_line(line, syntax="hcl"):
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
     line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = CRYPT_HASH.sub("[redacted]", line)
+    if STDIN_SINK.search(line):
+        line = PIPED_VALUE.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), line)
     if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere
         line = CLIENT_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)

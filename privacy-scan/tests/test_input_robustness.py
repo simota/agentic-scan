@@ -113,3 +113,43 @@ class StatusOutputTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewFollowUpTests(unittest.TestCase):
+    def render_into(self, out):
+        (out / "findings.json").write_text(json.dumps(complete_doc()), encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            render.main([str(out / "findings.json"), "--out", str(out)])
+
+    def test_staging_files_beside_symlink_targets_are_found(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            out, stored = root / "out", root / "stored [v1]"
+            out.mkdir()
+            stored.mkdir()
+            self.render_into(out)
+            # report.md becomes a link to a differently named file in another directory.
+            (out / "report.md").replace(stored / "assessment.md")
+            (out / "report.md").symlink_to(stored / "assessment.md")
+            (stored / ".assessment.md.k2j3_x.tmp").write_text("partial", encoding="utf-8")
+            # Inside the output directory, a linked target's staging file is named after it.
+            (out / "dashboard.html").replace(out / "board.html")
+            (out / "dashboard.html").symlink_to(out / "board.html")
+            (out / ".board.html.q9_z.tmp").write_text("partial", encoding="utf-8")
+            problems = findings.contract_problems(out, allow=["board.html"])
+            self.assertIn("stale staging file from an interrupted write: "
+                          f"{stored / '.assessment.md.k2j3_x.tmp'} (delete it)", problems)
+            self.assertIn("stale staging file from an interrupted write: .board.html.q9_z.tmp "
+                          "(delete it)", problems)
+            self.assertFalse(any("--allow .board" in p for p in problems), problems)
+
+    def test_malformed_steps_are_refused(self):
+        for step in ("LT2 extra", "lt2", "logs"):
+            with self.subTest(step=step):
+                doc = complete_doc()
+                doc["findings"][0]["step"] = step
+                self.assertTrue(any(p.startswith("PV-001.step: must be one hunt step ID")
+                                    for p in findings.record_problems(doc)))
+        doc = complete_doc()
+        doc["findings"][0]["step"] = " "
+        self.assertEqual(findings.record_problems(doc), [])

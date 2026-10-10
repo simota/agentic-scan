@@ -134,8 +134,6 @@ REFERENCE_KEYS = {"title", "url"}
 COMMITMENT_KEYS = {"id", "statement", "source", "status", "family", "inferred", "reason"}
 PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
-# Temporary files output_io stages beside a destination (`.report.md.abc123.tmp`).
-STAGING = re.compile(r"\.(?:findings\.json|dashboard\.html|report\.md)\.[^/]+\.tmp")
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 # Bounded so a long digit run cannot pass as an exempt technical identifier.
 COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
@@ -705,10 +703,12 @@ def contract_problems(out, allow=()):
         return ["output directory is not readable"]
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
+    staging = _staging_files(out, present)
+    for path in sorted(staging):
+        shown = path.name if path.parent == out.resolve() else str(path)
+        problems.append(f"stale staging file from an interrupted write: {shown} (delete it)")
     for name in sorted(present - OUTPUTS - set(allow)):
-        if STAGING.fullmatch(name):
-            problems.append(f"stale staging file from an interrupted write: {name} (delete it)")
-        else:
+        if (out / name).resolve() not in staging:
             problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     unusable = set()
     for name in sorted(OUTPUTS & present):
@@ -733,6 +733,33 @@ def contract_problems(out, allow=()):
     except SchemaError as exc:
         return problems + [f"findings.json: {exc}"]
     return problems + record_problems(doc) + _stale_outputs(out, doc, unusable | (OUTPUTS - present))
+
+
+def _staging_files(out, present):
+    """Find leftover staging files beside each output's resolved destination.
+
+    output_io stages `.NAME.<random>.tmp` next to the file it replaces, and a
+    symlinked output is replaced at its target, possibly elsewhere or renamed.
+    """
+    found = set()
+    for name in OUTPUTS:
+        destinations = {out / name}
+        if name in present:
+            try:
+                destinations.add((out / name).resolve())
+            except (OSError, RuntimeError):
+                pass
+        for destination in destinations:
+            prefix = f".{destination.name}."
+            try:
+                # Plain name matching: a target name may contain glob characters.
+                candidates = [path for path in destination.parent.iterdir()
+                              if path.name.startswith(prefix) and path.name.endswith(".tmp")
+                              and len(path.name) > len(prefix) + len(".tmp")]
+            except OSError:
+                continue
+            found.update(path.resolve() for path in candidates if path.is_file())
+    return found
 
 
 def _first_path(f):
@@ -773,8 +800,12 @@ def record_problems(doc):
             problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
                             "one finding per fix location: merge them or anchor each at its own fix site")
         first_seen.setdefault(location[0], f["id"])
-        step = STEP_ID.fullmatch(f.get("step", "").strip())
-        if step and step.group(1) != STEP_PREFIXES[f["category"]]:
+        written = f.get("step", "").strip()
+        step = STEP_ID.fullmatch(written)
+        if written and not step:
+            problems.append(f"{f['id']}.step: must be one hunt step ID such as "
+                            f"{STEP_PREFIXES[f['category']]}1, or omitted")
+        elif step and step.group(1) != STEP_PREFIXES[f["category"]]:
             problems.append(f"{f['id']}.step: {step.group(0)} is not a step of {f['category']} "
                             f"({STEP_PREFIXES[f['category']]}…); fix the step or the category")
     ledger = {r["id"] for r in doc.get("commitments", [])}

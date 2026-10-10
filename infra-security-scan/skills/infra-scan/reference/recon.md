@@ -23,13 +23,14 @@ Its `not_run` list goes into `limitations` as-is.
 
 The baseline reads Terraform/OpenTofu (`.tf`, `.tfvars`, `.tfvars.json`), plan
 JSON, CloudFormation and SAM (`.json`, `.yaml`, `.template`; a `Transform` is
-not expanded), Kubernetes manifests, `terragrunt.hcl` (module source and
+not expanded), Kubernetes manifests, Terragrunt files (module source and
 literal secrets only) and the exports in `reference/snapshots.md`. It names, but
 does not evaluate, Terraform JSON, Kustomizations, unrendered Helm templates,
 Serverless Framework and Pulumi files, other `.hcl` and export shapes without
 rules: render or review those by hand (`helm template`, `kustomize build`,
 `sam validate`). Tool caches (`.terraform`, `.terragrunt-cache`, `.aws-sam`,
-`.serverless`) are skipped as copies.
+`node_modules`) are skipped as copies and named; Serverless Framework's compiled
+`.serverless/` template is read.
 
 The Terraform baseline merges `override.tf` and `*_override.tf` after ordinary
 `.tf` files, in filename order within each module directory. Attribute and

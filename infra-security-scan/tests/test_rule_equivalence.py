@@ -133,7 +133,11 @@ class TerraformBooleanTest(ScanCase):
                 with self.subTest(case=name, value=value):
                     scan = self.scan(self.config(type_, body, value))
                     self.assertEqual(scan.hits, [])
-                    self.assertEqual(scan.not_run, [])
+                    # An unresolved private endpoint with no authorized networks
+                    # decides the finding, so it is named rather than skipped.
+                    self.assertEqual([n.split(";")[0] for n in scan.not_run],
+                                     ["GCP-GKE-001: unknown enable_private_endpoint and no authorized networks"]
+                                     if name == "gke_endpoint" else [])
 
     def test_null_and_omitted_bools_keep_the_existing_defaults(self):
         for name, type_, body, _, rule, missing_unsafe in self.CASES:

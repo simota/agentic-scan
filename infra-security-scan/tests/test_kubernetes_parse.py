@@ -165,7 +165,8 @@ metadata: {name: agent}
 spec: &unsupported {hostNetwork: true}
 """)
         self.assertEqual(scan.files, [{"path": "manifest.yaml", "kind": "kubernetes"}])
-        self.assertEqual(scan.resources, [])
+        # Inventoried from its headers so it still belongs to a review unit.
+        self.assertEqual([(r["address"], r["line"]) for r in scan.resources], [("k8s:Pod/agent", 3)])
         self.assertEqual(scan.hits, [])
         self.assertEqual(len(scan.not_run), 1)
         self.assertIn("kubernetes YAML rules not applied", scan.not_run[0])

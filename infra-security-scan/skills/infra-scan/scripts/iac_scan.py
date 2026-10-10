@@ -811,9 +811,15 @@ class Scan:
         self.local_module_dirs = set()
         # Account- or org-level settings that change what an omitted
         # argument means, per module directory (see collect_context).
-        self.imds_required_dirs, self.ebs_default_dirs, self.gcs_pap_dirs = set(), set(), set()
-        self.pap_orgs, self.orgs_seen = set(), set()
+        self.imds_required_dirs, self.ebs_default_dirs = set(), set()
+        # {constraint: {"orgs": org IDs, "dirs": {(dir, project or None)}}} for
+        # enforced storage org policies.
+        self.gcs_org_policies, self.orgs_seen = {}, set()
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
+        self.k8s_bindings, self.k8s_wildcard_roles = [], set()
+        # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
+        # project/folder/organization policy that applies it.
+        self.gcp_policy_data = {}
         self.admin_policy_data = set()  # (dir, name) of data "aws_iam_policy" naming AdministratorAccess
         self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
@@ -907,16 +913,25 @@ class Scan:
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
         return None
 
-    def gcp_iam(self, res, role, members, line, service_agent=False):
+    def gcp_iam(self, res, role, members, line, service_agent=None, raw="", scope_only=False):
+        """service_agent: every member is a Google-managed agent (computed here when
+        None); raw: the member's source text when it is templated; scope_only: only
+        the scope rule (the bindings were checked at their google_iam_policy data source)."""
+        if service_agent is None:
+            service_agent = bool(members) and all(isinstance(m, str) and SERVICE_AGENT.search(m) for m in members)
+        unresolved = role is UNKNOWN or UNKNOWN in members
+        if unresolved and not service_agent and not scope_only:
+            self.not_run.append(f"GCP-IAM: role or members unresolved; checks not run: {res.file}:{line} "
+                                f"({res.address})")
         role_text = role if isinstance(role, str) else "a role"
         public = [m for m in members if m in ("allUsers", "allAuthenticatedUsers")]
-        if public:
+        if public and not scope_only:
             self.hit("GCP-IAM-001", res, line, f"{role_text} granted to {public[0]}")
         # Google-managed service agents receive token-creator and, for the Google
         # APIs agent (@cloudservices), roles/editor by design; owner is never default.
-        agent_default = service_agent and (
-            role == "roles/editor" and all(isinstance(m, str) and "@cloudservices." in m for m in members))
-        if role in ("roles/owner", "roles/editor") and not agent_default:
+        agent_default = service_agent and role == "roles/editor" and all(
+            "@cloudservices." in (m if isinstance(m, str) else raw) for m in members)
+        if role in ("roles/owner", "roles/editor") and not agent_default and not scope_only:
             self.hit("GCP-IAM-002", res, line, f"{role} granted")
         if role in ("roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser") and not service_agent and \
                 res.type.startswith(("google_project_iam_", "google_folder_iam_",
@@ -930,8 +945,15 @@ class Scan:
         # to ingress, so known source ranges settle it.
         if direction not in (None, "INGRESS") and not (direction is UNKNOWN and ranges not in (None, UNKNOWN)):
             return
-        if ranges is None and all(src in (None, []) for src in other_sources):
-            ranges = ["0.0.0.0/0"]  # GCP: an ingress rule with no source applies to every source
+        if ranges in (None, []) and all(src in (None, []) for src in other_sources):
+            # GCP: an ingress rule with no source applies to every source; an
+            # empty list is not sent to the API, so it means the same.
+            ranges = ["0.0.0.0/0"]
+        if ranges is UNKNOWN or (isinstance(ranges, list) and UNKNOWN in ranges):
+            if any(proto is not None for proto, _ in allows):
+                self.not_run.append(f"GCP-NET-001: source ranges unresolved; check not run: "
+                                    f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
+            return
         open_from = world_cidrs(ranges)
         if not open_from:
             return
@@ -952,8 +974,8 @@ class Scan:
                 if span:
                     found += sensitive_ports("tcp", *span)
             if found:
-                self.hit("GCP-NET-001", res, line,
-                         f"ingress from {open_from[0]} to {', '.join(sorted(set(found))[:5])}")
+                ordered = sorted(set(found), key=lambda p: int(p.split("/")[0]) if p.split("/")[0].isdigit() else 0)
+                self.hit("GCP-NET-001", res, line, f"ingress from {open_from[0]} to {', '.join(ordered[:5])}")
                 return
 
 
@@ -1103,6 +1125,75 @@ def tf_bool(value):
     return UNKNOWN
 
 
+def without_block(text, name):
+    """text with every `name { ... }` block removed (braces counted)."""
+    while (m := re.search(rf"\b{name}\s*\{{", text)):
+        depth, i = 0, m.end() - 1
+        while i < len(text):
+            depth += {"{": 1, "}": -1}.get(text[i], 0)
+            i += 1
+            if depth == 0:
+                break
+        text = text[:m.start()] + text[i:]
+    return text
+
+
+def org_policy_enforced(scan, constraint, res):
+    """An enforced org policy in the inputs covers this bucket."""
+    policies = scan.gcs_org_policies.get(constraint)
+    if not policies:
+        return False
+    if policies["orgs"] and scan.orgs_seen <= policies["orgs"] and len(scan.orgs_seen) == 1:
+        return True
+    project = res.view.get("project") if res.view else None
+    here = {p for d, p in policies["dirs"] if d == res.dir}
+    # A project policy covers a bucket of that project; one whose project is
+    # not set in the module may be the provider's default project.
+    return None in here or project in here or (bool(here) and not isinstance(project, str))
+
+
+def default_service_account(email, raw=None):
+    """An omitted, "default" or *-compute@developer email, written out or referenced."""
+    if email is None or email == "default" or (isinstance(email, str) and DEFAULT_SA.search(email)):
+        return True
+    raw = raw or ""
+    return email is UNKNOWN and (DEFAULT_SA.search(raw.replace('"', "")) is not None or
+                                 "data.google_compute_default_service_account." in raw)
+
+
+def gce_metadata(scan, res, meta, line):
+    if not isinstance(meta, dict):
+        return
+    gaps = []
+    if str(meta.get("serial-port-enable")).lower() in ("true", "1"):
+        gaps.append("serial-port-enable = true")
+    if str(meta.get("block-project-ssh-keys")).lower() == "false":
+        gaps.append("block-project-ssh-keys = false")
+    if gaps:
+        scan.hit("GCP-GCE-002", res, line, "; ".join(gaps))
+
+
+def gke_node_config(scan, res, configs, default_pool=True):
+    """Nodes run as the default compute service account unless node_config names
+    another; GCE_METADATA exposes the node's metadata server to pods."""
+    # A cluster without node_config often removes its default pool or is
+    # managed by node pools elsewhere; only a node pool's omission is certain.
+    if not configs and default_pool and res.type == "google_container_node_pool":
+        scan.hit("GCP-GCE-001", res, res.line, "GKE nodes as the default compute service account")
+    for config in configs:
+        if config.known_present is False:
+            continue
+        if default_service_account(config.get("service_account"), config.raw("service_account")):
+            scopes = lower_strs(aslist(config.get("oauth_scopes")))
+            full = any(s.endswith("cloud-platform") for s in scopes)
+            scan.hit("GCP-GCE-001", res, config.line(), "GKE nodes as the default compute service account"
+                     + (" with cloud-platform scope" if full else ""))
+        for wmc in config.blocks("workload_metadata_config"):
+            if wmc.get("mode") == "GCE_METADATA":
+                scan.hit("GCP-GKE-001", res, wmc.line("mode"), "workload_metadata_config mode = GCE_METADATA "
+                         "(pods reach the node's metadata server)", "Medium")
+
+
 def check_tf_shared(scan, res):
     """Rules that apply across several resource types, ahead of the per-type chain."""
     t, v = res.type, res.view
@@ -1143,6 +1234,12 @@ def check_tf_shared(scan, res):
         public = [e for e in entities if e.endswith((":allUsers", ":allAuthenticatedUsers"))]
         if public:
             scan.hit("GCP-GCS-002", res, v.line("role_entity"), f"role_entity {public[0]}")
+    if t in ("google_storage_bucket_access_control", "google_storage_default_object_access_control",
+             "google_storage_object_access_control") and v.get("entity") in ("allUsers", "allAuthenticatedUsers"):
+        scan.hit("GCP-GCS-002", res, v.line("entity"), f"{v.get('role')} granted to {v.get('entity')}")
+    if t == "google_cloud_run_v2_service" and tf_bool(v.get("invoker_iam_disabled")) is True:
+        scan.hit("GCP-IAM-001", res, v.line("invoker_iam_disabled"),
+                 "invoker_iam_disabled = true: anyone can invoke the service")
     if t in ("google_bigquery_dataset", "google_bigquery_dataset_access"):
         grants = v.blocks("access") if t == "google_bigquery_dataset" else [v]
         for grant in grants:
@@ -1294,6 +1391,16 @@ def check_tf(scan, res):
         allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
         scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
                       v.get("source_ranges"), allows, (v.get("source_tags"), v.get("source_service_accounts")))
+    elif t in ("google_compute_firewall_policy_rule", "google_compute_network_firewall_policy_rule",
+               "google_compute_region_network_firewall_policy_rule"):
+        # Hierarchical and network firewall policies: match { src_ip_ranges, layer4_configs }.
+        if v.get("action") == "allow":
+            for match in v.blocks("match"):
+                allows = [(l4.get("ip_protocol"), l4.get("ports")) for l4 in match.blocks("layer4_configs")]
+                others = (match.blocks("src_secure_tags") or None, *(match.get(k) for k in (
+                    "src_address_groups", "src_fqdns", "src_region_codes", "src_threat_intelligences")))
+                scan.firewall(res, match.line(), v.get("direction"), tf_bool(v.get("disabled")),
+                              match.get("src_ip_ranges"), allows, others)
     elif GCP_IAM.match(t):
         members = [v.get("member")] if v.get("member") is not None else aslist(v.get("members"))
         # Every member must be a Google-managed agent; a templated single member
@@ -1302,8 +1409,16 @@ def check_tf(scan, res):
         agents = bool(members) and all(
             (isinstance(m, str) and SERVICE_AGENT.search(m)) or (m is UNKNOWN and SERVICE_AGENT.search(raw))
             for m in members)
-        scan.gcp_iam(res, v.get("role"), members, v.line("role"), service_agent=agents)
+        role = v.get("role")
+        each = role is UNKNOWN and (v.raw("role") or "").strip() in ("each.value", "each.key")
+        roles = [r for r in aslist(v.get("for_each")) if isinstance(r, str)] if each else []
+        # for_each = toset(["roles/owner", ...]) with role = each.value, as the iam modules write it.
+        for role in roles or [role]:
+            scan.gcp_iam(res, role, members, v.line("role"), service_agent=agents, raw=raw)
     elif GCP_IAM_POLICY.match(t):
+        source = re.fullmatch(r"\s*data\.google_iam_policy\.([\w-]+)\.policy_data\s*", v.raw("policy_data") or "")
+        for role, members, line in scan.gcp_policy_data.get((res.dir, source.group(1)), []) if source else []:
+            scan.gcp_iam(res, role, members, line, scope_only=True)
         data = v.get("policy_data")
         if isinstance(data, str):
             try:
@@ -1321,12 +1436,12 @@ def check_tf(scan, res):
         scan.hit("GCP-IAM-003", res, res.line, "google_service_account_key resource")
     elif t == "google_storage_bucket":
         gaps = []
-        if tf_bool(v.get("uniform_bucket_level_access")) in (False, None):
+        if tf_bool(v.get("uniform_bucket_level_access")) in (False, None) and \
+                not org_policy_enforced(scan, "storage.uniformBucketLevelAccess", res):
             gaps.append("uniform_bucket_level_access not true")
         pap = v.get("public_access_prevention")
         # "inherited" (the default) is enforced when the org policy in the inputs enforces it.
-        org_wide = bool(scan.pap_orgs) and scan.orgs_seen <= scan.pap_orgs and len(scan.orgs_seen) == 1
-        inherited = pap in (None, "inherited") and (org_wide or res.dir in scan.gcs_pap_dirs)
+        inherited = pap in (None, "inherited") and org_policy_enforced(scan, "storage.publicAccessPrevention", res)
         if not inherited and (pap is None or (isinstance(pap, str) and pap != "enforced")):
             gaps.append("public_access_prevention not enforced")
         if gaps:
@@ -1347,26 +1462,34 @@ def check_tf(scan, res):
                 if ipv4_enabled in (True, None) and require_ssl in (False, None) and \
                         (ipc.get("ssl_mode") is None or ipc.get("ssl_mode") not in (*SSL_MODES, UNKNOWN)):
                     scan.hit("GCP-SQL-001", res, ipc.line(), "public IP without required TLS", "Low")
-    elif t in ("google_compute_instance", "google_compute_instance_template"):
+    elif t in ("google_compute_instance", "google_compute_instance_template",
+               "google_compute_region_instance_template", "google_compute_instance_from_template"):
         for sa in v.blocks("service_account"):
-            email = sa.get("email")
-            if email is None or email == "default" or (isinstance(email, str) and DEFAULT_SA.search(email)):
+            if default_service_account(sa.get("email"), sa.raw("email")):
                 scopes = lower_strs(aslist(sa.get("scopes")))
                 full = any(s.endswith("cloud-platform") for s in scopes)
                 scan.hit("GCP-GCE-001", res, sa.line(),
                          "default compute service account" + (" with cloud-platform scope" if full else ""))
-        meta = v.get("metadata")
-        if isinstance(meta, dict):
-            gaps = []
-            if str(meta.get("serial-port-enable")).lower() in ("true", "1"):
-                gaps.append("serial-port-enable = true")
-            if str(meta.get("block-project-ssh-keys")).lower() == "false":
-                gaps.append("block-project-ssh-keys = false")
-            if gaps:
-                scan.hit("GCP-GCE-002", res, v.line("metadata"), "; ".join(gaps))
+        gce_metadata(scan, res, v.get("metadata"), v.line("metadata"))
+    elif t == "google_compute_project_metadata":
+        # Project metadata applies to every VM in the project.
+        gce_metadata(scan, res, v.get("metadata"), v.line("metadata"))
+    elif t == "google_compute_project_metadata_item":
+        if isinstance(v.get("key"), str) and isinstance(v.get("value"), str):
+            gce_metadata(scan, res, {v.get("key"): v.get("value")}, v.line("value"))
+    elif t == "google_container_node_pool":
+        gke_node_config(scan, res, v.blocks("node_config"))
     elif t == "google_container_cluster":
         if tf_bool(v.get("enable_legacy_abac")) is True:
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
+        if tf_bool(v.get("enable_autopilot")) is not True:
+            gke_node_config(scan, res, v.blocks("node_config"), default_pool=tf_bool(
+                v.get("remove_default_node_pool")) is not True)
+        for auth in v.blocks("master_auth"):
+            for cert in auth.blocks("client_certificate_config"):
+                if tf_bool(cert.get("issue_client_certificate")) is True:
+                    scan.hit("GCP-GKE-001", res, cert.line("issue_client_certificate"),
+                             "issue_client_certificate = true (static client certificate credential)")
         private = v.blocks("private_cluster_config")
         private_endpoint = tf_bool(private[0].get("enable_private_endpoint")) if private else None
         authorized = v.blocks("master_authorized_networks_config")
@@ -1374,6 +1497,10 @@ def check_tf(scan, res):
                         for ip in cfg.blocks("ip_endpoints_config")]
         if ip_endpoints and all(tf_bool(ip.get("enabled")) is False for ip in ip_endpoints):
             pass  # DNS-based endpoint only: no IP endpoint to authorize networks for
+        elif not authorized and private_endpoint is UNKNOWN and private[0].known_present:
+            line = private[0].line("enable_private_endpoint")
+            scan.not_run.append("GCP-GKE-001: unknown enable_private_endpoint and no authorized networks; check "
+                                f"not run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
         elif not authorized and private_endpoint in (False, None):
             scan.hit("GCP-GKE-001", res, res.line, "no master authorized networks and no private endpoint")
         elif private_endpoint in (False, None):
@@ -1554,19 +1681,26 @@ def collect_context(scan, d, type_, view, text, defaults=True):
     elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None) and defaults:
         scan.ebs_default_dirs.add((d, provider_key(view)))
     elif type_ in ("google_org_policy_policy", "google_organization_policy", "google_folder_organization_policy",
-                   "google_project_organization_policy") and "storage.publicAccessPrevention" in text \
-            and re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', text) \
-            and not re.search(r'\bcondition\s*\{|"condition"\s*:\s*\[\s*\{', text):
-        # Only an unconditional rule enforces for every bucket. An organization
-        # policy covers buckets only when the inputs name no other organization;
-        # a project or folder policy covers the module that declares it.
-        org = re.search(r'(?:parent|org_id)"?\s*[:=]\s*"(?:organizations/)?([0-9]+)"', text)
-        org_level = type_ == "google_organization_policy" or (
-            type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', text))
-        if org_level and org:
-            scan.pap_orgs.add(org.group(1))
-        elif not org_level:
-            scan.gcs_pap_dirs.add(d)
+                   "google_project_organization_policy"):
+        # A dry-run spec is not enforced.
+        enforced = without_block(text, "dry_run_spec")
+        for constraint in ("storage.publicAccessPrevention", "storage.uniformBucketLevelAccess"):
+            if constraint not in enforced or not re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', enforced) \
+                    or re.search(r'\bcondition\s*\{|"condition"\s*:\s*\[\s*\{', enforced):
+                continue
+            # Only an unconditional rule enforces for every bucket. An organization
+            # policy covers buckets only when the inputs name no other organization;
+            # a folder policy covers the module that declares it, and a project
+            # policy the buckets of that project there.
+            org = re.search(r'(?:parent|org_id)"?\s*[:=]\s*"(?:organizations/)?([0-9]+)"', enforced)
+            org_level = type_ == "google_organization_policy" or (
+                type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', enforced))
+            project = re.search(r'(?:\bproject"?\s*[:=]\s*"|parent"?\s*[:=]\s*"projects/)([a-z][a-z0-9-]*)"', enforced)
+            policies = scan.gcs_org_policies.setdefault(constraint, {"orgs": set(), "dirs": set()})
+            if org_level and org:
+                policies["orgs"].add(org.group(1))
+            elif not org_level:
+                policies["dirs"].add((d, project.group(1) if project else None))
     if type_ in ("aws_iam_role", "aws_iam_user"):
         for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, "permissions_boundary")):
             scan.boundary_policies.add((d, f"aws_iam_policy.{m.group(1)}"))
@@ -1618,6 +1752,10 @@ def handle_terraform(scan, parsed):
                                     f"{getattr(block.line, 'file', rel)}:{block.line}")
             pending.extend(reversed(block.blocks))
         for b in blocks:
+            if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
+                scan.gcp_policy_data[(d, b.labels[1])] = [
+                    (binding.get("role"), aslist(binding.get("members")), binding.line())
+                    for binding in HclView(b).blocks("binding")]
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy":
                 view = HclView(b)
                 if view.get("name") == "AdministratorAccess" or (
@@ -2734,6 +2872,37 @@ def _k8s_map(value, *keys):
     return value if isinstance(value, _YamlMap) else _YamlMap(1)
 
 
+# Capabilities that reach the node: kernel modules, raw devices, other
+# processes, host files, eBPF and the network stack.
+DANGEROUS_CAPABILITIES = {"ALL", "SYS_ADMIN", "SYS_MODULE", "SYS_RAWIO", "SYS_PTRACE", "DAC_READ_SEARCH",
+                          "NET_ADMIN", "BPF", "PERFMON", "SYS_BOOT"}
+PLATFORM_BINDINGS = {
+    ("ClusterRoleBinding", "kubeadm:cluster-admins", "cluster-admin", (("Group", "kubeadm:cluster-admins"),)),
+    ("ClusterRoleBinding", "eks:addon-cluster-admin", "cluster-admin", (("User", "eks:addon-manager"),)),
+    ("RoleBinding", "kubeadm:bootstrap-signer-clusterinfo", "kubeadm:bootstrap-signer-clusterinfo",
+     (("User", "system:anonymous"),)),
+}
+
+
+def contains_key(value, key, depth=8):
+    if depth == 0:
+        return False
+    if isinstance(value, dict):
+        return key in value or any(contains_key(v, key, depth - 1) for v in value.values())
+    if isinstance(value, list):
+        return any(contains_key(v, key, depth - 1) for v in value)
+    return False
+
+
+def finish_k8s(scan):
+    """Bindings to roles that grant * on *, wherever in the inputs the role is."""
+    for res, kind, namespace, role_kind, role_name, line in scan.k8s_bindings:
+        key = (role_kind, namespace if role_kind == "Role" else None, role_name)
+        if key in scan.k8s_wildcard_roles:
+            severity = "Medium" if kind == "RoleBinding" else None
+            scan.hit("K8S-002", res, line, f"binds {role_kind} {role_name}, which grants * on *", severity)
+
+
 def _check_k8s(scan, rel, doc, fallback_kind=None):
     kind = doc.get("kind", fallback_kind)
     if not isinstance(kind, str):
@@ -2771,39 +2940,74 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             isinstance(name, str) and name.startswith("system:")
         masters_only = bool(subjects) and all(s.get("kind") == "Group" and s.get("name") == "system:masters"
                                               for s in subjects)
-        if role.get("kind") == "ClusterRole" and role.get("name") == "cluster-admin" and not masters_only:
-            scan.hit("K8S-002", res, role.lines["name"], "binds cluster-admin")
-        for subject in subjects if not bootstrap else []:
+        # kubeadm and EKS create these bindings themselves; matched on name, role and subjects.
+        platform = (kind, name, role.get("name"), tuple((s.get("kind"), s.get("name")) for s in subjects)) \
+            in PLATFORM_BINDINGS and (kind == "ClusterRoleBinding" or namespace == "kube-public")
+        if platform:
+            scan.not_run.append(f"K8S-002: platform-managed binding {name} (kubeadm/EKS default); confirm it is "
+                                f"unmodified: {rel}:{res.line}")
+        elif role.get("kind") == "ClusterRole" and role.get("name") == "cluster-admin" and not masters_only:
+            if kind == "RoleBinding":
+                scan.hit("K8S-002", res, role.lines["name"], f"binds cluster-admin within namespace "
+                         f"{namespace if isinstance(namespace, str) else '(apply context)'}", "Medium")
+            else:
+                scan.hit("K8S-002", res, role.lines["name"], "binds cluster-admin")
+        elif role.get("kind") in ("ClusterRole", "Role") and isinstance(role.get("name"), str) and not masters_only:
+            # A role granting * on * is cluster-admin under another name; roles may be in other files.
+            scan.k8s_bindings.append((res, kind, namespace, role.get("kind"), role.get("name"), role.lines["name"]))
+        for subject in subjects if not (bootstrap or platform) else []:
             if (subject.get("kind") == "Group" and subject.get("name") in
-                    ("system:authenticated", "system:unauthenticated")) or (
+                    ("system:authenticated", "system:unauthenticated", "system:serviceaccounts")) or (
                     subject.get("kind") == "User" and subject.get("name") == "system:anonymous"):
                 scan.hit("K8S-002", res, subject.lines["name"], f"binds {subject['name']}")
+    if kind in ("ClusterRole", "Role") and isinstance(name, str):
+        for rule in aslist(doc.get("rules")):
+            if isinstance(rule, dict) and "*" in aslist(rule.get("verbs")) and "*" in aslist(rule.get("resources")) \
+                    and "*" in aslist(rule.get("apiGroups")):
+                scan.k8s_wildcard_roles.add((kind, namespace if kind == "Role" else None, name))
     if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
     if kind == "Secret":
         for key in ("data", "stringData"):
-            if isinstance(doc.get(key), dict) and doc[key]:
+            # Charts ship placeholder Secrets with empty values.
+            if isinstance(doc.get(key), dict) and any(value not in ("", None) for value in doc[key].values()):
                 scan.hit("K8S-003", res, doc.lines[key], "Secret manifest with data")
+    api = doc.get("apiVersion") if isinstance(doc.get("apiVersion"), str) else ""
     paths = {
         "Pod": ("spec",), "PodTemplate": ("template", "spec"),
         "CronJob": ("spec", "jobTemplate", "spec", "template", "spec"),
+        "ScaledJob": ("spec", "jobTargetRef", "template", "spec"),  # KEDA
         **{k: ("spec", "template", "spec") for k in (
             "Deployment", "DaemonSet", "StatefulSet", "ReplicaSet", "ReplicationController", "Job",
-            "Rollout")},  # Argo Rollouts keeps a Deployment-shaped template
+            "Rollout",  # Argo Rollouts keeps a Deployment-shaped template
+            "DeploymentConfig")},  # OpenShift
     }
+    if kind in ("Service", "Configuration") and api.startswith("serving.knative.dev/"):
+        paths[kind] = ("spec", "template", "spec")
     pod = _k8s_map(doc, *paths[kind]) if kind in paths else _YamlMap(res.line)
+    containers = [c for key in ("containers", "initContainers", "ephemeralContainers") for c in aslist(pod.get(key))]
+    if kind in ("Workflow", "WorkflowTemplate", "ClusterWorkflowTemplate", "CronWorkflow") and \
+            api.startswith("argoproj.io/"):
+        # Argo Workflows: each template runs a container, script, sidecars or init containers.
+        pod = _k8s_map(doc, "spec", "workflowSpec") if kind == "CronWorkflow" else _k8s_map(doc, "spec")
+        for template in aslist(pod.get("templates")):
+            if isinstance(template, _YamlMap):
+                containers += [template.get(k) for k in ("container", "script") if isinstance(template.get(k), _YamlMap)]
+                containers += [c for k in ("initContainers", "sidecars") for c in aslist(template.get(k))]
+    elif kind not in paths and contains_key(doc, "containers"):
+        scan.not_run.append(f"K8S-001: workload kind {kind} not modelled; review its pod spec by hand: "
+                            f"{rel}:{res.line}")
     hits = [(pod, k, f"{k}: true") for k in ("hostNetwork", "hostPID", "hostIPC")
             if pod.get(k) is True]
-    for key in ("containers", "initContainers", "ephemeralContainers"):
-        for container in aslist(pod.get(key)):
-            security = _k8s_map(container, "securityContext")
-            if security.get("privileged") is True:
-                hits.append((security, "privileged", "privileged: true"))
-            caps = _k8s_map(security, "capabilities")
-            added = [c for c in aslist(caps.get("add")) if isinstance(c, str)]
-            dangerous = [c for c in added if c.upper().removeprefix("CAP_") in ("SYS_ADMIN", "ALL")]
-            if dangerous:
-                hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
+    for container in containers:
+        security = _k8s_map(container, "securityContext")
+        if security.get("privileged") is True:
+            hits.append((security, "privileged", "privileged: true"))
+        caps = _k8s_map(security, "capabilities")
+        added = [c for c in aslist(caps.get("add")) if isinstance(c, str)]
+        dangerous = [c for c in added if c.upper().removeprefix("CAP_") in DANGEROUS_CAPABILITIES]
+        if dangerous:
+            hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
     for volume in aslist(pod.get("volumes")):
         if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
             hits.append((volume, "hostPath", "hostPath volume"))
@@ -2928,6 +3132,11 @@ def handle_yaml(scan, rel, lines):
             doc = parser.parse()
         except (ValueError, RecursionError) as exc:
             reason = "nesting too deep" if isinstance(exc, RecursionError) else str(exc)
+        if isinstance(doc, list) and doc and all(isinstance(x, _YamlMap) and is_manifest(x) for x in doc):
+            kinds.add("kubernetes")  # a root sequence of manifests
+            for item in doc:
+                _check_k8s(scan, rel, item)
+            continue
         kind = _yaml_kind(rows, doc)
         if not kind and any(YAML_BREAK.search(raw) for _, raw in rows):
             # A NEL or U+2028 can hide apiVersion/kind inside an LF-delimited
@@ -2961,9 +3170,11 @@ def handle_yaml(scan, rel, lines):
         if reason and any("{{" in raw for _, raw in rows):
             scan.not_run.append(f"kubernetes YAML rules not applied (template such as a Helm chart; review the "
                                 f"rendered output, e.g. `helm template`): {rel}:{rows[0][0]}")
+            k8s_header_resource(scan, rel, rows)
             continue
         if reason:
             scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
+            k8s_header_resource(scan, rel, rows)
             continue
         if isinstance(doc, _YamlMap):
             _check_k8s(scan, rel, doc)
@@ -2985,13 +3196,46 @@ def _json_as_yaml(value, keys, path=(), line=1):
     return value
 
 
+def is_manifest(doc):
+    return isinstance(doc, dict) and isinstance(doc.get("apiVersion"), str) and isinstance(doc.get("kind"), str)
+
+
 def handle_k8s_json(scan, rel, text, doc):
-    """Kubernetes manifests and `kubectl get -o json` exports written as JSON."""
-    if not (isinstance(doc, dict) and isinstance(doc.get("apiVersion"), str)
-            and isinstance(doc.get("kind"), str)):
+    """Kubernetes manifests and `kubectl get -o json` exports written as JSON,
+    also a bare array of objects (`kubectl get -o json | jq .items`)."""
+    if not (is_manifest(doc) or (isinstance(doc, list) and doc and all(is_manifest(x) for x in doc))):
         return False
-    _check_k8s(scan, rel, _json_as_yaml(doc, json_key_lines(text)))
+    converted = _json_as_yaml(doc, json_key_lines(text))
+    for item in converted if isinstance(converted, list) else [converted]:
+        _check_k8s(scan, rel, item)
     return True
+
+
+K8S_KIND = re.compile(r"""^kind:[ \t]*["']?([A-Za-z][\w.-]*)""")
+K8S_META = re.compile(r"""^[ \t]+(name|namespace):[ \t]*["']?([\w.:-]+)""")
+
+
+def k8s_header_resource(scan, rel, rows):
+    """Inventory an object whose document is outside the YAML subset, from its headers."""
+    kind = name = namespace = None
+    line, in_meta = rows[0][0] if rows else 1, False
+    for n, raw in rows:
+        if (m := K8S_KIND.match(raw)) and kind is None:
+            kind, line = m.group(1), n
+        if raw.startswith(("metadata:", "metadata :")):
+            in_meta = True
+            flow = re.search(r"\{.*?\bname:[ \t]*[\"']?([\w.:-]+)", raw)
+            name = name or (flow.group(1) if flow else None)
+        elif raw[:1] not in (" ", "\t", "", "#"):
+            in_meta = False
+        elif in_meta and (m := K8S_META.match(raw)) and len(raw) - len(raw.lstrip()) <= 4:
+            if m.group(1) == "name" and name is None:
+                name = m.group(2)
+            elif m.group(1) == "namespace" and namespace is None:
+                namespace = m.group(2)
+    if kind:
+        identity = f"{namespace}/{name or '?'}" if namespace else (name or "?")
+        scan.add_resource(Res(kind, f"k8s:{kind}/{identity}", rel, line), "kubernetes")
 
 
 def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
@@ -3293,7 +3537,8 @@ def run(root, snapshots=()):
                 scan.not_run.append(f"JSON nested too deeply, skipped: {rel}")
             except ValueError:
                 doc = None
-                if snapshot or "planned_values" in text or "AWSTemplateFormatVersion" in text:
+                if snapshot or "planned_values" in text or "AWSTemplateFormatVersion" in text or \
+                        ('"apiVersion"' in text and '"kind"' in text):
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             try:
@@ -3332,6 +3577,7 @@ def run(root, snapshots=()):
             scan.not_run.append("policy JSON without Principal is not read by a Terraform IAM policy "
                                 f"resource (identity policy, SCP or boundary?); review by hand: {rel}")
     finish_dirs(scan)
+    finish_k8s(scan)
     return scan
 
 

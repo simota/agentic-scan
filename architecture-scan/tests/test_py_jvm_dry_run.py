@@ -243,6 +243,9 @@ class ReviewRegressionTests(Workspace):
         for text, expected in (("https://jira.example/?project=案件&key=A-001 and A-001",
                                 "https://jira.example/?project=案件&key=A-001 and A-003"),
                                ("urn:ticket:A-001 for A-001", "urn:ticket:A-001 for A-003"),
+                               ("www.example.com/?key=A-001 and A-001",
+                                "www.example.com/?key=A-001 and A-003"),
+                               ("WWW.example.com/A-001。A-001", "WWW.example.com/A-001。A-003"),
                                ("参照https://x/A-001。A-001", "参照https://x/A-001。A-003"),
                                ("Fix:A-001 first", "Fix:A-003 first")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)

@@ -95,6 +95,15 @@ class CitationTests(unittest.TestCase):
                  "src/設定:12", "Program.CS:20", "index.PY:4", "Taskfile:1", "Pipfile:2",
                  "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10",
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
+                 "foo.1:3", "Dockerfile.22.04:2", "python3.11:3", "docker/22.04:3",
+                 "fixtures/1.5:3", "src/1.2:3", "./2.0.txt:3", "docs/1.2.py:4",
+                 "db/001_init.sql:4", "./v8.json:2", "lib/v8.json:2", "V1_1__init.sql:3", "DB/123:4", "./HTTP/2:3", "v8/123:4", "V1/2:4", "certs/TLSv1.3:2", "http2.go:5", "./SSH-2.0:3", "http2-server.go:4", "http2_test.go:9",
+                 "ssh-2.0.txt:1", "./SSH-2.0-OpenSSH_9.6:2", "ws/2:3", "ip/4:1", "SQL/001:3", "SQL\\001:3", "./SMB/3.1.1:2", "db/1.5:3", "./OData/4.0:2", "src/1.2.3:4", "http2-tests/README:3",
+                 "ssh-2.0-fixtures/Makefile:7", "icon@2x.png:3", "libfoo.so.1.2.3:2", "jquery-3.6.0.min.js:1", "./Python-3.12.1:2", "Python-3.12.1.tar.gz:1", "python3.11.txt:2", "log4j-2.17.1.jar:3", "http2-server.go:7", "vendor/lodash@4.17.21.tgz:1",
+                 "img/logo@1.5x.png:2", "Node.js-20.11.0.tar.xz:1", "app.config-1.2.json:3", "python-dateutil-2.8.2.tar.gz:1",
+                 "foo-2x-bar.txt:2", "node-v20.11.0-linux-x64.tar.xz:1", "foo-v2-bar.txt:1", "lib-1.2.bz2:1", "pkg-1.0.0.whl:2", "app-2.1.yaml:4", "Widget-1.2.3.m:10", "libfoo-1.2.a:1", "mode-1.2.el:3",
+                 "pkg-1.2.deb:1", "song-1.2.mp3:1", "lib-1.2.bz2:2", "-x/y.py:2", "rpc-tests/2.0/run.py:3", "pkg/mod/golang.org/x/sync@v0.17.0/errgroup/errgroup.go:30",
+                 ".pnpm/react@18.2.0/index.js:4", "@types/node/index.d.ts:2", "./react@18.2.0.js:1", "tls_v1\\x:2",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -109,11 +118,34 @@ class CitationTests(unittest.TestCase):
                      # Ambiguous without a directory: written as a host, read as one.
                      "settings.local:3", "app.test:5",
                      "TTL:300", "MAX_CONNECTIONS:100 is below the worker count", "TTL：300 なので問題なし",
-                     "Read/write ratio 1.5:1", "v1.2.3:4", "python3.11:3", "N/A:1", "I/O:5 per request",
+                     "Read/write ratio 1.5:1", "v1.2.3:4", "N/A:1", "I/O:5 per request",
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "golang.org/x/sync:1",
                      "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",
-                     "R/W:2", "1/2:3"]
+                     "R/W:2", "1/2:3", "HTTP/2:200", "TLS/1.3:1", "v1.2.3-rc1:4", "1.2.3-beta:4",
+                     "v1.2.3+build.5:4", "v1.2.3-rc.1+build.5:4", "1.2.3rc1:4", "2.0b3:1", "5.3.20.RELEASE:1",
+                     "1.0.Final:2", "1.0-SNAPSHOT:3", "1.2.3.post1:4", "1.2.3.dev1:4",
+                     "5.0.0.BUILD-SNAPSHOT:2", "2.0.txt:3", "1!2.3:4", "2!1.0.post1:2",
+                     "v1!2.3:4", "v2rc1.post2:4", "v2rc1+local.3:4", "V2.json:1", "v8.json:2", "V1__:2", "v3__x.sql:2", "~v1.2.3:4", "^v2.0.0:3", ">=v1.2.3:4",
+                     "=v1.2.3:4", "!=v1.2.3:4", "^2.0.0:3", "~>v1.2:1",
+                     "react@18.2.0:4", "pkg@v1.2.3:4", "python==1.2.3:4", "django>=4.2:1",
+                     "@types/node@20.1.0:2", "lodash@4.17.21.tgz:1",
+                     "version1.2.3:4", "Python-3.12.1:2", "OpenSSL_3.0.0:2", "release-2024.01.15:1",
+                     "Python-3.12.1rc1:2", "OpenSSL_3.0.0-alpha:2", "version1.2.3+build.5:4",
+                     "log4j-2.17.1:4", "OpenSSL3-3.0.0:2", "h2o_2.2.6:1",
+                     "Python-3.12.1.post1:2", "Django-4.2.1.dev1:3", "Spring-5.3.20.RELEASE:4",
+                     "Spring-5.3.20.BUILD-SNAPSHOT:1",
+                     "github.com/acme/pkg@v1.2.3:4", "golang.org/x/sync@v0.17.0:3", "deps/pkg@1.2.3-rc1:2",
+                     "Node.js-20.11.0:2", "ASP.NET-8.0.0:3", ".NET-8.0.0:4", "C++-17.0.1:1",
+                     "python-dateutil-2.8.2:4", "my_product-1.2.3:4", "Apache-HTTP-Server-2.4.62:3",
+                     "Python-v3.12.1:2", "OpenSSL_v3.0.0:2", "Node.js-v20.11.0:2", "app-V1.2:1",
+                     "openssl-3.0.7-27.el9:2", "Python-3.12.1.win_amd64:2", "kernel-5.14.0-362.fc39:1",
+                     "-1/2:3", "+1/2:3", "1/-2:3", "Spring-5.0.0.M1:2", "lib-1.2.b3:1", "Hibernate-3.2.5.sp1:2", "WildFly-8.2.1.SP1:2", "jdk-1.8.0.u292:1",
+                     "JSON-RPC/2.0:1", "XML-RPC/1.0:1", "json-rpc/2.0:1", "Foo-Bar/1.2:1", "１/２：３", "١/٢:3", "２０２４/１２３:3",
+                     "001_init.sql:4", ".5:1", "~1.5:1",
+                     "SMTP/2:1", "SSH/2.0:22", "https/1.1:200", "tls/1.3:1", "Ssh/2.0:22", "TLSv1.3:443", "SSH-2.0:22", "tls_v1.2:1", "HTTP2:1", "SSLv3:1", "TLSv1.3-draft28:1", "HTTP/3-draft-29:1",
+                     "SSH-2.0-OpenSSH_9.6:22", "TLSv1.2+:1", "SFTP/3.0:22", "SMB/3.1.1:445", "RDP/10.0:3389",
+                     "nfs/4.1:2049", "XYZ/2.0:1", "SMB2:445", "OData/4.0:1", "Stomp/1.2:1", "CoAP/1.0:1", "stomp/1.2:1", "coap/1.0:1", "odata/4.0:1", "rtmp/1.0:1", "src/.:3", "src/..:3", "./..:3", "src\\..:3", "..:3", "src/:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -129,6 +161,9 @@ class CitationTests(unittest.TestCase):
             findings.citation_rejections(token)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_a_directory_is_named_as_one(self):
+        for text in ("src/..:3", "./.:1", "src\\..:3"):
+            self.assertEqual(findings.citation_rejections(text)[0][1], "a directory, not a file", text)
 
 
 class UnknownKeyTests(unittest.TestCase):
@@ -214,6 +249,22 @@ class ImpactBudgetTests(unittest.TestCase):
         doc["findings"][0]["impact"] = "Also violates B-02"
         self.assertEqual(contract_problems(doc),
                          ["B-02: status holds, but P-001 is a Valid, unfixed violation of it"])
+
+
+class JapaneseMentionTests(unittest.TestCase):
+    def test_budget_ids_next_to_japanese_text_are_mentions(self):
+        self.assertEqual(findings.BUDGET_MENTION.findall("予算B-02を超過し、B-01も"), ["B-02", "B-01"])
+        self.assertEqual(findings.BUDGET_MENTION.findall("AB-01 B-01a B-01_x B-001"), ["B-001"])
+        doc = complete_doc()
+        doc["budgets"].append({"id": "B-02", "statement": "s", "source": "x", "status": "holds"})
+        doc["findings"][0]["impact"] = "予算B-02を超過"
+        self.assertEqual(contract_problems(doc),
+                         ["B-02: status holds, but P-001 is a Valid, unfixed violation of it"])
+
+    def test_partly_read_budgets_show_their_reason(self):
+        doc = complete_doc()
+        doc["budgets"][0].update(status="partly read", reason="only the list endpoint was read")
+        self.assertIn("only the list endpoint was read", render.render_markdown(doc, "en"))
 
 if __name__ == "__main__":
     unittest.main()

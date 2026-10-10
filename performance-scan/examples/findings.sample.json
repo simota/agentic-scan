@@ -64,7 +64,7 @@
       "step": "DB3",
       "location": "app/products/search.py:14",
       "workload": "Admin product search (cold)",
-      "scale_driver": "Products per tenant",
+      "scale_driver": "Products per tenant (matters above roughly 100k products; production volume unknown)",
       "cost_model": "Full scan of the products table per search",
       "request": "1. A tenant with a large product catalogue (matters above roughly 100k products; production volume unknown). 2. GET /admin/products?sku=<sku>",
       "impact": "Expected: indexed lookup. Actual: db/migrations defines no index on (tenant_id, sku); the deployed schema was not observed",

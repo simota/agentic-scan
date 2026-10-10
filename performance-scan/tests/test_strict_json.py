@@ -2,6 +2,7 @@
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
@@ -140,6 +141,29 @@ class StrictJsonTests(unittest.TestCase):
             self.assertEqual(code, 0, errors)
             code, _, errors = self.invoke(findings.main, ["check", out])
             self.assertEqual(code, 0, errors)
+
+
+
+class HugeIntegerTests(unittest.TestCase):
+    def test_integers_beyond_the_float_range_are_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "x.json"
+            source.write_text('{"meta": {"n": 1' + "0" * 400 + '}}', encoding="utf-8")
+            with self.assertRaisesRegex(findings.SchemaError, "finite floating-point range"):
+                findings.read_json(source)
+            source.write_text('{"meta": {"n": 12345678901234567890}}', encoding="utf-8")
+            self.assertEqual(findings.read_json(source)["meta"]["n"], 12345678901234567890)
+
+    def test_the_bound_is_exact(self):
+        bound = int(sys.float_info.max)
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "x.json"
+            for value in (bound + 1, -bound - 1):
+                source.write_text('{"meta": {"n": %d}}' % value, encoding="utf-8")
+                with self.assertRaisesRegex(findings.SchemaError, "finite floating-point range"):
+                    findings.read_json(source)
+            source.write_text('{"meta": {"n": %d}}' % bound, encoding="utf-8")
+            self.assertEqual(findings.read_json(source)["meta"]["n"], bound)
 
 
 if __name__ == "__main__":

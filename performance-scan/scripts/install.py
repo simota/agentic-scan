@@ -20,6 +20,8 @@ def targets(args):
         "agy": Path(args.agy_home),
     }
     agents = args.agents.split()
+    if not agents:
+        raise ValueError("AGENT is empty - use claude, codex or agy, or set SKILLS_DIR")
     unknown = sorted(set(agents) - roots.keys())
     if unknown:
         raise ValueError(
@@ -139,7 +141,9 @@ def main(argv=None):
         skill = args.skill.resolve()
         destinations = targets(args)
         if args.action == "link":
-            link(skill, destinations, args.agents)
+            # Name what was searched: AGENT is unused with SKILLS_DIR or PROJECT.
+            searched = args.skills_dir or args.project or args.agents
+            link(skill, destinations, searched)
         elif args.action == "unlink":
             unlink(skill, destinations)
         else:

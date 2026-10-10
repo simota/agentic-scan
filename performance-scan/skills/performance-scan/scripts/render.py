@@ -42,7 +42,7 @@ LABELS = {
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
         "project": "System", "revision": "Revision", "date": "Date / assessor",
-        "source": "Source", "inferred": "Inferred", "reason": "Reason not checked",
+        "source": "Source", "inferred": "Inferred", "reason": "Reason (partly read or not checked)",
         "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
@@ -67,7 +67,7 @@ LABELS = {
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
         "project": "システム", "revision": "リビジョン", "date": "診断日 / 診断者",
-        "source": "出典", "inferred": "推定", "reason": "未確認の理由",
+        "source": "出典", "inferred": "推定", "reason": "未確認・一部確認の理由",
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
@@ -244,11 +244,12 @@ def budget_cells(budget, labels, findings):
                  labels["inferred_no"] if inferred is False else "—")
     # Link each ledger entry to the included findings that cite it.
     # A finding cites its own budget in `budget` and any other it violates in `impact`.
-    mention = re.compile(rf"(?<![\w-]){re.escape(budget['id'])}(?![\w-])")
+    mention = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(budget['id'])}(?![A-Za-z0-9_-])")
     cited = ", ".join(f["id"] for f in findings if not is_excluded(f) and (
         f.get("budget") == budget["id"] or mention.search(f["impact"])))
     return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
-            inference, budget.get("reason", "") if budget["status"] == "not checked" else "",
+            inference, budget.get("reason", "") if budget["status"] in ("partly read", "not checked")
+            else "",
             cited or "—")
 
 
@@ -287,7 +288,7 @@ def markdown_finding(f, t):
             # Code spans keep paths copyable (no snake\_case escapes) and inert.
             locations = f[key] if isinstance(f[key], list) else [f[key]]
             lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
-        elif key in f:
+        elif str(f.get(key, "")).strip():  # optional contrast/budget may be blank
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
     if v.get("evidence"):
@@ -322,7 +323,7 @@ def render_markdown(doc, lang):
     lines += ["", f"{verdicts} · **{incomplete_high}**"]
     scope = [(t["project"], markdown_cell(meta.get("project", ""))),
              (t["scope_row"], markdown_cell(meta.get("scope", ""))),
-             (t["revision"], markdown_cell(meta.get("commit") or "UNKNOWN"))]
+             (t["revision"], markdown_cell(meta.get("commit", "").strip() or "UNKNOWN"))]
     if meta.get("method", "").strip():
         scope.append((t["method_row"], markdown_cell(meta["method"])))
     scope.append((t["date"], f"{markdown_cell(meta.get('date', ''))} / "
@@ -419,7 +420,7 @@ def html_finding(f, t):
     exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                  if excluded else "")
     step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
-    rows = [(t[k], f[k]) for k in FIELDS if k in f]
+    rows = [(t[k], f[k]) for k in FIELDS if str(f.get(k, "")).strip()]
     rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
     if v.get("evidence"):
         rows.append((t["evidence"], v["evidence"]))
@@ -453,7 +454,7 @@ def render_html(doc, lang):
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
-           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit') or 'UNKNOWN')} · "
+           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
            + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
            + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
     for s in SEVERITIES:

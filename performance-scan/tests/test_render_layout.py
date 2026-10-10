@@ -93,5 +93,18 @@ class LanguageNoteTests(unittest.TestCase):
             self.assertEqual((code, err), (0, ""))
 
 
+
+class BlankOptionalFieldTests(unittest.TestCase):
+    def test_blank_optional_fields_and_commit_are_not_rendered_blank(self):
+        doc = complete_doc()
+        doc["meta"]["commit"] = "   "
+        doc["findings"][0].update(contrast="", budget=" ")
+        report, html = render.render_markdown(doc, "en"), render.render_html(doc, "en")
+        self.assertIn("| Revision | UNKNOWN |", report)
+        self.assertIn(" · UNKNOWN · ", html)
+        self.assertNotIn("**contrast:**", report)
+        self.assertNotIn("**budget:**", report)
+        self.assertNotIn("<dt>contrast</dt>", html)
+
 if __name__ == "__main__":
     unittest.main()

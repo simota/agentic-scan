@@ -36,6 +36,10 @@ The scripts stage all output bytes in temporary files alongside their destinatio
 before replacing existing files. Encoding or staging failures preserve the previous
 outputs and remove staging files. Each final replacement is atomic; replacing
 multiple output files is not a single transaction.
+Inputs (fragments, the record) must be regular files of at most 16 MiB; a FIFO
+or device is refused instead of blocking. A command stopped by SIGTERM (for
+example a tool timeout) removes its staging files; if a hard kill leaves one,
+`check` names it as a stale staging file to delete rather than an extra output.
 Existing destination symlinks are retained and their target files are updated.
 Replaced files keep their permissions; newly created files are readable by
 their owner only (`0600`), because the record and reports describe where

@@ -23,7 +23,7 @@ from urllib.parse import quote, urlsplit
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      read_json, record_problems, validate)
+                      prepare_cli, read_json, record_problems, validate)
 from output_io import write_utf8_files  # noqa: E402
 
 LABELS = {
@@ -427,6 +427,7 @@ def render_html(doc, lang):
 
 
 def main(argv=None):
+    prepare_cli()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     parser.add_argument("findings")
     parser.add_argument("--out", required=True)

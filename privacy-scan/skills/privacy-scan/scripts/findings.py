@@ -37,8 +37,11 @@ example domains) or a run of 12 or more digits is refused.
 import argparse
 from html import unescape
 import json
+import os
 from pathlib import Path
 import re
+import signal
+import stat
 import sys
 import unicodedata
 from urllib.parse import parse_qsl, unquote, unquote_plus, urlsplit
@@ -92,6 +95,8 @@ REFERENCE_KEYS = {"title", "url"}
 COMMITMENT_KEYS = {"id", "statement", "source", "status", "family", "inferred", "reason"}
 PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
+# Temporary files output_io stages beside a destination (`.report.md.abc123.tmp`).
+STAGING = re.compile(r"\.(?:findings\.json|dashboard\.html|report\.md)\.[^/]+\.tmp")
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 # Bounded so a long digit run cannot pass as an exempt technical identifier.
 COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
@@ -144,9 +149,30 @@ class SchemaError(ValueError):
     pass
 
 
+# Records and fragments are small; anything larger is not one of them.
+MAX_INPUT_BYTES = 16 * 1024 * 1024
+
+
+def read_limited(path, limit=MAX_INPUT_BYTES):
+    """Read a regular file of at most `limit` bytes; never block on FIFOs or devices."""
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    with os.fdopen(fd, "rb") as stream:
+        info = os.fstat(stream.fileno())
+        if not stat.S_ISREG(info.st_mode):
+            raise SchemaError(f"{path}: must be a regular file")
+        if info.st_size > limit:
+            raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
+        data = stream.read(limit + 1)
+    if len(data) > limit:
+        raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
+    return data
+
+
 def read_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        return json.loads(read_limited(path).decode("utf-8"))
+    except SchemaError:
+        raise
     except UnicodeDecodeError as exc:
         raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
     except (OSError, json.JSONDecodeError) as exc:
@@ -641,7 +667,10 @@ def contract_problems(out, allow=()):
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        if STAGING.fullmatch(name):
+            problems.append(f"stale staging file from an interrupted write: {name} (delete it)")
+        else:
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     unusable = set()
     for name in sorted(OUTPUTS & present):
         path = out / name
@@ -724,7 +753,10 @@ def _stale_outputs(out, doc, skip):
     render = _import_sibling("render")  # render imports this module, so load it lazily
 
     try:
-        current = {name: (out / name).read_bytes() for name in names}
+        current = {name: read_limited(out / name) for name in names}
+    except SchemaError:
+        return ["stale outputs: report.md or dashboard.html is too large to be a rendering "
+                "of findings.json; re-run scripts/render.py"]
     except OSError:
         return [f"unreadable output: {name}" for name in names]
     # Either language is a valid rendering (render.py --lang may override meta.lang).
@@ -747,7 +779,16 @@ def cmd_check(args):
     return 0
 
 
+def prepare_cli():
+    """Let SIGTERM (tool timeouts) run cleanup, and never fail while reporting success."""
+    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")
+
+
 def main(argv=None):
+    prepare_cli()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into findings.json")

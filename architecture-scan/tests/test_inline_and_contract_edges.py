@@ -86,7 +86,7 @@ class SchemaEdgeTests(unittest.TestCase):
         for prefix, number in re.findall(r"^\| ([A-Z]{2})([0-9]+) \|", hunt, re.MULTILINE):
             highest[prefix] = max(highest.get(prefix, 0), int(number))
         self.assertEqual(highest, dict(zip(findings.STEP_PREFIXES, findings.STEP_COUNTS)))
-        with self.assertRaisesRegex(findings.SchemaError, r"DM1-DM4"):
+        with self.assertRaisesRegex(findings.SchemaError, r"DM1-DM5"):
             findings.validate({"findings": [finding(step="DM9")]})
 
     def test_byte_order_mark_is_not_content(self):

@@ -24,8 +24,9 @@ FINDINGS is created when absent. The merged record must pass the schema check
 
 `renumber` orders the findings by severity, then path and line of their first
 location, and renames them `A-001`… without gaps. Every whole-word mention of
-an old ID in the record's text is rewritten in the same pass, so `next_steps`
-and traces keep pointing at the same finding.
+an old ID in the record's prose is rewritten in the same pass, so `next_steps`
+and traces keep pointing at the same finding; `meta`, locations, URLs,
+commands and rule sources keep theirs.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -37,7 +38,7 @@ both rendered files match what `render.py` produces from the current record
 in `meta.lang`.
 
 Exit codes: 0 ok, 1 a fragment was refused, input/output failed or the contract
-failed (reasons on stderr).
+failed (reasons on stderr), 2 the command line is wrong.
 """
 import argparse
 from contextlib import contextmanager
@@ -72,15 +73,24 @@ PERSPECTIVES = (
 )
 # Hunt step prefixes, in PERSPECTIVES order (reference/perspectives.md).
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
-STEP_COUNTS = (4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 2, 3)
+STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 RULE_REQUIRED = ("id", "statement", "source", "status")
+# Every key the schema knows in a record that is rendered. A typo such as
+# `contrats` is refused instead of being kept and never shown. `meta` stays
+# open for run context the outputs do not show.
+RULE_KEYS = {*RULE_REQUIRED, "reason", "family", "inferred"}
+PERSPECTIVE_KEYS = {"name", "status", "note"}
+VALIDATION_KEYS = {"verdict", "method", "evidence"}
+ANALYSIS_KEYS = {"tool", "command", "result"}
+REFERENCE_KEYS = {"url", "title"}
 TEXT_FIELDS = ("title", "scenario", "blast_radius", "trace", "impact", "fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
+FINDING_KEYS = {*FINDING_REQUIRED, "contrast", "rule", "step", "status", "analysis", "references"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
@@ -102,6 +112,20 @@ LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
 
 class SchemaError(ValueError):
     pass
+
+
+def as_locations(value):
+    """A finding's `location`, a string or a list, as a list."""
+    return value if isinstance(value, list) else [value]
+
+
+def split_location(loc):
+    """`path:line` or `path:start-end` as (path, start, end); None if not one."""
+    match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
+    if not match:
+        return None
+    start = int(match[1])
+    return loc[:match.start(1) - 1], start, int(match[2] or start)
 
 
 def read_json(path):
@@ -136,6 +160,13 @@ def _list(value, where):
     return value
 
 
+def _known(record, allowed, where):
+    unknown = set(record) - allowed
+    if unknown:
+        raise SchemaError(f"{where}: unknown keys {sorted(unknown)} (known: "
+                          f"{', '.join(sorted(allowed))})")
+
+
 def _choice(value, allowed, where):
     if value not in allowed:
         raise SchemaError(f"{where}: {value!r} is not one of {', '.join(allowed)}")
@@ -147,6 +178,7 @@ def validate_finding(f, where):
     for key in FINDING_REQUIRED:
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
+    _known(f, FINDING_KEYS, where)
     if not FINDING_ID.fullmatch(str(f["id"])):
         raise SchemaError(f"{where}.id: {f['id']!r} must look like A-001")
     for key in TEXT_FIELDS:
@@ -158,14 +190,14 @@ def validate_finding(f, where):
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
     _choice(f.get("status", "Open"), STATUSES, f"{where}.status")
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    locations = as_locations(f["location"])
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
-        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
-        if not match:
+        parts = split_location(loc)
+        if not parts:
             raise SchemaError(f"{where}.location: {loc!r} must be path:line")
-        start, end = int(match[1]), int(match[2] or match[1])
+        _, start, end = parts
         if not 1 <= start <= end:
             raise SchemaError(f"{where}.location: {loc!r} needs lines from 1, start <= end")
     if "step" in f:
@@ -180,6 +212,7 @@ def validate_finding(f, where):
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
+    _known(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if "evidence" in v and not isinstance(v["evidence"], str):
@@ -192,11 +225,13 @@ def validate_finding(f, where):
         a = f["analysis"]
         if not isinstance(a, dict):
             raise SchemaError(f"{where}.analysis: must be an object")
+        _known(a, ANALYSIS_KEYS, f"{where}.analysis")
         for key in ("tool", "command", "result"):
             _text(a.get(key), f"{where}.analysis.{key}")
     for i, ref in enumerate(_list(f.get("references", []), f"{where}.references")):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
+        _known(ref, REFERENCE_KEYS, f"{where}.references[{i}]")
         _text(ref.get("url"), f"{where}.references[{i}].url")
         if "title" in ref and not isinstance(ref["title"], str):
             raise SchemaError(f"{where}.references[{i}].title: must be a string")
@@ -205,18 +240,15 @@ def validate_finding(f, where):
 def _location_paths(locations):
     """Each location's path and its file name, e.g. `bin/server` and `server`."""
     paths = set()
-    for loc in locations if isinstance(locations, list) else [locations]:
-        match = LOCATION.fullmatch(loc) if isinstance(loc, str) else None
-        if match:
-            path = loc[:match.start(1) - 1]
-            paths |= {path, re.split(r"[/\\]", path)[-1]}
+    for parts in filter(None, map(split_location, as_locations(locations))):
+        paths |= {parts[0], re.split(r"[/\\]", parts[0])[-1]}
     return paths
 
 
 def cites_line(evidence, locations=()):
     """True when evidence names a file and a line, e.g. `job.py:58` or `BUILD:12`.
 
-    A token is a path when it has a `.`, `/` or `\`, names a build file
+    A token is a path when it has a `.`, `/` or `\\`, names a build file
     (`Makefile`, `CODEOWNERS`), or is a path or file name from the finding's own
     locations (`server:9` beside `bin/server:9`). `ABC:123` or `ratio:3` is not.
     """
@@ -235,6 +267,7 @@ def _validate_perspectives(records, where):
         field = f"{where}[{i}]"
         if not isinstance(p, dict):
             raise SchemaError(f"{field}: must be an object")
+        _known(p, PERSPECTIVE_KEYS, field)
         _choice(p.get("name"), PERSPECTIVES, f"{field}.name")
         if p["name"] in names:
             raise SchemaError(f"{field}.name: duplicate {p['name']}")
@@ -276,6 +309,7 @@ def validate(doc, complete=False):
         if r["id"] in rule_ids:
             raise SchemaError(f"{where}.id: duplicate {r['id']}")
         rule_ids.add(r["id"])
+        _known(r, RULE_KEYS, where)
         for key in ("statement", "source"):
             _text(r.get(key), f"{where}.{key}")
         _choice(r.get("status"), RULE_STATUSES, f"{where}.status")
@@ -305,7 +339,7 @@ def _apply(target, updates, required, where):
 
 
 def _same_location(a, b):
-    return (a if isinstance(a, list) else [a]) == (b if isinstance(b, list) else [b])
+    return as_locations(a) == as_locations(b)
 
 
 def _collides(existing, record):
@@ -346,7 +380,8 @@ def _remove_items(doc, removals, where):
     if unknown:
         raise SchemaError(f"{where}: only rules and {', '.join(LISTS)} can be removed from, "
                           f"not {sorted(unknown)} (a finding is never removed: mark it "
-                          "FalsePositive or NotApplicable with evidence)")
+                          "FalsePositive or NotApplicable with evidence; a perspective "
+                          "is replaced, not removed)")
     for key, values in removals.items():
         if key == "rules":
             # A spurious ledger entry, by id; check then catches a finding citing it.
@@ -372,6 +407,9 @@ def merge(doc, fragment, where):
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
         _apply(doc.setdefault("meta", {}), fragment["meta"], META_REQUIRED, f"{where}.meta")
+    if "remove" in fragment:
+        # First, so one fragment can remove an entry and send its replacement.
+        _remove_items(doc, fragment["remove"], f"{where}.remove")
     for key in ("findings", "rules", "perspectives"):
         if key not in fragment:
             continue
@@ -384,8 +422,6 @@ def merge(doc, fragment, where):
         else:
             required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
             _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
-    if "remove" in fragment:
-        _remove_items(doc, fragment["remove"], f"{where}.remove")
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):
@@ -452,9 +488,8 @@ ID_MENTION = re.compile(r"(?<![\w/\\-])A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9])", re
 
 
 def _first_location(f):
-    loc = f["location"][0] if isinstance(f["location"], list) else f["location"]
-    match = LOCATION.fullmatch(loc)
-    return loc[:match.start(1) - 1], int(match[1])
+    path, start, _ = split_location(as_locations(f["location"])[0])
+    return path, start
 
 
 # Literal values that only look like prose: a path, a URL, a command that ran,
@@ -504,7 +539,13 @@ def _exclusive(target):
     merges one at a time.
     """
     directory = target.resolve().parent
+    # The directory is never removed again: a merge may already hold it open,
+    # waiting for the lock, and would then lock a deleted directory.
     directory.mkdir(parents=True, exist_ok=True)
+    yield from _locked(directory)
+
+
+def _locked(directory):
     if fcntl is None:
         yield
         return
@@ -559,16 +600,23 @@ def _report_renumber(target, changed):
         print(f"already in order: {target}")
 
 
+def _merge_all(doc, fragments):
+    validate(doc)
+    for path in fragments:
+        merge(doc, read_json(path), path)
+        # Each fragment must leave a valid record, even in a batch.
+        validate(doc)
+    return doc
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
+        if not target.resolve().parent.exists():
+            # Refuse a bad first batch before creating the output directory.
+            _merge_all({}, args.fragments)
         with _exclusive(target):
-            doc = read_json(target) if target.exists() else {}
-            validate(doc)
-            for path in args.fragments:
-                merge(doc, read_json(path), path)
-                # Each fragment must leave a valid record, even in a batch.
-                validate(doc)
+            doc = _merge_all(read_json(target) if target.exists() else {}, args.fragments)
             # Serialize before staging any output.
             _atomic_write(target, _serialize(doc))
     except (OSError, ValueError, RuntimeError) as exc:

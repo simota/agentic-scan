@@ -458,5 +458,52 @@ EOF
             self.assertLess(time.monotonic() - start, 5)
 
 
+class CodexEleventhReviewTest(unittest.TestCase):
+    BUCKET = 'resource "google_storage_bucket" "b" {\n  project = "other-project"\n' \
+             '  uniform_bucket_level_access = false\n  public_access_prevention = "enforced"\n}\n'
+    ORG = 'resource "google_org_policy_policy" "o" {\n  name = "organizations/123/policies/storage.uniformBucketLevelAccess"\n' \
+          '  parent = "organizations/123"\n  spec {\n    rules {\n      enforce = "TRUE"\n    }\n  }\n}\n'
+
+    def test_nested_unknown_in_a_plan_map_is_not_run(self):
+        plan = {"format_version": "1.2", "planned_values": {"root_module": {"resources": [{
+            "address": "google_compute_instance.vm", "mode": "managed", "type": "google_compute_instance",
+            "name": "vm", "values": {"metadata": {}, "service_account": [{"email": "app@p.iam.gserviceaccount.com"}],
+                                     "shielded_instance_config": [{"enable_secure_boot": True}]}}]}},
+            "resource_changes": [{"address": "google_compute_instance.vm", "type": "google_compute_instance",
+                                  "change": {"actions": ["create"],
+                                             "after_unknown": {"metadata": {"serial-port-enable": True}}}}]}
+        result = scan({"plan.json": plan})
+        self.assertTrue([n for n in result.not_run if "google_compute_instance.vm" in n and "metadata" in n],
+                        result.not_run)
+
+    def test_cloudformation_parameter_default_secret(self):
+        template = {"Parameters": {"DbPassword": {"Type": "String", "NoEcho": True, "Default": SECRET},
+                                   "DbUser": {"Type": "String", "Default": "admin"},
+                                   "ApiToken": {"Type": "String", "NoEcho": True}},
+                    "Resources": {"Topic": {"Type": "AWS::SNS::Topic"}}}
+        result = scan({"t.json": template})
+        self.assertEqual([h["detail"] for h in result.hits], ["literal default for parameter DbPassword"])
+
+    def test_organization_policy_needs_a_project_in_that_organization(self):
+        self.assertEqual([h["rule"] for h in scan({"g.tf": self.BUCKET + self.ORG}).hits], ["GCP-GCS-001"])
+        project = 'resource "google_project" "p" {\n  project_id = "other-project"\n  org_id = "123"\n}\n'
+        self.assertEqual(scan({"g.tf": self.BUCKET + self.ORG + project}).hits, [])
+
+    def test_escaped_space_in_an_unquoted_password(self):
+        rest = "Sup3r" + "Secret"
+        for line in (f"curl -u admin:pfx\\ {rest} https://host", f"docker login -p pfx\\ {rest} registry",
+                     f"mysql -ppfx\\ {rest} db"):
+            self.assertNotIn(rest, redaction.scrub_line(line, "shell"), line)
+
+    def test_public_access_block_with_count_one(self):
+        base = 'resource "aws_s3_bucket" "b" {{\n  bucket = "data"\n}}\n' \
+               'resource "aws_s3_bucket_acl" "a" {{\n  bucket = aws_s3_bucket.b.id\n  acl = "public-read"\n}}\n' \
+               'resource "aws_s3_bucket_public_access_block" "p" {{\n{count}  bucket = aws_s3_bucket.b.id\n' \
+               '  ignore_public_acls = true\n}}\n'
+        severities = lambda text: {h["severity"] for h in scan({"s.tf": text}).hits if h["rule"] == "AWS-S3-001"}  # noqa: E731
+        self.assertEqual(severities(base.format(count="  count = 1\n")), severities(base.format(count="")))
+        self.assertNotEqual(severities(base.format(count="  count = var.n\n")), severities(base.format(count="")))
+
+
 if __name__ == "__main__":
     unittest.main()

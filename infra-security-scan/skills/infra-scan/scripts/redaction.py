@@ -555,6 +555,21 @@ def _closing_quote(line, quote, start):
     return -1
 
 
+def _shell_word_end(line, start, end):
+    """End of the unquoted shell word holding line[start:end]: a backslash escapes
+    the next character (admin:pfx\\ secret is one argument), so the word runs
+    on through escaped spaces."""
+    i = start
+    while i < len(line) and (i < end or line[i] not in " \t\"'"):
+        if line[i] == "\\" and i + 1 < len(line):
+            i += 2
+        elif i >= end and line[i] in ",]":
+            break
+        else:
+            i += 1
+    return max(end, min(i, len(line)))
+
+
 def _redact_values(pattern, line, group, keep=lambda m: False):
     """Replace each match's value group with [redacted], through its closing quote.
 
@@ -570,6 +585,8 @@ def _redact_values(pattern, line, group, keep=lambda m: False):
         if quote:
             close = _closing_quote(line, quote, search)
             end = max(end, len(line) if close == -1 else close)
+        else:
+            end = _shell_word_end(line, start, end)
         out.append(line[pos:start] + "[redacted]")
         pos = end
     out.append(line[pos:])

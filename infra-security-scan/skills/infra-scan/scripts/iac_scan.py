@@ -628,7 +628,9 @@ class DictView:
     def get(self, name):
         value = UNKNOWN if self.data is UNKNOWN else self.data.get(name)
         # A block holding unknowns is not itself unread: its own reads are recorded.
-        if self.reads is not None and (value is UNKNOWN or isinstance(value, list) and UNKNOWN in value):
+        # A map attribute (metadata, labels) may hold unknowns at any depth.
+        if self.reads is not None and (value is UNKNOWN or isinstance(value, list) and UNKNOWN in value
+                                       or isinstance(value, dict) and holds_unknown(value)):
             self.reads.add(self.prefix + name)
         return value
 
@@ -665,6 +667,20 @@ def contains_unknown(value):
         return any(contains_unknown(v) for v in value.values())
     if isinstance(value, (list, tuple)):
         return any(contains_unknown(v) for v in value)
+    return False
+
+
+def holds_unknown(value):
+    """An unknown anywhere inside a plan value."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if item is UNKNOWN:
+            return True
+        if isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
     return False
 
 
@@ -821,8 +837,9 @@ class Scan:
         self.imds_required_dirs, self.ebs_default_dirs = set(), set()
         # {constraint: {"orgs": org IDs, "dirs": {(dir, project or None)}}} for
         # enforced storage org policies.
-        self.gcs_org_policies, self.orgs_seen = {}, set()
+        self.gcs_org_policies = {}
         self.project_folders = {}  # project ID: folder number, from google_project in the inputs
+        self.project_orgs = {}  # project ID: organization number, likewise
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
@@ -1185,10 +1202,11 @@ def org_policy_enforced(scan, constraint, res):
     policies = scan.gcs_org_policies.get(constraint)
     if not policies:
         return False
-    if policies["orgs"] and scan.orgs_seen <= policies["orgs"] and len(scan.orgs_seen) == 1:
-        return True
+    # An organization or folder policy covers a bucket whose project a google_project
+    # in the inputs places in that organization or folder.
     project = res.view.get("project") if res.view else None
-    if isinstance(project, str) and scan.project_folders.get(project) in policies["folders"]:
+    if isinstance(project, str) and (scan.project_folders.get(project) in policies["folders"] or
+                                     scan.project_orgs.get(project) in policies["orgs"]):
         return True
     # A project policy covers a bucket of the same project: the same literal, both
     # omitted (the provider's default project), or the same unresolved expression.
@@ -1759,15 +1777,16 @@ def collect_context(scan, d, type_, view, text, defaults=True):
     """
     if never_created(view):
         return
-    if type_ == "google_project" and isinstance(view.get("project_id"), str) and \
-            isinstance(view.get("folder_id"), str):
-        scan.project_folders[view.get("project_id")] = view.get("folder_id").removeprefix("folders/")
-    scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
+    if type_ == "google_project" and isinstance(view.get("project_id"), str):
+        if isinstance(view.get("folder_id"), str):
+            scan.project_folders[view.get("project_id")] = view.get("folder_id").removeprefix("folders/")
+        if isinstance(view.get("org_id"), (str, int)) and not isinstance(view.get("org_id"), bool):
+            scan.project_orgs[view.get("project_id")] = str(view.get("org_id")).removeprefix("organizations/")
     if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block") and \
-            view.get("count") is None and view.get("for_each") is None:
+            surely_created(view):
         # The account block applies per account: keyed by provider, and not
         # at all when a plan cannot tie resources to providers. A block that
-        # may not be created (count, for_each) neutralises nothing.
+        # may not be created (unknown count or for_each) neutralises nothing.
         account = type_ == "aws_s3_account_public_access_block"
         key = ("*", provider_key(view)) if account else bucket_key(view)
         on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
@@ -1785,10 +1804,9 @@ def collect_context(scan, d, type_, view, text, defaults=True):
             if constraint not in enforced or not re.search(r'\benforce(?:d)?"?\s*[:=]\s*"?(?:TRUE|true)"?', enforced) \
                     or re.search(r'\bcondition\s*\{|"condition"\s*:\s*\[\s*\{', enforced):
                 continue
-            # Only an unconditional rule enforces for every bucket. An organization
-            # policy covers buckets only when the inputs name no other organization;
-            # a folder policy covers the module that declares it, and a project
-            # policy the buckets of that project there.
+            # Only an unconditional rule enforces for every bucket. An organization or
+            # folder policy covers the buckets of projects a google_project places
+            # there; a project policy covers the buckets of that project in its module.
             org = re.search(r'(?:parent|org_id)"?\s*[:=]\s*"(?:organizations/)?([0-9]+)"', enforced)
             org_level = type_ == "google_organization_policy" or (
                 type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', enforced))
@@ -1943,6 +1961,16 @@ def local_emulator(block, view):
     """A provider pointed at LocalStack or another local emulator takes dummy keys."""
     return tf_bool(view.get("skip_credentials_validation")) is True and \
         re.search(r"localhost|127\.0\.0\.1|localstack", block_text(block)) is not None
+
+
+def surely_created(view):
+    """No count or for_each, a literal count of at least one, or a non-empty literal for_each."""
+    count, for_each = view.get("count"), view.get("for_each")
+    if count is not None:
+        return (to_int(count) or 0) >= 1
+    if for_each is not None:
+        return isinstance(for_each, (dict, list)) and bool(for_each) and not holds_unknown(for_each)
+    return True
 
 
 def never_created(view):
@@ -2349,6 +2377,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     globals_ = doc.get("Globals", {}).get("Function") if isinstance(doc.get("Globals"), dict) else None
     scan.cfn_checked_templates[rel] = {lid for lid, r in (doc.get("Resources") or {}).items()
                                        if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"}
+    cfn_parameter_defaults(scan, rel, text, doc)
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -2547,11 +2576,27 @@ CFN_SECRET_KEY = re.compile(r"(?i)[A-Za-z0-9_-]*(?:password|passwd|secret|secret
                             r"api_?key|access_?key|private_?key|credentials?|(?<![A-Za-z])(?:pass|pwd|pw))")
 
 
+def literal_secret(value):
+    return isinstance(value, str) and not value.startswith("{{resolve:") and \
+        not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.fullmatch(value.strip())
+
+
+def cfn_parameter_defaults(scan, rel, text, doc):
+    """SEC-001 for a literal Default of a secret-named parameter: NoEcho hides the
+    value in the console, not in the repository."""
+    params = doc.get("Parameters")
+    if not isinstance(params, dict):
+        return
+    for name, param in params.items():
+        if isinstance(name, str) and isinstance(param, dict) and CFN_SECRET_KEY.fullmatch(name) \
+                and literal_secret(param.get("Default")):
+            m = re.search(rf'^\s*"?{re.escape(name)}"?\s*:', text, re.M)
+            line = text.count("\n", 0, m.start()) + 1 if m else 1
+            scan.hit("SEC-001", Res("file", rel, rel, 1), line, f"literal default for parameter {name}")
+
+
 def cfn_secrets(scan, res, props, line):
     """SEC-001 for literal strings under secret-named properties or Name/Value pairs."""
-    def literal_secret(value):
-        return isinstance(value, str) and not value.startswith("{{resolve:") and \
-            not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.fullmatch(value.strip())
 
     found = []
     stack = [props]

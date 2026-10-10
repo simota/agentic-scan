@@ -103,7 +103,8 @@ class SecureCodeIsQuietTest(unittest.TestCase):
         org = ('resource "google_org_policy_policy" "pap" {\n  name = "organizations/1/policies/'
                'storage.publicAccessPrevention"\n  parent = "organizations/1"\n  spec {\n    rules {\n'
                '      enforce = "TRUE"\n    }\n  }\n}\n'
-               'resource "google_storage_bucket" "b" {\n  uniform_bucket_level_access = true\n'
+               'resource "google_project" "p" {\n  project_id = "app-prod"\n  org_id = "1"\n}\n'
+               'resource "google_storage_bucket" "b" {\n  project = "app-prod"\n  uniform_bucket_level_access = true\n'
                '  public_access_prevention = "inherited"\n}\n')
         self.assertEqual(rules({"main.tf": org}), [])
 

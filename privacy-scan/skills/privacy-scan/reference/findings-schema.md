@@ -120,7 +120,10 @@ Report prose is rendered as literal text in Markdown: placeholders such as
 spans that preserve backticks, and HTTP(S) or relative reference links are
 encoded separately; other URL schemes remain visible as text. In the HTML
 dashboard, commands use preformatted code blocks that preserve line breaks and
-indentation. Table headers follow the report language, perspectives are listed
+indentation. Table headers follow the report language; in Japanese reports perspective
+names, perspective and commitment statuses and finding statuses are shown in
+Japanese (perspective names keep the English name used in `category`), while
+severity, confidence and verdict names stay as recorded. perspectives are listed
 in the order of `reference/perspectives.md`, blank optional fields add no row,
 a blank reference `title` shows the URL, and a blank `meta.commit` shows
 `UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown

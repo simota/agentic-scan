@@ -51,7 +51,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per data domain (accounts and identity, payments, content and messages, analytics, support, HR…) plus one cross-cutting unit (logging, error tracking, analytics SDKs, backups, config, client-side scripts). Each unit first hunts the commitments ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/commitments.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
 | Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. `check` refuses two reported findings with the same first `location` |
-| IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
+| IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this and rewrites `PV-NNN` references in prose and lists); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
@@ -73,7 +73,8 @@ gap behind one deployment setting is Medium). The configuration a feature needs
 to work at all — an SDK's DSN or API key, a service endpoint, a credential read
 from the environment — is not such a condition: grade as if it is present. Only
 a setting that would have to differ from what the code evidently intends (a log
-level, an SDK option, a region) counts. An `Environment-dependent` finding
+level, an SDK option, a region) counts. A default committed to the repository
+(a config or IaC variable default) is what the code intends. An `Environment-dependent` finding
 records each such condition in `conditions`; confidence never changes the grade.
 Exposure bounded to a short window by the code itself (a revoked link cached
 for minutes, a local log kept for hours) also lowers the grade one level; an
@@ -110,6 +111,7 @@ requester's language (`--lang ja|en`).
 | Asked to check, audit or scan privacy or data protection | All five phases |
 | Asked about one feature, SDK or data flow | Scope the review units to the flows it touches, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No privacy policy or retention rule is in the repository | Infer the commitments from consent UI texts, settings screens, retention jobs and the majority of flows; mark them `inferred`, hunt them anyway, and put each in `decisions`. Ask for the published policy if the requester can share it |
+| The app processes personal data on behalf of its customers (a processor: B2B SaaS, a DPA in the repo) | Take commitments from the DPA, the customer-facing privacy terms and the sub-processor list; owe them to the customer. Add `INSTRUCT` entries (`reference/commitments.md` §2). Consent is usually the customer's to collect, so record `Purpose and consent` steps that do not apply as N/A with that reason; deletion and export reach every store when the customer instructs them. Use of customer data for the app's own purposes (analytics, training, warehousing) beyond the DPA is a finding |
 | A regulation is named | Add its requirements as commitments with the regulation as source, phrased as checks on the code (e.g. "deletion reaches every store holding the subject's data"). Never state that the app is or is not compliant |
 | A third party receives data | Record exactly which fields reach it, from where and when (before or after consent). Whether a contract or DPA covers it is `UNKNOWN` unless the repository says so; put it in `decisions` |
 | The commitments promise a control or feature the code does not have (a settings screen, an opt-out, an export) | Treat the commitment as violated on every flow it governs and report the missing mechanism as the finding; say in `flow` where it was searched for |

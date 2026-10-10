@@ -180,3 +180,26 @@ class RenderConsistencyTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class JapaneseTermTests(unittest.TestCase):
+    def test_enumerations_are_shown_in_japanese_with_the_category_kept(self):
+        doc = complete_doc()
+        doc["commitments"][0].update(status="holds", reason="checked in api/app.py:22")
+        markdown = render.render_markdown(doc, "ja")
+        html = render.render_html(doc, "ja")
+        for text in (markdown, html):
+            self.assertIn("ログ・テレメトリ・エラー（Logs, telemetry and errors）", text)
+            self.assertIn("守られている — 理由: checked in api/app.py:22", text)
+            self.assertIn("未対応", text)
+            self.assertIn("適用", text)
+        self.assertIn("**検証方法:** static", markdown)
+        english = render.render_markdown(doc, "en")
+        self.assertIn("| Logs, telemetry and errors | applied |", english)
+        self.assertIn("holds — reason: checked in api/app.py:22", english)
+
+    def test_every_recorded_enumeration_has_a_japanese_term(self):
+        terms = render.LABELS["ja"]["terms"]
+        for value in (*findings.PERSPECTIVES, *findings.PERSPECTIVE_STATUSES,
+                      *findings.COMMITMENT_STATUSES, *findings.STATUSES):
+            self.assertIn(value, terms)

@@ -60,15 +60,35 @@ LABELS = {
         "location": "場所", "data": "個人データ", "subjects": "データ主体",
         "flow": "データの流れ", "contrast": "対照", "impact": "何が起きるか", "commitment": "約束",
         "fix": "修正方針", "guard": "再発防止チェック", "verdict": "検証判定",
-        "method": "検証の根拠", "evidence": "根拠", "analysis": "解析",
+        "method": "検証方法", "evidence": "根拠", "analysis": "解析",
         "verdict_counts": "検証判定別の件数",
         "references": "参考", "status": "ステータス", "review_method": "診断方法",
-        "inferred": "推定", "not_checked_reason": "未確認の理由",
+        "inferred": "推定", "not_checked_reason": "理由",
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
         "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス"),
         "conditions": "前提条件",
+        # Enumerations shown in Japanese; perspective names keep the English name
+        # used in `category` so findings and coverage can be matched.
+        "terms": {
+            "Data inventory and minimisation": "データの棚卸しと最小化",
+            "Purpose and consent": "目的と同意",
+            "Retention and deletion": "保持と削除",
+            "Data subject rights": "データ主体の権利",
+            "Third-party sharing": "第三者提供",
+            "Logs, telemetry and errors": "ログ・テレメトリ・エラー",
+            "Exposure to other actors": "他者への露出",
+            "Storage protection": "保存時の保護",
+            "Client-side tracking": "クライアント側のトラッキング",
+            "Identifiers and pseudonymisation": "識別子と仮名化",
+            "Non-production and derived copies": "本番以外の環境と派生コピー",
+            "Location and transfers": "保存場所と移転",
+            "applied": "適用", "partly applied": "一部適用", "N/A": "対象外",
+            "not checked": "未確認", "holds": "守られている", "violated": "違反",
+            "partly read": "一部のみ確認", "Open": "未対応", "Fixed": "修正済み",
+            "Accepted": "受容",
+        },
         "disclaimer": "ソースコードの技術的なレビューであり、法的見解ではない。"
                       "アプリケーションが法令に適合しているかどうかは述べていない。",
         "perspective": "観点",
@@ -99,10 +119,11 @@ def shown(value):
     return bool(as_text(value).strip())
 
 
-def finding_fields(f):
+def finding_fields(f, labels):
     """The perspective (with its hunt step) leads the recorded fields."""
     step = f.get("step", "")
-    perspective = f"{f['category']} ({step.strip()})" if step.strip() else f["category"]
+    category = perspective_name(labels, f["category"])
+    perspective = f"{category} ({step.strip()})" if step.strip() else category
     return [("perspective", perspective)] + [(key, f[key]) for key in FIELDS
                                              if key in f and shown(f[key])]
 
@@ -112,10 +133,12 @@ def revision(meta):
     return commit if commit.strip() else "UNKNOWN"
 
 
-def perspective_rows(doc):
+def perspective_rows(doc, labels):
     """List every perspective in the reference order in both reports."""
     recorded = {p["name"]: p for p in doc.get("perspectives", [])}
-    return [(name, recorded.get(name, {}).get("status", "—"), recorded.get(name, {}).get("note", ""))
+    return [(perspective_name(labels, name),
+             term(labels, recorded.get(name, {}).get("status", "—")),
+             recorded.get(name, {}).get("note", ""))
             for name in PERSPECTIVES]
 
 
@@ -236,12 +259,22 @@ def html_reference(ref):
     return f'<a href="{escape(destination)}">{label}</a>'
 
 
+def term(labels, value):
+    """A recorded enumeration in the report language."""
+    return labels.get("terms", {}).get(value, value)
+
+
+def perspective_name(labels, name):
+    translated = term(labels, name)
+    return name if translated == name else f"{translated}（{name}）"
+
+
 def commitment_text(record, labels):
     """Keep recorded qualifications visible in both commitment ledgers."""
-    statement, status = record["statement"], record["status"]
+    statement, status = record["statement"], term(labels, record["status"])
     if record.get("inferred") is True:
         statement += f" ({labels['inferred']})"
-    if status == "not checked" and record.get("reason"):
+    if record.get("reason", "").strip():
         status += f" — {labels['not_checked_reason']}: {record['reason']}"
     return statement, status
 
@@ -280,7 +313,7 @@ def render_markdown(doc, lang):
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] "
                      f"{markdown_text(f['title'])}{note}")
         lines.append("")
-        for key, value in finding_fields(f):
+        for key, value in finding_fields(f, t):
             lines.append(f"- **{t[key]}:** {markdown_text(value)}")
         lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {v['method']}")
         if shown(v.get("evidence", "")):
@@ -289,7 +322,7 @@ def render_markdown(doc, lang):
             a = f["analysis"]
             lines.append(f"- **{t['analysis']}:** {markdown_text(a['result'])} "
                          f"({markdown_text(a['tool'])}: {markdown_code(a['command'])})")
-        lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
+        lines.append(f"- **{t['status']}:** {term(t, f.get('status', 'Open'))}")
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
@@ -301,7 +334,7 @@ def render_markdown(doc, lang):
             lines.append(markdown_row(cells))
         lines.append("")
     lines += [f"## {t['perspectives']}", "", markdown_row(t["perspective_columns"]), "|---|---|---|"]
-    for row in perspective_rows(doc):
+    for row in perspective_rows(doc, t):
         lines.append(markdown_row(row))
     lines.append("")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
@@ -383,7 +416,7 @@ def render_html(doc, lang):
     out.append(f"<p data-empty{'' if not findings else ' hidden'}>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
-        rows = [(t[k], value) for k, value in finding_fields(f)]
+        rows = [(t[k], value) for k, value in finding_fields(f, t)]
         rows.append((t["verdict"], f"{v['verdict']} ({v['method']})"))
         if shown(v.get("evidence", "")):
             rows.append((t["evidence"], v["evidence"]))
@@ -401,10 +434,10 @@ def render_html(doc, lang):
                    f"· {e(v['verdict'])}"
                    + (f" ({e(t['excluded'])})" if excluded_finding else "")
                    + f" <span class='muted'>· {e(f['confidence'])} · "
-                   f"{e(f['category'])}</span></summary><dl>"
+                   f"{e(perspective_name(t, f['category']))}</span></summary><dl>"
                    + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows)
                    + analysis_html
-                   + f"<dt>{e(t['status'])}</dt><dd>{e(f.get('status', 'Open'))}</dd>"
+                   + f"<dt>{e(t['status'])}</dt><dd>{e(term(t, f.get('status', 'Open')))}</dd>"
                    + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"
                              for ref in f.get("references", []))
                    + "</dl></details>")
@@ -416,7 +449,7 @@ def render_html(doc, lang):
             out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
         out.append("</table>")
     out.append(f"<h2>{e(t['perspectives'])}</h2><table>{html_head(t['perspective_columns'])}")
-    for row in perspective_rows(doc):
+    for row in perspective_rows(doc, t):
         out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>")
     out.append("</table>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):

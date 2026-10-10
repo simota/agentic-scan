@@ -27,9 +27,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   deletion and export paths
 - **Commitments** — what the app promises or must keep (privacy policy,
   consent texts, retention schedules, sub-processor lists, settings-screen
-  copy, requirements of regulations you name), in seven families:
-  minimisation, consent, retention, rights, sharing, containment and
-  protection. Each is hunted on every flow that must keep it
+  copy, requirements of regulations you name), in eight families:
+  minimisation, consent, retention, rights, sharing, containment, protection
+  and, for processors, the customer's instructions. Each is hunted on every
+  flow that must keep it
 - **Perspectives** — twelve review angles (data inventory and minimisation,
   purpose and consent, retention and deletion, data subject rights,
   third-party sharing, logs and telemetry, exposure to other actors, storage

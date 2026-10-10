@@ -1,10 +1,11 @@
 """Exercise installation targets only inside temporary directories."""
-import os
 from pathlib import Path
 import shutil
 import subprocess
 import tempfile
 import unittest
+
+from test_architecture_scan import make_env
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -22,9 +23,7 @@ class InstallTests(unittest.TestCase):
         # Explicit overrides keep every write away from the real host directories.
         settings = {"AGENT": "agy", "SKILLS_DIR": "", "PROJECT": ""}
         settings.update(variables)
-        env = os.environ.copy()
-        for name in ("MAKEFLAGS", "MFLAGS"):
-            env.pop(name, None)
+        env = make_env()
         return subprocess.run(
             ["make", "--no-print-directory", "-f", str(REPO / "Makefile"), target]
             + [f"{name}={value}" for name, value in settings.items()],

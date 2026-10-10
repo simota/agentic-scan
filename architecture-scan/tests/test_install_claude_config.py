@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+from test_architecture_scan import make_env
+
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "architecture-scan"
@@ -26,9 +28,7 @@ class ClaudeConfigTests(unittest.TestCase):
             "PYTHON": shlex.quote(sys.executable),
         }
         settings.update(variables)
-        env = os.environ.copy()
-        for name in ("MAKEFLAGS", "MFLAGS", "MAKEFILES", "CLAUDE_CONFIG_DIR"):
-            env.pop(name, None)
+        env = make_env("CLAUDE_CONFIG_DIR")
         if env_config is not None:
             env["CLAUDE_CONFIG_DIR"] = str(env_config)
         command = ["make", "--no-print-directory", "-f", str(REPO / "Makefile")]

@@ -82,7 +82,16 @@ A rule is locked in by a fitness function in the repo's own suite that:
 - names the rule (`R-…`) it encodes
 
 `status: Fixed` records that a fix was made; the guard is the evidence that it
-stays fixed.
+stays fixed. Record it with one fragment, keeping the proposed check and adding
+where it now lives and the revisions it was red and green at:
+`{"findings": [{"id": "A-001", "status": "Fixed", "guard": "R-01: CI search fails on writes to invoices outside api/billing/ — ci/single_writer_test.py, red at 8ab40fc, green at 1c2d3e4"}]}`.
+When the fix was shown only on a scratch copy (the default), the finding stays
+`Open` and the guard says so:
+`{"findings": [{"id": "A-001", "guard": "R-01: CI search fails on writes to invoices outside api/billing/ — ci/single_writer_test.py, red at 8ab40fc; passes on a scratch copy with the fix"}]}`.
+The rest of the record still describes the assessed revision (`meta.commit`):
+the rule stays `violated`, and the finding still counts in the headline;
+`scripts/findings.py counts` reports `n_fixed` beside it. Then render and
+check again.
 
 ## Reporting and limits
 

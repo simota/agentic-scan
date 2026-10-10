@@ -26,7 +26,8 @@ HOSTILE = [
 class PandocGfmTests(unittest.TestCase):
     def html(self, markdown):
         return subprocess.run(["pandoc", "-f", "gfm", "-t", "html"], input=markdown,
-                              capture_output=True, text=True, check=True, timeout=60).stdout
+                              capture_output=True, text=True, encoding="utf-8", check=True,
+                              timeout=60).stdout
 
     def test_hostile_text_stays_text_in_every_position(self):
         doc = complete_doc()

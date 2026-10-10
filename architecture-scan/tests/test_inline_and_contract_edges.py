@@ -24,7 +24,7 @@ class InlineTextTests(unittest.TestCase):
         rendered = render.markdown_inline(r"api/\*/models.py and web/\*/models.py")
         self.assertNotRegex(rendered, r"(?<!&#)\*")
         self.assertEqual(rendered.count("&#92;&#42;"), 2)
-        self.assertEqual(render.markdown_inline(r"C:\repo & <x>"), "C:&#92;repo &amp; &lt;x&gt;")
+        self.assertEqual(render.markdown_inline(r"C:\repo & <x>"), "C:&#92;repo &amp; &lt;x>")
 
     def test_emphasis_and_code_spans_are_kept(self):
         self.assertEqual(render.markdown_inline("keep *this* and `x | y`"),
@@ -120,7 +120,8 @@ class ContractEdgeTests(unittest.TestCase):
 
     def test_confirmed_finding_contradicting_its_rule_status_fails(self):
         for status, verdict, ok in (("holds", "Valid", False), ("not checked", "Likely", False),
-                                    ("partly read", "Valid", True), ("holds", "Unverified", True),
+                                    ("partly read", "Valid", False), ("partly read", "Likely", True),
+                                    ("holds", "Unverified", True),
                                     ("holds", "FalsePositive", True)):
             with self.subTest(status=status, verdict=verdict):
                 doc = complete_doc()

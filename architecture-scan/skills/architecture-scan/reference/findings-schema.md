@@ -30,18 +30,23 @@ including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
 never `//host`, `\\host` or `/\host`, which name another host);
-any other scheme, or any URL containing a control character, is shown as
-literal text. In `report.md`, recorded text keeps emphasis and code spans, but
+any other scheme, or any URL containing a control or bidirectional character,
+is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard) or `$` math.
+an e-mail address stays plain text, as in the dashboard; an `@` that starts
+a word, such as `@scope/pkg`, is left as written) or `$` math. A `>` stays
+as written (`a -> b`) except where it would start a quote.
 Backslashes are shown as written (`docs\adr`), so they never escape a
 delimiter; the one exception in `report.md` is a backslash directly before a
 backtick, the author's escape: `` \` `` shows a literal backtick and no
 backslash. The dashboard shows every recorded character verbatim. A blank
 optional field (including a rule's `reason`) gets no row in either output. The
 dashboard filters excluded findings separately from the severities, matching
-the counts.
+the counts, says so when a filter leaves nothing to show, and opens every
+finding when printed. Bidirectional control characters (U+202A–202E,
+U+2066–2069) in recorded text are shown as `[U+202E]` in both outputs, so no
+value can display reversed.
 Both outputs are written to temporary files first; only when both are written
 are they moved into place, one after the other. A write error therefore keeps
 the previous pair; after any exit `1`, render again before `check`.
@@ -57,8 +62,9 @@ required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
 `findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
-- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` or `Likely`
-  finding not excluded cites a rule recorded as `violated` or `partly read`
+- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` finding
+  not excluded cites a rule recorded as `violated`, a `Likely` one a rule
+  recorded as `violated` or `partly read`
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
@@ -104,8 +110,10 @@ Merge semantics:
 - A complete finding (every required field) sent with an ID that already holds
   a finding with a different `title` or `location` is refused as an ID
   collision: two review units numbered the same ID, or a different finding at
-  the same place. To correct a title or location, send only the changed fields
-  (`{"findings": [{"id": "A-003", "title": "…"}]}`). Each unit numbers in its
+  the same place. A partial record that changes both `title` and `location`
+  is taken for another finding too. To correct a title or location, send only
+  the changed field (`{"findings": [{"id": "A-003", "title": "…"}]}`); to
+  correct both, send them in two fragments. Each unit numbers in its
   own block (`A-101`…, `A-201`…); `renumber` compacts them. IDs are always
   `A-` and three digits, so blocks allow nine units of 99 findings each; a
   unit with more continues in a free block, and a record holds at most 999

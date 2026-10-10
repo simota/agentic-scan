@@ -3,6 +3,7 @@
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
+    python3 findings.py counts FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -27,6 +28,9 @@ location, and renames them `A-001`… without gaps. Every whole-word mention of
 an old ID in the record's prose is rewritten in the same pass, so `next_steps`
 and traces keep pointing at the same finding; `meta`, locations, URLs,
 commands and rule sources keep theirs.
+
+`counts` prints the `n_*` values the report templates use, one `name=value`
+per line, counted as report.md counts them (excluded verdicts apart).
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -80,6 +84,7 @@ LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 RULE_REQUIRED = ("id", "statement", "source", "status")
+ALLOWED_RULE_STATUS = {"Valid": ("violated",), "Likely": ("violated", "partly read")}
 # Every key the schema knows in a record that is rendered. A typo such as
 # `contrats` is refused instead of being kept and never shown. `meta` stays
 # open for run context the outputs do not show.
@@ -366,15 +371,21 @@ def _same_location(a, b):
 
 
 def _collides(existing, record):
-    """A complete record unlike the finding that holds its ID: another unit's finding.
+    """A record unlike the finding that holds its ID: another unit's finding.
 
-    Two findings can share a location, so either a new title or a new location
-    marks a different finding; a correction sends only the fields that change.
+    Two findings can share a location, so in a complete record either a new
+    title or a new location marks a different finding. A partial record that
+    changes both title and location is another finding too, even with a field
+    missing; a correction changes one of them at a time.
     """
-    return (all(key in record for key in FINDING_REQUIRED)
-            and (" ".join(str(record["title"]).split())
-                 != " ".join(str(existing.get("title", "")).split())
-                 or not _same_location(record["location"], existing.get("location"))))
+    if "title" not in record or "location" not in record:
+        return False
+    new_title = (" ".join(str(record["title"]).split())
+                 != " ".join(str(existing.get("title", "")).split()))
+    new_location = not _same_location(record["location"], existing.get("location"))
+    if all(key in record for key in FINDING_REQUIRED):
+        return new_title or new_location
+    return new_title and new_location
 
 
 def _merge_records(current, incoming, where, required):
@@ -387,9 +398,12 @@ def _merge_records(current, incoming, where, required):
         rid = record["id"]
         if rid in index:
             if required is FINDING_REQUIRED and _collides(index[rid], record):
+                hint = ("give the new finding another ID, or send only the fields that change"
+                        if all(key in record for key in FINDING_REQUIRED) else
+                        "a record changing both title and location is taken for another "
+                        "finding; give it another ID, or correct them in separate fragments")
                 raise SchemaError(
-                    f"{where}: {rid} already holds {index[rid].get('title')!r}; give the new "
-                    f"finding another ID, or send only the fields that change")
+                    f"{where}: {rid} already holds {index[rid].get('title')!r}; {hint}")
             _apply(index[rid], record, required, f"{where}.{rid}")
         else:
             current.append(_apply({}, record, required, f"{where}.{rid}"))
@@ -557,7 +571,7 @@ def _serialize(doc):
 
 
 @contextmanager
-def _exclusive(target):
+def _exclusive(target, create=True):
     """Hold an exclusive lock on target's directory from read to replace.
 
     Two merges started together would otherwise both read the same record and
@@ -567,8 +581,10 @@ def _exclusive(target):
     """
     directory = target.resolve().parent
     # The directory is never removed again: a merge may already hold it open,
-    # waiting for the lock, and would then lock a deleted directory.
-    directory.mkdir(parents=True, exist_ok=True)
+    # waiting for the lock, and would then lock a deleted directory. Only merge
+    # creates it; renumber on a mistyped path leaves nothing behind.
+    if create:
+        directory.mkdir(parents=True, exist_ok=True)
     yield from _locked(directory)
 
 
@@ -593,7 +609,9 @@ def _locked(directory):
 def cmd_renumber(args):
     target = Path(args.findings)
     try:
-        with _exclusive(target):
+        if not target.is_file():
+            raise SchemaError(f"{target}: no such record")
+        with _exclusive(target, create=False):
             changed = _renumber_file(target)
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
@@ -659,6 +677,39 @@ def cmd_merge(args):
     return 0
 
 
+def template_counts(doc):
+    """The `{{n_*}}` values of templates/report.*.md, counted as report.md counts."""
+    findings = doc.get("findings", [])
+    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    counts = {}
+    for severity in SEVERITIES:
+        same = [f for f in active if f["severity"] == severity]
+        counts[f"n_{severity.lower()}"] = len(same)
+        counts[f"n_{severity.lower()}_valid"] = sum(f["validation"]["verdict"] == "Valid"
+                                                    for f in same)
+    counts["n_excluded"] = len(findings) - len(active)
+    for verdict in ("Likely", "Unverified", "Unlikely"):
+        counts[f"n_{verdict.lower()}"] = sum(f["validation"]["verdict"] == verdict
+                                             for f in findings)
+    # The record describes the assessed revision, so a fixed finding still
+    # counts above; these say how many of them have since been closed.
+    for status in ("Fixed", "Accepted"):
+        counts[f"n_{status.lower()}"] = sum(f.get("status") == status for f in active)
+    return counts
+
+
+def cmd_counts(args):
+    try:
+        doc = read_json(args.findings)
+        validate(doc, complete=True)
+    except SchemaError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    for name, value in template_counts(doc).items():
+        print(f"{name}={value}")
+    return 0
+
+
 def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
@@ -706,9 +757,11 @@ def contract_problems(out, allow=()):
             status = rule_status.get(f["rule"])
             if status is None:
                 problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
-            elif verdict in ("Valid", "Likely") and status not in ("violated", "partly read"):
+            elif verdict in ("Valid", "Likely") and status not in ALLOWED_RULE_STATUS[verdict]:
+                # A Valid finding is a traced break, so its rule is violated; a
+                # Likely one may still sit on a rule whose edges were partly read.
                 problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
-                                f"{status}, not violated or partly read")
+                                f"{status}, not {' or '.join(ALLOWED_RULE_STATUS[verdict])}")
         if verdict in DEFINITIVE and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line")
         if verdict in EXCLUDED:
@@ -793,11 +846,14 @@ def main(argv=None):
     m.add_argument("fragments", nargs="+")
     r = sub.add_parser("renumber", help="order findings by severity and path, IDs gapless")
     r.add_argument("findings")
+    n = sub.add_parser("counts", help="print the n_* values the report templates use")
+    n.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
+            "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

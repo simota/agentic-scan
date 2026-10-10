@@ -31,7 +31,9 @@ Strongest first:
 
 Write each rule with its source (`path:line`). A rule inferred only from
 sources 3–6 is marked `inferred`, and the rule itself goes to `decisions` so a
-person can confirm the intent.
+person can confirm the intent. A `baseline` entry (§2) is the exception: it
+states a general family rule, not this codebase's intent, so it does not go to
+`decisions`.
 
 ## 2. The ledger
 
@@ -67,8 +69,16 @@ checked` (with a reason):
   rule; the count of unread edges goes to `limitations`
 - `not checked` — no edge was read; `reason` says why
 
-A `Valid` or `Likely` finding cites a `violated` or `partly read` rule; `check`
-refuses one that cites a rule recorded as holding or not checked.
+A `Valid` finding that cites a rule cites one recorded as `violated` (it is a
+traced break, so the rule cannot be merely `partly read`); a `Likely` one may
+cite a `violated` or `partly read` rule. `check` refuses anything else. The
+ledger describes the assessed revision: after a fix, the rule stays
+`violated` and the finding's `status` becomes `Fixed`. A defect claim may cite no codebase rule at all
+(`reference/validation.md`, claim 4); it then names its family's `baseline`
+entry when the ledger has one.
+
+In a checklist deliverable nothing has been hunted yet: the Status column reads
+`to trace`, and no `findings.json` is written.
 
 ## 3. Trace rows
 

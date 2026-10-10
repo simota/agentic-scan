@@ -5,6 +5,7 @@ import copy
 import importlib.util
 import io
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -29,6 +30,19 @@ def import_module(path: Path, name: str) -> ModuleType:
 
 findings = import_module(SKILL / "scripts" / "findings.py", "arch_findings")
 render = import_module(SKILL / "scripts" / "render.py", "arch_render")
+
+
+# Variables an outer make passes down that would change how the Makefile under
+# test runs (jobs, flags, extra makefiles).
+MAKE_ENV_LEAKS = ("MAKEFLAGS", "MFLAGS", "MAKEFILES")
+
+
+def make_env(*drop: str) -> dict:
+    """The environment for a nested `make`, without what the outer make leaks."""
+    env = os.environ.copy()
+    for name in (*MAKE_ENV_LEAKS, *drop):
+        env.pop(name, None)
+    return env
 
 
 def finding(fid="A-001", severity="High", **extra) -> dict:

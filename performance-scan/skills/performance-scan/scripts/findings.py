@@ -109,13 +109,12 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
 NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
-# A version with optional prerelease or build metadata, in SemVer or compact
-# form (v1.2.3-rc.1+build.5, 1.2.3rc1), or with a Maven-style qualifier
-# (5.3.20.RELEASE, 1.0.Final). Any other dotted suffix after the numbers is a
-# file extension (2.0.txt, 1.2.py).
-VERSION = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+"
-                     r"(?:\.(?:RELEASE|Final|FINAL|GA|SNAPSHOT|M[0-9]+|RC[0-9]+|CR[0-9]+))?"
-                     r"(?:(?:[-+]|(?=[A-Za-z]))[0-9A-Za-z.+-]*)?")
+# A root-level name that starts with a dotted version number is a version,
+# whatever qualifier follows (v1.2.3-rc.1+build.5, 1.2.3rc1, 1.2.3.post1,
+# 5.0.0.BUILD-SNAPSHOT): qualifiers cannot be listed exhaustively, so a file
+# whose name starts with a version is cited with its directory or ./
+# (./2.0.txt:3). Under a directory, such names count (docs/2.0.txt).
+VERSION_PREFIX = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+")
 PROTOCOL = re.compile(r"[A-Z]+[/\\][0-9]+(?:\.[0-9]+)*")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
@@ -141,11 +140,13 @@ def _is_host(name):
 
 def _file_shaped(path):
     """True when path has a directory part, a dotted suffix or a root-file name."""
-    if NUMERIC.fullmatch(path) or VERSION.fullmatch(path) or PROTOCOL.fullmatch(path):
+    if NUMERIC.fullmatch(path) or PROTOCOL.fullmatch(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
         return bool(last)
+    if VERSION_PREFIX.match(last):
+        return False
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))
 

@@ -122,8 +122,7 @@ VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
 # A package spec puts a dotted version after @ or an operator (react@18.2.0,
 # pkg@v1.2.3, python==1.2.3); a scale suffix such as icon@2x.png is a file.
 PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
-VERSION_NUMBER = re.compile(r"[0-9]+(?:\.[0-9]+)+")
-WORD = re.compile(r"[^\W_]+")
+PRODUCT_VERSION = re.compile(r"[^\W\d_]+([-_]?)([0-9]+(?:\.[0-9]+)+)")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
@@ -159,16 +158,18 @@ def _is_host(name):
 
 
 def _product_version(name):
-    """True for a word followed by a version: Python-3.12.1, OpenSSL_3.0.0, or
-    version1.2.3 (three or more parts when nothing separates them, so python3.11
-    and Dockerfile.22.04 stay files). String operations keep this linear."""
-    head = name.rstrip("0123456789.")
-    tail = name[len(head):]
-    if not head or not VERSION_NUMBER.fullmatch(tail):
+    """True for a word followed by a version, whatever qualifier follows:
+    Python-3.12.1rc1, OpenSSL_3.0.0-alpha, version1.2.3+build.5. Without a
+    separator the number needs three or more parts (python3.11 is a file), and
+    a name that ends in a letter-led extension is a file (jquery-3.6.0.min.js)."""
+    match = PRODUCT_VERSION.match(name)
+    if not match:
         return False
-    if head[-1] in "-_":
-        return bool(WORD.fullmatch(head[:-1]))
-    return tail.count(".") >= 2 and bool(WORD.fullmatch(head))
+    separator, number = match.group(1), match.group(2)
+    if not separator and number.count(".") < 2:
+        return False
+    _, dot, extension = name[match.end():].rpartition(".")
+    return not (dot and extension[:1].isalpha())
 
 
 def _protocol_version(path):

@@ -44,7 +44,9 @@ mechanical:
   screens toward the unit-size threshold in `SKILL.md`)
 - *Frequency / sensitivity*: `hot` (every page view, list screens, polling,
   auth, search, high-volume API, per-keystroke or per-scroll client work), `warm` (regular user actions), `cold`
-  (admin, one-off, nightly with slack). Infer from the client code, polling
+  (admin, one-off, nightly with slack). A `consumer` is hot when it processes
+  every event of a hot entity or its lag or redelivery budget is shorter than
+  its cost at a named volume, otherwise warm. Infer from the client code, polling
   intervals, schedules and route names; mark the inference
 - *Scale drivers*: every collection whose size the work depends on, with its
   owner (rows per tenant, items per order, members per team, file size). Each

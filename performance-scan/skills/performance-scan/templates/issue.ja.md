@@ -1,10 +1,12 @@
 <!--
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
-各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
+各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除し、中身がすべて
+空のセクション（参考がない場合の「参考」など）は見出しごと削除する。コードの識別子（`*sql.Tx`、
+`order_items`）はバッククォートで囲み、Markdown で * や _ が解釈されないようにする。
 場所は 1 つずつバッククォートで囲み、表のセル内では <br> で区切る。{{request}} は番号ごとに改行する。
 確度が Environment-dependent なら、前提条件としきい値（scale_driver または impact から）と、関連する
 limitations の項目を「未確定事項」に書く。
-step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
+検証方法は static を「静的」、measured を「計測」と書く。step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
 path:line、参考の title が空なら URL をリンク文字列にする。
 
 登録前に確認すること:
@@ -21,7 +23,7 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
 | 確度 | {{confidence}} |
-| 検証判定 | {{validation.verdict}}（検証方法: static は「静的」、measured は「計測」） |
+| 検証判定 | {{validation.verdict}}（検証方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |
 | 場所 | {{location}} |
 | 対象リビジョン | {{meta.commit}} |
@@ -42,7 +44,8 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 
 **対照（バジェットが守られている経路）:** {{contrast}}
 
-<!-- 該当するエントリーポイントが複数ある場合はすべて列挙する（同じ根本原因なら同じ issue）。 -->
+<!-- 該当するエントリーポイントが複数ある場合はすべて列挙する（同じ根本原因なら同じ issue）。共有資源の
+停止なら、停止を引き起こすワークロードと、待たされるワークロードの両方を書く。 -->
 
 ## 根拠
 

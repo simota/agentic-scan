@@ -43,7 +43,8 @@ python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
 
 - Write one to five findings per fragment; the first fragment carries `meta`.
 - One REPORT coordinator runs all merges to the same `findings.json`, one at a
-  time; parallel reviewers write fragments in scratch for that coordinator.
+  time; parallel reviewers write draft findings and notes in scratch, which
+  are never merged as they are.
   Merges are not safe to run concurrently: one can overwrite another's changes.
 - Reviewers label findings in their scratch notes with temporary IDs
   (`U<unit>-<n>`) and never put `perspectives` in fragments. After VERIFY the
@@ -134,6 +135,11 @@ While merging, `meta` may be partial, but any `project`, `scope`, `date`,
 
 ## Field rules
 
+Findings, budgets, perspectives and the objects inside a finding (`validation`,
+`measurement`, `references[]`) accept only the keys listed here; any other key
+(often a typo such as `budjet`) is refused. `meta` may carry extra keys, which
+nothing renders.
+
 String values are plain text, not authored Markdown or HTML. Renderers escape
 them for their output context; use `references[]` for links rather than
 embedding Markdown link syntax in another field.
@@ -150,10 +156,10 @@ embedding Markdown link syntax in another field.
 | `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
 | `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
 | `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `budget` holds exactly one ID, and `check` requires a nonblank `budget` to name an ID in `budgets[]`; name other violated budgets in `impact` |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line` or `path#L42` (the path must look like a file: an extension, a directory part, or a conventional name such as `Makefile` or `BUILD`; a URL, a `host:port` such as `db.example.com:5432` or `example.org:443`, a time, a ratio or prose such as `timeout:30` does not count, so write other extensionless files, and lowercase names ending in `.dev`, `.test`, `.local`, `.org` and similar, with their directory, e.g. `bin/server:12`, `config/settings.local:3`). For other verdicts, `evidence` may be omitted or empty but must be a string when present |
+| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line` or `path#L42` (the path must look like a file: an extension, a directory part, a capitalised `*file` such as `Makefile` or `Taskfile`, or a well-known all-caps file such as `BUILD` or `CHANGELOG`. A URL, a `host:port` such as `db.example.com:5432` or `example.org:443`, a module path such as `github.com/foo/bar:3`, a setting such as `TTL:300`, a time, a ratio or prose such as `timeout:30` does not count, and `check` names each rejected candidate. A code member such as `time.Second:30` has the same shape as a file with a capitalised extension (`Program.CS`, `analysis.Rmd`, `project.Rproj`) and counts, so cite source positions, not identifiers. Cite any other extensionless file, and lowercase names ending in `.dev`, `.test`, `.local`, `.org` and similar, with a directory or `./`, e.g. `bin/server:12`, `./NOTES:3`, `config/settings.local:3`). For other verdicts, `evidence` may be omitted or empty but must be a string when present |
 | `validation.method` | `static` or `measured`; `measured` requires `measurement` |
 | `measurement` | When present, an object with nonblank string fields `environment`, `command` and `result`, from an authorised local run. This shape is checked for both `static` and `measured`; `measured` requires the object |
-| `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost; still counted in the totals, with the decision recorded in `decisions`) |
+| `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost, with the decision recorded in `decisions`). Every non-excluded finding is counted in the totals whatever its status |
 | `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Only absolute `http(s)` URLs, `mailto:` and relative paths become links; any other URL (including `//host`) is shown as text. An omitted or blank `title` uses the URL as the link label |
 | `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs a nonblank `reason` for `check`, and `check` refuses `holds` while a `Valid` finding that is not `Fixed` names the budget. A present `reason` must be a string (empty allowed while merging). `family` (`QRY`, `SIZE`, `CPLX`, `LAT`, `RES` or `FE`, from `reference/budgets.md` §2) and `inferred` are optional |
 | `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |

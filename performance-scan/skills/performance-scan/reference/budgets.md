@@ -110,6 +110,8 @@ Each finding carries:
 - `impact` — expected (the budget) vs actual (the cost model), and the bounded
   consequence (timeouts at the gateway limit, pool exhaustion, memory growth)
 - `budget` — exactly one ledger ID; name any other violated budget in `impact`
+  (the report's *Cited by* column picks up IDs named there too, and `check`
+  refuses an ID there that is not in the ledger)
 - `fix` — one line: the bound restored and where (eager load at `path:line`,
   `LIMIT` with a cursor, a batch call, a composite index on named columns)
 - `regression_test` — at least one deterministic assertion: query or call

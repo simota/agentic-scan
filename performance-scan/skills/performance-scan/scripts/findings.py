@@ -58,14 +58,25 @@ META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "location",
                     "workload", "scale_driver", "cost_model", "request", "impact",
                     "fix", "regression_test", "validation")
+# Records accept only their documented keys, so a typo (budjet, measurment) is
+# refused instead of silently escaping check's rules and both outputs. meta stays
+# open for host-specific notes; only its documented keys are rendered.
+FINDING_KEYS = frozenset(FINDING_REQUIRED + ("contrast", "budget", "step", "status",
+                                             "measurement", "references"))
+VALIDATION_KEYS = frozenset(("verdict", "method", "evidence"))
+MEASUREMENT_KEYS = frozenset(("environment", "command", "result"))
+REFERENCE_KEYS = frozenset(("url", "title"))
+BUDGET_KEYS = frozenset(("id", "statement", "source", "family", "inferred", "status", "reason"))
+PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
+BUDGET_MENTION = re.compile(r"(?<![\w-])B-[0-9]{2,}(?![\w-])")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
 # The lookbehind starts a match only at the beginning of a run: without it a long
 # run with no colon is retried from every position (quadratic time).
 CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
-                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
+                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9１-９][0-9０-９]*")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
@@ -73,43 +84,101 @@ class SchemaError(ValueError):
     pass
 
 
-# Final labels that mark a dotted name as a host rather than a file name. The
-# ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev,
-# README.org): with them, a lowercase two-label name (example.org, db.dev) is a
-# host, while a name with an uppercase letter or a leading dot is a file.
+# Final labels that mark a dotted name as a host rather than a file name.
+# Hostnames are case-insensitive, so HOST_SUFFIXES apply in any case
+# (DB.EXAMPLE.COM). The ambiguous ones are also common file suffixes
+# (README.org, Dockerfile.dev, Service.svc, .env.local): they mark a host in a
+# name of three or more labels (api.corp.dev, postgres.default.svc) or in an
+# all-lowercase two-label name (example.org, db.dev); a leading dot always
+# means a file.
 HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", "eu", "us",
-                           "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
-AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
+                           "localdomain", "internal", "lan", "invalid", "arpa"))
+AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test",
+                                     "svc"))
+# Two single capital letters around a slash (N/A, I/O, R/W) are an
+# abbreviation; ./a, /a, a/b and src/a are files.
+ABBREVIATION = re.compile(r"[A-Z][/\\][A-Z]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
-# A file name has an extension, a directory part, or a conventional extensionless
-# name: Makefile, Dockerfile, BUILD, WORKSPACE, OWNERS.
-FILE_SHAPE = re.compile(r".*[/\\].*|.*\.[A-Za-z0-9]+|[A-Z][A-Za-z]*file|[A-Z][A-Z0-9_]+")
+# A file name has a directory part whose last segment holds a letter, in any
+# script (src/main, src/設定, src/a, ./CHANGELOG), or a numeric name under a
+# lettered directory (fixtures/123, testdata/1; not HTTP/1.1 or 1/2, and _rejection
+# refuses N/A and I/O), an extension with a letter (not 1.5 or v1.2.3), or a
+# conventional extensionless root name: a capitalised *file (Makefile, Taskfile,
+# Pipfile) or a well-known all-caps file. Other all-caps words (TTL, TIMEOUT,
+# MAX_CONNECTIONS) are settings; any other extensionless root file is cited
+# with ./ (./NOTES:3).
+# Checked by _file_shaped with string operations, not one regex: nested
+# unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
+LETTER = re.compile(r"[^\W\d_]")
+EXTENSION = re.compile(r"[A-Za-z][A-Za-z0-9]*")
+ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
+                        r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
+                        r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
+                        r"|MAINTAINERS|NOTICE|COPYING|INSTALL|SECURITY|TODO")
+# Capitalised words ending in "file" that are prose, not files.
+NOT_FILES = frozenset(("Profile", "Ffile"))
 
 
 def _is_host(name):
     """True for localhost, an IPv4 address or a dotted name ending in a host suffix."""
     if "/" in name or "\\" in name or name.startswith("."):
         return False
+    if name.lower() == "localhost" or IPV4.fullmatch(name):
+        return True
     labels = name.lower().split(".")
-    ambiguous = labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name.islower())
-    return (name.lower() == "localhost" or bool(IPV4.fullmatch(name))
-            or (len(labels) > 1 and (labels[-1] in HOST_SUFFIXES or ambiguous)))
+    if len(labels) < 2:
+        return False
+    if labels[-1] in HOST_SUFFIXES:
+        return True
+    return labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name == name.lower())
+
+
+def _file_shaped(path):
+    """True when path has a directory part, an extension or a root-file name."""
+    normalised = path.replace("\\", "/")
+    directory, slash, last = normalised.rpartition("/")
+    if slash:
+        return bool(LETTER.search(last)) or (last.isdigit() and last.isascii()
+                                             and bool(LETTER.search(directory)))
+    _, dot, extension = last.rpartition(".")
+    return bool(dot and EXTENSION.fullmatch(extension)) or bool(ROOT_FILE.fullmatch(last))
+
+
+def _rejection(path):
+    """Why a path:line candidate is not a file position, or None when it is one."""
+    if "//" in path:
+        return "a URL"
+    if _is_host(path):
+        return "a host:port"
+    if not _file_shaped(path) or path in NOT_FILES:
+        return "not a file name (a setting, number or word)"
+    if ABBREVIATION.fullmatch(path):
+        return "an abbreviation such as N/A or I/O, not a file"
+    first, _, rest = path.replace("\\", "/").partition("/")
+    last = path.replace("\\", "/").rsplit("/", 1)[-1]
+    if rest and "." not in last and _is_host(first):
+        return "a module or host path, not a file"
+    # A code member such as time.Second:30 has the same shape as a file with a
+    # capitalised extension (analysis.Rmd, project.Rproj, schema.PROTO), so it is
+    # not refused; the evidence rule asks for a citation, not proof of one.
+    return None
+
+
+def citation_rejections(text):
+    """The path:line candidates in text that do not name a file, with the reason."""
+    return [(match.group(0), reason) for match in CITATION.finditer(text)
+            for reason in [_rejection(match.group(1))] if reason]
 
 
 def cites_location(text):
     """True when text names a file position, not a URL, a host:port, a time or a ratio.
 
-    The path must look like a file (see FILE_SHAPE), so prose such as
+    The path must look like a file (see _file_shaped), so prose such as
     "timeout:30" or "上限：100" does not count. A service name such as
     redis:6379 does not either; an extensionless file must be written with its
     directory (src/main:40) unless its name is conventional (BUILD:10).
     """
-    for match in CITATION.finditer(text):
-        path = match.group(1)
-        if "//" in path or _is_host(path) or not FILE_SHAPE.fullmatch(path):
-            continue
-        return True
-    return False
+    return any(_rejection(match.group(1)) is None for match in CITATION.finditer(text))
 
 
 def resolve_path(path):
@@ -191,9 +260,16 @@ def _choice(value, allowed, where):
         raise SchemaError(f"{where}: {_show(value)} is not one of {', '.join(allowed)}")
 
 
+def _known_keys(record, allowed, where):
+    unknown = set(record) - allowed
+    if unknown:
+        raise SchemaError(f"{where}: unknown keys {sorted(unknown)}")
+
+
 def validate_finding(f, where):
     if not isinstance(f, dict):
         raise SchemaError(f"{where}: must be an object")
+    _known_keys(f, FINDING_KEYS, where)
     for key in FINDING_REQUIRED:
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
@@ -223,6 +299,7 @@ def validate_finding(f, where):
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
+    _known_keys(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if v["verdict"] in DEFINITIVE:
@@ -235,6 +312,7 @@ def validate_finding(f, where):
         m = f["measurement"]
         if not isinstance(m, dict):
             raise SchemaError(f"{where}.measurement: must be an object")
+        _known_keys(m, MEASUREMENT_KEYS, f"{where}.measurement")
         for key in ("environment", "command", "result"):
             _text(m.get(key), f"{where}.measurement.{key}")
     references = f.get("references", [])
@@ -243,6 +321,7 @@ def validate_finding(f, where):
     for i, ref in enumerate(references):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
+        _known_keys(ref, REFERENCE_KEYS, f"{where}.references[{i}]")
         _text(ref.get("url"), f"{where}.references[{i}].url")
         _optional_strings(ref, ("title",), f"{where}.references[{i}]")
 
@@ -252,6 +331,7 @@ def validate_budget(b, where, seen):
     if (not isinstance(b, dict) or not isinstance(b.get("id"), str)
             or not BUDGET_ID.fullmatch(b["id"])):
         raise SchemaError(f"{where}.id: must look like B-01")
+    _known_keys(b, BUDGET_KEYS, where)
     if b["id"] in seen:
         raise SchemaError(f"{where}.id: duplicate {b['id']}")
     seen.add(b["id"])
@@ -269,6 +349,7 @@ def validate_perspective(p, where, seen):
     """Check one perspective; seen collects the names of the perspectives before it."""
     if not isinstance(p, dict):
         raise SchemaError(f"{where}: must be an object")
+    _known_keys(p, PERSPECTIVE_KEYS, where)
     _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
     if p["name"] in seen:
         raise SchemaError(f"{where}.name: duplicate {p['name']}")
@@ -494,8 +575,10 @@ def _record_problems(doc):
     for f in findings:
         v = f["validation"]
         if v["verdict"] in DEFINITIVE and not cites_location(v["evidence"]):
+            rejected = "; ".join(f"{_show(candidate, 40)} is {reason}" for candidate, reason
+                                 in citation_rejections(v["evidence"])[:3])
             problems.append(f"{f['id']}.validation.evidence: {v['verdict']} evidence must "
-                            "cite a path:line")
+                            "cite a path:line" + (f" ({rejected})" if rejected else ""))
         if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
             problems.append(f"{f['id']}: a Suspected finding cannot be Valid; confirm the "
                             "code link (Confirmed or Environment-dependent) or record Likely")
@@ -510,13 +593,19 @@ def _record_problems(doc):
             problems.append(f"{b['id']}: a not-checked budget needs a reason")
     holding = {b["id"] for b in doc.get("budgets", []) if b["status"] == "holds"}
     for f in findings:
+        # Further violated budgets are named in impact; they must exist too.
+        for named in sorted(set(BUDGET_MENTION.findall(f["impact"])) - budget_ids):
+            problems.append(f"{f['id']}.impact: {named} is not in budgets")
         budget = f.get("budget", "")
         if budget.strip() and budget not in budget_ids:
             problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")
-        elif (budget in holding and f.get("status", "Open") != "Fixed"
-              and f["validation"]["verdict"] == "Valid"):
-            problems.append(f"{budget}: status holds, but {f['id']} is a Valid, unfixed "
-                            "violation of it")
+        # Every budget the finding violates, in budget or named in impact.
+        violated = sorted(({budget} if budget in budget_ids else set())
+                          | (set(BUDGET_MENTION.findall(f["impact"])) & budget_ids))
+        if f.get("status", "Open") != "Fixed" and f["validation"]["verdict"] == "Valid":
+            for held in (b for b in violated if b in holding):
+                problems.append(f"{held}: status holds, but {f['id']} is a Valid, unfixed "
+                                "violation of it")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

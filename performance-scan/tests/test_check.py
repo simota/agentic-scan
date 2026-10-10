@@ -99,7 +99,8 @@ class CitationTests(unittest.TestCase):
                  "fixtures/1.5:3", "src/1.2:3", "./2.0.txt:3", "docs/1.2.py:4",
                  "db/001_init.sql:4", "./v8.json:2", "lib/v8.json:2", "V1_1__init.sql:3", "DB/123:4", "./HTTP/2:3", "v8/123:4", "V1/2:4", "certs/TLSv1.3:2", "http2.go:5", "./SSH-2.0:3", "http2-server.go:4", "http2_test.go:9",
                  "ssh-2.0.txt:1", "./SSH-2.0-OpenSSH_9.6:2", "ws/2:3", "ip/4:1", "SQL/001:3", "SQL\\001:3", "./SMB/3.1.1:2", "db/1.5:3", "http2-tests/README:3",
-                 "ssh-2.0-fixtures/Makefile:7", "tls_v1\\x:2",
+                 "ssh-2.0-fixtures/Makefile:7", "icon@2x.png:3",
+                 ".pnpm/react@18.2.0/index.js:4", "@types/node/index.d.ts:2", "./react@18.2.0.js:1", "tls_v1\\x:2",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -124,6 +125,8 @@ class CitationTests(unittest.TestCase):
                      "5.0.0.BUILD-SNAPSHOT:2", "2.0.txt:3", "1!2.3:4", "2!1.0.post1:2",
                      "v1!2.3:4", "v2rc1.post2:4", "v2rc1+local.3:4", "V2.json:1", "v8.json:2", "V1__:2", "v3__x.sql:2", "~v1.2.3:4", "^v2.0.0:3", ">=v1.2.3:4",
                      "=v1.2.3:4", "!=v1.2.3:4", "^2.0.0:3", "~>v1.2:1",
+                     "react@18.2.0:4", "pkg@v1.2.3:4", "python==1.2.3:4", "django>=4.2:1",
+                     "@types/node@20.1.0:2", "lodash@4.17.21.tgz:1",
                      "001_init.sql:4", ".5:1", "~1.5:1",
                      "SMTP/2:1", "SSH/2.0:22", "https/1.1:200", "tls/1.3:1", "Ssh/2.0:22", "TLSv1.3:443", "SSH-2.0:22", "tls_v1.2:1", "HTTP2:1", "SSLv3:1", "TLSv1.3-draft28:1", "HTTP/3-draft-29:1",
                      "SSH-2.0-OpenSSH_9.6:22", "TLSv1.2+:1", "SFTP/3.0:22", "SMB/3.1.1:445", "RDP/10.0:3389",

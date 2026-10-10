@@ -119,6 +119,9 @@ NUMERIC = re.compile(r"[0-9][0-9./\\]*")
 LETTER = re.compile(r"[^\W\d_]")
 # Range operators may lead (~v1.2.3, ^v2.0.0, >=v1.2.3).
 VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
+# A package spec puts a dotted version after @ or an operator (react@18.2.0,
+# pkg@v1.2.3, python==1.2.3); a scale suffix such as icon@2x.png is a file.
+PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
@@ -177,10 +180,15 @@ def _file_shaped(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
+        # A scoped package spec (@scope/pkg@1.2.3) is not a file.
+        if directory.startswith("@") and "/" not in directory and PACKAGE_VERSION.search(last):
+            return False
         # . and .. name directories, not files (src/..:3).
         return last not in ("", ".", "..")
     # A root-level name needs a letter (.5, ~1.5 and 1/2-like tokens are numbers).
     if (VERSION_START.match(last) and not MIGRATION.match(last)) or not LETTER.search(last):
+        return False
+    if PACKAGE_VERSION.search(last):
         return False
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))

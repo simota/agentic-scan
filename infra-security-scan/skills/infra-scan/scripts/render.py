@@ -35,8 +35,8 @@ import time
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
-from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, SEVERITIES, STATE_FILE, STRING_LISTS,
-                    split_yaml_documents, unique_object, write_text_atomic)
+from common import (BASELINE_REFERENCE, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES, STATE_FILE,
+                    STRING_LISTS, find_references, split_yaml_documents, unique_object, write_text_atomic)
 from iac_scan import _YamlSubset, is_export, literal, parse_hcl
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
@@ -225,17 +225,15 @@ def location_problem(location):
     return None
 
 
-# Not after "/", ".", "=", "#", "?" or "&": an ID inside a URL or query is not a reference.
-RECORD_REFERENCE = re.compile(r"(?<![\w/.=#?&-])(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})(?![\w-])")
 
 
 def dangling_references(data):
     """[(where, ID)] for F-*, AP-* and I-* IDs named in prose that no record has.
 
-    After renumbering, removal or a rescan, a stale ID would silently name
-    another record. URLs are not prose: an ID after "/" or "." is ignored, and
-    so are external references. The limitations iac_scan.py writes name
-    baseline IDs from earlier scans on purpose.
+    An ID that no record has was renumbered, removed or dropped by a rescan
+    without its mention being updated. URLs and external references are not
+    prose. The limitations iac_scan.py writes name baseline IDs from earlier
+    scans on purpose.
     """
     known = {f.get("id") for f in data.get("findings", []) if isinstance(f, dict)}
     known |= {a.get("id") for a in data.get("attack_paths", []) if isinstance(a, dict)}
@@ -243,7 +241,7 @@ def dangling_references(data):
 
     def walk(value, where, baseline=True):
         if isinstance(value, str):
-            out.extend((where, m.group()) for m in RECORD_REFERENCE.finditer(value)
+            out.extend((where, m.group()) for m in find_references(RECORD_REFERENCE, value)
                        if m.group() not in known and (baseline or not m.group().startswith("I-")))
         elif isinstance(value, list):
             for item in value:
@@ -675,7 +673,7 @@ def covered_by(data):
         if not F_ID.match(str(f.get("id", ""))) or is_excluded(f):
             continue
         evidence = f.get("validation", {}).get("evidence", "")
-        for iid in BASELINE_REFERENCE.findall(evidence if isinstance(evidence, str) else ""):
+        for iid in (m.group() for m in find_references(BASELINE_REFERENCE, evidence if isinstance(evidence, str) else "")):
             out.setdefault(iid, []).append(f["id"])
     return out
 
@@ -1110,7 +1108,7 @@ def render_dashboard(data, L, lang, sources):
     c = counts(data)
     covered = covered_by(data)
     fs = ordered(data.get("findings", []))
-    md = {f["id"]: finding_markdown(f, L, lang) for f in fs}
+    md = {f["id"]: BIDI.sub(lambda m: f"[U+{ord(m.group()):04X}]", finding_markdown(f, L, lang)) for f in fs}
     # Escape every markup character: "<!--<script>" in a finding would
     # otherwise keep the real </script> from closing this block.
     md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")

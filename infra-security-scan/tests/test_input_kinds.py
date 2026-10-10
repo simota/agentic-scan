@@ -81,9 +81,20 @@ class InputKindTest(unittest.TestCase):
             (snaps / "aws-rds.json").unlink()
             snaps.rmdir()
 
-    def test_export_in_repository_is_named(self):
-        self.write("exports/roles.json", json.dumps({"RoleDetailList": [{"RoleName": "r"}]}))
-        self.assertTrue(self.notes(self.scan(), "exports/roles.json"))
+    def test_application_json_in_repository_is_quiet(self):
+        self.write("app/users.json", json.dumps({"Users": [{"Name": "a"}]}))
+        self.assertEqual(self.scan().not_run, [])
+
+    def test_yaml_snapshot_is_named(self):
+        snaps = Path(self.tmp.name + "-snaps")
+        snaps.mkdir()
+        try:
+            (snaps / "fw.yaml").write_text("kind: compute#firewall\nsourceRanges:\n- 0.0.0.0/0\n")
+            scan = self.scan(str(snaps))
+            self.assertTrue([n for n in scan.not_run if n.endswith("fw.yaml")], scan.not_run)
+        finally:
+            (snaps / "fw.yaml").unlink()
+            snaps.rmdir()
 
     def test_sam_function_rules(self):
         template = {"Transform": "AWS::Serverless-2016-10-31", "Resources": {
@@ -144,11 +155,63 @@ class InputKindTest(unittest.TestCase):
         self.write("tests/a.tftest.hcl", 'run "x" {}\n')
         self.assertEqual(self.scan().not_run, [])
 
-    def test_tool_caches_are_skipped(self):
-        for cache in (".terragrunt-cache/abc/def", ".aws-sam/build", ".serverless"):
+    def test_tool_caches_are_skipped_and_named(self):
+        for cache in (".terragrunt-cache/abc/def", ".aws-sam/build"):
             self.write(f"{cache}/main.tf", OPEN_SG)
         self.write("main.tf", OPEN_SG)
-        self.assertEqual(self.hits(self.scan()), [("AWS-NET-001", "main.tf")])
+        scan = self.scan()
+        self.assertEqual(self.hits(scan), [("AWS-NET-001", "main.tf")])
+        self.assertIn("2 tool cache or vendored directories skipped as copies: .aws-sam, .terragrunt-cache",
+                      scan.not_run)
+
+    def test_compiled_serverless_template_is_read(self):
+        template = {"AWSTemplateFormatVersion": "2010-09-09", "Resources": {"Sg": {
+            "Type": "AWS::EC2::SecurityGroup", "Properties": {"SecurityGroupIngress": [
+                {"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, "CidrIp": "0.0.0.0/0"}]}}}}
+        self.write("serverless.yml", "service: s\n")
+        self.write(".serverless/cloudformation-template-update-stack.json", json.dumps(template, indent=1))
+        self.assertIn(("AWS-NET-001", ".serverless/cloudformation-template-update-stack.json"),
+                      self.hits(self.scan()))
+
+    def test_terragrunt_mock_outputs_and_shared_files(self):
+        password = "Zq" + "x9" * 5 + "Wp"
+        self.write("live/terragrunt.hcl", 'dependency "db" {\n  config_path = "../db"\n  mock_outputs = {\n'
+                   '    db_password = "mock-value-1"\n  }\n}\n')
+        self.write("root.hcl", f'remote_state {{\n  backend = "s3"\n}}\ninputs = {{\n  db_password = "{password}"\n}}\n')
+        self.write("vault/policy.hcl", 'path "secret/*" {\n  capabilities = ["read"]\n}\n')
+        scan = self.scan()
+        self.assertEqual([h for h in self.hits(scan) if h[0] == "SEC-001"], [("SEC-001", "root.hcl")])
+        self.assertIn({"path": "root.hcl", "kind": "terragrunt"}, scan.files)
+        self.assertTrue([n for n in self.notes(scan, "vault/policy.hcl") if "Vault" in n])
+
+    def test_one_line_tfvars_json(self):
+        self.write("a.tfvars.json", json.dumps({"region": "x", "db_password": "Zq" + "x9" * 5 + "Wp"}))
+        self.assertIn(("SEC-001", "a.tfvars.json"), self.hits(self.scan()))
+
+    def test_bare_kustomization_file_is_named(self):
+        self.write("overlay/Kustomization", "resources:\n  - ../base\n")
+        self.assertTrue(self.notes(self.scan(), "overlay/Kustomization"))
+
+    def test_lone_surrogate_escape_in_an_input_does_not_abort(self):
+        template = '{"Resources": {"Open\\ud800": {"Type": "AWS::EC2::SecurityGroup", "Properties": ' \
+                   '{"SecurityGroupIngress": [{"IpProtocol": "tcp", "FromPort": 22, "ToPort": 22, ' \
+                   '"CidrIp": "0.0.0.0/0"}]}}}}'
+        self.write("stack.json", template)
+        out = Path(self.tmp.name + "-out")
+        try:
+            import contextlib
+            import io
+            with contextlib.redirect_stdout(io.StringIO()) as stdout, contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(iac_scan.main([str(self.root)]), 0)
+                self.assertEqual(iac_scan.main([str(self.root), "--out", str(out / "iac.json"),
+                                                "--into", str(out / "findings.json")]), 0)
+            addresses = [r["address"] for r in json.loads(stdout.getvalue().split("\n}\n")[0] + "\n}")["resources"]]
+            self.assertEqual(addresses, ["cfn:Open\\ud800"])
+        finally:
+            for f in out.glob("*"):
+                f.unlink()
+            if out.exists():
+                out.rmdir()
 
     def test_kustomization_is_not_a_cluster_object(self):
         self.write("overlay/kustomization.yaml", "apiVersion: kustomize.config.k8s.io/v1beta1\n"

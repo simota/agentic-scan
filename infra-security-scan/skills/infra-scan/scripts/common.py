@@ -17,11 +17,47 @@ RECORD_LISTS = ("attack_paths", "findings", "perspectives", *STRING_LISTS)
 STATE_FILE = re.compile(r"\.tfstate(\.[^/]*)?$")
 STATE_OR_VARS = re.compile(STATE_FILE.pattern + r"|\.tfvars(\.json)?$")
 
-# A baseline ID in prose or a Markdown label, not inside a word or filename.
-# URL ranges are protected separately, including their queries and fragments.
-BASELINE_REFERENCE = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
+# A record ID in prose or a Markdown label, not inside a word or filename.
+# ASCII classes: Japanese text often joins an ID directly (F-009は). "#F-123"
+# is another tracker's key. URLs are skipped by span (url_spans), including
+# their queries and fragments, so every tool reads references the same way.
+ID_BEFORE = r"(?<![A-Za-z0-9_#-])"
+ID_AFTER = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])"
+BASELINE_REFERENCE = re.compile(ID_BEFORE + r"I-[0-9]{3,}" + ID_AFTER)
+F_REFERENCE = re.compile(ID_BEFORE + r"F-[0-9]{3,}" + ID_AFTER)
+RECORD_REFERENCE = re.compile(ID_BEFORE + r"(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})" + ID_AFTER)
+URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
 
 YAML_DOCUMENT_MARK = re.compile(r"(?:---|\.\.\.)(?:\s+#.*)?\s*")
+
+
+def url_spans(text):
+    """(start, end) of each URL, ending before a Markdown link's closing parenthesis."""
+    cursor = 0
+    while match := URL.search(text, cursor):
+        depth, end = 0, match.end()
+        for offset, char in enumerate(match.group()):
+            if char == "(":
+                depth += 1
+            elif char == ")":
+                if depth == 0:
+                    end = match.start() + offset
+                    break
+                depth -= 1
+        yield match.start(), end
+        cursor = end
+
+
+def find_references(pattern, text):
+    """Matches of pattern outside URLs."""
+    spans = list(url_spans(text))
+    return [m for m in pattern.finditer(text) if not any(s <= m.start() < e for s, e in spans)]
+
+
+def sub_references(pattern, text, replace):
+    """pattern.sub outside URLs, in one pass (I-001 -> I-002 and I-002 -> I-003 do not chain)."""
+    spans = list(url_spans(text))
+    return pattern.sub(lambda m: m.group() if any(s <= m.start() < e for s, e in spans) else replace(m), text)
 
 
 def unique_object(pairs):

@@ -113,8 +113,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	@cd "$(REPO)" || exit 1; fail=0; \
 	misses=$$( \
 	for f in $(DOCS); do \
-	  grep -ohE '`[^`]+`' "$$f" | grep -oE '(^|[^A-Za-z0-9_./-])(reference|scripts|templates)/[A-Za-z][A-Za-z0-9._<>-]*' \
-	    | sed -E 's/^[^rst]//' | sort -u | while read -r ref; do \
+	  grep -ohE '`[^`]+`' "$$f" | tr -c 'A-Za-z0-9._<>/-' '\n' \
+	    | grep -E '^(reference|scripts|templates)/[A-Za-z]' | sort -u | while read -r ref; do \
 	    for r in $$(case "$$ref" in *'<lang>'*) echo "$$ref" | sed 's/<lang>/ja/'; echo "$$ref" | sed 's/<lang>/en/';; *) echo "$$ref";; esac); do \
 	      [ -f "$(SKILL)/$$r" ] || echo "MISS $$f cites $$r, which does not exist"; \
 	    done; \

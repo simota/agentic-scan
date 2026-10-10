@@ -46,7 +46,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
-from common import STRING_LISTS as LISTS, write_json_atomic  # noqa: E402
+from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, find_references,  # noqa: E402
+                    sub_references, write_json_atomic)
 from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
 
 OBJECTS = ("meta",)
@@ -232,12 +233,6 @@ def merge(findings_path, fragment_paths):
     return merged
 
 
-# The same boundaries as render.RECORD_REFERENCE: an ID after "/ . = # ? &"
-# belongs to a URL or another tracker and is neither checked nor rewritten.
-REFERENCE_BEFORE = r"(?<![\w/.=#?&-])"
-F_REFERENCE = re.compile(REFERENCE_BEFORE + r"F-[0-9]{3,}(?![\w-])")
-
-
 def record_strings(record):
     """(where, text) for every string in findings, attack paths, perspectives and lists."""
     def walk(value, where):
@@ -276,8 +271,8 @@ def remove(findings_path, ids):
                 other[link] = [x for x in other[link] if x != rid]
         # Prose mentioning the removed ID would later name whichever record
         # takes its number; make the author reword it first.
-        pattern = re.compile(REFERENCE_BEFORE + re.escape(rid) + r"(?![\w-])")
-        mentions = sorted({where for where, text in record_strings(record) if pattern.search(text)})
+        pattern = re.compile(ID_BEFORE + re.escape(rid) + ID_AFTER)
+        mentions = sorted({where for where, text in record_strings(record) if find_references(pattern, text)})
         if mentions:
             raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
                           "(merge a fragment) before removing it")
@@ -295,14 +290,14 @@ def renumber(findings_path):
     order = sorted(fs, key=lambda f: (render.SEV_RANK[f["severity"]], render.location_key(f["location"]),
                                       render.id_key(f["id"])))
     mapping = {f["id"]: f"F-{n:03d}" for n, f in enumerate(order, 1)}
-    stale = sorted({m.group() for _, text in record_strings(record) for m in F_REFERENCE.finditer(text)
+    stale = sorted({m.group() for _, text in record_strings(record) for m in find_references(F_REFERENCE, text)
                     if m.group() not in mapping})
     if stale:
         raise Refused(f"text mentions {', '.join(stale)}, which no longer exist; reword before renumbering")
 
     def rewrite(value):
         if isinstance(value, str):
-            return F_REFERENCE.sub(lambda m: mapping.get(m.group(), m.group()), value)
+            return sub_references(F_REFERENCE, value, lambda m: mapping.get(m.group(), m.group()))
         if isinstance(value, list):
             return [rewrite(x) for x in value]
         if isinstance(value, dict):

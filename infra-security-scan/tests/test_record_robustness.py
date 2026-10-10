@@ -138,7 +138,8 @@ class RecordRobustnessTest(unittest.TestCase):
         url = "https://tracker.example.com/issue?key=F-002&x=1"
         data = self.record_with(findings=[
             finding("F-001", "Low", "b.tf:1", references=[{"title": "upstream F-002", "url": url}]),
-            finding("F-002", "High", "a.tf:1", fix="see #F-123 and ?F-777")])
+            finding("F-002", "High", "a.tf:1", fix="see #F-123 and https://t.example/?F-777")],
+            decisions=["F-002/F-001 share one fix; also F-001&F-002", "F-002は本番で再確認する"])
         self.write(data)
         code, out = call(findings.main, "renumber", self.record)
         self.assertEqual(code, 0, out)
@@ -146,14 +147,17 @@ class RecordRobustnessTest(unittest.TestCase):
         low = next(f for f in renumbered if f["severity"] == "Low")
         self.assertEqual(low["references"][0], {"title": "upstream F-002", "url": url})
         high = next(f for f in renumbered if f["severity"] == "High")
-        self.assertEqual(high["fix"], "see #F-123 and ?F-777")
+        self.assertEqual(high["fix"], "see #F-123 and https://t.example/?F-777")
+        decisions = json.loads(self.record.read_text(encoding="utf-8"))["decisions"]
+        self.assertEqual(decisions, ["F-001/F-002 share one fix; also F-002&F-001", "F-001は本番で再確認する"])
         code, out = call(findings.main, "remove", self.record, "F-002")
-        self.assertEqual(code, 0, out)
+        self.assertEqual(code, 1, out)  # still named in decisions
 
     def test_dangling_baseline_references(self):
         data = self.record_with(findings=[finding("F-001", fix="root cause of I-999")],
+                                decisions=["I-077の判定は保留"],
                                 limitations=["I-004 (was I-003): triage not carried over"])
-        self.assertEqual(render.dangling_references(data), [("F-001.fix", "I-999")])
+        self.assertEqual(sorted(render.dangling_references(data)), [("F-001.fix", "I-999"), ("decisions", "I-077")])
 
     def test_bidi_controls_are_shown_not_applied(self):
         self.assertEqual(render.esc("a‮b"), "a[U+202E]b")
@@ -166,6 +170,16 @@ class RecordRobustnessTest(unittest.TestCase):
             self.assertNotIn(pw if pw in line else apr1, redaction.scrub_line(line, "yaml"))
         self.assertEqual(redaction.scrub_line("echo hello | grep x"), "echo hello | grep x")
         self.assertTrue(render.SENSITIVE_NAME.search("deploy/.htpasswd"))
+        for line in (f"run: echo {pw} | sudo -S systemctl restart app", f'command = "echo {pw} | vault login -"',
+                     f"run: htpasswd -bc /etc/nginx/.htpasswd admin {pw}"):
+            self.assertNotIn(pw, redaction.scrub_line(line, "yaml"), line)
+        self.assertEqual(redaction.scrub_line("htpasswd -c /etc/x admin"), "htpasswd -c /etc/x admin")
+
+    def test_bidi_controls_stay_out_of_copied_markdown(self):
+        data = json.loads(SAMPLE.read_text(encoding="utf-8"))
+        data["findings"][0]["title"] = "safe\u202etxt.exe"
+        page = render.render_dashboard(data, render.LABELS["en"], "en", {})
+        self.assertNotIn("\u202e", page)
 
 
 class PerspectiveNameTest(unittest.TestCase):

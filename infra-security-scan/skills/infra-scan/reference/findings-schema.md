@@ -47,6 +47,9 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 
 Every object accepts only the keys listed in this file; `validate` refuses any
 other key (a typo such as `contrats` would otherwise vanish from every report).
+Every string must be valid UTF-8 (a JSON `\ud800` escape alone is refused), the
+record nests at most 32 levels, and `location` line numbers have at most nine
+digits.
 
 ## meta
 
@@ -63,7 +66,8 @@ other key (a typo such as `contrats` would otherwise vanish from every report).
 
 ## inventory
 
-Written by `iac_scan.py --into`: `{"resources": N, "by_provider": {...}, "files": N, "not_run": [...]}`.
+Written by `iac_scan.py --into`: `{"resources": N, "by_provider": {...}, "files": N, "not_run": [...]}`,
+with counts as non-negative integers and `not_run` as a list of strings.
 Fragments may not set it.
 
 ## attack_paths
@@ -129,7 +133,8 @@ digits; the sequence continues through `AP-100` and beyond.
 IDs are ordered by their numeric suffix within each prefix, so `I-999` precedes
 `I-1000`. IDs are unique by number: `F-001` and `F-0001` (or `AP-01` and
 `AP-001`) are the same ID and cannot both appear. Review IDs run without gaps in severity order, then location; the
-minimum width is padding, not a limit on the number of findings.
+minimum width is padding, not a limit on the number of findings. Numbers start
+at 1 (`F-000` is refused) and have at most nine digits.
 
 ### validation
 

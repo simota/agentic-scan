@@ -54,13 +54,15 @@ import sys
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
-                    unique_object, write_json_atomic)
+                    sub_references, unique_object, write_json_atomic)
 from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
-# Tool caches hold copies of the configuration (.terragrunt-cache, the
-# Serverless and SAM build outputs); scanning them would duplicate findings.
-SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__", ".terragrunt-cache",
-             ".serverless", ".aws-sam"}
+# Tool caches hold copies of the configuration (downloaded modules, the
+# Terragrunt and SAM build copies); scanning them would duplicate findings.
+# Serverless Framework's .serverless/ is kept: its compiled CloudFormation is
+# the only form of serverless.yml the rules can read.
+SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__", ".terragrunt-cache", ".aws-sam"}
+QUIET_SKIPS = {".git", "__pycache__", ".venv"}
 MAX_BYTES = 2 * 1024 * 1024
 # Plan JSON and cloud exports are machine-written and routinely larger.
 MAX_JSON_BYTES = 64 * 1024 * 1024
@@ -2715,7 +2717,7 @@ SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
                    r'access_key|private_key))"?')
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
-GENERIC_SECRET_JSON = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
+GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
 PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*|"
@@ -2726,21 +2728,37 @@ SECRET_REF_BLOCK = re.compile(r"\b(?:secret_key_ref|secret_environment_variables
 SECRET_NAME_VALUE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
 
 
+def mock_lines(lines):
+    """Line numbers inside Terragrunt mock_outputs blocks: stand-ins for plan, not secrets."""
+    inside, depth = set(), 0
+    for n, line in enumerate(lines, 1):
+        if depth == 0 and not re.match(r"\s*mock_outputs\s*=\s*\{", line):
+            continue
+        inside.add(n)
+        depth += line.count("{") - line.count("}")
+        depth = max(depth, 0)
+    return inside
+
+
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
+    generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
+        lambda line: filter(None, [GENERIC_SECRET.match(line)]))
+    mocks = mock_lines(lines) if kind == "terragrunt" else set()
     for n, line in enumerate(lines, 1):
         for label, pattern in SECRET_PATTERNS:
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
-        if kind in ("terraform", "tfvars", "terragrunt"):
-            m = (GENERIC_SECRET_JSON if rel.endswith(".json") else GENERIC_SECRET).match(line)
-            if m and SECRET_NAME_VALUE.match(m.group(2)) and (
+        if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
+            continue
+        for m in generic(line):
+            if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
                 continue
-            if m and "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
+            if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")
     if re.search(r'"type"\s*:\s*"service_account"', text) and re.search(r'"private_key"\s*:', text):
         scan.hit("SEC-001", res, find_line(text, r'"private_key"\s*:'), "GCP service account key JSON",
@@ -2761,7 +2779,7 @@ def classify_json(doc):
 
 
 def walk(root, scan, prefix=""):
-    entries = []
+    entries, skipped = [], []
 
     def unreadable(error):
         where = Path(error.filename) if error.filename else root
@@ -2777,6 +2795,8 @@ def walk(root, scan, prefix=""):
         for d in sorted(dirnames):
             full = base / d
             if d in SKIP_DIRS:
+                if d not in QUIET_SKIPS:
+                    skipped.append(prefix + full.relative_to(root).as_posix())
                 continue
             if full.is_symlink():
                 shown = full.relative_to(root).as_posix().encode("utf-8", "surrogateescape").decode(
@@ -2799,10 +2819,18 @@ def walk(root, scan, prefix=""):
                 scan.not_run.append(f"symlink skipped: {rel}")
             elif full.is_file():
                 entries.append((full, rel))
+    if skipped:
+        examples = ", ".join(skipped[:3]) + (", ..." if len(skipped) > 3 else "")
+        scan.not_run.append(f"{len(skipped)} tool cache or vendored directories skipped as copies: {examples}")
     return entries
 
 
 INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml", ".template")
+
+
+# Top-level Terragrunt blocks, as shared include files hold them.
+TERRAGRUNT = re.compile(r'^(?:inputs\s*=|include\s*(?:"[^"]*"\s*)?\{|dependency\s*"|dependencies\s*\{|'
+                        r'remote_state\s*\{|generate\s*")', re.M)
 
 
 def input_note(name):
@@ -2820,7 +2848,10 @@ def input_note(name):
     if lower.endswith(".hcl") and lower != ".terraform.lock.hcl":
         return "HCL configuration (Packer, Nomad, Vault policy or other) not evaluated"
     if re.fullmatch(r"serverless\.(?:ya?ml|json|ts|js)", lower):
-        return "Serverless Framework configuration not evaluated"
+        return ("Serverless Framework configuration not evaluated (its compiled template in .serverless/, "
+                "from `serverless package`, is read when present)")
+    if name == "Kustomization":
+        return "Kustomize overlay: patches, generators and remote bases not applied; review the `kustomize build` output"
     if re.fullmatch(r"pulumi(?:\.[^.]+)?\.ya?ml", lower):
         return "Pulumi project or stack configuration not evaluated"
     return None
@@ -2898,6 +2929,10 @@ def run(root, snapshots=()):
             continue
         kind = None
         note = input_note(name)
+        terragrunt = name == "terragrunt.hcl" or (name.endswith(".hcl") and note and TERRAGRUNT.search(text))
+        if terragrunt:
+            # Shared Terragrunt files (root.hcl, env.hcl, _envcommon/*.hcl).
+            note = input_note("terragrunt.hcl")
         if note:
             scan.not_run.append(f"{note}; review by hand: {rel}")
         if name.endswith((".tf", ".tofu")):
@@ -2908,7 +2943,7 @@ def run(root, snapshots=()):
                 scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
         elif name.endswith(".tfvars"):
             kind = "tfvars"
-        elif name == "terragrunt.hcl":
+        elif terragrunt:
             kind = "terragrunt"
             handle_terragrunt(scan, rel, text)
         elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
@@ -2933,7 +2968,7 @@ def run(root, snapshots=()):
                     kind = "kubernetes"
                 elif doc is not None:
                     kind = handle_snapshot(scan, rel, text, doc)
-                    if kind is None and (snapshot or is_export(doc)):
+                    if kind is None and snapshot:
                         scan.not_run.append(f"cloud export shape has no baseline rules; review by hand: {rel}")
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
@@ -2942,6 +2977,8 @@ def run(root, snapshots=()):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
+        elif snapshot and not name.endswith(".json") and not note:
+            scan.not_run.append(f"export not read (rules cover JSON exports); review by hand: {rel}")
         scan_secrets(scan, rel, text, kind)
     for reason, rels in skipped.items():
         if rels:
@@ -3008,26 +3045,6 @@ def report(scan, root, commit, findings, snapshots=()):
             "backends": scan.backends, "not_run": scan.not_run, "hits": hits, "findings": findings}
 
 
-EVIDENCE_URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
-
-
-def evidence_url_spans(evidence):
-    """Keep URL contents intact while allowing references after Markdown links."""
-    cursor = 0
-    while match := EVIDENCE_URL.search(evidence, cursor):
-        depth, end = 0, match.end()
-        for offset, char in enumerate(match.group()):
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    end = match.start() + offset
-                    break
-                depth -= 1
-        yield match.start(), end
-        cursor = end
-
-
 def baseline_key(finding):
     """The same root-cause grouping used by build_findings, independent of ID/line."""
     rule, location = finding.get("rule"), finding.get("location")
@@ -3064,20 +3081,34 @@ def remap_baseline_references(data, old, new):
         # assigned to an unrelated hit on the next scan.
         return f"unmatched baseline number {fid[2:]}"
 
-    def rewrite_carried(evidence):
-        """Renumber I-IDs in carried I-* evidence in one pass, as for F-* below."""
-        spans = list(evidence_url_spans(evidence))
-
-        def replace(match):
-            fid = match.group()
-            if any(start <= match.start() < end for start, end in spans):
-                return fid
-            if fid in replacements:
-                return replacements[fid]
-            return f"[removed baseline: {removed_label(fid)}]"
-        return BASELINE_REFERENCE.sub(replace, evidence)
+    def rewrite_carried(text):
+        """Renumber I-IDs in one pass; a vanished one becomes a removal label."""
+        return sub_references(BASELINE_REFERENCE, text, lambda m: replacements.get(m.group()) or
+                              f"[removed baseline: {removed_label(m.group())}]")
 
     carry_triage(data, old_by_id, replacements, new, rewrite_carried)
+
+    def rewrite_prose(value):
+        if isinstance(value, str):
+            return rewrite_carried(value)
+        if isinstance(value, list):
+            return [rewrite_prose(x) for x in value]
+        if isinstance(value, dict):
+            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v) for k, v in value.items()}
+        return value
+
+    # Every other mention of a baseline ID follows it too. F-* evidence is
+    # handled below, where a lost reference also reopens the finding; the
+    # limitations iac_scan.py writes name earlier IDs on purpose.
+    for finding in data.get("findings", []):
+        if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
+            for key, value in list(finding.items()):
+                if key not in ("id", "references", "validation", "attack_paths"):
+                    finding[key] = rewrite_prose(value)
+    data["attack_paths"] = rewrite_prose(data["attack_paths"])
+    for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
+        if isinstance(data.get(key), list):
+            data[key] = rewrite_prose(data[key])
 
     invalidated = set()
     invalidated_paths = {}
@@ -3088,12 +3119,9 @@ def remap_baseline_references(data, old, new):
         if not isinstance(validation, dict) or not isinstance(validation.get("evidence"), str):
             continue
         removed = []
-        url_spans = list(evidence_url_spans(validation["evidence"]))
 
         def replace_reference(match):
             fid = match.group()
-            if any(start <= match.start() < end for start, end in url_spans):
-                return fid
             if fid in replacements:
                 return replacements[fid]
             label = removed_label(fid)
@@ -3103,7 +3131,7 @@ def remap_baseline_references(data, old, new):
 
         # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
         # a sequence of string replacements would move both to I-003.
-        validation["evidence"] = BASELINE_REFERENCE.sub(replace_reference, validation["evidence"])
+        validation["evidence"] = sub_references(BASELINE_REFERENCE, validation["evidence"], replace_reference)
         if removed:
             note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this finding."
             validation["evidence"] = validation["evidence"].rstrip() + "\n" + note
@@ -3154,8 +3182,9 @@ def remap_baseline_references(data, old, new):
 def carry_triage(data, old_by_id, replacements, new, rewrite):
     """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
 
-    Triage lives only in I-*.validation; dropping it on every rescan would
-    silently undo the review. A changed resource set needs fresh triage.
+    Triage is I-*.validation with the confidence and condition set beside it;
+    dropping it on every rescan would silently undo the review. A changed
+    resource set needs fresh triage.
     """
     new_by_id = {f["id"]: f for f in new}
     for fid, new_id in replacements.items():
@@ -3167,6 +3196,10 @@ def carry_triage(data, old_by_id, replacements, new, rewrite):
             current["validation"] = copy.deepcopy(validation)
             if isinstance(validation.get("evidence"), str):
                 current["validation"]["evidence"] = rewrite(validation["evidence"])
+            if isinstance(old.get("confidence"), str):
+                current["confidence"] = old["confidence"]
+            if isinstance(old.get("condition"), str):
+                current["condition"] = rewrite(old["condition"])
         else:
             note = (f"{new_id} (was {fid}): {validation['verdict']} triage not carried over; "
                     "affected resources changed. Recheck this baseline finding.")
@@ -3198,6 +3231,17 @@ def merge_into(path, findings, inventory, commit):
     remap_baseline_references(data, old, findings)
     data["findings"] = kept + findings
     write_json_atomic(path, data, mkdir=True)
+
+
+def printable(value):
+    """Spell lone surrogates (a "\\ud800" escape in an input) as text: the output is UTF-8."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, list):
+        return [printable(x) for x in value]
+    if isinstance(value, dict):
+        return {printable(k): printable(v) for k, v in value.items()}
+    return value
 
 
 def main(argv=None):
@@ -3242,8 +3286,8 @@ def main(argv=None):
             return 2
     scan = run(root, args.snapshots)
     commit = git_commit(root)
-    findings = build_findings(scan.hits)
-    result = report(scan, root, commit, findings, args.snapshots)
+    findings = printable(build_findings(scan.hits))
+    result = printable(report(scan, root, commit, findings, args.snapshots))
     # Write the inventory first: a failed --out must not leave findings.json
     # describing a scan whose inventory was never saved.
     if args.out:
@@ -3257,7 +3301,7 @@ def main(argv=None):
         sys.stdout.write("\n")
     if args.into:
         try:
-            merge_into(args.into, findings, inventory_of(scan), commit)
+            merge_into(args.into, findings, printable(inventory_of(scan)), commit)
         except (OSError, ValueError, RecursionError) as e:
             print(f"iac_scan: cannot update {args.into}: {e}", file=sys.stderr)
             return 2

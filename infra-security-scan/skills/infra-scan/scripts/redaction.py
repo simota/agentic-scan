@@ -459,7 +459,11 @@ WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/w
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
 # A secret piped into a command that reads it from stdin precedes the keyword
 # (echo X | docker login --password-stdin), so the keyword check misses it.
-STDIN_SINK = re.compile(r"--password-stdin|\bchpasswd\b|\bpasswd\b|--stdin\b")
+STDIN_SINK = re.compile(r"--password-stdin|--with-token\b|\bchpasswd\b|\bpasswd\b|--stdin\b|"
+                        r"\bsudo\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*S|\blogin\s+-(?![\w-])")
+# htpasswd -b FILE USER PASSWORD (or -nb USER PASSWORD) takes the password as an argument.
+HTPASSWD_ARG = re.compile(r"(\bhtpasswd\s+(?:-[a-zA-Z]+\s+)*-[a-zA-Z]*b[a-zA-Z]*\s+(?:\S+\s+)+?)"
+                          r"(\S+)(?=\s*(?:[\"';|&)]|$))")
 PIPED_VALUE = re.compile(r"\b((?:echo|printf)\s+(?:-[a-zA-Z]+\s+)*)([^|\s][^|]*?)(\s*\|)")
 # crypt(3), htpasswd and bcrypt hashes: crackable offline, and their "." and
 # "/" split them into runs too short for the entropy check.
@@ -504,6 +508,7 @@ def scrub_line(line, syntax="hcl"):
                              else m.group(1) + ":[redacted]@", line)
     line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
     line = CRYPT_HASH.sub("[redacted]", line)
+    line = HTPASSWD_ARG.sub(lambda m: m.group(1) + "[redacted]", line)
     if STDIN_SINK.search(line):
         line = PIPED_VALUE.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), line)
     if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere

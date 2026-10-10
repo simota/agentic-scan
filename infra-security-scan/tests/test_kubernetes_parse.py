@@ -142,7 +142,8 @@ spec: {hostNetwork: true}
                 self.assertEqual([(h["rule"], h["line"]) for h in scan.hits],
                                  [("K8S-001", lines.index("spec: {hostNetwork: true}") + 1)])
                 self.assertEqual(scan.not_run,
-                                 ["cloudformation yaml: rules not applied (no YAML parser): manifest.yaml"])
+                                 ["cloudformation yaml: rules not applied (tags or syntax outside the YAML subset): "
+                                  "manifest.yaml"])
 
     def test_cloudformation_text_in_non_infrastructure_yaml_is_not_inventory(self):
         scan = self.scan("""# AWSTemplateFormatVersion

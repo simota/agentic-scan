@@ -91,10 +91,11 @@ class RuleTest(TempDir):
         "aws": {"AWS-NET-001", "AWS-S3-001", "AWS-S3-002", "AWS-S3-003", "AWS-IAM-001",
                 "AWS-IAM-002", "AWS-IAM-003", "AWS-IAM-004", "AWS-IAM-005", "AWS-RDS-001",
                 "AWS-RDS-002", "AWS-EC2-001", "AWS-EBS-001", "AWS-LAMBDA-001", "AWS-LAMBDA-002",
-                "AWS-CT-001", "AWS-KMS-001", "AWS-EKS-001", "SEC-001", "PS-001", "PS-002", "PS-003"},
+                "AWS-CT-001", "AWS-KMS-001", "AWS-EKS-001", "AWS-SNAP-001", "AWS-CF-001", "SEC-001", "PS-001",
+                "PS-002", "PS-003"},
         "gcp": {"GCP-NET-001", "GCP-IAM-001", "GCP-IAM-002", "GCP-IAM-003", "GCP-IAM-004",
                 "GCP-GCS-001", "GCP-SQL-001", "GCP-GCE-001", "GCP-GCE-002", "GCP-GKE-001",
-                "GCP-WIF-001"},
+                "GCP-WIF-001", "GCP-GCS-002"},
         "plan": {"AWS-NET-001", "AWS-S3-001", "AWS-S3-002"},
         "k8s": {"K8S-001", "K8S-002", "K8S-003"},
         "snapshots": {"AWS-NET-001", "GCP-IAM-001", "GCP-IAM-002"},
@@ -153,11 +154,19 @@ class RuleTest(TempDir):
         hits = [h for h in iac_scan.run(self.tmp).hits if h["rule"] == "PS-002"]
         self.assertEqual([(h["file"], h["severity"]) for h in hits], [("envs/prod/main.tf", "Low")])
 
-    def test_cloudformation_yaml_is_inventoried_not_ruled(self):
+    def test_cloudformation_yaml_in_the_subset_gets_the_json_rules(self):
         self.write("stack.yaml", "AWSTemplateFormatVersion: '2010-09-09'\nResources:\n  Bucket:\n"
                                  "    Type: AWS::S3::Bucket\n    Properties:\n      AccessControl: PublicRead\n")
         scan = iac_scan.run(self.tmp)
         self.assertEqual([(r["address"], r["line"]) for r in scan.resources], [("cfn:Bucket", 4)])
+        self.assertEqual([(h["rule"], h["line"]) for h in scan.hits], [("AWS-S3-001", 4)])
+        self.assertEqual(scan.not_run, [])
+
+    def test_cloudformation_yaml_with_short_form_tags_is_inventoried_not_ruled(self):
+        self.write("stack.yaml", "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n    Properties:\n"
+                                 "      BucketName: !Ref Name\n      AccessControl: PublicRead\n")
+        scan = iac_scan.run(self.tmp)
+        self.assertEqual([(r["address"], r["line"]) for r in scan.resources], [("cfn:Bucket", 3)])
         self.assertEqual(scan.hits, [])
         self.assertTrue(any(n.startswith("cloudformation yaml: rules not applied") for n in scan.not_run))
 

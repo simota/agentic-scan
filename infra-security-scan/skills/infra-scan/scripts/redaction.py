@@ -8,12 +8,17 @@ from urllib.parse import unquote_plus, urlsplit, urlunsplit
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
     r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*[\"']?\s*[:=]")
-SECRET_SHAPE = re.compile(r"(?:AKIA|ASIA)[0-9A-Z]{16}|gh[pousr]_[A-Za-z0-9]{36}|"
-                          r"github_pat_[A-Za-z0-9_]{20,}|xox[abeoprs]-[A-Za-z0-9-]+|"
-                          r"xapp-[0-9]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}|"
-                          r"glpat-[A-Za-z0-9_-]{20}")
+# Known credential formats, labelled for the scanner's SEC-001 detail. The
+# scanner, redaction and the merge gate all build their patterns from these.
+CREDENTIAL_SHAPES = (
+    ("AWS access key ID", r"(?:AKIA|ASIA)[0-9A-Z]{16}"),
+    ("access token", r"gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{20,}|glpat-[A-Za-z0-9_-]{20}|"
+                     r"xox[abeoprs]-[0-9]+-[A-Za-z0-9-]+|xapp-[0-9]-[A-Za-z0-9-]+|AIza[0-9A-Za-z_-]{35}"),
+)
+SECRET_SHAPE = re.compile("|".join(pattern for _, pattern in CREDENTIAL_SHAPES))
 # PEM and OpenSSH use five dashes; RFC 4716 (SSH2) uses four and spaces.
 KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
+KEY_BEGIN = re.compile(KEY_MARKER.pattern.replace("(BEGIN|END)", "BEGIN"))
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
     r"\s*[,}]?\s*$")

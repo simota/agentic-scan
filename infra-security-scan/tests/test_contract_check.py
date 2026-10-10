@@ -86,6 +86,7 @@ class ContractTest(unittest.TestCase):
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()) as err:
             code = contract_check.main([str(self.out)])
         self.assertEqual(code, 1)
+        self.assertIn("outputs: assessment.pdf missing", err.getvalue())
 
     def test_extra_file_needs_allow(self):
         (self.out / "README.md").write_text("x", encoding="utf-8")
@@ -113,10 +114,25 @@ class ContractTest(unittest.TestCase):
         self.write()
         self.assertIn("without gaps", self.check()[2])
 
+    def test_prose_naming_missing_records_is_a_violation(self):
+        self.data["decisions"].append("Confirm F-099 and AP-42 with the owner")
+        self.data["findings"][0]["impact"] += " See https://example.com/F-777 for background."
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("names F-099", err)
+        self.assertIn("names AP-42", err)
+        self.assertNotIn("F-777", err)
+
     def test_four_digit_review_ids_follow_numeric_order(self):
         template = self.data["findings"][0]
         self.data["findings"] = []
         self.data["attack_paths"] = []
+        # Prose naming the sample's records would now dangle.
+        for p in self.data["perspectives"]:
+            p["note"] = "applied" if p["status"] == "Applied" else "not in the inputs"
+        for key in ("decisions", "next_steps"):
+            self.data[key] = []
         for n in range(1000, 0, -1):
             f = copy.deepcopy(template)
             f["id"] = f"F-{n:03d}"

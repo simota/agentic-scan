@@ -4,6 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py remove FINDINGS ID [ID ...]
     python3 findings.py renumber FINDINGS
+    python3 findings.py status FINDINGS
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It may hold:
@@ -31,26 +32,25 @@ Credential-shaped values are refused in every string saved to the record.
 Finding prose describes the weakness, never an attack: literal exploit strings
 and instance-metadata addresses are refused in those fields.
 
-Exit codes: 0 merged, 1 a fragment was refused (reason on stderr), 2 unreadable
-input or schema error.
+`status` lists untriaged `I-*` findings and prose naming IDs no record has;
+it exits 1 while either remains.
+
+Exit codes: 0 done, 1 refused (a fragment, a removal or a renumbering; reason on
+stderr), 2 unreadable input, schema error or unwritable record.
 """
 import argparse
 import copy
-import json
-import os
 from pathlib import Path
 import re
-import stat
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
+from common import STRING_LISTS as LISTS, write_json_atomic  # noqa: E402
 from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
-LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
 FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
@@ -157,9 +157,9 @@ def fragment_problems(fragment, name, record):
             if key == "findings" and rid.startswith("I-"):
                 if rid not in existing:
                     problems.append(f"{name}: {rid}: I-* findings come only from iac_scan.py")
-                elif set(rec) - {"id", "validation", "confidence"}:
+                elif set(rec) - {"id", "validation", "confidence", "condition"}:
                     problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's "
-                                    "validation and confidence")
+                                    "validation, confidence and condition")
     for p in fragment.get("perspectives", []):
         if not isinstance(p, dict) or not isinstance(p.get("name"), str):
             problems.append(f"{name}: perspectives entries need a name")
@@ -214,33 +214,6 @@ def apply(record, fragment):
                 current.append(item)
 
 
-def file_mode(path):
-    """Keep an existing file's mode; give a new one the umask default, not mkstemp's 0600."""
-    try:
-        return stat.S_IMODE(path.stat().st_mode)
-    except FileNotFoundError:
-        umask = os.umask(0)
-        os.umask(umask)
-        return 0o666 & ~umask
-
-
-def write_atomic(path, data):
-    path = Path(path)
-    if path.is_symlink():
-        raise OSError(f"{path} is a symlink; refusing to replace it")
-    mode = file_mode(path)
-    fd, tmp = tempfile.mkstemp(prefix=".findings.", suffix=".json", dir=path.parent)
-    try:
-        os.chmod(tmp, mode)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, ensure_ascii=False, indent=2)
-            fh.write("\n")
-        os.replace(tmp, path)
-    except BaseException:
-        Path(tmp).unlink(missing_ok=True)
-        raise
-
-
 def merge(findings_path, fragment_paths):
     path = Path(findings_path)
     record = render.load(path) if path.exists() else render.empty_record()
@@ -255,7 +228,7 @@ def merge(findings_path, fragment_paths):
     if problems:
         raise Refused("\n".join(problems))
     render.validate(merged, partial=True)
-    write_atomic(path, merged)
+    write_json_atomic(path, merged)
     return merged
 
 
@@ -305,7 +278,7 @@ def remove(findings_path, ids):
             raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
                           "(merge a fragment) before removing it")
     render.validate(record, partial=True)
-    write_atomic(path, record)
+    write_json_atomic(path, record)
     return record
 
 
@@ -334,11 +307,28 @@ def renumber(findings_path):
 
     for key in ("findings", "attack_paths", "perspectives", *LISTS):
         record[key] = rewrite(record.get(key, []))
+    record["attack_paths"] = sorted(record["attack_paths"], key=lambda ap: render.id_key(ap["id"]))
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
         sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))
     render.validate(record, partial=True)
-    write_atomic(path, record)
+    write_json_atomic(path, record)
     return record, {old: new for old, new in mapping.items() if old != new}
+
+
+def status(findings_path):
+    """What is left before contract_check: untriaged I-* and dangling references."""
+    record = render.load(findings_path)
+    findings = [f for f in record.get("findings", []) if isinstance(f, dict)]
+    open_items = [f for f in findings if str(f.get("id", "")).startswith("I-")
+                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
+    dangling = render.dangling_references(record)
+    print(f"{len(findings)} findings, {len(record.get('attack_paths', []))} attack paths; "
+          f"{len(open_items)} I-* untriaged, {len(dangling)} dangling reference(s)")
+    for f in open_items:
+        print(f"  untriaged {f['id']} {f.get('rule', '')} {f.get('location', '')}")
+    for where, rid in dangling:
+        print(f"  dangling  {rid} in {where}")
+    return 1 if open_items or dangling else 0
 
 
 def main(argv=None):
@@ -352,8 +342,12 @@ def main(argv=None):
     r.add_argument("ids", nargs="+")
     n = sub.add_parser("renumber", help="renumber F-* findings in severity order, then location")
     n.add_argument("findings")
+    s = sub.add_parser("status", help="list untriaged I-* findings and references to missing IDs")
+    s.add_argument("findings")
     a = p.parse_args(argv)
     try:
+        if a.cmd == "status":
+            return status(a.findings)
         if a.cmd == "remove":
             remove(a.findings, a.ids)
             print(f"removed {', '.join(a.ids)} from {a.findings}")

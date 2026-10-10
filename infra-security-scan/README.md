@@ -54,12 +54,18 @@ baseline                perspectives         └─ chat summary
   attributes and nested blocks. Boolean resource attributes accept native and
   quoted `true` / `false`; IAM action matching recognizes `*` and `?`
   — CloudFormation YAML inventories resource definitions under `Resources`,
-  excluding parameter types and embedded template text; its baseline rules
-  still require JSON input
+  excluding parameter types and embedded template text; the JSON baseline
+  rules also apply when the template parses within the YAML subset
+  (long-form intrinsics such as `{"Ref": X}`). Templates using short-form tags
+  (`!Ref`, `!Sub`) are inventoried and listed in `not_run`
   — Terraform JSON (`*.tf.json`), unreadable, binary and deeply nested inputs
   are listed in `not_run`; UTF-16/32 exports with a BOM are read
   — on rescan, an `I-*` verdict follows its finding when the rule, file and
   resources are unchanged
+  — settings elsewhere in the inputs are honoured before a rule fires:
+  account defaults for IMDSv2 and EBS encryption, an org policy enforcing
+  public access prevention, policies used only as permissions boundaries,
+  Terragrunt-generated backends and Google-managed service agents
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`); the
   exports join the baseline with `iac_scan.py --snapshots DIR`
@@ -101,6 +107,8 @@ skills/infra-scan/
   scripts/findings.py      merge finding fragments into findings.json
   scripts/render.py        dashboard.html, assessment.html, assessment.pdf
   scripts/contract_check.py  verify a finished run
+  scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts
+  scripts/common.py        shared constants, JSON loading and atomic writes
   templates/               issue and report drafts (ja/en)
 examples/                  sample findings.json (ja/en)
 tests/                     unit tests and fixtures

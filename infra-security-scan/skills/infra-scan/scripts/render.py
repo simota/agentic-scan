@@ -15,11 +15,12 @@ inspect before sharing.
 `validate()` is the executable form of reference/findings-schema.md and is
 imported by findings.py and contract_check.py.
 
-Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input
-or schema error (every problem on stderr).
+Exit codes: 0 rendered (a missing PDF engine is a warning), 2 unreadable input,
+schema error, refused or unwritable output directory (every problem on stderr).
 """
 import argparse
 import datetime
+import functools
 import html
 import json
 import os
@@ -33,15 +34,16 @@ import tempfile
 import time
 from urllib.parse import urlparse
 
-from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name, redact,
+sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
+from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, SEVERITIES, STATE_FILE, STRING_LISTS,
+                    split_yaml_documents, unique_object)
+from iac_scan import _YamlSubset, is_export, literal, parse_hcl
+from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
 
 SKILL = Path(__file__).resolve().parents[1]
 
-TOP = {"schema_version", "meta", "inventory", "attack_paths", "findings", "perspectives",
-       "checked_ok", "decisions", "limitations", "next_steps"}
-STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-SEVERITIES = ("High", "Medium", "Low", "Info")
+TOP = {"schema_version", "meta", "inventory", *RECORD_LISTS}
 CONFIDENCES = ("Confirmed", "Environment-dependent", "Suspected")
 PROVIDERS = ("aws", "gcp", "azure", "kubernetes", "multi")
 VERDICTS = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
@@ -75,7 +77,6 @@ INPUT_KEYS = {"kind", "path", "note"}
 REFERENCE_KEYS = {"title", "url"}
 INVENTORY_KEYS = {"resources", "by_provider", "files", "not_run"}
 BASE_FIELDS = ("title", "location")
-SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 
 CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
@@ -90,7 +91,17 @@ class SchemaError(Exception):
         super().__init__("; ".join(self.problems))
 
 
+@functools.lru_cache(maxsize=None)
+def _perspective_names():
+    return tuple(_read_perspective_names())
+
+
 def perspective_names():
+    """Canonical names (cached: the file is read once per process)."""
+    return list(_perspective_names())
+
+
+def _read_perspective_names():
     """Canonical names, read from the first table in reference/perspectives.md."""
     names = []
     for line in (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8").splitlines():
@@ -104,16 +115,6 @@ def perspective_names():
 
 def blank(value):
     return not isinstance(value, str) or not value.strip()
-
-
-def unique_object(pairs):
-    result = {}
-    for key, value in pairs:
-        if key in result:
-            # Object keys can themselves be credentials. Keep errors safe to log.
-            raise ValueError("duplicate JSON key")
-        result[key] = value
-    return result
 
 
 def load(path):
@@ -147,6 +148,39 @@ def location_problem(location):
     return None
 
 
+# Not after "/", ".", "=", "#", "?" or "&": an ID inside a URL or query is not a reference.
+RECORD_REFERENCE = re.compile(r"(?<![\w/.=#?&-])(?:F-[0-9]{3,}|AP-[0-9]{2,})(?![\w-])")
+
+
+def dangling_references(data):
+    """[(where, ID)] for F-* and AP-* IDs named in prose that no record has.
+
+    After renumbering or removal, a stale ID would silently name another
+    record. URLs are not prose: an ID after "/" or "." is ignored.
+    """
+    known = {f.get("id") for f in data.get("findings", []) if isinstance(f, dict)}
+    known |= {a.get("id") for a in data.get("attack_paths", []) if isinstance(a, dict)}
+    out = []
+
+    def walk(value, where):
+        if isinstance(value, str):
+            out.extend((where, m.group()) for m in RECORD_REFERENCE.finditer(value) if m.group() not in known)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item, where)
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if key != "id":
+                    walk(item, f"{where}.{key}")
+    for key in ("findings", "attack_paths", "perspectives"):
+        for item in data.get(key, []):
+            if isinstance(item, dict):
+                walk(item, str(item.get("id") or item.get("name") or key))
+    for key in STRING_LISTS:
+        walk(data.get(key, []), key)
+    return out
+
+
 def location_key(location):
     """Order path:line numerically within a file: storage.tf:9 before :10."""
     m = LOCATION.match(location) if isinstance(location, str) else None
@@ -156,8 +190,7 @@ def location_key(location):
 
 
 def empty_record():
-    return {"schema_version": 1, "meta": {}, "attack_paths": [], "findings": [], "perspectives": [],
-            "checked_ok": [], "decisions": [], "limitations": [], "next_steps": []}
+    return {"schema_version": 1, "meta": {}, **{key: [] for key in RECORD_LISTS}}
 
 
 def validate(data, partial=False):
@@ -457,6 +490,47 @@ DISPLAY = {
         "Governance and guardrails": "ガバナンスとガードレール", "Pipeline and state": "パイプラインと state",
         "Coverage and drift": "カバレッジとドリフト",
         "iac": "IaC", "plan": "プラン JSON", "snapshot": "スナップショット", "manifest": "マニフェスト",
+        # Baseline rule titles (iac_scan.RULES); review titles are written in the requester's language.
+        "Security group allows internet ingress to an admin or data port": "セキュリティグループが管理用・データ用ポートへのインターネットからの受信を許可している",
+        "S3 bucket ACL grants public access": "S3 バケットの ACL が公開アクセスを許可している",
+        "S3 public access block leaves a protection off": "S3 パブリックアクセスブロックに無効な保護がある",
+        "Resource policy allows any principal without a narrowing condition": "リソースポリシーが絞り込み条件なしに任意のプリンシパルを許可している",
+        "IAM policy grants all actions on all resources": "IAM ポリシーが全リソースに全アクションを許可している",
+        "IAM policy grants iam:PassRole on any role": "IAM ポリシーが任意のロールへの iam:PassRole を許可している",
+        "Role trust policy lets any AWS principal assume the role": "ロールの信頼ポリシーが任意の AWS プリンシパルに引き受けを許可している",
+        "GitHub OIDC trust does not pin the repository subject": "GitHub OIDC の信頼がリポジトリの subject を固定していない",
+        "IAM user with long-lived credentials managed in IaC": "長期認証情報を持つ IAM ユーザーが IaC で管理されている",
+        "Database or data service is publicly accessible": "データベースまたはデータサービスが公開アクセス可能",
+        "Machine image or database snapshot shared publicly": "マシンイメージまたはデータベーススナップショットが公開共有されている",
+        "CloudFront serves viewers over plaintext HTTP or outdated TLS": "CloudFront が平文 HTTP または古い TLS で閲覧者に配信している",
+        "Bucket, object or dataset ACL grants public access": "バケット・オブジェクト・データセットの ACL が公開アクセスを許可している",
+        "Database storage not encrypted": "データベースのストレージが暗号化されていない",
+        "Instance metadata service does not require IMDSv2": "インスタンスメタデータサービスが IMDSv2 を必須にしていない",
+        "EBS volume not encrypted": "EBS ボリュームが暗号化されていない",
+        "Lambda function URL requires no authentication": "Lambda 関数 URL が認証を要求しない",
+        "Lambda permission lets any principal invoke the function": "Lambda の権限が任意のプリンシパルに関数の呼び出しを許可している",
+        "CloudTrail not multi-region or without log file validation": "CloudTrail がマルチリージョンでない、またはログファイル検証がない",
+        "KMS key rotation not enabled": "KMS キーのローテーションが有効でない",
+        "EKS API endpoint public to any address": "EKS API エンドポイントが任意のアドレスに公開されている",
+        "Firewall allows internet ingress to an admin or data port": "ファイアウォールが管理用・データ用ポートへのインターネットからの受信を許可している",
+        "IAM binding grants a role to allUsers or allAuthenticatedUsers": "IAM バインディングが allUsers または allAuthenticatedUsers にロールを付与している",
+        "Basic role roles/owner or roles/editor granted": "基本ロール roles/owner または roles/editor が付与されている",
+        "User-managed service account key created": "ユーザー管理のサービスアカウントキーが作成されている",
+        "Service account impersonation role granted above the service account": "サービスアカウントより上位の階層で権限借用ロールが付与されている",
+        "Bucket without uniform access or enforced public access prevention": "バケットに均一なアクセス制御または公開アクセス防止の強制がない",
+        "Cloud SQL reachable from any address or without required TLS": "Cloud SQL が任意のアドレスから到達可能、または TLS が必須でない",
+        "Instance runs as the default compute service account": "インスタンスがデフォルトのコンピュートサービスアカウントで動作している",
+        "Instance metadata enables serial port or project-wide SSH keys": "インスタンスメタデータがシリアルポートまたはプロジェクト全体の SSH 鍵を有効にしている",
+        "GKE cluster control plane or identity hardening missing": "GKE クラスタのコントロールプレーンまたは ID の強化が不足している",
+        "Workload identity provider without an attribute condition": "Workload Identity プロバイダに属性条件がない",
+        "Literal secret committed to the repository": "リテラルのシークレットがリポジトリにコミットされている",
+        "Terraform state file committed to the repository": "Terraform の state ファイルがリポジトリにコミットされている",
+        "Module source not pinned to a version or commit": "モジュールのソースがバージョンまたはコミットに固定されていない",
+        "Terraform state backend unencrypted or local": "Terraform の state バックエンドが暗号化されていない、またはローカル",
+        "Provider block configures static credentials": "プロバイダブロックに静的な認証情報が設定されている",
+        "Pod runs privileged or with host access": "Pod が特権モードまたはホストへのアクセス付きで動作している",
+        "RBAC binding grants cluster-admin or binds every authenticated user": "RBAC バインディングが cluster-admin を付与している、または認証済みの全ユーザーをバインドしている",
+        "Kubernetes Secret with data committed": "データを含む Kubernetes Secret がコミットされている",
     },
 }
 
@@ -483,7 +557,6 @@ def ordered(findings):
     return sorted(findings, key=lambda f: (SEV_RANK.get(f.get("severity"), 9), id_key(f["id"])))
 
 
-BASELINE_ID = re.compile(r"(?<![A-Za-z0-9_./-])I-[0-9]{3,}(?![A-Za-z0-9_/-]|\.[A-Za-z0-9])")
 
 
 def covered_by(data):
@@ -497,7 +570,7 @@ def covered_by(data):
         if not F_ID.match(str(f.get("id", ""))) or is_excluded(f):
             continue
         evidence = f.get("validation", {}).get("evidence", "")
-        for iid in BASELINE_ID.findall(evidence if isinstance(evidence, str) else ""):
+        for iid in BASELINE_REFERENCE.findall(evidence if isinstance(evidence, str) else ""):
             out.setdefault(iid, []).append(f["id"])
     return out
 
@@ -518,15 +591,13 @@ def counts(data):
 # Terraform names state backups terraform.tfstate.<timestamp>.backup; dotenv
 # files carry an environment suffix (.env.production).
 SENSITIVE_NAME = re.compile(r"(\.tfvars(\.json)?|\.pem|\.key|\.p12|\.pfx|\.ppk|\.jks|\.keystore|\.env)$|"
-                            r"\.tfstate(\.[^/]*)?$|(^|/)\.env\.[^/]*$|\.env\.[^/]*$|\.envrc$|secret|credential|"
+                            + STATE_FILE.pattern + r"|\.env\.[^/]*$|\.envrc$|secret|credential|"
                             r"id_(rsa|dsa|ecdsa|ed25519)|netrc|\.npmrc|\.pypirc|\.pgpass|kubeconfig|"
                             r"\.dockercfg|(^|/)\.docker/config\.json$", re.IGNORECASE)
 
 
 def hcl_declares_sensitive(text):
     """Only a known false variable/output declaration permits its source."""
-    # Local imports avoid a cycle: the scanner also uses redaction helpers.
-    from iac_scan import literal, parse_hcl
     for block in parse_hcl(text):
         if block.type in ("variable", "output") and "sensitive" in block.attrs:
             raw, _ = block.attrs["sensitive"]
@@ -548,7 +619,6 @@ def hcl_has_paired_secret(text):
     Line redaction sees `value = "..."`, not that its sibling `name` is
     DB_PASSWORD. Treat a secret-shaped name with a value nearby as a secret.
     """
-    from iac_scan import literal, parse_hcl
     # Values Terraform itself treats as secret, wherever their names point.
     if HCL_MARKED_SECRET.search(text):
         return True
@@ -558,7 +628,8 @@ def hcl_has_paired_secret(text):
             if is_secret_name(match.group(1)) and any(
                     HCL_VALUE.search(near) for near in lines[max(0, n - 15):n + 16]):
                 return True
-    pending = list(parse_hcl(text))
+    top = parse_hcl(text)
+    pending = list(top)
     while pending:
         block = pending.pop()
         pending.extend(block.blocks)
@@ -566,7 +637,7 @@ def hcl_has_paired_secret(text):
         names = [literal(block.attrs[k][0]) for k in ("name", "key") if k in block.attrs]
         if "value" in block.attrs and any(not isinstance(x, str) or is_secret_name(x) for x in names):
             return True
-    for block in parse_hcl(text):
+    for block in top:
         if block.type == "variable" and block.labels and "default" in block.attrs and \
                 is_secret_name(block.labels[0]):
             default = literal(block.attrs["default"][0])
@@ -616,16 +687,8 @@ def source_lines(path):
             docs = [json.loads(text, object_pairs_hook=unique_object)]
         elif suffix in (".yaml", ".yml"):
             syntax = "yaml"
-            # Local import avoids a cycle: iac_scan also uses redaction helpers.
-            from iac_scan import _YamlSubset
-            docs, rows = [], []
-            for n, line in enumerate(lines, 1):
-                if re.fullmatch(r"(?:---|\.\.\.)(?:\s+#.*)?\s*", line):
-                    docs.append(_YamlSubset(rows).parse())
-                    rows = []
-                else:
-                    rows.append((n, line))
-            docs.append(_YamlSubset(rows).parse())
+            # The scanner's document split and YAML subset, so both read the same documents.
+            docs = [_YamlSubset(rows).parse() for rows in split_yaml_documents(lines)]
         else:
             docs = []
             if suffix in (".tf", ".tofu"):
@@ -635,6 +698,10 @@ def source_lines(path):
                 if hcl_declares_sensitive(text) or hcl_has_paired_secret(text):
                     return None
         if has_escaped_secret_keys(text, docs) or any(has_structured_secrets(doc) for doc in docs):
+            return None
+        # Exports committed into the repository are snapshots wherever they sit:
+        # deployed values (emails, IPs, environment) never become excerpts.
+        if any(is_export(doc) for doc in docs):
             return None
         lines = redact_lines(lines, syntax=syntax)
         if syntax == "json":
@@ -719,7 +786,7 @@ def field_text(f, key):
 
 def finding_markdown(f, L, lang):
     """Single-line fields as one list, then each multi-line field under its own heading."""
-    lines = [L["md_intro"], "", f"## {f['id']} {f.get('title', '')}", ""]
+    lines = [L["md_intro"], "", f"## {f['id']} {shown(f.get('title', ''), lang)}", ""]
     lines.append(f"- {L['severity']}: {shown(f.get('severity'), lang)} / "
                  f"{L['confidence']}: {shown(f.get('confidence'), lang)}")
     lines.append(f"- {L['category']}: {shown(f.get('category'), lang)} / {L['provider']}: {f.get('provider')}")
@@ -952,7 +1019,7 @@ def render_dashboard(data, L, lang, sources):
     for f in fs:
         val = f.get("validation", {}).get("verdict", "")
         val_raw = f.get("validation", {})
-        searchable = [f.get("id"), f.get("title"), f.get("location"), " ".join(f.get("resources", [])),
+        searchable = [f.get("id"), f.get("title"), shown(f.get("title"), lang), f.get("location"), " ".join(f.get("resources", [])),
                       f.get("rule", ""), f.get("cwe", ""), " ".join(f.get("controls", [])),
                       " ".join(f.get("attack_paths", [])), val_raw.get("evidence", "")]
         searchable += [f.get(k, "") for k in FIELD_ORDER if isinstance(f.get(k), str)]
@@ -968,7 +1035,7 @@ def render_dashboard(data, L, lang, sources):
             f'<td data-l="{L["severity"]}"><span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span></td>'
             f'<td data-l="{L["id"]}">{esc(f["id"])}</td>'
             f'<td class="t"><button class="toggle" type="button" aria-expanded="false" '
-            f'aria-controls="{esc(f["id"])}-detail">{esc(f.get("title"))}</button>'
+            f'aria-controls="{esc(f["id"])}-detail">{esc(shown(f.get("title"), lang))}</button>'
             f'<span class="loc">{esc(f.get("location"))}</span></td>'
             f'<td data-l="{L["provider"]}">{esc(f.get("provider"))}</td>'
             f'<td data-l="{L["category"]}">{esc(shown(f.get("category"), lang))}</td>'
@@ -1048,7 +1115,7 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
 
     def article(f, cls="finding"):
         return (f'<article class="{cls}" id="{esc(f["id"])}"><h3><span class="badge {esc(f.get("severity"))}">'
-                f'{esc(shown(f.get("severity"), lang))}</span> {esc(f["id"])} {esc(f.get("title"))}</h3>'
+                f'{esc(shown(f.get("severity"), lang))}</span> {esc(f["id"])} {esc(shown(f.get("title"), lang))}</h3>'
                 f'<p class="muted">{esc(shown(f.get("category"), lang))} · {esc(f.get("provider"))} · {esc(shown(f.get("confidence"), lang))}</p>'
                 f'{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}</article>')
 
@@ -1155,7 +1222,7 @@ def to_pdf(html_path, pdf_path, failed=None):
     return None
 
 
-def output_problem(out, repo):
+def output_dir_problem(out, repo):
     """Refuse outputs inside the assessed repository or through symlinks."""
     if repo:
         root, target = Path(repo).resolve(), out.resolve()
@@ -1184,17 +1251,20 @@ def main(argv=None):
         return 2
     L = LABELS[a.lang]
     out = Path(a.out)
-    problem = output_problem(out, a.repo)
+    problem = output_dir_problem(out, a.repo)
     if problem:
         print(f"render: {problem}", file=sys.stderr)
         return 2
     sources = attach_sources(data, a.repo) if a.repo else {}
-    out.mkdir(parents=True, exist_ok=True)
-    pdf = out / "assessment.pdf"
-    pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
-    (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
-    assessment = out / "assessment.html"
-    assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
+    pdf, assessment = out / "assessment.pdf", out / "assessment.html"
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
+        (out / "dashboard.html").write_text(render_dashboard(data, L, a.lang, sources), encoding="utf-8")
+        assessment.write_text(render_assessment(data, L, a.lang, sources), encoding="utf-8")
+    except OSError as e:
+        print(f"render: cannot write {out}: {e.strerror or e}", file=sys.stderr)
+        return 2
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
         failed = []

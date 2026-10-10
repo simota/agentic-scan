@@ -15,15 +15,15 @@ Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 import argparse
 import json
 from pathlib import Path
-import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
+from common import STATE_OR_VARS  # noqa: E402
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
-FORBIDDEN = re.compile(r"\.tfstate(\.[^/]*)?$|\.tfvars(\.json)?$")
+FORBIDDEN = STATE_OR_VARS
 
 
 def output_problem(path):
@@ -53,7 +53,6 @@ def output_problem(path):
 def check(data, out_dir, pdf=True, allow=()):
     problems = []
     add = problems.append
-    notes = []
     try:
         render.validate(data)
     except render.SchemaError as e:
@@ -95,6 +94,8 @@ def check(data, out_dir, pdf=True, allow=()):
     for a in data.get("attack_paths", []):
         if isinstance(a, dict) and a.get("status") not in render.AP_STATUSES:
             add(f"{a.get('id')}: attack path status must be open, blocked or unknown")
+    for where, rid in render.dangling_references(data):
+        add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):
         add("inventory: missing; run iac_scan.py --into findings.json")
 
@@ -112,7 +113,7 @@ def check(data, out_dir, pdf=True, allow=()):
     for p in out.rglob("*"):
         if FORBIDDEN.search(p.name):
             add(f"outputs: {p.relative_to(out)} is a state or variable file; never copy it into the output")
-    return problems, notes
+    return problems
 
 
 def main(argv=None):
@@ -129,9 +130,7 @@ def main(argv=None):
     except render.SchemaError as e:
         print(f"unreadable: {e}", file=sys.stderr)
         return 2
-    problems, notes = check(data, out, pdf=not a.no_pdf, allow=a.allow)
-    for n in notes:
-        print(f"note: {n}")
+    problems = check(data, out, pdf=not a.no_pdf, allow=a.allow)
     if problems:
         for problem in problems:
             print(problem, file=sys.stderr)

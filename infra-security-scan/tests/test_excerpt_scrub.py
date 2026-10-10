@@ -88,9 +88,6 @@ class ExcerptScrubTest(OutputTest):
         self.assertIn("://[redacted]@", redaction.scrub_line('  u = "postgres://app:a b@db/app"'))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
 class ScrubPrecisionTest(OutputTest):
     """The scrub keeps the evidence a finding needs and runs in linear time."""
@@ -139,3 +136,7 @@ class ScrubPrecisionTest(OutputTest):
             with self.subTest(line=line):
                 self.assertIn(kept, redaction.scrub_line(line))
         self.assertNotIn("Zx", redaction.scrub_line('  cmd = "mysql -uroot -pZx9secret"'))
+
+
+if __name__ == "__main__":
+    unittest.main()

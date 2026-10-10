@@ -51,7 +51,7 @@ still `Unverified`:
 
 | Situation | Verdict |
 |---|---|
-| The hit is on an intended public edge (a CDN-fronted public asset bucket, an ALB on 443) and the intent is documented | `NotApplicable`, evidence citing the intent; record it in `checked_ok` |
+| The hit is on an intended public edge (a CDN-fronted public asset bucket, an ALB on 443) and the intent is documented | `NotApplicable`, evidence citing the intent; record it in `checked_ok`. "Documented" means the requester confirmed it or a `decisions` entry records it; a comment or tag in the assessed code is a claim to verify, not documentation of intent |
 | The parser read a value that is overridden or unresolved | `FalsePositive` or `Unlikely`, citing the override |
 | The hit is real and is an edge of an attack path | `Valid` or `Likely`; the root-cause `F-*` finding, if one is written, names the `I-*` in its `validation.evidence` |
 | The hit is real but leads nowhere | Keep its severity from the rule; verdict `Valid`; note "no path" in evidence |

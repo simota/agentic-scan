@@ -16,7 +16,12 @@ fragments, `remove` and `renumber` for review IDs) and `scripts/iac_scan.py
 - `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
   severity order, then location, rewriting attack-path links and F-IDs in text;
   run it once every review finding is merged
-- A fragment may set an `I-*` finding's `validation` and `confidence`, nothing else
+- A fragment may set an `I-*` finding's `validation`, `confidence` and `condition`
+  (required with `Environment-dependent`), nothing else
+- `findings.py status <out>/findings.json` lists untriaged `I-*` findings and
+  references to IDs that do not exist; `contract_check.py` fails on the latter (a
+  standalone `F-NNN` or `AP-NN` in prose is read as a record ID; cite another
+  tracker's keys in a URL or as `#AP-123`)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once
 

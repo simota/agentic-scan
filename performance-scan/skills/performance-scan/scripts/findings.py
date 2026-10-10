@@ -125,14 +125,14 @@ PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,
-# SSH-2.0, HTTP2), and any all-caps name with a slash and a dotted number
-# (SMB/3.1.1, RDP/10.0). Other directories holding numbered files (DB/123,
-# SQL/001) are paths.
+# SSH-2.0, HTTP2), and any capitalised name with a slash and a dotted number
+# (SMB/3.1.1, RDP/10.0, OData/4.0, CoAP/1.0). Other directories holding
+# numbered files (DB/123, SQL/001, db/1.5) are paths.
 PROTOCOL = re.compile(r"(?:HTTPS?|TLS|SSL|DTLS|QUIC|SPDY|S?FTPS?|SMTPS?|IMAPS?|POP3?|SIP|RTSP"
                       r"|AMQP|MQTT|SOCKS|SSH|SNMP|LDAPS?|SMB|CIFS|NFS|RDP|NNTP|XMPP|IRC|WEBDAV"
                       r"|GRPC)(?:[/\\]|[-_]?v?)[0-9]+(?:\.[0-9]+)*",
                       re.IGNORECASE)
-CAPS_PROTOCOL = re.compile(r"[A-Z]{2,}[/\\][0-9]+(?:\.[0-9]+)+")
+CAPS_PROTOCOL = re.compile(r"[A-Z][A-Za-z]+[/\\][0-9]+(?:\.[0-9]+)+")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
                         r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"

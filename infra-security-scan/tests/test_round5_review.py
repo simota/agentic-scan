@@ -354,5 +354,38 @@ class CodexSeventhReviewTest(unittest.TestCase):
         self.assertTrue([n for n in result.not_run if "LaunchTemplateData is not a literal" in n], result.not_run)
 
 
+class CodexEighthReviewTest(unittest.TestCase):
+    def test_quoted_command_line_passwords_are_redacted_whole(self):
+        rest = "Sup3r" + "Secret"
+        for line in (f'curl -u "admin:pfx {rest}" https://host',
+                     f"curl -u 'admin:pfx {rest}' https://host",
+                     f'CMD ["curl", "-u", "admin:pfx {rest}", "https://host"]',
+                     f'command = "curl -u \\"admin:pfx {rest}\\" https://host"',
+                     f'docker login -p "pfx {rest}" registry',
+                     f'openssl pkcs12 -passout "pass:pfx {rest}" -in key.p12',
+                     f'sshpass -p "pfx {rest}" ssh host',
+                     f'redis-cli -a "pfx {rest}"'):
+            self.assertNotIn(rest, redaction.scrub_line(line, "shell"), line)
+        self.assertEqual(redaction.scrub_line('curl -u "admin:pfx x" https://host', "shell"),
+                         'curl -u "admin:[redacted]" https://host')
+
+    def test_unresolved_policy_project_covers_only_the_same_expression(self):
+        policy = 'resource "google_project_organization_policy" "p" {\n  project = var.policy_project\n' \
+                 '  constraint = "storage.uniformBucketLevelAccess"\n  boolean_policy {\n    enforced = true\n  }\n}\n'
+        bucket = 'resource "google_storage_bucket" "b" {{\n{project}  uniform_bucket_level_access = false\n' \
+                 '  public_access_prevention = "enforced"\n}}\n'
+        other = scan({"g.tf": policy + bucket.format(project='  project = "other-project"\n')})
+        self.assertEqual([h["rule"] for h in other.hits], ["GCP-GCS-001"])
+        same = scan({"g.tf": policy + bucket.format(project="  project = var.policy_project\n")})
+        self.assertEqual(same.hits, [])
+
+    def test_intrinsic_http_endpoint_is_unresolved(self):
+        template = {"Resources": {"Vm": {"Type": "AWS::EC2::Instance", "Properties": {"MetadataOptions": {
+            "HttpEndpoint": {"Fn::If": ["C", "disabled", "disabled"]}, "HttpTokens": "optional"}}}}}
+        result = scan({"t.json": template})
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "HttpEndpoint not a literal" in n], result.not_run)
+
+
 if __name__ == "__main__":
     unittest.main()

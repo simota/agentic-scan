@@ -472,15 +472,15 @@ UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
 # curl -u user:password, --user user:password, wget --http-user ... style pairs.
 # Option and value may be attached (-uadmin:pw), spaced, or separate exec-form
 # list elements ("-u", "admin:pw"). A numeric uid:gid (docker -u 1000:1000) is no password.
-OPTION_GAP = r"""(?:\s+|=|["']\s*,\s*)?["']?"""
-USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,]+:)(?=[^\s"'])([^\s"',\]]+)""")
+OPTION_GAP = r"""(?:\s+|=|["']\s*,\s*)?\\?["']?"""
+USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,\\]+:)(?=[^\s"'\\])([^\s"',\]\\]+)""")
 # Tools that take a password as an option's value; docker/podman only for login
 # (their -p elsewhere maps ports).
 TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|smbclient|mysqladmin|"
                         r"(?:docker|podman|nerdctl|buildah|skopeo|oras|helm|az|crane)\b[^|;&]*\blogin)\b|"
                         r"\bopenssl\b")
 TOOL_PASSWORD = re.compile(r"""((?<![\w-])["']?(?:-passin|-passout|-pass|--password|--pass|-p|-w|-k|-P)"""
-                           r"""(?:\s+|=|["']\s*,\s*)["']?)(?=[^\s"'])[^\s"',\]]+""")
+                           r"""(?:\s+|=|["']\s*,\s*)\\?["']?)(?=[^\s"'\\])([^\s"',\]\\]+)""")
 PROCESS_USER = re.compile(r"\b(?:docker|podman|nerdctl|kubectl|crictl|ctr|sudo|runuser|chroot|buildah)\b|"
                           r"\b(?:user|runAsUser|runAsGroup)\s*[:=]")
 HTTP_CLIENT = re.compile(r"\b(?:curl|wget|http|httpie|xh|ftp|lftp|svn|git)\b|://")
@@ -517,6 +517,45 @@ def _high_entropy(token):
 DATED_NAME = re.compile(r"[A-Za-z]*-?[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
+def _value_quote(line, start):
+    """The quote that encloses the argument holding line[start], or None.
+
+    The argument is the token around start: "admin:a b" or "-uadmin:a b" or an
+    escaped \\"admin:a b\\" inside an HCL string; -p"a b" quotes the value itself.
+    """
+    if line[start:start + 1] in ("\"", "'"):
+        return line[start], start + 1
+    token = start
+    while token > 0 and line[token - 1] not in " \t[,(=":
+        token -= 1
+    if line[token:token + 1] in ("\"", "'"):
+        return line[token], start
+    if line[token:token + 2] in ("\\\"", "\\'"):
+        return line[token:token + 2], start
+    return None, start
+
+
+def _redact_values(pattern, line, group, keep=lambda m: False):
+    """Replace each match's value group with [redacted], through its closing quote.
+
+    A quoted value may hold spaces ("admin:pfx secret"), so redacting only the
+    pattern's unspaced run would leave the rest of the credential in the excerpt.
+    """
+    out, pos = [], 0
+    for m in pattern.finditer(line):
+        if m.start() < pos or keep(m):
+            continue
+        start, end = m.start(group), m.end(group)
+        quote, search = _value_quote(line, start)
+        if quote:
+            close = line.find(quote, search)
+            end = max(end, len(line) if close == -1 else close)
+        out.append(line[pos:start] + "[redacted]")
+        pos = end
+    out.append(line[pos:])
+    return "".join(out)
+
+
 def _entropy(match):
     # A commit pinned with ?ref= is evidence (PS-001), not a secret.
     if match.string[max(0, match.start() - 4):match.start()] == "ref=":
@@ -540,23 +579,23 @@ def scrub_line(line, syntax="hcl"):
     line = URL_USERINFO.sub("://[redacted]@", line)
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
-    line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = _redact_values(SHELL_PASSWORD, line, 2)
     # A numeric uid:gid only where -u/--user selects a process user (docker run -u 1000:1000);
     # curl -u 123:456 is a password all the same.
     process_user = PROCESS_USER.search(line) is not None and not HTTP_CLIENT.search(line)
-    line = USER_PASSWORD.sub(lambda m: m.group() if process_user and (m.group(2)[:-1] + m.group(3)).isdigit()
-                             else m.group(1) + m.group(2) + "[redacted]", line)
-    line = SSHPASS_ATTACHED.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = _redact_values(USER_PASSWORD, line, 3,
+                          lambda m: process_user and (m.group(2)[:-1] + m.group(3)).isdigit())
+    line = _redact_values(SSHPASS_ATTACHED, line, 2)
     if TOOL_LOGIN.search(line):
-        line = TOOL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+        line = _redact_values(TOOL_PASSWORD, line, 2)
     line = CRYPT_HASH.sub("[redacted]", line)
     line = HTPASSWD_ARG.sub(lambda m: m.group(1) + "[redacted]", line)
     if STDIN_SINK.search(line):
         line = PIPED_VALUE.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), line)
     if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere
-        line = CLIENT_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+        line = _redact_values(CLIENT_PASSWORD, line, 2)
         if "redis-cli" in line:
-            line = REDIS_AUTH.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", line)
+            line = _redact_values(REDIS_AUTH, line, 3)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)

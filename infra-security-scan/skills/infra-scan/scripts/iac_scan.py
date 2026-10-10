@@ -1188,10 +1188,26 @@ def org_policy_enforced(scan, constraint, res):
     project = res.view.get("project") if res.view else None
     if isinstance(project, str) and scan.project_folders.get(project) in policies["folders"]:
         return True
+    # A project policy covers a bucket of the same project: the same literal, both
+    # omitted (the provider's default project), or the same unresolved expression.
     here = {p for d, p in policies["dirs"] if d == res.dir}
-    # A project policy covers a bucket of that project; one whose project is
-    # not set in the module may be the provider's default project.
-    return None in here or project in here or (bool(here) and not isinstance(project, str))
+    scope = project_scope(res.view, "project") if res.view else None
+    return scope in here and scope != ("expr", None)
+
+
+def project_scope(view, attr):
+    """A project as written: its literal ID, None when omitted, or ("expr", text)
+    for an unresolved reference (var.project, "projects/${var.project}")."""
+    value = view.get(attr)
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value.removeprefix("projects/") if attr == "parent" else value
+    raw = view.raw(attr)
+    if not raw:
+        return ("expr", None)
+    raw = re.sub(r'^"(?:projects/)?\$\{(.*)\}"$', r"\1", raw.strip())
+    return ("expr", raw.strip())
 
 
 def default_service_account(email, raw=None):
@@ -1774,7 +1790,6 @@ def collect_context(scan, d, type_, view, text, defaults=True):
             org = re.search(r'(?:parent|org_id)"?\s*[:=]\s*"(?:organizations/)?([0-9]+)"', enforced)
             org_level = type_ == "google_organization_policy" or (
                 type_ == "google_org_policy_policy" and re.search(r'parent"?\s*[:=]\s*"organizations/', enforced))
-            project = re.search(r'(?:\bproject"?\s*[:=]\s*"|parent"?\s*[:=]\s*"projects/)([a-z][a-z0-9-]*)"', enforced)
             folder = re.search(r'(?:\bfolder"?\s*[:=]\s*"|parent"?\s*[:=]\s*")folders/([0-9]+)"', enforced)
             policies = scan.gcs_org_policies.setdefault(constraint, {"orgs": set(), "dirs": set(), "folders": set()})
             if org_level and org:
@@ -1784,7 +1799,8 @@ def collect_context(scan, d, type_, view, text, defaults=True):
                 if folder:
                     policies["folders"].add(folder.group(1))
             elif not org_level:
-                policies["dirs"].add((d, project.group(1) if project else None))
+                policies["dirs"].add((d, project_scope(view, "parent" if type_ == "google_org_policy_policy"
+                                                       else "project")))
     if type_ in ("aws_iam_role", "aws_iam_user"):
         for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, "permissions_boundary")):
             scan.boundary_policies.add((d, f"aws_iam_policy.{m.group(1)}"))
@@ -2467,9 +2483,10 @@ def cfn_instance(scan, res, type_, props, line):
     if not isinstance(opts, dict):
         scan.hit("AWS-EC2-001", res, line, "no MetadataOptions; IMDSv1 allowed")
     elif opts.get("HttpEndpoint") != "disabled" and opts.get("HttpTokens") != "required":
-        if isinstance(opts.get("HttpTokens"), (dict, list)):
-            scan.not_run.append(f"AWS-EC2-001: HttpTokens is not a literal; check not run: {res.file}:{line} "
-                                f"({res.address})")
+        unresolved = [k for k in ("HttpEndpoint", "HttpTokens") if isinstance(opts.get(k), (dict, list))]
+        if unresolved:
+            scan.not_run.append(f"AWS-EC2-001: {' and '.join(unresolved)} not a literal; check not run: "
+                                f"{res.file}:{line} ({res.address})")
         else:
             scan.hit("AWS-EC2-001", res, line, f"HttpTokens = {opts.get('HttpTokens') or 'unset'}")
 

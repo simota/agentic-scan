@@ -823,7 +823,8 @@ class Scan:
         # enforced storage org policies.
         self.gcs_org_policies, self.orgs_seen = {}, set()
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
-        self.s3_blocks = {}  # (dir, bucket key or "*" for the account): flags turned on
+        self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
+        self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
         self.k8s_bindings, self.k8s_wildcard_roles = [], set()
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
@@ -1158,7 +1159,7 @@ def s3_block(scan, res, flag):
     for key in keys - {None}:
         if flag in scan.s3_blocks.get((res.dir, key), ()):
             return f"neutralised by {flag} in the bucket's public access block"
-    if flag in scan.s3_blocks.get((res.dir, "*"), ()):
+    if flag in scan.s3_blocks.get((res.dir, ("*", provider_key(res.view))), ()):
         return f"neutralised by {flag} in the account public access block"
     return None
 
@@ -1211,12 +1212,12 @@ def gce_metadata(scan, res, meta, line):
         scan.hit("GCP-GCE-002", res, line, "; ".join(gaps))
 
 
-def gke_node_config(scan, res, configs, default_pool=True):
+def gke_node_config(scan, res, configs):
     """Nodes run as the default compute service account unless node_config names
     another; GCE_METADATA exposes the node's metadata server to pods."""
     # A cluster without node_config often removes its default pool or is
     # managed by node pools elsewhere; only a node pool's omission is certain.
-    if not configs and default_pool and res.type == "google_container_node_pool":
+    if not configs and res.type == "google_container_node_pool":
         scan.hit("GCP-GCE-001", res, res.line, "GKE nodes as the default compute service account")
     for config in configs:
         if config.known_present is False:
@@ -1355,7 +1356,8 @@ def check_tf(scan, res):
         raw = (v.raw("policy_arn") or "").strip()
         data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
         # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
-        each = raw in ("each.value", "each.key") and ADMIN_ARN_RAW.search(text_of(v, "for_each"))
+        each = raw in ("each.value", "each.key") and any(
+            isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("for_each")))
         if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
                 (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
             scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
@@ -1530,9 +1532,9 @@ def check_tf(scan, res):
     elif t == "google_container_cluster":
         if tf_bool(v.get("enable_legacy_abac")) is True:
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
-        if tf_bool(v.get("enable_autopilot")) is not True:
-            gke_node_config(scan, res, v.blocks("node_config"), default_pool=tf_bool(
-                v.get("remove_default_node_pool")) is not True)
+        # The cluster's node_config describes its default pool, deleted when removed.
+        if tf_bool(v.get("enable_autopilot")) is not True and tf_bool(v.get("remove_default_node_pool")) is not True:
+            gke_node_config(scan, res, v.blocks("node_config"))
         for auth in v.blocks("master_auth"):
             for cert in auth.blocks("client_certificate_config"):
                 if tf_bool(cert.get("issue_client_certificate")) is True:
@@ -1724,10 +1726,15 @@ def collect_context(scan, d, type_, view, text, defaults=True):
     directory and provider configuration; defaults=False when that cannot be told.
     """
     scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
-    if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block"):
-        key = "*" if type_ == "aws_s3_account_public_access_block" else bucket_key(view)
+    if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block") and \
+            view.get("count") is None and view.get("for_each") is None:
+        # The account block applies per account: keyed by provider, and not
+        # at all when a plan cannot tie resources to providers. A block that
+        # may not be created (count, for_each) neutralises nothing.
+        account = type_ == "aws_s3_account_public_access_block"
+        key = ("*", provider_key(view)) if account else bucket_key(view)
         on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
-        if key and on:
+        if key and on and (defaults or not account):
             scan.s3_blocks.setdefault((d, key), set()).update(on)
     if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required" and defaults:
         scan.imds_required_dirs.add((d, provider_key(view)))
@@ -1807,7 +1814,7 @@ def handle_terraform(scan, parsed):
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
                 scan.gcp_policy_data[(d, b.labels[1])] = [
-                    (binding.get("role"), aslist(binding.get("members")), binding.line())
+                    (binding.get("role"), aslist(binding.get("members")), _HclLine(binding.line(), rel))
                     for binding in HclView(b).blocks("binding")]
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy":
                 view = HclView(b)
@@ -2110,8 +2117,11 @@ def handle_plan(scan, rel, text, doc):
             expressions = configured.get(re.sub(r"\[[^\]]*\]", "", address))
             if isinstance(mask, dict) and isinstance(expressions, dict):
                 # An argument the configuration omits is unknown in the plan only
-                # because the provider computes its default: it is omitted.
-                mask = {k: m for k, m in mask.items() if k in expressions}
+                # because the provider computes its default: it is omitted. A
+                # block with planned content was configured, if dynamically
+                # (expressions never list dynamic blocks).
+                planned = r.get("values") or {}
+                mask = {k: m for k, m in mask.items() if k in expressions or planned.get(k) not in (None, [], {})}
             values = with_plan_unknowns(r.get("values") or {}, mask)
             if not check:
                 # First pass: account and org settings that change what omitted arguments mean.
@@ -2228,6 +2238,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         scan.not_run.append(f"CloudFormation Transform (SAM or macro): rules read the template as written, not the "
                             f"expanded resources; review the transformed template by hand: {rel}")
     globals_ = doc.get("Globals", {}).get("Function") if isinstance(doc.get("Globals"), dict) else None
+    scan.cfn_checked_templates[rel] = {lid for lid, r in (doc.get("Resources") or {}).items()
+                                       if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"}
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -2365,11 +2377,16 @@ def cfn_instance(scan, res, type_, props, line):
             scan.hit("AWS-EBS-001", res, line, "BlockDeviceMappings Ebs.Encrypted = false")
     if type_ == "AWS::EC2::Instance":
         # An instance sets metadata options only through a launch template.
-        if "LaunchTemplate" in props:
+        template = props.get("LaunchTemplate")
+        ref = template.get("LaunchTemplateId") if isinstance(template, dict) else None
+        if isinstance(ref, dict) and ref.get("Ref") in scan.cfn_checked_templates.get(res.file, ()):
+            pass  # a launch template in this template, checked on its own
+        elif "LaunchTemplate" in props:
             scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
                                 f"template: {res.file}:{line} ({res.address})")
         else:
-            scan.hit("AWS-EC2-001", res, line, "no launch template with MetadataOptions; IMDSv1 allowed")
+            scan.hit("AWS-EC2-001", res, line, "IMDSv2 not enforced by the template (no launch template with "
+                     "MetadataOptions; depends on the AMI's ImdsSupport or the account default)")
         return
     opts = data.get("MetadataOptions")
     if not isinstance(opts, dict):
@@ -2382,6 +2399,9 @@ def cfn_instance(scan, res, type_, props, line):
             scan.hit("AWS-EC2-001", res, line, f"HttpTokens = {opts.get('HttpTokens') or 'unset'}")
 
 
+SECRET_REFERENCE_TYPES = {"PARAMETER_STORE", "SECRETS_MANAGER"}
+SECRET_REFERENCE = re.compile(r'(?i)\btype"?\s*[:=]\s*"(?:PARAMETER_STORE|SECRETS_MANAGER)"')
+FLAG_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|enabled?|disabled?|[0-9]{1,5})")
 # CloudFormation property names (CamelCase) that hold a credential.
 CFN_SECRET_KEY = re.compile(r"(?i)[A-Za-z0-9_-]*(?:password|passwd|secret|secret_?key|secret_?string|token|"
                             r"api_?key|access_?key|private_?key|credentials?|(?<![A-Za-z])(?:pass|pwd|pw))")
@@ -2391,7 +2411,7 @@ def cfn_secrets(scan, res, props, line):
     """SEC-001 for literal strings under secret-named properties or Name/Value pairs."""
     def literal_secret(value):
         return isinstance(value, str) and not value.startswith("{{resolve:") and \
-            not PLACEHOLDER.match(value.strip()) and "${" not in value
+            not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.match(value.strip())
 
     found = []
     stack = [props]
@@ -2402,7 +2422,9 @@ def cfn_secrets(scan, res, props, line):
         elif isinstance(item, dict):
             keys = {k.lower(): k for k in item if isinstance(k, str)}
             name = item.get(keys.get("name", ""))
-            if "value" in keys and isinstance(name, str) and CFN_SECRET_KEY.fullmatch(name) \
+            # CodeBuild variables of type PARAMETER_STORE / SECRETS_MANAGER hold a reference.
+            reference = str(item.get(keys.get("type", ""), "")).upper() in SECRET_REFERENCE_TYPES
+            if "value" in keys and isinstance(name, str) and CFN_SECRET_KEY.fullmatch(name) and not reference \
                     and literal_secret(item[keys["value"]]):
                 found.append(name)
             for key, value in item.items():
@@ -2514,7 +2536,8 @@ def aws_export(scan, rel, doc, keys):
                    for p in aslist(entity.get("AttachedManagedPolicies"))):
                 scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
     for i, managed in items("Policies"):
-        if not managed.get("AttachmentCount"):
+        # AWS-managed policies are AWS's documents; attaching them is checked above.
+        if not managed.get("AttachmentCount") or str(managed.get("Arn", "")).startswith("arn:aws:iam::aws:policy/"):
             continue
         matched = True
         line = at(("Policies", i), "Arn")
@@ -2705,7 +2728,7 @@ YAML_BREAK = re.compile("[\r\x85\u2028\u2029]")
 CFN_TAGS = {"Ref": "Ref", "Condition": "Condition", **{name: f"Fn::{name}" for name in (
     "And", "Base64", "Cidr", "Equals", "FindInMap", "GetAtt", "GetAZs", "If", "ImportValue", "Join",
     "Length", "Not", "Or", "Select", "Split", "Sub", "ToJsonString", "Transform")}}
-CFN_TAG = re.compile(r"!([A-Za-z]+)(?=[ \t]|$|[,\]}])")
+CFN_TAG = re.compile(r"!([A-Za-z][A-Za-z0-9]*)(?=[ \t]|$|[,\]}])")
 
 
 def cfn_intrinsic(tag, value, line):
@@ -2843,7 +2866,7 @@ class _YamlSubset:
         return text == "-" or text.startswith("- ")
 
     def entry(self, text, indent, line, indentless=True):
-        tag = re.fullmatch(r"!([A-Za-z]+)(?:[ \t]+([|>].*))?", text) if self.cfn else None
+        tag = re.fullmatch(r"!([A-Za-z][A-Za-z0-9]*)(?:[ \t]+([|>].*))?", text) if self.cfn else None
         if tag:
             # A short-form tag whose value is a block (!If, !Join) or a block string (!Sub |).
             return cfn_intrinsic(tag.group(1), self.entry(tag.group(2) or "", indent, line, indentless), line)
@@ -3371,7 +3394,10 @@ def scan_secrets(scan, rel, text, kind):
         if pair:
             name, value = (pair.group(1), pair.group(2)) if isinstance(pair, re.Match) else \
                 (pair[0].group(1), pair[1].group(1))
-            if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()):
+            # The whole entry: CodeBuild writes type = "PARAMETER_STORE" after the value.
+            entry = "\n".join(lines[max(0, n - 4):n + 3])
+            if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \
+                    and not FLAG_VALUE.fullmatch(value.strip()) and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
         for m in generic(line):
             if SECRET_NAME_VALUE.match(m.group(2)) and (

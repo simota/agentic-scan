@@ -120,7 +120,12 @@ def check(data, out_dir, pdf=True, allow=()):
         add("inventory: missing; run iac_scan.py --into findings.json")
     # The merge gate, over the whole record: it may have been written by hand.
     problems += [f"record: {p}" for p in record_gate.credential_problems(data, "findings.json")]
-    problems += [f"record: {p}" for p in record_gate.payload_problems(data, "findings.json")]
+    # I-* titles and details are the scanner's words about the configuration
+    # (they quote its values); no fragment could change them.
+    written = {**data, "findings": [
+        {k: v for k, v in f.items() if k not in ("title", "detail")} if str(f.get("id", "")).startswith("I-") else f
+        for f in data.get("findings", []) if isinstance(f, dict)]}
+    problems += [f"record: {p}" for p in record_gate.payload_problems(written, "findings.json")]
     problems += baseline_problems(data, Path(out_dir) / "iac.json")
 
     out = Path(out_dir)

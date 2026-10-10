@@ -470,14 +470,18 @@ SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
 # curl -u user:password, --user user:password, wget --http-user ... style pairs.
-USER_PASSWORD = re.compile(r"""((?<!\S)(?:-u|--user|--proxy-user)(?:\s+|=)["']?)([^\s:"'@]+:)(?=[^\s"'])[^\s"']+""")
+# Option and value may be attached (-uadmin:pw), spaced, or separate exec-form
+# list elements ("-u", "admin:pw"). A numeric uid:gid (docker -u 1000:1000) is no password.
+OPTION_GAP = r"""(?:\s+|=|["']\s*,\s*)?["']?"""
+USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,]+:)(?=[^\s"'])([^\s"',\]]+)""")
 # Tools that take a password as an option's value; docker/podman only for login
 # (their -p elsewhere maps ports).
 TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|smbclient|mysqladmin|"
                         r"(?:docker|podman|nerdctl|buildah|skopeo|oras|helm|az|crane)\b[^|;&]*\blogin)\b|"
                         r"\bopenssl\b")
-TOOL_PASSWORD = re.compile(r"""((?<!\S)(?:-p|-w|-k|-P|--password|--pass|-passin|-passout|-pass)(?:\s+|=)["']?)"""
-                           r"""(?=[^\s"'])[^\s"']+""")
+TOOL_PASSWORD = re.compile(r"""((?<![\w-])["']?(?:-passin|-passout|-pass|--password|--pass|-p|-w|-k|-P)"""
+                           r"""(?:\s+|=|["']\s*,\s*)["']?)(?=[^\s"'])[^\s"',\]]+""")
+SSHPASS_ATTACHED = re.compile(r"(\bsshpass\s+(?:-[a-zA-Z]\s+)*-p)(?=\S)([^\s\"']+)")
 # A secret piped into a command that reads it from stdin precedes the keyword
 # (echo X | docker login --password-stdin), so the keyword check misses it.
 STDIN_SINK = re.compile(r"--password-stdin|--with-token\b|\bchpasswd\b|\bpasswd\b|--stdin\b|"
@@ -534,7 +538,9 @@ def scrub_line(line, syntax="hcl"):
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
     line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
-    line = USER_PASSWORD.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", line)
+    line = USER_PASSWORD.sub(lambda m: m.group() if (m.group(2)[:-1] + m.group(3)).isdigit()
+                             else m.group(1) + m.group(2) + "[redacted]", line)
+    line = SSHPASS_ATTACHED.sub(lambda m: m.group(1) + "[redacted]", line)
     if TOOL_LOGIN.search(line):
         line = TOOL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
     line = CRYPT_HASH.sub("[redacted]", line)

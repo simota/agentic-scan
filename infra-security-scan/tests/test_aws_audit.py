@@ -89,7 +89,8 @@ Resources:
         self.assertEqual(sorted(h["detail"] for h in result.hits if h["rule"] == "SEC-001"),
                          ["literal value assigned to API_TOKEN (cfn:Fn)", "literal value assigned to DB_PASSWORD (cfn:Task)",
                           "literal value assigned to MasterUserPassword (cfn:Db)"])
-        self.assertTrue([n for n in result.not_run if "cfn:Vm" in n])
+        # Its launch template is in this template and checked on its own.
+        self.assertFalse([n for n in result.not_run if "cfn:Vm" in n])
 
     def test_sam_globals(self):
         template = {"Transform": "AWS::Serverless-2016-10-31",

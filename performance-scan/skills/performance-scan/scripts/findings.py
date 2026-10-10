@@ -117,7 +117,8 @@ NUMERIC = re.compile(r"[0-9][0-9./\\]*")
 # exhaustively, so a file named like that is cited with its directory or ./
 # (./2.0.txt:3, ./v8.json:2, db/001_init.sql:4). Under a directory, such names count.
 LETTER = re.compile(r"[^\W\d_]")
-VERSION_START = re.compile(r"[vV]?[0-9]")
+# Range operators may lead (~v1.2.3, ^v2.0.0, >=v1.2.3).
+VERSION_START = re.compile(r"[~^=<>!]*[vV]?[0-9]")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,

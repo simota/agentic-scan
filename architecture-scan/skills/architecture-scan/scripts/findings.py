@@ -641,10 +641,11 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
 
 # A bare e-mail address: an RFC 5322 dot-atom local part, `@`, a dotted domain.
 # It starts only where a run of local-part characters starts, so a long run
-# with no address in it is read once, not once per character. The local part
-# is ASCII on purpose: Japanese prose has no blanks between words, so a
-# non-ASCII local part would swallow the sentence before an address
-# (`A-001の担当はowner@example.com`) and hide the mention in it.
+# with no address in it is read once, not once per character. The address is
+# ASCII on purpose: Japanese prose has no blanks between words, so a non-ASCII
+# local part or domain would swallow the sentence before or after it
+# (`A-001の担当はowner@example.com`, `owner@example.comに連絡してA-001を直す`)
+# and hide the mention in it.
 EMAIL = re.compile(r"((?<![A-Za-z0-9!#$%&'*+/=?^_`{|}~.-])[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+"
                    r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+)")
 

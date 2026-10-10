@@ -80,7 +80,9 @@ spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
 the katakana prolonged sound mark (`ー`) between digits, and card-style groups
 (4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
 UUIDs are not counted as digit runs, so date ranges and identifiers stay
-allowed. Line numbers in `location` have at most nine digits and ledger IDs at
+allowed. In a `location` path only, a path segment that starts with a compact
+date-time (`20261009123045_create_users.py`, as timestamped migrations are
+named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
 most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
 Mail-header comments and folding whitespace around the local part, `@` and
 domain are also inspected without changing the saved text.

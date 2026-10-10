@@ -65,6 +65,34 @@ class RenumberTests(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
 
+    def test_equal_severities_are_ordered_by_path(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("PV-001", "High", location=["web/z.py:1"]),
+                           finding("PV-002", "High", location="api/a.py:9")]
+        findings.renumber(doc)
+        self.assertEqual([f["location"] for f in doc["findings"]], ["api/a.py:9", ["web/z.py:1"]])
+
+    def test_technical_values_keep_text_shaped_like_ids(self):
+        doc = complete_doc()
+        doc["findings"] = [
+            finding("PV-001", "Low", location=["docs/PV-001.md:10"],
+                    references=[{"title": "See PV-001", "url": "https://example.com/PV-001"}]),
+            finding("PV-002", "High")]
+        doc["findings"][0]["validation"]["method"] = "analysed"
+        doc["findings"][0]["analysis"] = {"tool": "rg", "command": "rg PV-001 docs",
+                                          "result": "PV-001 cited twice"}
+        doc["meta"]["commit"] = "PV-001"
+        findings.renumber(doc)
+        moved = doc["findings"][1]
+        self.assertEqual(moved["id"], "PV-002")
+        self.assertEqual(moved["location"], ["docs/PV-001.md:10"])
+        self.assertEqual(moved["references"], [{"title": "See PV-002",
+                                                "url": "https://example.com/PV-001"}])
+        self.assertEqual(moved["analysis"]["command"], "rg PV-001 docs")
+        self.assertEqual(moved["analysis"]["result"], "PV-002 cited twice")
+        self.assertEqual(doc["meta"]["commit"], "PV-001")
+
+
 class MergeAndSchemaTests(unittest.TestCase):
     def test_nested_validation_merges_key_by_key(self):
         doc = complete_doc()
@@ -117,6 +145,12 @@ class MergeAndSchemaTests(unittest.TestCase):
         # An impossible date-time is not masked.
         with self.assertRaises(findings.SchemaError):
             findings.validate({"findings": [finding(location="db/20261399123045_x.py:1")]})
+        # The exemption is for path segments only: in prose the same digits
+        # could be an account number.
+        with self.assertRaises(findings.SchemaError):
+            findings.validate({"findings": [finding(title="Account 20261009123045 is exposed")]})
+        with self.assertRaises(findings.SchemaError):
+            findings.validate({"findings": [finding(location="db/x_20261009123045.py:1")]})
 
 
 class DisclaimerTests(unittest.TestCase):

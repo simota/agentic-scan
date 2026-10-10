@@ -15,8 +15,9 @@ Nested `validation` and `analysis` objects of a known finding also merge key by
 key. FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
 
-`renumber` numbers findings PV-001… in severity order (excluded findings
-last) and rewrites every `PV-NNN` reference in the record, so a changed
+`renumber` numbers findings PV-001… in severity order, then path (excluded
+findings last), and rewrites `PV-NNN` references in IDs and prose (never in
+locations, URLs, commands or revisions), so a changed
 severity needs no manual rebuild.
 
 `check` is the run contract: the output directory holds exactly
@@ -118,19 +119,21 @@ LONG_NUMBER = re.compile(
 # 4-6-5). Groups of at most three digits, as in IP addresses, never match.
 GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
-# ISO dates, compact date-times, UUIDs and hex digests (a whole token of 32 or more hex digits with
+# ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
 # mask them before counting digits so they are not mistaken for personal
 # numbers. A UUID next to a dash-joined digit is not masked, so masking cannot
 # split a longer number.
 NOT_PERSONAL_NUMBERS = re.compile(
     r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
-    # Compact date-times (YYYYMMDDhhmmss), as in timestamped migration files.
-    r"|(?<!\d)(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
-    r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)"
     r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
     r"(?![0-9A-Fa-f])(?!-\d)"
     r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+# Compact date-times (YYYYMMDDhhmmss) that begin a path segment, as in
+# timestamped migration files. Only `location` paths are exempted this way;
+# in prose such a number could be an account identifier.
+PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+                            r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?=[_.-])")
 # Percent and entity decoding passes over prose (covers double encoding).
 DECODE_ROUNDS = 3
 
@@ -407,7 +410,7 @@ def validate_finding(f, where):
         # The parsed line range is technical metadata; the path can hold PII.
         path = loc.rsplit(":", 1)[0]
         _text(path, f"{where}.location[{i}]")
-        _no_personal_values(path, f"{where}.location[{i}]")
+        _no_personal_values(PATH_TIMESTAMP.sub("#", path), f"{where}.location[{i}]")
     v = f["validation"]
     _object(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
@@ -549,28 +552,39 @@ def merge(doc, fragment, where):
     return doc
 
 
+NOT_REFERENCES = {"location", "url", "command", "commit"}
 PV_REFERENCE = re.compile(r"(?<![\w-])PV-\d{3}(?![\w-])")
 
 
 def renumber(doc):
     """Number findings PV-001… in severity order and rewrite every PV- reference.
 
-    Reported findings keep their relative order within a severity; excluded
-    findings follow them. Returns the old-to-new ID mapping.
+    Reported findings are ordered by severity, then by their first location's
+    path; excluded findings follow them. Returns the old-to-new ID mapping.
     """
     findings = doc.get("findings", [])
+
+    def path(f):
+        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+        return location[0].rsplit(":", 1)[0]
+
+    # Severity order, then path, as the run contract numbers them.
     active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
-    ordered = sorted(active, key=lambda f: SEVERITIES.index(f["severity"]))
-    ordered += [f for f in findings if f["validation"]["verdict"] in EXCLUDED]
+    ordered = sorted(active, key=lambda f: (SEVERITIES.index(f["severity"]), path(f)))
+    ordered += sorted((f for f in findings if f["validation"]["verdict"] in EXCLUDED), key=path)
     mapping = {f["id"]: f"PV-{i:03d}" for i, f in enumerate(ordered, 1)}
 
-    def rewrite(value):
+    def rewrite(value, key=None):
+        # Technical values (source paths, URLs, commands, revisions) may contain
+        # text shaped like an ID; only IDs and prose are cross-references.
+        if key in NOT_REFERENCES:
+            return value
         if isinstance(value, str):
             return PV_REFERENCE.sub(lambda m: mapping.get(m.group(), m.group()), value)
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, dict):
-            return {key: rewrite(item) for key, item in value.items()}
+            return {k: rewrite(item, k) for k, item in value.items()}
         return value
 
     doc.update(rewrite({**doc, "findings": ordered}))

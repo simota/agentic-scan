@@ -3576,6 +3576,28 @@ VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
 VALUE_NAME = re.compile(r'(?i)"?\bvalue"?\s*[:=]\s*"([^"]*)"\s*,?\s*"?name"?\s*[:=]\s*"([^"]+)"')
 
 
+def innermost_objects(line):
+    """The { ... } spans on a line that hold no other object, with braces inside
+    quoted strings ignored ("pfx{x}" is a value, not an object)."""
+    found, stack, i, n = [], [], 0, len(line)
+    while i < n:
+        c = line[i]
+        if c == '"':
+            i += 1
+            while i < n and line[i] != '"':
+                i += 2 if line[i] == "\\" else 1
+        elif c == "{":
+            stack.append([i, False])
+        elif c == "}" and stack:
+            start, nested = stack.pop()
+            if not nested:
+                found.append(line[start:i + 1])
+            if stack:
+                stack[-1][1] = True
+        i += 1
+    return found
+
+
 def env_pairs(lines, i):
     """[(name, value, entry text)] of the environment entries whose name is on line i: on
     one line in either order, or as attributes of one block in any order (HCL order
@@ -3584,8 +3606,8 @@ def env_pairs(lines, i):
     line = lines[i]
     # One-line objects: every field of { name = ..., type = ..., value = ... }, in any order.
     objects = []
-    for obj in re.findall(r"\{[^{}]*\}", line):
-        fields = {k.lower(): v for k, v in re.findall(r'"?(\w+)"?\s*[:=]\s*"([^"]*)"', obj)}
+    for obj in innermost_objects(line):
+        fields = {k.lower(): v for k, v in re.findall(r'"?(\w+)"?\s*[:=]\s*"((?:\\.|[^"\\])*)"', obj)}
         if "name" in fields and "value" in fields:
             objects.append((fields["name"], fields["value"], obj))
     if objects:
@@ -3622,6 +3644,48 @@ def mock_lines(lines):
 HCL_KINDS = ("terraform", "tfvars", "terragrunt")
 
 
+HEREDOC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*<<-?([A-Za-z_]\w*)\s*$', re.IGNORECASE)
+SECRET_VARIABLE = re.compile(rf'^\s*variable\s+"({SECRET_KEY_NAME[3:-3]})"\s*\{{', re.IGNORECASE)
+
+
+def hcl_literal_secrets(scan, res, lines, mocks):
+    """SEC-001 for what the one-line patterns cannot see: a heredoc assigned to a
+    secret-named argument, and the literal default of a secret-named variable
+    (variable "db_password" { default = "..." } or default = <<EOT). One pass:
+    a heredoc's body is read once and then skipped, as it is text, not configuration."""
+    def literal(value):
+        value = value.strip()
+        return value and "${" not in value and not PLACEHOLDER.match(value) and not FLAG_VALUE.fullmatch(value)
+
+    skeleton = hcl_code("\n".join(lines), strings=False).split("\n")  # braces outside strings, heredocs
+    variable, depth, i = None, 0, 0
+    while i < len(lines):
+        line = lines[i]
+        after = i + 1
+        body = None
+        if (opener := re.search(r"<<-?([A-Za-z_]\w*)\s*$", line)):
+            after = next((j for j in range(i + 1, len(lines)) if lines[j].strip() == opener.group(1)), len(lines))
+            body = "\n".join(lines[i + 1:after])
+            after += 1
+        label = None
+        if (m := HEREDOC_SECRET.match(line)):
+            label = f"literal value assigned to {m.group(1)}"
+        elif variable and depth == 1 and (m := re.match(r'\s*default\s*=\s*(.*)$', line)):
+            label = f"literal default for variable {variable}"
+            if (quoted := re.fullmatch(r'"((?:\\.|[^"\\])*)"', m.group(1).strip())):
+                body = quoted.group(1)
+            elif not opener:
+                body = None
+        if label and body is not None and i + 1 not in mocks and literal(body):
+            scan.hit("SEC-001", res, i + 1, label)
+        if depth == 0 and (m := SECRET_VARIABLE.match(line)):
+            variable = m.group(1)
+        depth = max(0, depth + skeleton[i].count("{") - skeleton[i].count("}"))
+        if depth == 0:
+            variable = None
+        i = after
+
+
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
@@ -3654,6 +3718,8 @@ def scan_secrets(scan, rel, text, kind):
                 continue
             if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")
+    if kind in HCL_KINDS:
+        hcl_literal_secrets(scan, res, code_lines, mocks)
     if re.search(r'"type"\s*:\s*"service_account"', text) and re.search(r'"private_key"\s*:', text):
         scan.hit("SEC-001", res, find_line(text, r'"private_key"\s*:'), "GCP service account key JSON",
                  strong=True)

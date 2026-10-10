@@ -583,5 +583,32 @@ class CodexFourteenthReviewTest(unittest.TestCase):
         self.assertNotEqual(severities(mismatched), severities(plain))
 
 
+class CodexFifteenthReviewTest(unittest.TestCase):
+    def test_heredoc_secrets_and_variable_defaults(self):
+        text = (f'variable "db_password" {{\n  type    = string\n  default = "{SECRET}"\n}}\n'
+                f'variable "api_token" {{\n  default = <<EOT\n{SECRET}\nEOT\n}}\n'
+                f'resource "x" "y" {{\n  password = <<-EOT\n    {SECRET}\n  EOT\n}}\n'
+                'variable "empty_password" {\n  default = ""\n}\n'
+                'variable "region" {\n  default = "us-east-1"\n}\n'
+                'variable "ref_token" {\n  default = var.other\n}\n')
+        result = scan({"v.tf": text})
+        self.assertEqual([(h["detail"], h["line"]) for h in result.hits],
+                         [("literal default for variable db_password", 3),
+                          ("literal default for variable api_token", 6),
+                          ("literal value assigned to password", 11)])
+
+    def test_heredoc_scan_stays_linear(self):
+        import time
+        for text in ("password = <<A\n" * 30000, "password = <<A\n" * 30000 + "A\n",
+                     'variable "db_password" {\n  default = <<A\n' * 20000):
+            start = time.monotonic()
+            scan({"v.tf": text})
+            self.assertLess(time.monotonic() - start, 10)
+
+    def test_braces_inside_a_one_line_value(self):
+        line = f'x = [{{ name = "DB_PASSWORD", type = "PLAINTEXT", value = "pfx{{{SECRET}}}" }}]\n'
+        self.assertEqual([h["detail"] for h in scan({"e.tf": line}).hits], ["literal value for DB_PASSWORD"])
+
+
 if __name__ == "__main__":
     unittest.main()

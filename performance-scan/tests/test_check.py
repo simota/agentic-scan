@@ -97,7 +97,7 @@ class CitationTests(unittest.TestCase):
                  "fixtures/123:4", "testdata/1:8", "x/y:1", "a/b:1", "project.Rproj:1",
                  "foo.1:3", "Dockerfile.22.04:2", "python3.11:3", "docker/22.04:3",
                  "fixtures/1.5:3", "src/1.2:3", "./2.0.txt:3", "docs/1.2.py:4",
-                 "db/001_init.sql:4", "v8.json:2",
+                 "db/001_init.sql:4", "./v8.json:2", "lib/v8.json:2", "V1_1__init.sql:3",
                  "schema.PROTO:3", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
@@ -120,6 +120,7 @@ class CitationTests(unittest.TestCase):
                      "v1.2.3+build.5:4", "v1.2.3-rc.1+build.5:4", "1.2.3rc1:4", "2.0b3:1", "5.3.20.RELEASE:1",
                      "1.0.Final:2", "1.0-SNAPSHOT:3", "1.2.3.post1:4", "1.2.3.dev1:4",
                      "5.0.0.BUILD-SNAPSHOT:2", "2.0.txt:3", "1!2.3:4", "2!1.0.post1:2",
+                     "v1!2.3:4", "v2rc1.post2:4", "v2rc1+local.3:4", "V2.json:1", "v8.json:2", "V1__:2", "v3__x.sql:2",
                      "001_init.sql:4", ".5:1", "~1.5:1"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)

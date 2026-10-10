@@ -109,13 +109,15 @@ IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # Checked with string operations and single-class patterns only: nested
 # unbounded patterns backtrack quadratically on long candidates (aaa…aaa:1).
 NUMERIC = re.compile(r"[vV]?[0-9][0-9./\\]*")
-# A root-level name that starts with a digit (1!2.3, 1.2.3.post1, 2.0b3,
-# 5.0.0.BUILD-SNAPSHOT) or with a v-prefixed dotted version (v1.2.3-rc.1) is a
+# A root-level name that starts with a digit, or with v or V and a digit
+# (1!2.3, 1.2.3.post1, 2.0b3, 5.0.0.BUILD-SNAPSHOT, v1!2.3, v2rc1.post2), is a
 # number or version, whatever follows: version syntaxes cannot be listed
 # exhaustively, so a file named like that is cited with its directory or ./
-# (./2.0.txt:3, db/001_init.sql:4). Under a directory, such names count.
+# (./2.0.txt:3, ./v8.json:2, db/001_init.sql:4). Under a directory, such names count.
 LETTER = re.compile(r"[^\W\d_]")
-VERSION_PREFIX = re.compile(r"[vV]?[0-9]+(?:\.[0-9]+)+")
+VERSION_START = re.compile(r"[vV]?[0-9]")
+# Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
+MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 PROTOCOL = re.compile(r"[A-Z]+[/\\][0-9]+(?:\.[0-9]+)*")
 ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
@@ -147,7 +149,7 @@ def _file_shaped(path):
     if slash:
         return bool(last)
     # A root-level name needs a letter (.5, ~1.5 and 1/2-like tokens are numbers).
-    if last[:1].isdigit() or VERSION_PREFIX.match(last) or not LETTER.search(last):
+    if (VERSION_START.match(last) and not MIGRATION.match(last)) or not LETTER.search(last):
         return False
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))

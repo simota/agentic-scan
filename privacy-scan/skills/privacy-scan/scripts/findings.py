@@ -267,6 +267,10 @@ def _mask_technical_numbers(value):
 # in prose such a number could be an account identifier.
 PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
                             r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?=[_.-])")
+# A semantic version with a prerelease or build suffix (`1.2.3-beta.1`, `2.0.0+build`).
+PACKAGE_VERSION = re.compile(
+    r"\d+\.\d+\.\d+[-+](?:alpha|beta|rc|canary|next|pre|preview|dev|snapshot|nightly|build"
+    r"|experimental|insiders)(?:[.-]?[0-9A-Za-z]+)*", re.IGNORECASE)
 # Percent and entity decoding passes over prose (covers double encoding).
 DECODE_ROUNDS = 3
 
@@ -505,9 +509,10 @@ def _scan_personal_values(value, where):
     value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
     value = "".join(c for c in value if unicodedata.category(c) != "Cf")
     for domain in _email_domains(value):
-        # `react@18.2.0` names a package version: a domain needs a letter in its
-        # last label. Bracketed literals and four-part numeric hosts still count.
-        if (not domain.startswith("[") and domain.count(".") != 3
+        # `react@18.2.0` and `sdk@1.2.3-beta` name package versions, not mail
+        # domains. Bracketed literals and four-part numeric hosts still count.
+        if PACKAGE_VERSION.fullmatch(domain) or (
+                not domain.startswith("[") and domain.count(".") != 3
                 and not any(c.isalpha() for c in domain.rsplit(".", 1)[-1])):
             continue
         if not EXAMPLE_DOMAINS.search(domain):

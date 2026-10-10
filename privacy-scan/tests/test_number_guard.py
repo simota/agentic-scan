@@ -212,9 +212,11 @@ class FuzzFindingTests(unittest.TestCase):
         self.assertTrue(refused("4111 1111 1111 2024-03-15 10:22"))
 
     def test_package_versions_are_not_e_mail_addresses(self):
-        for value in ("react@18.2.0", "lodash@4.17.21", "@types/node@20.11.0"):
+        for value in ("react@18.2.0", "lodash@4.17.21", "@types/node@20.11.0",
+                      "sdk@1.2.3-beta", "next@14.0.0-canary.12", "tool@2.0.0+build.5"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
-        for value in ("user@192.0.2.1", "user@corp.co.jp", "user@[192.0.2.1]"):
+        for value in ("user@192.0.2.1", "user@corp.co.jp", "user@[192.0.2.1]",
+                      "taro@beta.example-corp.com", "user@1.2.3-corp.io"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))

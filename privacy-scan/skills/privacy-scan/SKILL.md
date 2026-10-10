@@ -147,7 +147,9 @@ requester's language (`--lang ja|en`).
   advice
 - Never: read, query or export personal data from any data store, log or
   backup; never print personal data values found in the repository
-- Never: edit source, configs or dependencies during the review
+- Never: edit source, configs or dependencies during the review. The one
+  exception is GUARD on explicit request: add the test, and the fix only if
+  asked (`reference/validation.md`)
 - Never: send source, findings or data to external services
 - Never: state that the application is or is not compliant with a law
 - Never: record a High or Medium finding as `Valid` unless you traced it end to

@@ -98,7 +98,7 @@ class EncodedValueTests(unittest.TestCase):
 
     def test_hex_digests_are_not_digit_runs(self):
         for value in ("commit 0a1b2c3d4e5f678901234567890abcdef1234567",
-                      "sha256 a1234567890123" + "0" * 50,
+                      "sha256 1234567890123a" + "0" * 50,
                       "pod-123e4567-e89b-12d3-a456-426614174000",
                       "123e4567e89b12d3a456426614174000"):
             with self.subTest(value=value):
@@ -182,12 +182,18 @@ class FuzzFindingTests(unittest.TestCase):
     """Cases found by property-based fuzzing of the guard."""
 
     def test_tokens_between_digit_groups_keep_their_edge_digits(self):
-        for value in ("a123456 12345678-1234-1234-1234-123456789012 123456a",
-                      "ref A1 12345678-1234-1234-1234-123456789012",
-                      "a\u0660 12345678-1234-1234-1234-123456789012",
-                      "a\u06670312011856311a87011a4a1459184610"):
+        for value in ("123456 12345678-1234-1234-1234-123456789012 123456",
+                      "ref 1 12345678-1234-1234-1234-123456789012",
+                      "\u0660 12345678-1234-1234-1234-123456789012",
+                      "\u06670312011856311a87011a4a1459184610"):
             with self.subTest(value=ascii(value)):
                 self.assertTrue(refused(value))
+        # Digits attached to a word are part of the word, as in `sha256 <digest>`.
+        for value in ("sha256 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                      "sha1 12345678901bcdef12345678901bcdef12345678",
+                      "utf8 12345678-1234-1234-1234-1234567890ab"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
 
     def test_long_uuid_chains_are_linear(self):
         import time

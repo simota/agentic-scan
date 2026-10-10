@@ -67,6 +67,7 @@ string. These checks use temporary copies; accepted URLs retain their original
 spelling.
 """
 import argparse
+import bisect
 from html import unescape
 import json
 import os
@@ -168,8 +169,9 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # LONG_NUMBER accepts: a run is masked only when it consists entirely of ISO
 # dates (a range) and six-digit times of day after a date; any other digit in
 # the run keeps the whole run counted, so masking cannot split a longer number.
-# A UUID or hex digest is masked, but where a digit sits next to it across
-# those separators, its digits on that edge are kept so they still count.
+# A UUID or hex digest is masked, but where a free-standing number sits next to
+# it across those separators, its digits on that edge are kept so they still
+# count; digits attached to a letter belong to a word (`sha256`).
 # The hour of a clock time after a date (`2024-03-15 10:22`) and the seconds
 # before a date that follows (`10:22:33 - 2024-03-15`) belong to the date-time.
 SEPARATOR_CLASS = r"(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])"
@@ -220,7 +222,22 @@ def _only_dates_and_times(run, after_colon=False, before_colon=False):
 
 def _mask_technical_numbers(value):
     spans = []
-    for m in DIGIT_RUN.finditer(value):
+    runs = list(DIGIT_RUN.finditer(value))
+    run_starts = [m.start() for m in runs]
+
+    def free_digit_at(pos, outward):
+        """Whether the digit at pos belongs to a free-standing number.
+
+        Digits attached to a letter on the outward side belong to a word
+        (`sha256`, `utf8`); the run may reach into the token on the other side.
+        Runs are found once and looked up by bisection, so chains stay linear.
+        """
+        run = runs[bisect.bisect_right(run_starts, pos) - 1]
+        if outward < 0:
+            return not (run.start() > 0 and value[run.start() - 1].isalpha())
+        return not (run.end() < len(value) and value[run.end()].isalpha())
+
+    for m in runs:
         after_colon = m.start() > 0 and value[m.start() - 1] == ":"
         before_colon = value[m.end():m.end() + 1] == ":"
         if _only_dates_and_times(m.group(), after_colon, before_colon) and DATE_TOKEN.search(m.group()):
@@ -232,8 +249,10 @@ def _mask_technical_numbers(value):
             right = _past_separators(value, m.end(), 1)
             lead = EDGE_DIGITS_START.match(token)
             tail = EDGE_DIGITS_END.search(token)
-            keep_left = lead.group() if lead and left > 0 and value[left - 1].isdecimal() else ""
-            keep_right = tail.group() if tail and right < len(value) and value[right].isdecimal() else ""
+            keep_left = (lead.group() if lead and left > 0 and value[left - 1].isdecimal()
+                         and free_digit_at(left - 1, -1) else "")
+            keep_right = (tail.group() if tail and right < len(value) and value[right].isdecimal()
+                          and free_digit_at(right, 1) else "")
             spans.append((m.start(), m.end(), keep_left + "#" + keep_right))
     masked, pos = [], 0
     for start, end, replacement in sorted(spans):

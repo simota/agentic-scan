@@ -1,7 +1,8 @@
 <!--
 Files one finding as one issue (one root cause = one fix location = one issue).
 Copy each {{field}} from the field of the same name in findings.json, verbatim and in the record's
-language. Delete optional rows, lines and sections left empty (no conditions, no step, no references).
+language. Delete optional rows, lines and sections left empty (no conditions, no references); without a step, drop
+` — {{step}}` and keep the Perspective row.
 `location` may be a list: write each entry as its own code span, comma-separated; the first is the fix location.
 
 Before filing:

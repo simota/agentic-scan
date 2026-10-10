@@ -1,7 +1,8 @@
 <!--
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
 各欄の {{field}} は findings.json の同名フィールドから、記録の言語のまま転記する。空の任意の行・節
-（conditions、step、references がない場合）は削除する。
+（conditions、references がない場合）は削除する。step がなければ ` — {{step}}` だけを
+省き、観点の行は残す。
 `location` がリストのときは 1 件ずつコードスパンにしてカンマで区切る。先頭が修正箇所。
 
 登録前に確認すること:

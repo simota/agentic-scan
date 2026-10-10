@@ -55,7 +55,7 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 
 ## 4. Commitments
 
-<!-- commitments[]: id, statement, family, source and status (with the reason when not checked); mark inferred ones, which are questions for the owner. -->
+<!-- commitments[]: id, statement, family, source and status, with the reason whenever one is recorded (required for not checked); mark inferred ones, which are questions for the owner. -->
 - 
 
 ## 5. Checked and sound

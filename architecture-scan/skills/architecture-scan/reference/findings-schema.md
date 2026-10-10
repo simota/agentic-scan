@@ -30,8 +30,8 @@ including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
 never `//host`, `\\host` or `/\host`, which name another host);
-any other scheme, or any URL containing a control character, is shown as
-literal text. In `report.md`, recorded text keeps emphasis and code spans, but
+any other scheme, or any URL containing a control or bidirectional character,
+is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
 an e-mail address stays plain text, as in the dashboard; an `@` that starts

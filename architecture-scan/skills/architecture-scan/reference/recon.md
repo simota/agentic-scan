@@ -37,8 +37,8 @@ of import sites, an example `path:line`. In TypeScript and JavaScript count
 `exports` map before deciding which module an import reaches. In Go,
 `go list -f '{{.ImportPath}} -> {{join .Imports " "}}' ./...` gives the graph
 (add `-test` and read `XTestImports` for `package x_test`; check `//go:build`
-variants); run it with `GOFLAGS=-mod=readonly GOPROXY=off` so it fetches
-nothing. Then flag:
+variants); run it with `GOPROXY=off` so it fetches nothing, and keep Go's
+own module mode, which reads `vendor/` when the repository has one. Then flag:
 
 - **Cycles** between modules or layers
 - **Upward edges** — domain or application code importing presentation,

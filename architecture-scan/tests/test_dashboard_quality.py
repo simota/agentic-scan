@@ -18,6 +18,16 @@ class DashboardTests(unittest.TestCase):
         self.assertIn("if(m)m.hidden=true", render.JS)
         self.assertIn("shut.forEach(d=>{d.open=false})", render.JS)
 
+    def test_a_url_with_a_bidi_control_is_never_a_link(self):
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [{"title": "t", "url": "https://e.example/\u202egpj.exe"},
+                                            {"url": "docs/\u2066a.md"}]
+        for output in (render.render_html(doc, "en"), render.render_markdown(doc, "en")):
+            self.assertNotRegex(output, "[\u202a-\u202e\u2066-\u2069]")
+            self.assertNotIn("href=", output.split("<details", 1)[-1])
+            self.assertNotIn("](<", output)
+            self.assertIn("U+202E", output)
+
     def test_the_tab_title_shows_bidi_controls_too(self):
         doc = complete_doc()
         doc["meta"]["project"] = "acme\u202eloc.exe"

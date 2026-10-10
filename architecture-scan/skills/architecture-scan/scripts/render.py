@@ -29,7 +29,8 @@ SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def is_web_url(url):
-    return bool(URL_SCHEME.match(url)) and not re.search(r"[\x00-\x20\x7f]", url)
+    return (bool(URL_SCHEME.match(url)) and not re.search(r"[\x00-\x20\x7f]", url)
+            and not BIDI_CONTROLS.search(url))
 
 
 def is_safe_link(url):
@@ -38,7 +39,9 @@ def is_safe_link(url):
     Browsers drop tabs, newlines and leading control characters from a URL, so
     any control character could hide a scheme: such a URL is never a link.
     """
-    if re.search(r"[\x00-\x1f\x7f]", url):
+    # A bidi control would reorder the destination wherever it is shown or
+    # copied, though its label makes it visible: such a URL is never a link.
+    if re.search(r"[\x00-\x1f\x7f]", url) or BIDI_CONTROLS.search(url):
         return False
     stripped = url.lstrip(" ")
     if len(stripped) > 1 and set(stripped[:2]) <= {"/", "\\"}:

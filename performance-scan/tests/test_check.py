@@ -93,7 +93,8 @@ class CitationTests(unittest.TestCase):
                  "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
                  "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7",
                  "src/設定:12", "Program.CS:20", "index.PY:4", "Taskfile:1", "Pipfile:2",
-                 "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
+                 "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10",
+                 "fixtures/123:4", "testdata/1:8", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
@@ -112,7 +113,7 @@ class CitationTests(unittest.TestCase):
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "time.Second:30 is the effective wait",
                      "json.Marshal:1", "http.DefaultClient:5", "runtime.GOMAXPROCS:4", "golang.org/x/sync:1",
                      "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",
-                     "R/W:2"]
+                     "R/W:2", "1/2:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -202,6 +203,13 @@ class ImpactBudgetTests(unittest.TestCase):
         doc = complete_doc()
         doc["findings"][1]["impact"] = "Also violates B-99 and B-01"
         self.assertEqual(contract_problems(doc), ["P-002.impact: B-99 is not in budgets"])
+
+    def test_a_holds_budget_named_in_impact_is_a_contradiction_too(self):
+        doc = complete_doc()
+        doc["budgets"].append({"id": "B-02", "statement": "s", "source": "x", "status": "holds"})
+        doc["findings"][0]["impact"] = "Also violates B-02"
+        self.assertEqual(contract_problems(doc),
+                         ["B-02: status holds, but P-001 is a Valid, unfixed violation of it"])
 
 if __name__ == "__main__":
     unittest.main()

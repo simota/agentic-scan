@@ -100,13 +100,15 @@ AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "exampl
 ABBREVIATION = re.compile(r"[^\W\d_][/\\][^\W\d_]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # A file name has a directory part whose last segment holds a letter, in any
-# script (src/main, src/設定, src/a, ./CHANGELOG; not HTTP/1.1, and _rejection
+# script (src/main, src/設定, src/a, ./CHANGELOG), or a numeric name under a
+# lettered directory (fixtures/123, testdata/1; not HTTP/1.1 or 1/2, and _rejection
 # refuses N/A and I/O), an extension with a letter (not 1.5 or v1.2.3), or a
 # conventional extensionless root name: a capitalised *file (Makefile, Taskfile,
 # Pipfile) or a well-known all-caps file. Other all-caps words (TTL, TIMEOUT,
 # MAX_CONNECTIONS) are settings; any other extensionless root file is cited
 # with ./ (./NOTES:3).
 FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[^\W\d_][^/\\]*"
+                        r"|.*[^\W\d_].*[/\\][0-9]+"
                         r"|.*\.[A-Za-z][A-Za-z0-9]*"
                         r"|(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
@@ -591,10 +593,13 @@ def _record_problems(doc):
         budget = f.get("budget", "")
         if budget.strip() and budget not in budget_ids:
             problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")
-        elif (budget in holding and f.get("status", "Open") != "Fixed"
-              and f["validation"]["verdict"] == "Valid"):
-            problems.append(f"{budget}: status holds, but {f['id']} is a Valid, unfixed "
-                            "violation of it")
+        # Every budget the finding violates, in budget or named in impact.
+        violated = sorted(({budget} if budget in budget_ids else set())
+                          | (set(BUDGET_MENTION.findall(f["impact"])) & budget_ids))
+        if f.get("status", "Open") != "Fixed" and f["validation"]["verdict"] == "Valid":
+            for held in (b for b in violated if b in holding):
+                problems.append(f"{held}: status holds, but {f['id']} is a Valid, unfixed "
+                                "violation of it")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

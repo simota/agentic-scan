@@ -121,13 +121,12 @@ RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
 # label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
-# is not a line; it has a letter (`10:30` is not one) and a line from 1. A Windows drive (`C:\repo\a.py:3`) is allowed.
-# The path is taken whole in a lookahead, so the regex never backtracks into
-# it, and is bounded, so a long list of names in evidence stays linear.
-EVIDENCE_LINE = re.compile(
-    r"(?<![^\s(\[{'\"`,;:])(?!//)"
-    r"(?=(?P<path>(?:[A-Za-z]:)?(?=[^\s:]{0,1023}[A-Za-z])[^\s:]{1,1024}))(?P=path)"
-    r":[1-9][0-9]*")
+# is not a line; it has a letter (`10:30` is not one) and a line from 1. A
+# Windows drive (`C:\repo\a.py:3`) is allowed. `evidence_paths` finds them in
+# one pass, so a long list of names in evidence stays linear.
+PATH_RUN = re.compile(r"[^\s:]+")
+LINE_AFTER = re.compile(r":[1-9][0-9]*")
+PATH_START_AFTER = set("([{'\"`,;:")
 # Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
@@ -185,16 +184,20 @@ def read_json(path):
 
 # Characters that render as nothing: Hangul and Braille fillers, beside the
 # format, control, separator and unassigned categories `visible` skips.
-BLANK_LOOKING = {"\u115f", "\u1160", "\u2800", "\u3164", "\uffa0"}
-# Default-ignorable marks that render nothing on their own: the combining
-# grapheme joiner, Mongolian free variation selectors, variation selectors.
-IGNORABLE_MARKS = re.compile("[\u034f\u180b-\u180f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
+# Characters that render as nothing: Unicode's Default_Ignorable_Code_Point
+# set (soft hyphen, joiners, variation selectors, Hangul fillers, Khmer
+# inherent vowels, tags …) and the blank Braille pattern, beside the format,
+# control, separator and unassigned categories `visible` skips.
+BLANK_LOOKING = re.compile(
+    "[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180b-\u180f\u200b-\u200f"
+    "\u202a-\u202e\u2060-\u206f\u2800\u3164\ufe00-\ufe0f\ufeff\uffa0\ufff0-\ufff8"
+    "\U0001bca0-\U0001bca3\U0001d173-\U0001d17a\U000e0000-\U000e0fff]")
 
 
 def visible(value):
     """True when value shows at least one character (`\u200b` alone does not)."""
-    return any(c not in BLANK_LOOKING and not IGNORABLE_MARKS.match(c)
-               and unicodedata.category(c)[0] not in "CZ" for c in value)
+    return any(not BLANK_LOOKING.match(c) and unicodedata.category(c)[0] not in "CZ"
+               for c in value)
 
 
 def _text(value, where):
@@ -293,6 +296,45 @@ def _location_paths(locations):
     return paths
 
 
+def evidence_paths(text):
+    """Yield each `path:line` candidate's path, left to right, as a regex would.
+
+    Every start inside one run of non-blank, non-colon text ends at the same
+    `:line`, so the earliest valid start is found without backtracking.
+    """
+    def starts_here(i):
+        return i == 0 or text[i - 1].isspace() or text[i - 1] in PATH_START_AFTER
+
+    def letter(c):
+        return c.isascii() and c.isalpha()
+
+    consumed = 0
+    for run in PATH_RUN.finditer(text):
+        begin, end = max(run.start(), consumed), run.end()
+        if begin >= end:
+            continue  # already part of the previous path or its line
+        # Without a drive: the earliest start whose path holds a letter.
+        line = LINE_AFTER.match(text, end)
+        plain = None
+        if line:
+            last = max((i for i in range(begin, end) if letter(text[i])), default=-1)
+            plain = next((i for i in range(begin, last + 1)
+                          if starts_here(i) and not text.startswith("//", i)), None)
+        # A Windows drive (`C:` and the next run) can only start at the run's
+        # last character; the letter a path needs comes after the drive.
+        drive = end - 1
+        after = PATH_RUN.match(text, end + 1) if text.startswith(":", end) else None
+        drive_line = (LINE_AFTER.match(text, after.end())
+                      if after and any(letter(c) for c in after[0]) else None)
+        if (drive_line and letter(text[drive]) and starts_here(drive)
+                and (plain is None or plain >= drive)):
+            consumed = drive_line.end()
+            yield text[drive:after.end()]
+        elif plain is not None:
+            consumed = line.end()
+            yield text[plain:end]
+
+
 def cites_line(evidence, locations=()):
     """True when evidence names a file and a line, e.g. `job.py:58` or `BUILD:12`.
 
@@ -304,8 +346,7 @@ def cites_line(evidence, locations=()):
     does. `ABC:123`, `ratio:3` and `v1.2:3` do not.
     """
     known = _location_paths(locations)
-    for match in EVIDENCE_LINE.finditer(evidence):
-        path = match["path"]
+    for path in evidence_paths(evidence):
         if path in known:
             return True
         has_dir = re.search(r"[/\\]", path) and not path.startswith("//")

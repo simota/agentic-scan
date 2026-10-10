@@ -150,10 +150,22 @@ class RenumberTests(Workspace):
 
 class EvidenceTests(Workspace):
     def test_long_evidence_is_checked_in_linear_time(self):
-        for evidence in (",".join(f"pkg.mod{i}" for i in range(5000)), "(a" * 20000):
+        for evidence in (",".join(f"pkg.mod{i}" for i in range(5000)), "(a" * 20000,
+                         "C:" * 30000, "a:" * 30000):
             start = time.monotonic()
             self.assertFalse(findings.cites_line(evidence))
             self.assertLess(time.monotonic() - start, 2)
+
+    def test_a_path_of_any_length_is_cited(self):
+        self.assertTrue(findings.cites_line("a/" * 3000 + "b.py:3"))
+
+    def test_paths_are_found_as_the_original_regex_found_them(self):
+        for text, paths in (("a:12C/x.py:1", ["a:12C/x.py"]), ("`C:.env:12", ["C:.env"]),
+                            ("C:0`,;\\:12", []), ("x C://{:12", []),
+                            ("a.py:3b.py:4", ["a.py"]), (r"C:\repo\job.py:3", [r"C:\repo\job.py"]),
+                            ("根拠:3_add.py:12", ["3_add.py"]), ("http://x.com:80/a", [])):
+            with self.subTest(text=text):
+                self.assertEqual(list(findings.evidence_paths(text)), paths)
 
     def test_jvm_build_wrappers_are_files(self):
         self.assertTrue(findings.cites_line("gradlew:3"))
@@ -172,7 +184,7 @@ class EvidenceTests(Workspace):
 
     def test_text_that_shows_nothing_is_blank(self):
         for value in ("\u200b", "\u2800", "\u3164 \u200d", "\u2028", "\ufe0f", "\u034f",
-                      "\U000e0100 "):
+                      "\U000e0100 ", "\u17b4", "\u17b5\u00ad", "\U0001bca0"):
             with self.subTest(value=repr(value)):
                 with self.assertRaisesRegex(findings.SchemaError, "nonblank"):
                     findings.validate({"limitations": [value]})

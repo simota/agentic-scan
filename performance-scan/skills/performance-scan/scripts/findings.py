@@ -148,9 +148,25 @@ def _is_host(name):
     return labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name == name.lower())
 
 
+def _protocol_version(path):
+    """True for a protocol version, bare or with a draft or implementation tag
+    (TLSv1.3, HTTP/3-draft-29, SSH-2.0-OpenSSH_9.6); a tagged name that ends in
+    a letter-led extension is a file (http2-server.go)."""
+    match = PROTOCOL.match(path)
+    if not match:
+        return False
+    rest = path[match.end():]
+    if not rest:
+        return True
+    if rest[0] not in "-+_":
+        return False
+    _, dot, extension = rest.rpartition(".")
+    return not (dot and extension[:1].isalpha())
+
+
 def _file_shaped(path):
     """True when path has a directory part, a dotted suffix or a root-file name."""
-    if NUMERIC.fullmatch(path) or PROTOCOL.fullmatch(path):
+    if NUMERIC.fullmatch(path) or _protocol_version(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:

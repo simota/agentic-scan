@@ -280,7 +280,11 @@ def markdown_finding(f, t):
     step = f" ({markdown_text(f['step'])})" if f.get("step", "").strip() else ""
     lines.append(f"- **{t['perspective']}:** {f['category']}{step}")
     for key in FIELDS:
-        if key in f:
+        if key == "location":
+            # Code spans keep paths copyable (no snake\_case escapes) and inert.
+            locations = f[key] if isinstance(f[key], list) else [f[key]]
+            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
+        elif key in f:
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
     if v.get("evidence"):

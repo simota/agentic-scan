@@ -40,13 +40,13 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   performance problems are violations of these bounds on some path; a generic
   linter cannot see them because the bounds exist only in this app
 - **Create a new, empty output directory** outside the audited repository and
-  follow the *Run contract* below
+  follow the *Run contract* below (not for a checklist-only request)
 
 ## Run contract
 
 | Item | Fixed choice |
 |---|---|
-| Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
+| Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them. Your own scratch from this conversation is not another assessment: reuse its recon and keep its `B-` IDs |
 | Review units | One unit per domain plus one cross-cutting unit (one domain unit when there are fewer than about 15 entry points). Each unit hunts the ledger entries it owns, sweeps every applicable perspective once, and closes only when its close-check matches. Ownership, subagents and the close-check: `reference/budgets.md` §4 |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
@@ -60,7 +60,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Severity | When |
 |---|---|
-| High | On a hot path (an interactive request, a frequent API call, a job with a deadline), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime on a hot or warm path and, at the path's rate, reaches the process limit within the restart or deploy interval (otherwise Medium) |
+| High | On a hot path (an interactive request, a frequent API call, a job whose schedule interval or stated deadline its cost can approach at a named volume; other jobs are warm), cost grows with a scale driver that has no cap — a query per row, an unpaginated query on a growing table, quadratic work over tenant data, a whole result set or file held in memory — or one request blocks a shared resource (event loop, global lock, connection pool) so that other requests stall. Also a leak (memory, connections, handles) that grows with uptime on a hot or warm path and, at the path's rate, reaches the process limit within the restart or deploy interval (otherwise Medium) |
 | Medium | A High-class growth that needs one condition the code does not control and that is independent of the scale driver's own growth (a missing index that the migrations do not show either way, a feature flag, a deployment setting; a large tenant is not such a condition, because every uncapped driver needs one), a bounded cost that, at its cap, violates a ledger budget on a hot path (many sequential outbound calls, multi-megabyte responses, a render that redoes all work per keystroke), uncapped growth on a warm path, or a leak fed only by a cold path |
 | Low | Inefficiency on a cold path (admin, one-off, startup) that stalls nothing shared, a bounded budget violation on a warm path, a missed cache with small cost, constant-factor waste |
 | Info | A tuning or observability note with no demonstrated cost path |
@@ -114,13 +114,13 @@ Skip the files when only a checklist was asked for.
 
 | Situation | How to proceed |
 |---|---|
-| Asked "what should we check" or "list the items" | RECON and CHECKLIST only, then stop and deliver the checklist |
+| Asked "what should we check" or "list the items" | RECON and CHECKLIST only, then stop. Deliver the checklist in chat (`reference/report.md`); no output directory and no `findings.json`. Keep the recon in scratch and name its path; write a `checklist.md` only on request |
 | Asked to check, audit, scan or find bottlenecks | All five phases |
-| Asked about one slow screen, endpoint or job | Scope the review units to the paths that serve it, plus the cross-cutting unit; say the rest was not read in `limitations` |
+| Asked about one slow screen, endpoint or job | Scope the review units to the paths that serve it, plus the cross-cutting unit, and produce the same three outputs. `meta.scope` names the entry point and `meta.method` says "Scoped static review". Derive only budgets the scoped paths pay; perspectives not reached are `not checked` with the note "outside the requested scope"; `limitations` says "Scoped to <entry>: read X of Y entry points; not read: <list>" |
 | No document states a latency target or limit | Derive the budget from hard limits (timeouts, page-size maxima, body limits; not `inferred`) and, failing those, from existing pagination and the majority of handlers (`inferred: true`, with the bound itself in `decisions`). Hunt it either way (`reference/budgets.md` §1) |
 | The ORM loads relations lazily by default | List every relation accessed inside a loop or a serializer over a collection, and check each for eager loading on that path. This list is the N+1 hunt list |
 | The ORM never loads lazily (e.g. Prisma, Drizzle, Knex) | Hunt explicit queries inside loops and per-item fluent relation calls instead. Prisma batches `findUnique` calls issued in the same tick (e.g. `Promise.all(ids.map(id => findUnique(...)))`) into one query: that is not an N+1 |
-| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them. If they form a complete chain (the first revision has no parent, or the earliest migration creates every table and the schema file matches the migrations) and no matching index appears, cite that as confirmed absence in the repository; the remaining condition is usually table size (`Environment-dependent`, naming the row threshold). Use "the migrations do not show either way" only when the schema history is partial or the schema lives outside the repository, and name the index to confirm |
+| Whether an index exists depends on the production schema | Read the migrations and schema files. If they show it, cite them. If they form a complete chain (the first revision has no parent, the earliest migration creates every table and the schema file matches the migrations, the schema dump such as `db/schema.rb` or `structure.sql` is at the newest migration's version and lists every table, or Flyway versions run contiguously from V1) and no matching index appears, cite that as confirmed absence in the repository; the remaining condition is usually table size: grade it Medium, `Environment-dependent`, naming the row threshold (an explicit exception to the rule that the driver's own growth does not lower severity, because whether the table reaches that size is a production fact). Use "the migrations do not show either way" only when the schema history is partial or the schema lives outside the repository, and name the index to confirm |
 | A finding's cost depends on data volume | State the volume at which it matters and where the volume comes from; never present a guess of production size as fact |
 | A cache sits in front of the cost | Check the key, the invalidation, the TTL, the bound on size and what happens on a miss storm. A cache does not mitigate the first request after a miss or expiry (cold cache), nor a shared cost cached under a per-user key |
 | The framework is async or event-loop based | Hunt synchronous blocking calls (file, crypto, synchronous DNS resolution such as `socket.gethostbyname`, sync HTTP or DB clients, CPU-heavy loops) on the loop. One is enough to stall every concurrent request. Check what the framework already offloads (e.g. FastAPI runs sync `def` routes in a threadpool) before reporting |
@@ -153,6 +153,7 @@ Skip the files when only a checklist was asked for.
   endpoints
 - Never: state a latency, throughput or memory figure that was not measured.
   Write the cost model instead ("2N+1 queries"), and label any estimate as one
+- Never: report a High or Medium finding you have not traced end to end yourself
 - Never: delete a finding judged false — mark it `FalsePositive` or
   `NotApplicable` with evidence so the exclusion is visible. A lead falsified
   before it reached any fragment goes to `checked_ok` instead

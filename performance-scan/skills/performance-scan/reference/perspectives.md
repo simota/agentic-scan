@@ -38,6 +38,9 @@ Rules:
   perspective's `note` instead of being re-run
 - The `note` lists the hunt step IDs applied and each one left out with its
   reason (e.g. `DB1–DB3 via B-01; DB5 N/A: no explicit transactions`)
+- A construct that is not sound but whose workload rate keeps it below every
+  severity in `SKILL.md` is noted as `applied, below threshold: <rate>, no
+  finding`
 - A step is `sound` only when its *Sound when* cell can be filled with the
   mitigation's `path:line` on the path the workload takes. "The ORM optimises
   it" is not evidence
@@ -105,7 +108,7 @@ Each step says **what** to hunt, **where** to look, and what evidence makes it
 | CC1 | Global locks or synchronised sections on hot paths | Mutexes, `synchronized`, file locks, advisory locks | The critical section holds no I/O and is short — because every request serialises behind it |
 | CC2 | Pool sizing and contention: acquisition waits or timeouts that violate caller deadlines, simultaneous connection holdings that can deadlock, aggregate pool capacity beyond the DB connection budget, thread-pool starvation from blocking calls | Pool and acquisition config, call paths, worker and replica counts, IaC | Acquisition waits are bounded within the caller's time budget, simultaneous holdings cannot deadlock, and total pool capacity fits the DB connection budget, cited — because bounded waiting can protect the DB from excess concurrency |
 | CC3 | *(sound constructs)* Unbounded parallelism: `Promise.all`/`gather`/goroutine per element of a growing collection | Fan-out code | A concurrency limit at `path:line` — because N simultaneous calls exhaust pools and trip rate limits |
-| CC4 | Contention on shared counters, hot rows, single queues or single partitions | Counters, sequences, aggregates updated per request | Sharded, batched or asynchronous updates — because a single hot spot caps throughput |
+| CC4 | Contention on shared counters, hot rows, single queues or single partitions (e.g. Rails `touch: true` and `counter_cache`, which update the parent row on every child write) | Counters, sequences, aggregates updated per request | Sharded, batched or asynchronous updates — because a single hot spot caps throughput |
 | CC5 | Unbounded queues and missing backpressure: in-process queues or executors that accept work faster than it drains (e.g. the unbounded queue behind Java `Executors.newFixedThreadPool`, `asyncio.Queue()` without `maxsize`, Node stream `write()` ignoring `false`/`drain`), no load shedding on overload | Executors, in-process queues, stream writers, consumer prefetch | A bounded queue with a rejection or backpressure policy, `pipeline()` or an awaited drain, bounded consumer prefetch, at `path:line` — because an unbounded queue turns overload into memory growth and unbounded latency instead of fast rejection |
 
 For CC2, do not report a small pool solely because workers or concurrent demand
@@ -113,7 +116,10 @@ outnumber connections. [HikariCP's pool-sizing guidance](https://github.com/bret
 explains why a small pool with waiting threads can be appropriate. Check bounded
 backpressure and the acquisition wait plus subsequent work against the caller's
 deadline; unknown workload or DB capacity is a limitation, not evidence that the
-pool should be enlarged.
+pool should be enlarged. Exception: when the framework holds one connection per
+thread for the whole unit of work (e.g. Rails before 7.2 per request, Sidekiq per
+job), a pool smaller than that process's thread count fails with checkout
+timeouts under load; report it (RES) and cite the pool and thread settings.
 
 ### Payload and API shape (PA) [SIZE, LAT]
 
@@ -130,6 +136,7 @@ pool should be enlarged.
 |---|---|---|---|
 | FE1 | *(sound constructs)* Bundle size: whole-library imports, no route-level code splitting, heavy dependencies for small uses, duplicated packages, dev builds shipped | Bundler config, entry points, imports | Split per route, tree-shakeable imports, production mode at `path:line` — because every byte is downloaded, parsed and executed before interaction |
 | FE2 | *(sound constructs)* Rendering: whole-tree re-renders on each change, unstable props defeating memoisation, long lists without virtualisation, expensive work in render | Components on hot screens | Memoised derived data, stable references, virtualised long lists — because render cost multiplies by item count and update frequency |
+| BG3 | Framework retries with exponential backoff and jitter (e.g. Sidekiq's default retry; ActiveJob `retry_on ... wait: :polynomially_longer`; Spring Retry `@Backoff(multiplier = ...)`); schedules spread across minutes | An overridden retry delay returning a constant (e.g. `sidekiq_retry_in { 10 }`); ActiveJob `retry_on` with its default fixed 3 s wait; `@Retryable` without `@Backoff`; every schedule on minute 0 | Synchronised retries multiply load at the worst time |
 | FE3 | Assets: unoptimised images, no responsive sizes, no lazy loading below the fold, render-blocking scripts, fonts and CSS | Templates, asset pipeline | Sized, compressed, lazy where appropriate, non-blocking scripts — because they delay first paint |
 | FE4 | Data-fetching waterfalls and loops: effects that fetch in sequence, refetch on every render, polling without backoff | Effects, data hooks, loaders | Parallel or server-side loading, stable dependencies, cached queries — because each waterfall step adds a round trip |
 | FE5 | Main-thread work: layout thrashing (read/write interleaving), heavy synchronous handlers on input or scroll | Event handlers, animation code | Batched DOM reads and writes, debounced or deferred handlers — because a long task blocks input |
@@ -140,7 +147,7 @@ pool should be enlarged.
 |---|---|---|---|
 | BG1 | Slow work in the request: emails, PDF, image processing, third-party calls, recalculation that the response does not need | Handlers with heavy side effects | Enqueued with the response not waiting — because the user pays the slowest dependency |
 | BG2 | Jobs that process everything each run: full-table scans, no cursor or batch, no incremental watermark | Scheduled jobs and consumers | Batched with a cursor and incremental selection — because the job grows with total history, not new work |
-| BG3 | Storms: retries without backoff or jitter, schedules aligned on the same minute, polling tighter than the data changes | Queue and scheduler config | Capped backoff with jitter, spread schedules — because synchronised retries multiply load at the worst time |
+| BG3 | *(sound constructs)* Storms: retries without backoff or jitter, schedules aligned on the same minute, polling tighter than the data changes | Queue and scheduler config | Capped backoff with jitter, spread schedules — because synchronised retries multiply load at the worst time |
 
 ### Startup and configuration (SC)
 
@@ -176,7 +183,7 @@ not a list to grep for: find this stack's equivalent.
 | DB2 | A server-side maximum applied after parsing (e.g. `min(requested, MAX)`; DRF `max_page_size`; keyset or cursor pagination); explicit column lists for wide tables | A client `limit` passed straight through; pagination only in the front end; slicing or `first(n)` after the query was evaluated (e.g. Django `list(qs)[:n]`, Rails `.to_a.first(n)`; slicing an unevaluated QuerySet or `.limit(n)` is a SQL `LIMIT`); `len(qs)` or `if qs:` used only to count or test existence instead of `.count()`/`.exists()` | The table grows; only a server cap bounds the result |
 | DB6 | Bulk statements (e.g. Django `bulk_create`/`bulk_update`; Rails `insert_all`/`upsert_all`; SQL multi-row `INSERT`; `COPY`); batched writes in fixed-size chunks | `save()` per item in a loop; a transaction around per-row statements (still N round trips); ORM callbacks firing per row in bulk paths | Round trips scale with N |
 | AL1 | A dict/map/set built once and probed in the loop; a database join or `IN` query instead of nested iteration; sorted merge | `list.includes`/`in list`/`Array.find` inside a loop over another growing list; nested `for` over two collections from different scale drivers | N probes of cost N is N² |
-| ME1 | Streaming readers and writers with bounded buffering through the reader, driver and consumer (e.g. Python file iteration or `csv` reader over a file object; Node streams and `pipeline`; Java `InputStream` with buffers; Django `.iterator()` with a verified streaming backend and cursor configuration; Rails `find_each` in fixed-size batches); chunked uploads to storage | `read()`/`readFileSync` of an unbounded file; `.all()`/`toList()` of an unbounded query; an ORM iterator whose driver buffers the full result; accumulating streamed rows or a whole response body before forwarding | Memory per request grows with the input unless buffering is bounded at every layer |
+| ME1 | Streaming readers and writers with bounded buffering through the reader, driver and consumer (e.g. Python file iteration or `csv` reader over a file object; Node streams and `pipeline`; Java `InputStream` with buffers; Django `.iterator()` with a verified streaming backend and cursor configuration; Rails `find_each` in fixed-size batches); chunked uploads to storage | `read()`/`readFileSync` of an unbounded file; `.all()`/`toList()` of an unbounded query; an ORM iterator whose driver buffers the full result; accumulating streamed rows or a whole response body before forwarding; Rails `Relation#each`/`map`/`to_a` over an uncapped scope (sound: `find_each`/`in_batches`); JPA `findAll()`/`getResultList()` in a job (sound: a `Stream` with a fetch size and `clear()` per batch, or `Slice` paging) | Memory per request grows with the input unless buffering is bounded at every layer |
 | IO1 | Async drivers and APIs on the loop (e.g. `asyncpg`, `httpx.AsyncClient`, Node `fs.promises`); blocking I/O offloaded (e.g. `run_in_executor`, `asyncio.to_thread`; FastAPI sync `def` routes, which already run in a bounded threadpool); CPU-bound pure-Python work in a process pool or job queue; Node CPU work in worker threads | `requests`, `time.sleep`, sync ORM calls or `fs.*Sync` inside `async def`/async handlers; large `JSON.parse`, synchronous hashing or image work on the loop; pure-Python CPU work sent to a thread executor (the GIL still serialises it); bursts of Node `fs`, `dns.lookup`, `crypto.pbkdf2` or `zlib` calls that saturate the libuv threadpool (`UV_THREADPOOL_SIZE`, default 4). Deliberately slow password hashing (bcrypt, argon2) is not a finding by itself; its synchronous form on the loop is | The loop serves every request; one block stalls all |
 | IO2 | Concurrent independent awaits with a bound (e.g. `asyncio.gather` with a semaphore; `Promise.all` over a fixed small set; Go `errgroup` with `SetLimit`) | `await a(); await b();` where `b` does not use `a`; sequential calls in a loop that do not depend on each other | Latency becomes the sum instead of the max |
 | CA2 | Keys that include every dimension the value depends on; invalidation from every writer (or versioned keys); single-flight, locking or early refresh on expensive misses; TTL plus jitter | A key without tenant or locale; invalidation only from one of several writers; all keys expiring together; recompute-on-miss with full concurrency | A miss storm sends full concurrency to the origin |

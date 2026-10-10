@@ -54,5 +54,12 @@ class UntrustedTextTests(unittest.TestCase):
                 self.assertNotIn("](<", render.render_markdown(doc, "en"))
         self.assertEqual(render.link_destination("docs/notes.md#x"), "docs/notes.md#x")
 
+class LocationTests(unittest.TestCase):
+    def test_locations_are_copyable_code_spans(self):
+        doc = complete_doc()
+        doc["findings"][0]["location"] = ["app/order_serializer.rb:9-12", "a`b.py:3"]
+        report = render.render_markdown(doc, "en")
+        self.assertIn("- **location:** `app/order_serializer.rb:9-12`, ``a`b.py:3``", report)
+
 if __name__ == "__main__":
     unittest.main()

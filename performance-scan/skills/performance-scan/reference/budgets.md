@@ -54,7 +54,8 @@ Families:
 - **FE** — front-end payload and main-thread work stay within budget
 
 Seed the ledger with one `baseline` entry per family that applies (e.g. `B-01
-QRY baseline: every hot list endpoint issues a constant number of queries`),
+QRY baseline: every hot list endpoint issues a constant number of queries`; for
+jobs, `QRY baseline: jobs issue queries per batch, not per row`),
 then add app-specific entries. A baseline entry uses `source: "baseline"` plus
 any supporting `path:line` and `inferred: false`, and is never a decision: code
 that contradicts it is a finding. Only inferred bounds go to `decisions`.

@@ -65,6 +65,10 @@ make unlink
 
 Then invoke `privacy-scan` (or `/privacy-scan`).
 
+GNU Make 3.81 (the macOS default) drops `$` references from a makefile path
+given with `-f`; with such a checkout path, run `make` from the checkout
+directory instead (the Makefile says so rather than guessing).
+
 Install paths supplied through environment variables preserve literal dollar
 signs. Command-line Make assignments retain Make's usual `$$` escaping for a
 literal `$`.
@@ -77,6 +81,7 @@ builds from JSON fragments rather than heredocs:
 ```sh
 python3 skills/privacy-scan/scripts/findings.py merge out/findings.json frag-001.json
 python3 skills/privacy-scan/scripts/render.py out/findings.json --out out --lang ja
+python3 skills/privacy-scan/scripts/findings.py renumber out/findings.json   # after a severity changes
 python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each violation
 ```
 
@@ -119,7 +124,7 @@ skills/privacy-scan/
   reference/validation.md      verdicts, the four claims, read-only analysis, guards
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
-  scripts/findings.py          merges JSON fragments; refuses personal values; checks the run contract
+  scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files
   templates/issue.{ja,en}.md   one finding as one issue
@@ -138,6 +143,8 @@ make demo    # render the sample into $TMPDIR/privacy-scan-demo (LANG_OUT=en for
 ```
 
 Requirements: Python 3.9+. No third-party packages.
+CI (`.github/workflows/check.yml`) runs `make check` on Python 3.9 and 3.13 on
+Linux, and on macOS (GNU Make 3.81 and BSD tools).
 
 The format follows the sibling `security-scan`, `performance-scan` and
 `architecture-scan` skills (same phases, run contract, verdicts and report

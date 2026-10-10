@@ -8,6 +8,7 @@ Render with (paths relative to this skill's directory):
 
 ```
 python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
+python3 scripts/findings.py renumber <out>/findings.json   # after a severity changes
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
@@ -56,7 +57,9 @@ Merge semantics:
 
 - `meta` updates key by key
 - `findings` and `commitments` match by `id`: a known record is updated key by
-  key (so a later fragment can add just `validation` to `PV-003`), a new one is
+  key (so a later fragment can add just `validation` to `PV-003`), and its
+  nested `validation` and `analysis` objects merge key by key as well (a
+  fragment can change just `validation.verdict`); a new one is
   appended. Duplicate IDs within one fragment are refused
 - `perspectives` match by `name` and replace the whole entry. Duplicate names
   within one fragment are refused; a later fragment can still replace an entry
@@ -77,7 +80,9 @@ spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
 the katakana prolonged sound mark (`ー`) between digits, and card-style groups
 (4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
 UUIDs are not counted as digit runs, so date ranges and identifiers stay
-allowed. Line numbers in `location` have at most nine digits and ledger IDs at
+allowed. In a `location` path only, a path segment that starts with a compact
+date-time (`20261009123045_create_users.py`, as timestamped migrations are
+named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
 most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
 Mail-header comments and folding whitespace around the local part, `@` and
 domain are also inspected without changing the saved text.
@@ -104,7 +109,9 @@ Unknown fields are refused instead of silently retaining unexamined values in
 shape without echoing submitted values or unknown key names.
 
 Record collections and `references` must be JSON arrays. Finding and commitment
-IDs, and perspective names, must each be unique in the combined record. Optional
+IDs, and perspective names, must each be unique in the combined record.
+Both reports carry a fixed line stating that the review is technical and not
+legal advice. Optional
 text fields must be strings when present; omit an unused field rather than
 setting it to `null` or an object. `inferred`, when present, must be a boolean.
 
@@ -189,7 +196,8 @@ long paths and keep line breaks.
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed |
-| `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values |
+| `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values. `fix` and `guard` may be omitted for `FalsePositive` and `NotApplicable` |
+| `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |
 | `contrast`, `commitment` | Strings the schema treats as optional but `SKILL.md` expects on every finding: the flow that keeps the commitment at `path:line` (or `none`); the ledger ID. `check` reports a ledger ID that is not in `commitments` |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
 | `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`; an optional string for other verdicts |

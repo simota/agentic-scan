@@ -9,10 +9,26 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "privacy-scan"
+# Variables passed to an outer `make test VAR=...` reach the tests through
+# MAKEFLAGS and would override the fixtures' own settings.
+MAKE_CONTROL = ("MAKEFLAGS", "GNUMAKEFLAGS", "MFLAGS", "MAKELEVEL", "MAKEFILES")
+
+
+def clean_environment(env=None, keep=()):
+    environment = dict(os.environ if env is None else env)
+    for name in MAKE_CONTROL:
+        if name not in keep:
+            environment.pop(name, None)
+    return environment
+
+
+MAKE_381 = subprocess.run(["make", "--version"], capture_output=True,
+                          text=True).stdout.startswith("GNU Make 3.81")
 
 
 class InstallTests(unittest.TestCase):
-    def run_make(self, cwd, target, *, makefile=REPO / "Makefile", extra_makefiles=(), env=None, **variables):
+    def run_make(self, cwd, target, *, makefile=REPO / "Makefile", extra_makefiles=(), env=None,
+                 keep=(), **variables):
         options = {"AGENT": "agy", "PROJECT": "", "SKILLS_DIR": ""}
         options.update(variables)
         command = ["make", "--no-print-directory"]
@@ -23,7 +39,7 @@ class InstallTests(unittest.TestCase):
         command += [target, *[f"{key}={value}" for key, value in options.items()]]
         return subprocess.run(
             command,
-            cwd=cwd, env=env, capture_output=True, text=True, timeout=10,
+            cwd=cwd, env=clean_environment(env, keep), capture_output=True, text=True, timeout=10,
         )
 
     def assert_success(self, result):
@@ -52,6 +68,14 @@ class InstallTests(unittest.TestCase):
                     options = {"makefile": makefile, "SKILLS_DIR": str(requested)}
 
                     linked = self.run_make(cwd, "link", **options)
+                    if "$" in name and makefile is not None and MAKE_381:
+                        # Make 3.81 expands '$(...)' in -f paths before recording
+                        # them; the Makefile must refuse clearly, never guess.
+                        self.assertNotEqual(linked.returncode, 0)
+                        self.assertIn("GNU Make 3.81", linked.stderr)
+                        self.assertFalse(destination.exists() or destination.is_symlink())
+                        self.assertFalse((cwd / "injected").exists())
+                        continue
                     self.assert_success(linked)
                     self.assertTrue(destination.is_symlink(), linked.stdout + linked.stderr)
                     self.assertEqual(destination.readlink(), source)
@@ -101,7 +125,9 @@ class InstallTests(unittest.TestCase):
                 wrapper = root / "wrapper.mk"
                 if prefix == "preload":
                     wrapper.write_text("PRELOADED := yes\n", encoding="utf-8")
-                    options["MAKEFILES"] = str(wrapper)
+                    # MAKEFILES is a space-separated list; name the file relative
+                    # to the working directory so a TMPDIR with spaces still works.
+                    options["MAKEFILES"] = wrapper.name
                 else:
                     escaped = str(checkout / "Makefile").replace(" ", "\\ ")
                     wrapper.write_text(f"include {escaped}\n", encoding="utf-8")
@@ -256,12 +282,14 @@ class InstallTests(unittest.TestCase):
                 defaults.write_text("# earlier makefile\n", encoding="utf-8")
                 options = {"makefile": makefile}
                 if mode == "environment":
-                    options["env"] = dict(os.environ, MAKEFILES=str(defaults))
+                    options["env"] = dict(os.environ, MAKEFILES=defaults.name)
+                    options["keep"] = ("MAKEFILES",)
                 elif mode == "multiple_f":
                     options["extra_makefiles"] = (defaults,)
                 else:
                     outer = root / "outer.mk"
-                    outer.write_text(f"include {makefile}\n", encoding="utf-8")
+                    escaped = str(makefile).replace(" ", "\\ ")
+                    outer.write_text(f"include {escaped}\n", encoding="utf-8")
                     options["makefile"] = outer
                 requested = root / "skills"
                 requested.mkdir()

@@ -35,7 +35,12 @@ MAKEFILE_PATH := $(shell path=$(call shell_quote,$(MAKEFILE_LIST)); \
   while [ ! -f "$$path" ]; do \
     case "$$path" in (*' '*) path=$${path$(hash)* };; (*) exit 1;; esac; \
   done; printf '%s\n' "$$path")
+# GNU Make 3.81 expands variable references in a makefile's path before adding
+# it to MAKEFILE_LIST, so a path containing '$' cannot be recovered there.
 ifeq ($(MAKEFILE_PATH),)
+ifeq ($(MAKE_VERSION),3.81)
+$(error cannot locate this Makefile: GNU Make 3.81 drops '$$' references from makefile paths given with -f; run make from the checkout directory or use GNU Make 4.0 or later)
+endif
 $(error cannot locate this Makefile from MAKEFILE_LIST)
 endif
 

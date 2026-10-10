@@ -44,6 +44,9 @@ LABELS = {
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
         "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status"),
+        "conditions": "conditions",
+        "disclaimer": "Technical review of source code, not legal advice; it does not state "
+                      "whether the application complies with any law.",
         "perspective": "perspective",
         "perspective_columns": ("Perspective", "Status", "Note"),
     },
@@ -64,12 +67,15 @@ LABELS = {
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
         "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス"),
+        "conditions": "前提条件",
+        "disclaimer": "ソースコードの技術的なレビューであり、法的見解ではない。"
+                      "アプリケーションが法令に適合しているかどうかは述べていない。",
         "perspective": "観点",
         "perspective_columns": ("観点", "ステータス", "メモ"),
     },
 }
-FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "commitment",
-          "fix", "guard")
+FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditions",
+          "commitment", "fix", "guard")
 
 
 def counts(findings):
@@ -256,7 +262,7 @@ def render_markdown(doc, lang):
     lines.append(" / ".join(f"{s} {by_sev[s]}" for s in SEVERITIES)
                  + f" · {t['excluded']} {excluded} · "
                  + markdown_text(method))
-    lines += ["", f"**{t['verdict_counts']}:** {verdict_summary(findings)}"]
+    lines += ["", f"**{t['verdict_counts']}:** {verdict_summary(findings)}", "", f"_{t['disclaimer']}_"]
     lines += ["", f"## {t['scope']}", "", "| | |", "|---|---|",
               markdown_row((t['project'], meta.get('project', ''))),
               markdown_row((t['scope_row'], meta.get('scope', ''))),
@@ -356,6 +362,7 @@ def render_html(doc, lang):
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
     out.append(f"<p><strong>{e(t['verdict_counts'])}:</strong> {e(verdict_summary(findings))}</p>")
+    out.append(f"<p class='muted'>{e(t['disclaimer'])}</p>")
     scope_rows = [(t['project'], meta.get('project', '')),
                   (t['scope_row'], meta.get('scope', '')),
                   (t['revision'], revision(meta)),

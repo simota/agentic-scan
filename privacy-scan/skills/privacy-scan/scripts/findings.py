@@ -2,6 +2,7 @@
 """Merge finding fragments into findings.json and check a run's output directory.
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
+    python3 findings.py renumber FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -10,8 +11,14 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
-FINDINGS is created when absent. The merged record must pass the schema check
+Nested `validation` and `analysis` objects of a known finding also merge key by
+key. FINDINGS is created when absent. The merged record must pass the schema check
 (`reference/findings-schema.md`) before anything is written.
+
+`renumber` numbers findings PV-001… in severity order, then path (excluded
+findings last), and rewrites `PV-NNN` references in IDs and prose (never in
+locations, URLs, commands or revisions), so a changed
+severity needs no manual rebuild.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -71,9 +78,11 @@ TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 META_KEYS = {*META_REQUIRED, "commit", "method"}
 TEXT_FIELDS = ("title", "data", "subjects", "flow", "impact", "fix", "guard")
+# A finding excluded as FalsePositive or NotApplicable needs no remedy.
+ACTION_FIELDS = ("fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
-FINDING_KEYS = {*FINDING_REQUIRED, "step", "contrast", "commitment", "analysis",
+FINDING_KEYS = {*FINDING_REQUIRED, "step", "contrast", "commitment", "analysis", "conditions",
                 "status", "references"}
 VALIDATION_KEYS = {"verdict", "method", "evidence"}
 ANALYSIS_KEYS = {"tool", "command", "result"}
@@ -120,6 +129,11 @@ NOT_PERSONAL_NUMBERS = re.compile(
     r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
     r"(?![0-9A-Fa-f])(?!-\d)"
     r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+# Compact date-times (YYYYMMDDhhmmss) that begin a path segment, as in
+# timestamped migration files. Only `location` paths are exempted this way;
+# in prose such a number could be an account identifier.
+PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+                            r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?=[_.-])")
 # Percent and entity decoding passes over prose (covers double encoding).
 DECODE_ROUNDS = 3
 
@@ -368,14 +382,18 @@ def _check_reference_url(value, where):
 
 def validate_finding(f, where):
     _object(f, FINDING_KEYS, where)
+    v = f.get("validation")
+    excluded = isinstance(v, dict) and v.get("verdict") in EXCLUDED
+    optional = ACTION_FIELDS if excluded else ()
     for key in FINDING_REQUIRED:
-        if key not in f:
+        if key not in f and key not in optional:
             raise SchemaError(f"{where}: missing {key}")
     _id(f["id"], FINDING_ID, "PV-001", f"{where}.id")
     for key in TEXT_FIELDS:
-        _text(f[key], f"{where}.{key}")
-    _optional_strings(f, ("contrast", "step", "commitment"), where)
-    _check_prose(f, (*TEXT_FIELDS, "contrast", "step"), where)
+        if key in f or key not in optional:
+            _text(f[key], f"{where}.{key}")
+    _optional_strings(f, ("contrast", "step", "commitment", "conditions"), where)
+    _check_prose(f, (*TEXT_FIELDS, "contrast", "step", "conditions"), where)
     commitment = f.get("commitment")
     if not isinstance(commitment, str) or not COMMITMENT_ID.fullmatch(commitment):
         _no_personal_values(commitment, f"{where}.commitment")
@@ -392,7 +410,7 @@ def validate_finding(f, where):
         # The parsed line range is technical metadata; the path can hold PII.
         path = loc.rsplit(":", 1)[0]
         _text(path, f"{where}.location[{i}]")
-        _no_personal_values(path, f"{where}.location[{i}]")
+        _no_personal_values(PATH_TIMESTAMP.sub("#", path), f"{where}.location[{i}]")
     v = f["validation"]
     _object(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
@@ -486,7 +504,14 @@ def _merge_records(current, incoming, where):
     index = {r["id"]: r for r in current}
     for record in incoming:
         if record["id"] in index:
-            index[record["id"]].update(record)
+            known = index[record["id"]]
+            for key, value in record.items():
+                # Nested objects (validation, analysis) merge key by key too,
+                # so a later fragment can change just a verdict.
+                if isinstance(value, dict) and isinstance(known.get(key), dict):
+                    known[key] = {**known[key], **value}
+                else:
+                    known[key] = value
         else:
             current.append(dict(record))
             index[record["id"]] = current[-1]
@@ -525,6 +550,65 @@ def merge(doc, fragment, where):
             _list(target, key)
             target.extend(v for v in fragment[key] if v not in target)
     return doc
+
+
+NOT_REFERENCES = {"location", "url", "command", "commit"}
+PV_REFERENCE = re.compile(r"(?<![\w-])PV-\d{3}(?![\w-])")
+
+
+def renumber(doc):
+    """Number findings PV-001… in severity order and rewrite every PV- reference.
+
+    Reported findings are ordered by severity, then by their first location's
+    path; excluded findings follow them. Returns the old-to-new ID mapping.
+    """
+    findings = doc.get("findings", [])
+
+    def path(f):
+        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+        return location[0].rsplit(":", 1)[0]
+
+    # Severity order, then path, as the run contract numbers them.
+    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    ordered = sorted(active, key=lambda f: (SEVERITIES.index(f["severity"]), path(f)))
+    ordered += sorted((f for f in findings if f["validation"]["verdict"] in EXCLUDED), key=path)
+    mapping = {f["id"]: f"PV-{i:03d}" for i, f in enumerate(ordered, 1)}
+
+    def rewrite(value, key=None):
+        # Technical values (source paths, URLs, commands, revisions) may contain
+        # text shaped like an ID; only IDs and prose are cross-references.
+        if key in NOT_REFERENCES:
+            return value
+        if isinstance(value, str):
+            return PV_REFERENCE.sub(lambda m: mapping.get(m.group(), m.group()), value)
+        if isinstance(value, list):
+            return [rewrite(item) for item in value]
+        if isinstance(value, dict):
+            return {k: rewrite(item, k) for k, item in value.items()}
+        return value
+
+    doc.update(rewrite({**doc, "findings": ordered}))
+    return {old: new for old, new in mapping.items() if old != new}
+
+
+def cmd_renumber(args):
+    target = Path(args.findings)
+    try:
+        doc = read_json(target)
+        validate(doc)
+        changed = renumber(doc)
+        validate(doc)
+    except SchemaError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    try:
+        write_utf8_files({target: json.dumps(doc, ensure_ascii=False, indent=2) + "\n"})
+    except (OSError, UnicodeError) as exc:
+        print(f"write failed: could not save renumbered record ({type(exc).__name__})", file=sys.stderr)
+        return 1
+    moves = ", ".join(f"{old} -> {new}" for old, new in changed.items()) or "no changes"
+    print(f"renumbered {target}: {moves}")
+    return 0
 
 
 def cmd_merge(args):
@@ -584,11 +668,20 @@ def contract_problems(out, allow=()):
     findings = doc.get("findings", [])
     expected = [f"PV-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
-        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}")
+        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
+                        "run scripts/findings.py renumber")
     ranks = [SEVERITIES.index(f["severity"]) for f in findings if
              f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
-        problems.append("findings must be numbered in severity order (High first)")
+        order = ", ".join(f"{f['id']} {f['severity']}" for f in findings
+                          if f["validation"]["verdict"] not in EXCLUDED)
+        problems.append(f"findings must be numbered in severity order (High first): {order}; "
+                        "run scripts/findings.py renumber")
+    for i, f in enumerate(findings):
+        if (f["confidence"] == "Environment-dependent" and f["validation"]["verdict"] not in EXCLUDED
+                and not f.get("conditions", "").strip()):
+            problems.append(f"findings[{i}].conditions: name the runtime setting an "
+                            "Environment-dependent finding assumes")
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
@@ -650,11 +743,13 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    r = sub.add_parser("renumber", help="number findings in severity order and rewrite PV- references")
+    r.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return cmd_merge(args) if args.cmd == "merge" else cmd_check(args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

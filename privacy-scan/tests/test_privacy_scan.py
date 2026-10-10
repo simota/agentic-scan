@@ -15,6 +15,9 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
+# Loading the scripts compiles them before they can disable bytecode themselves.
+sys.dont_write_bytecode = True
+
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "privacy-scan"
 

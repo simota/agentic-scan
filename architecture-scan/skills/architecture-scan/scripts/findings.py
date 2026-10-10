@@ -33,7 +33,8 @@ commands and rule sources keep theirs.
 record is complete, IDs are gapless in severity order, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
-Medium findings carry evidence, definitive evidence cites a `path:line`, and
+Medium findings are traced (not Unverified) and carry evidence, definitive
+evidence cites a `path:line`, and
 both rendered files match what `render.py` produces from the current record
 in `meta.lang`.
 
@@ -92,6 +93,7 @@ FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "val
                     *TEXT_FIELDS)
 FINDING_KEYS = {*FINDING_REQUIRED, "contrast", "rule", "step", "status", "analysis", "references"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
+TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
@@ -106,8 +108,17 @@ EVIDENCE_LINE = re.compile(
     r"(?P<path>(?:[A-Za-z]:)?[^\s:]*[A-Za-z][^\s:]*):[1-9][0-9]*")
 # Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
-                 "VERSION", "MODULE.bazel"}
-LOCATION = re.compile(r"[^\r\n]+:([0-9]+)(?:-([0-9]+))?")
+                 "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
+                 "CONTRIBUTING"}
+# A file extension starts with a letter; `v1.2` and `e.g.` have none. A token
+# ending in an unmistakable host suffix (`db.internal`, `api.example.com`) is a
+# host and port. The list stays short on purpose: refusing a real file
+# (`notes.org`, `.env.local`) fails a valid record, while passing a host only
+# lets weak evidence through.
+FILE_EXTENSION = re.compile(r"\.([A-Za-z][A-Za-z0-9_+-]{0,15})$")
+HOST_SUFFIXES = {"com", "net", "io", "internal", "localhost"}
+# At most nine digits per line number, so `int()` never meets a huge value.
+LOCATION = re.compile(r"[^\r\n]+:([0-9]{1,9})(?:-([0-9]{1,9}))?")
 
 
 class SchemaError(ValueError):
@@ -145,7 +156,8 @@ def read_json(path):
         return doc
     except SchemaError:
         raise
-    except (OSError, ValueError) as exc:
+    except (OSError, ValueError, RecursionError) as exc:
+        # RecursionError: nesting too deep for the parser, e.g. a hand edit.
         raise SchemaError(f"{path}: {exc}") from exc
 
 
@@ -248,15 +260,26 @@ def _location_paths(locations):
 def cites_line(evidence, locations=()):
     """True when evidence names a file and a line, e.g. `job.py:58` or `BUILD:12`.
 
-    A token is a path when it has a `.`, `/` or `\\`, names a build file
-    (`Makefile`, `CODEOWNERS`), or is a path or file name from the finding's own
-    locations (`server:9` beside `bin/server:9`). `ABC:123` or `ratio:3` is not.
+    A path or file name from the finding's own locations always counts
+    (`server:9` beside `bin/server:9`). Otherwise a bare name ending in a host
+    suffix is a host and port (`db.internal:5432`, `README.com:443`) and never
+    counts; then a path with `/` or `\\`, a dotfile, a build or project file
+    (`Makefile`, `CODEOWNERS`, `Dockerfile.dev`) or a name with a file extension
+    does. `ABC:123`, `ratio:3` and `v1.2:3` do not.
     """
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
-        if (re.search(r"[./\\]", path) or path.lower().endswith("file")
-                or path in EXTENSIONLESS or path in known):
+        if path in known:
+            return True
+        has_dir = re.search(r"[/\\]", path) and not path.startswith("//")
+        name = re.split(r"[/\\]", path)[-1]
+        extension = FILE_EXTENSION.search(name)
+        if not has_dir and extension and extension[1].lower() in HOST_SUFFIXES:
+            continue  # a host and port, whatever its first label looks like
+        stem = name.split(".")[0]
+        if (has_dir or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
+                or stem in EXTENSIONLESS or stem.lower().endswith("file") or extension):
             return True
     return False
 
@@ -481,10 +504,13 @@ def _atomic_write_all(files):
             temporary.unlink(missing_ok=True)
 
 
-# An ID mention, but not part of a longer token such as `JIRA-A-001` or `A-0012`,
-# nor a path segment (`docs/A-001.md`). ASCII word characters only, so an ID
-# next to Japanese text (`A-001を`) is still a mention.
-ID_MENTION = re.compile(r"(?<![\w/\\-])A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
+# A run of IDs standing free in prose: one ID, or several joined by `/` or `-`
+# (`A-002/A-001`, `A-001-A-002-A-003`). Every ID in a run is a mention. A run
+# touching a word, path or ticket (`docs/A-001.md`, `JIRA-A-001`,
+# `A-001-A-002.md`) is not prose and stays whole. ASCII word characters only,
+# so a run beside Japanese text (`A-001を`) is still a mention.
+ID_RUN = re.compile(
+    r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
 def _first_location(f):
@@ -501,7 +527,8 @@ def _rewrite_ids(value, mapping, key=None):
     if key in LITERAL_KEYS:
         return value
     if isinstance(value, str):
-        return ID_MENTION.sub(lambda m: mapping.get(m[0], m[0]), value)
+        return ID_RUN.sub(lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]),
+                                             run[0]), value)
     if isinstance(value, list):
         return [_rewrite_ids(v, mapping, key) for v in value]
     if isinstance(value, dict):
@@ -604,8 +631,12 @@ def _merge_all(doc, fragments):
     validate(doc)
     for path in fragments:
         merge(doc, read_json(path), path)
-        # Each fragment must leave a valid record, even in a batch.
-        validate(doc)
+        # Each fragment must leave a valid record, even in a batch; name the
+        # fragment that broke it.
+        try:
+            validate(doc)
+        except SchemaError as exc:
+            raise SchemaError(f"{path}: {exc}") from exc
     return doc
 
 
@@ -641,7 +672,11 @@ def contract_problems(out, allow=()):
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        if TEMPORARY.fullmatch(name):
+            problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
+                            "write; delete it once no merge or render is running")
+        else:
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
     for name in sorted(not_files):
         problems.append(f"output is not a file: {name}")
@@ -740,7 +775,17 @@ def cmd_check(args):
     return 0
 
 
+def safe_output():
+    """Print paths that are not valid UTF-8 (`o\\xff/`) instead of crashing after the work."""
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass  # not a text stream (StringIO, None) or already closed
+
+
 def main(argv=None):
+    safe_output()
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
     m = sub.add_parser("merge", help="merge fragments into findings.json")

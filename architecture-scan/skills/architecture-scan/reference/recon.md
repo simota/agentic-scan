@@ -120,3 +120,5 @@ Record what the later rules hunt needs (`reference/rules.md`):
 - **Failure rules** — the error model and where errors are translated
 - **Contract rules** — API versioning, event schema evolution, DTO vs entity
   separation
+- **Seam rules** — how time, randomness, I/O and vendors are reached from the
+  core (§7): injected, passed in, or called directly

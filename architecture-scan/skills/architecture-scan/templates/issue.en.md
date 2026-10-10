@@ -17,7 +17,7 @@ Before filing:
 | ID | {{id}} |
 | Severity | {{severity}} |
 | Confidence | {{confidence}} (if Environment-dependent, name the condition under *Open questions*) |
-| Verdict | {{validation.verdict}} (method: {{validation.method}}) |
+| Verdict | {{validation.verdict}} (verification: {{validation.method}}) |
 | Perspective | {{category}} ({{step}}) |
 | Location | `{{location}}` |
 | Assessed revision | {{meta.commit}} |

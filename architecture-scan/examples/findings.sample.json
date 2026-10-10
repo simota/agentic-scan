@@ -12,7 +12,8 @@
     {"id": "R-01", "statement": "Only the billing module writes invoices", "source": "docs/adr/0004-billing.md:12", "family": "OWN", "inferred": false, "status": "violated"},
     {"id": "R-02", "statement": "Domain modules do not import the ORM or vendor SDKs", "source": ".importlinter:3 layers contract", "family": "LAYER", "inferred": false, "status": "violated"},
     {"id": "R-03", "statement": "Every message consumer is idempotent", "source": "inferred from worker/consumers/base.py:20 dedup helper used by 5 of 6 consumers", "family": "TX", "inferred": true, "status": "violated"},
-    {"id": "R-04", "statement": "Public API responses use DTOs, never ORM entities", "source": "api/README.md:40", "family": "CONTRACT", "inferred": false, "status": "not checked", "reason": "GraphQL resolvers were outside the agreed scope"}
+    {"id": "R-04", "statement": "Public API responses use DTOs, never ORM entities", "source": "api/README.md:40", "family": "CONTRACT", "inferred": false, "status": "not checked", "reason": "GraphQL resolvers were outside the agreed scope"},
+    {"id": "R-05", "statement": "FAIL baseline: failures are not swallowed on a core flow", "source": "baseline; api/errors.py:8 translates every error once at the edge", "family": "FAIL", "inferred": true, "status": "holds"}
   ],
   "findings": [
     {
@@ -64,7 +65,7 @@
       "scenario": "Changing discount rules (changed 4 times in 12 months)",
       "blast_radius": "1 module, 2 import sites",
       "trace": "1. discounts.py:3 imports db.session. 2. Discount rules query coupons inside the domain function",
-      "contrast": "api/orders/domain/ receives repositories by injection",
+      "contrast": "api/orders/domain/quote.py:12 receives repositories by injection",
       "impact": "Expected (R-02): domain code is persistence-free. Actual: discount rules can only be tested with a database",
       "rule": "R-02",
       "fix": "Pass a coupon repository into the discount function",
@@ -89,7 +90,7 @@
     {"name": "Dependencies and evolution", "status": "applied", "note": "DE1-DE3 applied"}
   ],
   "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)", "Order placement uses a transactional outbox (api/orders/outbox.py:15)"],
-  "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)"],
+  "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)", "Confirm that failures may never be swallowed on a core flow (R-05 is a baseline)"],
   "limitations": ["Broker delivery semantics in production were not observed", "GraphQL resolvers were not read"],
   "next_steps": ["Fix A-001 and add the single-writer check to CI", "Confirm broker semantics, then fix A-002"]
 }

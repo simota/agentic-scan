@@ -1,7 +1,7 @@
 <!--
 Reports design findings to the owner, a tech lead or a manager. One report can carry several findings.
 Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
-Counts are the first line of report.md: excluded verdicts (FalsePositive, NotApplicable) are not counted.
+Counts are the counts line under report.md's title: excluded verdicts (FalsePositive, NotApplicable) are not counted.
 "Of which Valid" counts that severity's findings with verdict Valid; n_likely and n_unverified count verdicts.
 
 Before sending:
@@ -46,7 +46,7 @@ No code was changed and the application was not run.
 - **Severity / confidence / verdict:** {{severity}} / {{confidence}} / {{validation.verdict}}
 - **Location:** `{{location}}`
 - **Scenario / blast radius:** {{scenario}} / {{blast_radius}}
-- **Impact:** {{impact}}
+- **What happens:** {{impact}}
 - **Fix direction:** {{fix}}
 - **Guard:** {{guard}}
 - **Tracked in:** <issue URL>

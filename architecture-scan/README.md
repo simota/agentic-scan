@@ -91,7 +91,8 @@ and consistency, not whether a finding is true.
 
 `findings.json` is never edited by hand. A fragment corrects it: `null`
 removes an optional key, `{"remove": {"next_steps": ["…"]}}` deletes a list
-item, and a key sent again replaces its value. Merges may run in parallel
+item, `{"remove": {"rules": ["R-05"]}}` deletes a ledger entry, and a key sent
+again replaces its value. Merges may run in parallel
 (each holds a lock on the output directory; on Windows, run them one at a
 time).
 

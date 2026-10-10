@@ -167,10 +167,13 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # split a longer number.
 NOT_PERSONAL_NUMBERS = re.compile(
     # A date joined by a hyphen to other digits is not masked (it could split a
-    # longer number), unless those digits are another full date (a range).
+    # longer number), unless those digits are another full date (a range) or a
+    # six-digit time of day.
     r"(?<!\d)(?:(?<!\d-)|(?<=\d{4}-\d{2}-\d{2}-))"
     r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
-    r"(?:(?!-\d)|(?=-(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)))"
+    r"(?:(?!-\d)|(?=-(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d))"
+    # ... or a time of day (backup-2024-01-01-120000.sql).
+    r"|(?=-(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)(?!-\d)))"
     r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
     r"(?![0-9A-Fa-f])(?!-\d)"
     r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
@@ -807,13 +810,14 @@ def record_problems(doc):
             problems.append(f"perspective not recorded: {name}")
     first_seen = {}
     for f in findings:
-        if excluded(f):
-            continue
-        location = locations(f)
-        if location[0] in first_seen:
-            problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
-                            "one finding per fix location: merge them or anchor each at its own fix site")
-        first_seen.setdefault(location[0], f["id"])
+        if not excluded(f):
+            location = locations(f)
+            if location[0] in first_seen:
+                problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
+                                "one finding per fix location: merge them or anchor each at its own "
+                                "fix site")
+            first_seen.setdefault(location[0], f["id"])
+        # Every finding, excluded or not, names a real step of its perspective.
         written = f.get("step", "").strip()
         step = STEP_ID.fullmatch(written)
         if written and not step:

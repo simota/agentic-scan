@@ -119,3 +119,17 @@ class DateMaskTests(unittest.TestCase):
                       "from 2026-10-01 to 2026-10-09"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
+
+
+class FinalReviewTests(unittest.TestCase):
+    def test_a_date_followed_by_a_time_of_day_is_allowed(self):
+        self.assertFalse(refused("backup-2024-01-01-120000.sql"))
+        self.assertTrue(refused("4111-2026-01-01-111111-2222"))
+        self.assertTrue(refused("2026-01-01-111111-2222"))
+
+    def test_excluded_findings_also_need_a_valid_step(self):
+        doc = complete_doc()
+        doc["findings"][1]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        doc["findings"][1]["step"] = "ZZ9"
+        self.assertTrue(any(p.startswith("PV-002.step") for p in findings.record_problems(doc)))

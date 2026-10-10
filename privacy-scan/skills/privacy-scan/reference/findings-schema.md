@@ -7,8 +7,8 @@ summary use the same recorded facts.
 Render with (paths relative to this skill's directory):
 
 ```
+python3 scripts/findings.py renumber <out>/findings.json   # after the last merge
 python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en>   # --lang defaults to meta.lang
-python3 scripts/findings.py renumber <out>/findings.json   # after a severity changes
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
@@ -123,7 +123,7 @@ dashboard, commands use preformatted code blocks that preserve line breaks and
 indentation. Table headers follow the report language; in Japanese reports perspective
 names, perspective and commitment statuses and finding statuses are shown in
 Japanese (perspective names keep the English name used in `category`), while
-severity, confidence and verdict names stay as recorded. perspectives are listed
+severity, confidence and verdict names stay as recorded. Perspectives are listed
 in the order of `reference/perspectives.md`, blank optional fields add no row,
 a blank reference `title` shows the URL, and a blank `meta.commit` shows
 `UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown

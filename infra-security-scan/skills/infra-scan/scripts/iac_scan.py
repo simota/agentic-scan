@@ -1734,7 +1734,10 @@ def collect_context(scan, d, type_, view, text, defaults=True):
 
     Account defaults are per account and region, so they are keyed by module
     directory and provider configuration; defaults=False when that cannot be told.
+    A resource that is never created (count = 0, empty for_each) sets nothing.
     """
+    if never_created(view):
+        return
     scan.orgs_seen.update(re.findall(r"organizations/([0-9]+)", text))
     if type_ in ("aws_s3_bucket_public_access_block", "aws_s3_account_public_access_block") and \
             view.get("count") is None and view.get("for_each") is None:
@@ -3402,19 +3405,27 @@ VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
 VALUE_NAME = re.compile(r'(?i)"?\bvalue"?\s*[:=]\s*"([^"]*)"\s*,?\s*"?name"?\s*[:=]\s*"([^"]+)"')
 
 
-def env_pair(lines, i):
-    """(name, value, entry text) of an environment entry whose name is on line i: on
+def env_pairs(lines, i):
+    """[(name, value, entry text)] of the environment entries whose name is on line i: on
     one line in either order, or as attributes of one block in any order (HCL order
     is free). The entry text is that line, or the block's attribute lines between
     its braces, so a sibling entry's attributes never count."""
     line = lines[i]
+    # One-line objects: every field of { name = ..., type = ..., value = ... }, in any order.
+    objects = []
+    for obj in re.findall(r"\{[^{}]*\}", line):
+        fields = {k.lower(): v for k, v in re.findall(r'"?(\w+)"?\s*[:=]\s*"([^"]*)"', obj)}
+        if "name" in fields and "value" in fields:
+            objects.append((fields["name"], fields["value"], obj))
+    if objects:
+        return objects
     if (m := NAME_VALUE.search(line)):
-        return m.group(1), m.group(2), line
+        return [(m.group(1), m.group(2), line)]
     if (m := VALUE_NAME.search(line)):
-        return m.group(2), m.group(1), line
+        return [(m.group(2), m.group(1), line)]
     name = NAME_ONLY.match(line)
     if not name:
-        return None
+        return []
     lo = hi = i
     while lo > 0 and i - lo < 6 and not re.search(r"[{}\[\]]", lines[lo - 1]):
         lo -= 1
@@ -3422,7 +3433,7 @@ def env_pair(lines, i):
         hi += 1
     entry = lines[lo:hi + 1]
     value = next((m for raw in entry if (m := VALUE_ONLY.match(raw))), None)
-    return (name.group(1), value.group(1), "\n".join(entry)) if value else None
+    return [(name.group(1), value.group(1), "\n".join(entry))] if value else []
 
 
 def mock_lines(lines):
@@ -3450,9 +3461,7 @@ def scan_secrets(scan, rel, text, kind):
                 scan.hit("SEC-001", res, n, label, strong=True)
         if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
             continue
-        pair = env_pair(lines, n - 1)
-        if pair:
-            name, value, entry = pair
+        for name, value, entry in env_pairs(lines, n - 1):
             # The entry's own type: CodeBuild writes type = "PARAMETER_STORE" after the value.
             if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \
                     and not FLAG_VALUE.fullmatch(value.strip()) and not SECRET_REFERENCE.search(entry):

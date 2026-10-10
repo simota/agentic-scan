@@ -275,5 +275,32 @@ class CodexFourthReviewTest(unittest.TestCase):
         self.assertTrue([n for n in result.not_run if "google_compute_firewall.fw" in n], result.not_run)
 
 
+class CodexFifthReviewTest(unittest.TestCase):
+    def test_one_line_objects_with_fields_between(self):
+        result = scan({"cb.tf": f'''resource "aws_codebuild_project" "p" {{
+  environment_variables = [{{ name = "DB_PASSWORD", type = "PLAINTEXT", value = "{SECRET}" }}, {{ name = "API_TOKEN", type = "PARAMETER_STORE", value = "/ci/token" }}, {{ type = "PLAINTEXT", value = "{SECRET}", name = "AUTH_TOKEN" }}]
+}}
+'''})
+        self.assertEqual(sorted(h["detail"] for h in result.hits),
+                         ["literal value for AUTH_TOKEN", "literal value for DB_PASSWORD"])
+
+    def test_uncreated_org_policy_enforces_nothing(self):
+        result = scan({"gcs.tf": '''resource "google_project_organization_policy" "ubla" {
+  count      = 0
+  project    = "p"
+  constraint = "storage.uniformBucketLevelAccess"
+  boolean_policy {
+    enforced = true
+  }
+}
+resource "google_storage_bucket" "b" {
+  project                     = "p"
+  uniform_bucket_level_access = false
+  public_access_prevention    = "enforced"
+}
+'''})
+        self.assertEqual([h["rule"] for h in result.hits], ["GCP-GCS-001"])
+
+
 if __name__ == "__main__":
     unittest.main()

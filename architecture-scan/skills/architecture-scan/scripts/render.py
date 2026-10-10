@@ -99,8 +99,15 @@ def verdict_counts(findings):
     return {v: sum(f["validation"]["verdict"] == v for f in findings) for v in VERDICTS}
 
 
+# Bidirectional controls (U+202A-202E, U+2066-2069) reorder the text after them,
+# so a recorded value could display reversed or hide its own end (Trojan Source).
+# They are shown as visible code points instead.
+BIDI_CONTROLS = re.compile("[\u202a-\u202e\u2066-\u2069]")
+
+
 def as_text(value):
-    return ", ".join(value) if isinstance(value, list) else str(value)
+    text = ", ".join(value) if isinstance(value, list) else str(value)
+    return BIDI_CONTROLS.sub(lambda m: f"[U+{ord(m[0]):04X}]", text)
 
 
 def review_method(doc, lang):
@@ -347,7 +354,7 @@ CSS = """
 --high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}
 body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
 main{max-width:1040px;margin:0 auto;padding:24px 16px}
-h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
+h1,summary{overflow-wrap:anywhere}h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
 .muted{color:var(--muted)}.cards{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
 .card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:96px}
 .card b{display:block;font-size:1.4rem}
@@ -358,15 +365,23 @@ dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere}
 table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
 th{color:var(--muted);font-weight:600}a{color:inherit}
 .rules td:first-child,.rules td:last-child,.coverage td:nth-child(2){overflow-wrap:normal}
-details.excluded{opacity:.65}details.excluded summary{text-decoration:line-through}
+details.excluded summary{text-decoration:line-through}
+.coverage td:first-child,th{overflow-wrap:normal}
+@media print{[data-filter]{display:none}}
 button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
 button[aria-pressed="true"]{border-color:var(--fg)}
 """
 
 JS = """
+const show=s=>{let n=0;document.querySelectorAll('details[data-sev]').forEach(d=>{
+d.hidden=s!=='all'&&d.dataset.sev!==s;if(!d.hidden)n++});
+const m=document.querySelector('[data-empty]');if(m)m.hidden=n>0;};
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
-const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}));
+document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
+show(b.dataset.filter);}));
+addEventListener('beforeprint',()=>document.querySelectorAll('details[data-sev]').forEach(d=>{
+d.hidden=false;d.open=true}));
+addEventListener('afterprint',()=>show(document.querySelector('[aria-pressed="true"]').dataset.filter));
 """
 
 
@@ -420,6 +435,9 @@ def render_html(doc, lang):
                + f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button></p>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
+    else:
+        # Shown by the filter when it leaves no finding visible.
+        out.append(f"<p data-empty hidden>{e(t['none'])}</p>")
     for f in findings:
         v = f["validation"]
         rows = [(t["category"], e(category(f)))]

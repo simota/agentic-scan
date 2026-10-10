@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_architecture_scan import make_env
+
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "architecture-scan"
@@ -27,9 +29,7 @@ class InstallIntegrityTests(unittest.TestCase):
             "SKILLS_DIR": self.destination, "PROJECT": "",
         }
         settings.update(variables)
-        env = os.environ.copy()
-        for name in ("MAKEFLAGS", "MFLAGS", "MAKEFILES"):
-            env.pop(name, None)
+        env = make_env()
         if path is not None:
             env["PATH"] = str(path) + os.pathsep + env.get("PATH", "")
         return subprocess.run(

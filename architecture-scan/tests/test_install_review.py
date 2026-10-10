@@ -6,6 +6,8 @@ import subprocess
 import tempfile
 import unittest
 
+from test_architecture_scan import make_env
+
 
 REPO = Path(__file__).resolve().parents[1]
 
@@ -34,9 +36,7 @@ class CheckoutPathTests(unittest.TestCase):
             command.extend(["-f", str(makefile)])
         settings = {"AGENT": "agy", "SKILLS_DIR": "", "PROJECT": ""}
         settings.update(variables)
-        env = os.environ.copy()
-        for name in ("MAKEFLAGS", "MFLAGS", "MAKEFILES"):
-            env.pop(name, None)
+        env = make_env()
         if preload == "environment":
             env["MAKEFILES"] = str(self.root / "defaults.mk")
         return subprocess.run(

@@ -14,6 +14,9 @@
 #   make link PROJECT=/path/to/repo    # that project's .claude/skills instead
 #   make link SKILLS_DIR=/some/path    # one literal path; AGENT unused
 #   make demo LANG_OUT=en              # English
+#
+# Paths may hold spaces and quotes. A `$` in a path is expanded by make before
+# the shell sees it, so such a path must be written as `$$`.
 
 # Quote complete paths before shell expansion; only host names are Make lists.
 shell_quote = '$(subst ','"'"',$(1))'
@@ -65,6 +68,8 @@ LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
 .PHONY: help link unlink status check demo test
+# `make -j link unlink` must still run the goals in the order given.
+.NOTPARALLEL:
 
 help: ## list targets
 	@echo "$(NAME) - skill install"
@@ -73,14 +78,17 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
 	@echo
 	@echo $(call shell_quote,  skill:  $(SKILL))
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR CLAUDE_CONFIG_DIR CODEX_HOME AGY_HOME"
+	@echo "          PYTHON DEMO_INPUT DEMO_OUT LANG_OUT"
 
 # os.symlink refuses a destination created concurrently, including directories.
 link: ## symlink the skill into every installed host's skills dir
 	@n=0; set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  guard="$$1"; dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
-	  if [ ! -d "$$guard" ]; then echo "skip     $$d - $$guard does not exist"; continue; fi; \
+	  if [ ! -d "$$guard" ]; then \
+	    if [ -e "$$guard" ]; then echo "skip     $$d - $$guard is not a directory"; \
+	    else echo "skip     $$d - $$guard does not exist"; fi; continue; fi; \
 	  if [ -L "$$d" ]; then \
 	    if [ "$$(readlink -- "$$d")" = $(QSKILL) ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
 	    echo "refusing $$d is a symlink to $$(readlink -- "$$d") - resolve it, then re-run" >&2; exit 1; \
@@ -148,6 +156,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	done; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
+	  [ -e "$$sample" ] || { echo "MISS no examples/findings.sample*.json to render and check" >&2; fail=1; continue; }; \
 	  for lang in ja en; do \
 	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py "$$sample" --out "$$out" --lang $$lang >/dev/null \
 	      || { echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
@@ -160,9 +169,10 @@ check: test ## verify the skill is self-contained and internally consistent
 	  rm -f "$$out"/*; \
 	done; \
 	rm -rf "$$out"; \
+	command -v pandoc >/dev/null 2>&1 || echo "note: pandoc is not installed, so the GFM parser tests were skipped"; \
 	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
-	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(LANG_OUT)
+	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))

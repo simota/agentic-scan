@@ -8,6 +8,8 @@ import sys
 import tempfile
 import unittest
 
+from test_architecture_scan import make_env
+
 
 REPO = Path(__file__).resolve().parents[1]
 TEMPLATES = ("issue.ja.md", "issue.en.md", "report.ja.md", "report.en.md")
@@ -24,9 +26,7 @@ class PackageTemplateTests(unittest.TestCase):
         self.templates = self.repo / "skills" / "architecture-scan" / "templates"
 
     def run_check(self):
-        env = os.environ.copy()
-        for name in ("MAKEFLAGS", "MFLAGS", "MAKEFILES"):
-            env.pop(name, None)
+        env = make_env()
         return subprocess.run(
             ["make", "--no-print-directory", "-f", str(self.repo / "Makefile"),
              # Test the package gate without recursively invoking this test suite.

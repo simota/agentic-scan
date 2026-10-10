@@ -944,25 +944,24 @@ class Scan:
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
         return None
 
-    def gcp_iam(self, res, role, members, line, service_agent=None, raw="", scope_only=False):
+    def gcp_iam(self, res, role, members, line, service_agent=None, raw=""):
         """service_agent: every member is a Google-managed agent (computed here when
-        None); raw: the member's source text when it is templated; scope_only: only
-        the scope rule (the bindings were checked at their google_iam_policy data source)."""
+        None); raw: the member's source text when it is templated."""
         if service_agent is None:
             service_agent = bool(members) and all(isinstance(m, str) and SERVICE_AGENT.search(m) for m in members)
         unresolved = role is UNKNOWN or UNKNOWN in members
-        if unresolved and not service_agent and not scope_only:
+        if unresolved and not service_agent:
             self.not_run.append(f"GCP-IAM: role or members unresolved; checks not run: {res.file}:{line} "
                                 f"({res.address})")
         role_text = role if isinstance(role, str) else "a role"
         public = [m for m in members if m in ("allUsers", "allAuthenticatedUsers")]
-        if public and not scope_only:
+        if public:
             self.hit("GCP-IAM-001", res, line, f"{role_text} granted to {public[0]}")
         # Google-managed service agents receive token-creator and, for the Google
         # APIs agent (@cloudservices), roles/editor by design; owner is never default.
         agent_default = service_agent and role == "roles/editor" and all(
             "@cloudservices." in (m if isinstance(m, str) else raw) for m in members)
-        if role in ("roles/owner", "roles/editor") and not agent_default and not scope_only:
+        if role in ("roles/owner", "roles/editor") and not agent_default:
             self.hit("GCP-IAM-002", res, line, f"{role} granted")
         if role in ("roles/iam.serviceAccountTokenCreator", "roles/iam.serviceAccountUser") and not service_agent and \
                 res.type.startswith(("google_project_iam_", "google_folder_iam_",
@@ -1222,8 +1221,7 @@ def project_scope(view, attr):
     value = view.get(attr)
     if value is None:
         # The provider's default project: one per provider configuration (google.other).
-        provider = provider_key(view)
-        return ("provider", provider if "." in provider else "default")
+        return ("provider", provider_key(view))
     if isinstance(value, str):
         return value.removeprefix("projects/") if attr == "parent" else value
     raw = view.raw(attr)
@@ -1509,8 +1507,10 @@ def check_tf(scan, res):
             scan.gcp_iam(res, role, members, v.line("role"), service_agent=agents, raw=raw)
     elif GCP_IAM_POLICY.match(t):
         source = re.fullmatch(r"\s*data\.google_iam_policy\.([\w-]+)\.policy_data\s*", v.raw("policy_data") or "")
+        # A data "google_iam_policy" only builds JSON; its bindings take effect,
+        # and are checked, where a policy resource applies it.
         for role, members, line in scan.gcp_policy_data.get((res.dir, source.group(1)), []) if source else []:
-            scan.gcp_iam(res, role, members, line, scope_only=True)
+            scan.gcp_iam(res, role, members, line)
         data = v.get("policy_data")
         if isinstance(data, str):
             try:
@@ -1521,9 +1521,6 @@ def check_tf(scan, res):
             for b in data["bindings"]:
                 if isinstance(b, dict):
                     scan.gcp_iam(res, b.get("role"), aslist(b.get("members")), v.line("policy_data"))
-    elif t == "google_iam_policy":
-        for b in v.blocks("binding"):
-            scan.gcp_iam(res, b.get("role"), aslist(b.get("members")), b.line())
     elif t == "google_service_account_key":
         scan.hit("GCP-IAM-003", res, res.line, "google_service_account_key resource")
     elif t == "google_storage_bucket":
@@ -1577,11 +1574,17 @@ def check_tf(scan, res):
         # The cluster's node_config describes its default pool, deleted when removed.
         # The provider requires initial_node_count when no node_pool is inline,
         # so a set count with no node_config is a default pool on the default account.
-        if tf_bool(v.get("enable_autopilot")) is not True and tf_bool(v.get("remove_default_node_pool")) is not True:
+        removed = tf_bool(v.get("remove_default_node_pool"))
+        if tf_bool(v.get("enable_autopilot")) is not True and removed is not True:
             configs = v.blocks("node_config")
             if not configs and v.get("initial_node_count") is not None and not v.blocks("node_pool"):
-                scan.hit("GCP-GCE-001", res, v.line("initial_node_count"),
-                         "GKE default node pool as the default compute service account")
+                if removed is UNKNOWN:
+                    line = v.line("remove_default_node_pool")
+                    scan.not_run.append("GCP-GCE-001: unknown remove_default_node_pool; default pool check not run: "
+                                        f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
+                else:
+                    scan.hit("GCP-GCE-001", res, v.line("initial_node_count"),
+                             "GKE default node pool as the default compute service account")
             gke_node_config(scan, res, configs)
         for pool in v.blocks("node_pool"):
             if not pool.blocks("node_config"):
@@ -1771,9 +1774,11 @@ def block_text(block):
 
 
 def provider_key(view):
-    """The provider configuration a resource uses: "aws" or an alias such as "aws.west"."""
+    """The provider configuration a resource uses: "default" or an alias such as
+    "aws.west". provider = aws names the default configuration, as omitting it does."""
     raw = view.raw("provider") if hasattr(view, "raw") else None
-    return raw.strip().strip('"') if raw else "default"
+    raw = raw.strip().strip('"') if raw else ""
+    return raw if "." in raw else "default"
 
 
 def collect_context(scan, d, type_, view, text, defaults=True):
@@ -1938,8 +1943,6 @@ def check_block(scan, rel, d, b, view, info, declared, uncertain):
         info["resources"] = True
         if b not in uncertain and not never_created(view):
             check_tf(scan, res)
-    elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
-        check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
     elif b.type == "module" and b.labels:
         info["resources"] = True  # a root that only calls modules still holds state
         handle_module(scan, rel, b, view)
@@ -2585,8 +2588,10 @@ CFN_SECRET_KEY = re.compile(r"(?i)[A-Za-z0-9_-]*(?:password|passwd|secret|secret
 
 
 def literal_secret(value):
+    """A CloudFormation string holding a secret. ${...} is literal text outside
+    Fn::Sub (an intrinsic, so a dict here), so it does not exempt the value."""
     return isinstance(value, str) and not value.startswith("{{resolve:") and \
-        not PLACEHOLDER.match(value.strip()) and "${" not in value and not FLAG_VALUE.fullmatch(value.strip())
+        not PLACEHOLDER.match(value.strip()) and not FLAG_VALUE.fullmatch(value.strip())
 
 
 def cfn_parameter_defaults(scan, rel, text, doc):

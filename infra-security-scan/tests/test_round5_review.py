@@ -610,5 +610,42 @@ class CodexFifteenthReviewTest(unittest.TestCase):
         self.assertEqual([h["detail"] for h in scan({"e.tf": line}).hits], ["literal value for DB_PASSWORD"])
 
 
+class CodexSixteenthReviewTest(unittest.TestCase):
+    POLICY = ('data "google_iam_policy" "admin" {\n  binding {\n    role    = "roles/owner"\n'
+              '    members = ["user:a@example.com"]\n  }\n}\n')
+
+    def test_iam_policy_data_is_checked_where_applied(self):
+        self.assertEqual(scan({"p.tf": self.POLICY}).hits, [])
+        applied = self.POLICY + ('resource "google_project_iam_policy" "p" {\n  project = "x"\n'
+                                 '  policy_data = data.google_iam_policy.admin.policy_data\n}\n')
+        self.assertEqual(found(scan({"p.tf": applied})),
+                         [("GCP-IAM-002", "google_project_iam_policy.p", "Medium")])
+
+    def test_dollar_brace_is_literal_in_cloudformation(self):
+        value = "Sup3r${" + "Secret}Value"
+        template = {"Parameters": {"DbPassword": {"Type": "String", "Default": value}},
+                    "Resources": {"Db": {"Type": "AWS::RDS::DBInstance", "Properties": {
+                        "MasterUserPassword": value, "StorageEncrypted": True}}}}
+        details = [h["detail"] for h in scan({"t.json": template}).hits if h["rule"] == "SEC-001"]
+        self.assertEqual(sorted(details), ["literal default for parameter DbPassword",
+                                           "literal value assigned to MasterUserPassword (cfn:Db)"])
+
+    def test_explicit_default_provider_matches_an_omitted_one(self):
+        text = ('resource "aws_s3_account_public_access_block" "a" {\n  provider = aws\n'
+                '  ignore_public_acls = true\n}\n'
+                'resource "aws_s3_bucket_acl" "x" {\n  bucket = "data"\n  acl = "public-read"\n}\n')
+        plain = text.replace("  provider = aws\n", "")
+        severities = lambda t: [h["severity"] for h in scan({"s.tf": t}).hits if h["rule"] == "AWS-S3-001"]  # noqa: E731
+        self.assertEqual(severities(text), severities(plain))
+
+    def test_unknown_default_pool_removal_is_not_run(self):
+        result = scan({"c.tf": 'resource "google_container_cluster" "c" {\n  initial_node_count = 1\n'
+                               '  remove_default_node_pool = var.remove\n  workload_identity_config {\n'
+                               '    workload_pool = "p.svc.id.goog"\n  }\n  private_cluster_config {\n'
+                               '    enable_private_endpoint = true\n  }\n}\n'})
+        self.assertNotIn("GCP-GCE-001", [h["rule"] for h in result.hits])
+        self.assertTrue([n for n in result.not_run if "remove_default_node_pool" in n], result.not_run)
+
+
 if __name__ == "__main__":
     unittest.main()

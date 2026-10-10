@@ -3,9 +3,10 @@
 
     python3 iac_scan.py REPO [--snapshots DIR ...] [--out iac.json] [--into findings.json]
 
-Reads, never executes: Terraform/OpenTofu (`*.tf`, `*.tofu`), Terraform plan JSON
-(`terraform show -json` output the requester produced), CloudFormation JSON,
-Kubernetes YAML manifests and read-only config snapshots (AWS
+Reads, never executes: Terraform/OpenTofu (`*.tf`, `*.tofu`, `*.tfvars[.json]`),
+Terraform plan JSON (`terraform show -json` output the requester produced),
+CloudFormation and SAM templates (JSON, YAML, `.template`), `terragrunt.hcl`,
+Kubernetes manifests and read-only config snapshots (AWS
 describe-security-groups, a bucket policy, a GCP IAM policy, a GCP firewall
 list). It never runs terraform, a cloud CLI or an SDK, and never follows
 symlinks.
@@ -27,10 +28,14 @@ Neither --out nor --into may point inside REPO or through a symlink.
 keeps every other finding, and sets `meta.commit` and `inventory`. Attack-path
 references, I-IDs in review evidence and I-* triage verdicts follow the same
 (rule, file, resources) after renumbering. Lost references require fresh review
-of the finding and its paths. Terraform JSON (`*.tf.json`) and unreadable,
-binary or deeply nested inputs are listed in `not_run`.
+of the finding and its paths. Inputs read only in part or not at all (Terraform
+JSON, Kustomize, Helm templates, Serverless, Pulumi, other HCL, export shapes
+without rules) and unreadable, binary or deeply nested inputs are listed in
+`not_run`.
 
-Exit codes: 0 scanned (hits do not change it), 2 unreadable REPO or findings.json.
+Exit codes: 0 scanned (hits do not change it); 2 unreadable REPO, --snapshots
+directory or findings.json, a --snapshots directory overlapping REPO, or an
+--out/--into path inside REPO, through a symlink or not writable.
 """
 import argparse
 import bisect
@@ -49,11 +54,18 @@ import sys
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
-                    unique_object, write_json_atomic)
+                    sub_references, unique_object, write_json_atomic)
 from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
-SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
+# Tool caches hold copies of the configuration (downloaded modules, the
+# Terragrunt and SAM build copies); scanning them would duplicate findings.
+# Serverless Framework's .serverless/ is kept: its compiled CloudFormation is
+# the only form of serverless.yml the rules can read.
+SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__", ".terragrunt-cache", ".aws-sam"}
+QUIET_SKIPS = {".git", "__pycache__", ".venv"}
 MAX_BYTES = 2 * 1024 * 1024
+# Plan JSON and cloud exports are machine-written and routinely larger.
+MAX_JSON_BYTES = 64 * 1024 * 1024
 SENSITIVE_PORTS = {
     22: "SSH", 23: "Telnet", 445: "SMB", 1433: "SQL Server", 1521: "Oracle", 2375: "Docker",
     2376: "Docker", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL", 5601: "Kibana",
@@ -1355,6 +1367,15 @@ def find_line(text, pattern, default=1):
     return text.count("\n", 0, m.start()) + 1 if m else default
 
 
+def line_numbers(text, positions):
+    """1-based line of each ascending offset, counting newlines once."""
+    line, last = 1, 0
+    for pos in positions:
+        line += text.count("\n", last, pos)
+        last = pos
+        yield line
+
+
 GIT_SOURCE = re.compile(r"^(git::|git@|github\.com/|bitbucket\.org/)|\.git(//|$|\?)")
 REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+(?:\.[a-z]+|:[0-9]+)/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
                              r"(//[^?]+)?$")
@@ -1562,63 +1583,77 @@ def handle_terraform(scan, parsed):
             pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
-                statements = doc_statements(view_of(b, rel))
+                try:
+                    statements = doc_statements(view_of(b, rel))
+                except RecursionError:
+                    statements = UNKNOWN
                 scan.policy_docs[(d, b.labels[1])] = statements
                 if statements is UNKNOWN:
                     scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
                                         f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
     for rel, blocks in parsed:
         for b in blocks:
-            if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
-                collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
-            collect_policy_references(scan, str(Path(rel).parent), b)
+            try:
+                if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
+                    collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
+                collect_policy_references(scan, str(Path(rel).parent), b)
+            except RecursionError:
+                pass  # reported once by the checks below
     declared = {}
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
         info = scan.tf_dirs.setdefault(d, {"resources": False, "backend": False, "file": rel})
         for b in blocks:
-            view = view_of(b, rel)
-            if b.type in ("resource", "data") and len(b.labels) == 2:
-                # Terraform refuses a module that declares one address twice;
-                # the scanner reads both, so say the module is not valid as given.
-                key = (d, b.type, *b.labels)
-                if key in declared:
-                    address = ".".join(b.labels if b.type == "resource" else ["data", *b.labels])
-                    scan.not_run.append(f"duplicate declaration of {address} in one module (Terraform would "
-                                        f"reject it): {declared[key]} and {rel}:{b.line}")
-                else:
-                    declared[key] = f"{rel}:{b.line}"
-            if b.type == "resource" and len(b.labels) == 2:
-                res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
-                scan.add_resource(res)
-                info["resources"] = True
-                if b not in uncertain and not never_created(view):
-                    check_tf(scan, res)
-            elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
-                check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
-            elif b.type == "module" and b.labels:
-                info["resources"] = True  # a root that only calls modules still holds state
-                handle_module(scan, rel, b, view)
-            elif b.type == "provider" and b.labels and b not in uncertain and not local_emulator(b, view):
-                for key in ("access_key", "secret_key", "token", "credentials", "access_token",
-                            "client_secret", "client_certificate_password"):
-                    # AWS keys in a provider block are flagged in any form.
-                    # Other providers often take short-lived tokens from data sources
-                    # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
-                    # a literal value or a key file read from the repository.
-                    if key in b.attrs and key not in ("access_key", "secret_key") and not (
-                            isinstance(view.get(key), str) or re.search(r"\bfile\(", b.attrs[key][0])):
-                        continue
-                    if key in b.attrs:
-                        scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
-                                 view.line(key), f"{key} set in provider block")
-                        break
-            elif b.type == "terraform":
-                for inner in b.blocks:
-                    if inner.type == "cloud" or (inner.type == "backend" and inner.labels):
-                        info["backend"] = True
-                    if inner.type == "backend" and inner.labels:
-                        handle_backend(scan, getattr(inner.line, "file", rel), inner)
+            try:
+                check_block(scan, rel, d, b, view_of(b, rel), info, declared, uncertain)
+            except RecursionError:
+                scan.not_run.append(f"Terraform expression nested too deeply; checks not run: "
+                                    f"{getattr(b.line, 'file', rel)}:{b.line}")
+
+
+def check_block(scan, rel, d, b, view, info, declared, uncertain):
+    """Inventory and rules for one top-level block."""
+    if b.type in ("resource", "data") and len(b.labels) == 2:
+        # Terraform refuses a module that declares one address twice;
+        # the scanner reads both, so say the module is not valid as given.
+        key = (d, b.type, *b.labels)
+        if key in declared:
+            address = ".".join(b.labels if b.type == "resource" else ["data", *b.labels])
+            scan.not_run.append(f"duplicate declaration of {address} in one module (Terraform would "
+                                f"reject it): {declared[key]} and {rel}:{b.line}")
+        else:
+            declared[key] = f"{rel}:{b.line}"
+    if b.type == "resource" and len(b.labels) == 2:
+        res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
+        scan.add_resource(res)
+        info["resources"] = True
+        if b not in uncertain and not never_created(view):
+            check_tf(scan, res)
+    elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
+        check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
+    elif b.type == "module" and b.labels:
+        info["resources"] = True  # a root that only calls modules still holds state
+        handle_module(scan, rel, b, view)
+    elif b.type == "provider" and b.labels and b not in uncertain and not local_emulator(b, view):
+        for key in ("access_key", "secret_key", "token", "credentials", "access_token",
+                    "client_secret", "client_certificate_password"):
+            # AWS keys in a provider block are flagged in any form.
+            # Other providers often take short-lived tokens from data sources
+            # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
+            # a literal value or a key file read from the repository.
+            if key in b.attrs and key not in ("access_key", "secret_key") and not (
+                    isinstance(view.get(key), str) or re.search(r"\bfile\(", b.attrs[key][0])):
+                continue
+            if key in b.attrs:
+                scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
+                         view.line(key), f"{key} set in provider block")
+                break
+    elif b.type == "terraform":
+        for inner in b.blocks:
+            if inner.type == "cloud" or (inner.type == "backend" and inner.labels):
+                info["backend"] = True
+            if inner.type == "backend" and inner.labels:
+                handle_backend(scan, getattr(inner.line, "file", rel), inner)
 
 
 def local_emulator(block, view):
@@ -1655,6 +1690,28 @@ def handle_module(scan, rel, b, view):
             scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
     elif REGISTRY_SOURCE.match(source) and version is None:
         scan.hit("PS-001", res, view.line("source"), "registry module without version")
+
+
+def handle_terragrunt(scan, rel, text):
+    """terraform { source = ... } pins the module the same way a module block does."""
+    try:
+        blocks = parse_hcl(text)
+    except RecursionError:
+        scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
+        return
+    for b in blocks:
+        if b.type != "terraform":
+            continue
+        view = HclView(b)
+        source = view.get("source")
+        if not isinstance(source, str) or not GIT_SOURCE.search(source):
+            continue
+        res = Res("terragrunt", f"terragrunt:{rel}", rel, b.line)
+        m = re.search(r"[?&]ref=([^&]+)", source)
+        if not m:
+            scan.hit("PS-001", res, view.line("source"), "git source without ?ref=")
+        elif not PINNED_REF.fullmatch(m.group(1)):
+            scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
 
 
 def handle_backend(scan, rel, block):
@@ -1770,8 +1827,9 @@ def handle_plan(scan, rel, text, doc):
     # Map decoded addresses to lines once: Terraform escapes <, > and & and
     # writes non-ASCII raw, so re-encoding an address would not find it.
     lines = {}
-    for m in re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text):
-        lines.setdefault(json.loads(m.group(1)), text.count("\n", 0, m.start()) + 1)
+    matches = list(re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text))
+    for m, line in zip(matches, line_numbers(text, (m.start() for m in matches))):
+        lines.setdefault(json.loads(m.group(1)), line)
 
     plan_config_refs(scan, rel, doc)
     # planned_values do not say which provider alias a resource uses; with an
@@ -1884,6 +1942,9 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     if line_of is None:
         keys = json_key_lines(text)
         line_of = lambda lid: keys.get((("Resources",), lid), 1)  # noqa: E731
+    if doc.get("Transform") is not None:
+        scan.not_run.append(f"CloudFormation Transform (SAM or macro): rules read the template as written, not the "
+                            f"expanded resources; review the transformed template by hand: {rel}")
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -1963,6 +2024,20 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 inherited = (inherited - {"DBClusterIdentifier"}) or props.get("EngineMode") == "serverless"
             if props.get("StorageEncrypted") in (False, "false", None) and not inherited:
                 scan.hit("AWS-RDS-002", res, line, "StorageEncrypted not true")
+        elif type_ == "AWS::Serverless::Function":
+            # SAM expands these into Lambda, IAM role and URL resources.
+            url = props.get("FunctionUrlConfig")
+            if isinstance(url, dict) and url.get("AuthType") == "NONE":
+                scan.hit("AWS-LAMBDA-001", res, line, "FunctionUrlConfig.AuthType = NONE")
+            if "Role" not in props:
+                policies = aslist(props.get("Policies"))
+                for p in policies:
+                    if isinstance(p, dict) and "Statement" in p:
+                        scan.identity_policy(res, norm_statements(p), line)
+                # A bare name is a managed policy in the aws partition.
+                if any(p == "AdministratorAccess" or (isinstance(cfn_string(p), str) and ADMIN_ARN.search(cfn_string(p)))
+                       for p in policies):
+                    scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
         elif type_ == "AWS::Lambda::Url":
             if props.get("AuthType") == "NONE":
                 scan.hit("AWS-LAMBDA-001", res, line, "AuthType = NONE")
@@ -2546,6 +2621,10 @@ def _yaml_kind(rows, doc):
     return None
 
 
+KUSTOMIZE = re.compile(r"""apiVersion:\s*["']?kustomize\.config\.k8s\.io/""")
+KUSTOMIZATION_FILES = {"kustomization.yaml", "kustomization.yml", "Kustomization"}
+
+
 def handle_yaml(scan, rel, lines):
     kinds = set()
     for rows in split_yaml_documents(lines):
@@ -2566,11 +2645,23 @@ def handle_yaml(scan, rel, lines):
                 scan.not_run.append(f"YAML with unsupported line breaks could not be classified; "
                                     f"review by hand: {rel}:{rows[0][0]}")
                 continue
+        if kind == "kubernetes" and any(KUSTOMIZE.match(raw) for _, raw in rows) or (
+                not kind and Path(rel).name in KUSTOMIZATION_FILES):
+            # A Kustomization is build input, not a cluster object.
+            kind = "kustomize"
+            scan.not_run.append(f"Kustomize overlay: patches, generators and remote bases not applied; "
+                                f"review the `kustomize build` output by hand: {rel}")
         if not kind:
             continue
         kinds.add(kind)
+        if kind == "kustomize":
+            continue
         if kind == "cloudformation-yaml":
             handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0], doc)
+            continue
+        if reason and any("{{" in raw for _, raw in rows):
+            scan.not_run.append(f"kubernetes YAML rules not applied (template such as a Helm chart; review the "
+                                f"rendered output, e.g. `helm template`): {rel}:{rows[0][0]}")
             continue
         if reason:
             scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
@@ -2623,9 +2714,17 @@ def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
 
 SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})")) for label, pattern in CREDENTIAL_SHAPES]
 SECRET_PATTERNS.append(("private key", KEY_BEGIN))
-GENERIC_SECRET = re.compile(
-    r'^\s*"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
-    r'access_key|private_key))"?\s*=\s*"([^"]*)"', re.IGNORECASE)
+# The short spellings (db_pass, admin_pw) count only as a whole word, as in
+# redaction's CREDENTIAL_WORD: bypass or compass name no secret.
+SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
+                   r'access_key|private_key|credentials?|connection_string|(?<![A-Za-z])(?:pass|pwd|pw)))"?')
+# A key file path or a connection string without a password is no secret.
+NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|pem|p12|key)$"),
+                # Neither Password=... nor URI userinfo (postgres://user:pass@host).
+                ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)(?!.*://[^/@\s]*:[^/@\s]*@)",
+                                                   re.IGNORECASE)}
+GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
+GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
 PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*|"
@@ -2636,21 +2735,40 @@ SECRET_REF_BLOCK = re.compile(r"\b(?:secret_key_ref|secret_environment_variables
 SECRET_NAME_VALUE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
 
 
+def mock_lines(lines):
+    """Line numbers inside Terragrunt mock_outputs blocks: stand-ins for plan, not secrets."""
+    inside, depth = set(), 0
+    for n, line in enumerate(lines, 1):
+        if depth == 0 and not re.match(r"\s*mock_outputs\s*=\s*\{", line):
+            continue
+        inside.add(n)
+        depth += line.count("{") - line.count("}")
+        depth = max(depth, 0)
+    return inside
+
+
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
+    generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
+        lambda line: filter(None, [GENERIC_SECRET.match(line)]))
+    mocks = mock_lines(lines) if kind == "terragrunt" else set()
     for n, line in enumerate(lines, 1):
         for label, pattern in SECRET_PATTERNS:
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
-        if kind in ("terraform", "tfvars"):
-            m = GENERIC_SECRET.match(line)
-            if m and SECRET_NAME_VALUE.match(m.group(2)) and (
+        if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
+            continue
+        for m in generic(line):
+            if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
                 continue
-            if m and "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
+            exempt = next((p for keys, p in NOT_A_SECRET.items() if m.group(1).lower().endswith(keys)), None)
+            if exempt and exempt.search(m.group(2)):
+                continue
+            if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")
     if re.search(r'"type"\s*:\s*"service_account"', text) and re.search(r'"private_key"\s*:', text):
         scan.hit("SEC-001", res, find_line(text, r'"private_key"\s*:'), "GCP service account key JSON",
@@ -2671,7 +2789,7 @@ def classify_json(doc):
 
 
 def walk(root, scan, prefix=""):
-    entries = []
+    entries, skipped = [], []
 
     def unreadable(error):
         where = Path(error.filename) if error.filename else root
@@ -2687,23 +2805,66 @@ def walk(root, scan, prefix=""):
         for d in sorted(dirnames):
             full = base / d
             if d in SKIP_DIRS:
+                if d not in QUIET_SKIPS:
+                    skipped.append(prefix + full.relative_to(root).as_posix())
                 continue
             if full.is_symlink():
-                scan.not_run.append(f"symlink skipped: {prefix}{full.relative_to(root).as_posix()}")
+                shown = full.relative_to(root).as_posix().encode("utf-8", "surrogateescape").decode(
+                    "utf-8", "backslashreplace")
+                scan.not_run.append(f"symlink skipped: {prefix}{shown}")
                 continue
             keep.append(d)
         dirnames[:] = keep
         for f in sorted(filenames):
             full = base / f
             rel = prefix + full.relative_to(root).as_posix()
+            try:
+                rel.encode("utf-8")
+            except UnicodeEncodeError:
+                # Locations and the record are UTF-8; such a path cannot be cited.
+                shown = rel.encode("utf-8", "surrogateescape").decode("utf-8", "backslashreplace")
+                scan.not_run.append(f"file name is not UTF-8, skipped: {shown}")
+                continue
             if full.is_symlink():
                 scan.not_run.append(f"symlink skipped: {rel}")
             elif full.is_file():
                 entries.append((full, rel))
+    if skipped:
+        examples = ", ".join(skipped[:3]) + (", ..." if len(skipped) > 3 else "")
+        scan.not_run.append(f"{len(skipped)} tool cache or vendored directories skipped as copies: {examples}")
     return entries
 
 
-INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml")
+INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml", ".template")
+
+
+# Top-level Terragrunt blocks, as shared include files hold them.
+TERRAGRUNT = re.compile(r'^(?:inputs\s*=|include\s*(?:"[^"]*"\s*)?\{|dependency\s*"|dependencies\s*\{|'
+                        r'remote_state\s*\{|generate\s*")', re.M)
+
+
+def input_note(name):
+    """Why a recognised infrastructure input is read only in part, or not at all."""
+    lower = name.lower()
+    if lower.endswith((".tf.json", ".tofu.json")):
+        if re.search(r"(?:^|_)override\.(?:tf|tofu)\.json$", lower):
+            return ("Terraform JSON override not applied: the module's final configuration is unknown "
+                    "and its checks read the configuration before the override")
+        return "Terraform JSON syntax not evaluated"
+    if lower == "terragrunt.hcl":
+        return "Terragrunt inputs, dependencies and generate blocks not evaluated"
+    if lower.endswith(".tftest.hcl") or lower.endswith(".tftest.json"):
+        return None  # test assertions, not deployed configuration
+    if lower.endswith(".hcl") and lower != ".terraform.lock.hcl":
+        return "HCL configuration (Packer, Nomad, Vault policy or other) not evaluated"
+    if re.fullmatch(r"serverless\.(?:ya?ml|json|ts|js)", lower):
+        return ("Serverless Framework configuration not evaluated (its compiled template in .serverless/, "
+                "from `serverless package`, is read when present)")
+    if name == "Kustomization":
+        return "Kustomize overlay: patches, generators and remote bases not applied; review the `kustomize build` output"
+    if re.fullmatch(r"pulumi(?:\.[^.]+)?\.ya?ml", lower):
+        return "Pulumi project or stack configuration not evaluated"
+    return None
 BOMS = ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
         (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
 
@@ -2745,15 +2906,24 @@ def run(root, snapshots=()):
     entries = walk(root, scan)
     for directory, prefix in zip(snapshots, snapshot_prefixes(snapshots)):
         entries += walk(Path(directory), scan, prefix)
+    skipped = {"too large": [], "not UTF-8": []}
     for full, rel in entries:
         name = full.name
         if STATE_FILE.search(name):
             scan.files.append({"path": rel, "kind": "state"})
             scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "state file in the repository", strong=True)
             continue
+        snapshot = rel.startswith(SNAPSHOT_PREFIX)
+        # Inputs the scanner would read are named; other skipped files (archives,
+        # media, documents) only weaken the credential search, so they are counted.
+        is_input = snapshot or name.lower().endswith(INPUT_SUFFIXES) or input_note(name) is not None
         try:
-            if full.stat().st_size > MAX_BYTES:
-                scan.not_run.append(f"file too large to scan: {rel}")
+            limit = MAX_JSON_BYTES if snapshot or name.lower().endswith((".json", ".template")) else MAX_BYTES
+            if full.stat().st_size > limit:
+                if is_input:
+                    scan.not_run.append(f"file too large to scan: {rel}")
+                else:
+                    skipped["too large"].append(rel)
                 continue
             data = full.read_bytes()
         except OSError as e:
@@ -2762,20 +2932,31 @@ def run(root, snapshots=()):
         text = decode(data)
         if text is None:
             # Binary files are expected; an input the scanner would read is not.
-            if b"\0" not in data:
-                scan.not_run.append(f"not UTF-8, skipped: {rel}")
-            elif name.lower().endswith(INPUT_SUFFIXES):
+            if is_input:
                 scan.not_run.append(f"binary or not UTF-8, skipped: {rel}")
+            elif b"\0" not in data:
+                skipped["not UTF-8"].append(rel)
             continue
         kind = None
-        if name.endswith(".tf.json") or name.endswith(".tofu.json"):
-            scan.not_run.append(f"Terraform JSON syntax not evaluated; review by hand: {rel}")
+        note = input_note(name)
+        terragrunt = name == "terragrunt.hcl" or (name.endswith(".hcl") and note and TERRAGRUNT.search(text))
+        if terragrunt:
+            # Shared Terragrunt files (root.hcl, env.hcl, _envcommon/*.hcl).
+            note = input_note("terragrunt.hcl")
+        if note:
+            scan.not_run.append(f"{note}; review by hand: {rel}")
         if name.endswith((".tf", ".tofu")):
             kind = "terraform"
-            parsed.append((rel, parse_hcl(text)))
+            try:
+                parsed.append((rel, parse_hcl(text)))
+            except RecursionError:
+                scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
         elif name.endswith(".tfvars"):
             kind = "tfvars"
-        elif name.endswith(".json"):
+        elif terragrunt:
+            kind = "terragrunt"
+            handle_terragrunt(scan, rel, text)
+        elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
             try:
                 doc = json.loads(text)
             except RecursionError:
@@ -2783,11 +2964,13 @@ def run(root, snapshots=()):
                 scan.not_run.append(f"JSON nested too deeply, skipped: {rel}")
             except ValueError:
                 doc = None
-                if "planned_values" in text or "AWSTemplateFormatVersion" in text:
+                if snapshot or "planned_values" in text or "AWSTemplateFormatVersion" in text:
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             try:
-                if kind == "plan":
+                if name.endswith(".tfvars.json"):
+                    kind = "tfvars"
+                elif kind == "plan":
                     handle_plan(scan, rel, text, doc)
                 elif kind == "cloudformation":
                     handle_cfn(scan, rel, text, doc)
@@ -2795,14 +2978,22 @@ def run(root, snapshots=()):
                     kind = "kubernetes"
                 elif doc is not None:
                     kind = handle_snapshot(scan, rel, text, doc)
+                    if kind is None and snapshot:
+                        scan.not_run.append(f"cloud export shape has no baseline rules; review by hand: {rel}")
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
                 scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
-        elif name.endswith((".yaml", ".yml")):
+        elif name.endswith((".yaml", ".yml", ".template")):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
+        elif snapshot and not name.endswith(".json") and not note:
+            scan.not_run.append(f"export not read (rules cover JSON exports); review by hand: {rel}")
         scan_secrets(scan, rel, text, kind)
+    for reason, rels in skipped.items():
+        if rels:
+            examples = ", ".join(rels[:3]) + (", ..." if len(rels) > 3 else "")
+            scan.not_run.append(f"{len(rels)} other file(s) {reason}, not searched for credentials: {examples}")
     handle_terraform(scan, parsed)
     for rel, (_, referenced) in sorted(scan.policy_files.items()):
         if not referenced:
@@ -2864,26 +3055,6 @@ def report(scan, root, commit, findings, snapshots=()):
             "backends": scan.backends, "not_run": scan.not_run, "hits": hits, "findings": findings}
 
 
-EVIDENCE_URL = re.compile(r"\b[A-Za-z][A-Za-z0-9+.-]*://[^\s<>`\"']+")
-
-
-def evidence_url_spans(evidence):
-    """Keep URL contents intact while allowing references after Markdown links."""
-    cursor = 0
-    while match := EVIDENCE_URL.search(evidence, cursor):
-        depth, end = 0, match.end()
-        for offset, char in enumerate(match.group()):
-            if char == "(":
-                depth += 1
-            elif char == ")":
-                if depth == 0:
-                    end = match.start() + offset
-                    break
-                depth -= 1
-        yield match.start(), end
-        cursor = end
-
-
 def baseline_key(finding):
     """The same root-cause grouping used by build_findings, independent of ID/line."""
     rule, location = finding.get("rule"), finding.get("location")
@@ -2909,32 +3080,45 @@ def remap_baseline_references(data, old, new):
                 and set(resources) <= set(replacement.get("resources", [])):
             replacements[fid] = replacement["id"]
 
-    def removed_label(fid, evidence=False):
+    def removed_label(fid):
         key = baseline_key(old_by_id[fid]) if fid in old_by_id else None
         if key:
             label = f"{key[0]} at {key[1]}"
             if key in new_by_key:
                 label += " (affected resources changed)"
             return label
-        # Do not leave a live-looking I-ID in rewritten evidence: it could be
+        # Do not leave a live-looking I-ID in rewritten text: it could be
         # assigned to an unrelated hit on the next scan.
-        return (f"unmatched baseline number {fid[2:]}" if evidence
-                else f"unmatched baseline reference {fid}")
+        return f"unmatched baseline number {fid[2:]}"
 
-    def rewrite_carried(evidence):
-        """Renumber I-IDs in carried I-* evidence in one pass, as for F-* below."""
-        spans = list(evidence_url_spans(evidence))
-
-        def replace(match):
-            fid = match.group()
-            if any(start <= match.start() < end for start, end in spans):
-                return fid
-            if fid in replacements:
-                return replacements[fid]
-            return f"[removed baseline: {removed_label(fid, evidence=True)}]"
-        return BASELINE_REFERENCE.sub(replace, evidence)
+    def rewrite_carried(text):
+        """Renumber I-IDs in one pass; a vanished one becomes a removal label."""
+        return sub_references(BASELINE_REFERENCE, text, lambda m: replacements.get(m.group()) or
+                              f"[removed baseline: {removed_label(m.group())}]")
 
     carry_triage(data, old_by_id, replacements, new, rewrite_carried)
+
+    def rewrite_prose(value):
+        if isinstance(value, str):
+            return rewrite_carried(value)
+        if isinstance(value, list):
+            return [rewrite_prose(x) for x in value]
+        if isinstance(value, dict):
+            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v) for k, v in value.items()}
+        return value
+
+    # Every other mention of a baseline ID follows it too. F-* evidence is
+    # handled below, where a lost reference also reopens the finding; the
+    # limitations iac_scan.py writes name earlier IDs on purpose.
+    for finding in data.get("findings", []):
+        if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
+            for key, value in list(finding.items()):
+                if key not in ("id", "references", "validation", "attack_paths"):
+                    finding[key] = rewrite_prose(value)
+    data["attack_paths"] = rewrite_prose(data["attack_paths"])
+    for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
+        if isinstance(data.get(key), list):
+            data[key] = rewrite_prose(data[key])
 
     invalidated = set()
     invalidated_paths = {}
@@ -2945,22 +3129,19 @@ def remap_baseline_references(data, old, new):
         if not isinstance(validation, dict) or not isinstance(validation.get("evidence"), str):
             continue
         removed = []
-        url_spans = list(evidence_url_spans(validation["evidence"]))
 
         def replace_reference(match):
             fid = match.group()
-            if any(start <= match.start() < end for start, end in url_spans):
-                return fid
             if fid in replacements:
                 return replacements[fid]
-            label = removed_label(fid, evidence=True)
+            label = removed_label(fid)
             if label not in removed:
                 removed.append(label)
             return f"[removed baseline: {label}]"
 
         # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
         # a sequence of string replacements would move both to I-003.
-        validation["evidence"] = BASELINE_REFERENCE.sub(replace_reference, validation["evidence"])
+        validation["evidence"] = sub_references(BASELINE_REFERENCE, validation["evidence"], replace_reference)
         if removed:
             note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this finding."
             validation["evidence"] = validation["evidence"].rstrip() + "\n" + note
@@ -3011,8 +3192,9 @@ def remap_baseline_references(data, old, new):
 def carry_triage(data, old_by_id, replacements, new, rewrite):
     """Keep a reviewer's I-* verdict when the same rule, file and resources survive.
 
-    Triage lives only in I-*.validation; dropping it on every rescan would
-    silently undo the review. A changed resource set needs fresh triage.
+    Triage is I-*.validation with the confidence and condition set beside it;
+    dropping it on every rescan would silently undo the review. A changed
+    resource set needs fresh triage.
     """
     new_by_id = {f["id"]: f for f in new}
     for fid, new_id in replacements.items():
@@ -3024,6 +3206,10 @@ def carry_triage(data, old_by_id, replacements, new, rewrite):
             current["validation"] = copy.deepcopy(validation)
             if isinstance(validation.get("evidence"), str):
                 current["validation"]["evidence"] = rewrite(validation["evidence"])
+            if isinstance(old.get("confidence"), str):
+                current["confidence"] = old["confidence"]
+            if isinstance(old.get("condition"), str):
+                current["condition"] = rewrite(old["condition"])
         else:
             note = (f"{new_id} (was {fid}): {validation['verdict']} triage not carried over; "
                     "affected resources changed. Recheck this baseline finding.")
@@ -3055,6 +3241,17 @@ def merge_into(path, findings, inventory, commit):
     remap_baseline_references(data, old, findings)
     data["findings"] = kept + findings
     write_json_atomic(path, data, mkdir=True)
+
+
+def printable(value):
+    """Spell lone surrogates (a "\\ud800" escape in an input) as text: the output is UTF-8."""
+    if isinstance(value, str):
+        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+    if isinstance(value, list):
+        return [printable(x) for x in value]
+    if isinstance(value, dict):
+        return {printable(k): printable(v) for k, v in value.items()}
+    return value
 
 
 def main(argv=None):
@@ -3099,8 +3296,8 @@ def main(argv=None):
             return 2
     scan = run(root, args.snapshots)
     commit = git_commit(root)
-    findings = build_findings(scan.hits)
-    result = report(scan, root, commit, findings, args.snapshots)
+    findings = printable(build_findings(scan.hits))
+    result = printable(report(scan, root, commit, findings, args.snapshots))
     # Write the inventory first: a failed --out must not leave findings.json
     # describing a scan whose inventory was never saved.
     if args.out:
@@ -3114,7 +3311,7 @@ def main(argv=None):
         sys.stdout.write("\n")
     if args.into:
         try:
-            merge_into(args.into, findings, inventory_of(scan), commit)
+            merge_into(args.into, findings, printable(inventory_of(scan)), commit)
         except (OSError, ValueError, RecursionError) as e:
             print(f"iac_scan: cannot update {args.into}: {e}", file=sys.stderr)
             return 2

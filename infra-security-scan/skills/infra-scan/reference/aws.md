@@ -4,8 +4,8 @@
 listed; the CloudFormation equivalents (`AWS::S3::Bucket`…) carry the same
 properties in PascalCase.
 
-Benchmark citations in `controls` name the benchmark, its edition and the
-section title (e.g. `CIS AWS Foundations v3.0 — Ensure no security groups allow
+Benchmark citations in `controls` name the benchmark and the section title, with
+the edition only when the requester names one (e.g. `CIS AWS Foundations v3.0 — Ensure no security groups allow
 ingress from 0.0.0.0/0 to remote server administration ports`). Control numbers
 change between editions: copy the number only from the edition the requester
 uses, never from memory.

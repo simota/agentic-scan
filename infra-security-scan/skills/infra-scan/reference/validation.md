@@ -28,7 +28,10 @@ controls, reaches what. Check each claim and write what decided it into
    Service Controls perimeter, a bucket-level public access block overriding a
    policy, an account-level block, a NACL, a NetworkPolicy, a WAF in front,
    a condition key on the grant. A control outside the inputs makes the finding
-   `Environment-dependent`, with the control named in `condition`
+   `Environment-dependent` only when it is known to exist (the requester says
+   so, or the inputs reference it) and would decide the finding; name it in
+   `condition`. An unread guardrail nobody mentions is graded as absent and
+   listed once in `limitations` (`SKILL.md`)
 4. **Impact** — what the jewel at the end is, and what the actor can do there
    (read, write, delete, administer)
 

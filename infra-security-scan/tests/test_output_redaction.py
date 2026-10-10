@@ -91,12 +91,13 @@ class SourceRedactionTest(OutputTest):
             for n, text in enumerate(variants):
                 with self.subTest(suffix=suffix, text=text):
                     self.write("resource." + suffix, text)
-                    rows = self.excerpt("resource." + suffix + ":1")
+                    rows = render.attach_sources(self.record("resource." + suffix + ":1"), self.repo).get("F-001")
                     if n == 0:
                         self.assertEqual(rows, [(1, text, True)])
-                    else:
+                    elif rows is not None:
                         # A key or prose spelling "pass…" is treated as a secret
-                        # word by the final scrub; the line stays, its value goes.
+                        # word: the excerpt is withheld (a key "pass\…" names a
+                        # secret field) or the line stays and its value goes.
                         self.assertEqual([(r[0], r[2]) for r in rows], [(1, True)])
                         self.assertNotIn(value, rows[0][1])
 

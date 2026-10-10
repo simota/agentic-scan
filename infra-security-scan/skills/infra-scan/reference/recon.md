@@ -21,6 +21,17 @@ List every input and what it can and cannot tell:
 Run `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json`.
 Its `not_run` list goes into `limitations` as-is.
 
+The baseline reads Terraform/OpenTofu (`.tf`, `.tfvars`, `.tfvars.json`), plan
+JSON, CloudFormation and SAM (`.json`, `.yaml`, `.template`; a `Transform` is
+not expanded), Kubernetes manifests, Terragrunt files (module source and
+literal secrets only) and the exports in `reference/snapshots.md`. It names, but
+does not evaluate, Terraform JSON, Kustomizations, unrendered Helm templates,
+Serverless Framework and Pulumi files, other `.hcl` and export shapes without
+rules: render or review those by hand (`helm template`, `kustomize build`,
+`sam validate`). Tool caches (`.terraform`, `.terragrunt-cache`, `.aws-sam`,
+`node_modules`) are skipped as copies and named; Serverless Framework's compiled
+`.serverless/` template is read.
+
 The Terraform baseline merges `override.tf` and `*_override.tf` after ordinary
 `.tf` files, in filename order within each module directory. Attribute and
 nested-block evidence retains the contributing source file; whole-resource
@@ -96,5 +107,7 @@ For each, name the resource address and where it lives:
 
 What sits above the account: SCPs and RCPs, GCP organization policies, VPC
 Service Controls perimeters, Azure Policy, permission boundaries, Kubernetes
-admission policies. If they are not in the inputs, say so — findings that a
-guardrail might block become `Environment-dependent`.
+admission policies. If they are not in the inputs, say so once in
+`limitations` and grade as if they were absent; a finding becomes
+`Environment-dependent` on a guardrail only when one is known to exist and
+would decide it (`SKILL.md`).

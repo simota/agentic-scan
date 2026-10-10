@@ -8,7 +8,10 @@ needed, give the requester the commands below to run **themselves**, with
 read-only credentials (AWS `SecurityAudit` or `ReadOnlyAccess`; GCP
 `roles/iam.securityReviewer` plus `roles/viewer`, or `roles/cloudasset.viewer`
 for the asset export). Ask them to place the output in a directory outside the
-repository and pass that path.
+repository and pass that path to `iac_scan.py --snapshots`. Plan JSON
+(`terraform show -json plan.out > plan.json`) supplied the same way is read as a
+plan. Export shapes without baseline rules are named in `not_run` and read by
+hand.
 
 Before reading a snapshot, tell the requester it may contain secret values
 (function environment variables, user data) and that those values will be

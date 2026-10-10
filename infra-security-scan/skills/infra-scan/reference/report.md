@@ -26,7 +26,7 @@ Write in the requester's language.
 4. **Findings, by severity**:
 
    ```
-   [High|Medium|Low][Confirmed|Environment-dependent|Suspected] title
+   [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] title
      resource: address(es)            location: path:line
      actor: entry actor and preconditions
      path: numbered edges, each with path:line

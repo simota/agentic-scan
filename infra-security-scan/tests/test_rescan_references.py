@@ -277,7 +277,7 @@ class RescanReferencesTest(unittest.TestCase):
         data = self.scan()
         self.assertEqual(data["attack_paths"][0]["findings"], [])
         self.assertEqual(data["attack_paths"][0]["status"], "unknown")
-        self.assertIn("unmatched baseline reference I-002", data["attack_paths"][0]["note"])
+        self.assertIn("unmatched baseline number 002", data["attack_paths"][0]["note"])
 
     def test_same_rule_and_file_cannot_redirect_path_to_another_resource(self):
         self.seed_path(self.scan(), "I-001")
@@ -321,6 +321,44 @@ class RescanReferencesTest(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("duplicate IDs", err.getvalue())
         self.assertEqual(self.record.read_bytes(), before)
+
+    # I-IDs anywhere in prose follow a rescan, and triage keeps its grade.
+
+    def test_prose_mentions_follow_renumbering(self):
+        data = self.scan()
+        self.assertEqual([f["id"] for f in data["findings"]], ["I-001"])
+        self.seed_path(data, "I-001")
+        data = json.loads(self.record.read_text(encoding="utf-8"))
+        data["decisions"] = ["Accept I-001 until the CDN lands", "I-001の判定は保留"]
+        data["attack_paths"][0]["edges"] = ["Public ACL I-001 (z.tf:3)"]
+        data["perspectives"][0]["note"] = "I-001 triaged"
+        self.record.write_text(json.dumps(data), encoding="utf-8")
+        self.add_admin()  # a.tf sorts first, so the bucket becomes I-002
+        data = self.scan()
+        bucket = next(f["id"] for f in data["findings"] if f["rule"] == "AWS-S3-001")
+        self.assertEqual(bucket, "I-002")
+        self.assertEqual(data["decisions"], ["Accept I-002 until the CDN lands", "I-002の判定は保留"])
+        self.assertEqual(data["attack_paths"][0]["edges"], ["Public ACL I-002 (z.tf:3)"])
+        self.assertEqual(data["perspectives"][0]["note"], "I-001 triaged".replace("I-001", "I-002"))
+        self.assertEqual(render.dangling_references(data), [])
+
+    def test_removed_baseline_in_prose_is_labelled(self):
+        data = self.scan()
+        data["next_steps"] = ["Fix I-001 first"]
+        self.record.write_text(json.dumps(data), encoding="utf-8")
+        self.bucket.write_text("# gone\n", encoding="utf-8")
+        data = self.scan()
+        self.assertEqual(data["next_steps"], ["Fix [removed baseline: AWS-S3-001 at z.tf] first"])
+
+    def test_triage_keeps_confidence_and_condition(self):
+        data = self.scan()
+        data["findings"][0].update(confidence="Environment-dependent", condition="the bucket holds only I-001 assets",
+                                   validation={"verdict": "Likely", "evidence": "read z.tf"})
+        self.record.write_text(json.dumps(data), encoding="utf-8")
+        self.add_admin()
+        bucket = next(f for f in self.scan()["findings"] if f["rule"] == "AWS-S3-001")
+        self.assertEqual((bucket["confidence"], bucket["condition"], bucket["validation"]["verdict"]),
+                         ("Environment-dependent", "the bucket holds only I-002 assets", "Likely"))
 
 
 if __name__ == "__main__":

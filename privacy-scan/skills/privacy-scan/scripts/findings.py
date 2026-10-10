@@ -163,14 +163,19 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
 # they are masked before counting digits so they are not mistaken for personal
-# numbers. A date or UUID is masked only when no digit sits next to it across
-# the separators LONG_NUMBER accepts, so masking cannot split a longer number;
-# a neighbouring full date (a range) or six-digit time of day is allowed.
-DIGIT_SEPARATOR = re.compile(r"[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc]")
-ISO_DATE = re.compile(r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)")
+# numbers. Dates are judged per run of digits joined by the separators
+# LONG_NUMBER accepts: a run is masked only when it consists entirely of ISO
+# dates (a range) and six-digit times of day after a date; any other digit in
+# the run keeps the whole run counted, so masking cannot split a longer number.
+# A UUID or hex digest is masked only when no digit sits next to it across
+# those separators.
+SEPARATOR_CLASS = r"(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])"
+DIGIT_SEPARATOR = re.compile(SEPARATOR_CLASS)
+DIGIT_RUN = re.compile(rf"\d(?:{SEPARATOR_CLASS}*\d)*")
+DATE_TOKEN = re.compile(r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)")
+TIME_TOKEN = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)")
 UUID = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
 HEX_DIGEST = re.compile(r"(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
-TIME_OF_DAY = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)")
 
 
 def _past_separators(value, pos, step):
@@ -184,31 +189,45 @@ def _past_separators(value, pos, step):
     return pos
 
 
-def _digit_before(value, pos):
-    pos = _past_separators(value, pos, -1)
-    return pos if pos > 0 and value[pos - 1].isdigit() else None
+def _number_beside(value, pos, step):
+    """Whether a free-standing number sits next to pos across digit separators.
 
-
-def _digit_after(value, pos):
+    Digits attached to a letter belong to a word (`sha256`, `utf8`), not a number.
+    """
+    if step < 0:
+        pos = _past_separators(value, pos, -1)
+        if pos == 0 or not value[pos - 1].isdigit():
+            return False
+        while pos > 0 and (value[pos - 1].isdigit() or DIGIT_SEPARATOR.fullmatch(value[pos - 1])):
+            pos -= 1
+        return pos == 0 or not value[pos - 1].isalpha()
     pos = _past_separators(value, pos, 1)
-    return pos if pos < len(value) and value[pos].isdigit() else None
+    if pos == len(value) or not value[pos].isdigit():
+        return False
+    while pos < len(value) and (value[pos].isdigit() or DIGIT_SEPARATOR.fullmatch(value[pos])):
+        pos += 1
+    return pos == len(value) or not value[pos].isalpha()
+
+
+def _only_dates_and_times(run):
+    """True when a digit run is nothing but dates, each optionally followed by a time."""
+    pos, after_date = 0, False
+    while pos < len(run):
+        token = DATE_TOKEN.match(run, pos) or (after_date and TIME_TOKEN.match(run, pos))
+        if not token:
+            return False
+        after_date = token.re is DATE_TOKEN
+        pos = _past_separators(run, token.end(), 1)
+    return True
 
 
 def _mask_technical_numbers(value):
-    spans = []
-    dates = list(ISO_DATE.finditer(value))
-    starts, ends = {m.start() for m in dates}, {m.end() for m in dates}
-    for m in dates:
-        before, after = _digit_before(value, m.start()), _digit_after(value, m.end())
-        time = TIME_OF_DAY.match(value, after) if after is not None else None
-        if ((before is None or before in ends)
-                and (after is None or after in starts
-                     or (time and _digit_after(value, time.end()) is None))):
-            spans.append(m.span())
-    for m in UUID.finditer(value):
-        if _digit_before(value, m.start()) is None and _digit_after(value, m.end()) is None:
-            spans.append(m.span())
-    spans += [m.span() for m in HEX_DIGEST.finditer(value)]
+    spans = [m.span() for m in DIGIT_RUN.finditer(value)
+             if DATE_TOKEN.match(m.group()) and _only_dates_and_times(m.group())]
+    for pattern in (UUID, HEX_DIGEST):
+        for m in pattern.finditer(value):
+            if not _number_beside(value, m.start(), -1) and not _number_beside(value, m.end(), 1):
+                spans.append(m.span())
     masked, pos = [], 0
     for start, end in sorted(spans):
         if start >= pos:

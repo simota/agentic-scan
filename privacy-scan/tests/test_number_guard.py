@@ -149,3 +149,30 @@ class SeparatorAdjacencyTests(unittest.TestCase):
                       "on 2026-10-09, 1234 accounts"):
             with self.subTest(value=ascii(value)):
                 self.assertFalse(refused(value))
+
+
+class DigitRunTests(unittest.TestCase):
+    def test_chained_dates_cannot_hide_extra_digits(self):
+        for value in ("123 2026-01-01 2026-02-02", "2026-01-01 2026-02-02 123",
+                      "2026-01-01 123 2026-02-02", "2026-01-01-120000-1234",
+                      "12 2026-01-01-120000"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+    def test_runs_made_only_of_dates_and_times_stay_masked(self):
+        for value in ("2026-01-01 2026-02-02 2026-03-03", "2026-01-01-120000-2026-01-02-235959",
+                      "from 2026-01-01T10:00 to 2026-01-02"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_a_time_counts_only_after_a_date(self):
+        self.assertTrue(refused("120000-2026-01-01"))
+
+    def test_hex_digests_between_digit_groups_are_not_masked(self):
+        digest = "0a1b2c3d4e5f678901234567890abcdef1234567"
+        # Masked, this digest would hide the twelfth digit of the number beside it.
+        edge = "9" + "ab" * 20
+        self.assertTrue(refused(f"41111111111 {edge}"))
+        for value in (f"commit {digest} merged", f"sha256 {digest}", f"{digest} utf8"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))

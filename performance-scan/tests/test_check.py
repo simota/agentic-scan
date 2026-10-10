@@ -92,7 +92,8 @@ class CitationTests(unittest.TestCase):
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
                  "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
                  "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7",
-                 "src/設定:12", "Program.CS:20", "index.PY:4", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
+                 "src/設定:12", "Program.CS:20", "index.PY:4", "Taskfile:1", "Pipfile:2",
+                 "CHANGELOG:4", "./NOTES:3", "analysis.Rmd:42", "report.Rnw:10", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
@@ -194,6 +195,13 @@ class CitationCorpusTests(unittest.TestCase):
     def test_corpus(self):
         self.assertEqual([t for t in self.FILES if not findings.cites_location(t)], [])
         self.assertEqual([t for t in self.LOOK_ALIKES if findings.cites_location(t)], [])
+
+
+class ImpactBudgetTests(unittest.TestCase):
+    def test_budgets_named_in_impact_must_exist(self):
+        doc = complete_doc()
+        doc["findings"][1]["impact"] = "Also violates B-99 and B-01"
+        self.assertEqual(contract_problems(doc), ["P-002.impact: B-99 is not in budgets"])
 
 if __name__ == "__main__":
     unittest.main()

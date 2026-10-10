@@ -71,6 +71,7 @@ PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
+BUDGET_MENTION = re.compile(r"(?<![\w-])B-[0-9]{2,}(?![\w-])")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
 # The lookbehind starts a match only at the beginning of a run: without it a long
 # run with no colon is retried from every position (quadratic time).
@@ -99,16 +100,20 @@ AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "exampl
 ABBREVIATION = re.compile(r"[^\W\d_][/\\][^\W\d_]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # A file name has a directory part whose last segment holds a letter, in any
-# script (src/main, src/設定,
-# src/a; not HTTP/1.1, and _rejection refuses N/A and I/O, whose segments are all
-# single characters), an extension with a letter (not 1.5 or v1.2.3), or a
-# conventional extensionless name. All-caps words in general (TTL, MAX_CONNECTIONS)
-# are settings, not files.
+# script (src/main, src/設定, src/a, ./CHANGELOG; not HTTP/1.1, and _rejection
+# refuses N/A and I/O), an extension with a letter (not 1.5 or v1.2.3), or a
+# conventional extensionless root name: a capitalised *file (Makefile, Taskfile,
+# Pipfile) or a well-known all-caps file. Other all-caps words (TTL, TIMEOUT,
+# MAX_CONNECTIONS) are settings; any other extensionless root file is cited
+# with ./ (./NOTES:3).
 FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[^\W\d_][^/\\]*"
                         r"|.*\.[A-Za-z][A-Za-z0-9]*"
-                        r"|(?:GNU)?[Mm]akefile|(?:Docker|Container|Gem|Proc|Rake|Jenkins|Vagrant|Brew"
-                        r"|Pod|Fast|Just|Earth|Tilt|Guard|Cap|Berks|Snake)file"
-                        r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|README|VERSION|BUCK")
+                        r"|(?:GNU)?makefile|[A-Z][a-z]*file"
+                        r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|LICENCE|README|VERSION|BUCK"
+                        r"|CHANGELOG|CHANGES|HISTORY|NEWS|AUTHORS|CONTRIBUTORS|CONTRIBUTING"
+                        r"|MAINTAINERS|NOTICE|COPYING|INSTALL|SECURITY|TODO")
+# Capitalised words ending in "file" that are prose, not files.
+NOT_FILES = frozenset(("Profile", "Ffile"))
 
 
 def _is_host(name):
@@ -131,7 +136,7 @@ def _rejection(path):
         return "a URL"
     if _is_host(path):
         return "a host:port"
-    if not FILE_SHAPE.fullmatch(path):
+    if not FILE_SHAPE.fullmatch(path) or path in NOT_FILES:
         return "not a file name (a setting, number or word)"
     if ABBREVIATION.fullmatch(path):
         return "an abbreviation such as N/A or I/O, not a file"
@@ -141,11 +146,12 @@ def _rejection(path):
         return "a module or host path, not a file"
     stem, dot, ext = last.rpartition(".")
     # Go and Java selectors (time.Second, json.Marshal, runtime.GOMAXPROCS) look
-    # like a file with a capitalised extension. Real extensions are not
-    # CamelCase and stay short when upper-cased (Program.CS, index.PY, README.MD);
-    # a short all-caps selector such as sql.DB cannot be told apart and counts.
+    # like a file with a capitalised extension of five or more characters; real
+    # capitalised extensions are short (Program.CS, index.PY, analysis.Rmd,
+    # report.Rnw). A short selector such as sql.DB or json.Map cannot be told
+    # apart and counts.
     if (dot and stem and "/" not in path and "\\" not in path and ext[:1].isupper()
-            and (any(c.islower() for c in ext) or len(ext) > 5)):
+            and len(ext) >= 5):
         return "a code identifier, not a file"
     return None
 
@@ -579,6 +585,9 @@ def _record_problems(doc):
             problems.append(f"{b['id']}: a not-checked budget needs a reason")
     holding = {b["id"] for b in doc.get("budgets", []) if b["status"] == "holds"}
     for f in findings:
+        # Further violated budgets are named in impact; they must exist too.
+        for named in sorted(set(BUDGET_MENTION.findall(f["impact"])) - budget_ids):
+            problems.append(f"{f['id']}.impact: {named} is not in budgets")
         budget = f.get("budget", "")
         if budget.strip() and budget not in budget_ids:
             problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")

@@ -86,11 +86,11 @@ PERSPECTIVES = (
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
-# Evidence whose first sentence states the duplicate and nothing else:
-# `Duplicate of A-004.`, `Duplicates A-004`, `重複: A-004。…`. Anything else in
-# that sentence (`not a duplicate of A-001`, `重複: A-001 ではない`) needs a
-# `path:line` like any other evidence.
-DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*(?:$|[.。;；])",
+# Evidence that is the duplicate statement and nothing else: `Duplicate of
+# A-004`, `Duplicates A-004.`, `重複: A-004。`. Any other text, which could
+# qualify or contradict it, needs a `path:line` like any other evidence; the
+# reasons live in the finding it repeats.
+DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*[.。]?\s*",
                           re.ASCII)
 # A rule ID standing free in prose, as ID_RUN finds finding IDs: not part of a
 # path or file name (`docs/R-02.md`), and ASCII word characters only, so
@@ -186,12 +186,15 @@ def read_json(path):
 # Characters that render as nothing: Hangul and Braille fillers, beside the
 # format, control, separator and unassigned categories `visible` skips.
 BLANK_LOOKING = {"\u115f", "\u1160", "\u2800", "\u3164", "\uffa0"}
+# Default-ignorable marks that render nothing on their own: the combining
+# grapheme joiner, Mongolian free variation selectors, variation selectors.
+IGNORABLE_MARKS = re.compile("[\u034f\u180b-\u180f\ufe00-\ufe0f\U000e0100-\U000e01ef]")
 
 
 def visible(value):
     """True when value shows at least one character (`\u200b` alone does not)."""
-    return any(c not in BLANK_LOOKING and unicodedata.category(c)[0] not in "CZ"
-               for c in value)
+    return any(c not in BLANK_LOOKING and not IGNORABLE_MARKS.match(c)
+               and unicodedata.category(c)[0] not in "CZ" for c in value)
 
 
 def _text(value, where):
@@ -873,7 +876,7 @@ def contract_problems(out, allow=()):
         # A duplicate's evidence is the reported finding that keeps it, whose
         # own evidence cites the line; renumber rewrites the ID with the rest.
         duplicate = verdict == "NotApplicable" and any(
-            m[1] in kept for m in [DUPLICATE_OF.match(evidence)] if m)
+            m[1] in kept for m in [DUPLICATE_OF.fullmatch(evidence)] if m)
         if verdict in DEFINITIVE and not duplicate and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line"
                             + (" (or, for a duplicate, the finding it repeats)"

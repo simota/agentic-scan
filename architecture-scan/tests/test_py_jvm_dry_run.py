@@ -171,7 +171,8 @@ class EvidenceTests(Workspace):
         self.assertTrue(any("A-002: FalsePositive evidence" in p for p in self.problems(doc)))
 
     def test_text_that_shows_nothing_is_blank(self):
-        for value in ("​", "⠀", "ㅤ ‍", " "):
+        for value in ("\u200b", "\u2800", "\u3164 \u200d", "\u2028", "\ufe0f", "\u034f",
+                      "\U000e0100 "):
             with self.subTest(value=repr(value)):
                 with self.assertRaisesRegex(findings.SchemaError, "nonblank"):
                     findings.validate({"limitations": [value]})
@@ -348,8 +349,11 @@ class ReviewRegressionTests(Workspace):
 
     def test_only_a_stated_duplicate_skips_the_line_citation(self):
         doc = complete_doc()
-        for evidence, ok in (("Duplicates A-001", True), ("Duplicate of A-001. Same writer", True),
-                             ("重複: A-001", True), ("重複：A-001。同じ書き込み", True),
+        for evidence, ok in (("Duplicates A-001", True), ("Duplicate of A-001.", True),
+                             ("重複: A-001", True), ("重複：A-001。", True),
+                             ("Duplicate of A-001. Same writer", False),
+                             ("Duplicate of A-001; not actually a duplicate", False),
+                             ("重複: A-001；重複ではない", False),
                              ("Not a duplicate; unlike A-001 this module is legacy", False),
                              ("This is not a duplicate of A-001", False),
                              ("Duplicate of A-001 only in part", False),

@@ -398,9 +398,12 @@ def _merge_records(current, incoming, where, required):
         rid = record["id"]
         if rid in index:
             if required is FINDING_REQUIRED and _collides(index[rid], record):
+                hint = ("give the new finding another ID, or send only the fields that change"
+                        if all(key in record for key in FINDING_REQUIRED) else
+                        "a record changing both title and location is taken for another "
+                        "finding; give it another ID, or correct them in separate fragments")
                 raise SchemaError(
-                    f"{where}: {rid} already holds {index[rid].get('title')!r}; give the new "
-                    f"finding another ID, or send only the fields that change")
+                    f"{where}: {rid} already holds {index[rid].get('title')!r}; {hint}")
             _apply(index[rid], record, required, f"{where}.{rid}")
         else:
             current.append(_apply({}, record, required, f"{where}.{rid}"))

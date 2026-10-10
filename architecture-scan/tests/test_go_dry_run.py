@@ -1,6 +1,7 @@
 """Findings from a Go service run (with GUARD) and a fresh whole-repo review."""
 import io
 import json
+import re
 from pathlib import Path
 import subprocess
 import tempfile
@@ -55,6 +56,14 @@ class MakefileDefaultTests(unittest.TestCase):
             result = self.make("status", "AGENT=codex", "SKILLS_DIR=", "PROJECT=", env=env)
         self.assertIn(f"{home}/.codex/skills/architecture-scan", result.stdout)
 
+    def test_an_empty_host_override_on_the_command_line_falls_back_too(self):
+        with tempfile.TemporaryDirectory() as home:
+            (Path(home) / ".codex").mkdir()
+            env = {**make_env(), "HOME": home}
+            result = self.make("status", "AGENT=codex", "CODEX_HOME=", "SKILLS_DIR=", "PROJECT=",
+                               env=env)
+        self.assertIn(f"{home}/.codex/skills/architecture-scan", result.stdout)
+
     def test_demo_writes_to_a_new_private_directory_by_default(self):
         result = self.make("demo", "DEMO_OUT=")
         self.assertEqual(result.returncode, 0, result.stderr)
@@ -66,6 +75,36 @@ class MakefileDefaultTests(unittest.TestCase):
             for child in written.iterdir():
                 child.unlink()
             written.rmdir()
+
+
+class GuardRecordTests(unittest.TestCase):
+    def test_both_documented_guard_fragments_merge_and_pass_check(self):
+        text = (SKILL / "reference" / "validation.md").read_text(encoding="utf-8")
+        fragments = re.findall(r"`(\{\"findings\": \[\{\"id\": \"A-001\".*?\}\]\})`", text)
+        self.assertEqual(len(fragments), 2)
+        sample = (REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8")
+        for fragment in fragments:
+            with self.subTest(fragment=fragment[:40]), tempfile.TemporaryDirectory() as d:
+                out = Path(d)
+                (out / "findings.json").write_text(sample, encoding="utf-8")
+                (out.parent / f"{out.name}.frag.json").write_text(fragment, encoding="utf-8")
+                frag = out.parent / f"{out.name}.frag.json"
+                try:
+                    with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                        self.assertEqual(findings.main(["merge", str(out / "findings.json"),
+                                                        str(frag)]), 0)
+                        render.main([str(out / "findings.json"), "--out", str(out)])
+                    self.assertEqual(findings.contract_problems(out), [])
+                finally:
+                    frag.unlink()
+
+
+class PartialCollisionHintTests(unittest.TestCase):
+    def test_the_refusal_says_to_split_the_correction(self):
+        doc = {"findings": [finding()]}
+        with self.assertRaisesRegex(findings.SchemaError, "separate fragments"):
+            findings.merge(doc, {"findings": [{"id": "A-001", "title": "x",
+                                               "location": "y.py:1"}]}, "f")
 
 
 if __name__ == "__main__":

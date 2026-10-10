@@ -38,13 +38,15 @@ PROJECT ?=
 
 # Empty or unset overrides use the default configuration directory.
 CLAUDE_DIR := $(or $(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
-CODEX_HOME := $(or $(CODEX_HOME),$(HOME)/.codex)
-AGY_HOME   := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
+# Derived names, like CLAUDE_DIR: a command-line `CODEX_HOME=` would override
+# any reassignment of CODEX_HOME itself.
+CODEX_DIR  := $(or $(CODEX_HOME),$(HOME)/.codex)
+AGY_DIR    := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
 
 # Each host contributes two literal shell arguments: its guard and skills dir.
 tgt_claude := $(call shell_quote,$(CLAUDE_DIR)) $(call shell_quote,$(CLAUDE_DIR)/skills)
-tgt_codex  := $(call shell_quote,$(CODEX_HOME)) $(call shell_quote,$(CODEX_HOME)/skills)
-tgt_agy    := $(call shell_quote,$(AGY_HOME)) $(call shell_quote,$(AGY_HOME)/skills)
+tgt_codex  := $(call shell_quote,$(CODEX_DIR)) $(call shell_quote,$(CODEX_DIR)/skills)
+tgt_agy    := $(call shell_quote,$(AGY_DIR)) $(call shell_quote,$(AGY_DIR)/skills)
 
 ifneq ($(SKILLS_DIR),)
 QTARGETS := $(call shell_quote,$(SKILLS_DIR)) $(call shell_quote,$(SKILLS_DIR))
@@ -175,7 +177,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
 	exit $$fail
 
-demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
+demo: ## render the sample into DEMO_OUT, or a new private temp dir
 	@out=$(call shell_quote,$(DEMO_OUT)); \
 	if [ -z "$$out" ]; then out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-demo.XXXXXX") || exit 1; fi; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \

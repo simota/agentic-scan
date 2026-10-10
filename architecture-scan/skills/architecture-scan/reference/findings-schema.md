@@ -110,8 +110,10 @@ Merge semantics:
 - A complete finding (every required field) sent with an ID that already holds
   a finding with a different `title` or `location` is refused as an ID
   collision: two review units numbered the same ID, or a different finding at
-  the same place. To correct a title or location, send only the changed fields
-  (`{"findings": [{"id": "A-003", "title": "…"}]}`). Each unit numbers in its
+  the same place. A partial record that changes both `title` and `location`
+  is taken for another finding too. To correct a title or location, send only
+  the changed field (`{"findings": [{"id": "A-003", "title": "…"}]}`); to
+  correct both, send them in two fragments. Each unit numbers in its
   own block (`A-101`…, `A-201`…); `renumber` compacts them. IDs are always
   `A-` and three digits, so blocks allow nine units of 99 findings each; a
   unit with more continues in a free block, and a record holds at most 999

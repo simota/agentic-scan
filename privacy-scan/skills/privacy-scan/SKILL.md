@@ -35,7 +35,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Name the sensitive categories**: health, biometrics, precise location,
   financial and government identifiers, children's data, communications
   content, special categories under the named regulation. Severity is judged
-  against these
+  against these. Children's data always counts as a sensitive category
 - **Derive the commitments before hunting**: what this app promises or must
   keep — purposes, retention periods, deletion and export paths, the
   processors it shares with, consent conditions (`reference/commitments.md`).
@@ -51,7 +51,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
 | Review units | One unit per data domain (accounts and identity, payments, content and messages, analytics, support, HR…) plus one cross-cutting unit (logging, error tracking, analytics SDKs, backups, config, client-side scripts). Each unit first hunts the commitments ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/commitments.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Reviewer notes stay in scratch |
-| Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. `check` refuses two reported findings with the same first `location` |
+| Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. The same gap on two platforms is two findings when each platform's code is fixed separately; cross-reference them in `flow`. `check` refuses two reported findings with the same first `location` |
 | IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this and rewrites `PV-NNN` references in prose and lists); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`). Write the record's prose in that language; report labels follow `--lang`, prose is never machine-translated |
@@ -115,6 +115,7 @@ requester's language (`--lang ja|en`).
 | Asked about one feature, SDK or data flow | Scope the review units to the flows it touches, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | No privacy policy or retention rule is in the repository | Infer the commitments from consent UI texts, settings screens, retention jobs and the majority of flows; mark them `inferred`, hunt them anyway, and put each in `decisions`. Ask for the published policy if the requester can share it |
 | The app processes personal data on behalf of its customers (a processor: B2B SaaS, a DPA in the repo) | Take commitments from the DPA, the customer-facing privacy terms and the sub-processor list; owe them to the customer. Add `INSTRUCT` entries (`reference/commitments.md` §2). Consent is usually the customer's to collect, so record `Purpose and consent` steps that do not apply as N/A with that reason; deletion and export reach every store when the customer instructs them. Use of customer data for the app's own purposes (analytics, training, warehousing) beyond the DPA is a finding |
+| The app's own policy or store declarations cite a regulation or programme (COPPA, GDPR, an age-appropriate design code, a kids category) | Treat each claim as the app's own commitment, sourced to the policy line; hunt it like any other ledger entry. Still never state compliance |
 | A regulation is named | Add its requirements as commitments with the regulation as source, phrased as checks on the code (e.g. "deletion reaches every store holding the subject's data"). Never state that the app is or is not compliant |
 | A third party receives data | Record exactly which fields reach it, from where and when (before or after consent). Whether a contract or DPA covers it is `UNKNOWN` unless the repository says so; put it in `decisions` |
 | The commitments promise a control or feature the code does not have (a settings screen, an opt-out, an export) | Treat the commitment as violated on every flow it governs and report the missing mechanism as the finding; say in `flow` where it was searched for |
@@ -161,7 +162,9 @@ requester's language (`--lang ja|en`).
   the report, each hop at `path:line`
 - Every "reaches a third party" claim names the exact fields sent, checked
   against the serializer or event payload actually built, not inferred from
-  the SDK being present
+  the SDK being present. For mobile SDKs whose auto-collection never appears
+  in the repository, the SDK's documented defaults plus the manifest, plist or
+  build flags that enable them are such a check; name both in the evidence
 - Every logging claim is checked against redaction filters, scrubbers and
   `beforeSend`-style hooks configured for that logger or SDK
 - Every deletion claim lists every store holding the data element (from the

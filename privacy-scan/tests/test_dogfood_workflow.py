@@ -227,3 +227,8 @@ class BlindRunTests(unittest.TestCase):
             encoding="utf-8")
         for name, prefix in findings.STEP_PREFIXES.items():
             self.assertIn(f"### {name} ({prefix})", text)
+
+
+class MissingFileLocationTests(unittest.TestCase):
+    def test_a_file_to_create_is_anchored_at_line_zero(self):
+        findings.validate({"findings": [finding(location=["config/initializers/filter_parameter_logging.rb:0"])]})

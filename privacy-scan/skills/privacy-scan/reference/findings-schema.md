@@ -191,10 +191,10 @@ long paths and keep line breaks.
 | `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
 | `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts come last, by path |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
-| `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
+| `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected`. Confidence says how the claim follows from the code; the verdict says how far its verification got, so `Confirmed` with `Likely` means the code shows the gap but a hop was not traced. An excluded finding keeps the severity it would have had |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports. `check` requires its prefix to belong to `category` (`LT` steps under Logs, telemetry and errors) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed. When the fix is a file that does not exist yet, use `path:0` for the file to create and say so in `fix` |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values. `fix` and `guard` may be omitted for `FalsePositive` and `NotApplicable` |
 | `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |
 | `contrast`, `commitment` | Strings the schema treats as optional but `SKILL.md` expects on every finding: the flow that keeps the commitment at `path:line` (or `none`); the ledger ID. `check` reports a ledger ID that is not in `commitments` |

@@ -1,6 +1,9 @@
 <!--
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
-各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
+各欄の {{field}} は findings.json の同名フィールドから、記録の言語のまま転記する。空の任意の行・節
+（conditions、references がない場合）は削除する。step がなければ ` — {{step}}` だけを
+省き、観点の行は残す。
+`location` がリストのときは 1 件ずつコードスパンにしてカンマで区切る。先頭が修正箇所。
 
 登録前に確認すること:
 - 個人データの値を書かない。フィールド名とプレースホルダー（<顧客のメールアドレス> など）で示す
@@ -16,9 +19,10 @@
 |---|---|
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
-| 確度 | {{confidence}}（Environment-dependent の場合は前提条件 — {{conditions}}） |
+| 確度 | {{confidence}} |
+| 前提条件 | {{conditions}} |
 | 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
-| 観点 | {{category}} — {{step}}（step がなければ省く） |
+| 観点 | {{category}} — {{step}} |
 | 場所 | `{{location}}` |
 | 対象リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
@@ -55,7 +59,7 @@
 
 ## 未確定事項
 
-<!-- 静的解析では確認できない条件: 委託先側の設定、契約や DPA、実際に保存されているデータ、デプロイ先のリージョン。 -->
+<!-- finding の conditions と、この finding に触れている decisions・limitations の行から書く: 委託先側の設定、契約や DPA、実際に保存されているデータ、デプロイ先のリージョン。 -->
 - 
 
 ## 対応完了の条件

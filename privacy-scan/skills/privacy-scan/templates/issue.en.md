@@ -1,6 +1,9 @@
 <!--
 Files one finding as one issue (one root cause = one fix location = one issue).
-Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty.
+Copy each {{field}} from the field of the same name in findings.json, verbatim and in the record's
+language. Delete optional rows, lines and sections left empty (no conditions, no references); without a step, drop
+` — {{step}}` and keep the Perspective row.
+`location` may be a list: write each entry as its own code span, comma-separated; the first is the fix location.
 
 Before filing:
 - No personal data values: name fields and use placeholders (<customer email>)
@@ -16,9 +19,10 @@ Before filing:
 |---|---|
 | ID | {{id}} |
 | Severity | {{severity}} |
-| Confidence | {{confidence}} (if Environment-dependent: conditions — {{conditions}}) |
+| Confidence | {{confidence}} |
+| Conditions | {{conditions}} |
 | Verdict | {{validation.verdict}} (method: {{validation.method}}) |
-| Perspective | {{category}} — {{step}} (drop the step when absent) |
+| Perspective | {{category}} — {{step}} |
 | Location | `{{location}}` |
 | Assessed revision | {{meta.commit}} |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
@@ -55,7 +59,7 @@ Before filing:
 
 ## Open questions
 
-<!-- Conditions static reading cannot show: vendor-side settings, contracts and DPAs, data actually present, deployed regions. -->
+<!-- From the finding's conditions and the decisions and limitations lines that name this finding: vendor-side settings, contracts and DPAs, data actually present, deployed regions. -->
 - 
 
 ## Done when

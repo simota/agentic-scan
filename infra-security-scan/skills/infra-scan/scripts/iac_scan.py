@@ -52,8 +52,13 @@ from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, spli
                     unique_object, write_json_atomic)
 from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
-SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__"}
+# Tool caches hold copies of the configuration (.terragrunt-cache, the
+# Serverless and SAM build outputs); scanning them would duplicate findings.
+SKIP_DIRS = {".git", ".terraform", "node_modules", ".venv", "__pycache__", ".terragrunt-cache",
+             ".serverless", ".aws-sam"}
 MAX_BYTES = 2 * 1024 * 1024
+# Plan JSON and cloud exports are machine-written and routinely larger.
+MAX_JSON_BYTES = 64 * 1024 * 1024
 SENSITIVE_PORTS = {
     22: "SSH", 23: "Telnet", 445: "SMB", 1433: "SQL Server", 1521: "Oracle", 2375: "Docker",
     2376: "Docker", 3306: "MySQL", 3389: "RDP", 5432: "PostgreSQL", 5601: "Kibana",
@@ -1355,6 +1360,15 @@ def find_line(text, pattern, default=1):
     return text.count("\n", 0, m.start()) + 1 if m else default
 
 
+def line_numbers(text, positions):
+    """1-based line of each ascending offset, counting newlines once."""
+    line, last = 1, 0
+    for pos in positions:
+        line += text.count("\n", last, pos)
+        last = pos
+        yield line
+
+
 GIT_SOURCE = re.compile(r"^(git::|git@|github\.com/|bitbucket\.org/)|\.git(//|$|\?)")
 REGISTRY_SOURCE = re.compile(r"^([A-Za-z0-9.-]+(?:\.[a-z]+|:[0-9]+)/)?[A-Za-z0-9_-]+/[A-Za-z0-9_-]+/[A-Za-z0-9_-]+"
                              r"(//[^?]+)?$")
@@ -1562,63 +1576,77 @@ def handle_terraform(scan, parsed):
             pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
-                statements = doc_statements(view_of(b, rel))
+                try:
+                    statements = doc_statements(view_of(b, rel))
+                except RecursionError:
+                    statements = UNKNOWN
                 scan.policy_docs[(d, b.labels[1])] = statements
                 if statements is UNKNOWN:
                     scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
                                         f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
     for rel, blocks in parsed:
         for b in blocks:
-            if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
-                collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
-            collect_policy_references(scan, str(Path(rel).parent), b)
+            try:
+                if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
+                    collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
+                collect_policy_references(scan, str(Path(rel).parent), b)
+            except RecursionError:
+                pass  # reported once by the checks below
     declared = {}
     for rel, blocks in parsed:
         d = str(Path(rel).parent)
         info = scan.tf_dirs.setdefault(d, {"resources": False, "backend": False, "file": rel})
         for b in blocks:
-            view = view_of(b, rel)
-            if b.type in ("resource", "data") and len(b.labels) == 2:
-                # Terraform refuses a module that declares one address twice;
-                # the scanner reads both, so say the module is not valid as given.
-                key = (d, b.type, *b.labels)
-                if key in declared:
-                    address = ".".join(b.labels if b.type == "resource" else ["data", *b.labels])
-                    scan.not_run.append(f"duplicate declaration of {address} in one module (Terraform would "
-                                        f"reject it): {declared[key]} and {rel}:{b.line}")
-                else:
-                    declared[key] = f"{rel}:{b.line}"
-            if b.type == "resource" and len(b.labels) == 2:
-                res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
-                scan.add_resource(res)
-                info["resources"] = True
-                if b not in uncertain and not never_created(view):
-                    check_tf(scan, res)
-            elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
-                check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
-            elif b.type == "module" and b.labels:
-                info["resources"] = True  # a root that only calls modules still holds state
-                handle_module(scan, rel, b, view)
-            elif b.type == "provider" and b.labels and b not in uncertain and not local_emulator(b, view):
-                for key in ("access_key", "secret_key", "token", "credentials", "access_token",
-                            "client_secret", "client_certificate_password"):
-                    # AWS keys in a provider block are flagged in any form.
-                    # Other providers often take short-lived tokens from data sources
-                    # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
-                    # a literal value or a key file read from the repository.
-                    if key in b.attrs and key not in ("access_key", "secret_key") and not (
-                            isinstance(view.get(key), str) or re.search(r"\bfile\(", b.attrs[key][0])):
-                        continue
-                    if key in b.attrs:
-                        scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
-                                 view.line(key), f"{key} set in provider block")
-                        break
-            elif b.type == "terraform":
-                for inner in b.blocks:
-                    if inner.type == "cloud" or (inner.type == "backend" and inner.labels):
-                        info["backend"] = True
-                    if inner.type == "backend" and inner.labels:
-                        handle_backend(scan, getattr(inner.line, "file", rel), inner)
+            try:
+                check_block(scan, rel, d, b, view_of(b, rel), info, declared, uncertain)
+            except RecursionError:
+                scan.not_run.append(f"Terraform expression nested too deeply; checks not run: "
+                                    f"{getattr(b.line, 'file', rel)}:{b.line}")
+
+
+def check_block(scan, rel, d, b, view, info, declared, uncertain):
+    """Inventory and rules for one top-level block."""
+    if b.type in ("resource", "data") and len(b.labels) == 2:
+        # Terraform refuses a module that declares one address twice;
+        # the scanner reads both, so say the module is not valid as given.
+        key = (d, b.type, *b.labels)
+        if key in declared:
+            address = ".".join(b.labels if b.type == "resource" else ["data", *b.labels])
+            scan.not_run.append(f"duplicate declaration of {address} in one module (Terraform would "
+                                f"reject it): {declared[key]} and {rel}:{b.line}")
+        else:
+            declared[key] = f"{rel}:{b.line}"
+    if b.type == "resource" and len(b.labels) == 2:
+        res = Res(b.labels[0], f"{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d)
+        scan.add_resource(res)
+        info["resources"] = True
+        if b not in uncertain and not never_created(view):
+            check_tf(scan, res)
+    elif b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
+        check_tf(scan, Res(b.labels[0], f"data.{b.labels[0]}.{b.labels[1]}", rel, b.line, view, d))
+    elif b.type == "module" and b.labels:
+        info["resources"] = True  # a root that only calls modules still holds state
+        handle_module(scan, rel, b, view)
+    elif b.type == "provider" and b.labels and b not in uncertain and not local_emulator(b, view):
+        for key in ("access_key", "secret_key", "token", "credentials", "access_token",
+                    "client_secret", "client_certificate_password"):
+            # AWS keys in a provider block are flagged in any form.
+            # Other providers often take short-lived tokens from data sources
+            # (kubernetes token = data.aws_eks_cluster_auth.x.token); flag only
+            # a literal value or a key file read from the repository.
+            if key in b.attrs and key not in ("access_key", "secret_key") and not (
+                    isinstance(view.get(key), str) or re.search(r"\bfile\(", b.attrs[key][0])):
+                continue
+            if key in b.attrs:
+                scan.hit("PS-003", Res("provider", f"provider.{b.labels[0]}", rel, b.line),
+                         view.line(key), f"{key} set in provider block")
+                break
+    elif b.type == "terraform":
+        for inner in b.blocks:
+            if inner.type == "cloud" or (inner.type == "backend" and inner.labels):
+                info["backend"] = True
+            if inner.type == "backend" and inner.labels:
+                handle_backend(scan, getattr(inner.line, "file", rel), inner)
 
 
 def local_emulator(block, view):
@@ -1655,6 +1683,28 @@ def handle_module(scan, rel, b, view):
             scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
     elif REGISTRY_SOURCE.match(source) and version is None:
         scan.hit("PS-001", res, view.line("source"), "registry module without version")
+
+
+def handle_terragrunt(scan, rel, text):
+    """terraform { source = ... } pins the module the same way a module block does."""
+    try:
+        blocks = parse_hcl(text)
+    except RecursionError:
+        scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
+        return
+    for b in blocks:
+        if b.type != "terraform":
+            continue
+        view = HclView(b)
+        source = view.get("source")
+        if not isinstance(source, str) or not GIT_SOURCE.search(source):
+            continue
+        res = Res("terragrunt", f"terragrunt:{rel}", rel, b.line)
+        m = re.search(r"[?&]ref=([^&]+)", source)
+        if not m:
+            scan.hit("PS-001", res, view.line("source"), "git source without ?ref=")
+        elif not PINNED_REF.fullmatch(m.group(1)):
+            scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
 
 
 def handle_backend(scan, rel, block):
@@ -1770,8 +1820,9 @@ def handle_plan(scan, rel, text, doc):
     # Map decoded addresses to lines once: Terraform escapes <, > and & and
     # writes non-ASCII raw, so re-encoding an address would not find it.
     lines = {}
-    for m in re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text):
-        lines.setdefault(json.loads(m.group(1)), text.count("\n", 0, m.start()) + 1)
+    matches = list(re.finditer(r'"address"\s*:\s*("(?:\\.|[^"\\])*")', text))
+    for m, line in zip(matches, line_numbers(text, (m.start() for m in matches))):
+        lines.setdefault(json.loads(m.group(1)), line)
 
     plan_config_refs(scan, rel, doc)
     # planned_values do not say which provider alias a resource uses; with an
@@ -1884,6 +1935,9 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     if line_of is None:
         keys = json_key_lines(text)
         line_of = lambda lid: keys.get((("Resources",), lid), 1)  # noqa: E731
+    if doc.get("Transform") is not None:
+        scan.not_run.append(f"CloudFormation Transform (SAM or macro): rules read the template as written, not the "
+                            f"expanded resources; review the transformed template by hand: {rel}")
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -1963,6 +2017,20 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 inherited = (inherited - {"DBClusterIdentifier"}) or props.get("EngineMode") == "serverless"
             if props.get("StorageEncrypted") in (False, "false", None) and not inherited:
                 scan.hit("AWS-RDS-002", res, line, "StorageEncrypted not true")
+        elif type_ == "AWS::Serverless::Function":
+            # SAM expands these into Lambda, IAM role and URL resources.
+            url = props.get("FunctionUrlConfig")
+            if isinstance(url, dict) and url.get("AuthType") == "NONE":
+                scan.hit("AWS-LAMBDA-001", res, line, "FunctionUrlConfig.AuthType = NONE")
+            if "Role" not in props:
+                policies = aslist(props.get("Policies"))
+                for p in policies:
+                    if isinstance(p, dict) and "Statement" in p:
+                        scan.identity_policy(res, norm_statements(p), line)
+                # A bare name is a managed policy in the aws partition.
+                if any(p == "AdministratorAccess" or (isinstance(cfn_string(p), str) and ADMIN_ARN.search(cfn_string(p)))
+                       for p in policies):
+                    scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
         elif type_ == "AWS::Lambda::Url":
             if props.get("AuthType") == "NONE":
                 scan.hit("AWS-LAMBDA-001", res, line, "AuthType = NONE")
@@ -2546,6 +2614,10 @@ def _yaml_kind(rows, doc):
     return None
 
 
+KUSTOMIZE = re.compile(r"""apiVersion:\s*["']?kustomize\.config\.k8s\.io/""")
+KUSTOMIZATION_FILES = {"kustomization.yaml", "kustomization.yml", "Kustomization"}
+
+
 def handle_yaml(scan, rel, lines):
     kinds = set()
     for rows in split_yaml_documents(lines):
@@ -2566,11 +2638,23 @@ def handle_yaml(scan, rel, lines):
                 scan.not_run.append(f"YAML with unsupported line breaks could not be classified; "
                                     f"review by hand: {rel}:{rows[0][0]}")
                 continue
+        if kind == "kubernetes" and any(KUSTOMIZE.match(raw) for _, raw in rows) or (
+                not kind and Path(rel).name in KUSTOMIZATION_FILES):
+            # A Kustomization is build input, not a cluster object.
+            kind = "kustomize"
+            scan.not_run.append(f"Kustomize overlay: patches, generators and remote bases not applied; "
+                                f"review the `kustomize build` output by hand: {rel}")
         if not kind:
             continue
         kinds.add(kind)
+        if kind == "kustomize":
+            continue
         if kind == "cloudformation-yaml":
             handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0], doc)
+            continue
+        if reason and any("{{" in raw for _, raw in rows):
+            scan.not_run.append(f"kubernetes YAML rules not applied (template such as a Helm chart; review the "
+                                f"rendered output, e.g. `helm template`): {rel}:{rows[0][0]}")
             continue
         if reason:
             scan.not_run.append(f"kubernetes YAML rules not applied ({reason}): {rel}:{parser.line}")
@@ -2623,9 +2707,10 @@ def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
 
 SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})")) for label, pattern in CREDENTIAL_SHAPES]
 SECRET_PATTERNS.append(("private key", KEY_BEGIN))
-GENERIC_SECRET = re.compile(
-    r'^\s*"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
-    r'access_key|private_key))"?\s*=\s*"([^"]*)"', re.IGNORECASE)
+SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
+                   r'access_key|private_key))"?')
+GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
+GENERIC_SECRET_JSON = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
 PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*|"
@@ -2644,8 +2729,8 @@ def scan_secrets(scan, rel, text, kind):
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
-        if kind in ("terraform", "tfvars"):
-            m = GENERIC_SECRET.match(line)
+        if kind in ("terraform", "tfvars", "terragrunt"):
+            m = (GENERIC_SECRET_JSON if rel.endswith(".json") else GENERIC_SECRET).match(line)
             if m and SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
@@ -2703,7 +2788,28 @@ def walk(root, scan, prefix=""):
     return entries
 
 
-INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml")
+INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml", ".template")
+
+
+def input_note(name):
+    """Why a recognised infrastructure input is read only in part, or not at all."""
+    lower = name.lower()
+    if lower.endswith((".tf.json", ".tofu.json")):
+        if re.search(r"(?:^|_)override\.(?:tf|tofu)\.json$", lower):
+            return ("Terraform JSON override not applied: the module's final configuration is unknown "
+                    "and its checks read the configuration before the override")
+        return "Terraform JSON syntax not evaluated"
+    if lower == "terragrunt.hcl":
+        return "Terragrunt inputs, dependencies and generate blocks not evaluated"
+    if lower.endswith(".tftest.hcl") or lower.endswith(".tftest.json"):
+        return None  # test assertions, not deployed configuration
+    if lower.endswith(".hcl") and lower != ".terraform.lock.hcl":
+        return "HCL configuration (Packer, Nomad, Vault policy or other) not evaluated"
+    if re.fullmatch(r"serverless\.(?:ya?ml|json|ts|js)", lower):
+        return "Serverless Framework configuration not evaluated"
+    if re.fullmatch(r"pulumi(?:\.[^.]+)?\.ya?ml", lower):
+        return "Pulumi project or stack configuration not evaluated"
+    return None
 BOMS = ((codecs.BOM_UTF32_LE, "utf-32"), (codecs.BOM_UTF32_BE, "utf-32"),
         (codecs.BOM_UTF16_LE, "utf-16"), (codecs.BOM_UTF16_BE, "utf-16"))
 
@@ -2745,15 +2851,24 @@ def run(root, snapshots=()):
     entries = walk(root, scan)
     for directory, prefix in zip(snapshots, snapshot_prefixes(snapshots)):
         entries += walk(Path(directory), scan, prefix)
+    skipped = {"too large": [], "not UTF-8": []}
     for full, rel in entries:
         name = full.name
         if STATE_FILE.search(name):
             scan.files.append({"path": rel, "kind": "state"})
             scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "state file in the repository", strong=True)
             continue
+        snapshot = rel.startswith(SNAPSHOT_PREFIX)
+        # Inputs the scanner would read are named; other skipped files (archives,
+        # media, documents) only weaken the credential search, so they are counted.
+        is_input = snapshot or name.lower().endswith(INPUT_SUFFIXES) or input_note(name) is not None
         try:
-            if full.stat().st_size > MAX_BYTES:
-                scan.not_run.append(f"file too large to scan: {rel}")
+            limit = MAX_JSON_BYTES if snapshot or name.lower().endswith((".json", ".template")) else MAX_BYTES
+            if full.stat().st_size > limit:
+                if is_input:
+                    scan.not_run.append(f"file too large to scan: {rel}")
+                else:
+                    skipped["too large"].append(rel)
                 continue
             data = full.read_bytes()
         except OSError as e:
@@ -2762,20 +2877,27 @@ def run(root, snapshots=()):
         text = decode(data)
         if text is None:
             # Binary files are expected; an input the scanner would read is not.
-            if b"\0" not in data:
-                scan.not_run.append(f"not UTF-8, skipped: {rel}")
-            elif name.lower().endswith(INPUT_SUFFIXES):
+            if is_input:
                 scan.not_run.append(f"binary or not UTF-8, skipped: {rel}")
+            elif b"\0" not in data:
+                skipped["not UTF-8"].append(rel)
             continue
         kind = None
-        if name.endswith(".tf.json") or name.endswith(".tofu.json"):
-            scan.not_run.append(f"Terraform JSON syntax not evaluated; review by hand: {rel}")
+        note = input_note(name)
+        if note:
+            scan.not_run.append(f"{note}; review by hand: {rel}")
         if name.endswith((".tf", ".tofu")):
             kind = "terraform"
-            parsed.append((rel, parse_hcl(text)))
+            try:
+                parsed.append((rel, parse_hcl(text)))
+            except RecursionError:
+                scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
         elif name.endswith(".tfvars"):
             kind = "tfvars"
-        elif name.endswith(".json"):
+        elif name == "terragrunt.hcl":
+            kind = "terragrunt"
+            handle_terragrunt(scan, rel, text)
+        elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
             try:
                 doc = json.loads(text)
             except RecursionError:
@@ -2783,11 +2905,13 @@ def run(root, snapshots=()):
                 scan.not_run.append(f"JSON nested too deeply, skipped: {rel}")
             except ValueError:
                 doc = None
-                if "planned_values" in text or "AWSTemplateFormatVersion" in text:
+                if snapshot or "planned_values" in text or "AWSTemplateFormatVersion" in text:
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             try:
-                if kind == "plan":
+                if name.endswith(".tfvars.json"):
+                    kind = "tfvars"
+                elif kind == "plan":
                     handle_plan(scan, rel, text, doc)
                 elif kind == "cloudformation":
                     handle_cfn(scan, rel, text, doc)
@@ -2795,14 +2919,20 @@ def run(root, snapshots=()):
                     kind = "kubernetes"
                 elif doc is not None:
                     kind = handle_snapshot(scan, rel, text, doc)
+                    if kind is None and (snapshot or is_export(doc)):
+                        scan.not_run.append(f"cloud export shape has no baseline rules; review by hand: {rel}")
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
                 scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
-        elif name.endswith((".yaml", ".yml")):
+        elif name.endswith((".yaml", ".yml", ".template")):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
         scan_secrets(scan, rel, text, kind)
+    for reason, rels in skipped.items():
+        if rels:
+            examples = ", ".join(rels[:3]) + (", ..." if len(rels) > 3 else "")
+            scan.not_run.append(f"{len(rels)} other file(s) {reason}, not searched for credentials: {examples}")
     handle_terraform(scan, parsed)
     for rel, (_, referenced) in sorted(scan.policy_files.items()):
         if not referenced:

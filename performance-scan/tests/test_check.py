@@ -4,7 +4,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support import complete_doc, contract_problems, finding, findings
+from support import complete_doc, contract_problems, finding, findings, render
 
 
 class CheckRuleTests(unittest.TestCase):
@@ -90,6 +90,7 @@ class CitationTests(unittest.TestCase):
                  "BUILD:10 declares the target", "WORKSPACE:7", "config/app.local/settings.py:3",
                  ".env.local:3", ".env.example:1 sets DATABASE_POOL_SIZE=5", "Dockerfile.dev:12",
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
+                 "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
                      "measured locally at 12:30", "ratio 1:10", "redis at localhost:6379",
@@ -100,7 +101,11 @@ class CitationTests(unittest.TestCase):
                      "db.example.co.uk:5432", "api.example.de:443", "api.corp.dev:443",
                      "example.org:443", "db.dev:5432", "api.app:443",
                      # Ambiguous without a directory: written as a host, read as one.
-                     "settings.local:3", "app.test:5"]
+                     "settings.local:3", "app.test:5",
+                     "TTL:300", "MAX_CONNECTIONS:100 is below the worker count", "TTL：300 なので問題なし",
+                     "Read/write ratio 1.5:1", "v1.2.3:4", "python3.11:3", "N/A:1", "I/O:5 per request",
+                     "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
+                     "MAX_ROWS:100", "HTTP:200", "Profile:2"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -112,6 +117,40 @@ class CitationTests(unittest.TestCase):
         self.assertTrue(findings.cites_location("a" * 200000 + " views.py:3"))
         self.assertLess(time.monotonic() - started, 2)
 
+
+
+class UnknownKeyTests(unittest.TestCase):
+    def test_typos_in_records_are_refused_everywhere_but_meta(self):
+        cases = (
+            (lambda d: d["findings"][0].update(budjet="B-99"), r"^findings\[0\]: unknown keys \['budjet'\]"),
+            (lambda d: d["findings"][0]["validation"].update(evidense="x"), r"^findings\[0\]\.validation: unknown"),
+            (lambda d: d["findings"][0].update(measurement={"environment": "e", "command": "c",
+                                                            "result": "r", "note": "n"}),
+             r"^findings\[0\]\.measurement: unknown"),
+            (lambda d: d["findings"][0].update(references=[{"url": "https://a.test", "label": "x"}]),
+             r"^findings\[0\]\.references\[0\]: unknown"),
+            (lambda d: d["budgets"][0].update(reasn="x"), r"^budgets\[0\]: unknown"),
+            (lambda d: d["perspectives"][0].update(notes="x"), r"^perspectives\[0\]: unknown"),
+        )
+        for change, pattern in cases:
+            with self.subTest(pattern=pattern):
+                doc = complete_doc()
+                change(doc)
+                with self.assertRaisesRegex(findings.SchemaError, pattern):
+                    findings.validate(doc)
+        doc = complete_doc()
+        doc["meta"]["host_notes"] = ["kept, not rendered"]
+        findings.validate(doc, complete=True)
+
+
+class StaleReasonTests(unittest.TestCase):
+    def test_a_reason_shows_only_while_the_budget_is_not_checked(self):
+        doc = complete_doc()
+        doc["budgets"][0].update(status="holds", reason="API latency unknown")
+        self.assertNotIn("API latency unknown", render.render_markdown(doc, "en"))
+        self.assertNotIn("API latency unknown", render.render_html(doc, "en"))
+        doc["budgets"][0]["status"] = "not checked"
+        self.assertIn("API latency unknown", render.render_markdown(doc, "en"))
 
 if __name__ == "__main__":
     unittest.main()

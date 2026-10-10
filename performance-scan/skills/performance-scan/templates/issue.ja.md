@@ -4,7 +4,7 @@
 場所は 1 つずつバッククォートで囲み、表のセル内では <br> で区切る。{{request}} は番号ごとに改行する。
 確度が Environment-dependent なら、前提条件としきい値（scale_driver または impact から）と、関連する
 limitations の項目を「未確定事項」に書く。
-step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
+検証方法は static を「静的」、measured を「計測」と書く。step がなければ「（）」ごと省き、meta.commit が空なら UNKNOWN、location が配列なら 1 行に 1 つの
 path:line、参考の title が空なら URL をリンク文字列にする。
 
 登録前に確認すること:
@@ -21,7 +21,7 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
 | 確度 | {{confidence}} |
-| 検証判定 | {{validation.verdict}}（検証方法: static は「静的」、measured は「計測」） |
+| 検証判定 | {{validation.verdict}}（検証方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |
 | 場所 | {{location}} |
 | 対象リビジョン | {{meta.commit}} |

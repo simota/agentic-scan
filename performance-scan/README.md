@@ -72,8 +72,9 @@ failures, including Python's parsing limits, are reported as input errors
 before any record or report is changed.
 
 Run all merges to the same `findings.json` sequentially through one REPORT
-coordinator. Parallel reviewers write fragments in scratch for that coordinator
-to merge. Atomic replacement does not detect concurrent updates.
+coordinator. Parallel reviewers write draft findings in scratch; the coordinator
+writes the merged fragments with final IDs. Atomic replacement does not detect
+concurrent updates.
 
 ### Script behaviour
 

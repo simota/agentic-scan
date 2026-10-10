@@ -246,7 +246,8 @@ def budget_cells(budget, labels, findings):
     cited = ", ".join(f["id"] for f in findings
                       if f.get("budget") == budget["id"] and not is_excluded(f))
     return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
-            inference, budget.get("reason", ""), cited or "—")
+            inference, budget.get("reason", "") if budget["status"] == "not checked" else "",
+            cited or "—")
 
 
 def budget_headers(labels):

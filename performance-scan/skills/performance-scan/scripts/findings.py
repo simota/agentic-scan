@@ -58,6 +58,16 @@ META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "location",
                     "workload", "scale_driver", "cost_model", "request", "impact",
                     "fix", "regression_test", "validation")
+# Records accept only their documented keys, so a typo (budjet, measurment) is
+# refused instead of silently escaping check's rules and both outputs. meta stays
+# open for host-specific notes; only its documented keys are rendered.
+FINDING_KEYS = frozenset(FINDING_REQUIRED + ("contrast", "budget", "step", "status",
+                                             "measurement", "references"))
+VALIDATION_KEYS = frozenset(("verdict", "method", "evidence"))
+MEASUREMENT_KEYS = frozenset(("environment", "command", "result"))
+REFERENCE_KEYS = frozenset(("url", "title"))
+BUDGET_KEYS = frozenset(("id", "statement", "source", "family", "inferred", "status", "reason"))
+PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"P-[0-9]{3}")
 BUDGET_ID = re.compile(r"B-[0-9]{2,}")
@@ -65,7 +75,7 @@ BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 # The lookbehind starts a match only at the beginning of a run: without it a long
 # run with no colon is retried from every position (quadratic time).
 CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
-                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9][0-9]*")
+                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9１-９][0-9０-９]*")
 LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
@@ -73,27 +83,35 @@ class SchemaError(ValueError):
     pass
 
 
-# Final labels that mark a dotted name as a host rather than a file name. The
-# ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev,
-# README.org): with them, a lowercase two-label name (example.org, db.dev) is a
-# host, while a name with an uppercase letter or a leading dot is a file.
+# Final labels that mark a lowercase dotted name as a host rather than a file
+# name (hosts are written in lowercase; Service.svc and README.org are files).
+# The ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev),
+# so they mark a host only in a two-label name (example.org, db.dev) or in a
+# name of three or more labels (api.corp.dev); a leading dot always means a file.
 HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", "eu", "us",
                            "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
 AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
-# A file name has an extension, a directory part, or a conventional extensionless
-# name: Makefile, Dockerfile, BUILD, WORKSPACE, OWNERS.
-FILE_SHAPE = re.compile(r".*[/\\].*|.*\.[A-Za-z0-9]+|[A-Z][A-Za-z]*file|[A-Z][A-Z0-9_]+")
+# A file name has a directory part whose last segment holds a letter (src/main,
+# not N/A, I/O or HTTP/1.1), an extension with a letter (not 1.5 or v1.2.3), or a
+# conventional extensionless name. All-caps words in general (TTL, MAX_CONNECTIONS)
+# are settings, not files.
+FILE_SHAPE = re.compile(r".*[/\\][^/\\]*[A-Za-z][^/\\]*(?<=[^/\\]{2})"
+                        r"|.*\.[A-Za-z][A-Za-z0-9]*"
+                        r"|(?:GNU)?[Mm]akefile|(?:Docker|Container|Gem|Proc|Rake|Jenkins|Vagrant|Brew"
+                        r"|Pod|Fast|Just|Earth|Tilt|Guard|Cap|Berks|Snake)file"
+                        r"|BUILD|WORKSPACE|OWNERS|CODEOWNERS|LICENSE|README|VERSION|BUCK")
 
 
 def _is_host(name):
     """True for localhost, an IPv4 address or a dotted name ending in a host suffix."""
     if "/" in name or "\\" in name or name.startswith("."):
         return False
-    labels = name.lower().split(".")
-    ambiguous = labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name.islower())
-    return (name.lower() == "localhost" or bool(IPV4.fullmatch(name))
-            or (len(labels) > 1 and (labels[-1] in HOST_SUFFIXES or ambiguous)))
+    if name.lower() == "localhost" or IPV4.fullmatch(name):
+        return True
+    labels = name.split(".")
+    return (name == name.lower() and len(labels) > 1
+            and (labels[-1] in HOST_SUFFIXES or labels[-1] in AMBIGUOUS_HOST_SUFFIXES))
 
 
 def cites_location(text):
@@ -191,9 +209,16 @@ def _choice(value, allowed, where):
         raise SchemaError(f"{where}: {_show(value)} is not one of {', '.join(allowed)}")
 
 
+def _known_keys(record, allowed, where):
+    unknown = set(record) - allowed
+    if unknown:
+        raise SchemaError(f"{where}: unknown keys {sorted(unknown)}")
+
+
 def validate_finding(f, where):
     if not isinstance(f, dict):
         raise SchemaError(f"{where}: must be an object")
+    _known_keys(f, FINDING_KEYS, where)
     for key in FINDING_REQUIRED:
         if key not in f:
             raise SchemaError(f"{where}: missing {key}")
@@ -223,6 +248,7 @@ def validate_finding(f, where):
     v = f["validation"]
     if not isinstance(v, dict):
         raise SchemaError(f"{where}.validation: must be an object")
+    _known_keys(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
     _choice(v.get("method"), METHODS, f"{where}.validation.method")
     if v["verdict"] in DEFINITIVE:
@@ -235,6 +261,7 @@ def validate_finding(f, where):
         m = f["measurement"]
         if not isinstance(m, dict):
             raise SchemaError(f"{where}.measurement: must be an object")
+        _known_keys(m, MEASUREMENT_KEYS, f"{where}.measurement")
         for key in ("environment", "command", "result"):
             _text(m.get(key), f"{where}.measurement.{key}")
     references = f.get("references", [])
@@ -243,6 +270,7 @@ def validate_finding(f, where):
     for i, ref in enumerate(references):
         if not isinstance(ref, dict):
             raise SchemaError(f"{where}.references[{i}]: must be an object")
+        _known_keys(ref, REFERENCE_KEYS, f"{where}.references[{i}]")
         _text(ref.get("url"), f"{where}.references[{i}].url")
         _optional_strings(ref, ("title",), f"{where}.references[{i}]")
 
@@ -252,6 +280,7 @@ def validate_budget(b, where, seen):
     if (not isinstance(b, dict) or not isinstance(b.get("id"), str)
             or not BUDGET_ID.fullmatch(b["id"])):
         raise SchemaError(f"{where}.id: must look like B-01")
+    _known_keys(b, BUDGET_KEYS, where)
     if b["id"] in seen:
         raise SchemaError(f"{where}.id: duplicate {b['id']}")
     seen.add(b["id"])
@@ -269,6 +298,7 @@ def validate_perspective(p, where, seen):
     """Check one perspective; seen collects the names of the perspectives before it."""
     if not isinstance(p, dict):
         raise SchemaError(f"{where}: must be an object")
+    _known_keys(p, PERSPECTIVE_KEYS, where)
     _choice(p.get("name"), PERSPECTIVES, f"{where}.name")
     if p["name"] in seen:
         raise SchemaError(f"{where}.name: duplicate {p['name']}")

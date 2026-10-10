@@ -52,7 +52,7 @@
       "budget": "B-04",
       "fix": "Stream rows with a server-side cursor and write the CSV incrementally to the response",
       "regression_test": "Export of 10k synthetic orders keeps peak allocation below a fixed bound",
-      "validation": {"verdict": "Likely", "method": "static", "evidence": "export.py:27 list(Order.objects.filter(tenant=...)); production volume unknown"},
+      "validation": {"verdict": "Likely", "method": "static", "evidence": "export.py:27 list(Order.objects.filter(tenant=...)) materialises every order; whether GET /api/orders/export routes to this helper or to the streaming variant at app/orders/export_stream.py:9 depends on a feature flag read at app/orders/urls.py:14 that was not traced"},
       "status": "Open"
     },
     {

@@ -39,8 +39,8 @@ Rules:
 - The `note` lists the hunt step IDs applied and each one left out with its
   reason (e.g. `DB1–DB3 via B-01; DB5 N/A: no explicit transactions`)
 - A construct that is not sound but whose workload rate keeps it below every
-  severity in `SKILL.md` is noted as `applied, below threshold: <rate>, no
-  finding`
+  severity in `SKILL.md` leaves the status `applied`; its note says `below
+  threshold: <rate>, no finding`
 - A step is `sound` only when its *Sound when* cell can be filled with the
   mitigation's `path:line` on the path the workload takes. "The ORM optimises
   it" is not evidence

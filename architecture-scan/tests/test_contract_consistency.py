@@ -34,7 +34,7 @@ class SchemaConsistencyTests(unittest.TestCase):
         findings.validate({"findings": [finding(location=["src/a.py:5-5", "src/a.py:1-40"])]})
 
     def test_step_is_a_hunt_step_of_the_finding_category(self):
-        for step in ("dm1", "DM", "DM0", "DM5", "XX1", "DM1 DM2", 1, None):
+        for step in ("dm1", "DM", "DM0", "DM6", "XX1", "DM1 DM2", 1, None):
             with self.subTest(step=step):
                 self.assert_refused({"findings": [finding(step=step)]}, r"\.step")
         self.assert_refused({"findings": [finding(step="BL1")]}, "not a Domain model")

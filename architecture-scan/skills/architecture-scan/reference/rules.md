@@ -10,7 +10,9 @@ states for itself: *the domain does not import the ORM*, *only the billing
 module writes invoices*, *every consumer is idempotent*, *controllers call
 services, never repositories*, *errors are translated once at the edge*. No
 generic rule knows them, so they are written down before the code is judged.
-A rule the codebase never adopted is not a rule to hold it to.
+A rule the codebase never adopted is not a rule to hold it to for structure
+or change cost; a traced defect (a lost write, a dual write that diverges) is a
+finding under the family's `baseline` entry whatever the codebase adopted.
 
 ## 1. Derive rules from where the codebase already states them
 

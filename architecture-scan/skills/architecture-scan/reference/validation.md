@@ -25,8 +25,10 @@ finding judged false stays in the record with its exclusion and evidence.
 ## Four claims for every finding
 
 1. **Reach** — the violating edge, writer or flow exists in code that runs:
-   registered, imported, reachable from an entry point. Dead code is
-   `NotApplicable`, or a *Dependencies and evolution* finding of its own
+   registered, imported, reachable from an entry point. Before calling code
+   dead, search for its name as a string in config, DI registrations and
+   routing tables. Dead code is `NotApplicable`, or a *Dependencies and
+   evolution* finding of its own
 2. **Consequence** — what the violation allows or costs. For a defect: the
    concrete sequence (which call fails after which commit, which writer skips
    which rule). For change cost: history evidence (co-change counts, churn, the
@@ -37,7 +39,10 @@ finding judged false stays in the record with its exclusion and evidence.
    skipped: base classes, decorators, middleware, framework config
 4. **Rule** — the violated rule is this codebase's own (cited source), or is
    marked `inferred` with the rule in `decisions`. A rule from a textbook that
-   this codebase never adopted does not make a finding by itself
+   this codebase never adopted does not make a change-cost or structure
+   finding by itself. A defect claim — incorrect behaviour or data damage on a
+   traced path — needs no adopted rule: cite the family's `baseline` entry
+   (`reference/rules.md` §2)
 
 ## Falsification
 

@@ -72,7 +72,7 @@ PERSPECTIVES = (
 )
 # Hunt step prefixes, in PERSPECTIVES order (reference/perspectives.md).
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
-STEP_COUNTS = (4, 3, 4, 4, 4, 3, 3, 3, 3, 3, 2, 3)
+STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}

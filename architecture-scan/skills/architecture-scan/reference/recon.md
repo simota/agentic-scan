@@ -40,6 +40,12 @@ of import sites, an example `path:line`. Then flag:
 - **Hubs** — modules nearly everything depends on, and what they contain
   (a "utils" or "common" module that holds domain logic is a lead)
 
+Also record the edges no import statement shows: DI container wiring and
+component scan, string or dynamic imports (`importlib`, `require(name)`),
+decorator or annotation route registration, plugin entry points. An edge that
+cannot be resolved statically gets `UNKNOWN` in its *Control* cell, with what
+would decide it.
+
 ## 4. Entry points per module
 
 HTTP routes, jobs, consumers, CLI commands and UI routes, grouped by the module
@@ -52,6 +58,13 @@ One row per table, collection, cache keyspace or bucket on a core flow:
 
 | Store | Owning module | Writers (`path:line`) | Readers | Invariants enforced where |
 |---|---|---|---|---|
+
+Writers include more than explicit saves: ORM dirty-checking (a JPA or
+Hibernate entity mutated inside a transaction with no `save`, SQLAlchemy
+autoflush), bulk updates that bypass hooks (`QuerySet.update()`,
+`update_all`), cascades, model callbacks and signals, raw SQL, database
+triggers and procedures, migrations and backfills, admin panels and management
+commands. Search for each form and record the hit count.
 
 A store with writers in more than one module, or with rules enforced in some
 writers and not others, is a lead. Shared databases between deployable units

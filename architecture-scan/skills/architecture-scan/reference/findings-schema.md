@@ -198,7 +198,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
     }
   ],
   "perspectives": [
-    {"name": "Domain model and data ownership", "status": "applied", "note": "DM1 via R-01; DM2-DM4 applied"}
+    {"name": "Domain model and data ownership", "status": "applied", "note": "DM1 via R-01; DM2-DM5 applied"}
   ],
   "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)"],
   "decisions": ["Confirm that worker/ may not write billing tables"],
@@ -217,7 +217,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM4`, not `DM9`) |
+| `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM5`, not `DM9`) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |

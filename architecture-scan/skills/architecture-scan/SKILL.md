@@ -67,7 +67,19 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 Each further condition the code does not control lowers severity one level. An
 `Environment-dependent` finding names its condition (e.g. "if the queue
 delivers at least once"), and that condition counts as one the code does not
-control: a High-class risk that needs it is Medium.
+control: a High-class risk that needs it is Medium. The condition lowers the
+severity; the confidence label says only how sure the finding is.
+
+Worked examples:
+
+- Concurrent requests are not uncontrolled when the repository runs more than
+  one worker or replica (gunicorn `workers`, Kubernetes `replicas`,
+  autoscaling): a lost update on a balance with `replicas: 3` is High and
+  `Confirmed`
+- A destructive migration shipped with code that still reads the column on a
+  core flow is High
+- "Changes often" means top-decile churn in the history window, or at least
+  three comparable changes in it
 
 ## Phases
 
@@ -104,6 +116,7 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 | Several deployable services in the repo | One review unit per service; check shared databases, shared libraries carrying domain logic, synchronous call chains and contract versioning between them |
 | Change cost is the claim | Back it with history: co-change counts across the boundary, churn of the hotspot, or the number of files a recent comparable change touched (`git log`, read-only). Without history, confidence is at most `Suspected` |
 | Consistency depends on delivery semantics or deployment | Report as `Environment-dependent` and name the condition (at-least-once delivery, more than one instance, retries in the client). When the repository itself states the condition (broker config, a README or ADR that says "at least once"), it is not uncontrolled: the finding is `Confirmed` and keeps its severity, citing that source |
+| Authorization or tenant scoping is in question | Where it is enforced (one owner every path goes through, or a check repeated per call site) is in scope (`DM5`); whether it can be exploited is a security review, so name that in `next_steps` instead of grading it |
 | A pattern is merely unfamiliar or not to taste | Not a finding. Record it only if it causes a defect, a change cost or an inconsistency the history shows |
 | The requester wants a dependency graph or metrics | Run an already-installed, read-only analysis tool on the local checkout, name it before running, and record tool, command and result in `analysis`. Never install packages into the audited repository |
 | Asked to lock a rule in or confirm a fix | GUARD: a fitness function in the repo's own suite, red on the current violation and green after the fix |

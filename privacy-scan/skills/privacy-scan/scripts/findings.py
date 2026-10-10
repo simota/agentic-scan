@@ -33,6 +33,41 @@ contract failed (reasons on stderr).
 Findings describe where personal data goes, never the data itself: public
 prose or evidence containing an e-mail address (other than the reserved
 example domains) or a run of 12 or more digits is refused.
+
+Personal-value guard, in full:
+
+Report prose, including analysis results, commitments, perspective notes and the
+top-level text lists, is checked for e-mail addresses (other than
+`example.com`, `example.org`, `example.net` or the `.example`, `.test`,
+`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
+and Unicode e-mail forms, including complete internationalised domain labels
+and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
+not exempted as reserved example domains. The guard also recognises repeated
+spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
+the katakana prolonged sound mark (`ー`) between digits, and card-style groups
+(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
+UUIDs are not counted as digit runs, so date ranges and identifiers stay
+allowed. In a `location` path only, a path segment that starts with a compact
+date-time (`20261009123045_create_users.py`, as timestamped migrations are
+named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
+most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
+Mail-header comments and folding whitespace around the local part, `@` and
+domain are also inspected without changing the saved text.
+Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
+for inspection; accepted text retains its original spelling. Name fields and
+use placeholders.
+
+All checked prose is also inspected after percent-decoding and HTML-entity
+decoding (`%40`, `&#64;`), repeated up to three times so double-encoded values
+are caught, and with invisible format characters (zero-width spaces, word
+joiners, soft hyphens) removed. Hex digests and dashless UUIDs (whole tokens of
+32 or more hex digits containing a letter) are not counted as digit runs.
+
+Reference URLs are checked both as supplied and after percent-decoding their
+parsed components. Query names and values also receive form decoding (`+`
+means a space). A URL that cannot be parsed is checked after decoding the whole
+string. These checks use temporary copies; accepted URLs retain their original
+spelling.
 """
 import argparse
 from html import unescape
@@ -78,6 +113,10 @@ PERSPECTIVES = (
     "Identifiers and pseudonymisation", "Non-production and derived copies",
     "Location and transfers",
 )
+# Hunt-step prefixes per perspective (reference/perspectives.md headings).
+STEP_PREFIXES = dict(zip(PERSPECTIVES, ("MN", "PC", "RD", "DR", "TP", "LT", "EX", "SP", "CT",
+                                         "ID", "NP", "LO")))
+STEP_ID = re.compile(r"([A-Z]{2})\d+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -725,6 +764,19 @@ def record_problems(doc):
     for name in PERSPECTIVES:
         if name not in recorded:
             problems.append(f"perspective not recorded: {name}")
+    first_seen = {}
+    for f in findings:
+        if f["validation"]["verdict"] in EXCLUDED:
+            continue
+        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+        if location[0] in first_seen:
+            problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
+                            "one finding per fix location: merge them or anchor each at its own fix site")
+        first_seen.setdefault(location[0], f["id"])
+        step = STEP_ID.fullmatch(f.get("step", "").strip())
+        if step and step.group(1) != STEP_PREFIXES[f["category"]]:
+            problems.append(f"{f['id']}.step: {step.group(0)} is not a step of {f['category']} "
+                            f"({STEP_PREFIXES[f['category']]}…); fix the step or the category")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
         # Ledger IDs are technical identifiers; other prose was checked by validate.

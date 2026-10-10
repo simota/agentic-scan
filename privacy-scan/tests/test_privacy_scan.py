@@ -53,7 +53,7 @@ def complete_doc() -> dict:
         "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
                  "assessor": "test", "lang": "en"},
         "commitments": [{"id": "C-01", "statement": "no PII in errors", "source": "policy", "status": "violated"}],
-        "findings": [finding(), finding("PV-002", "Low")],
+        "findings": [finding(), finding("PV-002", "Low", location=["worker/app.py:15"])],
         "perspectives": [{"name": n, "status": "applied", "note": "applied"}
                          for n in findings.PERSPECTIVES],
         "checked_ok": ["deletion cascades"],

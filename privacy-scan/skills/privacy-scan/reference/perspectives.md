@@ -74,7 +74,7 @@ perspective is in brackets.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| RD1 | *(sound constructs)* No retention for an element the commitments give a period for; jobs that exist but skip stores | Retention jobs and TTLs vs the data map's stores | A job or TTL per store at `path:line` — because a period kept in one store and not another is not kept |
+| RD1 | *(sound constructs)* No retention for an element the commitments give a period for; jobs that exist but skip stores | Retention jobs and TTLs vs the data map's stores | A job or TTL per store at `path:line`; deleting by day or month bucket, so data may outlive the period by at most one bucket, is sound — because a period kept in one store and not another is not kept |
 | RD2 | *(sound constructs)* Account deletion that leaves data: soft delete only, related tables not cascaded, files, caches, search indexes, analytics, queues, third parties not reached | Deletion handlers and cascades vs the data map | Every store holding the element is reached or anonymised, at `path:line` — because one forgotten store keeps the subject identifiable |
 | RD3 | Backups and logs outliving stated periods | Backup and log retention config | Retention configured within the stated period, or the commitment names the exception — because backups are stores too |
 

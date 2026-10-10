@@ -21,11 +21,12 @@ class RenumberTests(unittest.TestCase):
     def doc(self):
         doc = complete_doc()
         doc["findings"] = [
-            finding("PV-001", "Low", title="Low first"),
+            finding("PV-001", "Low", title="Low first", location="web/low.py:1"),
             finding("PV-002", "High", title="High second",
                     validation={"verdict": "FalsePositive", "method": "static",
                                 "evidence": "scrubber at app.py:30"}),
-            finding("PV-003", "High", title="High third", impact="Same root as PV-001"),
+            finding("PV-003", "High", title="High third", impact="Same root as PV-001",
+                    location="api/high.py:1"),
         ]
         doc["next_steps"] = ["Fix PV-003, then PV-001; keep PV-002 excluded"]
         return doc
@@ -199,3 +200,30 @@ class DraftWarningTests(unittest.TestCase):
         self.assertTrue(any("then by path" in p for p in findings.record_problems(doc)))
         findings.renumber(doc)
         self.assertEqual(findings.record_problems(doc), [])
+
+
+class BlindRunTests(unittest.TestCase):
+    """Rules added after a blind run split one fix into two findings and mixed steps."""
+
+    def test_two_reported_findings_cannot_share_a_fix_location(self):
+        doc = complete_doc()
+        doc["findings"][1]["location"] = copy.deepcopy(doc["findings"][0]["location"])
+        self.assertTrue(any("share their first location" in p for p in findings.record_problems(doc)))
+        doc["findings"][1]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_steps_must_belong_to_the_category(self):
+        doc = complete_doc()
+        doc["findings"][0]["category"] = "Identifiers and pseudonymisation"
+        problems = findings.record_problems(doc)
+        self.assertTrue(any(p.startswith("PV-001.step: LT2 is not a step of Identifiers") for p in problems),
+                        problems)
+        doc["findings"][0]["step"] = "ID2"
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_step_prefixes_match_the_reference_headings(self):
+        text = (Path(findings.__file__).parents[1] / "reference" / "perspectives.md").read_text(
+            encoding="utf-8")
+        for name, prefix in findings.STEP_PREFIXES.items():
+            self.assertIn(f"### {name} ({prefix})", text)

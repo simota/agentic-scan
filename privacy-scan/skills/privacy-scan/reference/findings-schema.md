@@ -7,11 +7,12 @@ summary use the same recorded facts.
 Render with (paths relative to this skill's directory):
 
 ```
-python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
+python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en>   # --lang defaults to meta.lang
 python3 scripts/findings.py renumber <out>/findings.json   # after a severity changes
 python3 scripts/findings.py check <out> [--allow NAME]
 ```
 
+The scripts use only the standard library and also run under `python3 -I`.
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
 filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
@@ -76,38 +77,14 @@ Merge semantics:
 Every merge validates the combined record; a refused merge writes nothing.
 Each finding must be complete in the fragment that first adds it. Strings must
 be valid UTF-8 text; unpaired Unicode surrogates are refused before saving. Report
-prose, including analysis results, commitments, perspective notes and the
-top-level text lists, is checked for e-mail addresses (other than
-`example.com`, `example.org`, `example.net` or the `.example`, `.test`,
-`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
-and Unicode e-mail forms, including complete internationalised domain labels
-and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
-not exempted as reserved example domains. The guard also recognises repeated
-spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
-the katakana prolonged sound mark (`ー`) between digits, and card-style groups
-(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
-UUIDs are not counted as digit runs, so date ranges and identifiers stay
-allowed. In a `location` path only, a path segment that starts with a compact
-date-time (`20261009123045_create_users.py`, as timestamped migrations are
-named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
-most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
-Mail-header comments and folding whitespace around the local part, `@` and
-domain are also inspected without changing the saved text.
-Line breaks keep unrelated numbers separate. Only a temporary copy is normalised
-for inspection; accepted text retains its original spelling. Name fields and
-use placeholders.
-
-All checked prose is also inspected after percent-decoding and HTML-entity
-decoding (`%40`, `&#64;`), repeated up to three times so double-encoded values
-are caught, and with invisible format characters (zero-width spaces, word
-joiners, soft hyphens) removed. Hex digests and dashless UUIDs (whole tokens of
-32 or more hex digits containing a letter) are not counted as digit runs.
-
-Reference URLs are checked both as supplied and after percent-decoding their
-parsed components. Query names and values also receive form decoding (`+`
-means a space). A URL that cannot be parsed is checked after decoding the whole
-string. These checks use temporary copies; accepted URLs retain their original
-spelling.
+prose (every text field, including analysis results, commitments, perspective
+notes, top-level lists, location paths and reference URLs) is refused when it
+contains an e-mail address outside the reserved example domains (`example.com`,
+`.org`, `.net`, `.example`, `.test`, `.invalid`) or a run of 12 or more digits,
+including spaced, dashed, encoded and invisibly split forms. Dates, UUIDs and
+hex digests are not counted. The checks run on a temporary copy; accepted text
+keeps its spelling. Name fields and use placeholders; the full rules are in the
+docstring of `scripts/findings.py`.
 
 Only the fields documented below are accepted, at every object level: `meta`,
 findings, validation, analysis, references, commitments and perspectives.
@@ -201,7 +178,7 @@ long paths and keep line breaks.
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports |
+| `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports. `check` requires its prefix to belong to `category` (`LT` steps under Logs, telemetry and errors) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values. `fix` and `guard` may be omitted for `FalsePositive` and `NotApplicable` |
 | `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |
@@ -212,6 +189,6 @@ long paths and keep line breaks.
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
-| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports. `family` (string, shown in both reports; name several families as `CONTAIN, SHARE` when a commitment spans them) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
+| `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports; `reason` may also explain any other status. `family` (string, shown in both reports; name several families as `CONTAIN, SHARE` when a commitment spans them) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `partly applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons; for `partly applied`, which steps were not reached) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

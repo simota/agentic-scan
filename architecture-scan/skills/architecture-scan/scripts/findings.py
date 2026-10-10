@@ -84,9 +84,11 @@ PERSPECTIVES = (
 STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU", "DE")
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
-# `Duplicate of A-004`, `duplicates A-004`, `A-004 の重複`, `重複: A-004`.
-DUPLICATE_OF = re.compile(r"(?i)(?:duplicates?(?: of)?|重複[:：]?)\s*(A-[0-9]{3})(?![\w-])"
-                          r"|(?<![\w/-])(A-[0-9]{3})\s*の重複", re.ASCII)
+# Evidence that opens by stating the duplicate: `Duplicate of A-004`,
+# `Duplicates A-004`, `重複: A-004`, `A-004 の重複`. Prose that only mentions
+# one (`not a duplicate of A-001`, `A-001 の重複ではない`) is not a statement.
+DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：]?)\s*(A-[0-9]{3})(?![\w-])"
+                          r"|\s*(A-[0-9]{3})\s*の重複(?!では|じゃ)", re.ASCII)
 # ASCII word characters only, so `R-02にも` beside Japanese text is a mention.
 RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])", re.ASCII)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
@@ -839,7 +841,7 @@ def contract_problems(out, allow=()):
         # A duplicate's evidence is the reported finding that keeps it, whose
         # own evidence cites the line; renumber rewrites the ID with the rest.
         duplicate = verdict == "NotApplicable" and any(
-            (m[1] or m[2]) in kept for m in DUPLICATE_OF.finditer(evidence))
+            (m[1] or m[2]) in kept for m in [DUPLICATE_OF.match(evidence)] if m)
         if verdict in DEFINITIVE and not duplicate and not cites_line(evidence, f["location"]):
             problems.append(f"{f['id']}: {verdict} evidence must cite path:line"
                             + (" (or, for a duplicate, the finding it repeats)"
@@ -937,7 +939,7 @@ def location_problems(doc, repo):
                         for chunk in iter(lambda: stream.read(1 << 20), b""):
                             count, last = count + chunk.count(b"\n"), chunk[-1:]
                     lines[path] = count + (last not in (b"", b"\n"))
-                except OSError:
+                except (OSError, ValueError):  # ValueError: a NUL in the path
                     lines[path] = None
             if lines[path] is None:
                 problems.append(f"{f['id']}: location {loc}: no such file in {repo}")

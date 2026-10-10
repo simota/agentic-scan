@@ -259,6 +259,12 @@ class ReviewRegressionTests(Workspace):
         self.assertEqual([p.split(": ")[1] for p in problems],
                          ["location ../outside.py:1", "location link.py:1", "location pkg:1"])
 
+    def test_a_location_holding_a_nul_is_a_problem_not_a_crash(self):
+        doc = complete_doc()
+        doc["findings"][0]["location"] = ["bad\x00name.py:1"]
+        problems = findings.location_problems(doc, self.tmp)
+        self.assertIn("A-001: location bad\x00name.py:1: no such file", problems[0])
+
     def test_an_at_after_a_combining_mark_is_disarmed(self):
         for text in ("jose\u0301@example.com", "\u30ab\u3099@example.com"):
             with self.subTest(text=repr(text)):
@@ -275,9 +281,11 @@ class ReviewRegressionTests(Workspace):
 
     def test_only_a_stated_duplicate_skips_the_line_citation(self):
         doc = complete_doc()
-        for evidence, ok in (("A-001 の重複", True), ("duplicates A-001", True),
+        for evidence, ok in (("A-001 の重複", True), ("Duplicates A-001", True),
+                             ("重複: A-001。同じ書き込み", True),
                              ("Not a duplicate; unlike A-001 this module is legacy", False),
-                             ("see docs/A-001.md", False)):
+                             ("This is not a duplicate of A-001", False),
+                             ("A-001 の重複ではない", False), ("see docs/A-001.md", False)):
             with self.subTest(evidence=evidence):
                 doc["findings"][1]["validation"] = {"verdict": "NotApplicable",
                                                     "method": "static", "evidence": evidence}
@@ -298,7 +306,8 @@ class CommandLineTests(unittest.TestCase):
             env = make_env()
             env.update(HOME=str(home), PROJECT="my-cloud-project", SKILLS_DIR=str(Path(d) / "x"),
                        AGENT="claude")
-            env.pop("CLAUDE_CONFIG_DIR", None)
+            for name in ("CLAUDE_CONFIG_DIR", "CODEX_HOME", "AGY_HOME"):
+                env.pop(name, None)  # the default host directories are under HOME
             result = subprocess.run(["make", "--no-print-directory", "-C", str(REPO), "status"],
                                     env=env, capture_output=True, text=True, timeout=30)
         self.assertEqual(result.returncode, 0, result.stderr)

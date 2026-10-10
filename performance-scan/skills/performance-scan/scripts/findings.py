@@ -128,10 +128,11 @@ QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|
                        r"|build-snapshot|milestone|m|sr|cr|[ab])[0-9]*", re.IGNORECASE)
 # Before the - or _ that precedes the number, the name may hold digits, . + #
 # and further - or _ (log4j-2.17.1, Node.js-20.11.0, .NET-8.0.0,
-# python-dateutil-2.8.2); without a separator it is letters only, so python3.11 splits as
+# python-dateutil-2.8.2), and a v may mark the number (Python-v3.12.1).
+# Without a separator the name is letters only, so python3.11 splits as
 # python + 3.11.
-PRODUCT_VERSION = re.compile(r"(?:\.?[^\W\d_](?:[^\W_]|[.+#]|[-_](?!\d))*([-_])|[^\W\d_]+)"
-                             r"([0-9]+(?:\.[0-9]+)+)")
+PRODUCT_VERSION = re.compile(r"(?:\.?[^\W\d_](?:[^\W_]|[.+#]|[-_](?![vV]?\d))*([-_])[vV]?"
+                             r"|[^\W\d_]+)([0-9]+(?:\.[0-9]+)+)")
 # Flyway's versioned migrations (V3__add_index.sql, V1_1__init.sql) are files.
 MIGRATION = re.compile(r"V[0-9][0-9._]*__[^_]")
 # Named protocols, in any case and spelling (HTTP/1.1, tls/1.3, TLSv1.3,

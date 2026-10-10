@@ -149,22 +149,24 @@ AFTER_BACKSLASH = re.compile(r"(?<=\\)[!-%'-/:;=>?@^_{-~]")
 AUTOLINK = re.compile(r"(?i)(?:https?|ftp|mailto|xmpp):|www\.")
 
 
-# An `@` after a character an e-mail local part can end with: a letter or
-# digit (in any script, as pandoc's autolinker reads them), `.`, `+`, `-`,
-# `_`, or the `;` that ends an entity this renderer wrote (`a&#95;@x.com`),
-# which cmark-gfm decodes back into the local part before it autolinks.
-# A combining mark counts too: pandoc composes `e` + U+0301 into a letter of
-# the local part. After a blank or punctuation (`（@Version`, `。@Transactional`)
-# there is no local part, so the `@` stays as written.
+# An `@` is disarmed unless what precedes it cannot end an e-mail local part
+# in any renderer: a blank, an opening bracket or quote, `,` or `:` (as in
+# `@scope/pkg`, `(@Version`), or punctuation outside ASCII (`。@Transactional`,
+# `（@Version`). Everything else is disarmed: letters and digits in any script
+# (pandoc reads them all), a combining mark (pandoc composes it into the letter
+# before), the `;` that ends an entity this renderer wrote (`a&#95;@x.com`,
+# decoded back into the local part before cmark-gfm autolinks), and the rest of
+# ASCII punctuation, which other autolinkers accept (`a=@x.com`).
 EMAIL_AT = re.compile(r"(?<=(.))@", re.DOTALL)
-LOCAL_PART_END = re.compile(r"[\w.+\-;]")
+NOT_LOCAL_PART = set(" \t\r\n([{'\"`,:")
 
 
 def _disarm_at(match):
     before = match[1]
-    if LOCAL_PART_END.match(before) or unicodedata.category(before).startswith("M"):
-        return "&#64;<!-- -->"
-    return "@"
+    if before in NOT_LOCAL_PART or before.isspace() or (
+            ord(before) > 127 and unicodedata.category(before)[0] in "PSZ"):
+        return "@"
+    return "&#64;<!-- -->"
 
 
 def disarm_autolinks(text):

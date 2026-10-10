@@ -85,10 +85,12 @@ STEP_PREFIXES = ("BL", "CR", "CP", "DM", "TX", "FH", "AC", "CF", "TS", "OP", "DU
 STEP_COUNTS = (4, 3, 4, 5, 5, 3, 3, 3, 3, 3, 2, 3)
 RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # Evidence that opens by stating the duplicate: `Duplicate of A-004`,
-# `Duplicates A-004`, `重複: A-004`, `A-004 の重複`. Prose that only mentions
-# one (`not a duplicate of A-001`, `A-001 の重複ではない`) is not a statement.
+# `Duplicates A-004`, `重複: A-004`, `A-004 の重複` (ending there, or with `です`
+# or `である`, before punctuation). Prose that only mentions one (`not a
+# duplicate of A-001`, `A-001 の重複ではない`, `A-001 の重複とは言えない`) is not.
 DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：]?)\s*(A-[0-9]{3})(?![\w-])"
-                          r"|\s*(A-[0-9]{3})\s*の重複(?!では|じゃ)", re.ASCII)
+                          r"|\s*(A-[0-9]{3})\s*の重複(?:です|である)?(?=$|[\s。、．，.,;:；：])",
+                          re.ASCII)
 # ASCII word characters only, so `R-02にも` beside Japanese text is a mention.
 RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])", re.ASCII)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
@@ -939,7 +941,9 @@ def location_problems(doc, repo):
                         for chunk in iter(lambda: stream.read(1 << 20), b""):
                             count, last = count + chunk.count(b"\n"), chunk[-1:]
                     lines[path] = count + (last not in (b"", b"\n"))
-                except (OSError, ValueError):  # ValueError: a NUL in the path
+                # ValueError: a NUL in the path; RuntimeError: a symlink loop
+                # before Python 3.13.
+                except (OSError, ValueError, RuntimeError):
                     lines[path] = None
             if lines[path] is None:
                 problems.append(f"{f['id']}: location {loc}: no such file in {repo}")

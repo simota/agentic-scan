@@ -34,8 +34,9 @@ any other scheme, or any URL containing a control or bidirectional character,
 is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
-an e-mail address stays plain text, as in the dashboard; an `@` that starts
-a word, such as `@scope/pkg`, is left as written) or `$` math. A `>` stays
+an e-mail address stays plain text, as in the dashboard; an `@` after a
+blank, a bracket, a quote or non-ASCII punctuation, such as `@scope/pkg` or
+`。@Transactional`, is left as written) or `$` math. A `>` stays
 as written (`a -> b`) except where it would start a quote.
 Backslashes are shown as written (`docs\adr`), so they never escape a
 delimiter; the one exception in `report.md` is a backslash directly before a

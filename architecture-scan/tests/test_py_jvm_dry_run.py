@@ -265,6 +265,17 @@ class ReviewRegressionTests(Workspace):
         problems = findings.location_problems(doc, self.tmp)
         self.assertIn("A-001: location bad\x00name.py:1: no such file", problems[0])
 
+    def test_a_symlink_loop_is_a_problem_not_a_crash(self):
+        (self.tmp / "loop.py").symlink_to(self.tmp / "loop.py")
+        doc = complete_doc()
+        doc["findings"][0]["location"] = ["loop.py:1"]
+        self.assertIn("no such file", findings.location_problems(doc, self.tmp)[0])
+
+    def test_an_at_after_ascii_punctuation_is_disarmed(self):
+        for c in "!#$%&*/=?^|~.+-_;>":
+            with self.subTest(c=c):
+                self.assertIn("&#64;<!-- -->", render.markdown_inline(f"a{c}@example.com"))
+
     def test_an_at_after_a_combining_mark_is_disarmed(self):
         for text in ("jose\u0301@example.com", "\u30ab\u3099@example.com"):
             with self.subTest(text=repr(text)):
@@ -285,7 +296,9 @@ class ReviewRegressionTests(Workspace):
                              ("重複: A-001。同じ書き込み", True),
                              ("Not a duplicate; unlike A-001 this module is legacy", False),
                              ("This is not a duplicate of A-001", False),
-                             ("A-001 の重複ではない", False), ("see docs/A-001.md", False)):
+                             ("A-001 の重複ではない", False), ("A-001 の重複でない", False),
+                             ("A-001 の重複とは言えない", False), ("A-001 の重複です。", True),
+                             ("see docs/A-001.md", False)):
             with self.subTest(evidence=evidence):
                 doc["findings"][1]["validation"] = {"verdict": "NotApplicable",
                                                     "method": "static", "evidence": evidence}

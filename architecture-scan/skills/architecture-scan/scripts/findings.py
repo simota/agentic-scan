@@ -111,10 +111,12 @@ EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "L
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
                  "CONTRIBUTING"}
 # A file extension starts with a letter; `v1.2` and `e.g.` have none. A token
-# ending in a host suffix (`db.internal`, `api.example.com`) is a host:port.
+# ending in an unmistakable host suffix (`db.internal`, `api.example.com`) is a
+# host and port. The list stays short on purpose: refusing a real file
+# (`notes.org`, `.env.local`) fails a valid record, while passing a host only
+# lets weak evidence through.
 FILE_EXTENSION = re.compile(r"\.([A-Za-z][A-Za-z0-9_+-]{0,15})$")
-HOST_SUFFIXES = {"com", "net", "org", "io", "dev", "app", "cloud", "internal", "local",
-                 "localhost", "lan", "corp", "co", "jp", "uk", "de", "cn", "svc"}
+HOST_SUFFIXES = {"com", "net", "io", "internal", "localhost"}
 # At most nine digits per line number, so `int()` never meets a huge value.
 LOCATION = re.compile(r"[^\r\n]+:([0-9]{1,9})(?:-([0-9]{1,9}))?")
 
@@ -265,8 +267,11 @@ def cites_line(evidence, locations=()):
     known = _location_paths(locations)
     for match in EVIDENCE_LINE.finditer(evidence):
         path = match["path"]
-        if (path in known or path in EXTENSIONLESS or path.lower().endswith("file")
-                or re.search(r"[/\\]", path) and not path.startswith("//")):
+        name = re.split(r"[/\\]", path)[-1]
+        stem = name.split(".")[0]
+        if (path in known or re.search(r"[/\\]", path) and not path.startswith("//")
+                or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
+                or stem in EXTENSIONLESS or stem.lower().endswith("file")):
             return True
         extension = FILE_EXTENSION.search(path)
         if extension and extension[1].lower() not in HOST_SUFFIXES:
@@ -500,8 +505,11 @@ def _atomic_write_all(files):
 ID_MENTION = re.compile(
     # Joined to another ID by `/` or `-` (`A-002/A-001`, `A-002-A-001`) is still
     # a mention; joined to anything else that way is part of a path or token.
-    r"(?:(?<=A-[0-9]{3}[/-])|(?<![\w/\\-]))A-[0-9]{3}"
-    r"(?:(?=[/-]A-[0-9]{3}(?![\w]))|(?![\w/\\-]|\.[A-Za-z0-9]))", re.ASCII)
+    # The joined ID must itself stand free, so `A-001-A-002.md`, `A-001/A-002/`
+    # and `JIRA-A-001-A-002` stay whole.
+    r"(?:(?<=(?<![\w/\\-])A-[0-9]{3}[/-])|(?<![\w/\\-]))A-[0-9]{3}"
+    r"(?:(?=[/-]A-[0-9]{3}(?![\w/\\-]|\.[A-Za-z0-9]))|(?![\w/\\-]|\.[A-Za-z0-9]))",
+    re.ASCII)
 
 
 def _first_location(f):
@@ -768,8 +776,10 @@ def cmd_check(args):
 def safe_output():
     """Print paths that are not valid UTF-8 (`o\\xff/`) instead of crashing after the work."""
     for stream in (sys.stdout, sys.stderr):
-        if hasattr(stream, "reconfigure"):
+        try:
             stream.reconfigure(errors="backslashreplace")
+        except (AttributeError, ValueError, OSError):
+            pass  # not a text stream (StringIO, None) or already closed
 
 
 def main(argv=None):

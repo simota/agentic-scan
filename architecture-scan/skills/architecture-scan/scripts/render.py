@@ -41,7 +41,7 @@ def is_safe_link(url):
     if re.search(r"[\x00-\x1f\x7f]", url):
         return False
     stripped = url.lstrip(" ")
-    if stripped.startswith(("//", "\\\\")):
+    if len(stripped) > 1 and set(stripped[:2]) <= {"/", "\\"}:
         return False  # protocol-relative or UNC: another host, not a relative path
     return is_web_url(url) or not SCHEME.match(stripped)
 

@@ -29,7 +29,7 @@ name the verdict and perspective (with the hunt step) of every finding,
 including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
-never `//host` or `\\host`, which name another host);
+never `//host`, `\\host` or `/\host`, which name another host);
 any other scheme, or any URL containing a control character, is shown as
 literal text. In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
@@ -68,8 +68,10 @@ be byte-identical to what `render.py` produces from the current
   such as `Makefile`, `BUILD`, `CODEOWNERS` or `README`, or a path or file name
   from the finding's own `location`, then a line from 1: `job.py:58`,
   `根拠:job.py:58`, `BUILD:12`, `server:9` beside `bin/server:9`; not
-  `ABC:123`, `10:30`, `v1.2:3`, a URL's port or a host and port such as
-  `db.internal:5432`)
+  `ABC:123`, `10:30`, `v1.2:3`, a URL's port or a host and port ending in
+  `.com`, `.net`, `.io`, `.internal` or `.localhost`, such as
+  `db.internal:5432`. Dotfiles and names such as `Dockerfile.dev` or
+  `Makefile.local` count as files)
 
 ## Writing the file
 
@@ -157,7 +159,7 @@ again and re-render.
 
 A refused batch names the fragment that broke the record. A merge or render
 killed mid-write can leave a `.findings-<hex>.tmp` file beside the record;
-`check` names it, and it is deleted once no merge or render is running.
+`check` names it; delete it once no merge or render is running.
 
 Merge and renumber hold an exclusive lock on the record's directory from
 reading the record to replacing it, so review units may merge at the same

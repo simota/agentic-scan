@@ -19,9 +19,19 @@ class RenumberJoinTests(unittest.TestCase):
         rewrite = lambda text: findings._rewrite_ids(text, mapping)  # noqa: E731
         self.assertEqual(rewrite("Fix A-002/A-001 together"), "Fix A-001/A-002 together")
         self.assertEqual(rewrite("A-002-A-001 range"), "A-001-A-002 range")
-        for literal in ("docs/A-001.md", "JIRA-A-001", "A-001/notes", "x-A-001", "A-001-x"):
+        for literal in ("docs/A-001.md", "JIRA-A-001", "A-001/notes", "x-A-001", "A-001-x",
+                        "A-001-A-002.md", "A-001/A-002/", "foo/A-001/A-002 bar",
+                        "JIRA-A-001-A-002"):
             with self.subTest(literal=literal):
                 self.assertEqual(rewrite(literal), literal)
+
+
+class SafeOutputTests(unittest.TestCase):
+    def test_a_closed_or_plain_stream_is_left_alone(self):
+        closed = io.TextIOWrapper(io.BytesIO())
+        closed.close()
+        with redirect_stdout(closed), redirect_stderr(io.StringIO()):
+            findings.safe_output()
 
 
 class DashItemTests(unittest.TestCase):
@@ -102,14 +112,19 @@ class EvidenceHostTests(unittest.TestCase):
         for evidence, ok in (("db.internal:5432 refused", False), ("api.example.com:443", False),
                              ("e.g.:3", False), ("v1.2:3", False), ("//host/x.py:3", False),
                              ("README:4", True), ("job.py:58", True), ("src/x:9", True),
-                             (r"C:\repo\a.py:3", True), ("app.config.ts:3", True)):
+                             (r"C:\repo\a.py:3", True), ("app.config.ts:3", True),
+                             ("Dockerfile.dev:3", True), ("Containerfile.dev:1", True),
+                             (".env.local:3", True), ("Makefile.local:2", True),
+                             ("docker-compose.local:2", True), ("Service.svc:4", True),
+                             ("notes.org:3", True), ("api.example.io:443", False)):
             with self.subTest(evidence=evidence):
                 self.assertEqual(findings.cites_line(evidence), ok)
 
 
 class ProtocolRelativeTests(unittest.TestCase):
     def test_another_host_is_never_a_relative_link(self):
-        for url in ("//evil.example/x", " //evil.example/x", r"\\host\share"):
+        for url in ("//evil.example/x", " //evil.example/x", r"\\host\share", "/\\evil.com",
+                    "\\/evil.com"):
             with self.subTest(url=url):
                 self.assertFalse(render.is_safe_link(url))
                 self.assertNotIn("](<", render.markdown_reference({"url": url}))

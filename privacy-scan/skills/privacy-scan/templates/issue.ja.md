@@ -16,9 +16,9 @@
 |---|---|
 | ID | {{id}} |
 | 深刻度 | {{severity}} |
-| 確度 | {{confidence}}（Environment-dependent なら、前提となる設定を「未確定事項」に書く） |
+| 確度 | {{confidence}}（Environment-dependent の場合は前提条件 — {{conditions}}） |
 | 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
-| 観点 | {{category}}（{{step}}） |
+| 観点 | {{category}} — {{step}}（step がなければ省く） |
 | 場所 | `{{location}}` |
 | 対象リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |

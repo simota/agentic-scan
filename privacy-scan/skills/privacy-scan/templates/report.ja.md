@@ -46,7 +46,7 @@
 - **場所:** `{{location}}`
 - **個人データ / データ主体:** {{data}} / {{subjects}}
 - **破られている約束:** {{commitment}} — {{commitments[id].statement}}
-- **前提条件（Environment-dependent の場合のみ）:** 深刻度が前提とする設定
+- **前提条件（Environment-dependent の場合のみ）:** {{conditions}}
 - **影響:** {{impact}}
 - **修正方針:** {{fix}}
 - **再発防止チェック:** {{guard}}
@@ -55,7 +55,7 @@
 
 ## 4. プライバシー上の約束
 
-<!-- commitments[]: 各約束、その根拠と状態。推定（inferred）の約束はオーナーへの確認事項。 -->
+<!-- commitments[]: ID、約束、分類（family）、根拠、状態（not checked なら理由も）。推定（inferred）の約束は明記し、オーナーへの確認事項とする。 -->
 - 
 
 ## 5. 確認して問題なかった項目

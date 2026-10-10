@@ -18,16 +18,27 @@ filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
 is named). `render.py` still renders a draft that `check` would refuse, and
 prints each such problem on stderr as a warning. `findings.py check` exits `1`
-and lists every contract violation.
-Besides the shape and numbering rules below, `check` requires that a finding's
-`commitment`, when it is a ledger ID (`C-01`…), exists in `commitments`; that
-every finding not excluded (`FalsePositive`, `NotApplicable`) sits under a
-perspective recorded as `applied` or `partly applied`; that IDs follow severity,
-then the first location's path; and that `report.md` and `dashboard.html`
-are both exactly what `render.py` produces from the current `findings.json`
-in one language. Re-render after the last merge.
-All three required outputs must be readable, nonempty files; directories and
-broken links do not qualify.
+and lists every contract violation. This is the complete list; other documents
+point here. `check` refuses an output directory unless:
+
+- it holds exactly `findings.json`, `dashboard.html` and `report.md` (plus
+  `--allow` names), each a readable, nonempty file (directories and broken
+  links do not qualify), and no staging file left by an interrupted write
+- `findings.json` passes the schema below with every `meta` field required
+- IDs are `PV-001`… without gaps; reported findings (not `FalsePositive` or
+  `NotApplicable`) are in severity order, then by their first location's path
+- no two reported findings share their first `location` (one per fix location)
+- a nonblank `step` is one hunt step ID whose prefix belongs to `category`
+- an `Environment-dependent` reported finding names its `conditions`
+- a `commitment` that is a ledger ID (`C-01`…) exists in `commitments`
+- every perspective is recorded, and reported findings sit only under one
+  recorded as `applied` or `partly applied`
+- each `not checked` commitment has a nonblank `reason`
+- `checked_ok` and `limitations` are nonempty
+- `report.md` and `dashboard.html` are exactly what `render.py` produces from
+  the current `findings.json` in one language
+
+Run `renumber` and then `render.py` after the last merge.
 
 Both reports include counts for every verdict, including zero counts, alongside
 the severity counts. Collapsed HTML findings also show their recorded verdict.
@@ -174,7 +185,7 @@ long paths and keep line breaks.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
-| `findings[].id` | `PV-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere) |
+| `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts may sit anywhere |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |

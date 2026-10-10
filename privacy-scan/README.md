@@ -40,16 +40,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence,
   checked against four claims: reach, the data that actually arrives,
   controls, and whether the commitment is the app's own
-- **No values** — `findings.py merge` checks report prose, including analysis
-  results, commitments and coverage notes, for e-mail addresses (including
-  quoted, Unicode and address-literal forms, plus header comments and folding
-  whitespace, outside reserved example domains)
-  and runs of 12 or more digits, even with repeated spaces, tabs, non-breaking
-  spaces, hyphens or Unicode dashes, or as card-style groups joined by `.`, `/`,
-  `_` or `+` (ISO dates, UUIDs and hex digests are not counted). Percent- and
-  entity-encoded forms and invisible format characters are inspected too, and
-  reference URLs are checked after decoding their components; accepted text
-  and URLs keep their original spelling. Use field names and placeholders
+- **No values** — `findings.py merge` refuses e-mail addresses (outside the
+  reserved example domains) and runs of 12 or more digits in any prose,
+  including spaced, encoded and invisibly split forms (full rules in the
+  `scripts/findings.py` docstring). Use field names and placeholders
   throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
@@ -80,8 +74,8 @@ builds from JSON fragments rather than heredocs:
 
 ```sh
 python3 skills/privacy-scan/scripts/findings.py merge out/findings.json frag-001.json
+python3 skills/privacy-scan/scripts/findings.py renumber out/findings.json   # after the last merge
 python3 skills/privacy-scan/scripts/render.py out/findings.json --out out --lang ja
-python3 skills/privacy-scan/scripts/findings.py renumber out/findings.json   # after a severity changes
 python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each violation
 ```
 
@@ -92,14 +86,11 @@ python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each 
 | `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, commitments, perspective coverage |
 | `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
 
-`findings.py check` enforces the run contract: exactly these three readable,
-nonempty files, gapless `PV-NNN` IDs in severity order, every perspective
-recorded, nonblank reasons for unchecked commitments, nonempty `checked_ok`
-and `limitations`, ledger IDs cited by findings present in `commitments`,
-reported findings only under perspectives recorded as `applied` or `partly applied`, and both
-reports matching a fresh rendering of the current `findings.json` (re-render
-after every merge).
-It checks shape, not whether a finding is true.
+`findings.py check` enforces the run contract (exactly these three files, a
+complete record, ordered IDs, consistent references and reports rendered from
+the current record; the full list is in
+`skills/privacy-scan/reference/findings-schema.md`). It checks shape, not
+whether a finding is true.
 
 The scripts reject text that cannot be encoded as UTF-8 and stage output bytes
 before replacing files, so encoding or staging failures preserve existing results.

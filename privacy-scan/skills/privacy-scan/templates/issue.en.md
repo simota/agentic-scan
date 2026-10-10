@@ -16,9 +16,9 @@ Before filing:
 |---|---|
 | ID | {{id}} |
 | Severity | {{severity}} |
-| Confidence | {{confidence}} (if Environment-dependent, name the setting under *Open questions*) |
+| Confidence | {{confidence}} (if Environment-dependent: conditions — {{conditions}}) |
 | Verdict | {{validation.verdict}} (method: {{validation.method}}) |
-| Perspective | {{category}} ({{step}}) |
+| Perspective | {{category}} — {{step}} (drop the step when absent) |
 | Location | `{{location}}` |
 | Assessed revision | {{meta.commit}} |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |

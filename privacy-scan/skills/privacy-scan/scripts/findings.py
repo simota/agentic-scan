@@ -17,15 +17,11 @@ key. FINDINGS is created when absent. The merged record must pass the schema che
 
 `renumber` numbers findings PV-001… in severity order, then path (excluded
 findings last), and rewrites `PV-NNN` references in IDs and prose (never in
-locations, URLs, commands or revisions), so a changed
-severity needs no manual rebuild.
+locations, URLs, commands or revisions). Run it after the last merge; IDs
+change, so read them back before writing another fragment.
 
-`check` is the run contract: the output directory holds exactly
-`findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order, every perspective in
-`reference/perspectives.md` is recorded, every ledger ID a finding cites exists,
-every reported finding's perspective is recorded as applied, and both reports
-are the current rendering of `findings.json`.
+`check` is the run contract; its complete rule list is in
+`reference/findings-schema.md`.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr).

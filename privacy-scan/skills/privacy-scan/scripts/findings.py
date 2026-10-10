@@ -74,6 +74,7 @@ import re
 import signal
 import stat
 import sys
+import threading
 import unicodedata
 from urllib.parse import parse_qsl, unquote, unquote_plus, urlsplit
 
@@ -165,7 +166,11 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # numbers. A UUID next to a dash-joined digit is not masked, so masking cannot
 # split a longer number.
 NOT_PERSONAL_NUMBERS = re.compile(
-    r"(?<!\d)(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
+    # A date joined by a hyphen to other digits is not masked (it could split a
+    # longer number), unless those digits are another full date (a range).
+    r"(?<!\d)(?:(?<!\d-)|(?<=\d{4}-\d{2}-\d{2}-))"
+    r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)"
+    r"(?:(?!-\d)|(?=-(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)))"
     r"|(?<![0-9A-Fa-f])(?<!\d-)[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}"
     r"(?![0-9A-Fa-f])(?!-\d)"
     r"|(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
@@ -208,7 +213,9 @@ def read_json(path):
         raise
     except UnicodeDecodeError as exc:
         raise SchemaError(f"{path}: must contain UTF-8 JSON") from exc
-    except (OSError, json.JSONDecodeError) as exc:
+    except OSError as exc:
+        raise SchemaError(f"{path}: {exc.strerror or type(exc).__name__}") from exc
+    except json.JSONDecodeError as exc:
         raise SchemaError(f"{path}: {exc}") from exc
     except (ValueError, RecursionError) as exc:
         # Over-long integers and deep nesting are refused, not tracebacks.
@@ -462,10 +469,10 @@ def validate_finding(f, where):
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
     _choice(f.get("status", "Open"), STATUSES, f"{where}.status")
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
-    if not locations:
+    written = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    if not written:
         raise SchemaError(f"{where}.location: at least one path:line")
-    for i, loc in enumerate(locations):
+    for i, loc in enumerate(written):
         if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
             raise SchemaError(f"{where}.location[{i}]: must be path:line")
         # The parsed line range is technical metadata; the path can hold PII.
@@ -623,13 +630,7 @@ def renumber(doc):
     Reported findings are ordered by severity, then by their first location's
     path; excluded findings follow them. Returns the old-to-new ID mapping.
     """
-    findings = doc.get("findings", [])
-
-    path = _first_path
-    # Severity order, then path, as the run contract numbers them.
-    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
-    ordered = sorted(active, key=lambda f: (SEVERITIES.index(f["severity"]), path(f)))
-    ordered += sorted((f for f in findings if f["validation"]["verdict"] in EXCLUDED), key=path)
+    ordered = sorted(doc.get("findings", []), key=order_key)
     mapping = {f["id"]: f"PV-{i:03d}" for i, f in enumerate(ordered, 1)}
 
     def rewrite(value, key=None):
@@ -704,7 +705,11 @@ def contract_problems(out, allow=()):
         shown = path.name if path.parent == out.resolve() else str(path)
         problems.append(f"stale staging file from an interrupted write: {shown} (delete it)")
     for name in sorted(present - OUTPUTS - set(allow)):
-        if (out / name).resolve() not in staging:
+        try:
+            resolved = (out / name).resolve()
+        except (OSError, RuntimeError):  # symlink loops raise RuntimeError before 3.13
+            resolved = None
+        if resolved not in staging:
             problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
     unusable = set()
     for name in sorted(OUTPUTS & present):
@@ -758,9 +763,23 @@ def _staging_files(out, present):
     return found
 
 
+def locations(f):
+    """A finding's `location` as a list (a single `path:line` string is allowed)."""
+    return f["location"] if isinstance(f["location"], list) else [f["location"]]
+
+
+def excluded(f):
+    return f["validation"]["verdict"] in EXCLUDED
+
+
 def _first_path(f):
-    location = f["location"] if isinstance(f["location"], list) else [f["location"]]
-    return location[0].rsplit(":", 1)[0]
+    return locations(f)[0].rsplit(":", 1)[0]
+
+
+def order_key(f):
+    """The run contract's order: reported findings by severity, then path;
+    excluded findings last, by path. `renumber` and `check` share it."""
+    return (excluded(f), 0 if excluded(f) else SEVERITIES.index(f["severity"]), _first_path(f))
 
 
 def record_problems(doc):
@@ -771,15 +790,14 @@ def record_problems(doc):
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
                         "run scripts/findings.py renumber")
-    ranks = [(SEVERITIES.index(f["severity"]), _first_path(f)) for f in findings
-             if f["validation"]["verdict"] not in EXCLUDED]
-    if ranks != sorted(ranks):
-        order = ", ".join(f"{f['id']} {f['severity']}" for f in findings
-                          if f["validation"]["verdict"] not in EXCLUDED)
-        problems.append(f"findings must be numbered in severity order (High first), then by path: {order}; "
-                        "run scripts/findings.py renumber")
+    keys = [order_key(f) for f in findings]
+    if keys != sorted(keys):
+        order = ", ".join(f"{f['id']} {'excluded' if excluded(f) else f['severity']}"
+                          for f in findings)
+        problems.append("findings must be numbered in severity order (High first), then by path, "
+                        f"excluded findings last: {order}; run scripts/findings.py renumber")
     for i, f in enumerate(findings):
-        if (f["confidence"] == "Environment-dependent" and f["validation"]["verdict"] not in EXCLUDED
+        if (f["confidence"] == "Environment-dependent" and not excluded(f)
                 and not f.get("conditions", "").strip()):
             problems.append(f"findings[{i}].conditions: name the runtime setting an "
                             "Environment-dependent finding assumes")
@@ -789,9 +807,9 @@ def record_problems(doc):
             problems.append(f"perspective not recorded: {name}")
     first_seen = {}
     for f in findings:
-        if f["validation"]["verdict"] in EXCLUDED:
+        if excluded(f):
             continue
-        location = f["location"] if isinstance(f["location"], list) else [f["location"]]
+        location = locations(f)
         if location[0] in first_seen:
             problems.append(f"{first_seen[location[0]]} and {f['id']} share their first location; "
                             "one finding per fix location: merge them or anchor each at its own fix site")
@@ -811,7 +829,7 @@ def record_problems(doc):
             if cited not in ledger:
                 problems.append(f"findings[{i}].commitment: {cited} is not in the commitments ledger")
         status = recorded.get(f["category"])
-        if f["validation"]["verdict"] not in EXCLUDED and status not in (None, *APPLIED):
+        if not excluded(f) and status not in (None, *APPLIED):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
                             "not applied")
     for i, r in enumerate(doc.get("commitments", [])):
@@ -860,7 +878,8 @@ def cmd_check(args):
 
 def prepare_cli():
     """Let SIGTERM (tool timeouts) run cleanup, and never fail while reporting success."""
-    signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
+    if threading.current_thread() is threading.main_thread():
+        signal.signal(signal.SIGTERM, lambda signum, frame: sys.exit(128 + signum))
     for stream in (sys.stdout, sys.stderr):
         if hasattr(stream, "reconfigure"):
             stream.reconfigure(errors="backslashreplace")

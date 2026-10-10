@@ -26,7 +26,8 @@ point here. `check` refuses an output directory unless:
   links do not qualify), and no staging file left by an interrupted write
 - `findings.json` passes the schema below with every `meta` field required
 - IDs are `PV-001`… without gaps; reported findings (not `FalsePositive` or
-  `NotApplicable`) are in severity order, then by their first location's path
+  `NotApplicable`) are in severity order, then by their first location's path,
+  and excluded findings follow them, by path (the order `renumber` produces)
 - no two reported findings share their first `location` (one per fix location)
 - a nonblank `step` is one hunt step ID whose prefix belongs to `category`
 - an `Environment-dependent` reported finding names its `conditions`
@@ -185,7 +186,7 @@ long paths and keep line breaks.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
-| `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts may sit anywhere |
+| `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts come last, by path |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |

@@ -22,8 +22,9 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
+from findings import (PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       prepare_cli, read_json, record_problems, validate)
+from findings import excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 
 LABELS = {
@@ -79,7 +80,7 @@ FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditi
 
 
 def counts(findings):
-    active = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    active = [f for f in findings if not is_excluded(f)]
     return {s: sum(f["severity"] == s for f in active) for s in SEVERITIES}, len(findings) - len(active)
 
 
@@ -158,9 +159,10 @@ def markdown_text(value, links=True):
         if not url:
             continue
         parts.append(_literal(text[pos:match.start()]))
-        target = escape(url, quote=False)
-        parts.append(f"[{_literal(url)}](<http://{target}>)" if url.startswith("www.")
-                     else f"<{target}>")
+        # A bracketed link, not an autolink: CommonMark renderers differ on
+        # decoding `&amp;` inside autolinks, but agree inside link destinations.
+        target = escape(("http://" if url.startswith("www.") else "") + url, quote=False)
+        parts.append(f"[{_literal(url)}](<{target}>)")
         pos = match.start() + len(url)
     parts.append(_literal(text[pos:]))
     # Add our own breaks only after escaping the supplied HTML and Markdown.
@@ -274,7 +276,7 @@ def render_markdown(doc, lang):
         lines += [t["none"], ""]
     for f in findings:
         v = f["validation"]
-        note = f" ({t['excluded']})" if v["verdict"] in EXCLUDED else ""
+        note = f" ({t['excluded']})" if is_excluded(f) else ""
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}] "
                      f"{markdown_text(f['title'])}{note}")
         lines.append("")
@@ -390,7 +392,7 @@ def render_html(doc, lang):
             a = f["analysis"]
             analysis_html = (f"<dt>{e(t['analysis'])}</dt><dd>{e(a['result'])} — {e(a['tool'])}:"
                              f"<pre><code>{e(a['command'])}</code></pre></dd>")
-        excluded_finding = v["verdict"] in EXCLUDED
+        excluded_finding = is_excluded(f)
         # Excluded findings are not counted under their severity, so they are
         # filtered separately and labelled in the summary as well.
         out.append(f"<details data-sev='{'excluded' if excluded_finding else f['severity']}'>"

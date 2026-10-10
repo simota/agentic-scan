@@ -108,3 +108,14 @@ class EncodedValueTests(unittest.TestCase):
                       "123e4567-e89b-12d3-a456-426614174000-0"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
+
+
+class DateMaskTests(unittest.TestCase):
+    def test_dates_cannot_split_a_longer_number(self):
+        for value in ("4111-2026-01-01-1111", "1234-5678-2026-01-01", "1234-2026-01-01-5678-9012"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+        for value in ("2026-10-01-2026-10-09", "2026-10-01-2026-10-09-2026-10-12",
+                      "from 2026-10-01 to 2026-10-09"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))

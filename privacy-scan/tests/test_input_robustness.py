@@ -154,3 +154,39 @@ class ReviewFollowUpTests(unittest.TestCase):
         doc = complete_doc()
         doc["findings"][0]["step"] = " "
         self.assertEqual(findings.record_problems(doc), [])
+
+
+class CodeReviewFollowUpTests(unittest.TestCase):
+    def test_symlink_loops_in_the_output_directory_do_not_crash_check(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory).resolve()
+            (out / "findings.json").write_text(json.dumps(complete_doc()), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                render.main([str(out / "findings.json"), "--out", str(out)])
+            (out / "loop").symlink_to(out / "loop")
+            self.assertIn("unexpected output: loop (pass --allow loop if requested)",
+                          findings.contract_problems(out))
+
+    def test_cli_setup_works_outside_the_main_thread(self):
+        import threading
+        errors = []
+        worker = threading.Thread(target=lambda: errors.append(
+            None if findings.prepare_cli() is None else "unexpected"))
+        worker.start()
+        worker.join()
+        self.assertEqual(errors, [None])
+
+    def test_check_accepts_exactly_the_order_renumber_produces(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        problems = findings.record_problems(doc)
+        self.assertTrue(any("excluded findings last" in p for p in problems), problems)
+        findings.renumber(doc)
+        self.assertEqual(findings.record_problems(doc), [])
+        self.assertEqual([findings.excluded(f) for f in doc["findings"]], [False, True])
+
+    def test_missing_inputs_name_the_path_once(self):
+        with self.assertRaises(findings.SchemaError) as raised:
+            findings.read_json("/nonexistent/fragment.json")
+        self.assertEqual(str(raised.exception).count("fragment.json"), 1)

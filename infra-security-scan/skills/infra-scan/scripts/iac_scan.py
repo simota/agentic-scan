@@ -1110,6 +1110,8 @@ def github_trust_gap(st):
 
 # ---------------------------------------------------------------- Terraform rules
 
+# AWS-owned policies in every partition (aws, aws-us-gov, aws-cn, aws-iso...).
+AWS_MANAGED_ARN = re.compile(r"arn:aws(?:-[a-z]+)*:iam::aws:policy/")
 ADMIN_ARN = re.compile(r"\Aarn:(?:[a-z0-9-]+|\$\{[^}]+\}):iam::aws:policy/AdministratorAccess\Z")
 # The same ARN in raw HCL, with the partition interpolated (terraform-aws-modules idiom).
 ADMIN_ARN_RAW = re.compile(r'"arn:(?:[a-z0-9-]+|\$\{[^}"]+\}):iam::aws:policy/AdministratorAccess"')
@@ -2089,6 +2091,12 @@ def terragrunt_remote_state(scan, d):
     return False
 
 
+def hcl_code(text):
+    """HCL text without its comments (#, //, /* */); strings are kept."""
+    text = re.sub(r'"(?:\\.|[^"\\\n])*"|(/\*.*?\*/)', lambda m: "" if m.group(1) else m.group(), text, flags=re.S)
+    return re.sub(r'"(?:\\.|[^"\\\n])*"|((?:#|//)[^\n]*)', lambda m: "" if m.group(1) else m.group(), text)
+
+
 def top_level_attributes(text):
     """Names assigned outside every block (brace depth 0), ignoring strings and comments."""
     names, depth = set(), 0
@@ -2629,7 +2637,7 @@ def aws_export(scan, rel, doc, keys):
                 scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
     for i, managed in items("Policies"):
         # AWS-managed policies are AWS's documents; attaching them is checked above.
-        if not managed.get("AttachmentCount") or str(managed.get("Arn", "")).startswith("arn:aws:iam::aws:policy/"):
+        if not managed.get("AttachmentCount") or AWS_MANAGED_ARN.match(str(managed.get("Arn", ""))):
             continue
         matched = True
         line = at(("Policies", i), "Arn")
@@ -3516,7 +3524,8 @@ def scan_secrets(scan, rel, text, kind):
         for name, value, entry in env_pairs(lines, n - 1):
             # The entry's own type: CodeBuild writes type = "PARAMETER_STORE" after the value.
             if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \
-                    and not FLAG_VALUE.fullmatch(value.strip()) and not SECRET_REFERENCE.search(entry):
+                    and not FLAG_VALUE.fullmatch(value.strip()) \
+                    and not SECRET_REFERENCE.search(hcl_code(entry)):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
         for m in generic(line):
             if SECRET_NAME_VALUE.match(m.group(2)) and (

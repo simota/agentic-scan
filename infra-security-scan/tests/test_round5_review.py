@@ -387,5 +387,30 @@ class CodexEighthReviewTest(unittest.TestCase):
         self.assertTrue([n for n in result.not_run if "HttpEndpoint not a literal" in n], result.not_run)
 
 
+class CodexNinthReviewTest(unittest.TestCase):
+    def test_commented_reference_type_is_not_a_reference(self):
+        result = scan({"cb.tf": f'''resource "aws_codebuild_project" "p" {{
+  environment {{
+    environment_variable {{
+      name  = "DB_PASSWORD"
+      value = "{SECRET}"
+      type  = "PLAINTEXT"
+      # type = "PARAMETER_STORE"
+    }}
+  }}
+}}
+'''})
+        self.assertEqual([h["detail"] for h in result.hits], ["literal value for DB_PASSWORD"])
+
+    def test_aws_managed_policies_in_every_partition(self):
+        admin = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+        export = {"Policies": [{"PolicyName": "AdministratorAccess", "AttachmentCount": 1,
+                                "Arn": f"arn:{partition}:iam::aws:policy/AdministratorAccess",
+                                "PolicyVersionList": [{"IsDefaultVersion": True, "Document": admin}]}
+                               for partition in ("aws-us-gov", "aws-cn", "aws-iso-b")]}
+        result = scan({}, {"auth.json": export})
+        self.assertEqual(result.hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

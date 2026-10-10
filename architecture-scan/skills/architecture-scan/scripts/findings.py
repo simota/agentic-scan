@@ -95,8 +95,7 @@ DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-
 # A rule ID standing free in prose, as ID_RUN finds finding IDs: not part of a
 # path or file name (`docs/R-02.md`), and ASCII word characters only, so
 # `R-02にも` beside Japanese text is a mention.
-RULE_MENTION = re.compile(r"(?<![\w/\\.@+-])R-[0-9]{2,}(?![\w/\\@+-]|\.[A-Za-z0-9])",
-                          re.ASCII)
+RULE_MENTION = re.compile(r"(?<![\w/\\.-])R-[0-9]{2,}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -624,12 +623,12 @@ def _atomic_write_all(files):
 
 # A run of IDs standing free in prose: one ID, or several joined by `/` or `-`
 # (`A-002/A-001`, `A-001-A-002-A-003`). Every ID in a run is a mention. A run
-# touching a word, path, ticket or e-mail address (`docs/A-001.md`,
-# `JIRA-A-001`, `A-001-A-002.md`, `owner+A-001@example.com`) is not prose and
-# stays whole. ASCII word characters only, so a run beside Japanese text
+# touching a word, path or ticket (`docs/A-001.md`, `JIRA-A-001`,
+# `A-001-A-002.md`) is not prose and stays whole; URLs and e-mail addresses
+# are skipped whole by `_url_spans`. ASCII word characters only, so a run beside Japanese text
 # (`A-001を`) is still a mention.
 ID_RUN = re.compile(
-    r"(?<![\w/\\@+-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\@+-]|\.[A-Za-z0-9])", re.ASCII)
+    r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
 
 # ASCII URL characters only, so `…/x。A-001と` ends the URL at `。`.

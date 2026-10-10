@@ -147,7 +147,8 @@ def _file_shaped(path):
         return False
     directory, slash, last = path.replace("\\", "/").rpartition("/")
     if slash:
-        return bool(last)
+        # . and .. name directories, not files (src/..:3).
+        return last not in ("", ".", "..")
     # A root-level name needs a letter (.5, ~1.5 and 1/2-like tokens are numbers).
     if (VERSION_START.match(last) and not MIGRATION.match(last)) or not LETTER.search(last):
         return False
@@ -161,6 +162,8 @@ def _rejection(path):
         return "a URL"
     if _is_host(path):
         return "a host:port"
+    if "/" in path.replace("\\", "/") and path.replace("\\", "/").rsplit("/", 1)[-1] in ("", ".", ".."):
+        return "a directory, not a file"
     if not _file_shaped(path) or path in NOT_FILES:
         return ("not a file name (a setting, number, version or word; write an "
                 "extensionless file with its directory or ./)")

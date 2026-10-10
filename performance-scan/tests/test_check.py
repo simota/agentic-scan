@@ -121,7 +121,8 @@ class CitationTests(unittest.TestCase):
                      "1.0.Final:2", "1.0-SNAPSHOT:3", "1.2.3.post1:4", "1.2.3.dev1:4",
                      "5.0.0.BUILD-SNAPSHOT:2", "2.0.txt:3", "1!2.3:4", "2!1.0.post1:2",
                      "v1!2.3:4", "v2rc1.post2:4", "v2rc1+local.3:4", "V2.json:1", "v8.json:2", "V1__:2", "v3__x.sql:2",
-                     "001_init.sql:4", ".5:1", "~1.5:1"]
+                     "001_init.sql:4", ".5:1", "~1.5:1",
+                     "src/.:3", "src/..:3", "./..:3", "src\\..:3", "..:3", "src/:3"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -137,6 +138,9 @@ class CitationTests(unittest.TestCase):
             findings.citation_rejections(token)
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_a_directory_is_named_as_one(self):
+        for text in ("src/..:3", "./.:1", "src\\..:3"):
+            self.assertEqual(findings.citation_rejections(text)[0][1], "a directory, not a file", text)
 
 
 class UnknownKeyTests(unittest.TestCase):

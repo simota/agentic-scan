@@ -324,6 +324,8 @@ class ReviewRegressionTests(Workspace):
                                ("Fix A-001.@example.com, .A-001@example.com, A-001..t@example.com",
                                 "Fix A-003.@example.com, .A-003@example.com, A-003..t@example.com"),
                                ("a.A-001.b@x.example", "a.A-001.b@x.example"),
+                               ("A-001@example..com, A-001@example.-com, A-001@x.example.",
+                                "A-003@example..com, A-003@example.-com, A-001@x.example."),
                                ("owner@example.comに連絡してA-001を直す",
                                 "owner@example.comに連絡してA-003を直す")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)

@@ -2134,10 +2134,10 @@ def handle_plan(scan, rel, text, doc):
             if isinstance(mask, dict) and isinstance(expressions, dict):
                 # An argument the configuration omits is unknown in the plan only
                 # because the provider computes its default: it is omitted. A
-                # block with planned content was configured, if dynamically
-                # (expressions never list dynamic blocks).
+                # block present in planned values, even empty, may be dynamic
+                # (expressions never list dynamic blocks) and keeps its unknowns.
                 planned = r.get("values") or {}
-                mask = {k: m for k, m in mask.items() if k in expressions or planned.get(k) not in (None, [], {})}
+                mask = {k: m for k, m in mask.items() if k in expressions or planned.get(k) is not None}
             values = with_plan_unknowns(r.get("values") or {}, mask)
             if not check:
                 # First pass: account and org settings that change what omitted arguments mean.
@@ -2383,10 +2383,16 @@ def cfn_shared(scan, res, type_, props, line):
 
 
 def sam_merge(inherited, own):
-    """SAM's Globals merge: maps merge key by key (recursively), the function's value wins."""
+    """SAM's Globals merge: maps merge key by key (recursively), lists keep the
+    global entries first, and otherwise the function's value wins."""
     out = dict(inherited)
     for key, value in own.items():
-        out[key] = sam_merge(out[key], value) if isinstance(out.get(key), dict) and isinstance(value, dict) else value
+        if isinstance(out.get(key), dict) and isinstance(value, dict):
+            out[key] = sam_merge(out[key], value)
+        elif isinstance(out.get(key), list) and isinstance(value, list):
+            out[key] = out[key] + value
+        else:
+            out[key] = value
     return out
 
 

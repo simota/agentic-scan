@@ -136,7 +136,8 @@ resource "aws_iam_role_policy_attachment" "x" {
         for line in (f"curl -uadmin:{SECRET} http://x", f"sshpass -p{SECRET} ssh h", f'args: ["-u", "admin:{SECRET}"]',
                      f'command: ["docker", "login", "-p", "{SECRET}"]'):
             self.assertNotIn(SECRET, redaction.scrub_line(line, "yaml"), line)
-        for line in ("docker run -u 1000:1000 img", "--user 1000:1000", "openssl enc -pbkdf2 -in f"):
+        for line in ("docker run -u 1000:1000 img", 'command: ["docker", "run", "--user", "1000:1000"]',
+                     "openssl enc -pbkdf2 -in f"):
             self.assertEqual(redaction.scrub_line(line, "yaml"), line)
 
 
@@ -248,6 +249,30 @@ class CodexThirdReviewTest(unittest.TestCase):
         result = scan({"t.json": template})
         self.assertEqual(result.hits, [])
         self.assertTrue([n for n in result.not_run if "MetadataOptions is not a literal" in n])
+
+
+class CodexFourthReviewTest(unittest.TestCase):
+    def test_numeric_basic_auth_is_a_password(self):
+        self.assertEqual(redaction.scrub_line("curl -u 123:456 https://host"), "curl -u 123:[redacted] https://host")
+
+    def test_sam_global_lists_are_prepended(self):
+        template = {"Transform": "AWS::Serverless-2016-10-31",
+                    "Globals": {"Function": {"Policies": ["AdministratorAccess"]}},
+                    "Resources": {"Fn": {"Type": "AWS::Serverless::Function", "Properties": {
+                        "Policies": ["AWSLambdaBasicExecutionRole"]}}}}
+        self.assertEqual([r for r, _, _ in found(scan({"t.json": template}))], ["AWS-IAM-001"])
+
+    def test_empty_dynamic_block_keeps_its_unknowns(self):
+        doc = {"planned_values": {"root_module": {"resources": [{
+                   "address": "google_compute_firewall.fw", "mode": "managed", "type": "google_compute_firewall",
+                   "name": "fw", "values": {"allow": [], "source_ranges": ["0.0.0.0/0"]}}]}},
+               "resource_changes": [{"address": "google_compute_firewall.fw",
+                                     "change": {"after_unknown": {"allow": True}}}],
+               "configuration": {"root_module": {"resources": [{
+                   "address": "google_compute_firewall.fw", "expressions": {"source_ranges": {}}}]}}}
+        result = scan({"plan.json": doc})
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "google_compute_firewall.fw" in n], result.not_run)
 
 
 if __name__ == "__main__":

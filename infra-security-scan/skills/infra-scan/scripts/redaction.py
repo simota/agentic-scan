@@ -481,6 +481,9 @@ TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|s
                         r"\bopenssl\b")
 TOOL_PASSWORD = re.compile(r"""((?<![\w-])["']?(?:-passin|-passout|-pass|--password|--pass|-p|-w|-k|-P)"""
                            r"""(?:\s+|=|["']\s*,\s*)["']?)(?=[^\s"'])[^\s"',\]]+""")
+PROCESS_USER = re.compile(r"\b(?:docker|podman|nerdctl|kubectl|crictl|ctr|sudo|runuser|chroot|buildah)\b|"
+                          r"\b(?:user|runAsUser|runAsGroup)\s*[:=]")
+HTTP_CLIENT = re.compile(r"\b(?:curl|wget|http|httpie|xh|ftp|lftp|svn|git)\b|://")
 SSHPASS_ATTACHED = re.compile(r"(\bsshpass\s+(?:-[a-zA-Z]\s+)*-p)(?=\S)([^\s\"']+)")
 # A secret piped into a command that reads it from stdin precedes the keyword
 # (echo X | docker login --password-stdin), so the keyword check misses it.
@@ -538,7 +541,10 @@ def scrub_line(line, syntax="hcl"):
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
     line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
-    line = USER_PASSWORD.sub(lambda m: m.group() if (m.group(2)[:-1] + m.group(3)).isdigit()
+    # A numeric uid:gid only where -u/--user selects a process user (docker run -u 1000:1000);
+    # curl -u 123:456 is a password all the same.
+    process_user = PROCESS_USER.search(line) is not None and not HTTP_CLIENT.search(line)
+    line = USER_PASSWORD.sub(lambda m: m.group() if process_user and (m.group(2)[:-1] + m.group(3)).isdigit()
                              else m.group(1) + m.group(2) + "[redacted]", line)
     line = SSHPASS_ATTACHED.sub(lambda m: m.group(1) + "[redacted]", line)
     if TOOL_LOGIN.search(line):

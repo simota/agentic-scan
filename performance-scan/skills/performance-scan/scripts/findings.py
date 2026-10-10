@@ -95,9 +95,9 @@ HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", 
                            "localdomain", "internal", "lan", "invalid", "arpa"))
 AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test",
                                      "svc"))
-# Two single letters around a slash (N/A, I/O, R/W) are an abbreviation; ./a,
-# /a and src/a are files.
-ABBREVIATION = re.compile(r"[^\W\d_][/\\][^\W\d_]")
+# Two single capital letters around a slash (N/A, I/O, R/W) are an
+# abbreviation; ./a, /a, a/b and src/a are files.
+ABBREVIATION = re.compile(r"[A-Z][/\\][A-Z]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # A file name has a directory part whose last segment holds a letter, in any
 # script (src/main, src/設定, src/a, ./CHANGELOG), or a numeric name under a
@@ -146,15 +146,9 @@ def _rejection(path):
     last = path.replace("\\", "/").rsplit("/", 1)[-1]
     if rest and "." not in last and _is_host(first):
         return "a module or host path, not a file"
-    stem, dot, ext = last.rpartition(".")
-    # Go and Java selectors (time.Second, json.Marshal, runtime.GOMAXPROCS) look
-    # like a file with a capitalised extension of five or more characters; real
-    # capitalised extensions are short (Program.CS, index.PY, analysis.Rmd,
-    # report.Rnw). A short selector such as sql.DB or json.Map cannot be told
-    # apart and counts.
-    if (dot and stem and "/" not in path and "\\" not in path and ext[:1].isupper()
-            and len(ext) >= 5):
-        return "a code identifier, not a file"
+    # A code member such as time.Second:30 has the same shape as a file with a
+    # capitalised extension (analysis.Rmd, project.Rproj, schema.PROTO), so it is
+    # not refused; the evidence rule asks for a citation, not proof of one.
     return None
 
 

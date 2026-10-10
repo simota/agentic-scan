@@ -8,7 +8,7 @@ import re
 import tempfile
 import unittest
 
-from support import REPO, HtmlTableReader, HtmlTreeReader, element_text, render
+from support import REPO, HtmlTableReader, HtmlTreeReader, complete_doc, element_text, render
 
 
 class RenderRegressions(unittest.TestCase):
@@ -34,7 +34,7 @@ class RenderRegressions(unittest.TestCase):
         self.assertEqual(scope.count("|"), 3)
         self.assertIn("API &#124; worker<br>\\# forged scope", scope)
         budget = next(line for line in report.splitlines() if line.startswith("| B-01 |"))
-        self.assertEqual(budget.count("|"), 8)
+        self.assertEqual(budget.count("|"), 9)
         self.assertIn("baseline &#124; tests/query.py:30<br>&#124; forged &#124; row &#124;", budget)
         self.assertIn(r"literal \\&#124; and &amp;lt;", budget)
         self.assertIn(" | violated | ", budget)
@@ -287,7 +287,7 @@ class RenderRegressions(unittest.TestCase):
                 self.assertIn("Supplier API &#124; &lt;latency&gt; is unknown<br>Confirm the contract", report)
                 rows = [line for line in report.splitlines() if line.startswith("| B-")]
                 self.assertEqual(len(rows), len(self.doc["budgets"]))
-                self.assertTrue(all(line.count("|") == 8 for line in rows))
+                self.assertTrue(all(line.count("|") == 9 for line in rows))
                 self.assertIn(f" | {no} | ", rows[0])
                 self.assertIn(" | — | ", rows[1])
                 self.assertIn(f" | {yes} | ", rows[2])
@@ -297,10 +297,59 @@ class RenderRegressions(unittest.TestCase):
                 self.assertEqual(parsed.tags.count("script"), 1)  # Only the dashboard's own filter script.
                 self.assertIn(reason_label, parsed.rows[0])
                 budgets = {row[0]: row for row in parsed.rows if row and row[0].startswith("B-")}
-                self.assertEqual(budgets["B-01"][4], no)
-                self.assertEqual(budgets["B-02"][4], "—")
-                self.assertEqual(budgets["B-03"][4:6], [yes, reason])
+                self.assertEqual(budgets["B-01"][5], no)
+                self.assertEqual(budgets["B-02"][5], "—")
+                self.assertEqual(budgets["B-03"][5:7], [yes, reason])
                 self.assertNotIn("<script>bad()</script>", dashboard)
+
+
+
+class RenderRoundEightTests(unittest.TestCase):
+    def setUp(self):
+        self.doc = complete_doc()
+
+    def test_reference_urls_are_normalised_before_linking(self):
+        for url in (" https://example.com/doc", "https://example.com/doc\n", "https://exa\tmple.com/doc"):
+            with self.subTest(url=repr(url)):
+                destination = render.link_destination(url)
+                self.assertTrue(destination.startswith("https://exa"), destination)
+                self.assertNotIn("%", destination)
+
+    def test_an_invisible_reference_title_falls_back_to_the_url(self):
+        for title in ("​", "⁠﻿", "­ ", "  "):
+            with self.subTest(title=repr(title)):
+                ref = {"title": title, "url": "https://example.com/"}
+                self.assertEqual(render.reference_title(ref), "https://example.com/")
+        self.assertEqual(render.reference_title({"title": "Docs​", "url": "u"}), "Docs​")
+
+    def test_budget_family_is_shown(self):
+        self.doc["budgets"][0]["family"] = "QRY"
+        self.assertIn("| B-01 | QRY |", render.render_markdown(self.doc, "en"))
+        self.assertIn("<td>QRY</td>", render.render_html(self.doc, "en"))
+
+    def test_blank_evidence_is_hidden(self):
+        self.doc["findings"][1]["validation"] = {"verdict": "Likely", "method": "static", "evidence": "   "}
+        report = render.render_markdown(self.doc, "en")
+        dashboard = render.render_html(self.doc, "en")
+        self.assertNotIn("**evidence:** &#32;", report)
+        self.assertNotIn("<dt>evidence</dt><dd>   </dd>", dashboard)
+
+    def test_dashboard_shows_one_location_per_line(self):
+        self.doc["findings"][0]["location"] = ["a.py:1", "b.py:2"]
+        self.assertIn("<dd>a.py:1\nb.py:2</dd>", render.render_html(self.doc, "en"))
+
+    def test_html_lang_follows_the_record(self):
+        self.doc["meta"]["lang"] = "ja"
+        self.assertIn("<html lang='ja'>", render.render_html(self.doc, "en"))
+
+    def test_an_empty_out_is_refused(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "findings.json"
+            source.write_text(json.dumps(self.doc), encoding="utf-8")
+            with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
+                with self.assertRaises(SystemExit) as exit:
+                    render.main([str(source), "--out", " "])
+            self.assertEqual(exit.exception.code, 2)
 
 
 if __name__ == "__main__":

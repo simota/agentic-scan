@@ -20,6 +20,7 @@ import shutil
 import stat
 import sys
 import tempfile
+import unicodedata
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,7 +43,7 @@ LABELS = {
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
         "project": "System", "revision": "Revision", "date": "Date / assessor",
-        "source": "Source", "inferred": "Inferred", "reason": "Reason (partly read or not checked)",
+        "source": "Source", "family": "Family", "inferred": "Inferred", "reason": "Reason (partly read or not checked)",
         "inferred_yes": "Yes — confirm with owner", "inferred_no": "No",
         "verdict_counts": "Verification counts",
         "incomplete_high": "High with incomplete verification",
@@ -67,7 +68,7 @@ LABELS = {
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
         "project": "システム", "revision": "リビジョン", "date": "診断日 / 診断者",
-        "source": "出典", "inferred": "推定", "reason": "未確認・一部確認の理由",
+        "source": "出典", "family": "分類", "inferred": "推定", "reason": "未確認・一部確認の理由",
         "inferred_yes": "推定・要確認", "inferred_no": "いいえ",
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
@@ -200,6 +201,9 @@ def link_destination(url):
     document beside the report) qualify. A protocol-relative URL does not: opened
     from file://, //host resolves to a network share (an SMB fetch on Windows).
     """
+    # urlsplit drops tabs and newlines and the caller's spaces would otherwise be
+    # quoted into the link ("%20https://..."), so check and quote one string.
+    url = re.sub(r"[\t\n\r]", "", url).strip()
     try:
         parts = urlsplit(url)
     except ValueError:
@@ -233,9 +237,11 @@ def html_link(title, url):
 
 
 def reference_title(ref):
-    """Fall back to the URL so an empty title never yields an invisible link."""
+    """Fall back to the URL so an empty or invisible title (only spaces, format
+    or control characters such as U+200B) never yields an invisible link."""
     title = ref.get("title", "")
-    return title if title.strip() else ref["url"]
+    visible = any(unicodedata.category(ch)[0] not in "CZ" for ch in title)
+    return title if visible else ref["url"]
 
 
 def budget_cells(budget, labels, findings):
@@ -247,14 +253,14 @@ def budget_cells(budget, labels, findings):
     mention = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(budget['id'])}(?![A-Za-z0-9_-])")
     cited = ", ".join(f["id"] for f in findings if not is_excluded(f) and (
         f.get("budget") == budget["id"] or mention.search(f["impact"])))
-    return (budget["id"], budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
+    return (budget["id"], budget.get("family", "").strip() or "—", budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
             inference, budget.get("reason", "") if budget["status"] in ("partly read", "not checked")
             else "",
             cited or "—")
 
 
 def budget_headers(labels):
-    return ("ID", labels["budget_col"], labels["source"], labels["status_col"], labels["inferred"],
+    return ("ID", labels["family"], labels["budget_col"], labels["source"], labels["status_col"], labels["inferred"],
             labels["reason"], labels["findings_col"])
 
 
@@ -291,7 +297,7 @@ def markdown_finding(f, t):
         elif str(f.get(key, "")).strip():  # optional contrast/budget may be blank
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
-    if v.get("evidence"):
+    if v.get("evidence", "").strip():
         lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
     if "measurement" in f:
         m = f["measurement"]
@@ -420,9 +426,11 @@ def html_finding(f, t):
     exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                  if excluded else "")
     step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
-    rows = [(t[k], f[k]) for k in FIELDS if str(f.get(k, "")).strip()]
+    # One location per line: a path may itself contain ", ".
+    rows = [(t[k], "\n".join(f[k]) if k == "location" and isinstance(f[k], list) else f[k])
+            for k in FIELDS if str(f.get(k, "")).strip()]
     rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
-    if v.get("evidence"):
+    if v.get("evidence", "").strip():
         rows.append((t["evidence"], v["evidence"]))
     if not excluded:
         rows.append((t["status"], shown(f.get("status", "Open"), lang)))
@@ -450,7 +458,8 @@ def render_html(doc, lang):
     by_sev, excluded = counts(findings)
     verdicts, incomplete_high = verification_summary(findings, t)
     e = html_text
-    out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
+    # The record's text is the bulk of the page, so it sets the document language.
+    out = [f"<!doctype html><html lang='{meta['lang']}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
            f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
@@ -559,6 +568,8 @@ def main(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--lang", choices=("ja", "en"))
     args = parser.parse_args(argv)
+    if not args.out.strip():
+        parser.error("--out must name a directory")  # Path("") would be the cwd
     try:
         doc = read_json(args.findings)  # Its errors already name the file.
         try:

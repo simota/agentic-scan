@@ -125,7 +125,9 @@ PACKAGE_VERSION = re.compile(r"[@=<>~^!][vV]?[0-9]+\.[0-9]")
 # A dotted version qualifier is not a file extension (Python-3.12.1.post1,
 # Spring-5.3.20.RELEASE, 1.0.Final).
 QUALIFIER = re.compile(r"(?:post|dev|rc|pre|alpha|beta|preview|final|release|ga|snapshot"
-                       r"|build-snapshot|milestone|m|sr|cr|[ab])[0-9]*", re.IGNORECASE)
+                       r"|build-snapshot|milestone|m|sr|cr|[ab]"
+                       r"|el|fc|amzn|deb|ubuntu|sles|mga|git|svn)[0-9_]*", re.IGNORECASE)
+EXTENSION = re.compile(r"[^\W\d_][^\W_]{0,4}")
 # Before the - or _ that precedes the number, the name may hold digits, . + #
 # and further - or _ (log4j-2.17.1, Node.js-20.11.0, .NET-8.0.0,
 # python-dateutil-2.8.2), and a v may mark the number (Python-v3.12.1).
@@ -182,10 +184,12 @@ def _product_version(name):
 
 
 def _has_extension(name):
-    """True when name ends in a letter-led suffix that is not a version
-    qualifier (.js, .tar.gz; not .post1 or .RELEASE)."""
+    """True when name ends in an extension-shaped suffix: up to five letters
+    and digits, letter first (.js, .gz, .bz2), and not a version, platform or
+    distribution qualifier (.post1, .RELEASE, .el9, .win_amd64)."""
     _, dot, extension = name.rpartition(".")
-    return bool(dot and extension[:1].isalpha() and not QUALIFIER.fullmatch(extension))
+    return bool(dot and EXTENSION.fullmatch(extension)
+                and not QUALIFIER.fullmatch(extension))
 
 
 def _protocol_version(path):

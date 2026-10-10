@@ -318,6 +318,9 @@ class ReviewRegressionTests(Workspace):
                                ("Fix A-001+ follow-up, then @A-001", "Fix A-003+ follow-up, then @A-003"),
                                ("A-001の担当はowner@example.com", "A-003の担当はowner@example.com"),
                                ("owner+A-001@mailhost and A-001", "owner+A-001@mailhost and A-003"),
+                               ("Fix A-001@scope/pkg, A-001@v2-, A-001@x_y",
+                                "Fix A-003@scope/pkg, A-003@v2-, A-003@x_y"),
+                               ("mail a@b.example. Then A-001", "mail a@b.example. Then A-003"),
                                ("owner@example.comに連絡してA-001を直す",
                                 "owner@example.comに連絡してA-003を直す")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)

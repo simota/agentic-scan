@@ -639,7 +639,8 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
 
 
 # A bare e-mail address: an RFC 5322 dot-atom local part, `@`, a domain (one
-# label, `@mailhost`, or several).
+# label, `@mailhost`, or several) that ends the token, so `A-001@scope/pkg`
+# is not an address.
 # It starts only where a run of local-part characters starts, so a long run
 # with no address in it is read once, not once per character. The address is
 # ASCII on purpose: Japanese prose has no blanks between words, so a non-ASCII
@@ -647,7 +648,9 @@ URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
 # (`A-001の担当はowner@example.com`, `owner@example.comに連絡してA-001を直す`)
 # and hide the mention in it.
 EMAIL = re.compile(r"((?<![A-Za-z0-9!#$%&'*+/=?^_`{|}~.-])[A-Za-z0-9!#$%&'*+/=?^_`{|}~.-]+"
-                   r"@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*)")
+                   r"@[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?"
+                   r"(?:\.[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?)*"
+                   r"(?![\w/@\\-]|\.\w))", re.ASCII)
 
 
 def _url_spans(text):

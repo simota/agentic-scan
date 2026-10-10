@@ -43,16 +43,18 @@ AGENT   ?= claude codex agy
 PROJECT ?=
 SKILLS_DIR ?=
 
-# An exported but empty value falls back to the default instead of ".".
-CLAUDE_HOME := $(or $(CLAUDE_HOME),$(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
-CODEX_HOME  := $(or $(CODEX_HOME),$(HOME)/.codex)
-AGY_HOME    := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
+# An exported but empty value falls back to the default instead of ".". The
+# resolved values are override variables, so neither make -e (environment wins
+# over makefile assignments) nor a command-line setting can bypass the fallback.
+override claude_home := $(or $(CLAUDE_HOME),$(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
+override codex_home  := $(or $(CODEX_HOME),$(HOME)/.codex)
+override agy_home    := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
 
 INSTALL = $(call shell_quote,$(PYTHON)) $(call shell_quote,$(REPO)/scripts/install.py) \
   --skill $(call shell_quote,$(SKILL)) --agents $(call shell_quote,$(AGENT)) \
   --project $(call shell_quote,$(PROJECT)) --skills-dir $(call shell_quote,$(SKILLS_DIR)) \
-  --claude-home $(call shell_quote,$(CLAUDE_HOME)) \
-  --codex-home $(call shell_quote,$(CODEX_HOME)) --agy-home $(call shell_quote,$(AGY_HOME))
+  --claude-home $(call shell_quote,$(claude_home)) \
+  --codex-home $(call shell_quote,$(codex_home)) --agy-home $(call shell_quote,$(agy_home))
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 

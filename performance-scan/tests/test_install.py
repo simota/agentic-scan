@@ -329,6 +329,13 @@ class MakefilePathTests(unittest.TestCase):
         (home / ".codex").mkdir(parents=True)
         self.run_make("link", "AGENT=codex", environment={"HOME": str(home), "CODEX_HOME": ""})
         self.assertTrue((home / ".codex" / "skills" / self.skill.name).is_symlink())
+        (home / ".claude").mkdir()
+        for flags in ("", "-e"):
+            with self.subTest(flags=flags):
+                self.run_make("link", "AGENT=claude", environment={
+                    "HOME": str(home), "CLAUDE_HOME": "", "CLAUDE_CONFIG_DIR": "", "MAKEFLAGS": flags})
+                self.assertTrue((home / ".claude" / "skills" / self.skill.name).is_symlink())
+        self.run_make("link", "AGENT=claude", "CLAUDE_HOME=", environment={"HOME": str(home)})
         self.assertFalse((self.repo / "skills" / "skills").exists())
 
     def test_demo_writes_inside_the_checkout_by_default(self):

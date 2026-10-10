@@ -55,7 +55,7 @@ class WorkflowTest(unittest.TestCase):
         run(iac_scan.main, str(self.repo), "--into", str(self.record))
         code, out = run(findings.main, "status", str(self.record))
         self.assertEqual(code, 1)
-        self.assertIn("untriaged I-001 AWS-S3-001 main.tf:2", out)
+        self.assertIn("unverified I-001 AWS-S3-001 main.tf:2", out)
         run(findings.main, "merge", str(self.record), self.fragment({
             "findings": [{"id": "I-001", "validation": {"verdict": "Valid", "evidence": "see F-007"}}]}))
         code, out = run(findings.main, "status", str(self.record))

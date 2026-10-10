@@ -54,22 +54,30 @@ still `Unverified`:
 
 | Situation | Verdict |
 |---|---|
-| The hit is on an intended public edge (a CDN-fronted public asset bucket, an ALB on 443) and the intent is documented | `NotApplicable`, evidence citing the intent; record it in `checked_ok`. "Documented" means the requester confirmed it or a `decisions` entry records it; a comment or tag in the assessed code is a claim to verify, not documentation of intent |
+| The hit is on an intended public edge (a CDN-fronted public asset bucket, an ALB on 443) and the intent is documented | `NotApplicable`, evidence citing the intent; record it in `checked_ok`. "Documented" means the requester confirmed it, or a `decisions` entry records the requester's decision (who decided; an open question is not one); a comment or tag in the assessed code is a claim to verify, not documentation of intent |
 | The parser read a value that is overridden or unresolved | `FalsePositive` or `Unlikely`, citing the override |
 | The hit is real and is an edge of an attack path | `Valid` or `Likely`; the root-cause `F-*` finding, if one is written, names the `I-*` in its `validation.evidence` |
-| The hit is real but leads nowhere | Keep its severity from the rule; verdict `Valid`; note "no path" in evidence |
+| The hit is real but leads nowhere | Verdict `Valid`; note "no path" in evidence and grade `severity` by where it leads (SKILL.md), usually `Low` |
+
+A fragment may set an `I-*` finding's `validation`, `confidence`, `condition`
+and `severity`. Set `confidence` with the verdict: `Confirmed` when every edge
+was read in the inputs, as for `F-*`; a triaged hit left at the scanner's
+`Suspected` contradicts a `Valid` verdict. A rescan keeps all four while the
+same rule, file, resources and hit survive.
 
 Treat standalone `I-*` IDs in `F-*.validation.evidence` as baseline references;
 IDs embedded in source filenames or URLs are left unchanged.
 On rescan, the scanner updates them together with attack-path references when
 the same rule, file and previously affected resources survive. An `I-*`
 verdict carries over to its new ID when the same rule, file and exactly the
-same resources survive; if the resources changed, the finding returns to
-`Unverified` and `limitations` names the dropped verdict. If a reference
+same resources and the same hit (detail) survive; otherwise the finding
+returns to `Unverified` and `limitations` names the dropped verdict. If a reference
 disappears or loses resources, its evidence names the former rule and file,
 the finding becomes `Unverified` / `Suspected`, and linked attack paths become
 `unknown`, whether linked through the finding's `attack_paths` or the path's
-`findings`. Recheck those findings before giving them a definitive verdict again.
+`findings`. Recheck those findings before giving them a definitive verdict again:
+`findings.py status` lists them and `contract_check.py` fails while any finding
+is `Unverified`.
 
 ## Verdicts
 

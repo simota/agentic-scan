@@ -19,7 +19,8 @@ List every input and what it can and cannot tell:
 | Kubernetes manifests / rendered Helm | Workload and RBAC intent | Admission controllers and in-cluster objects created by operators |
 
 Run `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json`.
-Its `not_run` list goes into `limitations` as-is.
+Its `not_run` list is kept in `inventory.not_run`, which the reports show
+under "Not run" and a rescan replaces; do not copy it into `limitations`.
 
 The baseline reads Terraform/OpenTofu (`.tf`, `.tfvars`, `.tfvars.json`), plan
 JSON, CloudFormation and SAM (`.json`, `.yaml`, `.template`; a `Transform` is

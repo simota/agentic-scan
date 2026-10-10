@@ -65,7 +65,8 @@ class CloudSqlDefaultsTest(ScanCase):
                }}]}
         scan = self.scan(json.dumps(doc), "plan.json")
         self.assertEqual(scan.hits, [])
-        self.assertTrue(any("plan contains unknown" in note for note in scan.not_run))
+        self.assertTrue(any("plan value unknown until apply (settings.ip_configuration.ipv4_enabled)" in note
+                            for note in scan.not_run), scan.not_run)
 
 
 class GkeAutopilotTest(ScanCase):

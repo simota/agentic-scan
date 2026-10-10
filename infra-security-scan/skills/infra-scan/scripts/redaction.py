@@ -21,6 +21,10 @@ CREDENTIAL_SHAPES = (
 SECRET_SHAPE = re.compile("|".join(pattern for _, pattern in CREDENTIAL_SHAPES))
 # PEM and OpenSSH use five dashes; RFC 4716 (SSH2) uses four and spaces.
 KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
+# Anything credential-shaped in text saved to the record. Token prefixes are
+# case-sensitive: "asiaPacific..." is a name, not a key.
+CREDENTIAL = re.compile(
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 KEY_BEGIN = re.compile(KEY_MARKER.pattern.replace("(BEGIN|END)", "BEGIN"))
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
@@ -465,6 +469,23 @@ REDIS_AUTH = re.compile(r"""(?<![\w-])(-a|--pass|--askpass)(["']?\s*,?\s*["']?)(
 SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
+# curl -u user:password, --user user:password, wget --http-user ... style pairs.
+# Option and value may be attached (-uadmin:pw), spaced, or separate exec-form
+# list elements ("-u", "admin:pw"). A numeric uid:gid (docker -u 1000:1000) is no password.
+OPTION_GAP = r"""(?:\s+|=|["']\s*,\s*)?\\?["']?"""
+USER_PASSWORD = re.compile(rf"""((?<![\w-])["']?(?:-u|--user|--proxy-user){OPTION_GAP})([^\s:"'@,\\]+:)"""
+                           r"""("[^"\s,][^"]*"?|'[^'\s,][^']*'?|(?=[^\s"'\\])[^\s"',\]\\]+)""")
+# Tools that take a password as an option's value; docker/podman only for login
+# (their -p elsewhere maps ports).
+TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|smbclient|mysqladmin|"
+                        r"(?:docker|podman|nerdctl|buildah|skopeo|oras|helm|az|crane)\b[^|;&]*\blogin)\b|"
+                        r"\bopenssl\b")
+TOOL_PASSWORD = re.compile(r"""((?<![\w-])["']?(?:-passin|-passout|-pass|--password|--pass|-p|-w|-k|-P)"""
+                           r"""(?:\s+|=|["']\s*,\s*)\\?["']?)(?=[^\s"'\\])([^\s"',\]\\]+)""")
+PROCESS_USER = re.compile(r"\b(?:docker|podman|nerdctl|kubectl|crictl|ctr|sudo|runuser|chroot|buildah)\b|"
+                          r"\b(?:user|runAsUser|runAsGroup)\s*[:=]")
+HTTP_CLIENT = re.compile(r"\b(?:curl|wget|http|httpie|xh|ftp|lftp|svn|git)\b|://")
+SSHPASS_ATTACHED = re.compile(r"(\bsshpass\s+(?:-[a-zA-Z]\s+)*-p)(?=\S)([^\s\"']+)")
 # A secret piped into a command that reads it from stdin precedes the keyword
 # (echo X | docker login --password-stdin), so the keyword check misses it.
 STDIN_SINK = re.compile(r"--password-stdin|--with-token\b|\bchpasswd\b|\bpasswd\b|--stdin\b|"
@@ -494,9 +515,96 @@ def _high_entropy(token):
         len(token) >= 24 and digits >= 4 and letters >= 4 and "-" not in token and "_" not in token)
 
 
+DATED_NAME = re.compile(r"[A-Za-z]*-?[0-9]{4}-[0-9]{2}-[0-9]{2}")
+
+
+def _value_quote(line, start):
+    """The quote that encloses the argument holding line[start], or None.
+
+    The argument is the token around start: "admin:a b" or "-uadmin:a b" or an
+    escaped \\"admin:a b\\" inside an HCL string; -p"a b" quotes the value itself.
+    """
+    if line[start:start + 1] in ("\"", "'"):
+        return line[start], start + 1
+    token = start
+    while token > 0 and line[token - 1] not in " \t[,(=":
+        token -= 1
+    if line[token:token + 1] in ("\"", "'"):
+        return line[token], start
+    if line[token:token + 2] in ("\\\"", "\\'"):
+        return line[token:token + 2], start
+    return None, start
+
+
+def _closing_quote(line, quote, start):
+    """Index of the quote that closes an argument opened by quote, or -1.
+
+    In a shell, a backslash escapes a double quote (an odd run before it) and
+    nothing escapes a single quote. Inside an HCL string the argument opens with
+    an escaped quote, so exactly one backslash marks its close.
+    """
+    char = quote[-1]
+    for i in range(start, len(line)):
+        if line[i] != char:
+            continue
+        j = i
+        while j > 0 and line[j - 1] == "\\":
+            j -= 1
+        run = i - j
+        if char == "'" or (run == 1 if len(quote) == 2 else run % 2 == 0):
+            return i - len(quote) + 1
+    return -1
+
+
+def _shell_word_end(line, start, end):
+    """End of the unquoted shell word holding line[start:end]. A backslash escapes
+    the next character (admin:pfx\\ secret is one argument), and a quoted part
+    joined to the word continues it (admin:pfx"a secret"). A quote that is never
+    closed on the line ends the word: it closes a string the word sits in."""
+    i, n = start, len(line)
+    while i < n and (i < end or line[i] not in " \t,]"):
+        c = line[i]
+        if c == "\\" and i + 1 < n:
+            i += 2
+        elif c in "\"'" and i >= end:
+            close = _closing_quote(line, c, i + 1)
+            if close == -1:
+                break
+            i = close + 1
+        else:
+            i += 1
+    return max(end, i)
+
+
+def _redact_values(pattern, line, group, keep=lambda m: False):
+    """Replace each match's value group with [redacted], through its closing quote.
+
+    A quoted value may hold spaces ("admin:pfx secret"), so redacting only the
+    pattern's unspaced run would leave the rest of the credential in the excerpt.
+    """
+    out, pos = [], 0
+    for m in pattern.finditer(line):
+        if m.start() < pos or keep(m):
+            continue
+        start, end = m.start(group), m.end(group)
+        quote, search = _value_quote(line, start)
+        if quote:
+            close = _closing_quote(line, quote, search)
+            end = max(end, len(line) if close == -1 else close)
+        else:
+            end = _shell_word_end(line, start, end)
+        out.append(line[pos:start] + "[redacted]")
+        pos = end
+    out.append(line[pos:])
+    return "".join(out)
+
+
 def _entropy(match):
     # A commit pinned with ?ref= is evidence (PS-001), not a secret.
     if match.string[max(0, match.start() - 4):match.start()] == "ref=":
+        return match.group()
+    # Date-versioned names are public (AWS::Serverless-2016-10-31, 2012-10-17).
+    if DATED_NAME.fullmatch(match.group()):
         return match.group()
     return "[redacted]" if _high_entropy(match.group()) else match.group()
 
@@ -514,15 +622,23 @@ def scrub_line(line, syntax="hcl"):
     line = URL_USERINFO.sub("://[redacted]@", line)
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
-    line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = _redact_values(SHELL_PASSWORD, line, 2)
+    # A numeric uid:gid only where -u/--user selects a process user (docker run -u 1000:1000);
+    # curl -u 123:456 is a password all the same.
+    process_user = PROCESS_USER.search(line) is not None and not HTTP_CLIENT.search(line)
+    line = _redact_values(USER_PASSWORD, line, 3,
+                          lambda m: process_user and (m.group(2)[:-1] + m.group(3)).isdigit())
+    line = _redact_values(SSHPASS_ATTACHED, line, 2)
+    if TOOL_LOGIN.search(line):
+        line = _redact_values(TOOL_PASSWORD, line, 2)
     line = CRYPT_HASH.sub("[redacted]", line)
     line = HTPASSWD_ARG.sub(lambda m: m.group(1) + "[redacted]", line)
     if STDIN_SINK.search(line):
         line = PIPED_VALUE.sub(lambda m: m.group(1) + "[redacted]" + m.group(3), line)
     if DB_CLIENT.search(line):  # mysql -pX; not -port=8080 elsewhere
-        line = CLIENT_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+        line = _redact_values(CLIENT_PASSWORD, line, 2)
         if "redis-cli" in line:
-            line = REDIS_AUTH.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", line)
+            line = _redact_values(REDIS_AUTH, line, 3)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
@@ -551,9 +667,14 @@ def scrub_lines(lines, syntax="hcl", original=None):
     """
     out = []
     heredoc = block = None
-    putty = False
+    putty = continued = False
     original = lines if original is None else original
     for line, source in zip(lines, original):
+        if continued:
+            # A backslash continuation of a line whose value was hidden.
+            out.append("[redacted]")
+            continued = source.rstrip().endswith("\\")
+            continue
         if putty:
             out.append("[redacted]")
             putty = not re.match(r"\s*Private-MAC:", line)
@@ -589,6 +710,8 @@ def scrub_lines(lines, syntax="hcl", original=None):
                 continue
             block = None
         out.append(scrub_line(line, syntax))
+        continued = source.rstrip().endswith("\\") and (
+            "[redacted]" in out[-1] or SECRET_WORD.search(PUBLIC_WORDS.sub("_", source)) is not None)
         # Openers come from the source: an earlier pass may have replaced
         # "password = trimspace(<<EOF" with "password = [redacted]".
         line = source

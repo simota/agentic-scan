@@ -36,8 +36,9 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES, STATE_FILE,
-                    STRING_LISTS, find_references, split_yaml_documents, unique_object, write_text_atomic)
-from iac_scan import _YamlSubset, is_export, literal, parse_hcl
+                    STRING_LISTS, find_references, shape_problems, split_yaml_documents, unique_object,
+                    write_text_atomic)
+from iac_scan import MAX_BYTES, _YamlSubset, is_export, literal, parse_hcl
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
 
@@ -146,26 +147,6 @@ def load(path):
     return data
 
 
-def shape_problems(data):
-    """The structure every tool relies on before it reads a record at all."""
-    if not isinstance(data, dict):
-        return ["record: must be a JSON object"]
-    problems = []
-    for key in ("meta", "inventory"):
-        if key in data and not isinstance(data[key], dict):
-            problems.append(f"{key}: must be an object")
-    for key in RECORD_LISTS:
-        if key in data and not isinstance(data[key], list):
-            problems.append(f"{key}: must be a list")
-        elif key in ("findings", "attack_paths", "perspectives"):
-            for n, item in enumerate(data.get(key, [])):
-                if not isinstance(item, dict):
-                    problems.append(f"{key}[{n}]: must be an object")
-                elif key != "perspectives" and not isinstance(item.get("id"), str):
-                    problems.append(f"{key}[{n}]: id must be a string")
-    return problems
-
-
 def load_record(path):
     """A findings.json whose structure the tools can walk; SchemaError otherwise."""
     data = load(path)
@@ -257,6 +238,12 @@ def dangling_references(data):
     for key in STRING_LISTS:
         walk(data.get(key, []), key, baseline=key != "limitations")
     return out
+
+
+def untriaged(data):
+    """Findings still Unverified: an I-* not yet triaged, or any finding a rescan reopened."""
+    return [f for f in data.get("findings", []) if isinstance(f, dict) and isinstance(f.get("validation"), dict)
+            and f["validation"].get("verdict") == "Unverified"]
 
 
 def location_key(location):
@@ -411,7 +398,7 @@ def validate(data, partial=False):
             else:
                 for ap in f["attack_paths"]:
                     if not isinstance(ap, str) or ap not in ap_ids:
-                        add(f"{where}: attack path {ap} does not exist")
+                        add(f"{where}: attack path {ap} does not exist (merge linked records in one call, or add the link later)")
         for i, ref in enumerate(f.get("references", []) if isinstance(f.get("references", []), list) else [None]):
             if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")):
                 add(f"{where}: references[{i}] needs title and url")
@@ -475,7 +462,7 @@ def validate(data, partial=False):
         else:
             for fid in refs:
                 if not isinstance(fid, str) or fid not in finding_ids:
-                    add(f"{where}: finding {fid} does not exist")
+                    add(f"{where}: finding {fid} does not exist (merge linked records in one call, or add the link later)")
 
     persp = data.get("perspectives", [])
     if not isinstance(persp, list):
@@ -514,7 +501,7 @@ def validate(data, partial=False):
 LABELS = {
     "en": {
         "doc_title": "Infrastructure security assessment", "brand": "INFRA-SCAN",
-        "dashboard": "Dashboard", "assessment": "Assessment report", "theme": "Theme",
+        "assessment": "Assessment report", "theme": "Theme",
         "summary": "Summary", "findings": "Findings", "attack_paths": "Attack paths",
         "perspectives": "Perspective coverage", "checked_ok": "Checked and sound",
         "decisions": "Decisions for a human", "limitations": "Limitations", "next_steps": "Next steps",
@@ -525,24 +512,26 @@ LABELS = {
         "fix": "Fix direction", "regression": "Regression check",
         "controls": "Controls", "cwe": "CWE", "condition": "Assumed condition", "references": "References",
         "rule": "Baseline rule", "evidence": "Evidence", "detail": "Detail", "source": "Source excerpt",
-        "entry": "Entry", "target": "Target", "status": "Status", "edges": "Edges", "note": "Note",
+        "status": "Status", "note": "Note",
         "linked": "Findings", "id": "ID", "title": "Title",
         "project": "Project", "scope": "Scope", "date": "Date", "assessor": "Assessor",
         "method": "Method", "commit": "Commit", "inputs": "Inputs", "inventory": "Inventory",
         "resources_n": "resources", "files_n": "files", "not_run": "Not run",
         "all": "All", "search": "Search", "shown": "shown", "copy": "Copy for LLM", "copied": "Copied",
-        "expand": "Details", "active": "active", "excluded_n": "excluded", "unverified_n": "unverified",
+        "excluded_n": "excluded", "unverified_n": "unverified",
         "covered_n": "covered by review findings", "covered": "Covered by",
         "static_note": "Static review of configuration. No cloud API was called and no deployed resource was contacted.",
         "pdf_missing": "PDF not generated: no headless Chrome or WeasyPrint found.",
         "pdf_failed": "PDF not generated: the PDF engine was found but failed.",
         "cover_note": "Confidential — for the owner of the assessed estate.",
-        "scope_method": "Scope and method", "counts": "Counts by severity (excluded findings not counted)",
+        "scope_method": "Scope and method", "counts": "Counts by severity (excluded findings and those covered by review findings not counted)",
         "md_intro": "Infrastructure security finding from a static configuration review. Propose a minimal IaC change that restores the boundary, and a policy-as-code test for it.",
+        "md_excluded": "Infrastructure configuration hit from a static review, excluded after triage (see the verdict). It needs no change; use it only as context.",
+        "md_covered": "Infrastructure configuration hit from a static review, covered by review finding %s: fix that finding's root cause instead.",
     },
     "ja": {
         "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
-        "dashboard": "ダッシュボード", "assessment": "診断報告書", "theme": "テーマ",
+        "assessment": "診断報告書", "theme": "テーマ",
         "summary": "概要", "findings": "検出事項", "attack_paths": "攻撃経路",
         "perspectives": "観点ごとの実施状況", "checked_ok": "確認して問題なし",
         "decisions": "判断が必要な事項", "limitations": "制約事項", "next_steps": "次の対応",
@@ -553,20 +542,22 @@ LABELS = {
         "fix": "修正の方向", "regression": "回帰チェック",
         "controls": "対応コントロール", "cwe": "CWE", "condition": "前提条件", "references": "参考",
         "rule": "ベースラインルール", "evidence": "根拠", "detail": "詳細", "source": "ソース抜粋",
-        "entry": "侵入点", "target": "標的", "status": "状態", "edges": "経路", "note": "備考",
+        "status": "状態", "note": "備考",
         "linked": "関連する検出事項", "id": "ID", "title": "タイトル",
         "project": "対象", "scope": "範囲", "date": "診断日", "assessor": "診断者",
         "method": "方法", "commit": "コミット", "inputs": "入力", "inventory": "インベントリ",
         "resources_n": "リソース", "files_n": "ファイル", "not_run": "未実施",
         "all": "すべて", "search": "検索", "shown": "件表示", "copy": "LLM用にコピー", "copied": "コピーしました",
-        "expand": "詳細", "active": "有効", "excluded_n": "除外", "unverified_n": "未検証",
+        "excluded_n": "除外", "unverified_n": "未検証",
         "covered_n": "検出事項に統合", "covered": "統合先",
         "static_note": "設定の静的レビューです。クラウド API の呼び出しや稼働中リソースへの通信は行っていません。",
         "pdf_missing": "PDF は生成されませんでした（ヘッドレス Chrome / WeasyPrint が見つかりません）。",
         "pdf_failed": "PDF は生成されませんでした（PDF エンジンは見つかりましたが失敗しました）。",
         "cover_note": "機密 — 診断対象の所有者向け。",
-        "scope_method": "範囲と方法", "counts": "深刻度別の件数（除外分を除く）",
+        "scope_method": "範囲と方法", "counts": "深刻度別の件数（除外分と検出事項に統合した分を除く）",
         "md_intro": "設定の静的レビューで見つかったインフラのセキュリティ検出事項です。境界を回復する最小限の IaC 変更と、それを守る policy-as-code テストを提案してください。",
+        "md_excluded": "設定の静的レビューで検出し、精査の結果除外した項目です（判定を参照）。変更は不要で、文脈としてのみ使ってください。",
+        "md_covered": "設定の静的レビューで検出した項目で、検出事項 %s に統合されています。その根本原因を修正してください。",
     },
 }
 
@@ -764,7 +755,9 @@ def hcl_module_sensitive(directory):
                 continue
             if sibling.is_symlink():
                 return True
-            if sibling.is_file() and hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig")):
+            # A file the scanner skipped as too large is unknown context too.
+            if sibling.is_file() and (sibling.stat().st_size > MAX_BYTES or
+                                      hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig"))):
                 return True
     except (OSError, ValueError, TypeError, RecursionError):
         return True
@@ -779,6 +772,8 @@ def source_lines(path):
     JSON sensitivity and env name/value relationships require the whole document;
     line-oriented redaction alone cannot enforce them.
     """
+    if path.stat().st_size > MAX_BYTES:
+        return None  # the scanner did not read it either
     # Match the scanner's BOM handling before checking sensitivity or line numbers.
     text = path.read_text(encoding="utf-8-sig")
     lines = split_lines(text)
@@ -887,9 +882,11 @@ def field_text(f, key):
     return value
 
 
-def finding_markdown(f, L, lang):
+def finding_markdown(f, L, lang, covered=()):
     """Single-line fields as one list, then each multi-line field under its own heading."""
-    lines = [L["md_intro"], "", f"## {f['id']} {shown(f.get('title', ''), lang)}", ""]
+    # An excluded or covered finding needs no change of its own.
+    intro = L["md_excluded"] if is_excluded(f) else (L["md_covered"] % ", ".join(covered) if covered else L["md_intro"])
+    lines = [intro, "", f"## {f['id']} {shown(f.get('title', ''), lang)}", ""]
     lines.append(f"- {L['severity']}: {shown(f.get('severity'), lang)} / "
                  f"{L['confidence']}: {shown(f.get('confidence'), lang)}")
     lines.append(f"- {L['category']}: {shown(f.get('category'), lang)} / {L['provider']}: {f.get('provider')}")
@@ -897,8 +894,6 @@ def finding_markdown(f, L, lang):
     lines.append(f"- {L['resources']}: " + ", ".join(f"`{r}`" for r in f.get("resources", [])))
     if f.get("attack_paths"):
         lines.append(f"- {L['attack_paths']}: " + ", ".join(f["attack_paths"]))
-    if is_excluded(f):
-        lines.append(f"- {L['excluded']}")
     blocks = []
     for key in FIELD_ORDER:
         value = field_text(f, key)
@@ -1063,16 +1058,17 @@ var count=document.getElementById('count');
 function aside(r){return r.classList.contains('excluded')||r.classList.contains('covered');}
 var active=rows.filter(function(r){return !aside(r);}).length;
 function apply(){
-  var q=f.q.value.trim().toLowerCase(),n=0,x=0;
+  var q=f.q.value.trim().toLowerCase(),n=0,xe=0,xc=0;
   rows.forEach(function(r){
     var ok=(!f.sev.value||r.dataset.sev===f.sev.value)&&(!f.prov.value||r.dataset.prov===f.prov.value)&&
       (!f.cat.value||r.dataset.cat===f.cat.value)&&(!f.ver.value||r.dataset.ver===f.ver.value)&&
       (!q||r.dataset.text.indexOf(q)>=0);
     r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
-    if(ok){if(aside(r))x++;else n++;}
+    if(ok){if(r.classList.contains('excluded'))xe++;else if(r.classList.contains('covered'))xc++;else n++;}
   });
-  // Match the severity cards: excluded findings are counted on their own.
-  count.textContent=n+' / '+active+' '+count.dataset.l+(x?' + '+count.dataset.x+' '+x:'');
+  // Match the severity cards: excluded and covered findings are counted on their own.
+  count.textContent=n+' / '+active+' '+count.dataset.l+(xe?' + '+xe+' '+count.dataset.e:'')+
+    (xc?' + '+xc+' '+count.dataset.c:'');
 }
 function reveal(){
   var el=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
@@ -1108,7 +1104,8 @@ def render_dashboard(data, L, lang, sources):
     c = counts(data)
     covered = covered_by(data)
     fs = ordered(data.get("findings", []))
-    md = {f["id"]: BIDI.sub(lambda m: f"[U+{ord(m.group()):04X}]", finding_markdown(f, L, lang)) for f in fs}
+    md = {f["id"]: BIDI.sub(lambda m: f"[U+{ord(m.group()):04X}]", finding_markdown(f, L, lang, covered.get(f["id"], ())))
+          for f in fs}
     # Escape every markup character: "<!--<script>" in a finding would
     # otherwise keep the real </script> from closing this block.
     md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")
@@ -1176,7 +1173,7 @@ def render_dashboard(data, L, lang, sources):
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
 <label class="search">{L["search"]}<input id="f-q" type="search"></label>
 </div>
-<p class="count" id="count" data-l="{L["shown"]}" data-x="{L["excluded_n"]} / {L["covered_n"]}" aria-live="polite"></p>
+<p class="count" id="count" data-l="{L["shown"]}" data-e="{L["excluded_n"]}" data-c="{L["covered_n"]}" aria-live="polite"></p>
 <div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th>{L["severity"]}</th><th>{L["id"]}</th><th>{L["title"]}</th>
 <th>{L["provider"]}</th><th>{L["category"]}</th><th>{L["confidence"]}</th><th>{L["verdict"]}</th></tr></thead>
 <tbody>{table}</tbody></table></div>
@@ -1274,6 +1271,8 @@ def to_pdf(html_path, pdf_path, failed=None):
     for c in ([chrome] if chrome else CHROME_CANDIDATES):
         exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
         if not exe:
+            if chrome:
+                failed.append(f"CHROME={chrome} (not found)")
             continue
         with tempfile.TemporaryDirectory() as profile:
             try:
@@ -1354,6 +1353,9 @@ def main(argv=None):
         return 2
     L = LABELS[a.lang]
     out = Path(a.out)
+    if a.repo and not Path(a.repo).is_dir():
+        print(f"render: --repo {a.repo} is not a directory", file=sys.stderr)
+        return 2
     problem = output_dir_problem(out, a.repo)
     if problem:
         print(f"render: {problem}", file=sys.stderr)

@@ -74,6 +74,26 @@ def sub_references(pattern, text, replace):
     return pattern.sub(lambda m: replace(m) if _is_reference(text, m, spans) else m.group(), text)
 
 
+def shape_problems(data):
+    """The structure every tool relies on before it reads a record at all."""
+    if not isinstance(data, dict):
+        return ["record: must be a JSON object"]
+    problems = []
+    for key in ("meta", "inventory"):
+        if key in data and not isinstance(data[key], dict):
+            problems.append(f"{key}: must be an object")
+    for key in RECORD_LISTS:
+        if key in data and not isinstance(data[key], list):
+            problems.append(f"{key}: must be a list")
+        elif key in ("findings", "attack_paths", "perspectives"):
+            for n, item in enumerate(data.get(key, [])):
+                if not isinstance(item, dict):
+                    problems.append(f"{key}[{n}]: must be an object")
+                elif key != "perspectives" and not isinstance(item.get("id"), str):
+                    problems.append(f"{key}[{n}]: id must be a string")
+    return problems
+
+
 def unique_object(pairs):
     """object_pairs_hook refusing duplicate keys, which JSON would silently drop.
 

@@ -34,8 +34,17 @@ class YamlSubsetTest(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertEqual(yaml(text), expected)
 
+    def test_nested_sequences_on_one_line(self):
+        # As PyYAML reads them; CloudFormation writes !Join lists this way.
+        cases = {"a:\n- - b": {"a": [["b"]]}, "a:\n- - b: true": {"a": [[{"b": True}]]},
+                 "- - a\n  - b\n- c": [["a", "b"], "c"], "- - - x\n    - z": [[["x", "z"]]],
+                 "- - a: 1\n    b: 2\n  - c": [[{"a": "1", "b": "2"}, "c"]]}
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                self.assertEqual(yaml(text), expected)
+
     def test_unsupported_shapes_are_refused(self):
-        for text in ("a:\n- - b", "a:\n- - b: true", '- - "<<": x', "a: [x: ]"):
+        for text in ('- - "<<": x', "a: [x: ]"):
             with self.subTest(text=text):
                 with self.assertRaises(ValueError):
                     yaml(text)

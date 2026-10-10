@@ -19,15 +19,17 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 - `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
   severity order, then location, rewriting attack-path links and F-IDs in text;
   run it once every review finding is merged
-- A fragment may set an `I-*` finding's `validation`, `confidence` and `condition`
-  (required with `Environment-dependent`), nothing else
-- `findings.py status <out>/findings.json` lists untriaged `I-*` findings and
+- A fragment may set an `I-*` finding's `validation`, `confidence`, `condition`
+  (required with `Environment-dependent`) and `severity`, nothing else
+- `findings.py status <out>/findings.json` lists `Unverified` findings (untriaged
+  `I-*`, and any finding a rescan reopened) and
   references to IDs that do not exist; `contract_check.py` fails on the latter (a
   standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
   another tracker's keys in a URL, in `references`, or as `#AP-123`; an ID used as
   a path component, as in `docs/F-001/`, is not a reference)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
-  covered by that finding and counted once
+  covered by that finding and counted once: name in that evidence only the `I-*`
+  the finding is the root cause of
 
 ## Top level
 
@@ -155,7 +157,9 @@ excluded. `Valid` + `Confirmed` requires every edge in `path` to cite `path:line
 
 - `perspectives`: `{"name": "...", "status": "Applied|N/A|Not checked", "note": "..."}`
   — one per perspective in `reference/perspectives.md`
-- `checked_ok`, `decisions`, `limitations`, `next_steps`: lists of strings
+- `checked_ok`, `decisions`, `limitations`, `next_steps`: lists of strings.
+  `decisions` holds what a human decided (with who decided) and what a human
+  must still decide; only the former documents intent (`reference/validation.md`)
 
 ## Prose rules
 

@@ -62,7 +62,8 @@ Always, when true:
   unfetched modules were `UNKNOWN`
 - Guardrails outside the inputs (SCPs, org policies, perimeters) were not read
 - Resources created outside IaC are not covered (unless a snapshot was supplied)
-- `iac_scan.py` `not_run` entries, verbatim
+- What `iac_scan.py` could not read: the reports show `inventory.not_run`
+  under "Not run" themselves; `limitations` adds only what that list does not say
 - Zero findings is not an all-clear
 
 Never print secret values; location and kind only. Describe permission chains

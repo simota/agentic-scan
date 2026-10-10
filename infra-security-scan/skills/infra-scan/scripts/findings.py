@@ -13,7 +13,7 @@ shell heredoc or a generated script). It may hold:
 - `findings`, `attack_paths` — matched by `id`: a known record is updated key
   by key (a key set to null is removed), a new one appended. `I-*` findings
   belong to iac_scan.py: a fragment may only update an existing one's
-  `validation`, `confidence` and `condition`
+  `validation`, `confidence`, `condition` and `severity` (graded by where it leads)
 - `perspectives` — matched by `name`, replaced whole
 - `checked_ok`, `decisions`, `limitations`, `next_steps` — appended without
   duplicates
@@ -32,7 +32,7 @@ Credential-shaped values are refused in every string saved to the record.
 Finding prose describes the weakness, never an attack: literal exploit strings
 and instance-metadata addresses are refused in those fields.
 
-`status` lists untriaged `I-*` findings and prose naming IDs no record has;
+`status` lists `Unverified` findings and prose naming IDs no record has;
 it exits 1 while either remains.
 
 Exit codes: 0 done, 1 refused (a fragment, a removal or a renumbering; reason on
@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
 from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, find_references,  # noqa: E402
                     sub_references, write_json_atomic)
-from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
+from redaction import CREDENTIAL  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
@@ -59,7 +59,7 @@ PAYLOAD = re.compile(
     # Narrow shapes only: relative module paths (../../modules/app) and
     # quoted names joined by "and"/"or" are ordinary infrastructure prose.
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
-    r"(?:\.\./){3,}|(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
+    r"(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
     r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
     r"metadata\.google\.internal",
@@ -67,9 +67,6 @@ PAYLOAD = re.compile(
 )
 # Share the renderer's known credential formats and retain the merge gate's
 # conservative handling of private-key fields and incomplete Slack tokens.
-# Token prefixes are case-sensitive: "asiaPacific..." is a name, not a key.
-CREDENTIAL = re.compile(
-    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 
 
 class Refused(Exception):
@@ -158,9 +155,9 @@ def fragment_problems(fragment, name, record):
             if key == "findings" and rid.startswith("I-"):
                 if rid not in existing:
                     problems.append(f"{name}: {rid}: I-* findings come only from iac_scan.py")
-                elif set(rec) - {"id", "validation", "confidence", "condition"}:
+                elif set(rec) - {"id", "validation", "confidence", "condition", "severity"}:
                     problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's "
-                                    "validation, confidence and condition")
+                                    "validation, confidence, condition and severity")
     for p in fragment.get("perspectives", []):
         if not isinstance(p, dict) or not isinstance(p.get("name"), str):
             problems.append(f"{name}: perspectives entries need a name")
@@ -176,10 +173,17 @@ def fragment_problems(fragment, name, record):
             pending.extend(value)
     if problems:
         return problems
-    for where, text in prose_strings(fragment):
-        if PAYLOAD.search(text):
-            problems.append(f"{name}: {where}: describe the weakness, not a payload or credential; "
-                            "use placeholders such as <attacker account>")
+    problems += payload_problems(fragment, name)
+    return problems
+
+
+def payload_problems(record, name):
+    problems = []
+    for where, text in prose_strings(record):
+        if (m := PAYLOAD.search(text)):
+            problems.append(f"{name}: {where}: {m.group()[:40]!r} reads as an exploit string; describe the "
+                            "weakness, not a payload or credential, with placeholders such as <attacker account> "
+                            "or <metadata endpoint>")
     return problems
 
 
@@ -225,7 +229,12 @@ def merge(findings_path, fragment_paths):
         if problems:
             raise Refused("\n".join(problems))
         apply(merged, fragment)
-    problems = credential_problems(merged, path)
+    # Only what fragments own: I-* findings and inventory come from iac_scan.py,
+    # which redacts at the source, and no fragment could fix them.
+    owned = {**merged, "findings": [f for f in merged.get("findings", [])
+                                    if not (isinstance(f, dict) and str(f.get("id", "")).startswith("I-"))]}
+    owned.pop("inventory", None)
+    problems = credential_problems(owned, path)
     if problems:
         raise Refused("\n".join(problems))
     render.validate(merged, partial=True)
@@ -315,16 +324,15 @@ def renumber(findings_path):
 
 
 def status(findings_path):
-    """What is left before contract_check: untriaged I-* and dangling references."""
+    """What is left before contract_check: Unverified findings and dangling references."""
     record = render.load_record(findings_path)
     findings = [f for f in record.get("findings", []) if isinstance(f, dict)]
-    open_items = [f for f in findings if str(f.get("id", "")).startswith("I-")
-                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
+    open_items = render.untriaged(record)
     dangling = render.dangling_references(record)
     print(f"{len(findings)} findings, {len(record.get('attack_paths', []))} attack paths; "
-          f"{len(open_items)} I-* untriaged, {len(dangling)} dangling reference(s)")
+          f"{len(open_items)} Unverified, {len(dangling)} dangling reference(s)")
     for f in open_items:
-        print(f"  untriaged {f['id']} {f.get('rule', '')} {f.get('location', '')}")
+        print(f"  unverified {f['id']} {f.get('rule', '')} {f.get('location', '')}".rstrip())
     for where, rid in dangling:
         print(f"  dangling  {rid} in {where}")
     return 1 if open_items or dangling else 0
@@ -341,7 +349,7 @@ def main(argv=None):
     r.add_argument("ids", nargs="+")
     n = sub.add_parser("renumber", help="renumber F-* findings in severity order, then location")
     n.add_argument("findings")
-    s = sub.add_parser("status", help="list untriaged I-* findings and references to missing IDs")
+    s = sub.add_parser("status", help="list Unverified findings and references to missing IDs")
     s.add_argument("findings")
     a = p.parse_args(argv)
     try:

@@ -5,10 +5,12 @@
 
 OUT_DIR holds findings.json and the rendered outputs. The check covers shape
 and provenance only: schema, ID scheme and order, the fields every F-* finding
-carries, a triage verdict (not `Unverified`) on every I-*, every perspective
-recorded once, the inventory written by iac_scan.py, and the exact output file
-set, each output nonempty and of its kind (HTML, iac_scan JSON, %PDF). It
-cannot tell whether a finding is true.
+carries, a verdict other than `Unverified` on every finding, every perspective
+recorded once, references that name existing records, the merge gate's
+credential and exploit-string checks over the whole record, I-* findings and
+meta.commit identical to iac.json, and the exact output file set, each output
+nonempty and of its kind (HTML, iac_scan JSON, %PDF). It cannot tell whether a
+finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """
@@ -18,6 +20,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import findings as record_gate  # noqa: E402
 import render  # noqa: E402
 from common import STATE_OR_VARS  # noqa: E402
 
@@ -41,13 +44,44 @@ def output_problem(path):
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError, RecursionError):
             return "is not valid JSON"
-        if not isinstance(doc, dict) or doc.get("tool") != "iac_scan":
+        if not isinstance(doc, dict) or doc.get("tool") != "iac_scan" or not isinstance(doc.get("findings"), list):
             return "was not written by iac_scan.py --out"
     elif path.suffix == ".html":
         with path.open("rb") as fh:
             if not fh.read(64).lstrip().lower().startswith(b"<!doctype html"):
                 return "is not an HTML report written by render.py"
     return None
+
+
+# What a fragment may set on an I-* finding (findings.py); the rest is the scanner's.
+REVIEW_FIELDS = {"validation", "confidence", "condition", "severity"}
+
+
+def baseline_problems(data, iac_path):
+    """Every I-* must be the one iac_scan.py wrote with this inventory, and no more."""
+    try:
+        iac = json.loads(iac_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return []  # reported by output_problem
+    if not isinstance(iac, dict) or not isinstance(iac.get("findings"), list):
+        return []
+
+    def key(f):
+        # Everything the scanner wrote; the fields a fragment may set are the reviewer's.
+        return json.dumps({k: v for k, v in f.items() if k not in REVIEW_FIELDS}, sort_keys=True, default=str)
+    record = {str(f.get("id")): key(f) for f in data.get("findings", [])
+              if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")}
+    scanned = {str(f.get("id")): key(f) for f in iac["findings"] if isinstance(f, dict)}
+    problems = []
+    if record != scanned:
+        ids = sorted({i for i in record.keys() | scanned.keys() if record.get(i) != scanned.get(i)},
+                     key=lambda i: render.id_key(i) if render.I_ID.match(i) else ("", 0))
+        problems.append(f"I-*: differ from iac.json ({', '.join(map(str, ids[:10]))}); I-* come only from one "
+                        "iac_scan.py run with both --out and --into")
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    if iac.get("commit") is not None and meta.get("commit") != iac.get("commit"):
+        problems.append("meta.commit: differs from iac.json; rerun iac_scan.py with both --out and --into")
+    return problems
 
 
 def check(data, out_dir, pdf=True, allow=()):
@@ -70,21 +104,13 @@ def check(data, out_dir, pdf=True, allow=()):
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "
             + ", ".join(f"{f['id']}={f.get('severity')}@{f.get('location')}" for f in expected))
-    for f in fs:
-        for key in render.F_FIELDS:
-            if render.blank(f.get(key)):
-                add(f"{f['id']}: {key} required")
-        if not isinstance(f.get("validation"), dict) or "verdict" not in f["validation"]:
-            add(f"{f['id']}: explicit validation.verdict required")
-    for f in findings:
-        fid = str(f.get("id", ""))
-        if not (F_ID.match(fid) or render.I_ID.match(fid)):
-            add(f"{fid}: only F-* and I-* IDs are allowed")
-    # "Done when" requires a verdict on every I-*; Unverified means not triaged.
-    unverified = [str(f.get("id")) for f in findings if str(f.get("id", "")).startswith("I-")
-                  and isinstance(f.get("validation"), dict) and f["validation"].get("verdict") == "Unverified"]
+    # Required fields, verdicts, ID shapes and path statuses are schema checks
+    # (render.validate above); only what the schema cannot see follows.
+    # "Done when" requires a verdict on every finding; Unverified means not
+    # triaged (I-*) or reopened by a rescan (F-*).
+    unverified = [str(f.get("id")) for f in render.untriaged(data)]
     if unverified:
-        add(f"I-*: {len(unverified)} finding(s) still Unverified; triage each one "
+        add(f"findings: {len(unverified)} still Unverified; triage or recheck each one "
             f"(reference/validation.md): {', '.join(unverified)}")
 
     names = render.perspective_names()
@@ -93,13 +119,19 @@ def check(data, out_dir, pdf=True, allow=()):
         n = recorded.count(name)
         if n != 1:
             add(f"perspectives: {name!r} recorded {n} times; every perspective exactly once")
-    for a in data.get("attack_paths", []):
-        if isinstance(a, dict) and a.get("status") not in render.AP_STATUSES:
-            add(f"{a.get('id')}: attack path status must be open, blocked or unknown")
     for where, rid in render.dangling_references(data):
         add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):
         add("inventory: missing; run iac_scan.py --into findings.json")
+    # The merge gate, over the whole record: it may have been written by hand.
+    problems += [f"record: {p}" for p in record_gate.credential_problems(data, "findings.json")]
+    # I-* titles and details are the scanner's words about the configuration
+    # (they quote its values); no fragment could change them.
+    written = {**data, "findings": [
+        {k: v for k, v in f.items() if k not in ("title", "detail")} if str(f.get("id", "")).startswith("I-") else f
+        for f in data.get("findings", []) if isinstance(f, dict)]}
+    problems += [f"record: {p}" for p in record_gate.payload_problems(written, "findings.json")]
+    problems += baseline_problems(data, Path(out_dir) / "iac.json")
 
     out = Path(out_dir)
     required = OUTPUTS - (set() if pdf else {"assessment.pdf"})

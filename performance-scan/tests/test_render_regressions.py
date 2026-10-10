@@ -314,6 +314,8 @@ class RenderRoundEightTests(unittest.TestCase):
                 destination = render.link_destination(url)
                 self.assertTrue(destination.startswith("https://exa"), destination)
                 self.assertNotIn("%", destination)
+        self.assertEqual(render.link_destination(" docs/a.md"), "%20docs/a.md")
+        self.assertEqual(render.link_destination("docs/a\tb.md"), "docs/a%09b.md")
 
     def test_an_invisible_reference_title_falls_back_to_the_url(self):
         for title in ("​", "⁠﻿", "­ ", "  "):

@@ -201,10 +201,13 @@ def link_destination(url):
     document beside the report) qualify. A protocol-relative URL does not: opened
     from file://, //host resolves to a network share (an SMB fetch on Windows).
     """
-    # urlsplit drops tabs and newlines and the caller's spaces would otherwise be
-    # quoted into the link ("%20https://..."), so check and quote one string.
-    url = re.sub(r"[\t\n\r]", "", url).strip()
+    # urlsplit drops tabs and newlines, so a padded absolute URL would pass the
+    # check and then be quoted as "%20https://...": check and quote one string.
+    # A relative path keeps its characters, since a file name may hold them.
+    cleaned = re.sub(r"[\t\n\r]", "", url).strip()
     try:
+        if urlsplit(cleaned).scheme:
+            url = cleaned
         parts = urlsplit(url)
     except ValueError:
         return None

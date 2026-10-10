@@ -583,10 +583,11 @@ ID_RUN = re.compile(
 
 
 # ASCII URL characters only, so `…/x。A-001と` ends the URL at `。`.
-# Where a URL starts in prose: a scheme with `//`, `urn:` and `mailto:`, or a
-# bare `www.` (which render.py's AUTOLINK also treats as a link).
-URL_START = re.compile(
-    r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:urn|mailto):|(?i:www)\.)")
+# Where a URL starts in prose: a scheme with `//`, or `urn:`; and, with no
+# boundary before them, exactly what render.py's AUTOLINK links even right
+# after a word (`seeWWW.example.com`, `1https://x`).
+URL_START = re.compile(r"(?i:https?|ftp|mailto|xmpp):|(?i:www)\."
+                       r"|(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:urn):)")
 
 
 def _url_spans(text):

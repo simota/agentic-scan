@@ -246,6 +246,11 @@ class ReviewRegressionTests(Workspace):
                                ("www.example.com/?key=A-001 and A-001",
                                 "www.example.com/?key=A-001 and A-003"),
                                ("WWW.example.com/A-001。A-001", "WWW.example.com/A-001。A-003"),
+                               ("seeWWW.example.com/?key=A-001 A-001",
+                                "seeWWW.example.com/?key=A-001 A-003"),
+                               ("1https://x/?key=A-001 A-001", "1https://x/?key=A-001 A-003"),
+                               ("mailto:a@x.example?subject=A-001 A-001",
+                                "mailto:a@x.example?subject=A-001 A-003"),
                                ("参照https://x/A-001。A-001", "参照https://x/A-001。A-003"),
                                ("Fix:A-001 first", "Fix:A-003 first")):
             self.assertEqual(findings._rewrite_ids(text, mapping), expected)

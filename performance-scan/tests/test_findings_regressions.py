@@ -324,3 +324,44 @@ class OptionalFieldRegressionTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ReviewRoundEightTests(unittest.TestCase):
+    def test_an_unprintable_path_does_not_turn_success_into_a_traceback(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fragment = root / "fragment.json"
+            fragment.write_text('{"meta": {"project": "p"}}', encoding="utf-8")
+            target = root / "所見.json"
+            result = run_cli("findings.py", "merge", target, fragment,
+                             env_updates={"PYTHONIOENCODING": "cp1252"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("merged 1 fragment", result.stdout)
+            self.assertTrue(target.is_file())
+
+    def test_merge_creates_the_output_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fragment = root / "fragment.json"
+            fragment.write_text('{"meta": {"project": "p"}}', encoding="utf-8")
+            target = root / "new" / "out" / "findings.json"
+            code, _, errors = run_main(findings.main, "merge", target, fragment)
+            self.assertEqual(code, 0, errors)
+            self.assertTrue(target.is_file())
+
+    def test_budget_and_perspective_errors_name_the_record(self):
+        doc = {"budgets": [{"id": "B-01", "statement": "s", "source": "x", "status": "holds"},
+                           {"id": "B-02", "statement": "s", "source": "x", "status": "hold"}],
+               "perspectives": []}
+        with self.assertRaisesRegex(findings.SchemaError, r"budgets\[1\]\.status.*\(budget 'B-02'\)"):
+            findings.validate(doc)
+        doc = {"perspectives": [{"name": "Memory", "status": "done", "note": "n"}]}
+        with self.assertRaisesRegex(findings.SchemaError, r"\(perspective 'Memory'\)"):
+            findings.validate(doc)
+
+    def test_a_location_path_holds_no_line_break_of_any_kind(self):
+        for brk in ("\x0b", "\x0c", "\x1c", "\x85", " ", " "):
+            with self.subTest(brk=repr(brk)), self.assertRaises(findings.SchemaError):
+                findings.validate_finding(finding(location=[f"src/a.py{brk}x:3"]), "f")
+        findings.validate_finding(finding(location=["src/a b.py:3"]), "f")

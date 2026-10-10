@@ -26,6 +26,7 @@ Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr), 2 a command-line usage error.
 """
 import argparse
+import contextlib
 import errno
 import json
 import math
@@ -79,7 +80,9 @@ BUDGET_MENTION = re.compile(r"(?<![A-Za-z0-9_-])B-[0-9]{2,}(?![A-Za-z0-9_-])")
 # run with no colon is retried from every position (quadratic time).
 CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
                       r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9１-９][0-9０-９]*")
-LOCATION = re.compile(r"(?P<path>[^\r\n]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
+# The path holds no line break of any kind str.splitlines() knows.
+LOCATION = re.compile(r"(?P<path>[^\r\n\x0b\x0c\x1c-\x1e\x85\u2028\u2029]+)"
+                      r":(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
 
 
 class SchemaError(ValueError):
@@ -497,16 +500,31 @@ def validate(doc, complete=False):
         seen.add(f["id"])
     seen = set()
     for i, b in enumerate(doc.get("budgets", [])):
-        validate_budget(b, f"budgets[{i}]", seen)
+        with _named(b, "id", "budget"):
+            validate_budget(b, f"budgets[{i}]", seen)
     seen = set()
     for i, p in enumerate(doc.get("perspectives", [])):
-        validate_perspective(p, f"perspectives[{i}]", seen)
+        with _named(p, "name", "perspective"):
+            validate_perspective(p, f"perspectives[{i}]", seen)
     for key in LISTS:
         values = doc.get(key, [])
         if not isinstance(values, list):
             raise SchemaError(f"{key}: must be a list")
         for i, value in enumerate(values):
             _text(value, f"{key}[{i}]")
+
+
+@contextlib.contextmanager
+def _named(record, key, kind):
+    """Name the record in an error: after a merge the index is the combined
+    record's, not the fragment's."""
+    try:
+        yield
+    except SchemaError as exc:
+        name = record.get(key) if isinstance(record, dict) else None
+        if isinstance(name, str) and f".{key}:" not in str(exc):
+            raise SchemaError(f"{exc} ({kind} {_show(name)})") from exc
+        raise
 
 
 def _record_identity(record, key, where):
@@ -583,6 +601,10 @@ def write_atomic(target, content):
                                          delete=False) as output:
             temporary = Path(output.name)
             output.write(content)
+            # Durable before the rename: after a crash the record is the old
+            # bytes or the new ones, never an empty file.
+            output.flush()
+            os.fsync(output.fileno())
         if mode is not None:
             temporary.chmod(mode)
         os.replace(temporary, target)
@@ -613,6 +635,8 @@ def cmd_merge(args):
             except SchemaError as exc:
                 raise SchemaError(f"{path}: {exc}") from exc
         content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        # FINDINGS is created when absent, together with its directory.
+        destination.parent.mkdir(parents=True, exist_ok=True)
         write_atomic(destination, content)
     except (SchemaError, OSError, UnicodeError, RecursionError) as exc:
         print(f"refused: {exc}", file=sys.stderr)
@@ -762,6 +786,12 @@ def main(argv=None):
     c.add_argument("--allow", action="append", default=[])
     c.set_defaults(func=cmd_check)
     args = parser.parse_args(argv)
+    # A path the console encoding cannot show must not turn a completed command
+    # into a traceback and exit 1.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
     return args.func(args)
 
 

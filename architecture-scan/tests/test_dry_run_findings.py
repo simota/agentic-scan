@@ -49,6 +49,8 @@ class UntracedFindingTests(unittest.TestCase):
             with self.subTest(severity=severity):
                 doc = complete_doc()
                 doc["findings"] = [finding("A-001", severity, rule="R-01")]
+                # An untraced finding cannot back a violated rule.
+                doc["rules"][0]["status"] = "partly read"
                 doc["findings"][0]["validation"] = {"verdict": "Unverified", "method": "static",
                                                     "evidence": "some text"}
                 problems = self.problems(doc)

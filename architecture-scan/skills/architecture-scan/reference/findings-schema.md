@@ -66,7 +66,7 @@ be byte-identical to what `render.py` produces from the current
 - every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` finding
   not excluded cites a rule recorded as `violated`, a `Likely` one a rule
   recorded as `violated` or `partly read`
-- every `violated` rule to be cited by a finding not excluded, in `rule` or,
+- every `violated` rule to be cited by a `Valid` or `Likely` finding, in `rule` or,
   when one root cause breaks several rules, named in its `trace` (cite the
   most specific rule in `rule` and name the others in `trace`)
 - no `reason` on a `holds` or `violated` rule: a provisional `not checked`

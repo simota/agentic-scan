@@ -87,7 +87,7 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 gapless `A-NNN` IDs in severity order, every perspective recorded, nonempty
 `checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
 recorded as violated, a `Likely` one violated or partly read), every violated rule
-cited by a finding and no reason left on a closed rule, traced and evidenced
+cited by a Valid or Likely finding and no reason left on a closed rule, traced and evidenced
 High and Medium findings, and a dashboard and
 report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape

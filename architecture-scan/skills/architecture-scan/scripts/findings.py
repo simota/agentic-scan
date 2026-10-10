@@ -36,7 +36,8 @@ per line, counted as report.md counts them (excluded verdicts apart).
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
 record is complete, IDs are gapless in severity order, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, every
-violated rule is cited (in `rule`, or named in a `trace`) and carries no
+violated rule is cited by a Valid or Likely finding (in `rule`, or named in
+a `trace`) and carries no
 stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
@@ -90,8 +91,10 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # `path:line` like any other evidence.
 DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*(?:$|[.。;；])",
                           re.ASCII)
-# ASCII word characters only, so `R-02にも` beside Japanese text is a mention.
-RULE_MENTION = re.compile(r"(?<![\w-])R-[0-9]{2,}(?![\w-])", re.ASCII)
+# A rule ID standing free in prose, as ID_RUN finds finding IDs: not part of a
+# path or file name (`docs/R-02.md`), and ASCII word characters only, so
+# `R-02にも` beside Japanese text is a mention.
+RULE_MENTION = re.compile(r"(?<![\w/\\.-])R-[0-9]{2,}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -887,15 +890,16 @@ def contract_problems(out, allow=()):
                                 "naming what the trace found")
     named = set()
     for f in findings:
-        if f["validation"]["verdict"] not in EXCLUDED:
+        # Only a finding that establishes the break can back a `violated` entry.
+        if f["validation"]["verdict"] in ("Valid", "Likely"):
             named.add(f.get("rule", "").strip())
             named.update(RULE_MENTION.findall(f["trace"]))
     for r in doc.get("rules", []):
         if r["status"] == "violated" and r["id"] not in named:
             # The ledger says an edge breaks it, so a finding must say which.
-            problems.append(f"{r['id']}: a violated rule needs a finding that cites it in "
-                            "rule, or names it in trace when its root cause is cited "
-                            "under another rule")
+            problems.append(f"{r['id']}: a violated rule needs a Valid or Likely finding that "
+                            "cites it in rule, or names it in trace when its root cause is "
+                            "cited under another rule")
         if r["status"] in ("holds", "violated") and r.get("reason", "").strip():
             # Usually a provisional `not checked` reason left behind by the fragment
             # that closed the rule; it would render under the final status.

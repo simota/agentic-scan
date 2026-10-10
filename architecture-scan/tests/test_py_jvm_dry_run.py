@@ -226,6 +226,27 @@ class EmailAtTests(unittest.TestCase):
 class ReviewRegressionTests(Workspace):
     """Defects the review of this round's own diff found."""
 
+    def test_a_rule_in_a_path_is_not_a_mention(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
+        for trace in ("see docs/R-02.md", "docs\\R-02\\x", "R-02.md", "x.R-02"):
+            with self.subTest(trace=trace):
+                doc["findings"][0]["trace"] = trace
+                self.assertTrue(any(p.startswith("R-02: a violated rule")
+                                    for p in self.problems(doc)))
+        doc["findings"][0]["trace"] = "breaks R-02."
+        self.assertEqual(self.problems(doc), [])
+
+    def test_only_a_valid_or_likely_finding_backs_a_violated_rule(self):
+        doc = complete_doc()
+        for verdict, ok in (("Unverified", False), ("Unlikely", False), ("Likely", True)):
+            with self.subTest(verdict=verdict):
+                doc["findings"][0]["validation"]["verdict"] = verdict
+                doc["findings"][0]["severity"] = "Low"
+                doc["findings"][1]["severity"] = "Low"
+                problems = [p for p in self.problems(doc) if p.startswith("R-01")]
+                self.assertEqual(problems == [], ok, problems)
+
     def test_a_rule_named_beside_japanese_text_is_cited(self):
         doc = complete_doc()
         doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})

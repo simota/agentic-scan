@@ -112,7 +112,8 @@ Go: `database/sql` `Exec`/`ExecContext`, pgx `Exec`/`CopyFrom`, sqlx, gorm
 `Save`/`Updates`/`Create`, and the files sqlc generates. In Python: Django
 `save`, `create`, `bulk_create`/`bulk_update`, `get_or_create`/
 `update_or_create`, `QuerySet.update()` with `F()` expressions, `.delete()` and
-its `on_delete` cascades, `connection.cursor().execute` and `.raw()`,
+its `on_delete` cascades, `connection.cursor().execute` and `.raw()` whose
+SQL modifies data (both usually only read),
 `RunPython`/`RunSQL` migrations; SQLAlchemy `session.add`/`merge` and
 `session.execute(update(...))`. On the JVM: Spring Data
 `save`/`saveAll`/`delete*`, `@Modifying @Query` (JPQL and native, which skip

@@ -72,6 +72,25 @@
       "regression_test": "EXPLAIN for the search query uses the new index",
       "validation": {"verdict": "Unverified", "method": "static"},
       "status": "Open"
+    },
+    {
+      "id": "P-004",
+      "title": "Dashboard widgets appear to query once per widget (N+1)",
+      "severity": "Medium",
+      "confidence": "Suspected",
+      "category": "Database access",
+      "step": "DB1",
+      "location": "app/dashboard/widgets.py:31",
+      "workload": "Tenant dashboard (warm; opened a few times per session)",
+      "scale_driver": "Widgets per dashboard (max 12)",
+      "cost_model": "1 + W queries suspected, W = widgets",
+      "request": "1. A dashboard with W=12 widgets. 2. GET /api/dashboard",
+      "impact": "Expected (B-01): constant data queries. Suspected: one query per widget",
+      "budget": "B-01",
+      "fix": "None needed: the widget queries are already prefetched",
+      "regression_test": "Query count for GET /api/dashboard is equal for W=1 and W=12",
+      "validation": {"verdict": "FalsePositive", "method": "static", "evidence": "app/dashboard/views.py:12 prefetches every widget's data in one query before widgets.py:31 reads it"},
+      "status": "Open"
     }
   ],
   "perspectives": [

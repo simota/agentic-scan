@@ -2,35 +2,17 @@
 import json
 import os
 from pathlib import Path
-import stat
-import subprocess
 import sys
 import tempfile
 import unittest
 
-from test_performance_scan import SKILL, complete_doc
+from support import complete_doc, run_cli, snapshot
 
 
 class JsonInputFileTests(unittest.TestCase):
     def run_cli(self, script, *args, env_updates=None):
-        env = os.environ.copy()
-        env["PYTHONDONTWRITEBYTECODE"] = "1"
-        env.update(env_updates or {})
-        return subprocess.run(
-            [sys.executable, str(SKILL / "scripts" / script), *(str(arg) for arg in args)],
-            capture_output=True, text=True, check=False, timeout=2, env=env)
-
-    def snapshot(self, root):
-        entries = {}
-        for path in root.rglob("*"):
-            mode = path.lstat().st_mode
-            record = (stat.S_IFMT(mode), stat.S_IMODE(mode))
-            if stat.S_ISLNK(mode):
-                record += (path.readlink(),)
-            elif stat.S_ISREG(mode):
-                record += (path.read_bytes(),)
-            entries[str(path.relative_to(root))] = record
-        return entries
+        # A short timeout: a FIFO input must be refused, not waited on.
+        return run_cli(script, *args, timeout=2, env_updates=env_updates)
 
     def prepare(self, root):
         out = root / "out"
@@ -61,7 +43,7 @@ class JsonInputFileTests(unittest.TestCase):
                             input_path.symlink_to(fifo)
                         except (OSError, NotImplementedError):
                             self.skipTest("symbolic links are unavailable")
-                    original = self.snapshot(root)
+                    original = snapshot(root)
 
                     if origin == "render input":
                         result = self.run_cli("render.py", target, "--out", out)
@@ -77,7 +59,7 @@ class JsonInputFileTests(unittest.TestCase):
                     diagnostic_path = fifo if origin == "existing findings" else input_path
                     self.assertIn(str(diagnostic_path), result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
-                    self.assertEqual(self.snapshot(root), original)
+                    self.assertEqual(snapshot(root), original)
 
     def test_commands_report_json_decoder_limits_without_changing_files(self):
         cases = [("nesting", "[" * 200000 + "0" + "]" * 200000, {})]
@@ -91,7 +73,7 @@ class JsonInputFileTests(unittest.TestCase):
                     out, target, fragment = self.prepare(root)
                     input_path = fragment if origin == "fragment" else target
                     input_path.write_text(content, encoding="utf-8")
-                    original = self.snapshot(root)
+                    original = snapshot(root)
 
                     if origin == "render input":
                         result = self.run_cli("render.py", target, "--out", out,
@@ -107,7 +89,7 @@ class JsonInputFileTests(unittest.TestCase):
                     self.assertIn(prefix, result.stderr)
                     self.assertIn(str(input_path), result.stderr)
                     self.assertNotIn("Traceback", result.stderr)
-                    self.assertEqual(self.snapshot(root), original)
+                    self.assertEqual(snapshot(root), original)
 
     def test_regular_file_symlinks_work_as_merge_and_render_inputs(self):
         with tempfile.TemporaryDirectory() as directory:

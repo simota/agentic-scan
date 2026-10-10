@@ -41,7 +41,8 @@ No load was sent to any deployed environment.
 
 ## 3. Findings to act on first
 
-<!-- In severity order; repeat the block per finding and link the issue filed from templates/issue.en.md. -->
+<!-- Every High and Medium finding in severity order, one block each; list Low and Info by ID only.
+Link the issue filed from templates/issue.en.md, or write "not filed yet". -->
 
 ### {{id}}: {{title}}
 
@@ -51,7 +52,7 @@ No load was sent to any deployed environment.
 - **Cost model:** {{cost_model}}
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
-- **Tracked in:** <issue URL>
+- **Tracked in:** <issue URL, or "not filed yet">
 
 ## 4. Budgets
 

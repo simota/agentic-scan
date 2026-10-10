@@ -8,7 +8,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_performance_scan import complete_doc, findings, render
+from support import complete_doc, findings, render
 
 
 class BudgetInferredValidationTests(unittest.TestCase):
@@ -101,10 +101,10 @@ class BudgetInferredValidationTests(unittest.TestCase):
                         with self.subTest(budget=record["id"]):
                             row = next(line for line in markdown.splitlines()
                                        if line.startswith(f"| {record['id']} |"))
-                            self.assertIn(f"| violated | {label} |", row)
+                            self.assertIn(f"| {render.shown('violated', lang)} | {label} |", row)
                             row = next(row for row in re.findall(r"<tr>.*?</tr>", html)
                                        if row.startswith(f"<tr><td>{record['id']}</td>"))
-                            self.assertIn(f"<td>violated</td><td>{label}</td>", row)
+                            self.assertIn(f"<td>{render.shown('violated', lang)}</td><td>{label}</td>", row)
 
 
 class MergeRecordValidationTests(unittest.TestCase):

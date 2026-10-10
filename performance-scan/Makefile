@@ -11,7 +11,7 @@
 #   make link AGENT=claude             # this host only
 #   make link PROJECT=/path/to/repo    # that project's .claude/skills instead
 #   make link SKILLS_DIR=/some/path    # one literal path; AGENT unused
-#   make demo LANG_OUT=en              # English
+#   make demo LANG_OUT=ja              # Japanese labels (default: the record's language)
 
 NAME    := performance-scan
 # PYTHON is an executable name or path, including paths containing spaces.
@@ -55,7 +55,8 @@ INSTALL = $(call shell_quote,$(PYTHON)) $(call shell_quote,$(REPO)/scripts/insta
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
 DEMO_OUT ?= $(or $(TMPDIR),/tmp)/$(NAME)-demo
-LANG_OUT ?= ja
+# Empty: render in the record's own language.
+LANG_OUT ?=
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
 .PHONY: help link unlink status check demo test
@@ -109,8 +110,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  for lang in ja en; do \
-	    PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/render.py) "$$sample" --out "$$out" --lang $$lang >/dev/null \
-	      || { echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
+	    err=$$(PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/render.py) "$$sample" --out "$$out" --lang $$lang 2>&1 >/dev/null) \
+	      || { echo "$$err" >&2; echo "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
 	  done; \
 	  cp "$$sample" "$$out/findings.json"; \
 	  PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/findings.py) check "$$out" >/dev/null \
@@ -123,4 +124,4 @@ check: test ## verify the skill is self-contained and internally consistent
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
 	@PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/render.py) $(call shell_quote,$(DEMO_INPUT)) \
-	  --out $(call shell_quote,$(DEMO_OUT)) --lang $(call shell_quote,$(LANG_OUT))
+	  --out $(call shell_quote,$(DEMO_OUT)) $(if $(LANG_OUT),--lang $(call shell_quote,$(LANG_OUT)))

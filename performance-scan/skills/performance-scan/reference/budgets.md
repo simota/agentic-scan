@@ -20,7 +20,9 @@ drivers grow. Derive it from evidence in the repository, strongest first:
 1. **Stated targets** — SLO documents, CI performance budgets, load-test
    thresholds, query-count tests
 2. **Hard limits** — request, job and gateway timeouts; container memory;
-   pool sizes; plan limits; body and upload limits
+   pool sizes; plan limits; body and upload limits. Confirm what a timeout
+   bounds: Node's `server.requestTimeout` and `headersTimeout` bound receiving
+   the request only, and Express has no handler deadline
 3. **The majority of handlers** — if nine list endpoints paginate and one does
    not, the nine state the bound and the one breaks it
 4. **Data model** — caps on child counts, unique constraints, indexes that show
@@ -62,7 +64,10 @@ or `not checked` (with a reason).
 ## 3. Cost-trace rows
 
 For each ledger entry, one row per path that pays it and scale driver that path
-iterates; a path with constant cost gets one row with Driver `none`:
+iterates; a path with constant cost gets one row with Driver `none`. A branch
+inside a handler that costs differently (e.g. key vs session auth) is a separate
+path. Costs paid in shared middleware ("every route through X") get their rows
+in the cross-cutting unit, and domain units cite those rows:
 
 | Entry | Path | Driver | Hops (entry → loop → sink, `path:line`) | Cost | Mitigation | Verdict |
 |---|---|---|---|---|---|---|
@@ -75,7 +80,14 @@ iterates; a path with constant cost gets one row with Driver `none`:
   middleware) count only with their `path:line`
 - *Verdict*: `holds`, `violated`, or `lead` (needs VERIFY)
 
-## 4. Close-check per review unit
+## 4. Review units and close-check
+
+Group the workload inventory by domain, plus one cross-cutting unit (DB and
+HTTP client setup, middleware, caching layer, runtime and build config). A
+ledger entry belongs to every unit that has a path paying it: each unit writes
+rows only for its own paths, and the coordinator sets the entry's status from
+all units' rows. With subagents, one reviewer per unit; without, the same units
+sequentially. Reviewer notes stay in scratch.
 
 A unit closes when, for every owned entry, rows = the sum over its paths of
 max(1, drivers that path iterates); every

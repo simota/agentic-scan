@@ -1,5 +1,4 @@
 """Failed report generation must preserve both existing output artifacts."""
-import io
 import json
 import os
 from pathlib import Path
@@ -8,7 +7,6 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
 from unittest.mock import patch
 
 try:
@@ -16,18 +14,13 @@ try:
 except ImportError:
     resource = None
 
-from test_performance_scan import SKILL, complete_doc, render
-
-
-OUTPUTS = ("report.md", "dashboard.html")
+from support import OUTPUTS, SKILL, complete_doc, render, run_cli, run_main
 
 
 class AtomicRenderTests(unittest.TestCase):
     def run_render(self, source, out):
-        errors = io.StringIO()
-        with redirect_stdout(io.StringIO()), redirect_stderr(errors):
-            result = render.main([str(source), "--out", str(out)])
-        return result, errors.getvalue()
+        result, _, errors = run_main(render.main, source, "--out", out)
+        return result, errors
 
     def prepare(self, root, existing=True, project="Updated project"):
         source = root / "findings.json"
@@ -151,9 +144,7 @@ class AtomicRenderTests(unittest.TestCase):
             with self.subTest(existing=existing), tempfile.TemporaryDirectory() as d:
                 source, out, _ = self.prepare(Path(d), existing, project="\ud800")
                 original = self.snapshot(out)
-                result = subprocess.run(
-                    [sys.executable, str(SKILL / "scripts/render.py"), str(source), "--out", str(out)],
-                    capture_output=True, text=True, check=False, timeout=15)
+                result = run_cli("render.py", source, "--out", out)
                 self.assert_unchanged(out, original)
                 self.assert_render_failure(result.returncode, result.stderr)
 

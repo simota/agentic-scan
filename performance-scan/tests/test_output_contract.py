@@ -3,14 +3,12 @@ import io
 import json
 import os
 from pathlib import Path
-import subprocess
-import sys
 import tempfile
 import unittest
-from contextlib import redirect_stderr, redirect_stdout
+from contextlib import redirect_stdout
 from unittest.mock import MagicMock, patch
 
-from test_performance_scan import SKILL, complete_doc, findings, render
+from support import complete_doc, findings, render, run_cli, run_main
 
 
 OUTPUTS = ("dashboard.html", "findings.json", "report.md")
@@ -27,10 +25,7 @@ class OutputContractTests(unittest.TestCase):
         return out
 
     def check(self, out, *args):
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            result = findings.main(["check", str(out), *args])
-        return result, output.getvalue(), errors.getvalue()
+        return run_main(findings.main, "check", out, *args)
 
     def assert_rejected(self, result, name, reason):
         code, output, errors = result
@@ -152,9 +147,7 @@ class OutputContractTests(unittest.TestCase):
                 target = out / name
                 target.unlink()
                 os.mkfifo(target)
-                result = subprocess.run(
-                    [sys.executable, str(SKILL / "scripts" / "findings.py"), "check", str(out)],
-                    capture_output=True, text=True, check=False, timeout=5)
+                result = run_cli("findings.py", "check", out, timeout=5)
                 self.assert_rejected(
                     (result.returncode, result.stdout, result.stderr), name, "regular file")
 

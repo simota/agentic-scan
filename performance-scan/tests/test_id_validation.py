@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_performance_scan import complete_doc, finding, findings, render
+from support import complete_doc, finding, findings, render
 
 
 class IdValidationTests(unittest.TestCase):

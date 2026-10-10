@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from test_performance_scan import complete_doc, findings, render
+from support import complete_doc, findings, render, run_main
 
 
 class MetadataMergeTests(unittest.TestCase):
@@ -14,10 +14,7 @@ class MetadataMergeTests(unittest.TestCase):
     INVALID = (None, False, 20261009, 1.5, [], {}, "", " \t\n")
 
     def run_merge(self, target, fragment):
-        output, errors = io.StringIO(), io.StringIO()
-        with redirect_stdout(output), redirect_stderr(errors):
-            code = findings.main(["merge", str(target), str(fragment)])
-        return code, output.getvalue(), errors.getvalue()
+        return run_main(findings.main, "merge", target, fragment)
 
     def test_present_metadata_fields_are_validated_in_partial_records(self):
         for field in self.FIELDS:

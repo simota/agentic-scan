@@ -2,8 +2,7 @@
 from copy import deepcopy
 import unittest
 
-from test_performance_scan import complete_doc, finding, findings, render
-from test_render_regressions import HtmlTreeReader, element_text
+from support import HtmlTreeReader, complete_doc, element_text, finding, findings, render
 
 
 LANGUAGES = (
@@ -96,7 +95,7 @@ class SummaryRegressions(unittest.TestCase):
                         self.assertIn(note, overview)
                         self.assertNotIn("静的レビューのみ。", overview)
                         self.assertNotIn("Static review;", overview)
-                    self.assertIn(f"Valid ({method})", element_text(root))
+                    self.assertIn(f"Valid ({render.shown(method, lang)})", element_text(root))
             self.assertEqual(doc, original)
 
     def test_static_only_note_is_visible_without_measurement(self):

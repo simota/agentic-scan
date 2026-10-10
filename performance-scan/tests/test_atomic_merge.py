@@ -16,7 +16,7 @@ try:
 except ImportError:
     resource = None
 
-from test_performance_scan import SKILL, complete_doc, findings
+from support import SKILL, complete_doc, findings, run_cli
 
 
 class AtomicMergeTests(unittest.TestCase):
@@ -35,10 +35,7 @@ class AtomicMergeTests(unittest.TestCase):
                 target, fragment = self.prepare(root, existing, project="\ud800")
                 original = target.read_bytes() if existing else None
                 names = {path.name for path in root.iterdir()}
-                result = subprocess.run(
-                    [sys.executable, str(SKILL / "scripts/findings.py"),
-                     "merge", str(target), str(fragment)],
-                    capture_output=True, text=True, check=False)
+                result = run_cli("findings.py", "merge", target, fragment)
                 self.assertEqual(target.read_bytes() if target.exists() else None, original)
                 self.assertEqual(result.returncode, 1)
                 self.assertIn("refused:", result.stderr)

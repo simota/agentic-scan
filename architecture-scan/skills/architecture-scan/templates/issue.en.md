@@ -4,7 +4,7 @@ Copy each {{field}} from the field of the same name in findings.json. Delete opt
 section whose only content is empty (e.g. References when the finding has none).
 - {{location}}: one code span per location, comma-separated
 - ({{step}}): drop the parentheses when the finding has no step
-- {{rule}}: the ID, then the statement and source from the rules[] entry with that id
+- {{rule}}: each ID, then the statement and source from the rules[] entry with that id
 - {{trace}}: keep the numbered steps, one per line
 - Open questions: no field holds them; write the conditions static reading could not settle
 

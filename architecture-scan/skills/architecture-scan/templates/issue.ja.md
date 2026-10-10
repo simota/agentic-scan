@@ -4,7 +4,7 @@
 節（finding に references がないときの「参考」など）は見出しごと削除する。
 - {{location}}: location ごとにコードスパンにし、読点で区切る
 - （{{step}}）: finding に step がないときは括弧ごと削除する
-- {{rule}}: ID のあとに、rules[] の同じ id のエントリから statement と source を書く
+- {{rule}}: ID ごとに、rules[] の同じ id のエントリから statement と source を書く
 - {{trace}}: 番号付きの手順を 1 行に 1 つずつ書く
 - 未確定事項: 対応するフィールドはない。静的な読解で確定できなかった条件を書く
 

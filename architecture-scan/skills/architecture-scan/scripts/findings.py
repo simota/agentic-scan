@@ -37,8 +37,8 @@ per line, counted as report.md counts them (excluded verdicts apart).
 record is complete, IDs are gapless in severity order with excluded verdicts
 last, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, every
-violated rule is cited by a Valid or Likely finding (in `rule`, or named in
-a `trace`) and carries no
+violated rule is cited in the `rule` of a Valid or Likely finding (which may
+list several, `R-01, R-02`) and carries no
 stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
@@ -92,10 +92,9 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # reasons live in the finding it repeats.
 DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*[.。]?\s*",
                           re.ASCII)
-# A rule ID standing free in prose, as ID_RUN finds finding IDs: not part of a
-# path or file name (`docs/R-02.md`), and ASCII word characters only, so
-# `R-02にも` beside Japanese text is a mention.
-RULE_MENTION = re.compile(r"(?<![\w/\\.-])R-[0-9]{2,}(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
+# `findings[].rule` names one rule or several (`R-01, R-02`) when one root
+# cause breaks more than one.
+RULE_LIST = re.compile(r"[\s,、，;；]+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -625,8 +624,8 @@ def _atomic_write_all(files):
 # (`A-002/A-001`, `A-001-A-002-A-003`). Every ID in a run is a mention. A run
 # touching a word, path or ticket (`docs/A-001.md`, `JIRA-A-001`,
 # `A-001-A-002.md`) is not prose and stays whole; URLs and e-mail addresses
-# are skipped whole by `_url_spans`. ASCII word characters only, so a run beside Japanese text
-# (`A-001を`) is still a mention.
+# are skipped whole by `_url_spans`. ASCII word characters only, so a run
+# beside Japanese text (`A-001を`) is still a mention.
 ID_RUN = re.compile(
     r"(?<![\w/\\-])A-[0-9]{3}(?:[/-]A-[0-9]{3})*(?![\w/\\-]|\.[A-Za-z0-9])", re.ASCII)
 
@@ -872,6 +871,11 @@ def cmd_counts(args):
     return 0
 
 
+def cited_rules(f):
+    """The rule IDs a finding's `rule` names, in order."""
+    return [rid for rid in RULE_LIST.split(f.get("rule", "")) if rid]
+
+
 def contract_problems(out, allow=()):
     """Return the run-contract violations for an output directory."""
     out = Path(out)
@@ -920,14 +924,14 @@ def contract_problems(out, allow=()):
     kept = {f["id"] for f in findings if f["validation"]["verdict"] not in EXCLUDED}
     for f in findings:
         verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
-        if f.get("rule", "").strip():
-            status = rule_status.get(f["rule"])
+        for rid in cited_rules(f):
+            status = rule_status.get(rid)
             if status is None:
-                problems.append(f"{f['id']}: rule {f['rule']!r} is not a rules[] id")
+                problems.append(f"{f['id']}: rule {rid!r} is not a rules[] id")
             elif verdict in ("Valid", "Likely") and status not in ALLOWED_RULE_STATUS[verdict]:
                 # A Valid finding is a traced break, so its rule is violated; a
                 # Likely one may still sit on a rule whose edges were partly read.
-                problems.append(f"{f['id']}: {verdict} finding cites {f['rule']}, recorded as "
+                problems.append(f"{f['id']}: {verdict} finding cites {rid}, recorded as "
                                 f"{status}, not {' or '.join(ALLOWED_RULE_STATUS[verdict])}")
         # A duplicate's evidence is the reported finding that keeps it, whose
         # own evidence cites the line; renumber rewrites the ID with the rest.
@@ -952,20 +956,16 @@ def contract_problems(out, allow=()):
             elif not visible(evidence):
                 problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence "
                                 "naming what the trace found")
-    named = set()
-    for f in findings:
-        # Only a finding that establishes the break can back a `violated` entry.
-        if f["validation"]["verdict"] in ("Valid", "Likely"):
-            named.add(f.get("rule", "").strip())
-            # A URL in the trace (`?key=R-02`) links elsewhere; it cites nothing.
-            named.update(m for part in _url_spans(f["trace"])[::2]
-                         for m in RULE_MENTION.findall(part))
+    # Only a finding that establishes the break, and says so in `rule`, backs
+    # a `violated` entry; prose in a trace can mention a rule it does not break.
+    named = {rid for f in findings if f["validation"]["verdict"] in ("Valid", "Likely")
+             for rid in cited_rules(f)}
     for r in doc.get("rules", []):
         if r["status"] == "violated" and r["id"] not in named:
             # The ledger says an edge breaks it, so a finding must say which.
             problems.append(f"{r['id']}: a violated rule needs a Valid or Likely finding that "
-                            "cites it in rule, or names it in trace when its root cause is "
-                            "cited under another rule")
+                            "cites it in rule (list several, `R-01, R-02`, when one root "
+                            "cause breaks them all)")
         if r["status"] in ("holds", "violated") and r.get("reason", "").strip():
             # Usually a provisional `not checked` reason left behind by the fragment
             # that closed the rule; it would render under the final status.

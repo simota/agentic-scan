@@ -62,11 +62,23 @@ class ViolatedRuleTests(Workspace):
         doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
         self.assertTrue(any(p.startswith("R-02: a violated rule") for p in self.problems(doc)))
 
-    def test_one_root_cause_names_its_other_rules_in_trace(self):
+    def test_one_root_cause_cites_every_rule_it_breaks(self):
         doc = complete_doc()
         doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
-        doc["findings"][0]["trace"] += "\n2. the same edge breaks R-02"
+        doc["findings"][0]["rule"] = "R-01, R-02"
         self.assertEqual(self.problems(doc), [])
+        doc["findings"][0]["rule"] = "R-01、R-09"
+        self.assertTrue(any("rule 'R-09' is not a rules[] id" in p for p in self.problems(doc)))
+
+    def test_a_rule_in_a_trace_cites_nothing(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
+        for trace in ("the same edge breaks R-02", "does not violate R-02; only R-01",
+                      "ルールR-02にも違反する"):
+            with self.subTest(trace=trace):
+                doc["findings"][0]["trace"] = trace
+                self.assertTrue(any(p.startswith("R-02: a violated rule")
+                                    for p in self.problems(doc)))
 
     def test_an_excluded_finding_does_not_explain_a_violation(self):
         doc = complete_doc()
@@ -239,17 +251,6 @@ class EmailAtTests(unittest.TestCase):
 class ReviewRegressionTests(Workspace):
     """Defects the review of this round's own diff found."""
 
-    def test_a_rule_in_a_path_is_not_a_mention(self):
-        doc = complete_doc()
-        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
-        for trace in ("see docs/R-02.md", "docs\\R-02\\x", "R-02.md", "x.R-02"):
-            with self.subTest(trace=trace):
-                doc["findings"][0]["trace"] = trace
-                self.assertTrue(any(p.startswith("R-02: a violated rule")
-                                    for p in self.problems(doc)))
-        doc["findings"][0]["trace"] = "breaks R-02."
-        self.assertEqual(self.problems(doc), [])
-
     def test_only_a_valid_or_likely_finding_backs_a_violated_rule(self):
         doc = complete_doc()
         for verdict, ok in (("Unverified", False), ("Unlikely", False), ("Likely", True)):
@@ -260,14 +261,6 @@ class ReviewRegressionTests(Workspace):
                 problems = [p for p in self.problems(doc) if p.startswith("R-01")]
                 self.assertEqual(problems == [], ok, problems)
 
-    def test_a_rule_id_inside_a_url_cites_nothing(self):
-        doc = complete_doc()
-        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
-        doc["findings"][0]["trace"] = "see https://tracker.example/?key=R-02"
-        self.assertTrue(any(p.startswith("R-02: a violated rule") for p in self.problems(doc)))
-        doc["findings"][0]["trace"] = "https://tracker.example/x breaks R-02"
-        self.assertEqual(self.problems(doc), [])
-
     def test_an_excluded_finding_before_an_active_one_fails(self):
         doc = complete_doc()
         doc["findings"][0]["validation"] = {"verdict": "FalsePositive", "method": "static",
@@ -277,12 +270,6 @@ class ReviewRegressionTests(Workspace):
         self.assertTrue(any("numbered after the rest" in p for p in problems), problems)
         renamed, _ = findings.renumber(doc)
         self.assertEqual(self.problems(renamed), [])
-
-    def test_a_rule_named_beside_japanese_text_is_cited(self):
-        doc = complete_doc()
-        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
-        doc["findings"][0]["trace"] += "、ルールR-02にも違反する"
-        self.assertEqual(self.problems(doc), [])
 
     def test_a_label_before_a_path_starting_with_a_digit_still_cites_it(self):
         for evidence in ("根拠:20240101_create_orders.rb:12", "確認:1_init.sql:3",

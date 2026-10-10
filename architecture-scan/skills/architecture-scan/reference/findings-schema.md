@@ -63,12 +63,12 @@ required output paths must be files, and `report.md` and `dashboard.html` must
 be byte-identical to what `render.py` produces from the current
 `findings.json` in `meta.lang` — re-render after the last merge. It also requires:
 
-- every nonblank `findings[].rule` to name a `rules[].id`; a `Valid` finding
-  not excluded cites a rule recorded as `violated`, a `Likely` one a rule
-  recorded as `violated` or `partly read`
-- every `violated` rule to be cited by a `Valid` or `Likely` finding, in `rule` or,
-  when one root cause breaks several rules, named in its `trace` (cite the
-  most specific rule in `rule` and name the others in `trace`)
+- every ID in a nonblank `findings[].rule` to name a `rules[].id`; a `Valid`
+  finding not excluded cites rules recorded as `violated`, a `Likely` one
+  rules recorded as `violated` or `partly read`
+- every `violated` rule to be cited in the `rule` of a `Valid` or `Likely`
+  finding; one root cause that breaks several rules lists them all
+  (`"rule": "R-01, R-02"`). A rule ID in a trace cites nothing
 - no `reason` on a `holds` or `violated` rule: a provisional `not checked`
   reason is sent back as `"reason": null` with the final status
 - every finding not excluded to sit under a perspective recorded as `applied`
@@ -271,7 +271,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM5`, not `DM9`) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
-| `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID |
+| `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID, or several separated by commas (`R-01, R-02`) |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |
 | `meta.commit`, `validation.evidence`, `references[].title`, `rules[].reason` | Strings when present. Empty values and omission are allowed except where a nonblank value is required by the verdict or run contract |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |

@@ -74,8 +74,9 @@ class SchemaError(ValueError):
 
 
 # Final labels that mark a dotted name as a host rather than a file name. The
-# ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev), so
-# they mark a host only in names of three or more labels (api.corp.dev).
+# ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev,
+# README.org): with them, a lowercase two-label name (example.org, db.dev) is a
+# host, while a name with an uppercase letter or a leading dot is a file.
 HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", "eu", "us",
                            "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
 AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
@@ -90,9 +91,9 @@ def _is_host(name):
     if "/" in name or "\\" in name or name.startswith("."):
         return False
     labels = name.lower().split(".")
+    ambiguous = labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name.islower())
     return (name.lower() == "localhost" or bool(IPV4.fullmatch(name))
-            or (len(labels) > 1 and labels[-1] in HOST_SUFFIXES)
-            or (len(labels) > 2 and labels[-1] in AMBIGUOUS_HOST_SUFFIXES))
+            or (len(labels) > 1 and (labels[-1] in HOST_SUFFIXES or ambiguous)))
 
 
 def cites_location(text):

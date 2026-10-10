@@ -1,7 +1,7 @@
 ---
 name: privacy-scan
 description: "Static privacy review of an application's own source: maps personal data, where it flows and who receives it, then checks minimisation, consent, retention and deletion, data subject rights, third-party sharing, logs and telemetry, exposure, storage, tracking and copies. Outputs a dashboard and a report. Read-only; not legal advice. Use to find privacy gaps or list what to check."
-allowed-tools: Read, Grep, Glob, Bash, Write
+allowed-tools: Read, Grep, Glob, Bash, Write, Edit
 ---
 
 ## Owns
@@ -42,7 +42,8 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   Essential privacy gaps are violations of these on some path; a generic
   scanner cannot see them because the commitments exist only for this app
 - **Create a new, empty output directory** outside the audited repository and
-  follow the *Run contract* below
+  follow the *Run contract* below (skip it when only a checklist is asked for; the
+  checklist goes in chat unless a file is requested)
 
 ## Run contract
 
@@ -53,12 +54,12 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Granularity | One finding per root cause, i.e. per fix location. The same personal field leaking through one shared logger is one finding that lists every call site in `flow`; a deletion path that misses several stores is one finding naming every missed store; gaps needing different fixes are separate findings. `check` refuses two reported findings with the same first `location` |
 | IDs | `PV-001`… numbered without gaps in severity order, then by the path of each finding's first `location` (`scripts/findings.py renumber` applies this and rewrites `PV-NNN` references in prose and lists); `FalsePositive` and `NotApplicable` findings come last, by path. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language. No extra files unless asked (`findings.py check --allow NAME`). Write the record's prose in that language; report labels follow `--lang`, prose is never machine-translated |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Effort | When the effort runs short, close units in risk order (sensitive categories, third-party flows and deletion first) instead of thinning every unit. `limitations` gives the count of unreached units and ledger entries |
 | Scratch | A new, empty directory for working records (data map, ledger, flow rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
 | Writing the record | Never build `findings.json` with a shell heredoc, `echo`/`printf` redirection or a generated script. Write each batch of one to five findings as a JSON fragment with the host's file-write tool into scratch, then `scripts/findings.py merge <out>/findings.json <fragment>…`. The first fragment carries `meta` (`reference/findings-schema.md`). To correct a finding, write a fragment with its `id` and only the changed keys. After the last merge, run `scripts/findings.py renumber <out>/findings.json` (*IDs* row), then render. Renumbering changes IDs, so read them back from `findings.json` before writing any later fragment. The merge refuses e-mail addresses and long digit runs: name fields and use placeholders (`reference/findings-schema.md`) |
-| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository |
+| Read-only | Read, search, run read-only `git` commands and this skill's scripts; the file-write tool is for scratch records and fragments only; write nothing inside the audited repository. The one exception is GUARD, on explicit request: add the test (and the fix only if asked), as `reference/validation.md` describes |
 
 | Severity | When |
 |---|---|
@@ -74,8 +75,10 @@ to work at all — an SDK's DSN or API key, a service endpoint, a credential rea
 from the environment — is not such a condition: grade as if it is present. Only
 a setting that would have to differ from what the code evidently intends (a log
 level, an SDK option, a region) counts. A default committed to the repository
-(a config or IaC variable default) is what the code intends. An `Environment-dependent` finding
-records each such condition in `conditions`; confidence never changes the grade.
+(a config or IaC variable default) is what the code intends, and so is
+deployment documented in the repository (a README stating that stdout goes to a
+log service). An `Environment-dependent` finding records each such condition in
+`conditions`; confidence never changes the grade.
 Exposure bounded to a short window by the code itself (a revoked link cached
 for minutes, a local log kept for hours) also lowers the grade one level; an
 external log or error service keeps its own copy, so it is never bounded this way.
@@ -120,7 +123,7 @@ requester's language (`--lang ja|en`).
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
 | Asked to lock a commitment in or confirm a fix | GUARD: a test in the repo's own suite with synthetic data, red before and green after |
 | The host cannot run a second, independent reviewer | Record that in `limitations`; the *Never* rule on `Valid` still applies. Never invent a second reviewer |
-| Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several. An open High goes to a private tracker. Filing or sending is the requester's step |
+| Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several (its counts from `scripts/findings.py counts`). An open High goes to a private tracker. Filing or sending is the requester's step |
 
 ## Always / Never
 

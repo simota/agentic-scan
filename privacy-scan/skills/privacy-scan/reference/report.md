@@ -1,18 +1,25 @@
 # Report — output formats
 
 **Read when:** CHECKLIST, to deliver a checklist; REPORT, to deliver findings.
-Write in the requester's language.
+Write in the requester's language. Never include personal data values in any
+deliverable here — checklist notes included; name fields and use placeholders.
 
 ## Checklist deliverable
 
-- First line: how many commitments were derived, how many perspectives apply,
-  that suspicions are unverified, and that this is not legal advice
+Delivered in chat; write a file only when the requester asks for one (no
+output directory is needed).
+
+- First line: how many commitments were derived (baseline entries included),
+  how many perspectives apply, that suspicions are unverified, and that this is
+  not legal advice
 - **Commitments ledger first** (`reference/commitments.md` §2): each commitment
   with its source, the flows that must keep it and which to trace; mark
-  `inferred` commitments as questions for the requester
-- Then one section per perspective from `reference/perspectives.md`, most
-  important first, listing only the hunt steps no ledger entry covers; list the
-  ones judged N/A with a reason
+  `inferred` commitments as questions for the requester. Leave *Status* out:
+  nothing has been checked yet
+- Then one section for every perspective in `reference/perspectives.md`, most
+  important first: the hunt steps no ledger entry covers, and the steps judged
+  N/A with a reason (a perspective fully covered by the ledger says so in one
+  line)
 - Each item: the question, concrete files and flows, and an optional
   `initial note (unverified)`
 - Close with the recommended starting point and one decision for the requester

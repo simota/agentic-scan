@@ -1,6 +1,9 @@
 <!--
 Reports privacy findings to the owner, a DPO or a manager. One report can carry several findings.
-Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
+Copy each finding from findings.json, verbatim and in the record's language, so the report never disagrees
+with the dashboard. Take every {{n_…}} count from `python3 scripts/findings.py counts <out>/findings.json`
+(severity counts cover reported findings; excluded ones are counted separately). Delete optional lines left
+empty. Write <to fill in> where the record has no source (issue URLs, decisions on data already sent).
 
 Before sending:
 - No personal data values anywhere; field names and placeholders only
@@ -31,14 +34,14 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Not yet verified — L
 | System | {{meta.project}} |
 | Scope | {{meta.scope}} |
 | Revision | {{meta.commit}} |
-| Method | {{meta.method}} |
+| Method | {{meta.method}} (when absent, the review-method line of report.md) |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 Source code was read; no data store, log or backup was accessed. This is a technical review, not legal advice.
 
 ## 3. Findings to act on first
 
-<!-- In severity order; repeat the block per finding and link the issue filed from templates/issue.en.md. -->
+<!-- Every reported High and Medium finding, in ID order; repeat the block per finding and link the issue filed from templates/issue.en.md. -->
 
 ### {{id}}: {{title}}
 
@@ -50,8 +53,8 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
 - **Guard:** {{guard}}
-- **Data already sent or retained:** owner and decision (purge, notify, accept)
-- **Tracked in:** <issue URL>
+- **Data already sent or retained:** <to fill in: owner and decision (purge, notify, accept)>
+- **Tracked in:** <to fill in: issue URL>
 
 ## 4. Commitments
 

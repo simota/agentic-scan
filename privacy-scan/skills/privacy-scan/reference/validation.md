@@ -64,14 +64,32 @@ analytics or backups, and never run the application against real data.
 
 ## Guards (GUARD)
 
-A commitment is locked in by a check in the repo's own suite that:
+Only on explicit request; it is the one time the skill writes into the audited
+repository (the test, and the fix only if that is asked for too). A commitment
+is locked in by a check in the repo's own suite that:
 
 - uses synthetic data only (placeholders such as `user@example.com`)
 - fails on the current gap and passes after the fix (the captured log output
   contains a redaction marker instead of the synthetic email; deleting a
   synthetic user leaves no row in each listed store; the SDK spy records no
   call while consent is absent)
-- names the commitment (`C-…`) it encodes
+- names the finding (`PV-…`) and the commitment (`C-…`) it encodes
+- asserts on keys and markers, and never prints captured output: a failing
+  assertion must not dump what a real run might have logged
+
+Steps:
+
+1. Write the test in the suite's own conventions and run it: it must fail
+   (red) at the assessed revision.
+2. If no fix was requested, leave the test marked as expected to fail (the
+   suite's xfail/skip-with-reason mechanism) with the finding ID, and say so.
+3. If a fix was requested, apply it and run the test again: it must pass
+   (green), and a positive control (the feature still works) must pass too.
+4. If the suite cannot run here (dependencies missing, no network), do not
+   install anything: deliver the test, say it was not run, and claim neither
+   red nor green.
+5. After a fix, merge `status: Fixed` for the finding, re-render and pass
+   `check`; note in `limitations` that the fix post-dates `meta.commit`.
 
 `status: Fixed` records that a fix was made; the guard is the evidence that it
 stays fixed.

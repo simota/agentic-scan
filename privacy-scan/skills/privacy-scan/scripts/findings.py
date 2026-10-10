@@ -3,6 +3,7 @@
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
+    python3 findings.py counts FINDINGS
     python3 findings.py check OUT_DIR [--allow NAME ...]
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -732,6 +733,36 @@ def cmd_renumber(args):
     return 0
 
 
+def counts(doc):
+    """The counts the report templates use, derived from the record alone.
+
+    Severity counts cover reported findings only (excluded ones are counted in
+    `n_excluded`), matching the dashboard and report.md.
+    """
+    findings = doc.get("findings", [])
+    reported = [f for f in findings if not excluded(f)]
+    result = {}
+    for severity in SEVERITIES:
+        rows = [f for f in reported if f["severity"] == severity]
+        result[f"n_{severity.lower()}"] = len(rows)
+        result[f"n_{severity.lower()}_valid"] = sum(f["validation"]["verdict"] == "Valid" for f in rows)
+    result["n_excluded"] = len(findings) - len(reported)
+    for verdict in ("Likely", "Unverified", "Unlikely"):
+        result[f"n_{verdict.lower()}"] = sum(f["validation"]["verdict"] == verdict for f in reported)
+    return result
+
+
+def cmd_counts(args):
+    try:
+        doc = read_json(args.findings)
+        validate(doc)
+    except SchemaError as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    print(json.dumps(counts(doc), indent=2))
+    return 0
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
@@ -955,13 +986,16 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into findings.json")
     m.add_argument("findings")
     m.add_argument("fragments", nargs="+")
+    n = sub.add_parser("counts", help="print the counts the report templates use ({{n_high}}…)")
+    n.add_argument("findings")
     r = sub.add_parser("renumber", help="number findings in severity order and rewrite PV- references")
     r.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
-    return {"merge": cmd_merge, "renumber": cmd_renumber, "check": cmd_check}[args.cmd](args)
+    return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
+            "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

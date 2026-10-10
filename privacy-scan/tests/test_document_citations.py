@@ -71,3 +71,27 @@ class FrontmatterTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TemplateCountTests(unittest.TestCase):
+    def test_every_count_placeholder_comes_from_findings_counts(self):
+        import json
+        from test_privacy_scan import findings
+        sample = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+        produced = set(findings.counts(sample))
+        for lang in ("ja", "en"):
+            text = (SKILL / "templates" / f"report.{lang}.md").read_text(encoding="utf-8")
+            used = set(re.findall(r"{{(n_[a-z_]+)}}", text))
+            with self.subTest(lang=lang):
+                self.assertTrue(used)
+                self.assertLessEqual(used, produced)
+
+    def test_counts_exclude_excluded_findings_from_severities(self):
+        from test_privacy_scan import complete_doc, findings
+        doc = complete_doc()
+        doc["findings"][1]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        doc["findings"][0]["validation"]["verdict"] = "Likely"
+        result = findings.counts(doc)
+        self.assertEqual((result["n_high"], result["n_high_valid"], result["n_low"],
+                          result["n_excluded"], result["n_likely"]), (1, 0, 0, 1, 1))

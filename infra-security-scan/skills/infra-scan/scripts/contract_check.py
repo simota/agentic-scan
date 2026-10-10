@@ -18,6 +18,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import findings as record_gate  # noqa: E402
 import render  # noqa: E402
 from common import STATE_OR_VARS  # noqa: E402
 
@@ -41,13 +42,39 @@ def output_problem(path):
             doc = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, UnicodeError, ValueError, RecursionError):
             return "is not valid JSON"
-        if not isinstance(doc, dict) or doc.get("tool") != "iac_scan":
+        if not isinstance(doc, dict) or doc.get("tool") != "iac_scan" or not isinstance(doc.get("findings"), list):
             return "was not written by iac_scan.py --out"
     elif path.suffix == ".html":
         with path.open("rb") as fh:
             if not fh.read(64).lstrip().lower().startswith(b"<!doctype html"):
                 return "is not an HTML report written by render.py"
     return None
+
+
+def baseline_problems(data, iac_path):
+    """Every I-* must be the one iac_scan.py wrote with this inventory, and no more."""
+    try:
+        iac = json.loads(iac_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return []  # reported by output_problem
+    if not isinstance(iac, dict) or not isinstance(iac.get("findings"), list):
+        return []
+
+    def key(f):
+        resources = f.get("resources") if isinstance(f.get("resources"), list) else []
+        return (f.get("id"), f.get("rule"), f.get("location"), f.get("severity"),
+                tuple(sorted(str(r) for r in resources)))
+    record = {key(f) for f in data.get("findings", []) if isinstance(f, dict) and str(f.get("id", "")).startswith("I-")}
+    scanned = {key(f) for f in iac["findings"] if isinstance(f, dict)}
+    problems = []
+    if record != scanned:
+        ids = sorted({k[0] for k in record ^ scanned}, key=lambda i: render.id_key(i) if render.I_ID.match(str(i)) else ("", 0))
+        problems.append(f"I-*: differ from iac.json ({', '.join(map(str, ids[:10]))}); I-* come only from one "
+                        "iac_scan.py run with both --out and --into")
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    if iac.get("commit") is not None and meta.get("commit") != iac.get("commit"):
+        problems.append("meta.commit: differs from iac.json; rerun iac_scan.py with both --out and --into")
+    return problems
 
 
 def check(data, out_dir, pdf=True, allow=()):
@@ -100,6 +127,10 @@ def check(data, out_dir, pdf=True, allow=()):
         add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):
         add("inventory: missing; run iac_scan.py --into findings.json")
+    # The merge gate, over the whole record: it may have been written by hand.
+    problems += [f"record: {p}" for p in record_gate.credential_problems(data, "findings.json")]
+    problems += [f"record: {p}" for p in record_gate.payload_problems(data, "findings.json")]
+    problems += baseline_problems(data, Path(out_dir) / "iac.json")
 
     out = Path(out_dir)
     required = OUTPUTS - (set() if pdf else {"assessment.pdf"})

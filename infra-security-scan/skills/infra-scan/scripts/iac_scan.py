@@ -56,7 +56,7 @@ from urllib.parse import unquote as url_unquote
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, split_yaml_documents,
                     sub_references, unique_object, write_json_atomic)
-from redaction import CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
+from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
 # Tool caches hold copies of the configuration (downloaded modules, the
 # Terragrunt and SAM build copies); scanning them would duplicate findings.
@@ -315,7 +315,14 @@ class Block:
         self.attrs, self.blocks = {}, []
 
 
-def parse_body(t, start, end, line_of):
+# Real configuration nests a few blocks deep; each level rescans its body, so
+# deeper input would cost depth x size time.
+MAX_HCL_DEPTH = 64
+
+
+def parse_body(t, start, end, line_of, depth=0):
+    if depth > MAX_HCL_DEPTH:
+        raise RecursionError("HCL blocks nested deeper than %d" % MAX_HCL_DEPTH)
     """Attributes {name: (raw, line)} and nested blocks of t[start:end]."""
     attrs, blocks, i = {}, [], start
     while True:
@@ -347,7 +354,7 @@ def parse_body(t, start, end, line_of):
         if j < end and t[j] == "{":
             close = skip_balanced(t, j)
             block = Block(name, labels, line_of(i), line_of(close - 1))
-            block.attrs, block.blocks = parse_body(t, j + 1, close - 1, line_of)
+            block.attrs, block.blocks = parse_body(t, j + 1, close - 1, line_of, depth + 1)
             blocks.append(block)
             i = close
             continue
@@ -2148,13 +2155,14 @@ def json_key_lines(text):
             if stack and stack[-1][0] == "{" and expect_key:
                 key = json.loads(token)
                 stack[-1][1] = key
-                out.setdefault((tuple(entry[1] for entry in stack[:-1]), key), line)
+                out.setdefault((stack[-1][2], key), line)
                 expect_key = False
-        elif token == "{":
-            stack.append(["{", None])
-            expect_key = True
-        elif token == "[":
-            stack.append(["[", 0])
+        elif token in "{[":
+            # Each container's path is built once when it opens and shared by
+            # its keys: time and memory stay linear in the document.
+            path = stack[-1][2] + (stack[-1][1],) if stack else ()
+            stack.append(["{", None, path] if token == "{" else ["[", 0, path])
+            expect_key = token == "{"
         elif token in "}]":
             stack.pop()
         elif token == "," and stack:
@@ -3608,9 +3616,14 @@ def build_findings(hits):
 
 
 def git_commit(root):
+    """HEAD of the repository holding root. A bare-repository layout committed
+    inside the assessed tree is not a repository (safe.bareRepository=explicit),
+    and neither the caller's GIT_* environment nor repository hooks apply."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
     try:
-        out = subprocess.run(["git", "-C", str(root), "rev-parse", "HEAD"], capture_output=True,
-                             text=True, timeout=30)
+        out = subprocess.run(["git", "-c", "safe.bareRepository=explicit", "-c", "core.fsmonitor=",
+                              "-C", str(root), "rev-parse", "--verify", "HEAD"], capture_output=True,
+                             text=True, timeout=30, env=env)
     except (OSError, subprocess.SubprocessError):
         return ""
     return out.stdout.strip() if out.returncode == 0 else ""
@@ -3822,9 +3835,11 @@ def merge_into(path, findings, inventory, commit):
 
 
 def printable(value):
-    """Spell lone surrogates (a "\\ud800" escape in an input) as text: the output is UTF-8."""
+    """Output text: lone surrogates (a "\\ud800" escape in an input) spelled out,
+    since the output is UTF-8, and credential shapes in repository-derived names
+    (a resource or directory named like a key) redacted."""
     if isinstance(value, str):
-        return value.encode("utf-8", "backslashreplace").decode("utf-8")
+        return CREDENTIAL.sub("[redacted]", value.encode("utf-8", "backslashreplace").decode("utf-8"))
     if isinstance(value, list):
         return [printable(x) for x in value]
     if isinstance(value, dict):

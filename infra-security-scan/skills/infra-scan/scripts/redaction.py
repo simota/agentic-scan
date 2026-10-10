@@ -21,6 +21,10 @@ CREDENTIAL_SHAPES = (
 SECRET_SHAPE = re.compile("|".join(pattern for _, pattern in CREDENTIAL_SHAPES))
 # PEM and OpenSSH use five dashes; RFC 4716 (SSH2) uses four and spaces.
 KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
+# Anything credential-shaped in text saved to the record. Token prefixes are
+# case-sensitive: "asiaPacific..." is a name, not a key.
+CREDENTIAL = re.compile(
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 KEY_BEGIN = re.compile(KEY_MARKER.pattern.replace("(BEGIN|END)", "BEGIN"))
 SAFE_VALUE = re.compile(
     r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
@@ -465,6 +469,15 @@ REDIS_AUTH = re.compile(r"""(?<![\w-])(-a|--pass|--askpass)(["']?\s*,?\s*["']?)(
 SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
+# curl -u user:password, --user user:password, wget --http-user ... style pairs.
+USER_PASSWORD = re.compile(r"""((?<!\S)(?:-u|--user|--proxy-user)(?:\s+|=)["']?)([^\s:"'@]+:)(?=[^\s"'])[^\s"']+""")
+# Tools that take a password as an option's value; docker/podman only for login
+# (their -p elsewhere maps ports).
+TOOL_LOGIN = re.compile(r"\b(?:sshpass|ldap(?:search|add|modify|delete|passwd)|smbclient|mysqladmin|"
+                        r"(?:docker|podman|nerdctl|buildah|skopeo|oras|helm|az|crane)\b[^|;&]*\blogin)\b|"
+                        r"\bopenssl\b")
+TOOL_PASSWORD = re.compile(r"""((?<!\S)(?:-p|-w|-k|-P|--password|--pass|-passin|-passout|-pass)(?:\s+|=)["']?)"""
+                           r"""(?=[^\s"'])[^\s"']+""")
 # A secret piped into a command that reads it from stdin precedes the keyword
 # (echo X | docker login --password-stdin), so the keyword check misses it.
 STDIN_SINK = re.compile(r"--password-stdin|--with-token\b|\bchpasswd\b|\bpasswd\b|--stdin\b|"
@@ -515,6 +528,9 @@ def scrub_line(line, syntax="hcl"):
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
     line = SHELL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
+    line = USER_PASSWORD.sub(lambda m: m.group(1) + m.group(2) + "[redacted]", line)
+    if TOOL_LOGIN.search(line):
+        line = TOOL_PASSWORD.sub(lambda m: m.group(1) + "[redacted]", line)
     line = CRYPT_HASH.sub("[redacted]", line)
     line = HTPASSWD_ARG.sub(lambda m: m.group(1) + "[redacted]", line)
     if STDIN_SINK.search(line):
@@ -551,9 +567,14 @@ def scrub_lines(lines, syntax="hcl", original=None):
     """
     out = []
     heredoc = block = None
-    putty = False
+    putty = continued = False
     original = lines if original is None else original
     for line, source in zip(lines, original):
+        if continued:
+            # A backslash continuation of a line whose value was hidden.
+            out.append("[redacted]")
+            continued = source.rstrip().endswith("\\")
+            continue
         if putty:
             out.append("[redacted]")
             putty = not re.match(r"\s*Private-MAC:", line)
@@ -589,6 +610,8 @@ def scrub_lines(lines, syntax="hcl", original=None):
                 continue
             block = None
         out.append(scrub_line(line, syntax))
+        continued = source.rstrip().endswith("\\") and (
+            "[redacted]" in out[-1] or SECRET_WORD.search(PUBLIC_WORDS.sub("_", source)) is not None)
         # Openers come from the source: an earlier pass may have replaced
         # "password = trimspace(<<EOF" with "password = [redacted]".
         line = source

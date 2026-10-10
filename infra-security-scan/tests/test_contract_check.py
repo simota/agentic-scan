@@ -27,7 +27,10 @@ class ContractTest(unittest.TestCase):
 
     def write(self):
         (self.out / "findings.json").write_text(json.dumps(self.data), encoding="utf-8")
-        (self.out / "iac.json").write_text('{"tool": "iac_scan"}', encoding="utf-8")
+        # The baseline the record's I-* came from, as iac_scan.py --out writes it.
+        baseline = [f for f in self.data["findings"] if str(f.get("id", "")).startswith("I-")]
+        (self.out / "iac.json").write_text(json.dumps({"tool": "iac_scan", "commit": self.data["meta"].get("commit"),
+                                                       "findings": baseline}), encoding="utf-8")
         with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
             self.assertEqual(render.main([str(self.out / "findings.json"), "--out", str(self.out), "--no-pdf"]), 0)
 

@@ -37,7 +37,7 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES, STATE_FILE,
                     STRING_LISTS, find_references, split_yaml_documents, unique_object, write_text_atomic)
-from iac_scan import _YamlSubset, is_export, literal, parse_hcl
+from iac_scan import MAX_BYTES, _YamlSubset, is_export, literal, parse_hcl
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_lines, split_lines)
 
@@ -764,7 +764,9 @@ def hcl_module_sensitive(directory):
                 continue
             if sibling.is_symlink():
                 return True
-            if sibling.is_file() and hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig")):
+            # A file the scanner skipped as too large is unknown context too.
+            if sibling.is_file() and (sibling.stat().st_size > MAX_BYTES or
+                                      hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig"))):
                 return True
     except (OSError, ValueError, TypeError, RecursionError):
         return True
@@ -779,6 +781,8 @@ def source_lines(path):
     JSON sensitivity and env name/value relationships require the whole document;
     line-oriented redaction alone cannot enforce them.
     """
+    if path.stat().st_size > MAX_BYTES:
+        return None  # the scanner did not read it either
     # Match the scanner's BOM handling before checking sensitivity or line numbers.
     text = path.read_text(encoding="utf-8-sig")
     lines = split_lines(text)

@@ -48,7 +48,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
 from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, find_references,  # noqa: E402
                     sub_references, write_json_atomic)
-from redaction import KEY_MARKER, SECRET_SHAPE  # noqa: E402
+from redaction import CREDENTIAL  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
@@ -59,7 +59,7 @@ PAYLOAD = re.compile(
     # Narrow shapes only: relative module paths (../../modules/app) and
     # quoted names joined by "and"/"or" are ordinary infrastructure prose.
     r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
-    r"(?:\.\./){3,}|(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
+    r"(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
     r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
     r"metadata\.google\.internal",
@@ -67,9 +67,6 @@ PAYLOAD = re.compile(
 )
 # Share the renderer's known credential formats and retain the merge gate's
 # conservative handling of private-key fields and incomplete Slack tokens.
-# Token prefixes are case-sensitive: "asiaPacific..." is a name, not a key.
-CREDENTIAL = re.compile(
-    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 
 
 class Refused(Exception):
@@ -176,10 +173,17 @@ def fragment_problems(fragment, name, record):
             pending.extend(value)
     if problems:
         return problems
-    for where, text in prose_strings(fragment):
-        if PAYLOAD.search(text):
-            problems.append(f"{name}: {where}: describe the weakness, not a payload or credential; "
-                            "use placeholders such as <attacker account>")
+    problems += payload_problems(fragment, name)
+    return problems
+
+
+def payload_problems(record, name):
+    problems = []
+    for where, text in prose_strings(record):
+        if (m := PAYLOAD.search(text)):
+            problems.append(f"{name}: {where}: {m.group()[:40]!r} reads as an exploit string; describe the "
+                            "weakness, not a payload or credential, with placeholders such as <attacker account> "
+                            "or <metadata endpoint>")
     return problems
 
 
@@ -225,7 +229,12 @@ def merge(findings_path, fragment_paths):
         if problems:
             raise Refused("\n".join(problems))
         apply(merged, fragment)
-    problems = credential_problems(merged, path)
+    # Only what fragments own: I-* findings and inventory come from iac_scan.py,
+    # which redacts at the source, and no fragment could fix them.
+    owned = {**merged, "findings": [f for f in merged.get("findings", [])
+                                    if not (isinstance(f, dict) and str(f.get("id", "")).startswith("I-"))]}
+    owned.pop("inventory", None)
+    problems = credential_problems(owned, path)
     if problems:
         raise Refused("\n".join(problems))
     render.validate(merged, partial=True)

@@ -34,7 +34,8 @@ per line, counted as report.md counts them (excluded verdicts apart).
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order, every perspective in
+record is complete, IDs are gapless in severity order with excluded verdicts
+last, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, every
 violated rule is cited by a Valid or Likely finding (in `rule`, or named in
 a `trace`) and carries no
@@ -848,6 +849,10 @@ def contract_problems(out, allow=()):
              f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
         problems.append("findings must be numbered in severity order (High first)")
+    excluded = [f["validation"]["verdict"] in EXCLUDED for f in findings]
+    if excluded != sorted(excluded):
+        problems.append("excluded findings (FalsePositive, NotApplicable) are numbered after "
+                        "the rest; run renumber")
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
@@ -893,7 +898,9 @@ def contract_problems(out, allow=()):
         # Only a finding that establishes the break can back a `violated` entry.
         if f["validation"]["verdict"] in ("Valid", "Likely"):
             named.add(f.get("rule", "").strip())
-            named.update(RULE_MENTION.findall(f["trace"]))
+            # A URL in the trace (`?key=R-02`) links elsewhere; it cites nothing.
+            named.update(m for part in _url_spans(f["trace"])[::2]
+                         for m in RULE_MENTION.findall(part))
     for r in doc.get("rules", []):
         if r["status"] == "violated" and r["id"] not in named:
             # The ledger says an edge breaks it, so a finding must say which.

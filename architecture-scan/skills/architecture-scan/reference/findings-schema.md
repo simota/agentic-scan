@@ -264,7 +264,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `meta.method` | Optional string: one phrase naming the reading and each read-only tool or history window, e.g. `Static review; git log 12 months; import-linter`. Shown verbatim in both outputs in place of the generic static/analysed note |
-| `findings[].id` | `A-001`…, gapless, numbered in severity order (excluded verdicts may sit anywhere; `renumber` puts them last) |
+| `findings[].id` | `A-001`…, gapless, numbered in severity order, excluded verdicts after the rest (`renumber` orders both) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |

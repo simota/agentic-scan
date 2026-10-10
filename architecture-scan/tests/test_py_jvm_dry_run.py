@@ -247,6 +247,24 @@ class ReviewRegressionTests(Workspace):
                 problems = [p for p in self.problems(doc) if p.startswith("R-01")]
                 self.assertEqual(problems == [], ok, problems)
 
+    def test_a_rule_id_inside_a_url_cites_nothing(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})
+        doc["findings"][0]["trace"] = "see https://tracker.example/?key=R-02"
+        self.assertTrue(any(p.startswith("R-02: a violated rule") for p in self.problems(doc)))
+        doc["findings"][0]["trace"] = "https://tracker.example/x breaks R-02"
+        self.assertEqual(self.problems(doc), [])
+
+    def test_an_excluded_finding_before_an_active_one_fails(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "job.py:58 delegates"}
+        doc["findings"][1]["rule"] = "R-01"
+        problems = self.problems(doc)
+        self.assertTrue(any("numbered after the rest" in p for p in problems), problems)
+        renamed, _ = findings.renumber(doc)
+        self.assertEqual(self.problems(renamed), [])
+
     def test_a_rule_named_beside_japanese_text_is_cited(self):
         doc = complete_doc()
         doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr", "status": "violated"})

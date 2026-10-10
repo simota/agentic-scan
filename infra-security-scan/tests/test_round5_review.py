@@ -171,5 +171,52 @@ class CodexReviewTest(unittest.TestCase):
             self.assertTrue(problems and baseline[0]["id"] in problems[0], problems)
 
 
+class CodexSecondReviewTest(unittest.TestCase):
+    def test_value_before_name_and_fields_between(self):
+        result = scan({"e.tf": f'''resource "kubernetes_deployment" "d" {{
+  env {{
+    value = "{SECRET}"
+    name  = "DB_PASSWORD"
+  }}
+  env {{
+    name       = "API_TOKEN"
+    value_from = "x"
+    value      = "{SECRET}"
+  }}
+}}
+resource "aws_ecs_task_definition" "t" {{
+  container_definitions = jsonencode([{{ environment = [{{ value = "{SECRET}", name = "AUTH_TOKEN" }}] }}])
+}}
+'''})
+        self.assertEqual(sorted(h["detail"] for h in result.hits),
+                         ["literal value for API_TOKEN", "literal value for AUTH_TOKEN", "literal value for DB_PASSWORD"])
+
+    def test_retained_default_pool_without_node_config(self):
+        base = 'resource "google_container_cluster" "c" {{\n{body}  private_cluster_config {{\n' \
+               '    enable_private_endpoint = true\n  }}\n  workload_identity_config {{\n' \
+               '    workload_pool = "p.svc.id.goog"\n  }}\n}}\n'
+        kept = scan({"c.tf": base.format(body="  initial_node_count = 1\n")})
+        self.assertEqual([h["rule"] for h in kept.hits], ["GCP-GCE-001"])
+        removed = scan({"c.tf": base.format(body="  initial_node_count = 1\n  remove_default_node_pool = true\n")})
+        self.assertEqual(removed.hits, [])
+        inline = scan({"c.tf": base.format(body="  node_pool {\n    name = \"a\"\n  }\n")})
+        self.assertEqual([h["rule"] for h in inline.hits], ["GCP-GCE-001"])
+
+    def test_terragrunt_backend_only_from_loaded_files(self):
+        unit = 'include "root" {\n  path = find_in_parent_folders("root.hcl")\n}\n'
+        backend = 'remote_state {\n  backend = "s3"\n  config = {\n    encrypt = true\n  }\n}\n'
+        app = 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n'
+        unrelated = scan({"prod/unused.hcl": backend, "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
+        self.assertIn("PS-002", [h["rule"] for h in unrelated.hits])
+        included = scan({"root.hcl": backend, "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
+        self.assertNotIn("PS-002", [h["rule"] for h in included.hits])
+
+    def test_instance_metadata_options(self):
+        template = {"Resources": {"Vm": {"Type": "AWS::EC2::Instance", "Properties": {
+            "MetadataOptions": {"HttpTokens": "required"}}},
+            "Old": {"Type": "AWS::EC2::Instance", "Properties": {"MetadataOptions": {"HttpTokens": "optional"}}}}}
+        self.assertEqual(found(scan({"t.json": template})), [("AWS-EC2-001", "cfn:Old", "Medium")])
+
+
 if __name__ == "__main__":
     unittest.main()

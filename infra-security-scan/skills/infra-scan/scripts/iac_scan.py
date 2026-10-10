@@ -1533,8 +1533,18 @@ def check_tf(scan, res):
         if tf_bool(v.get("enable_legacy_abac")) is True:
             scan.hit("GCP-GKE-001", res, v.line("enable_legacy_abac"), "enable_legacy_abac = true", "High")
         # The cluster's node_config describes its default pool, deleted when removed.
+        # The provider requires initial_node_count when no node_pool is inline,
+        # so a set count with no node_config is a default pool on the default account.
         if tf_bool(v.get("enable_autopilot")) is not True and tf_bool(v.get("remove_default_node_pool")) is not True:
-            gke_node_config(scan, res, v.blocks("node_config"))
+            configs = v.blocks("node_config")
+            if not configs and v.get("initial_node_count") is not None and not v.blocks("node_pool"):
+                scan.hit("GCP-GCE-001", res, v.line("initial_node_count"),
+                         "GKE default node pool as the default compute service account")
+            gke_node_config(scan, res, configs)
+        for pool in v.blocks("node_pool"):
+            if not pool.blocks("node_config"):
+                scan.hit("GCP-GCE-001", res, pool.line(), "GKE node pool as the default compute service account")
+            gke_node_config(scan, res, pool.blocks("node_config"))
         for auth in v.blocks("master_auth"):
             for cert in auth.blocks("client_certificate_config"):
                 if tf_bool(cert.get("issue_client_certificate")) is True:
@@ -2017,24 +2027,30 @@ def backend_config_encrypts(scan, rel):
 
 
 def terragrunt_remote_state(scan, d):
-    """Terragrunt writes the backend at run time. A unit (a terragrunt.hcl in this
-    directory or above) gets it from remote_state or generate "backend" in any
-    .hcl it can include from here up to the scanned root (root.hcl, env.hcl)."""
+    """Terragrunt writes the backend at run time, from remote_state or generate
+    "backend" in the unit's terragrunt.hcl (here or above, within the scanned
+    tree) or in a file that unit includes: find_in_parent_folders("root.hcl"),
+    find_in_parent_folders() or a literal include path. Other .hcl files are not
+    loaded and establish nothing."""
     root = Path(scan.root).resolve()
     here = (root / d).resolve()
-    chain = []
-    for directory in (here, *here.parents):
-        if directory != root and root not in directory.parents:
-            break
-        chain.append(directory)
+    chain = [p for p in (here, *here.parents) if p == root or root in p.parents]
     try:
-        if not any((directory / "terragrunt.hcl").is_file() for directory in chain):
+        unit = next((p / "terragrunt.hcl" for p in chain if (p / "terragrunt.hcl").is_file()), None)
+        if unit is None or unit.is_symlink():
             return False
-        for directory in chain:
-            for candidate in sorted(directory.glob("*.hcl")):
-                if candidate.is_file() and not candidate.is_symlink() and TERRAGRUNT_BACKEND.search(
-                        candidate.read_text(encoding="utf-8-sig")):
-                    return True
+        text = unit.read_text(encoding="utf-8-sig")
+        if TERRAGRUNT_BACKEND.search(text):
+            return True
+        names = set(re.findall(r'find_in_parent_folders\(\s*"([^"/]+)"\s*\)', text))
+        if re.search(r"find_in_parent_folders\(\s*\)", text):
+            names |= {"terragrunt.hcl", "root.hcl"}
+        candidates = [p / name for p in unit.parent.parents if p == root or root in p.parents for name in names]
+        candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', text)]
+        for candidate in candidates:
+            if (candidate == root or root in candidate.parents) and candidate.is_file() and \
+                    not candidate.is_symlink() and TERRAGRUNT_BACKEND.search(candidate.read_text(encoding="utf-8-sig")):
+                return True
     except (OSError, UnicodeError):
         return False
     return False
@@ -2383,8 +2399,8 @@ def cfn_instance(scan, res, type_, props, line):
         ebs = mapping.get("Ebs") if isinstance(mapping, dict) else None
         if isinstance(ebs, dict) and ebs.get("Encrypted") in (False, "false"):
             scan.hit("AWS-EBS-001", res, line, "BlockDeviceMappings Ebs.Encrypted = false")
-    if type_ == "AWS::EC2::Instance":
-        # An instance sets metadata options only through a launch template.
+    if type_ == "AWS::EC2::Instance" and not isinstance(props.get("MetadataOptions"), dict):
+        # Without its own MetadataOptions an instance takes them from a launch template.
         template = props.get("LaunchTemplate")
         ref = template.get("LaunchTemplateId") if isinstance(template, dict) else None
         if isinstance(ref, dict) and ref.get("Ref") in scan.cfn_checked_templates.get(res.file, ()):
@@ -3370,6 +3386,30 @@ NAME_ONLY = re.compile(r'(?i)^\s*"?name"?\s*[:=]\s*"([^"]+)"\s*,?\s*$')
 VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
 
 
+VALUE_NAME = re.compile(r'(?i)"?\bvalue"?\s*[:=]\s*"([^"]*)"\s*,?\s*"?name"?\s*[:=]\s*"([^"]+)"')
+
+
+def env_pair(lines, i):
+    """(name, value) of an environment entry whose name is on line i: on one line in
+    either order, or as attributes of one block in any order (HCL order is free)."""
+    line = lines[i]
+    if (m := NAME_VALUE.search(line)):
+        return m.group(1), m.group(2)
+    if (m := VALUE_NAME.search(line)):
+        return m.group(2), m.group(1)
+    name = NAME_ONLY.match(line)
+    if not name:
+        return None
+    # Neighbouring attribute lines of the same entry, up to its braces.
+    for step in (1, -1):
+        j = i + step
+        while 0 <= j < len(lines) and j - i in range(-6, 7) and not re.search(r"[{}\[\]]", lines[j]):
+            if (value := VALUE_ONLY.match(lines[j])):
+                return name.group(1), value.group(1)
+            j += step
+    return None
+
+
 def mock_lines(lines):
     """Line numbers inside Terragrunt mock_outputs blocks: stand-ins for plan, not secrets."""
     inside, depth = set(), 0
@@ -3395,13 +3435,9 @@ def scan_secrets(scan, rel, text, kind):
                 scan.hit("SEC-001", res, n, label, strong=True)
         if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
             continue
-        pair = NAME_VALUE.search(line)
-        if not pair and n < len(lines) and NAME_ONLY.match(line):
-            pair = NAME_ONLY.match(line), VALUE_ONLY.match(lines[n])
-            pair = None if not pair[1] else pair
+        pair = env_pair(lines, n - 1)
         if pair:
-            name, value = (pair.group(1), pair.group(2)) if isinstance(pair, re.Match) else \
-                (pair[0].group(1), pair[1].group(1))
+            name, value = pair
             # The whole entry: CodeBuild writes type = "PARAMETER_STORE" after the value.
             entry = "\n".join(lines[max(0, n - 4):n + 3])
             if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()) \

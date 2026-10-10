@@ -98,13 +98,13 @@ class EncodedValueTests(unittest.TestCase):
 
     def test_hex_digests_are_not_digit_runs(self):
         for value in ("commit 0a1b2c3d4e5f678901234567890abcdef1234567",
-                      "sha256 " + "1234567890123a" + "0" * 50,
+                      "sha256 a1234567890123" + "0" * 50,
                       "pod-123e4567-e89b-12d3-a456-426614174000",
                       "123e4567e89b12d3a456426614174000"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
         # Without a hex letter or next to a dash-joined digit, the digits still count.
-        for value in ("0" * 40, "1-123e4567-e89b-12d3-a456-426614174000",
+        for value in ("0" * 40, "41111111111-123e4567-e89b-12d3-a456-426614174000",
                       "123e4567-e89b-12d3-a456-426614174000-0"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
@@ -176,3 +176,39 @@ class DigitRunTests(unittest.TestCase):
         for value in (f"commit {digest} merged", f"sha256 {digest}", f"{digest} utf8"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
+
+
+class FuzzFindingTests(unittest.TestCase):
+    """Cases found by property-based fuzzing of the guard."""
+
+    def test_tokens_between_digit_groups_keep_their_edge_digits(self):
+        for value in ("a123456 12345678-1234-1234-1234-123456789012 123456a",
+                      "ref A1 12345678-1234-1234-1234-123456789012",
+                      "a\u0660 12345678-1234-1234-1234-123456789012",
+                      "a\u06670312011856311a87011a4a1459184610"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+
+    def test_long_uuid_chains_are_linear(self):
+        import time
+        chain = " ".join(["12345678-1234-1234-1234-123456789012"] * 6000)
+        started = time.perf_counter()
+        refused(chain)
+        self.assertLess(time.perf_counter() - started, 5)
+
+    def test_clock_times_in_date_ranges_are_allowed(self):
+        for value in ("Times 2024-03-15 10:22:33 \u2013 2024-03-15 11:22:33",
+                      "between 2024-03-15 10:22 and 2024-03-16 09:05",
+                      "2024-03-15 10:22:33 - 2024-03-15 11:22:33"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))
+        # Free digits beside a clock time still count.
+        self.assertTrue(refused("4111 1111 1111 2024-03-15 10:22"))
+
+    def test_package_versions_are_not_e_mail_addresses(self):
+        for value in ("react@18.2.0", "lodash@4.17.21", "@types/node@20.11.0"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+        for value in ("user@192.0.2.1", "user@corp.co.jp", "user@[192.0.2.1]"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))

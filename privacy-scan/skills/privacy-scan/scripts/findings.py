@@ -168,15 +168,21 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # LONG_NUMBER accepts: a run is masked only when it consists entirely of ISO
 # dates (a range) and six-digit times of day after a date; any other digit in
 # the run keeps the whole run counted, so masking cannot split a longer number.
-# A UUID or hex digest is masked only when no digit sits next to it across
-# those separators.
+# A UUID or hex digest is masked, but where a digit sits next to it across
+# those separators, its digits on that edge are kept so they still count.
+# The hour of a clock time after a date (`2024-03-15 10:22`) and the seconds
+# before a date that follows (`10:22:33 - 2024-03-15`) belong to the date-time.
 SEPARATOR_CLASS = r"(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])"
 DIGIT_SEPARATOR = re.compile(SEPARATOR_CLASS)
 DIGIT_RUN = re.compile(rf"\d(?:{SEPARATOR_CLASS}*\d)*")
 DATE_TOKEN = re.compile(r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)")
 TIME_TOKEN = re.compile(r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?!\d)")
-UUID = re.compile(r"(?<![0-9A-Fa-f])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![0-9A-Fa-f])")
-HEX_DIGEST = re.compile(r"(?<![0-9A-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![0-9A-Za-z])")
+# Unicode-aware boundaries: a token never starts or ends inside a digit run.
+UUID = re.compile(r"(?<![\dA-Fa-f])[0-9A-Fa-f]{8}(?:-[0-9A-Fa-f]{4}){3}-[0-9A-Fa-f]{12}(?![\dA-Fa-f])")
+HEX_DIGEST = re.compile(r"(?<![\dA-Za-z])(?=[0-9]*[A-Fa-f])[0-9A-Fa-f]{32,128}(?![\dA-Za-z])")
+EDGE_DIGITS_START = re.compile(rf"\d(?:{SEPARATOR_CLASS}*\d)*")
+EDGE_DIGITS_END = re.compile(rf"\d(?:{SEPARATOR_CLASS}*\d)*\Z")
+CLOCK_EDGE = re.compile(r"\d{1,2}")
 
 
 def _past_separators(value, pos, step):
@@ -190,30 +196,20 @@ def _past_separators(value, pos, step):
     return pos
 
 
-def _number_beside(value, pos, step):
-    """Whether a free-standing number sits next to pos across digit separators.
+def _only_dates_and_times(run, after_colon=False, before_colon=False):
+    """True when a digit run is nothing but dates, each optionally followed by a time.
 
-    Digits attached to a letter belong to a word (`sha256`, `utf8`), not a number.
+    With `after_colon`, the run may open with the 1-2 digits that end a clock
+    time; with `before_colon`, it may close with the 1-2 digit hour of one.
     """
-    if step < 0:
-        pos = _past_separators(value, pos, -1)
-        if pos == 0 or not value[pos - 1].isdigit():
-            return False
-        while pos > 0 and (value[pos - 1].isdigit() or DIGIT_SEPARATOR.fullmatch(value[pos - 1])):
-            pos -= 1
-        return pos == 0 or not value[pos - 1].isalpha()
-    pos = _past_separators(value, pos, 1)
-    if pos == len(value) or not value[pos].isdigit():
-        return False
-    while pos < len(value) and (value[pos].isdigit() or DIGIT_SEPARATOR.fullmatch(value[pos])):
-        pos += 1
-    return pos == len(value) or not value[pos].isalpha()
-
-
-def _only_dates_and_times(run):
-    """True when a digit run is nothing but dates, each optionally followed by a time."""
     pos, after_date = 0, False
+    if after_colon:
+        opening = CLOCK_EDGE.match(run)
+        if opening and opening.end() < len(run) and DIGIT_SEPARATOR.fullmatch(run[opening.end()]):
+            pos = _past_separators(run, opening.end(), 1)
     while pos < len(run):
+        if before_colon and after_date and CLOCK_EDGE.fullmatch(run, pos):
+            return True
         token = DATE_TOKEN.match(run, pos) or (after_date and TIME_TOKEN.match(run, pos))
         if not token:
             return False
@@ -223,16 +219,26 @@ def _only_dates_and_times(run):
 
 
 def _mask_technical_numbers(value):
-    spans = [m.span() for m in DIGIT_RUN.finditer(value)
-             if DATE_TOKEN.match(m.group()) and _only_dates_and_times(m.group())]
+    spans = []
+    for m in DIGIT_RUN.finditer(value):
+        after_colon = m.start() > 0 and value[m.start() - 1] == ":"
+        before_colon = value[m.end():m.end() + 1] == ":"
+        if _only_dates_and_times(m.group(), after_colon, before_colon) and DATE_TOKEN.search(m.group()):
+            spans.append((m.start(), m.end(), "#"))
     for pattern in (UUID, HEX_DIGEST):
         for m in pattern.finditer(value):
-            if not _number_beside(value, m.start(), -1) and not _number_beside(value, m.end(), 1):
-                spans.append(m.span())
+            token = m.group()
+            left = _past_separators(value, m.start(), -1)
+            right = _past_separators(value, m.end(), 1)
+            lead = EDGE_DIGITS_START.match(token)
+            tail = EDGE_DIGITS_END.search(token)
+            keep_left = lead.group() if lead and left > 0 and value[left - 1].isdecimal() else ""
+            keep_right = tail.group() if tail and right < len(value) and value[right].isdecimal() else ""
+            spans.append((m.start(), m.end(), keep_left + "#" + keep_right))
     masked, pos = [], 0
-    for start, end in sorted(spans):
+    for start, end, replacement in sorted(spans):
         if start >= pos:
-            masked.append(value[pos:start] + "#")
+            masked.append(value[pos:start] + replacement)
             pos = end
     return "".join(masked) + value[pos:]
 
@@ -480,6 +486,11 @@ def _scan_personal_values(value, where):
     value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
     value = "".join(c for c in value if unicodedata.category(c) != "Cf")
     for domain in _email_domains(value):
+        # `react@18.2.0` names a package version: a domain needs a letter in its
+        # last label. Bracketed literals and four-part numeric hosts still count.
+        if (not domain.startswith("[") and domain.count(".") != 3
+                and not any(c.isalpha() for c in domain.rsplit(".", 1)[-1])):
+            continue
         if not EXAMPLE_DOMAINS.search(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
     if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(_mask_technical_numbers(value)):

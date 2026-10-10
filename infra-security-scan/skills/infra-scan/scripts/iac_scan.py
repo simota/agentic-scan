@@ -50,6 +50,7 @@ import posixpath
 import re
 import subprocess
 import sys
+from urllib.parse import unquote as url_unquote
 
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -600,28 +601,35 @@ class HclView:
 
 
 class DictView:
-    def __init__(self, data, line):
+    def __init__(self, data, line, reads=None, prefix=""):
         self.data, self._line = data, line
         # An unknown block may be absent after apply; unknown attributes in
         # an existing dictionary do not make the block's presence unknown.
         self.known_present = data is not UNKNOWN
+        # Plan values: the attributes a rule read while unknown, so not_run
+        # names exactly the checks that could not run.
+        self.reads, self.prefix = reads, prefix
 
     @staticmethod
-    def wrap(value, line):
+    def wrap(value, line, reads=None, prefix=""):
         if value is UNKNOWN or isinstance(value, dict):
-            return [DictView(value, line)]
+            return [DictView(value, line, reads, prefix)]
         if isinstance(value, list):
-            return [DictView(v, line) for v in value if v is UNKNOWN or isinstance(v, dict)]
+            return [DictView(v, line, reads, prefix) for v in value if v is UNKNOWN or isinstance(v, dict)]
         return []
 
     def get(self, name):
-        return UNKNOWN if self.data is UNKNOWN else self.data.get(name)
+        value = UNKNOWN if self.data is UNKNOWN else self.data.get(name)
+        # A block holding unknowns is not itself unread: its own reads are recorded.
+        if self.reads is not None and (value is UNKNOWN or isinstance(value, list) and UNKNOWN in value):
+            self.reads.add(self.prefix + name)
+        return value
 
     def raw(self, name):
         return None
 
     def blocks(self, name):
-        return self.wrap(self.get(name), self._line)
+        return self.wrap(self.get(name), self._line, self.reads, f"{self.prefix}{name}.")
 
     def line(self, name=None):
         return self._line
@@ -683,12 +691,25 @@ DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9
 
 
 def cfn_string(value):
-    """The template text of {"Fn::Sub": "..."}; other values unchanged."""
+    """The template text of {"Fn::Sub": "..."} or of a {"Fn::Join": ["", [...]]}
+    whose parts are strings and Refs (CDK writes managed policy ARNs that way,
+    with {"Ref": "AWS::Partition"}); other values unchanged."""
     if isinstance(value, dict) and len(value) == 1 and "Fn::Sub" in value:
         sub = value["Fn::Sub"]
         if isinstance(sub, list) and sub and isinstance(sub[0], str):
             return sub[0]
         return sub if isinstance(sub, str) else value
+    if isinstance(value, dict) and len(value) == 1 and "Fn::Join" in value:
+        join = value["Fn::Join"]
+        if isinstance(join, list) and len(join) == 2 and isinstance(join[0], str) and isinstance(join[1], list):
+            parts = []
+            for part in join[1]:
+                if isinstance(part, dict) and len(part) == 1 and isinstance(part.get("Ref"), str):
+                    part = "${" + part["Ref"] + "}"
+                if not isinstance(part, str):
+                    return value
+                parts.append(part)
+            return join[0].join(parts)
     return value
 
 
@@ -792,6 +813,8 @@ class Scan:
         # argument means, per module directory (see collect_context).
         self.imds_required_dirs, self.ebs_default_dirs, self.gcs_pap_dirs = set(), set(), set()
         self.pap_orgs, self.orgs_seen = set(), set()
+        self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
+        self.admin_policy_data = set()  # (dir, name) of data "aws_iam_policy" naming AdministratorAccess
         self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
@@ -827,13 +850,14 @@ class Scan:
         for st in stmts or []:
             if st["effect"] != "Allow":
                 continue
-            if not st["conditions"] and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
+            # aws:SecureTransport or MFA presence do not narrow who may assume.
+            if not narrowing(st["conditions"]) and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
                     self.not_run.append("AWS-IAM-003: unknown or unsupported trust policy actions; "
                                         f"check not run: {source}:{line} ({res.address})")
                 elif allows_assume:
-                    self.hit("AWS-IAM-003", res, line, "Principal * without a condition")
+                    self.hit("AWS-IAM-003", res, line, "Principal * without a narrowing condition")
             gap = github_trust_gap(st)
             if gap is UNKNOWN:
                 self.not_run.append("AWS-IAM-004: unknown or unsupported GitHub OIDC actions or conditions "
@@ -1142,7 +1166,8 @@ def check_tf(scan, res):
             scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
                          v.get("protocol"), v.get("from_port"), v.get("to_port"))
     elif t == "aws_vpc_security_group_ingress_rule":
-        scan.ingress(res, res.line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
+        line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
+        scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
                      v.get("from_port"), v.get("to_port"))
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
         if v.get("acl") in ("public-read", "public-read-write", "authenticated-read"):
@@ -1182,7 +1207,12 @@ def check_tf(scan, res):
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
                "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
         arn = v.get("policy_arn")
-        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")):
+        raw = (v.raw("policy_arn") or "").strip()
+        data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
+        # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
+        each = raw in ("each.value", "each.key") and ADMIN_ARN_RAW.search(text_of(v, "for_each"))
+        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
+                (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
             scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
     elif t == "aws_iam_access_key":
         scan.hit("AWS-IAM-005", res, res.line, "access key for an IAM user")
@@ -1202,8 +1232,12 @@ def check_tf(scan, res):
     elif t in ("aws_instance", "aws_launch_template", "aws_launch_configuration"):
         opts = v.blocks("metadata_options")
         if not opts and t == "aws_instance" and v.blocks("launch_template"):
-            scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
-                                f"template: {res.file}:{res.line} ({res.address})")
+            template = v.blocks("launch_template")[0]
+            ref = re.match(r"\s*aws_launch_template\.([\w-]+)\.(?:id|name)\s*$",
+                           template.raw("id") or template.raw("name") or "")
+            if not (ref and (res.dir, ref.group(1)) in scan.launch_templates):
+                scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
+                                    f"template: {res.file}:{res.line} ({res.address})")
         elif not opts and (res.dir, provider_key(v)) in scan.imds_required_dirs:
             pass  # aws_ec2_instance_metadata_defaults requires IMDSv2 for omitted settings
         elif not opts:
@@ -1219,6 +1253,8 @@ def check_tf(scan, res):
                     scan.not_run.append("AWS-EC2-001: unknown metadata endpoint; check not run: "
                                         f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
                 return
+            if tokens is None and (res.dir, provider_key(v)) in scan.imds_required_dirs:
+                return  # an omitted http_tokens takes the account default
             if tokens is None or (isinstance(tokens, str) and tokens != "required"):
                 scan.hit("AWS-EC2-001", res, opts[0].line("http_tokens"),
                          f"http_tokens = {tokens if tokens else 'unset'}")
@@ -1582,6 +1618,11 @@ def handle_terraform(scan, parsed):
                                     f"{getattr(block.line, 'file', rel)}:{block.line}")
             pending.extend(reversed(block.blocks))
         for b in blocks:
+            if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy":
+                view = HclView(b)
+                if view.get("name") == "AdministratorAccess" or (
+                        isinstance(view.get("arn"), str) and ADMIN_ARN.search(view.get("arn"))):
+                    scan.admin_policy_data.add((d, b.labels[1]))
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
                 try:
                     statements = doc_statements(view_of(b, rel))
@@ -1596,6 +1637,8 @@ def handle_terraform(scan, parsed):
             try:
                 if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
                     collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
+                    if b.labels[0] == "aws_launch_template":
+                        scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
                 collect_policy_references(scan, str(Path(rel).parent), b)
             except RecursionError:
                 pass  # reported once by the checks below
@@ -1693,17 +1736,37 @@ def handle_module(scan, rel, b, view):
 
 
 def handle_terragrunt(scan, rel, text):
-    """terraform { source = ... } pins the module the same way a module block does."""
+    """terraform { source = ... } pins the module the same way a module block does,
+    and remote_state configures the state backend. Literal locals in the same
+    file are substituted into source ("${local.base_source_url}?ref=v1.2.0")."""
     try:
         blocks = parse_hcl(text)
     except RecursionError:
         scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
         return
+    locals_ = {}
     for b in blocks:
+        if b.type == "locals":
+            view = HclView(b)
+            locals_.update({name: value for name in b.attrs if isinstance(value := view.get(name), str)})
+    for b in blocks:
+        view = HclView(b)
+        if b.type == "remote_state" and view.get("backend") == "s3" and isinstance(view.get("config"), dict):
+            config = view.get("config")
+            encrypt = tf_bool(config.get("encrypt"))
+            if encrypt is False or (encrypt is None and "encrypt" not in config and
+                                    config.get("kms_key_id") in (None, "")):
+                scan.hit("PS-002", Res("backend", "terragrunt.remote_state.s3", rel, b.line), view.line("config"),
+                         "Terragrunt s3 remote_state without encrypt = true; relies on bucket default encryption",
+                         "Low")
         if b.type != "terraform":
             continue
-        view = HclView(b)
         source = view.get("source")
+        raw = view.raw("source")
+        if source is UNKNOWN and raw and raw.startswith('"') and raw.endswith('"'):
+            substituted = re.sub(r"\$\{\s*local\.(\w+)\s*\}",
+                                 lambda m: locals_.get(m.group(1), m.group()), raw[1:-1])
+            source = substituted if "${" not in substituted else UNKNOWN
         if not isinstance(source, str) or not GIT_SOURCE.search(source):
             continue
         res = Res("terragrunt", f"terragrunt:{rel}", rel, b.line)
@@ -1756,23 +1819,30 @@ def backend_config_encrypts(scan, rel):
 
 
 def terragrunt_remote_state(scan, d):
-    """Terragrunt writes the backend at run time from remote_state in a terragrunt.hcl
-    in this directory or one above it within the scanned tree."""
-    root = Path(scan.root)
-    here = root / d
+    """Terragrunt writes the backend at run time. A unit (a terragrunt.hcl in this
+    directory or above) gets it from remote_state or generate "backend" in any
+    .hcl it can include from here up to the scanned root (root.hcl, env.hcl)."""
+    root = Path(scan.root).resolve()
+    here = (root / d).resolve()
+    chain = []
     for directory in (here, *here.parents):
-        try:
-            directory.relative_to(root)
-        except ValueError:
+        if directory != root and root not in directory.parents:
             break
-        candidate = directory / "terragrunt.hcl"
-        try:
-            if candidate.is_file() and not candidate.is_symlink() and \
-                    re.search(r"^\s*remote_state\s*\{", candidate.read_text(encoding="utf-8-sig"), re.M):
-                return True
-        except (OSError, UnicodeError):
+        chain.append(directory)
+    try:
+        if not any((directory / "terragrunt.hcl").is_file() for directory in chain):
             return False
+        for directory in chain:
+            for candidate in sorted(directory.glob("*.hcl")):
+                if candidate.is_file() and not candidate.is_symlink() and TERRAGRUNT_BACKEND.search(
+                        candidate.read_text(encoding="utf-8-sig")):
+                    return True
+    except (OSError, UnicodeError):
+        return False
     return False
+
+
+TERRAGRUNT_BACKEND = re.compile(r'^\s*(?:remote_state\s*\{|generate\s*"backend"\s*\{)', re.M)
 
 
 def finish_dirs(scan):
@@ -1805,12 +1875,6 @@ def with_plan_unknowns(value, mask):
     return value
 
 
-# Attributes known only after apply on almost every resource. Rules do not read
-# them, so their being unknown says nothing about a check.
-COMPUTED = {"id", "arn", "tags_all", "owner_id", "unique_id", "self_link", "etag", "creation_date",
-            "create_date", "creation_timestamp", "fingerprint", "bucket_domain_name",
-            "bucket_regional_domain_name", "hosted_zone_id", "dns_name", "endpoint", "address",
-            "number", "project_number", "version", "latest_version", "key_id", "name_prefix"}
 
 
 def handle_plan(scan, rel, text, doc):
@@ -1851,26 +1915,52 @@ def handle_plan(scan, rel, text, doc):
                 scan.not_run.append(f"plan resource with an unexpected shape skipped: {rel}")
                 continue
             line = lines.get(address, 1)
-            values = with_plan_unknowns(r.get("values") or {}, unknowns.get(address))
+            mask = unknowns.get(address)
+            expressions = configured.get(re.sub(r"\[[^\]]*\]", "", address))
+            if isinstance(mask, dict) and isinstance(expressions, dict):
+                # An argument the configuration omits is unknown in the plan only
+                # because the provider computes its default: it is omitted.
+                mask = {k: m for k, m in mask.items() if k in expressions}
+            values = with_plan_unknowns(r.get("values") or {}, mask)
             if not check:
                 # First pass: account and org settings that change what omitted arguments mean.
                 collect_context(scan, rel, type_, DictView(values, line), json.dumps(values, default=str),
                                 defaults=not aliased)
                 continue
-            res = Res(type_, address, rel, line, DictView(values, line), rel)
+            reads = set()
+            res = Res(type_, address, rel, line, DictView(values, line, reads), rel)
             scan.add_resource(res)
-            relevant = {k: x for k, x in values.items() if k not in COMPUTED} if isinstance(values, dict) else values
-            if contains_unknown(relevant):
-                scan.not_run.append(f"plan contains unknown values; affected checks not run: "
-                                    f"{address} at {rel}:{line}")
             check_tf(scan, res)
+            if reads:
+                scan.not_run.append(f"plan value unknown until apply ({', '.join(sorted(reads))}); affected checks "
+                                    f"not run: {address} at {rel}:{line}")
         children = module.get("child_modules")
         for child in children if isinstance(children, list) else []:
             walk(child, check)
+    configured = plan_expressions(doc)
     planned = doc.get("planned_values")
     root = planned.get("root_module") if isinstance(planned, dict) else None
     walk(root, False)
     walk(root, True)
+
+
+def plan_expressions(doc):
+    """{address without instance keys: configured expressions} from the plan's configuration."""
+    out = {}
+
+    def walk(module, prefix):
+        if not isinstance(module, dict):
+            return
+        for r in module.get("resources", []) if isinstance(module.get("resources"), list) else []:
+            if isinstance(r, dict) and isinstance(r.get("address"), str) and isinstance(r.get("expressions"), dict):
+                out[prefix + r["address"]] = r["expressions"]
+        calls = module.get("module_calls")
+        for name, call in calls.items() if isinstance(calls, dict) else ():
+            if isinstance(call, dict):
+                walk(call.get("module"), f"{prefix}module.{name}.")
+    config = doc.get("configuration")
+    walk(config.get("root_module") if isinstance(config, dict) else None, "")
+    return out
 
 
 def plan_config_refs(scan, rel, doc):
@@ -1945,6 +2035,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     if doc.get("Transform") is not None:
         scan.not_run.append(f"CloudFormation Transform (SAM or macro): rules read the template as written, not the "
                             f"expanded resources; review the transformed template by hand: {rel}")
+    globals_ = doc.get("Globals", {}).get("Function") if isinstance(doc.get("Globals"), dict) else None
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
             continue
@@ -1955,10 +2046,13 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         props = r.get("Properties") or {}
         if not isinstance(props, dict):
             props = {}
+        if type_ == "AWS::Serverless::Function" and isinstance(globals_, dict):
+            props = {**globals_, **props}  # SAM Globals; a function's own value wins
         line = line_of(lid)
         res = Res(type_, f"cfn:{lid}", rel, line, DictView(props, line))
         scan.add_resource(res, "aws")
         cfn_shared(scan, res, type_, props, line)
+        cfn_secrets(scan, res, props, line)
         if type_ == "AWS::EC2::SecurityGroup":
             for rule in aslist(props.get("SecurityGroupIngress")):
                 if isinstance(rule, dict):
@@ -1977,7 +2071,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                     scan.hit("AWS-S3-002", res, line, "off: " + ", ".join(off))
         elif type_ == "AWS::S3::BucketPolicy":
             scan.resource_policy(res, norm_statements(props.get("PolicyDocument")), line)
-        elif type_ in ("AWS::IAM::Policy", "AWS::IAM::ManagedPolicy"):
+        elif type_ in ("AWS::IAM::Policy", "AWS::IAM::ManagedPolicy", "AWS::IAM::RolePolicy",
+                       "AWS::IAM::UserPolicy", "AWS::IAM::GroupPolicy"):
             scan.identity_policy(res, norm_statements(props.get("PolicyDocument")), line)
         elif type_ == "AWS::IAM::Role":
             scan.trust_policy(res, norm_statements(props.get("AssumeRolePolicyDocument")), line)
@@ -1994,7 +2089,9 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
             scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
         elif type_ == "AWS::KMS::Key":
             spec = props.get("KeySpec")
-            if spec in (None, "SYMMETRIC_DEFAULT") and props.get("EnableKeyRotation") in (False, "false", None):
+            # Imported and custom-key-store material cannot rotate automatically.
+            if spec in (None, "SYMMETRIC_DEFAULT") and props.get("Origin") in (None, "AWS_KMS") \
+                    and props.get("EnableKeyRotation") in (False, "false", None):
                 scan.hit("AWS-KMS-001", res, line, "EnableKeyRotation not true")
         elif type_ == "AWS::CloudTrail::Trail":
             off = [k for k in ("IsMultiRegionTrail", "EnableLogFileValidation")
@@ -2038,6 +2135,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 if any(p == "AdministratorAccess" or (isinstance(cfn_string(p), str) and ADMIN_ARN.search(cfn_string(p)))
                        for p in policies):
                     scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
+        elif type_ in ("AWS::EC2::LaunchTemplate", "AWS::EC2::Instance"):
+            cfn_instance(scan, res, type_, props, line)
         elif type_ == "AWS::Lambda::Url":
             if props.get("AuthType") == "NONE":
                 scan.hit("AWS-LAMBDA-001", res, line, "AuthType = NONE")
@@ -2061,6 +2160,66 @@ def cfn_shared(scan, res, type_, props, line):
         cert = config.get("ViewerCertificate") if isinstance(config.get("ViewerCertificate"), dict) else {}
         if cert.get("MinimumProtocolVersion") in OLD_TLS and cert.get("CloudFrontDefaultCertificate") not in (True, "true"):
             scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
+
+
+def cfn_instance(scan, res, type_, props, line):
+    """AWS-EC2-001 and AWS-EBS-001 for launch templates and instances."""
+    data = props.get("LaunchTemplateData") if type_ == "AWS::EC2::LaunchTemplate" else props
+    if not isinstance(data, dict):
+        return
+    for mapping in aslist(data.get("BlockDeviceMappings")):
+        ebs = mapping.get("Ebs") if isinstance(mapping, dict) else None
+        if isinstance(ebs, dict) and ebs.get("Encrypted") in (False, "false"):
+            scan.hit("AWS-EBS-001", res, line, "BlockDeviceMappings Ebs.Encrypted = false")
+    if type_ == "AWS::EC2::Instance":
+        # An instance sets metadata options only through a launch template.
+        if "LaunchTemplate" in props:
+            scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
+                                f"template: {res.file}:{line} ({res.address})")
+        else:
+            scan.hit("AWS-EC2-001", res, line, "no launch template with MetadataOptions; IMDSv1 allowed")
+        return
+    opts = data.get("MetadataOptions")
+    if not isinstance(opts, dict):
+        scan.hit("AWS-EC2-001", res, line, "no MetadataOptions; IMDSv1 allowed")
+    elif opts.get("HttpEndpoint") != "disabled" and opts.get("HttpTokens") != "required":
+        if isinstance(opts.get("HttpTokens"), (dict, list)):
+            scan.not_run.append(f"AWS-EC2-001: HttpTokens is not a literal; check not run: {res.file}:{line} "
+                                f"({res.address})")
+        else:
+            scan.hit("AWS-EC2-001", res, line, f"HttpTokens = {opts.get('HttpTokens') or 'unset'}")
+
+
+# CloudFormation property names (CamelCase) that hold a credential.
+CFN_SECRET_KEY = re.compile(r"(?i)[A-Za-z0-9_-]*(?:password|passwd|secret|secret_?key|secret_?string|token|"
+                            r"api_?key|access_?key|private_?key|credentials?|(?<![A-Za-z])(?:pass|pwd|pw))")
+
+
+def cfn_secrets(scan, res, props, line):
+    """SEC-001 for literal strings under secret-named properties or Name/Value pairs."""
+    def literal_secret(value):
+        return isinstance(value, str) and not value.startswith("{{resolve:") and \
+            not PLACEHOLDER.match(value.strip()) and "${" not in value
+
+    found = []
+    stack = [props]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            keys = {k.lower(): k for k in item if isinstance(k, str)}
+            name = item.get(keys.get("name", ""))
+            if "value" in keys and isinstance(name, str) and CFN_SECRET_KEY.fullmatch(name) \
+                    and literal_secret(item[keys["value"]]):
+                found.append(name)
+            for key, value in item.items():
+                if isinstance(key, str) and CFN_SECRET_KEY.fullmatch(key) and literal_secret(value):
+                    found.append(key)
+                elif isinstance(value, (dict, list)):
+                    stack.append(value)
+    for key in sorted(set(found)):
+        scan.hit("SEC-001", Res("file", res.file, res.file, 1), line, f"literal value assigned to {key} ({res.address})")
 
 
 def cfn_admin(scan, res, props, line):
@@ -2126,9 +2285,110 @@ def is_export(doc):
         all(isinstance(k, str) and k[:1].isupper() for k in doc)
 
 
+def aws_export(scan, rel, doc, keys):
+    """Rules for the AWS CLI exports reference/snapshots.md lists; True when one matched."""
+    def at(path, key):
+        return keys.get((path, key), 1)
+
+    def items(name):
+        value = doc.get(name)
+        return [(i, x) for i, x in enumerate(value) if isinstance(x, dict)] if isinstance(value, list) else []
+
+    def policy(document):
+        if isinstance(document, str):  # get-account-authorization-details may URL-encode documents
+            try:
+                document = json.loads(url_unquote(document))
+            except ValueError:
+                return None
+        return norm_statements(document) if isinstance(document, dict) else None
+
+    matched = False
+    # aws iam get-account-authorization-details
+    for list_name, inline_key, type_ in (("RoleDetailList", "RolePolicyList", "aws_iam_role"),
+                                         ("UserDetailList", "UserPolicyList", "aws_iam_user"),
+                                         ("GroupDetailList", "GroupPolicyList", "aws_iam_group")):
+        for i, entity in items(list_name):
+            matched = True
+            name = str(entity.get(type_.split("_")[-1].capitalize() + "Name", i))
+            line = at((list_name, i), "Arn")
+            res = Res(type_, f"snapshot:{type_}.{name}", rel, line)
+            scan.add_resource(res, "aws")
+            if "AssumeRolePolicyDocument" in entity:
+                scan.trust_policy(res, policy(entity["AssumeRolePolicyDocument"]), line)
+            for p in aslist(entity.get(inline_key)):
+                if isinstance(p, dict):
+                    scan.identity_policy(res, policy(p.get("PolicyDocument")), line)
+            if any(isinstance(p, dict) and isinstance(p.get("PolicyArn"), str) and ADMIN_ARN.search(p["PolicyArn"])
+                   for p in aslist(entity.get("AttachedManagedPolicies"))):
+                scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
+    for i, managed in items("Policies"):
+        if not managed.get("AttachmentCount"):
+            continue
+        matched = True
+        line = at(("Policies", i), "Arn")
+        res = Res("aws_iam_policy", f"snapshot:aws_iam_policy.{managed.get('PolicyName', i)}", rel, line)
+        scan.add_resource(res, "aws")
+        for version in aslist(managed.get("PolicyVersionList")):
+            if isinstance(version, dict) and version.get("IsDefaultVersion"):
+                scan.identity_policy(res, policy(version.get("Document")), line)
+    # aws rds describe-db-instances
+    for i, db in items("DBInstances"):
+        matched = True
+        line = at(("DBInstances", i), "DBInstanceIdentifier")
+        res = Res("aws_db_instance", f"snapshot:aws_db_instance.{db.get('DBInstanceIdentifier', i)}", rel, line)
+        scan.add_resource(res, "aws")
+        if db.get("PubliclyAccessible") is True:
+            scan.hit("AWS-RDS-001", res, at(("DBInstances", i), "PubliclyAccessible"), "PubliclyAccessible = true")
+        if db.get("StorageEncrypted") is False:
+            scan.hit("AWS-RDS-002", res, at(("DBInstances", i), "StorageEncrypted"), "StorageEncrypted = false")
+    # aws ec2 describe-instances
+    for r, reservation in items("Reservations"):
+        for i, instance in enumerate(aslist(reservation.get("Instances"))):
+            if not isinstance(instance, dict):
+                continue
+            matched = True
+            line = keys.get((("Reservations", r, "Instances", i), "InstanceId"), 1)
+            res = Res("aws_instance", f"snapshot:aws_instance.{instance.get('InstanceId', i)}", rel, line)
+            scan.add_resource(res, "aws")
+            opts = instance.get("MetadataOptions")
+            if isinstance(opts, dict) and opts.get("HttpEndpoint") != "disabled" and opts.get("HttpTokens") == "optional":
+                scan.hit("AWS-EC2-001", res, line, "HttpTokens = optional")
+    # aws lambda list-function-url-configs
+    for i, url in items("FunctionUrlConfigs"):
+        matched = True
+        line = at(("FunctionUrlConfigs", i), "FunctionArn")
+        res = Res("aws_lambda_function_url", f"snapshot:{url.get('FunctionArn', i)}", rel, line)
+        scan.add_resource(res, "aws")
+        if url.get("AuthType") == "NONE":
+            scan.hit("AWS-LAMBDA-001", res, at(("FunctionUrlConfigs", i), "AuthType"), "AuthType = NONE")
+    # aws cloudtrail describe-trails
+    for i, trail in items("trailList"):
+        matched = True
+        line = at(("trailList", i), "Name")
+        res = Res("aws_cloudtrail", f"snapshot:aws_cloudtrail.{trail.get('Name', i)}", rel, line)
+        scan.add_resource(res, "aws")
+        off = [k for k in ("IsMultiRegionTrail", "LogFileValidationEnabled") if trail.get(k) is False]
+        if off:
+            scan.hit("AWS-CT-001", res, line, "not true: " + ", ".join(off))
+    # aws s3control get-public-access-block / aws s3api get-public-access-block
+    pab = doc.get("PublicAccessBlockConfiguration")
+    if isinstance(pab, dict):
+        matched = True
+        line = at((), "PublicAccessBlockConfiguration")
+        res = Res("aws_s3_public_access_block", f"snapshot:{Path(rel).name}", rel, line)
+        scan.add_resource(res, "aws")
+        off = [k for k in ("BlockPublicAcls", "IgnorePublicAcls", "BlockPublicPolicy", "RestrictPublicBuckets")
+               if pab.get(k) is False]
+        if off:
+            scan.hit("AWS-S3-002", res, line, "off: " + ", ".join(off))
+    return matched
+
+
 def handle_snapshot(scan, rel, text, doc):
     """The file kind ("snapshot" or "policy") when the document is recognised, else None."""
     keys = json_key_lines(text)
+    if isinstance(doc, dict) and aws_export(scan, rel, doc, keys):
+        return "snapshot"
     if isinstance(doc, dict) and isinstance(doc.get("SecurityGroups"), list):
         for index, sg in enumerate(doc["SecurityGroups"]):
             if not isinstance(sg, dict):
@@ -2249,10 +2509,29 @@ def _yaml_pair(text):
 YAML_BREAK = re.compile("[\r\x85\u2028\u2029]")
 
 
+# CloudFormation's short-form intrinsic function tags and their long forms.
+CFN_TAGS = {"Ref": "Ref", "Condition": "Condition", **{name: f"Fn::{name}" for name in (
+    "And", "Base64", "Cidr", "Equals", "FindInMap", "GetAtt", "GetAZs", "If", "ImportValue", "Join",
+    "Length", "Not", "Or", "Select", "Split", "Sub", "ToJsonString", "Transform")}}
+CFN_TAG = re.compile(r"!([A-Za-z]+)(?=[ \t]|$|[,\]}])")
+
+
+def cfn_intrinsic(tag, value, line):
+    """{"Ref": x} or {"Fn::Name": x} for a short-form tag; !GetAtt A.B is ["A", "B"]."""
+    if tag not in CFN_TAGS:
+        raise ValueError("unsupported YAML tag")
+    if tag == "GetAtt" and isinstance(value, str) and "." in value:
+        value = value.split(".", 1)
+    result = _YamlMap(line)
+    result.put(CFN_TAGS[tag], value, line)
+    return result
+
+
 class _YamlFlow:
-    """Single-line flow collections and scalars; no YAML tags or references."""
-    def __init__(self, text, line):
-        self.text, self.line, self.i = text, line, 0
+    """Single-line flow collections and scalars; no YAML tags or references,
+    except CloudFormation's intrinsic tags when cfn is set."""
+    def __init__(self, text, line, cfn=False):
+        self.text, self.line, self.i, self.cfn = text, line, 0, cfn
 
     def ws(self):
         # YAML whitespace is space and tab; NBSP or a BOM is content.
@@ -2272,6 +2551,12 @@ class _YamlFlow:
         if start >= len(self.text):
             raise ValueError("multiline or incomplete scalar")
         c = self.text[start]
+        if c == "!" and self.cfn and not key:
+            m = CFN_TAG.match(self.text, start)
+            if not m:
+                raise ValueError("unsupported YAML scalar, tag or reference")
+            self.i = m.end()
+            return cfn_intrinsic(m.group(1), self.value(flow=flow), self.line)
         if c in "\"'":
             self.i += 1
             while self.i < len(self.text):
@@ -2340,8 +2625,8 @@ class _YamlSubset:
     tags, directives, complex/duplicate keys and multiline flow/quoted/plain
     scalars are rejected, so the caller records the document in not_run.
     """
-    def __init__(self, rows):
-        self.rows, self.i = rows, 0
+    def __init__(self, rows, cfn=False):
+        self.rows, self.i, self.cfn = list(rows), 0, cfn
         self.line = rows[0][0] if rows else 1
 
     def peek(self):
@@ -2366,6 +2651,10 @@ class _YamlSubset:
         return text == "-" or text.startswith("- ")
 
     def entry(self, text, indent, line, indentless=True):
+        tag = re.fullmatch(r"!([A-Za-z]+)(?:[ \t]+([|>].*))?", text) if self.cfn else None
+        if tag:
+            # A short-form tag whose value is a block (!If, !Join) or a block string (!Sub |).
+            return cfn_intrinsic(tag.group(1), self.entry(tag.group(2) or "", indent, line, indentless), line)
         if re.fullmatch(r"[|>](?:[+-][1-9]?|[1-9][+-]?)?", text):
             # Never interpret embedded manifests, scripts or configuration as YAML.
             while self.i < len(self.rows):
@@ -2375,7 +2664,7 @@ class _YamlSubset:
                 self.i += 1
             return UNKNOWN
         if text:
-            return _YamlFlow(text, line).parse()
+            return _YamlFlow(text, line, self.cfn).parse()
         nxt = self.peek()
         if nxt and (nxt[0] > indent or
                     (indentless and nxt[0] == indent and self.is_list(nxt[1]))):
@@ -2408,7 +2697,7 @@ class _YamlSubset:
         if not self.is_list(row[1]):
             if row[1].startswith(("{", "[")):
                 self.i += 1
-                return _YamlFlow(row[1], row[2]).parse()
+                return _YamlFlow(row[1], row[2], self.cfn).parse()
             return self.mapping(indent, _YamlMap(row[2]))
         result = []
         while (row := self.peek()) and row[0] == indent and self.is_list(row[1]):
@@ -2416,7 +2705,12 @@ class _YamlSubset:
             text = row[1][1:].lstrip(" ")
             item_indent = indent + len(row[1]) - len(text)
             if self.is_list(text):
-                raise ValueError("nested sequence on one line")
+                # "- - a" opens a sequence inside the item: re-read the rest of
+                # the row as the first entry of a block at the item's column.
+                self.i -= 1
+                self.rows[self.i] = (row[2], " " * item_indent + text)
+                result.append(self.block(item_indent))
+                continue
             if _yaml_pair(text):
                 value = _YamlMap(row[2])
                 self.pair(value, text, item_indent, row[2])
@@ -2657,6 +2951,11 @@ def handle_yaml(scan, rel, lines):
         if kind == "kustomize":
             continue
         if kind == "cloudformation-yaml":
+            if doc is None:
+                try:  # short-form intrinsic tags (!Ref, !Sub, !GetAtt) as their long forms
+                    doc = _YamlSubset(rows, cfn=True).parse()
+                except (ValueError, RecursionError):
+                    doc = None
             handle_cfn_yaml(scan, rel, [line for _, line in rows], rows[0][0], doc)
             continue
         if reason and any("{{" in raw for _, raw in rows):
@@ -2698,8 +2997,8 @@ def handle_k8s_json(scan, rel, text, doc):
 def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
     resources = doc.get("Resources") if isinstance(doc, _YamlMap) else None
     if isinstance(resources, _YamlMap):
-        # Parsed by the YAML subset (long-form intrinsics such as {"Ref": X}):
-        # the JSON rules apply unchanged. Short-form tags (!Ref) are not parsed.
+        # Parsed by the YAML subset, with short-form tags (!Ref) read as their
+        # long forms ({"Ref": X}): the JSON rules apply unchanged.
         def line_of(lid):  # the Type line, as the tag-tolerant inventory reports it
             r = resources.get(lid)
             return r.lines.get("Type", resources.lines[lid]) if isinstance(r, _YamlMap) else resources.lines[lid]
@@ -2735,6 +3034,13 @@ SECRET_REF_BLOCK = re.compile(r"\b(?:secret_key_ref|secret_environment_variables
 SECRET_NAME_VALUE = re.compile(r"^[a-z][a-z0-9]*(?:[-_][a-z0-9]+)+$")
 
 
+# Container environment entries: { name = "DB_PASSWORD", value = "..." }, also
+# split over two lines and in jsonencode()d container definitions.
+NAME_VALUE = re.compile(r'(?i)"?\bname"?\s*[:=]\s*"([^"]+)"\s*,?\s*"?value"?\s*[:=]\s*"([^"]*)"')
+NAME_ONLY = re.compile(r'(?i)^\s*"?name"?\s*[:=]\s*"([^"]+)"\s*,?\s*$')
+VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
+
+
 def mock_lines(lines):
     """Line numbers inside Terragrunt mock_outputs blocks: stand-ins for plan, not secrets."""
     inside, depth = set(), 0
@@ -2760,6 +3066,15 @@ def scan_secrets(scan, rel, text, kind):
                 scan.hit("SEC-001", res, n, label, strong=True)
         if kind not in ("terraform", "tfvars", "terragrunt") or n in mocks:
             continue
+        pair = NAME_VALUE.search(line)
+        if not pair and n < len(lines) and NAME_ONLY.match(line):
+            pair = NAME_ONLY.match(line), VALUE_ONLY.match(lines[n])
+            pair = None if not pair[1] else pair
+        if pair:
+            name, value = (pair.group(1), pair.group(2)) if isinstance(pair, re.Match) else \
+                (pair[0].group(1), pair[1].group(1))
+            if CFN_SECRET_KEY.fullmatch(name) and "${" not in value and not PLACEHOLDER.match(value.strip()):
+                scan.hit("SEC-001", res, n, f"literal value for {name}")
         for m in generic(line):
             if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
@@ -2838,9 +3153,17 @@ def walk(root, scan, prefix=""):
 INPUT_SUFFIXES = (".tf", ".tofu", ".tfvars", ".json", ".yaml", ".yml", ".template")
 
 
+TERRAGRUNT_BLOCKS = {"locals", "terraform", "inputs", "include", "dependency", "dependencies", "remote_state",
+                     "generate", "download_dir", "prevent_destroy", "skip", "iam_role", "terraform_version_constraint",
+                     "terragrunt_version_constraint", "retryable_errors"}
+TOP_LEVEL = re.compile(r'^([A-Za-z_][\w-]*)\s*(?:"[^"]*"\s*)*[{=]', re.M)
 # Top-level Terragrunt blocks, as shared include files hold them.
 TERRAGRUNT = re.compile(r'^(?:inputs\s*=|include\s*(?:"[^"]*"\s*)?\{|dependency\s*"|dependencies\s*\{|'
                         r'remote_state\s*\{|generate\s*")', re.M)
+
+
+TERRAGRUNT_NOTE = ("Terragrunt configuration read only for module sources, s3 remote_state encryption and "
+                   "literal secrets; inputs, dependencies and generate blocks not evaluated")
 
 
 def input_note(name):
@@ -2852,7 +3175,7 @@ def input_note(name):
                     "and its checks read the configuration before the override")
         return "Terraform JSON syntax not evaluated"
     if lower == "terragrunt.hcl":
-        return "Terragrunt inputs, dependencies and generate blocks not evaluated"
+        return TERRAGRUNT_NOTE
     if lower.endswith(".tftest.hcl") or lower.endswith(".tftest.json"):
         return None  # test assertions, not deployed configuration
     if lower.endswith(".hcl") and lower != ".terraform.lock.hcl":
@@ -2907,6 +3230,9 @@ def run(root, snapshots=()):
     for directory, prefix in zip(snapshots, snapshot_prefixes(snapshots)):
         entries += walk(Path(directory), scan, prefix)
     skipped = {"too large": [], "not UTF-8": []}
+    terragrunt_files = []
+    # In a Terragrunt tree, account.hcl, region.hcl and env.hcl hold its locals.
+    terragrunt_tree = any(full.name in ("terragrunt.hcl", "root.hcl") for full, _ in entries)
     for full, rel in entries:
         name = full.name
         if STATE_FILE.search(name):
@@ -2939,10 +3265,13 @@ def run(root, snapshots=()):
             continue
         kind = None
         note = input_note(name)
-        terragrunt = name == "terragrunt.hcl" or (name.endswith(".hcl") and note and TERRAGRUNT.search(text))
+        terragrunt = name == "terragrunt.hcl" or (name.endswith(".hcl") and note and (
+            TERRAGRUNT.search(text) or terragrunt_tree and set(TOP_LEVEL.findall(text)) and
+            set(TOP_LEVEL.findall(text)) <= TERRAGRUNT_BLOCKS))
         if terragrunt:
-            # Shared Terragrunt files (root.hcl, env.hcl, _envcommon/*.hcl).
-            note = input_note("terragrunt.hcl")
+            # Shared Terragrunt files (root.hcl, env.hcl, _envcommon/*.hcl), named once below.
+            terragrunt_files.append(rel)
+            note = None
         if note:
             scan.not_run.append(f"{note}; review by hand: {rel}")
         if name.endswith((".tf", ".tofu")):
@@ -2990,6 +3319,9 @@ def run(root, snapshots=()):
         elif snapshot and not name.endswith(".json") and not note:
             scan.not_run.append(f"export not read (rules cover JSON exports); review by hand: {rel}")
         scan_secrets(scan, rel, text, kind)
+    if terragrunt_files:
+        examples = ", ".join(terragrunt_files[:3]) + (", ..." if len(terragrunt_files) > 3 else "")
+        scan.not_run.append(f"{TERRAGRUNT_NOTE} ({len(terragrunt_files)} file(s)); review by hand: {examples}")
     for reason, rels in skipped.items():
         if rels:
             examples = ", ".join(rels[:3]) + (", ..." if len(rels) > 3 else "")

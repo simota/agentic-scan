@@ -162,9 +162,20 @@ class RuleTest(TempDir):
         self.assertEqual([(h["rule"], h["line"]) for h in scan.hits], [("AWS-S3-001", 4)])
         self.assertEqual(scan.not_run, [])
 
-    def test_cloudformation_yaml_with_short_form_tags_is_inventoried_not_ruled(self):
+    def test_cloudformation_yaml_with_short_form_tags_is_ruled(self):
         self.write("stack.yaml", "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n    Properties:\n"
-                                 "      BucketName: !Ref Name\n      AccessControl: PublicRead\n")
+                                 "      BucketName: !Ref Name\n      AccessControl: PublicRead\n"
+                                 "      Tags:\n        - Key: arn\n          Value: !Sub 'arn:${AWS::Partition}:x'\n"
+                                 "        - Key: joined\n          Value: !Join\n            - ''\n"
+                                 "            - - a\n              - !GetAtt Role.Arn\n")
+        scan = iac_scan.run(self.tmp)
+        self.assertEqual([(r["address"], r["line"]) for r in scan.resources], [("cfn:Bucket", 3)])
+        self.assertEqual([h["rule"] for h in scan.hits], ["AWS-S3-001"])
+        self.assertEqual(scan.not_run, [])
+
+    def test_cloudformation_yaml_with_unknown_tags_is_inventoried_not_ruled(self):
+        self.write("stack.yaml", "Resources:\n  Bucket:\n    Type: AWS::S3::Bucket\n    Properties:\n"
+                                 "      BucketName: !Custom Name\n      AccessControl: PublicRead\n")
         scan = iac_scan.run(self.tmp)
         self.assertEqual([(r["address"], r["line"]) for r in scan.resources], [("cfn:Bucket", 3)])
         self.assertEqual(scan.hits, [])

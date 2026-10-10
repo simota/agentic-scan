@@ -453,7 +453,8 @@ class CloudFormationSourceRedactionTest(OutputTest):
                 scan = iac_scan.run(self.repo)
                 record = self.record("template.json:1")
                 record["findings"] = iac_scan.build_findings(scan.hits)
-                self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-RDS-001"])
+                # The literal password is itself a finding, reported by key only.
+                self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-RDS-001", "SEC-001"])
                 self.assertEqual(scan.not_run, [])
                 self.assertNotIn(value, json.dumps(iac_scan.report(scan, self.repo, "", record["findings"])))
                 self.assert_source_omitted(record, value)

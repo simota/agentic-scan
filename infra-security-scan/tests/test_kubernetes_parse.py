@@ -123,7 +123,7 @@ spec: {hostNetwork: true}
   Bucket:
     Type: AWS::S3::Bucket
     Properties:
-      BucketName: !Ref BucketName
+      BucketName: !Custom BucketName
 """
         pod = """apiVersion: v1
 kind: Pod

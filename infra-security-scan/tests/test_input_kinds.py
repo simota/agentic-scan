@@ -72,13 +72,13 @@ class InputKindTest(unittest.TestCase):
         snaps = Path(self.tmp.name + "-snaps")
         snaps.mkdir()
         try:
-            (snaps / "aws-rds.json").write_text(json.dumps({"DBInstances": [{"PubliclyAccessible": True}]}))
+            (snaps / "aws-ecs.json").write_text(json.dumps({"Clusters": [{"ClusterName": "c"}]}))
             self.write("main.tf", OPEN_SG)
             scan = self.scan(str(snaps))
-            self.assertTrue([n for n in scan.not_run if "aws-rds.json" in n and "review by hand" in n],
+            self.assertTrue([n for n in scan.not_run if "aws-ecs.json" in n and "review by hand" in n],
                             scan.not_run)
         finally:
-            (snaps / "aws-rds.json").unlink()
+            (snaps / "aws-ecs.json").unlink()
             snaps.rmdir()
 
     def test_application_json_in_repository_is_quiet(self):

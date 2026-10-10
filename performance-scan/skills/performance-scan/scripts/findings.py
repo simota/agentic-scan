@@ -83,14 +83,20 @@ class SchemaError(ValueError):
     pass
 
 
-# Final labels that mark a lowercase dotted name as a host rather than a file
-# name (hosts are written in lowercase; Service.svc and README.org are files).
-# The ambiguous ones are also common file suffixes (.env.local, Dockerfile.dev),
-# so they mark a host only in a two-label name (example.org, db.dev) or in a
-# name of three or more labels (api.corp.dev); a leading dot always means a file.
+# Final labels that mark a dotted name as a host rather than a file name.
+# Hostnames are case-insensitive, so HOST_SUFFIXES apply in any case
+# (DB.EXAMPLE.COM). The ambiguous ones are also common file suffixes
+# (README.org, Dockerfile.dev, Service.svc, .env.local): they mark a host in a
+# name of three or more labels (api.corp.dev, postgres.default.svc) or in an
+# all-lowercase two-label name (example.org, db.dev); a leading dot always
+# means a file.
 HOST_SUFFIXES = frozenset(("com", "net", "io", "cloud", "jp", "uk", "de", "fr", "eu", "us",
-                           "localdomain", "internal", "lan", "invalid", "arpa", "svc"))
-AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test"))
+                           "localdomain", "internal", "lan", "invalid", "arpa"))
+AMBIGUOUS_HOST_SUFFIXES = frozenset(("org", "co", "dev", "app", "local", "example", "test",
+                                     "svc"))
+# Two single letters around a slash (N/A, I/O, R/W) are an abbreviation; ./a,
+# /a and src/a are files.
+ABBREVIATION = re.compile(r"[^\W\d_][/\\][^\W\d_]")
 IPV4 = re.compile(r"[0-9]{1,3}(?:\.[0-9]{1,3}){3}")
 # A file name has a directory part whose last segment holds a letter, in any
 # script (src/main, src/設定,
@@ -111,9 +117,12 @@ def _is_host(name):
         return False
     if name.lower() == "localhost" or IPV4.fullmatch(name):
         return True
-    labels = name.split(".")
-    return (name == name.lower() and len(labels) > 1
-            and (labels[-1] in HOST_SUFFIXES or labels[-1] in AMBIGUOUS_HOST_SUFFIXES))
+    labels = name.lower().split(".")
+    if len(labels) < 2:
+        return False
+    if labels[-1] in HOST_SUFFIXES:
+        return True
+    return labels[-1] in AMBIGUOUS_HOST_SUFFIXES and (len(labels) > 2 or name == name.lower())
 
 
 def _rejection(path):
@@ -124,8 +133,7 @@ def _rejection(path):
         return "a host:port"
     if not FILE_SHAPE.fullmatch(path):
         return "not a file name (a setting, number or word)"
-    segments = path.replace("\\", "/").split("/")
-    if len(segments) > 1 and all(len(segment) <= 1 for segment in segments):
+    if ABBREVIATION.fullmatch(path):
         return "an abbreviation such as N/A or I/O, not a file"
     first, _, rest = path.replace("\\", "/").partition("/")
     last = path.replace("\\", "/").rsplit("/", 1)[-1]

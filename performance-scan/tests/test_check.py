@@ -92,7 +92,7 @@ class CitationTests(unittest.TestCase):
                  "Procfile.dev:2", "config/settings.local:3", "tests/app.test:5", "README.org:10",
                  "makefile:12", "Service.svc:12", "Jenkinsfile:4", "src/v2.1/app.ts:7",
                  "internal/store/orders.go:42", "go.sum:10", "src/a:1", "lib/x/b:7",
-                 "src/設定:12", "Program.CS:20", "index.PY:4", "orders.go:42:7", "analysis.R:3",
+                 "src/設定:12", "Program.CS:20", "index.PY:4", "./a:1", "/a:1", "C:\\a:1", "orders.go:42:7", "analysis.R:3",
                  "README.MD:2", "vendor/github.com/foo/bar.go:3", "internal/db/DB.Go:4", "app/views.py：１８", "go.mod:5", "CODEOWNERS:2",
                  "config/docker-compose.override.local:4"]
         not_cites = ["confirmed against https://staging.example:8080/api/orders",
@@ -110,7 +110,8 @@ class CitationTests(unittest.TestCase):
                      "HTTP/1.1:200", "123.dev:443", "at 10.30:15", "3.14:1 ratio", "TIMEOUT:30",
                      "MAX_ROWS:100", "HTTP:200", "Profile:2", "time.Second:30 is the effective wait",
                      "json.Marshal:1", "http.DefaultClient:5", "runtime.GOMAXPROCS:4", "golang.org/x/sync:1",
-                     "github.com/foo/bar:3"]
+                     "github.com/foo/bar:3", "DB.EXAMPLE.COM:443", "Api.Example.Com:443",
+                     "R/W:2"]
         for text in cites:
             self.assertTrue(findings.cites_location(text), text)
         for text in not_cites:
@@ -173,6 +174,26 @@ class CitationMessageTests(unittest.TestCase):
         row = next(line for line in render.render_markdown(doc, "en").splitlines()
                    if line.startswith("| B-02 |"))
         self.assertTrue(row.endswith(" | P-002 |"), row)
+
+
+class CitationCorpusTests(unittest.TestCase):
+    """A broad sample of real citations and look-alikes across stacks."""
+
+    FILES = """app/models/order.rb:12 src/main/java/com/acme/Order.java:40 Order.java:40 Program.cs:5
+        main.go:3 cmd/api/main.go:9 src/lib.rs:7 App.tsx:30 pages/index.vue:4 styles.scss:8
+        pyproject.toml:12 package.json:4 Cargo.toml:3 Gemfile.lock:9 Dockerfile:7 Dockerfile.prod:2
+        docker-compose.yml:14 .env:2 .env.production:4 .gitlab-ci.yml:20 CMakeLists.txt:8
+        BUILD.bazel:4 schema.prisma:22 db/schema.rb:100 V3__add_index.sql:2 nginx.conf:30
+        values.yaml:11 Chart.yaml:2 README:3 LICENSE:1 Startup.cs:44 Web.config:9 config.ru:2
+        Procfile:1 Rakefile:5 requirements.txt:3 server.mjs:8 a.h:3 Foo.kt:9 build.gradle.kts:12
+        pom.xml:30 vite.config.ts:6 ../x/y.py:3 C:\\src\\a.py:4 main.py#L10-L20 a.py:1-3
+        orders.go:42:7 orders_test.go:3 Vagrantfile:2 terraform/main.tf:12 config/routes.rb:5""".split()
+    LOOK_ALIKES = """12:30 R/W:2 localhost:6379 10.0.0.5:5432 node:18 postgres:16 ubuntu:22.04
+        sha256:abc pool:10 N:1 port:8080 ratio:2 件数：50 cache.internal:11211""".split()
+
+    def test_corpus(self):
+        self.assertEqual([t for t in self.FILES if not findings.cites_location(t)], [])
+        self.assertEqual([t for t in self.LOOK_ALIKES if findings.cites_location(t)], [])
 
 if __name__ == "__main__":
     unittest.main()

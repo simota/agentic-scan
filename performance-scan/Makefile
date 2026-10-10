@@ -43,18 +43,22 @@ AGENT   ?= claude codex agy
 PROJECT ?=
 SKILLS_DIR ?=
 
-CODEX_HOME ?= $(HOME)/.codex
-AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
+# An exported but empty value falls back to the default instead of ".".
+CLAUDE_HOME := $(or $(CLAUDE_HOME),$(CLAUDE_CONFIG_DIR),$(HOME)/.claude)
+CODEX_HOME  := $(or $(CODEX_HOME),$(HOME)/.codex)
+AGY_HOME    := $(or $(AGY_HOME),$(HOME)/.gemini/antigravity-cli)
 
 INSTALL = $(call shell_quote,$(PYTHON)) $(call shell_quote,$(REPO)/scripts/install.py) \
   --skill $(call shell_quote,$(SKILL)) --agents $(call shell_quote,$(AGENT)) \
   --project $(call shell_quote,$(PROJECT)) --skills-dir $(call shell_quote,$(SKILLS_DIR)) \
-  --claude-home $(call shell_quote,$(HOME)/.claude) \
+  --claude-home $(call shell_quote,$(CLAUDE_HOME)) \
   --codex-home $(call shell_quote,$(CODEX_HOME)) --agy-home $(call shell_quote,$(AGY_HOME))
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
-DEMO_OUT ?= $(or $(TMPDIR),/tmp)/$(NAME)-demo
+# Inside the repository (git-ignored): a fixed name under a shared /tmp could be
+# pre-created by another user with links that the renderer would follow.
+DEMO_OUT ?= $(REPO)/.demo
 # Empty: render in the record's own language.
 LANG_OUT ?=
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
@@ -68,7 +72,7 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-8s %s\n", $$1, $$2}'
 	@echo
 	@echo $(call shell_quote,  skill:  $(SKILL))
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR CLAUDE_HOME CODEX_HOME AGY_HOME PYTHON DEMO_OUT LANG_OUT"
 
 link: ## symlink the skill into every installed host's skills dir
 	@$(INSTALL) link
@@ -99,7 +103,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	head -1 $(call shell_quote,$(SKILL)/SKILL.md) | grep -qx -- '---' || { echo "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \
 	sed -n '2,8p' $(call shell_quote,$(SKILL)/SKILL.md) | grep -q '^name: $(NAME)$$' || { echo "MISS SKILL.md frontmatter has no 'name: $(NAME)' line" >&2; fail=1; }; \
 	d=$$(sed -n 's/^description: //p' $(call shell_quote,$(SKILL)/SKILL.md) | head -1 | wc -c); \
-	[ "$$d" -le 400 ] || { echo "MISS description is $$d chars; listings truncate well before that" >&2; fail=1; }; \
+	[ "$$d" -le 400 ] || { echo "MISS description is $$d bytes; listings truncate well before that" >&2; fail=1; }; \
 	if grep -nE '`[^`]*\.\./' $(DOCS) >&2; then \
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
 	for p in $(call shell_quote,$(SKILL))/scripts/*.py $(call shell_quote,$(REPO))/scripts/*.py; do \

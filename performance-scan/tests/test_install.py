@@ -191,6 +191,35 @@ class InstallerTests(unittest.TestCase):
             self.assertEqual(result, 1, action)
             self.assertIn("AGENT is empty", errors)
 
+    def test_an_empty_home_is_refused_instead_of_linking_into_the_cwd(self):
+        for host in self.hosts.values():
+            host.mkdir()
+        result, _, errors = self.run_install("link", "--codex-home", "")
+        self.assertEqual(result, 1)
+        self.assertIn("home directory for 'codex' is empty", errors)
+        self.assertFalse((self.hosts["claude"] / "skills").exists())
+
+    def test_a_blocked_path_on_one_host_links_none(self):
+        for host in self.hosts.values():
+            host.mkdir()
+        (self.hosts["codex"] / "skills").symlink_to(self.root / "gone")
+        result, _, errors = self.run_install("link", "--agents", "claude codex")
+        self.assertEqual(result, 1)
+        self.assertIn("dangling symlink", errors)
+        self.assertFalse((self.hosts["claude"] / "skills").exists())
+        project = self.root / "project"
+        project.mkdir()
+        (project / ".claude").write_text("not a directory", encoding="utf-8")
+        result, _, errors = self.run_install("link", "--project", str(project))
+        self.assertEqual(result, 1)
+        self.assertIn("is not a directory", errors)
+
+    def test_the_skills_own_parent_is_refused_with_a_clear_reason(self):
+        result, _, errors = self.run_install("link", "--skills-dir", str(self.skill.parent))
+        self.assertEqual(result, 1)
+        self.assertIn("the skill itself already lives there", errors)
+        self.assertTrue(self.skill.is_dir())
+
     def test_missing_source_and_unknown_agent_do_not_create_links(self):
         directory = self.root / "custom skills"
         directory.mkdir()
@@ -294,6 +323,17 @@ class MakefilePathTests(unittest.TestCase):
                 self.assertEqual(link.readlink(), self.skill)
                 self.assertNotIn(str(project), output)
                 self.assertEqual(list(project.iterdir()), [])
+
+    def test_an_exported_empty_home_falls_back_to_the_default(self):
+        home = self.root / "home"
+        (home / ".codex").mkdir(parents=True)
+        self.run_make("link", "AGENT=codex", environment={"HOME": str(home), "CODEX_HOME": ""})
+        self.assertTrue((home / ".codex" / "skills" / self.skill.name).is_symlink())
+        self.assertFalse((self.repo / "skills" / "skills").exists())
+
+    def test_demo_writes_inside_the_checkout_by_default(self):
+        self.run_make("demo")
+        self.assertTrue((self.repo / ".demo" / "report.md").is_file())
 
     def test_preceding_makefiles_preserve_spaceful_checkout_paths(self):
         settings = self.root / "settings.mk"

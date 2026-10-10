@@ -160,7 +160,7 @@ make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, description <= 400 bytes, no cited ../ paths,
              # sample renders in ja/en and passes the run contract
-make demo    # render the sample into $TMPDIR/performance-scan-demo (LANG_OUT=ja for Japanese labels)
+make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
 ```
 
 Requirements: Python 3.9+. No third-party packages. The `make` targets need

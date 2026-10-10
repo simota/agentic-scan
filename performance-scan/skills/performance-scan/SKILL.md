@@ -21,6 +21,10 @@ production or third-party system.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
+Paths written as `scripts/…`, `reference/…` and `templates/…` are relative to
+this skill's directory (the one holding this file), not to the audited
+repository: call the scripts by that path, never a `scripts/` of the audited project.
+
 ## Before starting
 
 - **Confirm scope in one line.** The repository is the requester's, the review
@@ -51,7 +55,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language (`--lang` changes the labels and the display names of statuses and methods; finding text stays in the language it was written in). No extra files unless asked (`findings.py check --allow NAME`) |
+| Outputs | Exactly `findings.json`, `dashboard.html`, `report.md`, in the requester's language (`meta.lang` and `--lang` are `ja` or `en` and change the labels and the display names of statuses and methods; finding text stays in the language it was written in, so for any other language use `en` labels and write the text in the requester's language). No extra files unless asked (`findings.py check --allow NAME`) |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)`, `Codex (<model>)` |
 | Budget (effort) | When the effort runs short, close units in impact order (highest-frequency workloads and uncapped scale drivers first) instead of thinning every unit. `limitations` gives the count of unreached units, entry points and ledger entries |
 | Scratch | A new, empty directory for working records (recon map, ledger, cost-trace rows, fragments), outside both the audited repository and the output directory: the host's session scratch when it names one, otherwise a fresh directory under `$TMPDIR`. Name its path in the chat summary |
@@ -137,8 +141,8 @@ Skip the files when only a checklist was asked for.
   driver and the cost model as a function of that driver
 - Always: give every finding static reproduction steps — workload, data shape
   as numbered preconditions (e.g. "a tenant with N orders, each with M items"),
-  the request shape (method, path, parameter names), the `Contrast:` path that
-  keeps the budget, and expected vs actual naming the violated budget — a
+  the request shape (method, path, parameter names), the `contrast` field (the
+  sibling path that keeps the budget, or "none"), and expected vs actual naming the violated budget — a
   one-line fix direction stated as the bound restored, and at least one
   regression assertion (`reference/budgets.md` §5)
 - Always: grade **severity** (High / Medium / Low / Info) and **confidence**

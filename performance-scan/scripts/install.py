@@ -14,19 +14,22 @@ def targets(args):
         project = Path(args.project)
         return [(project, project / ".claude" / "skills")]
 
-    roots = {
-        "claude": Path(args.claude_home),
-        "codex": Path(args.codex_home),
-        "agy": Path(args.agy_home),
-    }
+    homes = {"claude": args.claude_home, "codex": args.codex_home, "agy": args.agy_home}
     agents = args.agents.split()
     if not agents:
         raise ValueError("AGENT is empty - use claude, codex or agy, or set SKILLS_DIR")
-    unknown = sorted(set(agents) - roots.keys())
+    unknown = sorted(set(agents) - homes.keys())
     if unknown:
         raise ValueError(
             f"unknown AGENT '{' '.join(unknown)}' - use claude, codex or agy, or set SKILLS_DIR"
         )
+    # Path("") is ".", which always exists: an empty home would link into the
+    # current directory.
+    empty = sorted(a for a in agents if not homes[a])
+    if empty:
+        raise ValueError(f"the home directory for '{' '.join(empty)}' is empty"
+                         " - set CLAUDE_HOME, CODEX_HOME or AGY_HOME, or set SKILLS_DIR")
+    roots = {a: Path(homes[a]) for a in agents}
     return sorted({(roots[a], roots[a] / "skills") for a in agents}, key=lambda t: str(t[0]))
 
 
@@ -67,8 +70,19 @@ def link(skill, destinations, agents):
         # Python 3.13+ returns a looping link instead of raising; a file cannot hold links.
         if resolved.is_symlink() or (directory.exists() and not directory.is_dir()):
             raise ValueError(f"refusing {directory} - not a usable directory")
+        if resolved / skill.name == skill:
+            raise ValueError(f"refusing {destination} - the skill itself already lives there")
         if resolved == skill or skill in resolved.parents:
             raise ValueError(f"refusing {directory} - it is inside the skill itself")
+        # mkdir runs after earlier hosts are linked, so find a blocked path now:
+        # a dangling symlink or a file where a missing directory would go.
+        ancestor = directory
+        while not ancestor.exists():
+            if ancestor.is_symlink():
+                raise ValueError(f"refusing {directory} - {ancestor} is a dangling symlink")
+            ancestor = ancestor.parent
+        if not ancestor.is_dir():
+            raise ValueError(f"refusing {directory} - {ancestor} is not a directory")
         if destination.is_symlink():
             if not points_at(destination, skill):
                 raise ValueError(

@@ -1,0 +1,11 @@
+Use the documents below to answer the customer's question.
+
+<documents>
+{{ context }}
+</documents>
+
+<question>
+{{ question }}
+</question>
+
+Return JSON with two keys: "answer" (string) and "sources" (list of document titles).

@@ -1,0 +1,991 @@
+#!/usr/bin/env python3
+"""Render findings.json into dashboard.html, report.html and report.pdf.
+
+    python3 render.py FINDINGS --out DIR [--lang ja|en] [--repo REPO] [--no-pdf]
+
+With --repo, each finding's `location` excerpt is embedded: read from the blob
+at `meta.commit` when the record names one (never from later working-tree
+edits), otherwise from the working tree. Credential-shaped values in excerpts
+are masked. The PDF is printed by headless Chrome/Chromium (CHROME overrides
+the path), else WeasyPrint.
+
+Exit codes: 0 written, 2 unreadable input or schema error, 3 HTML written but
+no PDF (no engine, or the engine failed; the message says which).
+"""
+import argparse
+from collections import Counter
+import hashlib
+import html
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+SEVERITIES = ["High", "Medium", "Low", "Info"]
+CONFIDENCES = ["Confirmed", "Model-dependent", "Suspected"]
+KINDS = ["defect", "improvement"]
+STATUSES = ["Open", "Fixed", "Accepted"]
+VERDICTS = ["Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable"]
+EXCLUDED = {"FalsePositive", "NotApplicable"}
+PROMPT_KINDS = ["system", "template", "few-shot", "tool", "agent", "skill", "other"]
+RESULTS = ["applied", "N/A", "not checked"]
+TOP_KEYS = {"schema_version", "meta", "prompts", "findings", "eval_runs", "perspectives",
+            "checked_ok", "decisions", "limitations", "next_steps"}
+STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
+FINDING_ID = re.compile(r"[FL]-[0-9]{3}")
+PROMPT_ID = re.compile(r"P-[0-9]{2,3}")
+EVAL_ID = re.compile(r"E-[0-9]{3}")
+LOC_RE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
+SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|"
+                       r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
+                       r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+MAX_JSON_DEPTH = 100
+STAMP = '<meta name="prompt-scan-source" content="sha256:{}">'
+
+LABELS = {
+    "en": {
+        "title": "Prompt review report", "dashboard": "Prompt review dashboard",
+        "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present", "date": "Date",
+        "assessor": "Assessor", "scope": "Scope", "abstract": "Summary",
+        "summary_line": "{total} findings ({defects} defects, {improvements} improvements); "
+                        "{high} High, {medium} Medium. {excluded} excluded with evidence.",
+        "table_counts": "Table 1. Findings by severity and kind",
+        "severity": "Severity", "kind": "Kind", "total": "Total",
+        "defect": "Defect", "improvement": "Improvement",
+        "s_inventory": "Prompt inventory", "s_perspectives": "Perspectives", "s_findings": "Findings",
+        "s_sound": "Checked and sound", "s_evals": "Eval runs", "s_decisions": "Decisions for a human",
+        "s_limitations": "Limitations", "s_next": "Next steps",
+        "id": "ID", "name": "Name", "location": "Location", "consumer": "Consumer", "model": "Model",
+        "inputs": "Inputs", "output": "Output", "result": "Result", "note": "Note", "perspective": "Perspective",
+        "prompt": "Prompt", "confidence": "Confidence", "verdict": "Verdict", "status": "Status",
+        "symptom": "Symptom", "cause": "Cause", "impact": "Impact", "fix": "Fix direction",
+        "proposal": "Proposal", "before": "Before", "after": "After", "test": "Eval / test assertion",
+        "evidence": "Verdict evidence", "references": "References", "excerpt": "Excerpt",
+        "previous": "Earlier review (before rescan)", "source": "Source",
+        "cases": "Cases", "passed": "Passed", "failed": "Failed", "finding": "Finding",
+        "none": "None recorded.", "all": "All", "search": "Search", "excluded": "Excluded",
+        "no_match": "No finding matches the filters.",
+        "kinds": {"defect": "Defect", "improvement": "Improvement"},
+        "results": {"applied": "applied", "N/A": "N/A", "not checked": "not checked"},
+    },
+    "ja": {
+        "title": "プロンプト診断レポート", "dashboard": "プロンプト診断ダッシュボード",
+        "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり", "date": "診断日",
+        "assessor": "診断者", "scope": "範囲", "abstract": "要旨",
+        "summary_line": "指摘 {total} 件（不具合 {defects} 件、改善提案 {improvements} 件）。"
+                        "High {high} 件、Medium {medium} 件。根拠付きで除外 {excluded} 件。",
+        "table_counts": "表 1. 深刻度と種別ごとの指摘数",
+        "severity": "深刻度", "kind": "種別", "total": "合計",
+        "defect": "不具合", "improvement": "改善提案",
+        "s_inventory": "プロンプト一覧", "s_perspectives": "観点", "s_findings": "指摘",
+        "s_sound": "確認して問題がなかった項目", "s_evals": "評価の実行記録", "s_decisions": "判断が必要な事項",
+        "s_limitations": "制約事項", "s_next": "次のステップ",
+        "id": "ID", "name": "名前", "location": "場所", "consumer": "利用箇所", "model": "モデル",
+        "inputs": "入力", "output": "出力先", "result": "結果", "note": "備考", "perspective": "観点",
+        "prompt": "プロンプト", "confidence": "確度", "verdict": "検証判定", "status": "状態",
+        "symptom": "症状", "cause": "原因", "impact": "影響", "fix": "修正方針",
+        "proposal": "改善案", "before": "現在", "after": "提案", "test": "評価・テストの確認内容",
+        "evidence": "判定の根拠", "references": "参考資料", "excerpt": "抜粋",
+        "previous": "再スキャン前のレビュー", "source": "出所",
+        "cases": "ケース数", "passed": "成功", "failed": "失敗", "finding": "指摘",
+        "none": "記録なし。", "all": "すべて", "search": "検索", "excluded": "除外",
+        "no_match": "条件に合う指摘はありません。",
+        "kinds": {"defect": "不具合", "improvement": "改善提案"},
+        "results": {"applied": "実施", "N/A": "対象外", "not checked": "未確認"},
+    },
+}
+
+
+class SchemaError(Exception):
+    pass
+
+
+def json_depth(value):
+    depth, pending = 0, [(value, 1)]
+    while pending:
+        item, level = pending.pop()
+        if isinstance(item, (dict, list)):
+            depth = max(depth, level)
+            if level > MAX_JSON_DEPTH:
+                return level
+            pending.extend((child, level + 1) for child in (item.values() if isinstance(item, dict) else item))
+    return depth
+
+
+def _str(obj, key, where, required=False):
+    value = obj.get(key)
+    if value is None and not required:
+        return
+    if not isinstance(value, str) or (required and not value.strip()):
+        raise SchemaError(f"{where}.{key} must be a {'nonblank ' if required else ''}string")
+
+
+def _enum(obj, key, allowed, where, required=True):
+    if key not in obj and not required:
+        return
+    if obj.get(key) not in allowed:
+        raise SchemaError(f"{where}.{key} must be one of {', '.join(allowed)}")
+
+
+def validate_data(data):
+    """Structural check of a findings.json object. Raises SchemaError."""
+    if not isinstance(data, dict):
+        raise SchemaError("report must be a JSON object")
+    unknown = data.keys() - TOP_KEYS
+    if unknown:
+        raise SchemaError(f"unknown top-level keys {sorted(unknown)}")
+    if data.get("schema_version", 1) != 1:
+        raise SchemaError("schema_version must be 1")
+    meta = data.get("meta", {})
+    if not isinstance(meta, dict):
+        raise SchemaError("meta must be an object")
+    for key in ("target", "date", "assessor", "scope", "lang"):
+        _str(meta, key, "meta")
+    if meta.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(meta["commit"])):
+        raise SchemaError("meta.commit must be a full Git object id or null")
+    if meta.get("dirty") is not None and not isinstance(meta["dirty"], bool):
+        raise SchemaError("meta.dirty must be true, false or null")
+    for key in ("prompts", "findings", "eval_runs", "perspectives", *STRING_LISTS):
+        if not isinstance(data.get(key, []), list):
+            raise SchemaError(f"{key} must be a list")
+    for key in STRING_LISTS:
+        if not all(isinstance(x, str) and x.strip() for x in data.get(key, [])):
+            raise SchemaError(f"{key} entries must be nonblank strings")
+    seen = set()
+    for i, p in enumerate(data.get("prompts", [])):
+        where = f"prompts[{i}]"
+        if not isinstance(p, dict) or not PROMPT_ID.fullmatch(str(p.get("id", ""))):
+            raise SchemaError(f"{where}.id must be P-NN")
+        if p["id"] in seen:
+            raise SchemaError(f"duplicate prompt id {p['id']}")
+        seen.add(p["id"])
+        _str(p, "name", where, True)
+        _str(p, "location", where, True)
+        _enum(p, "kind", PROMPT_KINDS, where)
+        for key in ("consumer", "model", "inputs", "output"):
+            _str(p, key, where)
+    prompts = seen
+    seen = set()
+    for i, f in enumerate(data.get("findings", [])):
+        if not isinstance(f, dict) or not FINDING_ID.fullmatch(str(f.get("id", ""))):
+            raise SchemaError(f"findings[{i}].id must be F-NNN or L-NNN")
+        where = f"findings[{f['id']}]"
+        if f["id"] in seen:
+            raise SchemaError(f"duplicate finding id {f['id']}")
+        seen.add(f["id"])
+        _enum(f, "kind", KINDS, where)
+        _enum(f, "severity", SEVERITIES, where)
+        _enum(f, "confidence", CONFIDENCES, where)
+        _enum(f, "status", STATUSES, where, required=False)
+        for key in ("title", "location", "category"):
+            _str(f, key, where, True)
+        for key in ("symptom", "cause", "impact", "fix", "source", "rule"):
+            _str(f, key, where)
+        test = f.get("test")
+        if test is not None and not (isinstance(test, str) or (
+                isinstance(test, list) and all(isinstance(t, str) for t in test))):
+            raise SchemaError(f"{where}.test must be a string or a list of strings")
+        refs = f.get("prompt")
+        refs = [refs] if isinstance(refs, str) else refs
+        if refs is not None and (not isinstance(refs, list) or any(r not in prompts for r in refs)):
+            raise SchemaError(f"{where}.prompt must name recorded prompt ids")
+        proposal = f.get("proposal")
+        if proposal is not None:
+            if not isinstance(proposal, dict) or proposal.keys() - {"before", "after"}:
+                raise SchemaError(f"{where}.proposal must be an object with before and after")
+            for key in ("before", "after"):
+                _str(proposal, key, f"{where}.proposal")
+        for key in ("validation", "previous_validation"):
+            v = f.get(key)
+            if v is None and key == "previous_validation":
+                continue
+            if not isinstance(v, dict):
+                raise SchemaError(f"{where}.{key} must be an object")
+            _enum(v, "verdict", VERDICTS, f"{where}.{key}")
+            _str(v, "evidence", f"{where}.{key}")
+            _str(v, "method", f"{where}.{key}")
+        if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not str(f["validation"].get("evidence", "")).strip():
+            raise SchemaError(f"{where}: verdict {f['validation']['verdict']} needs validation.evidence")
+        for j, ref in enumerate(f.get("references", [])):
+            if not isinstance(ref, dict) or not re.match(r"https?://", str(ref.get("url", ""))):
+                raise SchemaError(f"{where}.references[{j}] needs an http(s) url")
+            _str(ref, "title", f"{where}.references[{j}]")
+    findings = seen
+    seen = set()
+    for i, run in enumerate(data.get("eval_runs", [])):
+        where = f"eval_runs[{i}]"
+        if not isinstance(run, dict) or not EVAL_ID.fullmatch(str(run.get("id", ""))):
+            raise SchemaError(f"{where}.id must be E-NNN")
+        if run["id"] in seen:
+            raise SchemaError(f"duplicate eval run id {run['id']}")
+        seen.add(run["id"])
+        if run.get("finding") not in findings:
+            raise SchemaError(f"{where}.finding must name a recorded finding")
+        for key in ("model", "date"):
+            _str(run, key, where, True)
+        _str(run, "note", where)
+        for key in ("cases", "passed", "failed"):
+            if not isinstance(run.get(key), int) or isinstance(run.get(key), bool) or run[key] < 0:
+                raise SchemaError(f"{where}.{key} must be a nonnegative integer")
+        if run["passed"] + run["failed"] > run["cases"]:
+            raise SchemaError(f"{where}: passed + failed exceeds cases")
+    for i, p in enumerate(data.get("perspectives", [])):
+        where = f"perspectives[{i}]"
+        if not isinstance(p, dict):
+            raise SchemaError(f"{where} must be an object")
+        _str(p, "name", where, True)
+        _enum(p, "result", RESULTS, where)
+        _str(p, "note", where)
+    return data
+
+
+def load(path, raw=None):
+    try:
+        raw = Path(path).read_bytes() if raw is None else raw
+        data = json.loads(raw.decode("utf-8"))
+    except (OSError, UnicodeError, ValueError) as e:
+        raise SchemaError(f"{path}: {e}") from None
+    if json_depth(data) > MAX_JSON_DEPTH:
+        raise SchemaError(f"{path}: JSON nesting deeper than {MAX_JSON_DEPTH} levels")
+    return validate_data(data)
+
+
+def ordered(findings):
+    """Active findings by severity, then kind and location; excluded ones last."""
+    return sorted(findings, key=lambda f: (f["validation"]["verdict"] in EXCLUDED, SEVERITIES.index(f["severity"]),
+                                           KINDS.index(f["kind"]), f["id"]))
+
+
+def counts(data):
+    active = [f for f in data.get("findings", []) if f["validation"]["verdict"] not in EXCLUDED]
+    by = Counter((f["severity"], f["kind"]) for f in active)
+    return active, by
+
+
+# ---------------------------------------------------------------- excerpts
+
+def mask(text):
+    return SECRET_RE.sub("[REDACTED]", text)
+
+
+def _source(repo, commit, rel):
+    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+        return None
+    if commit:
+        try:
+            # "./" resolves the path against --repo, which may be a subdirectory of the Git work tree.
+            r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:./{rel}"], capture_output=True, timeout=20)
+        except (OSError, subprocess.TimeoutExpired):
+            return None
+        return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
+    root = Path(repo).resolve()
+    path = (root / rel).resolve()
+    if root not in path.parents or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+        return None
+    return path.read_text(encoding="utf-8", errors="replace")
+
+
+def attach_sources(data, repo, context=3, limit=40):
+    """Excerpts keyed by finding id: (first line number, lines, highlighted range)."""
+    excerpts = {}
+    if repo is None:
+        return excerpts
+    commit = data.get("meta", {}).get("commit")
+    cache = {}
+    for f in data.get("findings", []):
+        m = LOC_RE.match(f["location"])
+        if not m:
+            continue
+        rel = m["path"]
+        if rel not in cache:
+            cache[rel] = _source(repo, commit, rel)
+        text = cache[rel]
+        if text is None:
+            continue
+        lines = text.splitlines()
+        start = int(m["start"])
+        end = max(start, int(m["end"] or start))
+        if start < 1 or start > len(lines):
+            continue
+        first = max(1, start - context)
+        last = min(len(lines), end + context, first + limit - 1)
+        excerpts[f["id"]] = (first, [mask(line) for line in lines[first - 1:last]], (start, end))
+    return excerpts
+
+
+# ---------------------------------------------------------------- HTML helpers
+
+def esc(value):
+    return html.escape(str(value), quote=True)
+
+
+def para(value):
+    if isinstance(value, list):
+        return "<ul>" + "".join(f"<li>{esc(v)}</li>" for v in value) + "</ul>"
+    return "<p>" + esc(value).replace("\n", "<br>") + "</p>"
+
+
+def excerpt_html(excerpt):
+    first, lines, (start, end) = excerpt
+    rows = []
+    for offset, line in enumerate(lines):
+        number = first + offset
+        cls = " hl" if start <= number <= end else ""
+        rows.append(f'<div class="row{cls}"><span class="ln">{number}</span><span class="src">{esc(line) or " "}</span></div>')
+    return '<div class="excerpt">' + "".join(rows) + "</div>"
+
+
+def meta_rows(data, L):
+    meta = data.get("meta", {})
+    commit = meta.get("commit")
+    revision = (commit[:12] + (f" ({L['dirty']})" if meta.get("dirty") else "")) if commit else "—"
+    rows = [(L["target"], meta.get("target", "—")), (L["commit"], revision), (L["date"], meta.get("date", "—")),
+            (L["assessor"], meta.get("assessor", "—")), (L["scope"], meta.get("scope", "—"))]
+    return "".join(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>" for k, v in rows)
+
+
+def counts_table(data, L):
+    active, by = counts(data)
+    head = "".join(f"<th>{esc(L[k])}</th>" for k in KINDS) + f"<th>{esc(L['total'])}</th>"
+    rows = []
+    for s in SEVERITIES:
+        cells = "".join(f'<td class="num">{by[(s, k)]}</td>' for k in KINDS)
+        rows.append(f'<tr><th><span class="sev sev-{s.lower()}">{s}</span></th>{cells}'
+                    f'<td class="num">{sum(by[(s, k)] for k in KINDS)}</td></tr>')
+    totals = "".join(f'<td class="num">{sum(by[(s, k)] for s in SEVERITIES)}</td>' for k in KINDS)
+    rows.append(f'<tr class="total"><th>{esc(L["total"])}</th>{totals}<td class="num">{len(active)}</td></tr>')
+    return (f'<table class="counts"><caption>{esc(L["table_counts"])}</caption>'
+            f'<thead><tr><th>{esc(L["severity"])}</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>')
+
+
+def summary_line(data, L):
+    active, by = counts(data)
+    return L["summary_line"].format(
+        total=len(active), defects=sum(1 for f in active if f["kind"] == "defect"),
+        improvements=sum(1 for f in active if f["kind"] == "improvement"),
+        high=sum(1 for f in active if f["severity"] == "High"),
+        medium=sum(1 for f in active if f["severity"] == "Medium"),
+        excluded=len(data.get("findings", [])) - len(active))
+
+
+def finding_html(f, L, excerpts, number):
+    prompt = f.get("prompt")
+    prompt = ", ".join(prompt) if isinstance(prompt, list) else prompt
+    v = f["validation"]
+    rows = [(L["location"], f'<code>{esc(f["location"])}</code>'),
+            (L["prompt"], esc(prompt) if prompt else None),
+            (L["perspective"], esc(f["category"])),
+            (L["confidence"], esc(f["confidence"])),
+            (L["verdict"], esc(v["verdict"]) + (f' <span class="muted">({esc(v["method"])})</span>'
+                                                 if v.get("method") else "")),
+            (L["status"], esc(f.get("status", "Open"))),
+            (L["source"], esc(f["source"]) if f.get("source") else None)]
+    meta = "".join(f"<tr><th>{esc(k)}</th><td>{val}</td></tr>" for k, val in rows if val)
+    body = []
+    for key in ("symptom", "cause", "impact", "fix"):
+        if f.get(key):
+            body.append(f'<h4>{esc(L[key])}</h4>{para(f[key])}')
+    proposal = f.get("proposal")
+    if proposal:
+        body.append(f'<h4>{esc(L["proposal"])}</h4><div class="proposal">'
+                    f'<figure><figcaption>{esc(L["before"])}</figcaption><pre>{esc(proposal.get("before", ""))}</pre></figure>'
+                    f'<figure><figcaption>{esc(L["after"])}</figcaption><pre>{esc(proposal.get("after", ""))}</pre></figure>'
+                    "</div>")
+    if f.get("test"):
+        body.append(f'<h4>{esc(L["test"])}</h4>{para(f["test"])}')
+    if v.get("evidence"):
+        body.append(f'<h4>{esc(L["evidence"])}</h4>{para(v["evidence"])}')
+    if f.get("previous_validation"):
+        pv = f["previous_validation"]
+        body.append(f'<h4>{esc(L["previous"])}</h4>{para(pv["verdict"] + ": " + pv.get("evidence", ""))}')
+    if f["id"] in excerpts:
+        body.append(f'<h4>{esc(L["excerpt"])}</h4>{excerpt_html(excerpts[f["id"]])}')
+    if f.get("references"):
+        items = "".join(f'<li><a href="{esc(r["url"])}">{esc(r.get("title") or r["url"])}</a></li>'
+                        for r in f["references"])
+        body.append(f'<h4>{esc(L["references"])}</h4><ul>{items}</ul>')
+    excluded = " excluded" if v["verdict"] in EXCLUDED else ""
+    return (f'<article class="finding{excluded}" id="{esc(f["id"])}">'
+            f'<h3><span class="fnum">{number}</span> <span class="fid">{esc(f["id"])}</span> '
+            f'<span class="sev sev-{f["severity"].lower()}">{f["severity"]}</span> '
+            f'<span class="kind kind-{f["kind"]}">{esc(L["kinds"][f["kind"]])}</span> {esc(f["title"])}</h3>'
+            f'<table class="fmeta">{meta}</table>{"".join(body)}</article>')
+
+
+def list_section(items, L):
+    return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="muted">{esc(L["none"])}</p>'
+
+
+REPORT_CSS = """
+:root{--ink:#1d1d1f;--muted:#5b5b60;--rule:#c9c9cf;--paper:#fff;--code:#f4f4f6;--hl:#fff3c4;
+--high:#a3241b;--medium:#a35a00;--low:#2c5a8a;--info:#55595e}
+*{box-sizing:border-box}
+body{margin:0;background:var(--paper);color:var(--ink);font:10pt/1.65 "Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",serif}
+main{max-width:180mm;margin:0 auto;padding:16mm 0}
+h1{font-size:20pt;margin:0 0 4mm}h2{font-size:13pt;margin:9mm 0 3mm;border-bottom:.6pt solid var(--rule);padding-bottom:1mm}
+h3{font-size:11pt;margin:6mm 0 2mm;break-after:avoid}h4{font:600 8.5pt/1.4 system-ui,"Hiragino Sans","Noto Sans CJK JP",sans-serif;letter-spacing:.04em;color:var(--muted);margin:3mm 0 1mm;text-transform:uppercase}
+p{margin:0 0 2mm}ul{margin:0 0 2mm;padding-left:6mm}
+table{border-collapse:collapse;width:100%;margin:2mm 0 4mm;font-size:9pt}
+caption{caption-side:top;text-align:left;font-size:8.5pt;color:var(--muted);padding-bottom:1mm}
+th,td{text-align:left;vertical-align:top;padding:1mm 2mm;border-bottom:.4pt solid var(--rule)}
+thead th{border-top:1pt solid var(--ink);border-bottom:.6pt solid var(--ink);font-family:system-ui,"Hiragino Sans","Noto Sans CJK JP",sans-serif;font-size:8.5pt}
+tbody tr:last-child td,tbody tr:last-child th{border-bottom:1pt solid var(--ink)}
+.num{text-align:right;font-variant-numeric:tabular-nums}.total th,.total td{font-weight:700}
+.meta th{width:28mm;color:var(--muted);font-weight:400}.fmeta th{width:30mm;color:var(--muted);font-weight:400}
+code,pre,.fid{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5pt}
+pre{background:var(--code);padding:2mm;white-space:pre-wrap;word-break:break-word;margin:0 0 2mm}
+.excerpt{background:var(--code);padding:2mm;margin:0 0 2mm;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5pt}
+.row{display:flex}.row.hl{background:var(--hl)}.ln{flex:0 0 9mm;color:var(--muted);user-select:none}.src{flex:1;white-space:pre-wrap;word-break:break-word}
+td code{word-break:break-all}.fid{white-space:nowrap}.inv td:nth-child(2){min-width:34mm}
+.proposal{display:grid;grid-template-columns:1fr 1fr;gap:3mm}.proposal figure{margin:0}
+figcaption{font-size:8.5pt;color:var(--muted)}
+.sev{font:700 8pt system-ui,sans-serif;letter-spacing:.03em}.sev-high{color:var(--high)}.sev-medium{color:var(--medium)}
+.sev-low{color:var(--low)}.sev-info{color:var(--info)}
+.kind{font:8pt system-ui,sans-serif;color:var(--muted);border:.5pt solid var(--rule);padding:0 1.5mm;border-radius:1mm}
+.fnum{color:var(--muted)}.muted{color:var(--muted)}.finding{break-inside:auto;border-top:.4pt solid var(--rule);padding-top:1mm}
+.excluded h3{color:var(--muted);text-decoration:line-through}
+.abstract{border-left:1.5pt solid var(--ink);padding-left:3mm;margin:4mm 0}
+a{color:var(--low)}
+@page{size:A4;margin:16mm 15mm}
+@media print{main{padding:0;max-width:none}}
+"""
+
+
+def render_report_html(data, L, lang, excerpts):
+    findings = ordered(data.get("findings", []))
+    prompts = data.get("prompts", [])
+    prompt_rows = "".join(
+        f'<tr><td class="fid">{esc(p["id"])}</td><td>{esc(p["name"])}</td><td>{esc(p.get("kind", ""))}</td>'
+        f'<td><code>{esc(p["location"])}</code></td><td><code>{esc(p.get("consumer", ""))}</code></td>'
+        f'<td>{esc(p.get("model", ""))}</td></tr>' for p in prompts)
+    prompt_table = (f'<table class="inv"><thead><tr><th>{L["id"]}</th><th>{L["name"]}</th><th>{L["kind"]}</th>'
+                    f'<th>{L["location"]}</th><th>{L["consumer"]}</th><th>{L["model"]}</th></tr></thead>'
+                    f'<tbody>{prompt_rows}</tbody></table>') if prompts else f'<p class="muted">{esc(L["none"])}</p>'
+    persp_rows = "".join(
+        f'<tr><td>{esc(p["name"])}</td><td>{esc(L["results"][p["result"]])}</td><td>{esc(p.get("note", ""))}</td></tr>'
+        for p in data.get("perspectives", []))
+    persp_table = (f'<table><thead><tr><th>{L["perspective"]}</th><th>{L["result"]}</th><th>{L["note"]}</th></tr>'
+                   f'</thead><tbody>{persp_rows}</tbody></table>')
+    finding_parts = "".join(finding_html(f, L, excerpts, f"4.{i}") for i, f in enumerate(findings, 1)) \
+        or f'<p class="muted">{esc(L["none"])}</p>'
+    runs = data.get("eval_runs", [])
+    eval_rows = "".join(
+        f'<tr><td class="fid">{esc(r["id"])}</td><td class="fid">{esc(r["finding"])}</td><td>{esc(r["model"])}</td>'
+        f'<td>{esc(r["date"])}</td><td class="num">{r["cases"]}</td><td class="num">{r["passed"]}</td>'
+        f'<td class="num">{r["failed"]}</td><td>{esc(r.get("note", ""))}</td></tr>' for r in runs)
+    eval_part = (f'<table><thead><tr><th>{L["id"]}</th><th>{L["finding"]}</th><th>{L["model"]}</th><th>{L["date"]}</th>'
+                 f'<th>{L["cases"]}</th><th>{L["passed"]}</th><th>{L["failed"]}</th><th>{L["note"]}</th></tr></thead>'
+                 f'<tbody>{eval_rows}</tbody></table>') if runs else f'<p class="muted">{esc(L["none"])}</p>'
+    sections = [
+        ("1", L["s_inventory"], prompt_table), ("2", L["s_perspectives"], persp_table),
+        ("3", L["s_sound"], list_section(data.get("checked_ok", []), L)),
+        ("4", L["s_findings"], finding_parts), ("5", L["s_evals"], eval_part),
+        ("6", L["s_decisions"], list_section(data.get("decisions", []), L)),
+        ("7", L["s_limitations"], list_section(data.get("limitations", []), L)),
+        ("8", L["s_next"], list_section(data.get("next_steps", []), L)),
+    ]
+    body = "".join(f'<section><h2>{n}. {esc(title)}</h2>{content}</section>' for n, title, content in sections)
+    title = f'{L["title"]} — {data.get("meta", {}).get("target", "")}'.rstrip(" —")
+    return (f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
+            f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title>'
+            f'<style>{REPORT_CSS}</style></head><body><main>'
+            f'<h1>{esc(L["title"])}</h1><table class="meta">{meta_rows(data, L)}</table>'
+            f'<div class="abstract"><h4>{esc(L["abstract"])}</h4><p>{esc(summary_line(data, L))}</p></div>'
+            f'{counts_table(data, L)}{body}</main></body></html>')
+
+
+DASHBOARD = r"""<!doctype html>
+<html lang="__LANG__">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>__TITLE__</title>
+<style>
+:root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--text:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;--accent:#1f3f66;--tint:#efede6;--warn:#f6f5f1;--warn-line:#1b1b1b;--serif:"Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",Georgia,serif;--sans:system-ui,-apple-system,"Hiragino Sans","Noto Sans CJK JP","Noto Sans JP",sans-serif}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--text:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4;--accent:#a9c3e6;--tint:#26252a;--warn:#17171a;--warn-line:#ece9e2}}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--text:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4;--accent:#a9c3e6;--tint:#26252a;--warn:#17171a;--warn-line:#ece9e2}
+*{box-sizing:border-box}[hidden]{display:none!important}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;overflow-wrap:anywhere;background:var(--bg);color:var(--text);font:14px/1.65 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}main{max-width:1320px;margin:auto;padding:32px 28px 48px}a{color:var(--accent);text-underline-offset:3px}button,input,select{font:inherit}button,a,input,select,summary{-webkit-tap-highlight-color:transparent}:focus-visible{outline:3px solid var(--accent);outline-offset:3px}button{cursor:pointer}button,.button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:8px 12px;text-decoration:none}button:hover,.button:hover{background:var(--soft)}.skip{position:absolute;left:20px;top:-100px}.skip:focus{top:8px;z-index:2}.masthead{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:26px}.brand{font-size:12px;font-weight:750;letter-spacing:.15em;color:var(--accent)}.tools{display:flex;gap:8px;flex-wrap:wrap}.hero{display:flex;justify-content:space-between;gap:24px;margin-bottom:20px}.hero h1{font-size:clamp(25px,3.5vw,38px);line-height:1.25;letter-spacing:-.04em;margin:3px 0 9px;overflow-wrap:anywhere}.eyebrow,.meta,.muted{color:var(--muted)}.eyebrow{font-size:13px}.meta{max-width:820px;overflow-wrap:anywhere}.hero-aside{align-self:flex-end;font-size:12px;text-align:right;max-width:280px}.summary-banner{padding:16px 20px;background:var(--tint);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;margin-bottom:16px}.summary-banner strong{display:block;font-size:18px}.summary-banner p{margin:5px 0 0}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}.cards.part-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.part-heading{margin:18px 0 8px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;text-align:left}.card .n{font-size:32px;line-height:1.25;font-weight:750;letter-spacing:-.03em}.card .l{font-size:12px;color:var(--muted);display:block;margin-bottom:8px}.card .sub{font-size:12px;color:var(--muted);margin-top:6px}.card.urgent .n{color:var(--high)}.card.review .n{color:var(--medium)}.report-note{font-size:12px;color:var(--muted);margin:8px 0 22px}.section-head{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin:26px 0 12px}h2{font-size:19px;letter-spacing:-.02em;margin:0}h3{font-size:15px;margin:0 0 6px}.section-head p{margin:4px 0 0;color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}.priority-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px}.hero>div,.priority-item,.panel{min-width:0}.priority-item h3{overflow-wrap:anywhere}.priority-item{border-top:3px solid var(--line)}.priority-item.sev-High{border-top-color:var(--high)}.priority-item.sev-Medium{border-top-color:var(--medium)}.priority-top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:10px}.priority-item h3 a{text-decoration:none;color:var(--text)}.priority-item h3 a:hover{text-decoration:underline}.priority-item p{margin:8px 0;overflow-wrap:anywhere}.priority-item .action-label{font-size:12px;font-weight:700;color:var(--accent)}.priority-item .impact{color:var(--muted)}.priority-item .action{padding-top:10px;border-top:1px solid var(--line)}.priority-item .location{font-size:12px;color:var(--muted)}.badge{display:inline-block;border:1px solid currentColor;border-radius:5px;padding:1px 7px;font-size:11px;line-height:1.7;font-weight:750;white-space:nowrap}.High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}.verdict{font-size:12px;color:var(--muted)}.section-note{font-size:12px;color:var(--muted);margin:10px 0}.coverage{margin:20px 0;background:var(--warn);border-color:var(--warn-line)}summary{cursor:pointer;font-weight:700}summary .small{font-weight:400;color:var(--muted);margin-left:10px}.coverage p{margin:10px 0}.scope-meta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 16px;margin:16px 0}.scope-meta dt{font-size:12px;color:var(--muted)}.scope-meta dd{margin:0;overflow-wrap:anywhere}.coverage-columns{display:grid;grid-template-columns:1fr 1fr;gap:24px}.coverage ul{margin:6px 0;padding-left:20px}.perspective{border-bottom:1px solid var(--warn-line);padding:9px 0}.perspective:last-child{border:0}.perspective strong{display:block}.perspective p{margin:3px 0;font-size:13px}.chart-section{margin:20px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px}.grid .panel{padding:16px}.grid h3{font-size:13px}.bar{display:grid;grid-template-columns:minmax(85px,46%) 1fr 26px;gap:8px;align-items:center;margin:7px 0;font-size:12px}.bar .t{overflow-wrap:anywhere}.bar .track{height:7px;background:var(--soft);border-radius:4px;overflow:hidden}.bar .fill{height:100%;background:var(--accent)}.bar .v{text-align:right;font-variant-numeric:tabular-nums}.filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}.filters select,.filters input{width:100%;min-width:0;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:9px;font-size:13px}.filters .search{grid-column:span 2}.filter-bottom{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px}.result-count{font-size:12px;color:var(--muted);margin:0}.tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-top:12px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}th{font-size:11px;color:var(--muted);font-weight:700;background:var(--soft)}th:nth-child(1){width:9%}th:nth-child(2){width:9%}th:nth-child(3){width:14%}th:nth-child(4){width:9%}th:nth-child(5){width:11%}th:nth-child(6){width:30%}th:nth-child(7){width:18%}tr.row{cursor:pointer}tr.row:hover{background:var(--tint)}.finding-toggle{border:0;border-radius:3px;padding:0;background:transparent;text-align:left;font-weight:650;color:var(--text);width:100%}.finding-toggle:hover{background:transparent;color:var(--accent)}.finding-toggle .toggle-label{font-size:11px;display:block;font-weight:400;color:var(--accent);margin-top:4px}.location{display:block;overflow-wrap:anywhere;margin-top:4px;font-size:11px;color:var(--muted)}tr.detail>td{background:var(--tint);padding:18px 24px}tr.detail dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:12px 0}tr.detail dt{font-size:12px;color:var(--muted)}tr.detail dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.detail-actions{display:flex;justify-content:space-between;gap:12px;align-items:center}.detail-links{display:flex;gap:12px;align-items:center;flex-wrap:wrap;flex-shrink:0}.action-guidance{border-left:3px solid var(--accent);padding:8px 12px;background:var(--panel)}.action-guidance strong{display:block}.action-guidance p{margin:4px 0}.three-pass-summary{margin:16px 0;overflow-wrap:anywhere;break-inside:auto!important;page-break-inside:auto}.three-pass-summary .prose{white-space:pre-wrap;overflow-wrap:anywhere}.three-pass-summary h4{margin:12px 0 4px}.three-pass-stage{break-inside:avoid}.verification-record,.workflow-record{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:6px;min-width:0}.verification-record h4,.workflow-record h4{font-size:15px;margin:0 0 8px}.verification-record h5,.workflow-record h5{font-size:13px;margin:18px 0 6px}.verification-record .prose,.workflow-record .prose{white-space:pre-wrap;overflow-wrap:anywhere}.verification-level,.workflow-status,.workflow-next{display:block;font-size:12px;font-weight:600;margin-top:7px}.history{border:1px dashed var(--line);padding:12px;margin-top:16px}.history p{margin:5px 0;white-space:pre-wrap}.lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;margin-top:24px}.lists h2{font-size:16px}.lists ul{margin:10px 0 0;padding-left:18px}.empty{color:var(--muted);padding:20px}.snippet{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow-x:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre}.snippet span{display:block}.snippet .hit{background:var(--warn)}.snippet b{color:var(--muted);font-weight:400}.refs{margin:0;padding-left:18px}.refs li{overflow-wrap:anywhere}.rt{display:inline-block;min-width:60px;color:var(--muted);font-size:12px}.footer{font-size:12px;color:var(--muted);border-top:1px solid var(--line);margin-top:32px;padding-top:16px}code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
+/* Academic layer (docs/report-design.md): serif argument, sans apparatus, booktabs rules, no boxes. */
+body{font-family:var(--serif);font-size:15px;line-height:1.7;font-variant-numeric:lining-nums tabular-nums}
+h1,h2,h3,h4{font-family:var(--serif);font-weight:700;letter-spacing:0}
+button,input,select,label,th,.badge,.brand,.eyebrow,.tools,.filters,.result-count,.card .l,.card .sub,.verdict,.location,.finding-toggle .toggle-label,.priority-item .action-label,.rt,tr.detail dt,.scope-meta dt,.bar,summary .small{font-family:var(--sans)}
+.brand{color:var(--muted);letter-spacing:.2em;font-size:11px}
+.masthead{border-bottom:1.5px solid var(--text)}
+.hero h1{font-size:clamp(26px,3.2vw,36px);letter-spacing:-.01em}
+.summary-banner{background:transparent;border:0;border-top:1px solid var(--text);border-bottom:1px solid var(--text);border-radius:0;padding:14px 4px}
+.summary-banner strong{font-size:17px}
+.cards{gap:28px}
+.card{background:transparent;border:0;border-top:1.5px solid var(--text);border-radius:0;padding:12px 2px 6px}
+.card .l{letter-spacing:.08em;font-size:11px}
+.card .n{font-family:var(--serif);font-weight:400;font-size:34px;letter-spacing:0}
+.panel{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:18px 0}
+.priority-item{border-top-width:2px}
+.coverage{background:transparent;border:0;border-left:1px solid var(--text);border-radius:0;padding:4px 0 4px 18px}
+.coverage-columns{grid-template-columns:1fr;gap:8px}#perspectives{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));column-gap:32px}.perspective,.perspective:last-child{border:0;border-top:1px solid var(--line)}
+.bar .fill{background:var(--text)}.bar .track{border-radius:0;height:5px}
+.tablewrap{background:transparent;border:0;border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text);border-radius:0}
+th{background:transparent;color:var(--text);letter-spacing:.06em;font-size:11px;border-bottom:1px solid var(--text)}
+.badge{border:0;padding:0;border-radius:0;letter-spacing:.1em;font-size:11px}
+button,.button,.filters select,.filters input{border-radius:2px}
+.action-guidance{background:transparent}
+.snippet{border:0;border-left:1px solid var(--text);border-radius:0;background:transparent}
+.verification-record,.workflow-record{border:0;border-left:1px solid var(--line);border-radius:0;padding:4px 0 4px 16px}
+.expert-summary h3,.three-pass-summary h3{margin-top:0}
+.footer{border-top:1.5px solid var(--text)}
+.priority-item .impact{color:var(--text)}
+.finding-toggle{font-family:var(--serif);font-weight:700}
+#verification-summary h2,#decisions-section h2{margin-bottom:8px}#decisions-section ul{margin:0;padding-left:20px}
+.verify-legend{margin:0 0 14px;color:var(--muted)}.verify-legend .action-label{font-family:var(--sans);font-size:12px;font-weight:700;color:var(--accent)}
+.card .n .pair{display:inline-block;white-space:nowrap;margin-right:18px}.card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
+td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;color:var(--muted);margin-top:4px}
+.snippet .hit{background:var(--tint)}
+@media(max-width:850px){main{padding:22px 18px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{display:block}.hero-aside{text-align:left;max-width:none;margin-top:12px}.coverage-columns{grid-template-columns:1fr}.filters{grid-template-columns:repeat(2,minmax(0,1fr))}table,tbody,tr,td{display:block}thead{display:none}tr.row{padding:14px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}tr.row td{border:0;padding:0;font-size:12px}tr.row td:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;margin-bottom:3px}tr.row td:nth-child(6){grid-column:1/-1;grid-row:1}.finding-toggle{font-size:15px}tr.row td:nth-child(7){grid-column:span 2}.detail-actions{align-items:flex-start}tr.detail>td{padding:16px}tr.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}tr.detail dd{margin-bottom:10px}}
+@media(max-width:480px){main{padding:16px 12px}.masthead{align-items:flex-start;flex-direction:column;gap:12px}.tools{width:100%}.tools .button{flex:1}.card{padding:14px}.card .n{font-size:28px}.panel{padding:16px}.section-head{display:block}.filters{grid-template-columns:1fr 1fr;gap:10px}.filters label:first-child,.filters .search{grid-column:1/-1}.filter-bottom{align-items:flex-start;flex-direction:column}.scope-meta{grid-template-columns:1fr;gap:2px}.scope-meta dd{margin-bottom:8px}.priority-top{flex-wrap:wrap}}
+@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+@media print{body{background:white}.tools,.chart-section,.skip,.copy-finding,.toggle-label{display:none}.filters-panel{border:0;padding:0;box-shadow:none}.filters-panel *{display:none}.filters-panel .filter-bottom,.filters-panel #result-count{display:block}main{padding:0;max-width:none}.panel,.card{break-inside:avoid}.tablewrap{overflow:visible}.snippet{white-space:pre-wrap;overflow:visible}.footer{margin-top:16px}}
+</style>
+</head>
+<body>
+<a class="skip" href="#findings" data-l="jump_findings"></a>
+<main>
+<header class="masthead"><span class="brand" data-l="eyebrow"></span><div class="tools"><a class="button" href="report.html" data-l="report_link"></a><button id="theme" type="button" data-l="theme"></button></div></header>
+<div class="hero"><div><div class="eyebrow" data-l="dash_title"></div><h1 id="h"></h1><div class="meta" id="meta"></div></div><div class="hero-aside" data-l="report_note"></div></div>
+<div class="summary-banner" id="summary"></div>
+<div class="cards" id="cards"></div><p class="report-note" data-l="counts_note"></p>
+<div class="cards part-cards" id="part-cards"></div><p class="report-note" data-l="part_note"></p>
+<section aria-labelledby="priority-heading"><div class="section-head"><div><h2 id="priority-heading" data-l="priority"></h2><p data-l="priority_note"></p></div><a href="#findings" data-l="view_all"></a></div><p class="verify-legend" id="verify-legend" hidden></p><div id="priority"></div><p class="section-note" id="queue-note"></p></section>
+<section class="panel" id="decisions-section" aria-labelledby="decisions-heading"><h2 id="decisions-heading" data-l="decisions"></h2><div id="decisions"></div></section>
+<details class="panel coverage" id="coverage" open><summary><span data-l="coverage_heading"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><section><h3 data-l="limitations"></h3><div id="limitations"></div></section><section><h3 data-l="perspectives"></h3><div id="perspectives"></div></section></div></details>
+<details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_sev"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_kind"></h3><div id="c-kind"></div></div><div class="panel"><h3 data-l="by_conf"></h3><div id="c-conf"></div></div><div class="panel"><h3 data-l="by_cat"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div><div class="panel"><h3 data-l="by_verdict"></h3><div id="c-verdict"></div><p class="section-note" data-l="excluded_note"></p></div></div></details>
+<section id="findings" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="findings_register"></h2><p data-l="findings_note"></p></div></div>
+<div class="panel filters-panel"><div class="filters">
+<label><span data-l="record_set"></span><select id="f-scope"></select></label><label><span data-l="part"></span><select id="f-part"></select></label><label><span data-l="severity"></span><select id="f-sev"></select></label><label><span data-l="confidence"></span><select id="f-conf"></select></label><label><span data-l="category"></span><select id="f-cat"></select></label><label><span data-l="prompt"></span><select id="f-prompt"></select></label><label><span data-l="status"></span><select id="f-status"></select></label><label><span data-l="verdict"></span><select id="f-verdict"></select></label><label><span data-l="sort"></span><select id="f-sort"></select></label><label class="search"><span data-l="search"></span><input id="f-q" type="search"></label></div><div class="filter-bottom"><p class="result-count" id="result-count" role="status" aria-live="polite"></p><button type="button" id="reset" data-l="reset"></button></div></div>
+<div class="tablewrap"><table><thead><tr><th scope="col">ID</th><th scope="col" data-l="severity"></th><th scope="col" data-l="part"></th><th scope="col" data-l="confidence"></th><th scope="col" data-l="verdict"></th><th scope="col" data-l="title_col"></th><th scope="col" data-l="category"></th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<div class="lists" id="lists"></div><footer class="footer" data-l="source_note"></footer>
+<noscript><p>__NOSCRIPT__ <a href="report.html">__REPORT__</a></p></noscript>
+</main>
+<script id="data" type="application/json">__DATA__</script>
+<script>
+(function(){
+'use strict';
+var D=JSON.parse(document.getElementById('data').textContent),L=D.labels,ALL=D.findings,R=D.report;
+var F=ALL.filter(function(f){return D.excluded_verdicts.indexOf(f.verdict)<0;}),SEV=D.order.severity,CONF=D.order.confidence,ST=D.order.status;
+var expanded=new Set();
+function el(t,a,txt){var e=document.createElement(t);if(a)Object.keys(a).forEach(function(k){e.setAttribute(k,a[k]);});if(txt!=null)e.textContent=txt;return e;}
+function byId(id){return document.getElementById(id);}
+function fmt(text,values){return text.replace(/\{(\w+)\}/g,function(_,key){return values[key];});}
+function pl(key,n,values){return fmt(n===1&&L[key+'_one']?L[key+'_one']:L[key],values||{n:n});}
+function excluded(f){return D.excluded_verdicts.indexOf(f.verdict)>=0;}
+function statusText(f){return excluded(f)?L.excluded_short:f.status;}
+function badge(f){return el('span',{'class':'badge '+f.severity},f.severity);}
+function kindText(f){return L['part_short_'+f.kind];}
+function action(f){return f.status==='Open'&&f.verdict==='Valid'&&f.confidence==='Confirmed'?'fix_now':'verify_first';}
+function count(fs,key,label){var c=Object.create(null);fs.forEach(function(f){var k=label?label(f):f[key];c[k]=(c[k]||0)+1;});return c;}
+function listInto(box,items,empty){if(!items.length){box.appendChild(el('p',{'class':'muted'},empty));return;}var ul=el('ul');items.forEach(function(x){ul.appendChild(el('li',null,x));});box.appendChild(ul);}
+document.title=L.dash_title+' - '+D.meta.target;byId('h').textContent=D.meta.target;
+byId('meta').textContent=[D.meta.date,D.meta.assessor].filter(Boolean).join(' · ');
+document.querySelectorAll('[data-l]').forEach(function(e){e.textContent=L[e.getAttribute('data-l')];});
+byId('theme').onclick=function(){var root=document.documentElement,dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';};
+var summary=byId('summary');
+summary.appendChild(el('strong',null,D.headline));
+summary.appendChild(el('p',null,F.length?(R.open_hm?pl('risk_summary',R.open_hm):(R.open_count?pl('open_summary',R.open_count):L.no_open)):L.no_findings));
+[[L.open_hm,R.open_hm,'urgent',L.open_count+': '+R.open_count],[L.needs_validation,R.verify_first,'review',L.fix_now+': '+R.fix_now],[L.closed_count,[[R.fixed,'Fixed'],[R.accepted,'Accepted']],'',L.included+': '+F.length],[L.excluded_short,R.excluded,'',L.all_records+': '+ALL.length]].forEach(function(c){var d=el('div',{'class':'card '+c[2]});d.appendChild(el('span',{'class':'l'},c[0]));var n=el('div',{'class':'n'});if(Array.isArray(c[1]))c[1].forEach(function(x){var pair=el('span',{'class':'pair'},x[0]);pair.appendChild(el('span',{'class':'u'},x[1]));n.appendChild(pair);});else n.textContent=c[1];d.appendChild(n);d.appendChild(el('div',{'class':'sub'},c[3]));byId('cards').appendChild(d);});
+D.parts.forEach(function(part){var c=R.parts[part],d=el('div',{'class':'card','data-part':part});d.appendChild(el('span',{'class':'l'},L['part_'+part]+' · '+L.open_count));d.appendChild(el('div',{'class':'n'},c.open_count));d.appendChild(el('div',{'class':'sub'},fmt(L.part_card_sub,c)));byId('part-cards').appendChild(d);});
+var shownTop=0;D.parts.forEach(function(part){var items=R.queue.filter(function(item){return item.kind===part;}).map(function(item){return {finding:ALL.find(function(f){return f.id===item.id;}),action:item.action,anchor:D.anchors[item.id]};}),high=items.filter(function(item){return item.finding.severity==='High';}).length,top=items.slice(0,Math.max(4,Math.min(high,12))),hiddenHigh=high-top.filter(function(item){return item.finding.severity==='High';}).length;shownTop+=top.length;if(!R.queue.length)return;byId('priority').appendChild(el('h3',{'class':'part-heading',id:'priority-'+part},L['part_'+part]));var list=el('div',{'class':'priority-list'});byId('priority').appendChild(list);if(!top.length)list.appendChild(el('div',{'class':'panel muted'},L.part_none_open));top.forEach(function(item){var f=item.finding,p=el('article',{'class':'panel priority-item sev-'+f.severity}),head=el('div',{'class':'priority-top'});head.appendChild(badge(f));head.appendChild(el('span',{'class':'action-label'},L[item.action]));p.appendChild(head);var h=el('h3');h.appendChild(el('a',{href:'#'+item.anchor},f.id+' · '+f.title));p.appendChild(h);p.appendChild(el('div',{'class':'verdict'},f.confidence+' · '+f.verdict));p.appendChild(el('code',{'class':'location'},f.location));if(f.impact)p.appendChild(el('p',{'class':'impact'},f.impact));if(item.action==='fix_now')p.appendChild(el('p',{'class':'action'},f.fix||L.missing_fix));list.appendChild(p);});if(hiddenHigh>0)byId('priority').appendChild(el('p',{'class':'section-note more-high','data-part':part},pl('more_high',hiddenHigh)));});
+if(R.queue.some(function(item){return item.action==='verify_first';})){var legend=byId('verify-legend');legend.appendChild(el('span',{'class':'action-label'},L.verify_first));legend.appendChild(document.createTextNode(' '+L.verify_first_note));legend.hidden=false;}
+if(!R.queue.length)byId('priority').appendChild(el('div',{'class':'panel muted'},L.no_open));byId('queue-note').textContent=shownTop<R.open_count?fmt(L.queue_more,{shown:shownTop,total:R.open_count}):'';
+[['scope','scope_l'],['commit','commit'],['prompts','prompts_l']].forEach(function(k){byId('scope-meta').appendChild(el('dt',null,L[k[1]]));byId('scope-meta').appendChild(el('dd',null,D.meta[k[0]]||L.not_recorded));});
+byId('coverage-count').textContent=L.limitations_count+': '+D.limitations.length;listInto(byId('limitations'),D.limitations,L.limitations_empty);
+if(!D.perspectives.length)byId('perspectives').appendChild(el('p',{'class':'muted'},L.coverage_missing));
+D.perspectives.forEach(function(p){var box=el('div',{'class':'perspective'});box.appendChild(el('strong',null,p.name));box.appendChild(el('p',null,L.results[p.result]||p.result||L.not_recorded));if(p.note)box.appendChild(el('p',{'class':'muted'},p.note));byId('perspectives').appendChild(box);});
+function bars(id,key,order,colored,fs,label){var c=count(fs||F,key,label),keys=order||Object.keys(c).sort(function(a,b){return c[b]-c[a]||a.localeCompare(b);});var max=Math.max.apply(null,keys.map(function(k){return c[k]||0;}).concat([1]));keys.forEach(function(k){var r=el('div',{'class':'bar'});r.appendChild(el('span',{'class':'t'},k));var t=el('div',{'class':'track'}),fill=el('div',{'class':'fill'});fill.style.width=((c[k]||0)/max*100)+'%';if(colored)fill.style.background='var(--'+k.toLowerCase()+')';t.appendChild(fill);r.appendChild(t);r.appendChild(el('span',{'class':'v'},c[k]||0));byId(id).appendChild(r);});}
+bars('c-sev','severity',SEV,true);bars('c-kind','kind',D.parts.map(function(p){return L['part_short_'+p];}),false,F,kindText);bars('c-conf','confidence',CONF);bars('c-cat','category');bars('c-status','status',ST);bars('c-verdict','verdict',D.order.verdict,false,ALL);
+function opts(id,vals,first){var s=byId(id);if(first)s.appendChild(el('option',{value:''},first));vals.forEach(function(v){var pair=Array.isArray(v)?v:[v,v];s.appendChild(el('option',{value:pair[0]},pair[1]));});s.onchange=function(){if(id==='f-verdict'&&D.excluded_verdicts.indexOf(s.value)>=0)byId('f-scope').value='all';draw();};}
+opts('f-scope',[['included',L.included_set],['excluded',L.excluded_set],['all',L.all_records]]);opts('f-part',D.parts.map(function(part){return [part,L['part_short_'+part]];}),L.part_all);opts('f-sort',[['priority',L.priority_sort],['severity',L.severity_sort]]);
+opts('f-sev',SEV,L.all);opts('f-conf',CONF,L.all);opts('f-cat',Object.keys(count(ALL,'category')).sort(),L.all);opts('f-prompt',D.prompt_ids,L.all);opts('f-status',ST,L.all);opts('f-verdict',D.order.verdict,L.all_verdicts);
+// Large registers redraw once typing pauses instead of on every keystroke.
+var q=byId('f-q'),searchTimer=null;q.placeholder=L.search;q.oninput=function(){clearTimeout(searchTimer);if(ALL.length>300)searchTimer=setTimeout(draw,150);else draw();};
+function v(id){return byId(id).value;}
+function reset(){['f-part','f-sev','f-conf','f-cat','f-prompt','f-status','f-verdict'].forEach(function(id){byId(id).value='';});byId('f-scope').value='included';byId('f-sort').value='priority';q.value='';}
+byId('reset').onclick=function(){reset();draw();};
+function fence(text){var runs=String(text).match(/`+/g)||[],n=Math.max.apply(null,runs.map(function(r){return r.length;}).concat([2]))+1;return Array(n+1).join('`');}
+function oneLine(v){return String(v).replace(/\s*[\r\n]+\s*/g,' ');}
+function fenced(v){var fc=fence(v);return fc+'text\n'+v+'\n'+fc;}
+function asText(v){return Array.isArray(v)?v.map(function(x){return '- '+x;}).join('\n'):v;}
+function findingMarkdown(f){var out=['## '+oneLine(f.id)+' · '+oneLine(f.title),''],p=function(label,value){if(value)out.push('- '+label+': '+oneLine(value));},block=function(label,value,raw){if(value)out.push('','### '+label,'',raw?value:fenced(value));};
+p(L.severity,f.severity);p(L.part,kindText(f));p(L.confidence,f.confidence);p(L.status,statusText(f));p(L.verdict,f.verdict);p(L.category,f.category);p(L.prompt,f.prompts.join(', '));p(L.location,f.location);
+if(f.status==='Open'&&!excluded(f)){var a=action(f);block(L[a],L[a+'_note'],true);}['symptom','cause','impact','fix'].forEach(function(k){block(L[k],f[k]);});
+if(f.proposal){block(L.proposal_before,f.proposal.before);block(L.proposal_after,f.proposal.after);}block(L.test,asText(f.test));block(L.evidence,f.validation.evidence);block(L.validation_method,f.validation.method);
+if(f.snippet){var lines=f.snippet.lines.map(function(text,i){var n=f.snippet.start+i;return (n>=f.snippet.hit[0]&&n<=f.snippet.hit[1]?'>':' ')+String(n).padStart(5,' ')+' '+text;}).join('\n'),fc=fence(lines);block(L.snippet,fc+'\n'+lines+'\n'+fc,true);}
+var refs=f.references||[];if(refs.length)block(L.references,refs.map(function(r){return '- '+(r.title&&r.title!==r.url?oneLine(r.title)+' — ':'')+oneLine(r.url);}).join('\n'),true);
+return out.join('\n')+'\n';}
+// A denied or unavailable Clipboard API falls back to the selection copy.
+function copyText(text){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(text).catch(function(){return copyFallback(text);});return copyFallback(text);}
+function copyFallback(text){return new Promise(function(resolve,reject){var prev=document.activeElement,t=el('textarea',{readonly:'','aria-hidden':'true',style:'position:fixed;top:0;left:-9999px'});t.value=text;document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(e){}t.remove();if(prev&&prev.focus)prev.focus({preventScroll:true});if(ok)resolve();else reject(new Error('copy'));});}
+function copyButton(f){var b=el('button',{type:'button','class':'copy-finding','aria-live':'polite'},L.copy_llm),timer;b.onclick=function(e){e.stopPropagation();var done=function(label){b.textContent=label;clearTimeout(timer);timer=setTimeout(function(){b.textContent=L.copy_llm;},2000);};copyText(findingMarkdown(f)).then(function(){done(L.copied);},function(){done(L.copy_failed);});};return b;}
+// Detail content is built on first expansion: a large register would
+// otherwise build every record's full detail tree on each redraw.
+function details(f,anchor){var dt=el('tr',{'class':'detail',id:anchor+'-detail'});dt.hidden=!expanded.has(anchor);if(!dt.hidden)fillDetails(dt,f,anchor);return dt;}
+function snippetNode(start,lines,hit){var pre=el('pre',{'class':'snippet'});lines.forEach(function(text,i){var n=start+i,ln=el('span',{'class':hit&&n>=hit[0]&&n<=hit[1]?'hit':''});ln.appendChild(el('b',null,String(n).padStart(5,' ')+' '));ln.appendChild(document.createTextNode(text));pre.appendChild(ln);});return pre;}
+function textNode(text){var pre=el('pre',{'class':'snippet'});pre.textContent=text;return pre;}
+function fillDetails(dt,f,anchor){if(dt.firstChild)return;var td=el('td',{colspan:7}),dl=el('dl');
+var head=el('div',{'class':'detail-actions'});head.appendChild(el('strong',null,f.id+' · '+f.title));var links=el('span',{'class':'detail-links'});links.appendChild(copyButton(f));links.appendChild(el('a',{href:'#'+anchor},L.permalink));head.appendChild(links);td.appendChild(head);
+if(f.status==='Open'&&!excluded(f)){var a=action(f),guidance=el('div',{'class':'action-guidance'});guidance.appendChild(el('strong',null,L[a]));guidance.appendChild(el('p',null,L[a+'_note']));td.appendChild(guidance);}else if(excluded(f)){td.appendChild(el('p',{'class':'muted'},L.excluded_note));}
+function field(label,value){dl.appendChild(el('dt',null,label));var dd=el('dd');if(value instanceof Node)dd.appendChild(value);else dd.textContent=value;dl.appendChild(dd);}
+field(L.location,f.location);if(f.prompts.length)field(L.prompt,f.prompts.join(', '));field(L.status,statusText(f));['symptom','cause','impact'].forEach(function(k){if(f[k])field(L[k],f[k]);});field(L.fix,f.fix||(f.status==='Open'&&!excluded(f)?L.missing_fix:L.not_recorded));
+if(f.proposal){if(f.proposal.before)field(L.proposal_before,textNode(f.proposal.before));if(f.proposal.after)field(L.proposal_after,textNode(f.proposal.after));}
+if(f.test)field(L.test,asText(f.test));field(L.evidence,f.validation.evidence||L.missing_evidence);if(f.validation.method)field(L.validation_method,f.validation.method);
+if(f.snippet)field(L.snippet,snippetNode(f.snippet.start,f.snippet.lines,f.snippet.hit));
+var refs=f.references||[];if(refs.length){var ul=el('ul',{'class':'refs'});refs.forEach(function(r){var li=el('li');li.appendChild(el('a',{href:r.url,target:'_blank',rel:'noopener noreferrer'},r.title||r.url));ul.appendChild(li);});field(L.references,ul);}td.appendChild(dl);
+if(f.previous_validation&&typeof f.previous_validation==='object'){var history=el('aside',{'class':'history'});history.appendChild(el('strong',null,L.previous_validation));history.appendChild(el('p',null,L.history_note));['verdict','evidence','method'].forEach(function(k){if(typeof f.previous_validation[k]==='string')history.appendChild(el('p',null,f.previous_validation[k]));});td.appendChild(history);}dt.appendChild(td);}
+var searchCache=new Map();
+function searchText(f){if(searchCache.has(f))return searchCache.get(f);var val=f.validation||{},pr=f.proposal||{},text=[f.id,f.title,f.location,f.category,f.prompts.join(' '),f.symptom,f.cause,f.impact,f.fix,pr.before,pr.after,asText(f.test),f.status,f.severity,f.kind,kindText(f),f.confidence,f.verdict,val.evidence,val.method].filter(Boolean).join('\n').toLowerCase();searchCache.set(f,text);return text;}
+function draw(){clearTimeout(searchTimer);var tb=byId('rows');tb.textContent='';var term=q.value.trim().toLowerCase(),scope=v('f-scope');var pool=scope==='all'?ALL:ALL.filter(function(f){return scope==='excluded'?excluded(f):!excluded(f);});var shown=pool.filter(function(f){return (!v('f-part')||f.kind===v('f-part'))&&(!v('f-sev')||f.severity===v('f-sev'))&&(!v('f-conf')||f.confidence===v('f-conf'))&&(!v('f-cat')||f.category===v('f-cat'))&&(!v('f-prompt')||f.prompts.indexOf(v('f-prompt'))>=0)&&(!v('f-status')||f.status===v('f-status'))&&(!v('f-verdict')||f.verdict===v('f-verdict'))&&(!term||searchText(f).indexOf(term)>=0);});
+shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||(String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);});
+byId('result-count').textContent=fmt(L.showing,{shown:shown.length,total:pool.length});
+if(!shown.length){var empty=el('tr'),td=el('td',{colspan:7,'class':'empty'},pool.length?L.no_matches:L.no_records);empty.appendChild(td);tb.appendChild(empty);return;}
+shown.forEach(function(f){var anchor=D.anchors[f.id],tr=el('tr',{'class':'row',id:anchor}),dt=details(f,anchor);var labels=['ID',L.severity,L.part,L.confidence,L.verdict,L.title_col,L.category];var values=[f.id,null,kindText(f),f.confidence,f.verdict,null,f.category],button;
+values.forEach(function(value,i){var cell=el('td',{'data-label':labels[i]},value);if(i===1)cell.appendChild(badge(f));if(i===5){button=el('button',{type:'button','class':'finding-toggle','aria-expanded':String(!dt.hidden),'aria-controls':dt.id},f.title);button.appendChild(el('span',{'class':'toggle-label'},dt.hidden?L.expand:L.collapse));cell.appendChild(button);cell.appendChild(el('code',{'class':'location'},f.location));}tr.appendChild(cell);});
+function toggle(){if(dt.hidden)fillDetails(dt,f,anchor);dt.hidden=!dt.hidden;if(dt.hidden)expanded.delete(anchor);else expanded.add(anchor);button.setAttribute('aria-expanded',String(!dt.hidden));button.querySelector('.toggle-label').textContent=dt.hidden?L.expand:L.collapse;}
+button.onclick=function(e){e.stopPropagation();toggle();};tr.onclick=function(e){if(!e.target.closest('a,button'))toggle();};tb.appendChild(tr);tb.appendChild(dt);});}
+function openHash(){var anchor=window.location.hash.slice(1),f=ALL.find(function(x){return D.anchors[x.id]===anchor;});if(!f)return;expanded.add(anchor);draw();if(!byId(anchor)){reset();if(excluded(f))byId('f-scope').value='all';expanded.add(anchor);draw();}var row=byId(anchor);row.scrollIntoView({block:'start'});row.querySelector('button').focus({preventScroll:true});}
+document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#finding-"]');if(a&&a.getAttribute('href')===window.location.hash){e.preventDefault();openHash();}});
+window.addEventListener('hashchange',openHash);draw();if(window.location.hash)openHash();
+listInto(byId('decisions'),D.decisions,L.not_recorded);
+['next_steps','checked_ok'].forEach(function(k){var p=el('section',{'class':'panel'});p.appendChild(el('h2',null,L[k]));listInto(p,D[k],L.not_recorded);byId('lists').appendChild(p);});
+})();
+</script>
+</body>
+</html>
+"""
+
+# Dashboard wording follows security-scan's dashboard; the record's kinds stand where its parts were.
+DASH_LABELS = {
+    "en": {
+        "eyebrow": "PROMPT REVIEW", "dash_title": "Prompt Findings",
+        "report_note": "Static review · read-only · offline report",
+        "report_link": "Print / report", "theme": "Toggle color theme",
+        "priority": "Start here",
+        "priority_note": "Open findings, ordered by severity, then readiness to fix. Check the cited prompt "
+                         "and call site before changing the text.",
+        "fix_now": "Plan the fix", "verify_first": "Verify first",
+        "fix_now_note": "Valid, Confirmed finding. Apply the recorded fix direction or proposal and check it "
+                        "with the recorded eval or test.",
+        "verify_first_note": "Re-read the prompt as sent and the code around it, or run the recorded eval "
+                             "case, before deciding on a change.",
+        "more_high": "{n} more open High findings of this kind are listed in the findings register.",
+        "more_high_one": "1 more open High finding of this kind is listed in the findings register.",
+        "missing_fix": "Fix direction not recorded. Define the change after reviewing the evidence.",
+        "no_open": "No open findings are recorded. This does not establish that the prompts behave as intended.",
+        "no_findings": "No included findings are recorded. Review the scope and limitations before drawing "
+                       "conclusions.",
+        "included": "Included findings", "excluded_short": "Excluded", "open_count": "Open findings",
+        "open_hm": "Open High/Medium", "needs_validation": "Open, needs validation",
+        "closed_count": "Fix recorded / accepted", "all_records": "All records",
+        "open_summary": "{n} open findings are recorded; none are High or Medium.",
+        "open_summary_one": "1 open finding is recorded; it is not High or Medium.",
+        "risk_summary": "{n} open High / Medium findings need attention.",
+        "risk_summary_one": "1 open High / Medium finding needs attention.",
+        "counts_note": "Report-wide totals include Open, Fixed and Accepted. Excluded findings do not "
+                       "contribute to these totals.",
+        "part": "Kind", "part_all": "All kinds",
+        "part_defect": "Defects", "part_improvement": "Improvements",
+        "part_short_defect": "Defect", "part_short_improvement": "Improvement",
+        "part_note": "Defects are prompts or prompt assembly that is broken: unfilled variables, contradictions, "
+                     "output-contract mismatches, injection boundaries, truncation. Improvements are prompts that "
+                     "work but would work better; each carries a before/after proposal. L-* findings come from "
+                     "inventory.py lint.",
+        "part_card_sub": "Open High/Medium: {open_hm} · Total: {total}",
+        "part_none_open": "No open findings of this kind.",
+        "view_all": "View all findings", "queue_more": "Showing {shown} of {total} open findings.",
+        "decisions": "Decisions required",
+        "coverage_heading": "Scope, coverage and limitations",
+        "coverage_note": "Coverage is recorded per perspective below. Missing perspectives or empty notes do "
+                         "not mean they were checked. Zero findings does not mean the prompts behave as intended.",
+        "scope_l": "Scope", "commit": "Revision", "prompts_l": "Prompts reviewed",
+        "limitations": "Limitations", "limitations_count": "Recorded limitations",
+        "limitations_empty": "No limitations were recorded. This is not evidence of complete coverage.",
+        "perspectives": "Coverage by perspective", "coverage_missing": "No perspective coverage was recorded.",
+        "not_recorded": "Not recorded",
+        "overview": "Results overview",
+        "count_basis": "Severity is potential impact; confidence is certainty. Validation records whether the "
+                       "finding applies.",
+        "by_sev": "By severity", "by_kind": "By kind", "by_conf": "By confidence", "by_cat": "By perspective",
+        "by_status": "By status", "by_verdict": "By validation",
+        "excluded_note": "Excluded findings are retained with their justification. They are not counted in "
+                         "included totals.",
+        "findings_register": "Findings register",
+        "findings_note": "Open a finding for its cause, proposal and how to check the fix. Totals above remain "
+                         "report-wide while filtering.",
+        "record_set": "Records", "included_set": "Included (excludes ruled-out findings)",
+        "excluded_set": "Excluded only", "severity": "Severity", "confidence": "Confidence",
+        "category": "Perspective", "prompt": "Prompt", "status": "Status", "verdict": "Validation",
+        "all_verdicts": "All validations", "sort": "Order", "priority_sort": "Open first, then severity",
+        "severity_sort": "Severity", "search": "Search", "all": "All", "reset": "Clear filters",
+        "showing": "Showing {shown} of {total} records in this view",
+        "no_matches": "No findings match these filters. Clear filters to see more.",
+        "no_records": "No records in this view.", "title_col": "Title",
+        "expand": "Show details", "collapse": "Hide details", "permalink": "Link to finding",
+        "copy_llm": "Copy for LLM", "copied": "Copied", "copy_failed": "Copy failed",
+        "location": "Location", "symptom": "Symptom", "cause": "Cause", "impact": "Impact",
+        "fix": "Fix direction", "proposal_before": "Current text", "proposal_after": "Proposed text",
+        "test": "How to check", "evidence": "Validation evidence", "validation_method": "Validation method",
+        "snippet": "Source", "references": "References",
+        "previous_validation": "Previous validation (historical; not the current verdict)",
+        "history_note": "Revalidate this evidence against the current prompts and code.",
+        "missing_evidence": "No validation evidence recorded.",
+        "next_steps": "Recommended next steps", "checked_ok": "Checked and sound",
+        "source_note": "Source excerpts are best-effort redacted. Inspect this report before sharing.",
+        "no_script": "Enable JavaScript to use the interactive dashboard, or open the report for the complete "
+                     "record.",
+        "jump_findings": "Jump to findings",
+    },
+    "ja": {
+        "eyebrow": "PROMPT REVIEW", "dash_title": "プロンプト診断結果",
+        "report_note": "静的レビュー · 読み取り専用 · オフラインレポート",
+        "report_link": "印刷用のレポート", "theme": "配色を切り替え",
+        "priority": "まず取り組むこと",
+        "priority_note": "未対応の指摘を重大度順、同じ重大度では修正判断の準備ができた順に表示します。"
+                         "文面を変える前に、該当プロンプトと呼び出し箇所を確認してください。",
+        "fix_now": "修正を計画", "verify_first": "先に検証する",
+        "fix_now_note": "Valid・Confirmed の指摘です。記録された対応方針または改善案を適用し、記録された評価・テストで確認してください。",
+        "verify_first_note": "送信されるプロンプト全体と周辺コードを読み直すか、記録された評価ケースを実行してから変更要否を判断してください。",
+        "more_high": "この種別には未対応の High がほかに {n} 件あります（指摘一覧に記載）。",
+        "missing_fix": "対応方針が未記録です。根拠を確認し、変更内容を具体化してください。",
+        "no_open": "未対応の指摘は記録されていません。プロンプトが意図どおりに動くことを保証するものではありません。",
+        "no_findings": "集計対象の指摘はありません。診断範囲と制約を確認してから判断してください。",
+        "included": "集計対象の指摘", "excluded_short": "除外", "open_count": "未対応の指摘",
+        "open_hm": "未対応の高・中", "needs_validation": "未対応・要検証",
+        "closed_count": "修正の申告 / 受容", "all_records": "すべての記録",
+        "open_summary": "未対応の指摘は {n} 件です。High / Medium は含まれていません。",
+        "risk_summary": "未対応の High / Medium が {n} 件あります。",
+        "counts_note": "全体集計には Open・Fixed・Accepted を含みます。除外した指摘は含みません。",
+        "part": "種別", "part_all": "すべての種別",
+        "part_defect": "不具合", "part_improvement": "改善提案",
+        "part_short_defect": "不具合", "part_short_improvement": "改善提案",
+        "part_note": "不具合は、プロンプトやその組み立てが壊れているものです（埋まらない変数、指示の矛盾、出力形式とパーサーの不一致、"
+                     "インジェクション境界、切り詰め）。改善提案は、動作はするがより良くできるもので、現在の文面と提案文を併記しています。"
+                     "L-* は inventory.py の機械チェックによる指摘です。",
+        "part_card_sub": "未対応の高・中: {open_hm} 件 · 計 {total} 件",
+        "part_none_open": "この種別に未対応の指摘はありません。",
+        "view_all": "指摘一覧を見る", "queue_more": "未対応 {total} 件のうち {shown} 件を表示しています。",
+        "decisions": "判断が必要な事項",
+        "coverage_heading": "診断範囲・確認状況・制約",
+        "coverage_note": "観点ごとの確認状況を下に示します。観点や備考の記載がない場合、確認済みとは見なしません。"
+                         "指摘がゼロでも、プロンプトが意図どおりに動く保証にはなりません。",
+        "scope_l": "範囲", "commit": "リビジョン", "prompts_l": "対象プロンプト",
+        "limitations": "制約事項", "limitations_count": "記録された制約",
+        "limitations_empty": "制約事項が記録されていません。すべて確認済みであることを示すものではありません。",
+        "perspectives": "観点別の診断結果", "coverage_missing": "観点ごとの確認状況が記録されていません。",
+        "not_recorded": "未記録",
+        "overview": "結果概要",
+        "count_basis": "重大度は想定される影響、確度は確かさ、妥当性はこの対象に指摘が成立するかを表します。",
+        "by_sev": "重大度別", "by_kind": "種別別", "by_conf": "確度別", "by_cat": "観点別",
+        "by_status": "対応状況別", "by_verdict": "妥当性別",
+        "excluded_note": "除外した指摘も、その根拠とともに保持します。集計対象の件数には含めません。",
+        "findings_register": "指摘一覧",
+        "findings_note": "指摘を開くと原因・改善案・修正の確認方法を確認できます。絞り込んでも上部の全体集計は変わりません。",
+        "record_set": "表示対象", "included_set": "集計対象（誤検知・対象外を除く）",
+        "excluded_set": "除外した指摘のみ", "severity": "重大度", "confidence": "確度",
+        "category": "観点", "prompt": "プロンプト", "status": "状況", "verdict": "妥当性",
+        "all_verdicts": "すべての妥当性", "sort": "表示順", "priority_sort": "未対応を先に、重大度順",
+        "severity_sort": "重大度順", "search": "検索", "all": "すべて", "reset": "絞り込みを解除",
+        "showing": "この表示対象 {total} 件中 {shown} 件を表示",
+        "no_matches": "条件に一致する指摘はありません。絞り込みを解除すると、ほかの指摘を確認できます。",
+        "no_records": "この表示対象に該当する記録はありません。", "title_col": "件名",
+        "expand": "詳細を開く", "collapse": "詳細を閉じる", "permalink": "この指摘へのリンク",
+        "copy_llm": "LLM用にコピー", "copied": "コピーしました", "copy_failed": "コピーできませんでした",
+        "location": "場所", "symptom": "症状", "cause": "原因", "impact": "影響",
+        "fix": "対応方針", "proposal_before": "現在の文面", "proposal_after": "提案する文面",
+        "test": "確認方法", "evidence": "妥当性の根拠", "validation_method": "検証方法",
+        "snippet": "該当ソース", "references": "参照",
+        "previous_validation": "以前の判定（履歴。現在の判定ではありません）",
+        "history_note": "現在のプロンプト・コードに照らして再検証してください。",
+        "missing_evidence": "妥当性の根拠が記録されていません。",
+        "next_steps": "推奨する対応順", "checked_ok": "問題がなかった確認項目",
+        "source_note": "ソース抜粋の伏せ字は完全ではありません。共有前に内容を確認してください。",
+        "no_script": "対話型ダッシュボードには JavaScript が必要です。レポートではすべての記録を確認できます。",
+        "jump_findings": "指摘一覧へ移動",
+    },
+}
+
+
+def dashboard_model(data):
+    """Counts and the open queue, as security-scan's dashboard shows them."""
+    findings = data.get("findings", [])
+    included = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
+    open_ = [f for f in included if f.get("status", "Open") == "Open"]
+
+    def action(f):
+        return "fix_now" if f["validation"]["verdict"] == "Valid" and f["confidence"] == "Confirmed" else "verify_first"
+
+    queue = sorted(open_, key=lambda f: (SEVERITIES.index(f["severity"]), action(f) != "fix_now",
+                                         KINDS.index(f["kind"]), f["id"]))
+    return {
+        "queue": [{"id": f["id"], "kind": f["kind"], "action": action(f)} for f in queue],
+        "open_count": len(open_), "open_hm": sum(f["severity"] in ("High", "Medium") for f in open_),
+        "fix_now": sum(action(f) == "fix_now" for f in open_),
+        "verify_first": sum(action(f) == "verify_first" for f in open_),
+        "fixed": sum(f.get("status") == "Fixed" for f in included),
+        "accepted": sum(f.get("status") == "Accepted" for f in included),
+        "excluded": len(findings) - len(included),
+        "parts": {kind: {"open_count": sum(f["kind"] == kind for f in open_),
+                         "open_hm": sum(f["kind"] == kind and f["severity"] in ("High", "Medium") for f in open_),
+                         "total": sum(f["kind"] == kind for f in included)} for kind in KINDS},
+    }
+
+
+def render_dashboard(data, L, lang, excerpts):
+    meta = data.get("meta", {})
+    labels = {**L, **DASH_LABELS[lang]}
+    items = []
+    for f in data.get("findings", []):
+        prompt = f.get("prompt")
+        x = excerpts.get(f["id"])
+        item = {k: f[k] for k in ("id", "kind", "severity", "confidence", "category", "title", "location",
+                                  "symptom", "cause", "impact", "fix", "proposal", "test", "references",
+                                  "previous_validation") if k in f}
+        item.update(status=f.get("status", "Open"), verdict=f["validation"]["verdict"], validation=f["validation"],
+                    prompts=[prompt] if isinstance(prompt, str) else (prompt or []),
+                    snippet={"start": x[0], "lines": x[1], "hit": list(x[2])} if x else None)
+        items.append(item)
+    commit = meta.get("commit")
+    prompts = data.get("prompts", [])
+    payload = {
+        "meta": {"target": meta.get("target", ""), "date": meta.get("date"), "assessor": meta.get("assessor"),
+                 "scope": meta.get("scope"),
+                 "commit": (commit[:12] + (" (" + L["dirty"] + ")" if meta.get("dirty") else "")) if commit else None,
+                 "prompts": ", ".join(f'{p["id"]} {p["name"]}' for p in prompts) or None},
+        "labels": labels, "headline": summary_line(data, L), "report": dashboard_model(data), "findings": items,
+        "anchors": {f["id"]: "finding-" + f["id"].lower() for f in data.get("findings", [])},
+        "parts": KINDS, "prompt_ids": [p["id"] for p in prompts],
+        "order": {"severity": SEVERITIES, "confidence": CONFIDENCES, "status": STATUSES, "verdict": VERDICTS},
+        "excluded_verdicts": sorted(EXCLUDED),
+        **{k: data.get(k, []) for k in STRING_LISTS},
+        "perspectives": [{k: p[k] for k in ("name", "result", "note") if k in p} for p in data.get("perspectives", [])],
+    }
+    # Escape every less-than sign: <!-- and <script also change HTML parsing.
+    blob = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c") \
+        .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
+    replacements = {"__LANG__": lang, "__TITLE__": esc(f'{labels["dash_title"]} - {meta.get("target", "")}'),
+                    "__NOSCRIPT__": esc(labels["no_script"]), "__REPORT__": esc(labels["report_link"]),
+                    "__DATA__": blob}
+    # Substitute only template tokens, not token-like strings inside report data.
+    return re.sub(r"__(?:LANG|TITLE|NOSCRIPT|REPORT|DATA)__", lambda m: replacements[m.group(0)], DASHBOARD)
+
+
+# ---------------------------------------------------------------- PDF
+
+CHROME_CANDIDATES = [
+    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
+]
+
+
+def to_pdf(html_path, pdf_path, failures, timeout=120.0):
+    """Print html_path with headless Chrome, else WeasyPrint. Returns the engine name or None."""
+    pdf = Path(pdf_path)
+    pdf.unlink(missing_ok=True)
+    chrome = os.environ.get("CHROME")
+    for c in [chrome] if chrome else CHROME_CANDIDATES:
+        exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
+        if not exe:
+            continue
+        sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
+        with tempfile.TemporaryDirectory() as profile:
+            try:
+                proc = subprocess.Popen([exe, "--headless=new", "--disable-gpu", *sandbox, "--no-pdf-header-footer",
+                                         f"--user-data-dir={profile}", f"--print-to-pdf={pdf}",
+                                         Path(html_path).resolve().as_uri()],
+                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            except OSError as e:
+                failures.append(f"chrome could not be started ({e.strerror or e})")
+                continue
+            # Chrome sometimes keeps running after writing: wait until the file stops growing.
+            last, deadline = -1, time.monotonic() + timeout
+            while time.monotonic() < deadline:
+                size = pdf.stat().st_size if pdf.exists() else -1
+                if (size > 0 and size == last) or (proc.poll() is not None and size <= 0 and size == last):
+                    break
+                last = size
+                time.sleep(0.5)
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+        if pdf.exists() and pdf.stat().st_size > 0:
+            return "chrome"
+        failures.append("chrome did not write a PDF")
+        pdf.unlink(missing_ok=True)
+    wp = shutil.which("weasyprint")
+    if wp:
+        try:
+            r = subprocess.run([wp, str(html_path), str(pdf)], capture_output=True, text=True, timeout=timeout)
+            if r.returncode == 0 and pdf.exists():
+                return "weasyprint"
+            failures.append(f"weasyprint exited with status {r.returncode}")
+        except (OSError, subprocess.TimeoutExpired) as e:
+            failures.append(f"weasyprint failed ({e})")
+    return None
+
+
+def write_output(path, text):
+    if path.is_symlink() or (os.path.lexists(path) and not path.is_file()):
+        raise OSError(f"refusing to write {path}: it exists as a symlink or non-regular file")
+    path.write_text(text, encoding="utf-8")
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("findings")
+    p.add_argument("--out", required=True)
+    p.add_argument("--lang", choices=sorted(LABELS), default="ja")
+    p.add_argument("--repo", help="reviewed repository, for embedded excerpts")
+    p.add_argument("--no-pdf", action="store_true")
+    a = p.parse_args(argv)
+    try:
+        source = Path(a.findings).read_bytes()
+        data = load(a.findings, source)
+        excerpts = attach_sources(data, a.repo)
+        L = LABELS[a.lang]
+        stamp = STAMP.format(hashlib.sha256(source).hexdigest())
+        pages = {"dashboard.html": render_dashboard(data, L, a.lang, excerpts),
+                 "report.html": render_report_html(data, L, a.lang, excerpts)}
+    except (SchemaError, OSError) as e:
+        print(f"render.py: {e}", file=sys.stderr)
+        return 2
+    out = Path(a.out)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        for name, page in pages.items():
+            write_output(out / name, page.replace("<head>", "<head>" + stamp, 1))
+            print(f"wrote {out / name}")
+        if a.no_pdf:
+            (out / "report.pdf").unlink(missing_ok=True)
+            return 0
+    except OSError as e:
+        print(f"render.py: cannot write outputs to {out}: {e}", file=sys.stderr)
+        return 2
+    failures = []
+    engine = to_pdf(out / "report.html", out / "report.pdf", failures)
+    if not engine:
+        reason = "; ".join(failures) if failures else "no PDF engine found (Chrome/Chromium or weasyprint)"
+        print(f"render.py: {reason}. report.html is ready to print. Without an engine anywhere: merge the "
+              "limitation 'report.pdf not produced: no PDF engine', re-run with --no-pdf, then "
+              "contract_check.py <out> --no-pdf", file=sys.stderr)
+        return 3
+    print(f"wrote {out / 'report.pdf'} ({engine})")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

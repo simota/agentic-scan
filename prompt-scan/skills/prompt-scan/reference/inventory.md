@@ -1,0 +1,53 @@
+# Inventory — what `inventory.py` finds and what it misses
+
+**Read when:** RECON, to run the inventory and read its output; end of REVIEW,
+before `--into`; whenever an `L-*` finding is reviewed.
+
+```
+python3 scripts/inventory.py <repo> --out <out>/inventory.json
+python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json
+```
+
+It reads files only. It never executes code from the repository and sends
+nothing over the network. Directories such as `.git`, `node_modules`, virtual
+environments and build output are skipped, as are `.env*` files, key files,
+symlinks, binary files and files over 1 MiB.
+
+## What it lists
+
+| Section | Contents |
+|---|---|
+| `prompt_files` | Files under a `prompts/`, `prompt/`, `system_prompts/` or `instructions/` directory; `.prompt`, `.prompty`, `*.prompt.md`; `SKILL.md`; `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `copilot-instructions.md`; files under `.claude/agents`, `.claude/commands`, `.cursor/rules`, `.github/prompts`. Each with kind, size, an estimated token count and the template variables found (`{{name}}`, `{name}`, `${name}`) |
+| `call_sites` | Lines in code that call a model API or build a prompt object: Anthropic `messages.create`, OpenAI `chat.completions.create` / `responses.create`, Gemini `generate_content`, the AI SDK `generateText` family, LangChain prompt and message classes, `role: "system"` literals and `SYSTEM_PROMPT`-style assignments |
+| `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
+| `lint` | Mechanical hits in prompt files, below |
+| `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
+
+`est_tokens` is a rough estimate (about four ASCII characters per token, one
+per other character). Use it to rank prompts by size, not as a provider count.
+
+## Lint rules
+
+| Rule | Kind / severity / confidence | Hit when |
+|---|---|---|
+| `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access key, GitHub and Slack tokens, private-key block). Location and kind only; the value is never copied |
+| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up |
+| `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code fences |
+| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX`, lorem ipsum or `[INSERT …]` outside code fences |
+| `duplicate-line` | improvement / Info / Confirmed | A line of 40 or more characters (not a table row) appears again in the same file |
+| `large-prompt` | improvement / Info / Confirmed | The file alone is estimated at more than 8000 tokens |
+
+Each hit is one `L-*` finding per rule per file, at the first line that hits.
+
+## Reviewing `L-*` findings
+
+`--into` replaces every `L-*` in `findings.json`, so review them only after the
+last `--into`. For each one, read the location and merge a `validation` with a
+verdict and evidence — for example `FalsePositive` for a literal brace that the
+template engine never sees, or `Valid` for a `TODO` that reaches the model.
+A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
+larger defect the agent found, keep the `L-*` and cite it from the `F-*`
+finding's `cause`.
+
+A rescan keeps a reviewed verdict on the same rule and location as
+`previous_validation`; the new hit starts `Unverified` and needs a fresh look.

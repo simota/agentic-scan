@@ -814,7 +814,7 @@ def render_html(doc, lang):
             rule_state = e(r["status"])
             if filled(r, "reason"):
                 rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
-            out.append(f"<tr><td>{e(rule_id(r))}</td><td>{e(rule_statement(r, lang))}</td>"
+            out.append(f"<tr><td class='nowrap'>{e(rule_id(r))}</td><td>{e(rule_statement(r, lang))}</td>"
                        f"<td>{e(r['source'])}</td><td>{rule_state}</td></tr>")
         out.append("</tbody></table></div></section>")
 

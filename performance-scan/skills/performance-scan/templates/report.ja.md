@@ -5,6 +5,7 @@
 該当深刻度の件数、n_excluded はそれ以外の件数、n_likely / n_unverified / n_unlikely は除外以外の
 判定別件数。「うち Valid」は深刻度ごとの Valid 件数。
 任意フィールド: meta.commit が空なら UNKNOWN と書き、値のないフィールドの行は削除する。
+location が配列なら path:line を 1 つずつバッククォートで囲み、「, 」で区切る。
 
 送る前に確認すること:
 - 計測していないレイテンシ・スループット・メモリの数値を書かない

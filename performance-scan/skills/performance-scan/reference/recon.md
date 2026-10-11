@@ -46,7 +46,10 @@ mechanical:
   auth, search, high-volume API, per-keystroke or per-scroll client work), `warm` (regular user actions), `cold`
   (admin, one-off, nightly with slack). A `consumer` is hot when it processes
   every event of a hot entity or its lag or redelivery budget is shorter than
-  its cost at a named volume, otherwise warm. Infer from the client code, polling
+  its cost at a named volume, otherwise warm. A `job` is hot when its cost at a
+  named volume can approach its schedule interval or stated deadline (the
+  `SKILL.md` severity table); otherwise warm, or cold when it is admin, one-off
+  or has slack. Infer from the client code, polling
   intervals, schedules and route names; mark the inference
 - *Scale drivers*: every collection whose size the work depends on, with its
   owner (rows per tenant, items per order, members per team, file size). Each

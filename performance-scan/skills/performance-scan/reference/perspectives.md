@@ -35,7 +35,12 @@ Rules:
   checked` with what would be needed
 - Every finding names the perspective that surfaced it in `category`
 - A hunt step covered by a budget ledger entry cites it (`B-…`) in the
-  perspective's `note` instead of being re-run
+  perspective's `note` instead of being re-run. A step is covered only when
+  that entry's cost-trace rows already hunt the step's own construct on the
+  same paths: a QRY query-count row covers DB1 (N+1) but never DB3–DB5
+  (indexes, query shapes, transactions), which are hunted even on paths the
+  entry pays. The family in brackets after a heading only says which entries
+  may cover some of its steps
 - The `note` lists the hunt step IDs applied and each one left out with its
   reason (e.g. `DB1–DB3 via B-01; DB5 N/A: no explicit transactions`)
 - A construct that is not sound but whose workload rate keeps it below every

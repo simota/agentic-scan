@@ -5,6 +5,7 @@ Counts are not fields: n_<severity> counts findings of that severity whose verdi
 FalsePositive/NotApplicable; n_excluded counts the rest; n_likely, n_unverified and n_unlikely count
 verdicts among the included findings. "Of which Valid" counts verdict Valid per severity.
 Optional fields: write UNKNOWN for an empty meta.commit, and delete lines whose field is absent.
+When location is a list, wrap each path:line in its own backticks and separate them with ", ".
 
 Before sending:
 - No latency, throughput or memory figures that were not measured

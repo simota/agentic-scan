@@ -110,7 +110,7 @@ High; duplicated side effects from user retries go to `decisions`.
 |---|---|
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard: counts, filterable findings, budgets, perspective coverage |
+| `dashboard.html` | Self-contained dashboard: counts, filterable findings with a Copy-for-LLM button each, budgets, perspective coverage |
 | `report.md` | Counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, sound items, limitations, decisions, next steps |
 
 Skip the files when only a checklist was asked for.

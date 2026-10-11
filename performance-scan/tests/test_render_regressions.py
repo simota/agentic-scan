@@ -202,7 +202,7 @@ class RenderRegressions(unittest.TestCase):
                 with self.subTest(lang=lang, findings=len(selected)):
                     root = HtmlTreeReader(render.render_html(self.doc, lang)).root
                     buttons = {button.get("data-filter"): element_text(button)
-                               for button in root.findall(".//button")}
+                               for button in root.findall(".//button[@data-filter]")}
                     self.assertEqual(set(buttons), {"all", "High", "Medium", "Low", "Info", "excluded"})
                     self.assertEqual(buttons["excluded"], excluded_label)
                     cards = {element_text(card.find("span")): int(card.findtext("b"))

@@ -111,7 +111,7 @@ concurrent updates.
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity or Excluded, budgets, perspective coverage; light and dark themes |
+| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity or Excluded, budgets, perspective coverage; a Copy-for-LLM button per finding; light and dark themes |
 | `report.md` | Severity and verification counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, checked and sound, limitations, decisions, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,

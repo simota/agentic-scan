@@ -917,18 +917,23 @@ def record_problems(doc):
     expected = [f"PV-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
-                        "run scripts/findings.py renumber")
+                        "run scripts/findings.py renumber, then re-run scripts/render.py")
     keys = [order_key(f) for f in findings]
     if keys != sorted(keys):
         order = ", ".join(f"{f['id']} {'excluded' if excluded(f) else f['severity']}"
                           for f in findings)
         problems.append("findings must be numbered in severity order (High first), then by path, "
-                        f"excluded findings last: {order}; run scripts/findings.py renumber")
+                        f"excluded findings last: {order}; run scripts/findings.py renumber, "
+                        "then re-run scripts/render.py")
     for i, f in enumerate(findings):
         if (f["confidence"] == "Environment-dependent" and not excluded(f)
                 and not f.get("conditions", "").strip()):
             problems.append(f"findings[{i}].conditions: name the runtime setting an "
                             "Environment-dependent finding assumes")
+        if (f["severity"] in ("High", "Medium") and not excluded(f)
+                and not f["validation"].get("evidence", "").strip()):
+            problems.append(f"{f['id']}.validation.evidence: a {f['severity']} finding needs "
+                            "evidence; for an untraced one, name the hop that was not read")
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:

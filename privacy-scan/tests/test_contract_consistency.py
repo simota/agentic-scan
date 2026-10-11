@@ -203,3 +203,34 @@ class JapaneseTermTests(unittest.TestCase):
         for value in (*findings.PERSPECTIVES, *findings.PERSPECTIVE_STATUSES,
                       *findings.COMMITMENT_STATUSES, *findings.STATUSES):
             self.assertIn(value, terms)
+
+
+class EvidenceRequirementTests(unittest.TestCase):
+    """SKILL.md *Done when*: every High and Medium finding has a verdict and evidence."""
+
+    def test_high_and_medium_need_evidence_whatever_the_verdict(self):
+        for severity in ("High", "Medium"):
+            for verdict in ("Likely", "Unverified", "Unlikely"):
+                with self.subTest(severity=severity, verdict=verdict):
+                    doc = complete_doc()
+                    doc["findings"] = [finding(severity=severity, validation={
+                        "verdict": verdict, "method": "static", "evidence": " "})]
+                    problems = findings.record_problems(doc)
+                    self.assertEqual(len(problems), 1, problems)
+                    self.assertIn("PV-001.validation.evidence", problems[0])
+                    self.assertIn("hop", problems[0])
+
+    def test_low_info_and_excluded_findings_keep_evidence_optional(self):
+        doc = complete_doc()
+        doc["findings"] = [
+            finding(severity="Low", validation={"verdict": "Likely", "method": "static"}),
+            finding("PV-002", "Info", location=["worker/app.py:15"],
+                    validation={"verdict": "Unverified", "method": "static"}),
+        ]
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_order_problems_tell_the_agent_to_render_again(self):
+        doc = complete_doc()
+        doc["findings"].reverse()
+        problems = "\n".join(findings.record_problems(doc))
+        self.assertIn("findings.py renumber, then re-run scripts/render.py", problems)

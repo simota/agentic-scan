@@ -48,7 +48,7 @@ class RenumberTests(unittest.TestCase):
             write_outputs(out, self.doc())
             problems = "\n".join(findings.contract_problems(out))
             self.assertIn("PV-001 Low, PV-002 excluded, PV-003 High", problems)
-            self.assertIn("findings.py renumber", problems)
+            self.assertIn("findings.py renumber, then re-run scripts/render.py", problems)
             with redirect_stdout(io.StringIO()) as stdout:
                 self.assertEqual(findings.main(["renumber", str(out / "findings.json")]), 0)
             self.assertIn("PV-003 -> PV-001", stdout.getvalue())

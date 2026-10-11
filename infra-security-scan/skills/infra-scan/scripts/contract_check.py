@@ -122,7 +122,8 @@ def check(data, out_dir, pdf=True, allow=()):
     for where, rid in render.dangling_references(data):
         add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
     if not isinstance(data.get("inventory"), dict):
-        add("inventory: missing; run iac_scan.py --into findings.json")
+        add("inventory: missing; run iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json "
+            "(both in one run)")
     # The merge gate, over the whole record: it may have been written by hand.
     problems += [f"record: {p}" for p in record_gate.credential_problems(data, "findings.json")]
     # I-* titles and details are the scanner's words about the configuration

@@ -22,7 +22,7 @@ Run `scripts/iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json`
 Its `not_run` list is kept in `inventory.not_run`, which the reports show
 under "Not run" and a rescan replaces; do not copy it into `limitations`.
 
-The baseline reads Terraform/OpenTofu (`.tf`, `.tfvars`, `.tfvars.json`), plan
+The baseline reads Terraform/OpenTofu (`.tf`, `.tofu`, `.tfvars`, `.tfvars.json`), plan
 JSON, CloudFormation and SAM (`.json`, `.yaml`, `.template`; a `Transform` is
 not expanded), Kubernetes manifests, Terragrunt files (module source and
 literal secrets only) and the exports in `reference/snapshots.md`. It names, but

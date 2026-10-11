@@ -28,6 +28,7 @@ Write in the requester's language.
    ```
    [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] title
      resource: address(es)            location: path:line
+     attack paths: AP-nn, or "none"   perspective: category
      actor: entry actor and preconditions
      path: numbered edges, each with path:line
      contrast: a sibling configured soundly (path:line) or "none"

@@ -14,6 +14,10 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 
 - A fragment updates a known record key by key; a key set to `null` is removed
   (e.g. `"condition": null` after a finding becomes `Confirmed`)
+- A `perspectives` entry replaces the recorded entry with the same `name` whole,
+  so send its `status` and `note` together. Lines in `checked_ok`, `decisions`,
+  `limitations` and `next_steps` are appended without duplicates and no command
+  removes them: merge a line once it is final
 - `findings.py remove <out>/findings.json F-007 AP-03` deletes review findings or
   attack paths and the ID lists that point at them
 - `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
@@ -66,6 +70,18 @@ digits.
 | `providers` | no | Subset of `aws`, `gcp`, `azure`, `kubernetes` |
 | `inputs` | no | List of inputs read: `{"kind": "iac|plan|snapshot|manifest", "path": "...", "note": "..."}` |
 | `commit` | set by `iac_scan.py` | Git commit of the assessed repository, or `""` outside git |
+
+`iac_scan.py --into` writes only `meta.commit`; the first fragment carries the
+rest. A minimal first fragment:
+
+```json
+{
+  "meta": {"project": "acme-platform", "scope": "AWS account prod; environment prod",
+           "date": "2026-10-08", "assessor": "Claude Code (<model>)",
+           "method": "Static review of Terraform; no cloud API calls", "providers": ["aws"],
+           "inputs": [{"kind": "iac", "path": "envs/prod/"}]}
+}
+```
 
 ## inventory
 

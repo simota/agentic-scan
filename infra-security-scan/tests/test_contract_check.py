@@ -158,6 +158,8 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("'Network exposure' recorded 0 times", err)
         self.assertIn("inventory: missing", err)
+        # Rerunning with --into alone would leave iac.json stale; the hint names both.
+        self.assertIn("--out <out>/iac.json --into <out>/findings.json", err)
 
     def test_schema_failure_is_a_violation(self):
         (self.out / "findings.json").write_text(json.dumps({**self.data, "meta": {}}), encoding="utf-8")

@@ -1343,7 +1343,9 @@ def main(argv=None):
             except OSError as e:
                 print(f"render: cannot write {assessment}: {e.strerror or e}", file=sys.stderr)
                 return 2
-            print(f"warning: {note}" + (f" Tried: {', '.join(failed)}" if failed else ""), file=sys.stderr)
+            print(f"warning: {note}" + (f" Tried: {', '.join(failed)}" if failed else "")
+                  + " Next: merge a limitations line saying so, re-render with --no-pdf, then run "
+                    "contract_check.py OUT --no-pdf", file=sys.stderr)
     return 0
 
 

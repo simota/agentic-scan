@@ -51,7 +51,11 @@ LABELS = {
         "method_row": "Method", "confidence": "Confidence", "verdict_col": "Verdict",
         "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
         "item_col": "Item", "value_col": "Value", "perspective_col": "Perspective", "lang": "en",
-        "excluded_findings": "Excluded findings",
+        "excluded_findings": "Excluded findings", "brand": "PERFORMANCE REVIEW",
+        "theme": "Toggle theme", "copy_llm": "Copy for LLM", "copied": "Copied",
+        "copy_failed": "Copy failed",
+        "findings_note": "Open a finding for its cost model, evidence and fix direction. "
+                         "Copy for LLM copies that finding as Markdown.",
     },
     "ja": {
         "title": "パフォーマンス診断", "scope": "対象と方法",
@@ -75,7 +79,11 @@ LABELS = {
         "method_row": "方法", "confidence": "確度", "verdict_col": "検証判定",
         "title_col": "タイトル", "location_col": "場所", "findings_col": "引用する検出事項", "budget_col": "バジェット",
         "item_col": "項目", "value_col": "値", "perspective_col": "観点", "lang": "ja",
-        "excluded_findings": "除外した検出事項",
+        "excluded_findings": "除外した検出事項", "brand": "PERFORMANCE REVIEW",
+        "theme": "配色を切り替え", "copy_llm": "LLM用にコピー", "copied": "コピーしました",
+        "copy_failed": "コピーできませんでした",
+        "findings_note": "検出事項を開くとコストモデル・根拠・修正方針を確認できます。"
+                         "「LLM用にコピー」でその検出事項を Markdown としてコピーします。",
     },
 }
 # Display names for fixed values. Severity, confidence and verdict names stay as
@@ -377,50 +385,157 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
+# Visual language shared with the security-scan dashboard: serif argument,
+# sans apparatus, ruled tables and cards instead of boxes.
 CSS = """
-:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
---high:#b91c1c;--medium:#b45309;--low:#1d4ed8;--info:#57534e}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1917;--fg:#f5f5f4;
---muted:#a8a29e;--card:#292524;--line:#44403c;--high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}}
+:root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--fg:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;
+--tint:#efede6;--accent:#1f3f66;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;
+--serif:"Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",Georgia,serif;
+--sans:system-ui,-apple-system,"Hiragino Sans","Noto Sans CJK JP","Noto Sans JP",sans-serif;
+--mono:ui-monospace,SFMono-Regular,Menlo,monospace}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#17171a;--panel:#1f1f23;
+--fg:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--tint:#26252a;--accent:#a9c3e6;--high:#f2a19a;
+--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}}
 :root[data-theme="light"]{color-scheme:light}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#1c1917;--fg:#f5f5f4;--muted:#a8a29e;--card:#292524;--line:#44403c;
---high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
-main{max-width:1040px;margin:0 auto;padding:24px 16px}
-h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
-.muted{color:var(--muted)}.cards{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:96px}
-.card b{display:block;font-size:1.4rem}
+:root[data-theme="dark"]{color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--fg:#ece9e2;--muted:#b3aea4;--line:#3a3936;
+--soft:#2a2a2e;--tint:#26252a;--accent:#a9c3e6;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}
+*{box-sizing:border-box}[hidden]{display:none!important}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 var(--serif);font-variant-numeric:lining-nums tabular-nums}
+main{max-width:1180px;margin:0 auto;padding:32px 28px 48px}
+a{color:var(--accent);text-underline-offset:3px}
+:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
+h1,h2,h3{font-family:var(--serif);font-weight:700;letter-spacing:0}
+h1{font-size:clamp(26px,3.2vw,36px);line-height:1.25;margin:3px 0 9px}
+h2{font-size:19px;margin:36px 0 12px;padding-top:14px;border-top:1.5px solid var(--fg)}
+h3{font-size:15px;margin:0 0 6px}
+button,th,dt,summary .muted,.brand,.eyebrow,.meta,.card span,.badge,.filters,.section-note,.hero-aside{font-family:var(--sans)}
+.muted,.meta,.eyebrow,.section-note,.hero-aside{color:var(--muted)}
+.masthead{display:flex;justify-content:space-between;align-items:center;gap:12px;
+border-bottom:1.5px solid var(--fg);padding-bottom:14px;margin-bottom:26px}
+.brand{font-size:11px;font-weight:750;letter-spacing:.2em}
+.hero{display:flex;justify-content:space-between;gap:24px;margin-bottom:18px}
+.eyebrow{font-size:13px}.meta{font-size:13px;margin:0;max-width:820px}
+.hero-aside{align-self:flex-end;font-size:12px;text-align:right;max-width:300px;margin:0}
+.summary-banner{border-top:1px solid var(--fg);border-bottom:1px solid var(--fg);padding:14px 4px;margin:0 0 16px}
+.summary-banner strong{display:block;font-size:17px}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px;margin:20px 0}
+.card{border-top:1.5px solid var(--fg);padding:12px 2px 6px}
+.card span{display:block;font-size:11px;letter-spacing:.08em;margin-bottom:6px}
+.card b{display:block;font-size:34px;line-height:1.25;font-weight:400}
 .High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
-a{color:var(--low)}
-details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
-summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
-dt{color:var(--muted)}dd{margin:0}h1,summary,p,dd,td,li{overflow-wrap:anywhere}
+.badge{font-size:11px;font-weight:750;letter-spacing:.1em;margin-right:6px}
+.section-note{font-size:12px;margin:0 0 10px}
+.filters{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
+button{font:inherit;font-family:var(--sans);font-size:13px;background:var(--panel);color:var(--fg);
+border:1px solid var(--line);border-radius:2px;padding:6px 12px;cursor:pointer}
+button:hover{background:var(--soft)}button[aria-pressed="true"]{border-color:var(--fg);background:var(--soft)}
+details{border-top:1px solid var(--line);padding:12px 0}
+details:last-of-type{border-bottom:1px solid var(--line)}
+details[data-sev="High"]{border-top:2px solid var(--high)}details[data-sev="Medium"]{border-top:2px solid var(--medium)}
+summary{cursor:pointer;font-weight:700}
+summary .muted{font-weight:400;font-size:13px}
+.detail-actions{display:flex;justify-content:flex-end;margin:10px 0 0}
+dl{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 18px;margin:12px 0 4px;padding:14px 18px;background:var(--tint)}
+dt{font-size:12px;color:var(--muted)}dd{margin:0}
+h1,summary,p,dd,td,li{overflow-wrap:anywhere}
 h1,summary,p,dd,td,li{white-space:pre-wrap}
-pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}
-table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top}
-button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
-button[aria-pressed="true"]{border-color:var(--fg)}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--fg);padding:2px 0 2px 10px}
+code{font:12px/1.6 var(--mono)}
+.tablewrap{overflow-x:auto;border-top:1.5px solid var(--fg);border-bottom:1.5px solid var(--fg)}
+table{border-collapse:collapse;width:100%}
+td,th{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top}
+th{font-size:11px;letter-spacing:.06em;font-weight:700;border-bottom:1px solid var(--fg)}
+tr:last-child td{border-bottom:0}
+.lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:0 28px}
+.lists ul{margin:0;padding-left:20px}
+@media (max-width:850px){main{padding:22px 16px}.hero{display:block}.hero-aside{text-align:left;max-width:none;margin-top:12px}
+.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
+@media (max-width:480px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card b{font-size:28px}}
+@media print{body{background:#fff}.tools,.filters,.detail-actions{display:none}main{padding:0;max-width:none}
+details{break-inside:avoid}.tablewrap{overflow:visible}}
 """
 
 JS = """
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
 document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}));
+document.getElementById('theme').addEventListener('click',()=>{const r=document.documentElement,
+dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
+r.dataset.theme=dark?'light':'dark';});
+// file:// pages or a denied Clipboard API fall back to a selection copy.
+function copyFallback(text){const prev=document.activeElement,t=document.createElement('textarea');
+t.value=text;t.setAttribute('readonly','');t.style.cssText='position:fixed;top:0;left:-9999px';
+document.body.appendChild(t);t.select();let ok=false;try{ok=document.execCommand('copy');}catch(e){}
+t.remove();if(prev&&prev.focus)prev.focus({preventScroll:true});
+return ok?Promise.resolve():Promise.reject(new Error('copy'));}
+function copyText(text){return navigator.clipboard&&window.isSecureContext
+?navigator.clipboard.writeText(text).catch(()=>copyFallback(text)):copyFallback(text);}
+document.querySelectorAll('[data-llm]').forEach(b=>{const label=b.textContent;let timer;
+b.addEventListener('click',()=>{const done=s=>{b.textContent=s;clearTimeout(timer);
+timer=setTimeout(()=>{b.textContent=label;},2000);};
+copyText(b.dataset.llm).then(()=>done(b.dataset.copied),()=>done(b.dataset.failed));});});
 """
 
 
 def html_table(headers, rows):
     e = html_text
-    return ("<table><thead><tr>"
+    return ("<div class='tablewrap'><table><thead><tr>"
             + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
             + "</tr></thead><tbody>"
             + "".join("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>"
                       for row in rows)
-            + "</tbody></table>")
+            + "</tbody></table></div>")
 
 
-def html_finding(f, t):
+def llm_line(value):
+    """One line of plain text: an LLM prompt is not rendered, so nothing is escaped."""
+    return " ".join(line.strip() for line in text_lines(value) if line.strip())
+
+
+def llm_block(label, value):
+    """A fence longer than any backtick run keeps record text from closing it."""
+    text = "\n".join(text_lines(value))
+    fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    return ["", f"### {label}", "", f"{fence}text", text, fence]
+
+
+def llm_finding(f, t, meta):
+    """Plain Markdown for pasting one finding into an LLM: short facts as bullets,
+    recorded prose fenced so it reads as data rather than instructions."""
+    v, lang = f["validation"], t["lang"]
+    step = f" ({llm_line(f['step'])})" if f.get("step", "").strip() else ""
+    out = [f"## {llm_line(f['id'])} · {llm_line(f['title'])}", "",
+           f"- {t['project']}: {llm_line(meta.get('project', ''))}",
+           f"- {t['revision']}: {llm_line(meta.get('commit', '').strip() or 'UNKNOWN')}",
+           f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
+           f"- {t['perspective']}: {f['category']}{step}"]
+    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    if len(locations) == 1:
+        out.append(f"- {t['location']}: {llm_line(locations[0])}")
+    else:
+        out += [f"- {t['location']}:"] + [f"  - {llm_line(loc)}" for loc in locations]
+    verdict = f"{v['verdict']} ({shown(v['method'], lang)})"
+    out.append(f"- {t['verdict']}: {verdict}" + (f" · {t['excluded']}" if is_excluded(f) else ""))
+    if not is_excluded(f):
+        out.append(f"- {t['status']}: {shown(f.get('status', 'Open'), lang)}")
+    if str(f.get("budget", "")).strip():
+        out.append(f"- {t['budget']}: {llm_line(f['budget'])}")
+    for key in FIELDS:
+        if key not in ("location", "budget") and str(f.get(key, "")).strip():
+            out += llm_block(t[key], f[key])
+    if v.get("evidence", "").strip():
+        out += llm_block(t["evidence"], v["evidence"])
+    if "measurement" in f:
+        m = f["measurement"]
+        out += (llm_block(t["measurement"], m["result"]) + llm_block(t["environment"], m["environment"])
+                + llm_block(t["command"], m["command"]))
+    if f.get("references"):
+        out += ["", f"### {t['references']}", ""]
+        out += [f"- {llm_line(reference_title(ref))}: {llm_line(ref['url'])}" for ref in f["references"]]
+    return "\n".join(out) + "\n"
+
+
+def html_finding(f, t, meta):
     """One finding's <details>; an excluded finding shows its verdict instead of a status."""
     e, lang = html_text, t["lang"]
     v = f["validation"]
@@ -440,10 +555,13 @@ def html_finding(f, t):
     if "measurement" in f:
         m = f["measurement"]
         rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
-    out = [f"<details data-sev='{group}'><summary><span class='{f['severity']}'>"
+    out = [f"<details data-sev='{group}'><summary><span class='badge {f['severity']}'>"
            f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
            f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
-           f"{exclusion}</summary><dl>"]
+           f"{exclusion}</summary>"
+           f"<div class='detail-actions'><button type='button' class='copy-finding' "
+           f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
+           f"data-failed='{e(t['copy_failed'])}'>{e(t['copy_llm'])}</button></div><dl>"]
     out += [f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows]
     if "measurement" in f:
         out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"
@@ -465,23 +583,29 @@ def render_html(doc, lang):
     out = [f"<!doctype html><html lang='{meta['lang']}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
-           f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
-           f"<p class='muted'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
+           f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
+           f"<div class='tools'><button type='button' id='theme'>{e(t['theme'])}</button></div></header>",
+           f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
+           f"<h1>{e(meta.get('project', ''))}</h1>",
+           f"<p class='meta'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
            + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
-           + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p><div class='cards'>"]
+           + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p></div>"
+           f"<p class='hero-aside'>{e(review_note(findings, t))}</p></div>",
+           f"<p class='summary-banner'><strong>{e(incomplete_high)}</strong>{e(verdicts)}</p>",
+           "<div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
-    out.append(f"<p>{e(verdicts)} · <strong>{e(incomplete_high)}</strong></p>"
-               f"<p class='muted'>{e(review_note(findings, t))}</p>")
-    out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
-               f"{e(t['all'])}</button> "
-               + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
-               + f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
-               + "</p>")
+    out.append(f"<h2>{e(t['findings'])}</h2><p class='section-note'>{e(t['findings_note'])}</p>"
+               f"<div class='filters'><button type='button' data-filter='all' aria-pressed='true'>"
+               f"{e(t['all'])}</button>"
+               + "".join(f"<button type='button' data-filter='{s}' aria-pressed='false'>{s}</button>"
+                         for s in SEVERITIES)
+               + f"<button type='button' data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
+               + "</div>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
-    out += [html_finding(f, t) for f in findings]
+    out += [html_finding(f, t, meta) for f in findings]
     if doc.get("budgets"):
         out.append(f"<h2>{e(t['budgets'])}</h2>"
                    + html_table(budget_headers(t),
@@ -489,12 +613,13 @@ def render_html(doc, lang):
     out.append(f"<h2>{e(t['perspectives'])}</h2>"
                + html_table((t["perspective_col"], t["status_col"], t["note"]),
                             perspective_rows(doc, lang)))
+    out.append("<div class='lists'>")
     for key in LIST_SECTIONS:
         items = doc.get(key, [])
-        out.append(f"<h2>{e(t[key])}</h2>"
+        out.append(f"<section><h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
-                      else f"<p>{e(t['none'])}</p>"))
-    out.append(f"</main><script>{JS}</script></body></html>")
+                      else f"<p class='muted'>{e(t['none'])}</p>") + "</section>")
+    out.append(f"</div></main><script>{JS}</script></body></html>")
     return "".join(out)
 
 

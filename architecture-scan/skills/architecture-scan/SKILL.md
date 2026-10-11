@@ -111,7 +111,7 @@ Worked examples:
 |---|---|
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard (security-scan layout): counts, priority queue, filterable findings, design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard (security-scan layout, scan-report-kit styles): counts, priority queue, filterable findings, design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the

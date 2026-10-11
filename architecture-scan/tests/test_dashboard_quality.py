@@ -8,12 +8,19 @@ from pathlib import Path
 from test_architecture_scan import REPO, complete_doc, make_env, render
 
 
+def page_style(doc=None):
+    """The stylesheet the rendered dashboard inlines (scan-report-kit's, then this skill's)."""
+    html = render.render_html(doc or complete_doc(), "en")
+    return re.search(r"<style>(.*?)</style>", html, re.S)[1]
+
+
 class DashboardTests(unittest.TestCase):
     def test_printing_opens_every_finding_and_hides_the_filter(self):
         self.assertIn("beforeprint", render.JS)
         self.assertIn("f.hidden=false;d.open=true", render.JS)
-        printed = render.CSS.split("@media print{", 1)[1]
-        self.assertRegex(printed, r"\.filters-panel[^{]*\{display:none")
+        # The last print block is this skill's; it hides the whole filter panel.
+        printed = page_style().rsplit("@media print{", 1)[1]
+        self.assertRegex(printed, r"\.filters-panel[^{]*\{display:none!important")
 
     def test_printing_hides_the_empty_message_and_restores_collapsed_findings(self):
         self.assertIn("if(m)m.hidden=true", render.JS)
@@ -42,10 +49,13 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn("<p data-empty", render.render_html({**complete_doc(), "findings": []}, "en"))
 
     def test_excluded_findings_keep_full_contrast(self):
-        self.assertNotIn("opacity", render.CSS)
+        self.assertNotIn("opacity", page_style())
 
     def test_long_titles_and_project_names_wrap(self):
-        self.assertIn("h1,summary{overflow-wrap:anywhere}", render.CSS)
+        style = page_style()
+        # Titles and register rows inherit the body rule; the hero title also sets it.
+        self.assertRegex(style, r"(?m)^body\{[^}]*overflow-wrap:anywhere")
+        self.assertRegex(style, r"\.hero h1\{[^}]*overflow-wrap:anywhere")
 
     def test_bidi_controls_are_shown_not_applied(self):
         doc = complete_doc()

@@ -474,8 +474,9 @@ def render_html(doc, lang):
                    f"{html_head(t['commitment_columns'])}")
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
-            out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
+            cells = (statement, r.get("family", ""), r["source"], status)
+            out.append(f"<tr><td class='nowrap'>{e(r['id'])}</td>"
+                       + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
         out.append("</table></div></section>")
     out.append(f"<section><div class='section-head'><div><h2>{e(t['perspectives'])}</h2></div></div>"
                f"<div class='tablewrap'><table class='ledger coverage-table'>"

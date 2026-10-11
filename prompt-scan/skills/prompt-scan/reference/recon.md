@@ -26,6 +26,9 @@ in databases or fetched from a registry. Search for those next.
   `path:line`; the text itself is outside the review and goes in `limitations`
 - Tool and function definitions passed to the API (`tools=`, `functions=`,
   schema objects) — their descriptions are prompts
+- Files an agent or skill definition tells the model to read (a skill's
+  `reference/` files and templates, `@path` imports in `CLAUDE.md`): each is
+  part of that prompt and gets its own row
 - Agent frameworks: chains, graphs and agents whose prompts are assembled by
   the framework from pieces (LangChain, LlamaIndex, Semantic Kernel, the
   Agent SDKs). Record each piece's location and the order the framework

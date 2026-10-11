@@ -17,7 +17,7 @@ symlinks, binary files and files over 1 MiB.
 
 | Section | Contents |
 |---|---|
-| `prompt_files` | Files under a `prompts/`, `prompt/`, `system_prompts/` or `instructions/` directory; `.prompt`, `.prompty`, `*.prompt.md`; `SKILL.md`; `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `copilot-instructions.md`; files under `.claude/agents`, `.claude/commands`, `.cursor/rules`, `.github/prompts`. Each with kind, size, an estimated token count and the template variables found (`{{name}}`, `{name}`, `${name}`) |
+| `prompt_files` | Files under a `prompts/`, `prompt/`, `system_prompts/`, `system-prompts/` or `instructions/` directory; `.prompt`, `.prompty`, `*.prompt.md`; `SKILL.md` (not the files it tells the model to read: `reference/recon.md` §2); `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`; files under `.claude/agents`, `.claude/commands`, `.cursor/rules`, `.github/prompts`, `.codex/agents`. Each with kind, size, an estimated token count and the template variables found (`{{name}}`, `{name}`, `${name}`) |
 | `call_sites` | Lines in code that call a model API or build a prompt object: Anthropic `messages.create`, OpenAI `chat.completions.create` / `responses.create`, Gemini `generate_content`, the AI SDK `generateText` family, LangChain prompt and message classes, `role: "system"` literals and `SYSTEM_PROMPT`-style assignments |
 | `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
@@ -31,13 +31,15 @@ per other character). Use it to rank prompts by size, not as a provider count.
 | Rule | Kind / severity / confidence | Hit when |
 |---|---|---|
 | `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access key, GitHub and Slack tokens, private-key block). Location and kind only; the value is never copied |
-| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code fences |
-| `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code fences |
-| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX`, lorem ipsum or `[INSERT …]` outside code fences |
+| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code |
+| `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
+| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX`, lorem ipsum or `[INSERT …]` outside code |
 | `duplicate-line` | improvement / Info / Confirmed | A line of 40 or more characters (not a table row) appears again in the same file |
 | `large-prompt` | improvement / Info / Confirmed | The file alone is estimated at more than 8000 tokens |
 
-Each hit is one `L-*` finding per rule per file, at the first line that hits.
+"Outside code" excludes both code fences and inline code spans, which hold
+examples such as `<out>`. Each hit is one `L-*` finding per rule per file, at
+the first line that hits; `unclosed-tag` gives one per tag name.
 
 ## Reviewing `L-*` findings
 

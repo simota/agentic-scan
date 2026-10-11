@@ -350,7 +350,6 @@ def render_markdown(doc, lang):
 # Rules for privacy-scan record types only, after the shared dashboard
 # stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
 DASHBOARD_CSS = """
-@media(min-width:851px){.cards{grid-template-columns:repeat(5,minmax(0,1fr))}}
 .filter-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
 button[aria-pressed="true"]{border-color:var(--text);background:var(--soft)}
 .register{border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text)}
@@ -380,7 +379,7 @@ details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:any
 .coverage-table th:nth-child(2){width:14%}
 .coverage-table th:nth-child(3){width:44%}
 .lists .panel ul{white-space:normal}
-@media(max-width:850px){table.ledger{min-width:620px}details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
+@media(max-width:850px){details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 

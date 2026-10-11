@@ -66,7 +66,9 @@ class ExcludedFindingTests(unittest.TestCase):
 class LayoutTests(unittest.TestCase):
     def test_cells_wrap_and_keep_line_breaks(self):
         css = render.CSS
-        self.assertRegex(css, r"(?:td,th|th,td)\{[^}]*overflow-wrap:anywhere")
+        # Cells wrap between words; a table too wide scrolls inside .tablewrap.
+        self.assertRegex(css, r"(?:td,th|th,td)\{[^}]*overflow-wrap:break-word")
+        self.assertIn(".tablewrap{overflow-x:auto", css)
         for selector in ("dd", "li", "td"):
             self.assertRegex(css, selector + r"\{[^}]*white-space:pre-line")
         # Light and dark themes come from scan-report-kit: the system setting and the toggle.

@@ -28,19 +28,17 @@ from pathlib import Path
 import posixpath
 import re
 import shutil
-import subprocess
 import sys
-import tempfile
-import time
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES, STATE_FILE,
-                    STRING_LISTS, find_references, shape_problems, split_yaml_documents, unique_object,
-                    write_text_atomic)
+                    STRING_LISTS, find_references, shape_problems, split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, _YamlSubset, is_export, literal, parse_hcl
 from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
-                       redact_json_values, redact_lines, scrub_lines, split_lines)
+                       redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
+from scan_report_kit import pdf as kit_pdf, style as kit_style
+from scan_report_kit.output import unsafe_target, write_output
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -81,13 +79,6 @@ INPUT_KEYS = {"kind", "path", "note"}
 REFERENCE_KEYS = {"title", "url"}
 INVENTORY_KEYS = {"resources", "by_provider", "files", "not_run"}
 BASE_FIELDS = ("title", "location")
-
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser", "chrome",
-]
-
 
 class SchemaError(Exception):
     def __init__(self, problems):
@@ -501,6 +492,7 @@ def validate(data, partial=False):
 LABELS = {
     "en": {
         "doc_title": "Infrastructure security assessment", "brand": "INFRA-SCAN",
+        "running_footer": "INFRASTRUCTURE SECURITY ASSESSMENT",
         "assessment": "Assessment report", "theme": "Theme",
         "summary": "Summary", "findings": "Findings", "attack_paths": "Attack paths",
         "perspectives": "Perspective coverage", "checked_ok": "Checked and sound",
@@ -531,6 +523,7 @@ LABELS = {
     },
     "ja": {
         "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
+        "running_footer": "インフラ セキュリティ診断",
         "assessment": "診断報告書", "theme": "テーマ",
         "summary": "概要", "findings": "検出事項", "attack_paths": "攻撃経路",
         "perspectives": "観点ごとの実施状況", "checked_ok": "確認して問題なし",
@@ -948,13 +941,19 @@ def ap_html(a, L, lang):
             f'<p class="muted">{L["linked"]}: {links}</p></article>')
 
 
-def list_block(items, L):
+def list_block(items, L, empty="muted"):
     if not items:
-        return f'<p class="muted">{L["none"]}</p>'
+        return f'<p class="{empty}">{L["none"]}</p>'
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>"
 
 
 def meta_rows(data, L, lang="en"):
+    """Scope and method as <dt>/<dd> pairs (the dashboard's scope list)."""
+    return "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in meta_pairs(data, L, lang))
+
+
+def meta_pairs(data, L, lang="en"):
+    """[(label, value HTML)] for the scope, method, inputs and inventory."""
     meta = data.get("meta", {})
     rows = [(L[k], esc(meta.get(k))) for k in ("project", "scope", "date", "assessor", "method", "commit")
             if meta.get(k)]
@@ -975,71 +974,46 @@ def meta_rows(data, L, lang="en"):
         if inv.get("not_run"):
             rows.append((L["not_run"], "<br>".join(esc(x if isinstance(x, str) else json.dumps(x, ensure_ascii=False))
                                                    for x in inv["not_run"])))
-    return "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in rows)
+    return rows
 
 
-TOKENS = """
-:root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--text:#1b1b1b;--muted:#5b5b5b;--line:#dcd9d2;--soft:#ecebe5;--high:#9b1c1c;--medium:#8a5300;--low:#24476e;--info:#5b5b5b;--accent:#1f4f7a;--ok:#2d6a3e}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#16171a;--panel:#1f2024;--text:#ece9e2;--muted:#b0aba2;--line:#38383c;--soft:#2a2b30;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b0aba2;--accent:#9cc3ec;--ok:#9fd3ad}}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#16171a;--panel:#1f2024;--text:#ece9e2;--muted:#b0aba2;--line:#38383c;--soft:#2a2b30;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b0aba2;--accent:#9cc3ec;--ok:#9fd3ad}
-@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light;--bg:#fff;--panel:#fff;--text:#1b1b1b;--muted:#5b5b5b;--line:#dcd9d2;--soft:#ecebe5;--high:#9b1c1c;--medium:#8a5300;--low:#24476e;--info:#5b5b5b;--accent:#1f4f7a;--ok:#2d6a3e}}
-"""
-
-BASE_CSS = """
-*{box-sizing:border-box}[hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--text);font:14px/1.65 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif;overflow-wrap:anywhere}
-a{color:var(--accent)}code,.snippet{font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
-.muted,.note{color:var(--muted)}
-.High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
-.badge{display:inline-block;font-size:11px;font-weight:700;letter-spacing:.06em;white-space:nowrap}
-.pill{font-size:11px;font-weight:700;border:1px solid currentColor;border-radius:999px;padding:0 8px}
-.st-open .pill,.pill.st-open{color:var(--high)}.pill.st-blocked{color:var(--ok)}.pill.st-unknown{color:var(--medium)}
-.snippet{margin:0;padding:8px 10px;border-left:2px solid var(--line);overflow-x:auto;white-space:pre}
-.snippet span{display:block}.snippet .hit{background:var(--soft)}.snippet b{color:var(--muted);font-weight:400}
-dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:6px 16px;margin:10px 0}
-dt{color:var(--muted);font-size:12px}dd{margin:0;white-space:pre-wrap;min-width:0}
-.ap{border-top:2px solid var(--line);padding:12px 0}.ap.st-open{border-top-color:var(--high)}.ap.st-blocked{border-top-color:var(--ok)}.ap.st-unknown{border-top-color:var(--medium)}
-.ap-head{display:flex;gap:10px;align-items:center}.ap-route{font-weight:650;margin:6px 0}
-.edges{margin:6px 0;padding-left:22px}.edges li{margin:2px 0}
-@media print{.snippet{white-space:pre-wrap;overflow:visible}}
-"""
-
+# Shared stylesheets (scan_report_kit/assets, docs: scan-report-kit) come first;
+# these add only the rules for infra-scan record types: attack paths, the
+# perspective status, covered/excluded rows and the scope list.
+# Attack-path status inks: open is the High ink, unknown the Medium ink, blocked muted.
 DASH_CSS = """
-main{max-width:1240px;margin:auto;padding:28px 16px 48px}
-.masthead{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1.5px solid var(--text);padding-bottom:14px}
-.brand{font-size:11px;letter-spacing:.2em;color:var(--muted);font-weight:700}
-.tools{display:flex;gap:8px;flex-wrap:wrap}
-button,.button,select,input{font:inherit;color:var(--text);background:var(--panel);border:1px solid var(--line);border-radius:4px;padding:7px 11px;text-decoration:none}
-button{cursor:pointer}button:hover,.button:hover{background:var(--soft)}:focus-visible{outline:3px solid var(--accent);outline-offset:2px}
-h1{font-size:clamp(24px,3.4vw,34px);margin:20px 0 4px;line-height:1.25}h2{font-size:18px;margin:32px 0 10px}
-.meta{color:var(--muted);margin:0}
-.banner{border-top:1px solid var(--text);border-bottom:1px solid var(--text);padding:12px 2px;margin:18px 0;font-weight:650}
-.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:20px}
-.card{border-top:2px solid currentColor;padding:8px 2px}.card .n{font-size:32px;line-height:1.2}.card .l{font-size:11px;letter-spacing:.08em;color:var(--muted);display:block}
-.aps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:18px}
-.filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr)) 2fr;gap:10px}
-.filters label{display:flex;flex-direction:column;gap:3px;font-size:12px;color:var(--muted)}.filters select,.filters input{width:100%;min-width:0}
-.count{font-size:12px;color:var(--muted);margin:8px 0}
-.tablewrap{border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text)}
-table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:10px 8px;border-bottom:1px solid var(--line);vertical-align:top}
-th{font-size:11px;letter-spacing:.05em;color:var(--muted)}
-tr.excluded td{color:var(--muted)}tr.excluded .toggle{text-decoration:line-through}
-.toggle{border:0;background:none;padding:0;text-align:left;font-weight:650;width:100%}.toggle:hover{background:none;color:var(--accent)}
-.loc{display:block;font-size:11px;color:var(--muted)}
-tr.detail>td{background:var(--soft);padding:14px 18px}
-.detail-actions{display:flex;justify-content:flex-end}
-.coverage{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:4px 24px}
-.persp{border-bottom:1px solid var(--line);padding:8px 0}.persp p{margin:2px 0;font-size:13px;color:var(--muted)}
-.persp .st{font-size:11px;font-weight:700;margin-left:6px}
-.lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,260px),1fr));gap:20px}
-.lists ul{padding-left:18px;margin:6px 0}
-.footer{border-top:1.5px solid var(--text);margin-top:36px;padding-top:12px;font-size:12px;color:var(--muted)}
-@media(max-width:760px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.filters{grid-template-columns:1fr 1fr}.filters .search{grid-column:1/-1}
-thead{display:none}table,tbody,tr,td{display:block}tr.row{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;padding:10px 0;border-bottom:1px solid var(--line)}
-tr.row td{border:0;padding:0}tr.row td.t{grid-column:1/-1}td[data-l]:before{content:attr(data-l);display:block;font-size:10px;color:var(--muted)}
-dl{grid-template-columns:1fr}dd{margin-bottom:6px}}
-@media screen{tr[hidden]{display:none!important}}
-@media print{.tools,.filters,.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
+.aps{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:12px 28px}
+.ap{border-top:2px solid var(--line);padding:12px 0;min-width:0}
+.ap.st-open{border-top-color:var(--high)}.ap.st-unknown{border-top-color:var(--medium)}.ap.st-blocked{border-top-color:var(--muted)}
+.ap-head{display:flex;gap:10px;align-items:baseline}
+.ap-route{font-weight:700;margin:6px 0}
+.pill{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.1em;white-space:nowrap}
+.pill.st-open{color:var(--high)}.pill.st-unknown{color:var(--medium)}.pill.st-blocked{color:var(--muted)}
+.edges{margin:6px 0;padding-left:22px}.edges li{margin:2px 0}
+.note{color:var(--muted)}
+.card .n{color:var(--text)}.card.High .n{color:var(--high)}.card.Medium .n{color:var(--medium)}.card.Low .n{color:var(--low)}
+.perspective .st{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-left:8px}
+.lists section{min-width:0}
+tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
+@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light;--bg:#fff;--panel:#fff;--text:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;--accent:#1f3f66;--tint:#efede6;--warn:#f6f5f1;--warn-line:#1b1b1b}}
+@media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
+"""
+
+ASSESSMENT_CSS = """
+.ap{margin:4mm 0 0;padding:0 0 0 4mm;border-left:.6pt solid var(--hair)}
+.ap{break-inside:avoid-page}
+.ap.st-open{border-left:2.4pt solid var(--high)}.ap.st-unknown{border-left:1.2pt solid var(--medium)}
+.ap-head{display:flex;gap:3mm;align-items:baseline;font:400 8pt/1.4 var(--mono)}
+.ap-head strong{font-weight:400;color:var(--muted)}
+.ap-route{font-weight:700;margin:1mm 0 1.5mm}
+.pill{font:700 7.2pt/1.5 var(--sans);letter-spacing:.1em;color:var(--muted);white-space:nowrap}
+.pill.st-open{color:var(--high)}.pill.st-unknown{color:var(--medium)}
+.edges{margin:1mm 0 2mm;padding-left:6mm;font-size:9pt}
+.muted,.note{color:var(--muted)}
+.ap .muted,.ap .note{font-size:8.5pt}
+.report-header .small{margin:3mm 0 0}
+.finding.covered{border-left-style:dashed}
+.finding-state code{font-size:7.8pt}
 """
 
 DASH_JS = r"""
@@ -1054,7 +1028,7 @@ document.getElementById('theme').addEventListener('click',function(){
 var md=JSON.parse(document.getElementById('md').textContent);
 var rows=[].slice.call(document.querySelectorAll('tr.row'));
 var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),q:document.getElementById('f-q')};
-var count=document.getElementById('count');
+var count=document.getElementById('result-count');
 function aside(r){return r.classList.contains('excluded')||r.classList.contains('covered');}
 var active=rows.filter(function(r){return !aside(r);}).length;
 function apply(){
@@ -1063,7 +1037,7 @@ function apply(){
     var ok=(!f.sev.value||r.dataset.sev===f.sev.value)&&(!f.prov.value||r.dataset.prov===f.prov.value)&&
       (!f.cat.value||r.dataset.cat===f.cat.value)&&(!f.ver.value||r.dataset.ver===f.ver.value)&&
       (!q||r.dataset.text.indexOf(q)>=0);
-    r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
+    r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.finding-toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
     if(ok){if(r.classList.contains('excluded'))xe++;else if(r.classList.contains('covered'))xc++;else n++;}
   });
   // Match the severity cards: excluded and covered findings are counted on their own.
@@ -1074,12 +1048,12 @@ function reveal(){
   var el=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
   if(!el||!el.classList.contains('row'))return;
   if(el.hidden){Object.keys(f).forEach(function(k){f[k].value='';});apply();}
-  var b=el.querySelector('.toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();
+  var b=el.querySelector('.finding-toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();
   el.scrollIntoView({block:'start'});
 }
 window.addEventListener('hashchange',reveal);
 Object.keys(f).forEach(function(k){f[k].addEventListener('input',apply);});
-document.querySelectorAll('.toggle').forEach(function(b){b.addEventListener('click',function(){
+document.querySelectorAll('.finding-toggle').forEach(function(b){b.addEventListener('click',function(){
   var open=b.getAttribute('aria-expanded')==='true';b.setAttribute('aria-expanded',String(!open));
   b.closest('tr').nextElementSibling.hidden=open;
 });});
@@ -1132,23 +1106,23 @@ def render_dashboard(data, L, lang, sources):
         rows.append(
             f'<tr class="{cls}" id="{esc(f["id"])}" data-sev="{esc(f.get("severity"))}" data-prov="{esc(f.get("provider"))}" '
             f'data-cat="{esc(f.get("category"))}" data-ver="{esc(val)}" data-text="{esc(text)}">'
-            f'<td data-l="{L["severity"]}"><span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span></td>'
-            f'<td data-l="{L["id"]}">{esc(f["id"])}</td>'
-            f'<td class="t"><button class="toggle" type="button" aria-expanded="false" '
+            f'<td data-label="{L["id"]}">{esc(f["id"])}</td>'
+            f'<td data-label="{L["severity"]}"><span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span></td>'
+            f'<td data-label="{L["confidence"]}">{esc(shown(f.get("confidence"), lang))}</td>'
+            f'<td data-label="{L["provider"]}">{esc(f.get("provider"))}</td>'
+            f'<td data-label="{L["verdict"]}">{esc(shown(val, lang))}</td>'
+            f'<td><button class="finding-toggle" type="button" aria-expanded="false" '
             f'aria-controls="{esc(f["id"])}-detail">{esc(shown(f.get("title"), lang))}</button>'
-            f'<span class="loc">{esc(f.get("location"))}</span></td>'
-            f'<td data-l="{L["provider"]}">{esc(f.get("provider"))}</td>'
-            f'<td data-l="{L["category"]}">{esc(shown(f.get("category"), lang))}</td>'
-            f'<td data-l="{L["confidence"]}">{esc(shown(f.get("confidence"), lang))}</td>'
-            f'<td data-l="{L["verdict"]}">{esc(shown(val, lang))}</td></tr>'
+            f'<span class="location">{esc(f.get("location"))}</span></td>'
+            f'<td data-label="{L["category"]}">{esc(shown(f.get("category"), lang))}</td></tr>'
             f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}'
             f'<div class="detail-actions"><button class="copy" type="button" data-id="{esc(f["id"])}" '
             f'data-done="{esc(L["copied"])}">{L["copy"]}</button></div></td></tr>')
-    table = "".join(rows) or f'<tr><td colspan="7" class="muted">{L["none"]}</td></tr>'
+    table = "".join(rows) or f'<tr><td colspan="7" class="empty">{L["none"]}</td></tr>'
     names = perspective_names()
     present = {p.get("name"): p for p in data.get("perspectives", [])}
     persp = "".join(
-        f'<div class="persp"><strong>{esc(shown(n, lang))}</strong><span class="st">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span>'
+        f'<div class="perspective"><strong>{esc(shown(n, lang))}<span class="st">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span></strong>'
         f'<p>{esc(present.get(n, {}).get("note", ""))}</p></div>' for n in names)
     used = lambda key: sorted({f.get(key) for f in fs if f.get(key)})
     lists = "".join(f'<section><h2>{L[k]}</h2>{list_block(data.get(k, []), L)}</section>' for k in STRING_LISTS)
@@ -1156,29 +1130,29 @@ def render_dashboard(data, L, lang, sources):
     return f"""<!doctype html>
 <html lang="{lang}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(title)}</title><style>{TOKENS}{BASE_CSS}{DASH_CSS}</style></head>
+<title>{esc(title)}</title><style>{kit_style.dashboard_css()}{DASH_CSS}</style></head>
 <body><main>
 <header class="masthead"><span class="brand">{L["brand"]}</span><div class="tools">
 <a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button">{L["theme"]}</button></div></header>
-<h1>{esc(meta.get("project", ""))}</h1>
-<p class="meta">{esc(meta.get("scope", ""))} · {esc(meta.get("date", ""))} · {esc(meta.get("assessor", ""))}{(" · " + esc(meta["commit"][:12])) if meta.get("commit") else ""}</p>
-<p class="banner">{esc(banner)}</p>
+<div class="hero"><div><div class="eyebrow">{L["doc_title"]}</div><h1>{esc(meta.get("project", ""))}</h1>
+<div class="meta">{esc(meta.get("scope", ""))} · {esc(meta.get("date", ""))} · {esc(meta.get("assessor", ""))}{(" · " + esc(meta["commit"][:12])) if meta.get("commit") else ""}</div></div></div>
+<div class="summary-banner"><strong>{esc(banner)}</strong></div>
 <div class="cards">{cards}</div>
-<h2>{L["attack_paths"]}</h2><div class="aps">{aps}</div>
-<h2 id="findings-h">{L["findings"]}</h2>
-<div class="filters">
+<section><div class="section-head"><div><h2>{L["attack_paths"]}</h2></div></div><div class="aps">{aps}</div></section>
+<section><div class="section-head"><div><h2 id="findings-h">{L["findings"]}</h2></div></div>
+<div class="panel filters-panel"><div class="filters">
 <label>{L["severity"]}<select id="f-sev">{options(SEVERITIES, L, lang)}</select></label>
 <label>{L["provider"]}<select id="f-prov">{options(used("provider"), L, lang)}</select></label>
 <label>{L["category"]}<select id="f-cat">{options(used("category"), L, lang)}</select></label>
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
 <label class="search">{L["search"]}<input id="f-q" type="search"></label>
-</div>
-<p class="count" id="count" data-l="{L["shown"]}" data-e="{L["excluded_n"]}" data-c="{L["covered_n"]}" aria-live="polite"></p>
-<div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th>{L["severity"]}</th><th>{L["id"]}</th><th>{L["title"]}</th>
-<th>{L["provider"]}</th><th>{L["category"]}</th><th>{L["confidence"]}</th><th>{L["verdict"]}</th></tr></thead>
-<tbody>{table}</tbody></table></div>
-<h2>{L["perspectives"]}</h2><div class="coverage">{persp}</div>
-<h2>{L["scope_method"]}</h2><dl>{meta_rows(data, L, lang)}</dl>
+</div><div class="filter-bottom"><p class="result-count" id="result-count" data-l="{L["shown"]}" data-e="{L["excluded_n"]}" data-c="{L["covered_n"]}" aria-live="polite"></p></div></div>
+<div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["severity"]}</th>
+<th scope="col">{L["confidence"]}</th><th scope="col">{L["provider"]}</th><th scope="col">{L["verdict"]}</th><th scope="col">{L["title"]}</th>
+<th scope="col">{L["category"]}</th></tr></thead>
+<tbody>{table}</tbody></table></div></section>
+<section><div class="section-head"><div><h2>{L["perspectives"]}</h2></div></div><div id="perspectives">{persp}</div></section>
+<section><div class="section-head"><div><h2>{L["scope_method"]}</h2></div></div><dl class="scope-meta">{meta_rows(data, L, lang)}</dl></section>
 <div class="lists">{lists}</div>
 <footer class="footer">{L["static_note"]}</footer>
 </main>
@@ -1188,21 +1162,42 @@ def render_dashboard(data, L, lang, sources):
 """
 
 
-REPORT_CSS = """
-@page{size:A4;margin:18mm 16mm}
-body{font-family:"Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",Georgia,serif;font-size:11pt;line-height:1.7;max-width:900px;margin:auto;padding:24px 16px}
-h1,h2,h3{line-height:1.3}h2{border-bottom:1.5px solid var(--text);padding-bottom:4px;margin-top:28px;break-after:avoid}
-h3{margin:18px 0 4px;break-after:avoid}
-.cover{min-height:60vh;display:flex;flex-direction:column;justify-content:center;border-bottom:2px solid var(--text);margin-bottom:24px;break-after:page}
-.cover h1{font-size:28pt;margin:0 0 8px}.cover .sub{font-size:15pt}
-table{border-collapse:collapse;width:100%;margin:8px 0}th,td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
-th{font-family:system-ui,sans-serif;font-size:9pt;color:var(--muted)}
-.finding{break-inside:avoid-page;border-top:1px solid var(--line);padding-top:6px}
-.finding.excluded h3{text-decoration:line-through;text-decoration-thickness:1px}
-.ap{break-inside:avoid-page}
-dt{font-family:system-ui,sans-serif}
-@media print{body{max-width:none;padding:0;background:#fff;color:#000}a{color:inherit}}
-"""
+# Long-text fields are set as headed paragraphs; the rest go in the state table.
+DOC_FIELDS = ("actor", "path", "contrast", "impact", "condition", "fix", "regression", "detail")
+
+
+def doc_finding(f, L, lang, sources, covered=()):
+    """One finding entry in the assessment, in the shared document vocabulary."""
+    state = [(L["severity"], f'<span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span>'),
+             (L["confidence"], esc(shown(f.get("confidence"), lang))),
+             (L["verdict"], esc(shown(f.get("validation", {}).get("verdict"), lang))),
+             (L["category"], esc(shown(f.get("category"), lang))),
+             (L["provider"], esc(f.get("provider"))),
+             (L["location"], f"<code>{esc(f.get('location'))}</code>"),
+             (L["resources"], "<br>".join(f"<code>{esc(r)}</code>" for r in f.get("resources", [])))]
+    if covered:
+        state.append((L["covered"], ", ".join(f'<a href="#{esc(x)}">{esc(x)}</a>' for x in covered)))
+    for key in ("rule", "controls", "cwe"):
+        value = field_text(f, key)
+        if value:
+            state.append((L[key], esc(value)))
+    if f.get("attack_paths"):
+        state.append((L["attack_paths"], ", ".join(f'<a href="#{esc(a)}">{esc(a)}</a>' for a in f["attack_paths"])))
+    fields = [(L[key], field_text(f, key)) for key in DOC_FIELDS if field_text(f, key)]
+    if f.get("validation", {}).get("evidence"):
+        fields.append((L["evidence"], f["validation"]["evidence"]))
+    body = "".join(f'<div class="finding-field"><h4>{k}</h4><p class="prose">{esc(v)}</p></div>' for k, v in fields)
+    if f.get("id") in sources:
+        body += f'<div class="finding-field"><h4>{L["source"]}</h4>{snippet_html(sources[f["id"]])}</div>'
+    if f.get("references"):
+        body += (f'<div class="finding-field"><h4>{L["references"]}</h4><ul class="refs">' + "".join(
+            f'<li><a href="{esc(r["url"])}" rel="noopener noreferrer">{esc(r.get("title") or r["url"])}</a></li>'
+            for r in f["references"]) + "</ul></div>")
+    cls = "finding excluded" if is_excluded(f) else f"finding sev-{esc(f.get('severity'))}" + (" covered" if covered else "")
+    rows = "".join(f'<tr><th scope="row">{k}</th><td>{v}</td></tr>' for k, v in state)
+    return (f'<article class="{cls}" id="{esc(f["id"])}"><div class="finding-header">'
+            f'<span class="finding-id">{esc(f["id"])}</span><h3>{esc(shown(f.get("title"), lang))}</h3>'
+            f'<table class="finding-state"><tbody>{rows}</tbody></table></div>{body}</article>')
 
 
 def render_assessment(data, L, lang, sources, pdf_note=""):
@@ -1212,116 +1207,78 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
     fs = ordered(data.get("findings", []))
     active = [f for f in fs if not is_excluded(f)]
     excluded = [f for f in fs if is_excluded(f)]
-
-    def article(f, cls="finding"):
-        return (f'<article class="{cls}" id="{esc(f["id"])}"><h3><span class="badge {esc(f.get("severity"))}">'
-                f'{esc(shown(f.get("severity"), lang))}</span> {esc(f["id"])} {esc(shown(f.get("title"), lang))}</h3>'
-                f'<p class="muted">{esc(shown(f.get("category"), lang))} · {esc(f.get("provider"))} · {esc(shown(f.get("confidence"), lang))}</p>'
-                f'{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}</article>')
+    none = f'<p class="small">{L["none"]}</p>'
 
     by_sev = "".join(
-        f'<h3>{esc(shown(s, lang))}</h3>' + "".join(article(f) for f in active if f.get("severity") == s)
-        for s in SEVERITIES if any(f.get("severity") == s for f in active)) or f'<p class="muted">{L["none"]}</p>'
-    excl = "".join(article(f, "finding excluded") for f in excluded) or f'<p class="muted">{L["none"]}</p>'
+        f'<h3>{esc(shown(s, lang))}</h3>' + "".join(doc_finding(f, L, lang, sources, covered.get(f["id"], ()))
+                                                   for f in active if f.get("severity") == s)
+        for s in SEVERITIES if any(f.get("severity") == s for f in active)) or none
+    excl = "".join(doc_finding(f, L, lang, sources, covered.get(f["id"], ())) for f in excluded) or none
     present = {p.get("name"): p for p in data.get("perspectives", [])}
     persp = "".join(f'<tr><td>{esc(shown(n, lang))}</td><td>{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</td>'
                     f'<td>{esc(present.get(n, {}).get("note", ""))}</td></tr>' for n in perspective_names())
-    count_rows = "".join(f'<tr><td class="{s}">{esc(shown(s, lang))}</td><td>{c[s]}</td></tr>' for s in SEVERITIES)
-    aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or f'<p class="muted">{L["none"]}</p>'
+    sev_head = "".join(f'<th scope="col" class="{s}">{esc(shown(s, lang))}</th>' for s in SEVERITIES)
+    sev_cells = "".join(f'<td class="metric-urgent">{c[s]}</td>' if s in ("High", "Medium") and c[s] else f"<td>{c[s]}</td>"
+                        for s in SEVERITIES)
+    metrics = (f'<table class="metrics"><caption>{L["counts"]}</caption><thead><tr><th scope="col"></th>{sev_head}</tr></thead>'
+               f'<tbody><tr><th scope="row">{L["findings"]}</th>{sev_cells}</tr></tbody></table>')
+    aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or none
+    scope = "".join(f'<p class="meta-line"><strong>{k}</strong><span>{v}</span></p>' for k, v in meta_pairs(data, L, lang))
     sections = [
-        (L["summary"], f'<p><strong>{" · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES)}</strong> — '
-                       f'{L["excluded_n"]} {c["excluded"]}, {L["covered_n"]} {c["covered"]}, '
-                       f'{L["unverified_n"]} {c["unverified"]}</p>'
-                       f'<table><caption class="muted">{L["counts"]}</caption>{count_rows}</table><p>{L["static_note"]}</p>'
-                       + (f'<p class="muted">{esc(pdf_note)}</p>' if pdf_note else "")),
-        (L["scope_method"], f"<dl>{meta_rows(data, L, lang)}</dl>"),
-        (L["attack_paths"], aps),
-        (L["findings"], by_sev),
-        (L["excluded"], excl),
-        (L["perspectives"], f'<table><thead><tr><th>{L["category"]}</th><th>{L["status"]}</th><th>{L["note"]}</th></tr></thead>'
-                            f'<tbody>{persp}</tbody></table>'),
-    ] + [(L[k], list_block(data.get(k, []), L)) for k in STRING_LISTS]
-    body = "".join(f"<section><h2>{i}. {t}</h2>{b}</section>" for i, (t, b) in enumerate(sections, 1))
+        ("summary", L["summary"], f'<p><strong>{" · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES)}</strong> — '
+                                  f'{L["excluded_n"]} {c["excluded"]}, {L["covered_n"]} {c["covered"]}, '
+                                  f'{L["unverified_n"]} {c["unverified"]}</p>{metrics}<p>{L["static_note"]}</p>'
+                                  + (f'<p class="small">{esc(pdf_note)}</p>' if pdf_note else "")),
+        ("scope", L["scope_method"], scope),
+        ("attack-paths", L["attack_paths"], aps),
+        ("finding-details", L["findings"], by_sev),
+        ("excluded", L["excluded"], excl),
+        ("perspectives", L["perspectives"],
+         f'<table class="coverage"><caption>{L["perspectives"]}</caption>'
+         '<colgroup><col class="perspective-col"><col class="result-col"><col class="note-col"></colgroup>'
+         f'<thead><tr><th scope="col">{L["category"]}</th><th scope="col">{L["status"]}</th><th scope="col">{L["note"]}</th></tr></thead>'
+         f'<tbody>{persp}</tbody></table>'),
+    ] + [(k.replace("_", "-"), L[k], list_block(data.get(k, []), L, "small")) for k in STRING_LISTS]
+    body = "".join(f'<section id="{sid}"' + (' class="excluded-section"' if sid == "excluded" else "") +
+                   f"><h2>{t}</h2>{b}</section>" for sid, t, b in sections)
+    cover = "".join(f'<p class="meta-line"><strong>{L[k]}</strong><span>{esc(meta.get(k))}</span></p>'
+                    for k in ("scope", "date", "assessor", "commit") if meta.get(k))
     return f"""<!doctype html>
 <html lang="{lang}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(L["assessment"])} — {esc(meta.get("project", ""))}</title><style>{TOKENS}{BASE_CSS}{REPORT_CSS}</style></head>
+<title>{esc(L["assessment"])} — {esc(meta.get("project", ""))}</title><style>{kit_style.document_css(L["running_footer"])}{ASSESSMENT_CSS}</style></head>
 <body>
-<section class="cover"><p class="muted">{L["brand"]}</p><h1>{L["doc_title"]}</h1>
-<p class="sub">{esc(meta.get("project", ""))}</p>
-<dl>{"".join(f"<dt>{L[k]}</dt><dd>{esc(meta.get(k))}</dd>" for k in ("scope", "date", "assessor", "commit") if meta.get(k))}</dl>
-<p class="muted">{L["cover_note"]}</p></section>
+<header class="report-header"><p class="kicker">{L["brand"]}</p><h1>{L["doc_title"]}</h1>
+<p class="project">{esc(meta.get("project", ""))}</p>{cover}
+<p class="small">{L["cover_note"]}</p></header>
+<main>
 {body}
+</main>
 </body></html>
 """
 
 
-def to_pdf(html_path, pdf_path, failed=None):
-    """Print with Chrome or WeasyPrint; leave no PDF when neither succeeds.
+def to_pdf(html_path, pdf_path, failed=None, timeout=None):
+    """Print with scan_report_kit.pdf.to_pdf (Chrome, else WeasyPrint); leave no PDF when neither succeeds.
 
-    Engines that were found but did not produce a PDF are appended to `failed`.
+    Engines that were found but did not produce a PDF, and a CHROME that does
+    not exist, are appended to `failed` as one readable string each. Engine
+    stderr is scrubbed (redaction.scrub_line) before it is recorded.
     """
     failed = [] if failed is None else failed
-    pdf = Path(pdf_path)
-    pdf.unlink(missing_ok=True)
     chrome = os.environ.get("CHROME")
-    # Chrome refuses to start its sandbox as root (containers, CI runners).
-    # The page is a local file this script just wrote, not a remote site.
-    sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
-    for c in ([chrome] if chrome else CHROME_CANDIDATES):
-        exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
-        if not exe:
-            if chrome:
-                failed.append(f"CHROME={chrome} (not found)")
-            continue
-        with tempfile.TemporaryDirectory() as profile:
-            try:
-                proc = subprocess.Popen(
-                    [exe, "--headless=new", "--disable-gpu", "--no-pdf-header-footer", *sandbox,
-                     f"--user-data-dir={profile}", f"--print-to-pdf={pdf}", Path(html_path).resolve().as_uri()],
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except OSError:
-                continue
-            # Chrome may keep running after writing: wait until the file stops growing.
-            complete = False
-            last, deadline = -1, time.monotonic() + 120
-            while time.monotonic() < deadline:
-                status = proc.poll()
-                size = pdf.stat().st_size if pdf.exists() else -1
-                if status is not None:
-                    complete = status == 0 and size > 0
-                    break
-                if size > 0 and size == last:
-                    complete = True
-                    break
-                last = size
-                time.sleep(0.5)
-            status = proc.poll()
-            if status is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-            elif status != 0:
-                complete = False
-        if complete and pdf.exists() and pdf.stat().st_size > 0:
-            return "chrome"
-        failed.append(f"{exe} (exit {status})" if status is not None else f"{exe} (timed out)")
-        pdf.unlink(missing_ok=True)
-    wp = shutil.which("weasyprint")
-    if wp:
-        try:
-            r = subprocess.run([wp, str(html_path), str(pdf)], capture_output=True, text=True, timeout=120)
-        except (OSError, subprocess.TimeoutExpired):
-            pass
-        else:
-            if r.returncode == 0 and pdf.exists() and pdf.stat().st_size > 0:
-                return "weasyprint"
-        failed.append(f"{wp}")
-    pdf.unlink(missing_ok=True)
-    return None
+    if chrome and not (os.path.isabs(chrome) and os.path.exists(chrome)) and not shutil.which(chrome):
+        failed.append(f"CHROME={chrome} (not found)")
+    failures = []
+    engine = kit_pdf.to_pdf(html_path, pdf_path, failures, kit_pdf.pdf_timeout() if timeout is None else timeout,
+                            redact=scrub_line)
+    failed.extend(f"{name} ({reason})" + (f": {detail}" if detail else "") for name, reason, detail in failures)
+    if engine is None:
+        Path(pdf_path).unlink(missing_ok=True)  # A failed engine's partial output is not an assessment.
+    return engine
+
+
+OUTPUTS = ("dashboard.html", "assessment.html", "assessment.pdf")
 
 
 def output_dir_problem(out, repo):
@@ -1330,9 +1287,9 @@ def output_dir_problem(out, repo):
         root, target = Path(repo).resolve(), out.resolve()
         if target == root or root in target.parents:
             return f"{out} is inside the assessed repository {repo}; write outputs elsewhere"
-    for name in ("dashboard.html", "assessment.html", "assessment.pdf"):
-        if (out / name).is_symlink():
-            return f"{out / name} is a symlink; refusing to write through it"
+    target = unsafe_target(out, OUTPUTS)
+    if target:
+        return f"{target} is a symlink or not a regular file; refusing to write through it"
     return None
 
 
@@ -1369,21 +1326,21 @@ def main(argv=None):
     try:
         out.mkdir(parents=True, exist_ok=True)
         pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
-        write_text_atomic(out / "dashboard.html", dashboard)
-        write_text_atomic(assessment, page)
+        write_output(out / "dashboard.html", dashboard)
+        write_output(assessment, page)
     except OSError as e:
         print(f"render: cannot write {out}: {e.strerror or e}", file=sys.stderr)
         return 2
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
         failed = []
-        engine = to_pdf(assessment, pdf, failed)
+        engine = to_pdf(assessment, pdf, failed, kit_pdf.pdf_timeout(len(data.get("findings", []))))
         if engine:
             print(f"wrote {pdf} ({engine})")
         else:
             note = L["pdf_failed"] if failed else L["pdf_missing"]
             try:
-                write_text_atomic(assessment, render_assessment(data, L, a.lang, sources, note))
+                write_output(assessment, render_assessment(data, L, a.lang, sources, note))
             except OSError as e:
                 print(f"render: cannot write {assessment}: {e.strerror or e}", file=sys.stderr)
                 return 2

@@ -94,7 +94,19 @@ make demo LANG_OUT=ja                      # render the sample report
 Python 3.10+, standard library only. PDF output uses headless Chrome / Chromium
 (`CHROME=/path/to/chrome` to override), or WeasyPrint when no Chrome is found,
 and is skipped with a warning if neither works; then run
-`contract_check.py OUT --no-pdf`.
+`contract_check.py OUT --no-pdf`. Each engine gets a timeout scaled to the
+number of findings (`SCAN_REPORT_PDF_TIMEOUT=<seconds>` to override).
+
+The dashboard and the assessment use the shared *-scan report format,
+[scan-report-kit](https://github.com/simota/scan-report-kit): its design
+document (`docs/design.md` in that repository) sets the journal-style
+assessment (numbered sections, captioned booktabs tables, one mincho face for
+both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
+engine and safe writes are vendored under `skills/infra-scan/scripts/scan_report_kit/`;
+`render.py` adds only the rules for infra-scan's own records (attack paths,
+perspective status, covered and excluded rows). Change the kit upstream and
+re-vendor, never in place: `make check` verifies the copy against
+`scripts/scan_report_kit/MANIFEST`.
 
 ## Layout
 
@@ -109,6 +121,7 @@ skills/infra-scan/
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts
   scripts/common.py        shared constants, JSON loading and atomic writes
+  scripts/scan_report_kit/ vendored scan-report-kit: shared stylesheets, PDF engine, safe writes
   templates/               issue and report drafts (ja/en)
 examples/                  sample findings.json (ja/en)
 tests/                     unit tests and fixtures

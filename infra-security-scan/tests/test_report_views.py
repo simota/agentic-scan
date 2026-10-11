@@ -27,9 +27,13 @@ def pages(source, lang):
 class ReportViewTest(unittest.TestCase):
     def test_print_css_wraps_excerpts_and_forces_light_colors(self):
         dash, report = pages(SAMPLE, "en")
-        for page in (dash, report):
-            self.assertIn("@media print{.snippet{white-space:pre-wrap;overflow:visible}}", page)
-            self.assertIn("@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light", page)
+        # Printed excerpts wrap: inside the dashboard's print block; always in the paper document.
+        self.assertRegex(dash, r"@media print\{[^@]*\.snippet\{white-space:pre-wrap;overflow:visible\}")
+        self.assertRegex(report, r"\.snippet\{[^}]*white-space:pre-wrap;[^}]*overflow:visible")
+        # Print is light: the dashboard forces its light tokens; the document has no dark theme at all.
+        self.assertIn("@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light", dash)
+        self.assertNotIn("prefers-color-scheme", report)
+        self.assertNotIn("data-theme", report)
         self.assertIn("tr.row:not([hidden])+tr.detail{display:table-row!important}", dash)
         self.assertNotIn("tr.detail{display:table-row!important}}", dash.replace("+tr.detail", ""))
         self.assertIn(".ap{break-inside:avoid-page}", report)

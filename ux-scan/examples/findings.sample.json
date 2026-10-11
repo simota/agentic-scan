@@ -1,0 +1,608 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "Tasklane (fictional sample)",
+    "date": "2026-10-12",
+    "assessor": "ux-scan / sample data",
+    "scope": "examples/tasklane: sign-up, dashboard and task list, archive, settings, app shell",
+    "method": "Static review of routes, components, styles and locale files against the primary flows, the token scales and WCAG 2.2 AA",
+    "commit": "sample",
+    "viewports": [
+      "360x640",
+      "768x1024",
+      "1280x800"
+    ],
+    "locales": [
+      "en",
+      "de",
+      "ja"
+    ]
+  },
+  "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every button, and German labels are cut off.",
+  "findings": [
+    {
+      "id": "U-001",
+      "title": "Sign-up clears every field when the server rejects the request",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM5",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "Input is preserved across errors (WCAG 2.2 SC 3.3.7 Redundant Entry; error recovery heuristic)",
+      "location": "src/components/SignupForm.tsx:18",
+      "occurrences": [
+        "src/components/SignupForm.tsx:18",
+        "src/components/SignupForm.tsx:19"
+      ],
+      "observed": "if (!res.ok) { setEmail(\"\"); setPassword(\"\"); setError(...) }",
+      "expected": "Keep the email, clear only the password if policy requires it, and show the error next to the field that caused it.",
+      "impact": "Any rejected sign-up (taken email, weak password, a 5xx) sends the visitor back to an empty form; many will not retype.",
+      "fix": "Remove the two resets on failure; map the server error to the field and move focus to it.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "submit() is the form's onSubmit (SignupForm.tsx:25); the resets run on every non-OK response.",
+        "intent_checked": "No comment or setting asks for the reset; the password field could be cleared for security, the email has no such reason."
+      }
+    },
+    {
+      "id": "U-002",
+      "title": "Task rows open only on mouse click",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AX2",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "WCAG 2.2 SC 2.1.1 Keyboard",
+      "location": "src/components/TaskList.tsx:15",
+      "observed": "<div className=\"task-title\" onClick={() => api.open(task.id)}>",
+      "expected": "A <button> or <a href> that opens the task, reachable with Tab and operable with Enter/Space.",
+      "impact": "Keyboard and switch users cannot open any task, so the primary flow stops at the list.",
+      "fix": "Render the title as a link to the task (or a button) instead of a clickable div.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory click_handlers: div without role, tabindex or key handler; no parent element handles keys.",
+        "intent_checked": "No other control on the row opens the task; the only other control is delete."
+      },
+      "references": [
+        {
+          "type": "standard",
+          "title": "WCAG 2.2 Understanding 2.1.1",
+          "url": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html"
+        }
+      ]
+    },
+    {
+      "id": "U-003",
+      "title": "Delete is an icon-only button with no accessible name",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AX4",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "WCAG 2.2 SC 4.1.2 Name, Role, Value",
+      "location": "src/components/TaskList.tsx:16",
+      "observed": "<button className=\"icon-btn\" onClick={...}><Trash2 /></button>",
+      "expected": "<button aria-label=\"Delete task: {title}\">",
+      "impact": "Screen readers announce \"button\" on every row; the delete step of the primary flow cannot be identified.",
+      "fix": "Add an aria-label naming the action and the task; keep the icon aria-hidden.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory icon_buttons; lucide-react icons render an aria-hidden SVG with no title.",
+        "intent_checked": "No visually hidden text or tooltip inside the button."
+      }
+    },
+    {
+      "id": "U-004",
+      "title": "Deleting a task is immediate, with no confirmation or undo",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FB4",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "Destructive actions are confirmed or undoable (error prevention heuristic; WCAG 2.2 SC 3.3.4 by analogy)",
+      "location": "src/components/TaskList.tsx:16",
+      "observed": "onClick={() => api.remove(task.id)} sends DELETE on the first click",
+      "expected": "Delete with an undo toast (preferred for a single task), or a confirmation naming the task.",
+      "impact": "A mis-tap on a 20px icon next to the title permanently removes the task; nothing tells the user it happened.",
+      "fix": "Remove optimistically and show an undo toast that cancels the DELETE for a few seconds.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory destructive_actions; api.remove (src/api.ts:3) issues DELETE directly; no confirm, dialog or undo in the file.",
+        "intent_checked": "No trash or archive step exists in the API module."
+      }
+    },
+    {
+      "id": "U-005",
+      "title": "480px sidebar overflows the 360px phone viewport",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "RS2",
+      "flow_ref": "FL-02",
+      "screen": "Dashboard (/)",
+      "viewport": "360x640",
+      "criterion": "Supported viewports 360–1280 (docs/design.md:3); WCAG 2.2 SC 1.4.10 Reflow",
+      "location": "src/styles/app.css:6",
+      "observed": ".sidebar { width: 480px; flex-shrink: 0; } with no rule for small screens",
+      "expected": "The sidebar collapses or stacks below 640px; the task list is visible without horizontal scrolling.",
+      "impact": "On a phone the task list starts 480px to the right: the primary flow requires horizontal scrolling to begin.",
+      "fix": "Make the sidebar a drawer below the 640px breakpoint and let it shrink above it.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory fixed_widths 480px (wider than smallest viewport 360); the only media query (app.css:18) touches .card only.",
+        "intent_checked": "The design notes list 360x640 as supported."
+      }
+    },
+    {
+      "id": "U-006",
+      "title": "Viewport meta disables pinch zoom",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "RS4",
+      "flow_ref": "FL-05",
+      "screen": "Every page",
+      "criterion": "WCAG 2.2 SC 1.4.4 Resize Text",
+      "location": "index.html:5",
+      "observed": "maximum-scale=1, user-scalable=no",
+      "expected": "width=device-width, initial-scale=1",
+      "impact": "Low-vision users cannot enlarge 12–15px text on phones (Safari ignores it, Chrome and others honour it).",
+      "fix": "Drop maximum-scale and user-scalable from the viewport meta.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory viewport_meta blocks_zoom: true; index.html is the single entry page.",
+        "intent_checked": "No comment explains it; it is not needed to stop input zoom when inputs are 16px."
+      }
+    },
+    {
+      "id": "U-007",
+      "title": "Add-task dialog does not trap, return or release focus",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AX3",
+      "flow_ref": "FL-02",
+      "screen": "Add task dialog (/)",
+      "criterion": "WCAG 2.2 SC 2.4.3 Focus Order; ARIA APG dialog pattern",
+      "location": "src/components/AddTaskModal.tsx:7",
+      "observed": "<div className=\"modal panel\"> with no role, aria-modal, focus move, Escape handler or focus return",
+      "expected": "role=\"dialog\" aria-modal with a label; focus moves into it, Tab stays inside, Escape closes, focus returns to \"New task\".",
+      "impact": "Keyboard users tab behind the open dialog and screen readers do not announce it; adding a task is slow and confusing.",
+      "fix": "Use a dialog primitive (native <dialog> with showModal(), or the design system's) instead of a positioned div.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "AddTaskModal.tsx:7-12 has no focus or key handling; Dashboard.tsx:19 renders it inline.",
+        "intent_checked": "No dialog library is installed or imported."
+      }
+    },
+    {
+      "id": "U-008",
+      "title": "Archive has a route but no navigation entry",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "IA2",
+      "flow_ref": "FL-03",
+      "screen": "Main navigation",
+      "criterion": "Every supported task is reachable from the navigation (findability heuristic)",
+      "location": "src/components/Nav.tsx:7",
+      "occurrences": [
+        "src/components/Nav.tsx:7",
+        "src/App.tsx:17"
+      ],
+      "observed": "Nav links / and /settings; /archive is defined in App.tsx but nothing links to it",
+      "expected": "An \"Archive\" item in the main navigation or a link from the task list.",
+      "impact": "Members cannot find archived tasks unless they type the URL: a secondary task is blocked.",
+      "fix": "Add a NavLink to /archive.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory orphan_routes lists /archive; no href, to= or navigate() reaches it.",
+        "intent_checked": "Archive.tsx is complete, not behind a feature flag."
+      }
+    },
+    {
+      "id": "U-009",
+      "title": "Email error appears on the first keystroke",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM3",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "Validate on blur or submit, not while typing (form usability); WCAG 2.2 SC 3.3.1 Error Identification",
+      "location": "src/components/SignupForm.tsx:11",
+      "observed": "onChange runs the email check and sets \"Invalid input\" until the address is complete",
+      "expected": "Check on blur and on submit; once shown, clear the message as soon as the value becomes valid.",
+      "impact": "Every visitor sees an error while typing a correct address, at the first step of the product.",
+      "fix": "Move the check to onBlur and submit; keep the live re-check only after the first error.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "onEmail is the email input's onChange (SignupForm.tsx:26).",
+        "intent_checked": "No debounce or touched-state guard."
+      }
+    },
+    {
+      "id": "U-010",
+      "title": "Task list has no loading, empty or error state",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FB1",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "Visibility of system status; every data view has loading, empty and error states",
+      "location": "src/components/TaskList.tsx:8",
+      "observed": "fetch(...).then(setTasks) with no pending flag, no catch and no zero-items branch",
+      "expected": "A skeleton while loading, an empty state that offers \"New task\", and an error with retry.",
+      "impact": "A new member sees a blank area and cannot tell \"loading\", \"no tasks\" and \"failed\" apart; failures are silent.",
+      "fix": "Track status (loading / error / ready) and render the three states; add .catch with a retry.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory state_branches: TaskList.tsx missing loading, error, empty.",
+        "intent_checked": "No Suspense or error boundary wraps TaskList in Dashboard.tsx."
+      }
+    },
+    {
+      "id": "U-011",
+      "title": "Sign-up errors say \"Invalid input\" and \"Error 500\"",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CP2",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "Error messages say what went wrong and how to fix it (WCAG 2.2 SC 3.3.3 Error Suggestion)",
+      "location": "src/i18n/en.json:4",
+      "occurrences": [
+        "src/i18n/en.json:4",
+        "src/i18n/de.json:4",
+        "src/i18n/ja.json:4"
+      ],
+      "observed": "\"invalid\": \"Invalid input\", \"failed\": \"Error 500\"",
+      "expected": "\"Enter an email like name@example.com\" / \"We couldn't create your account. Try again in a minute.\"",
+      "impact": "Visitors do not learn what to change; a status code reads as a crash.",
+      "fix": "Rewrite both strings in every locale; distinguish \"email taken\" from server failure.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Both keys are rendered by SignupForm.tsx:11 and :20.",
+        "intent_checked": "Copy only; brand voice is out of scope (brand-scan)."
+      }
+    },
+    {
+      "id": "U-012",
+      "title": "Two primary buttons compete on the dashboard",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "VH1",
+      "flow_ref": "FL-02",
+      "screen": "Dashboard (/)",
+      "criterion": "One primary action per view (visual hierarchy)",
+      "location": "src/pages/Dashboard.tsx:15",
+      "occurrences": [
+        "src/pages/Dashboard.tsx:15",
+        "src/pages/Dashboard.tsx:16"
+      ],
+      "observed": "\"New task\" and \"Import\" both variant=\"primary\", side by side",
+      "expected": "\"New task\" primary; \"Import\" secondary or in an overflow menu.",
+      "impact": "The main action of the product has no visual priority over a rarely used one.",
+      "fix": "Make Import variant=\"secondary\".",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Both are the design-system Button with the same variant.",
+        "intent_checked": "No onboarding state that would favour Import."
+      }
+    },
+    {
+      "id": "U-013",
+      "title": "Settings \"Save\" is a hand-styled link: no keyboard access, off-system style",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CC2",
+      "flow_ref": "FL-04",
+      "screen": "Settings (/settings)",
+      "criterion": "Use the design-system Button for actions; WCAG 2.2 SC 2.1.1 Keyboard",
+      "location": "src/pages/Settings.tsx:9",
+      "observed": "<a className=\"save-link\" style={{ padding: 10, background: \"#2563eb\" }} onClick={save}> without href",
+      "expected": "<Button variant=\"primary\" onClick={save}>",
+      "impact": "Save cannot be reached with Tab and looks unlike every other button: a secondary task is blocked for keyboard users.",
+      "fix": "Replace the anchor with the shared Button component.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory click_handlers (a without href) and spacing 10px off the scale.",
+        "intent_checked": "Button.tsx exists and is used on the dashboard."
+      }
+    },
+    {
+      "id": "U-014",
+      "title": "Focus outline removed from every button with no replacement",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "ST2",
+      "flow_ref": "FL-05",
+      "screen": "Every page",
+      "criterion": "WCAG 2.2 SC 2.4.7 Focus Visible",
+      "location": "src/styles/app.css:4",
+      "observed": ".btn:focus { outline: none; }",
+      "expected": ".btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }",
+      "impact": "Keyboard users lose track of where they are on every screen that uses the shared button.",
+      "fix": "Delete the rule and add a :focus-visible style from the tokens.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory focus_outline: no replacement in the rule, no :focus-visible in the file or tokens.css.",
+        "intent_checked": "No global focus style elsewhere."
+      }
+    },
+    {
+      "id": "U-015",
+      "title": "German button labels are cut to \"Neue Aufgab…\"",
+      "severity": "Medium",
+      "confidence": "Runtime-dependent",
+      "status": "Open",
+      "perspective": "IN1",
+      "flow_ref": "FL-02",
+      "screen": "Dashboard (/)",
+      "criterion": "Labels fit the longest shipped locale (de)",
+      "location": "src/styles/app.css:13",
+      "observed": ".btn-label { max-width: 120px; white-space: nowrap; text-overflow: ellipsis }",
+      "expected": "Labels wrap or the button grows; truncation only where the full text is available.",
+      "impact": "German users see \"Neue Aufgab…\" on the main action; \"Einstellungen\" is clipped as a title.",
+      "fix": "Remove max-width from .btn-label; keep ellipsis only on .task-title with a title attribute.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "inventory locale_expansion de: task.new 2.75x (22 vs 8 characters); at 14px, 22 characters exceed 120px.",
+        "intent_checked": "Exact width depends on the font; not rendered."
+      }
+    },
+    {
+      "id": "U-016",
+      "title": "Email field typed as text, without labels or autocomplete",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM4",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "WCAG 2.2 SC 1.3.5 Identify Input Purpose; SC 3.3.2 Labels or Instructions",
+      "location": "src/components/SignupForm.tsx:26",
+      "occurrences": [
+        "src/components/SignupForm.tsx:26",
+        "src/components/SignupForm.tsx:27"
+      ],
+      "observed": "type=\"text\" name=\"email\" placeholder=\"Email\"; password with placeholder only; no autocomplete",
+      "expected": "Visible <label>s; type=\"email\" autocomplete=\"email\"; autocomplete=\"new-password\".",
+      "impact": "Phones show the wrong keyboard, password managers do not fill, and the placeholder label vanishes on input.",
+      "fix": "Add labels and the input types and autocomplete tokens.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory inputs: label, autocomplete, type=email missing; placeholder_only.",
+        "intent_checked": "No wrapping <label> or aria-label."
+      }
+    },
+    {
+      "id": "U-017",
+      "title": "\"Create account\" stays active while the request runs",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "ST3",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "Pending state on submit; prevent double submission",
+      "location": "src/components/SignupForm.tsx:30",
+      "observed": "No pending state; the button is never disabled or relabelled",
+      "expected": "aria-busy / disabled with \"Creating account…\" until the response.",
+      "impact": "Slow networks invite a second click and a duplicate request; there is no sign that anything happened.",
+      "fix": "Track a submitting flag; disable the button and show progress while it is set.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory state_branches: SignupForm.tsx missing loading.",
+        "intent_checked": "The API's duplicate handling was not read."
+      }
+    },
+    {
+      "id": "U-018",
+      "title": "Avatars have no alt text or dimensions",
+      "severity": "Low",
+      "confidence": "Runtime-dependent",
+      "status": "Open",
+      "perspective": "PP2",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "Reserve space for media (Cumulative Layout Shift); WCAG 2.2 SC 1.1.1 Non-text Content",
+      "location": "src/components/TaskList.tsx:14",
+      "observed": "<img src={task.assignee.avatar} className=\"avatar\" />",
+      "expected": "<img alt=\"\" width={24} height={24}> (decorative next to the assignee's name) or alt with the name.",
+      "impact": "Rows jump as avatars load, moving the delete icon under the pointer; screen readers read the file URL.",
+      "fix": "Add width, height and alt.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory images: missing alt and dimensions; .avatar sets no size (app.css:14).",
+        "intent_checked": "The size of the shift depends on the image."
+      }
+    },
+    {
+      "id": "U-019",
+      "title": "Spacing and type literals off the token scales",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "LG2",
+      "flow_ref": "FL-05",
+      "screen": "Cards, sidebar title, settings",
+      "criterion": "Spacing scale 4/8/12/16/24/32 and type scale 12–32 (src/styles/tokens.css:2-3)",
+      "location": "src/styles/app.css:7",
+      "occurrences": [
+        "src/styles/app.css:7",
+        "src/styles/app.css:8",
+        "src/pages/Settings.tsx:9"
+      ],
+      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px; padding: 10",
+      "expected": "var(--space-3), var(--space-4), var(--text-md)",
+      "impact": "Cards and headings sit off the rhythm of the rest of the UI.",
+      "fix": "Replace the literals with the nearest tokens.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px.",
+        "intent_checked": "No comment justifies the values."
+      }
+    },
+    {
+      "id": "U-020",
+      "title": "Dropdown z-index 99999 sits above modals and toasts",
+      "severity": "Low",
+      "confidence": "Runtime-dependent",
+      "status": "Open",
+      "perspective": "LG3",
+      "flow_ref": "FL-05",
+      "screen": "Any page with a dropdown",
+      "criterion": "Layer scale dropdown 10 < modal 100 < toast 1000 (docs/design.md:7)",
+      "location": "src/styles/app.css:9",
+      "observed": ".dropdown { z-index: 99999 }",
+      "expected": "z-index: var(--z-dropdown)",
+      "impact": "An open dropdown would cover a dialog opened from it and hide toasts.",
+      "fix": "Use the token.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "inventory off_scale z_index 99999.",
+        "intent_checked": "No dropdown component exists yet in the fixture; the class is shared CSS."
+      }
+    },
+    {
+      "id": "U-021",
+      "title": "Motion ignores prefers-reduced-motion",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "MO2",
+      "flow_ref": "FL-02",
+      "screen": "Add task dialog, spinners",
+      "criterion": "WCAG 2.2 SC 2.3.3 Animation from Interactions (AAA); platform reduced-motion setting",
+      "location": "src/styles/app.css:15",
+      "occurrences": [
+        "src/styles/app.css:15",
+        "src/styles/app.css:16"
+      ],
+      "observed": ".panel { transition: transform 600ms } and an infinite spin, no reduced-motion query",
+      "expected": "@media (prefers-reduced-motion: reduce) { .panel { transition: none } }; 200–300ms for the panel.",
+      "impact": "The dialog slides for 0.6s every time, including for people who asked their OS for less motion.",
+      "fix": "Shorten the transition and add a reduced-motion override.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory motion: 2 declarations, reduced_motion empty.",
+        "intent_checked": "No JS motion library."
+      }
+    },
+    {
+      "id": "U-022",
+      "title": "Skip link z-index 9999 off the layer scale",
+      "severity": "Info",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "LG3",
+      "flow_ref": "FL-05",
+      "screen": "Every page",
+      "criterion": "Layer scale (src/styles/tokens.css:4)",
+      "location": "src/styles/app.css:2",
+      "observed": ".skip-link:focus { z-index: 9999 }",
+      "expected": "—",
+      "impact": "None: a focused skip link must sit above everything.",
+      "fix": "None.",
+      "validation": {
+        "verdict": "FalsePositive",
+        "evidence": "The value applies only while the skip link has focus; topmost is the intent."
+      }
+    }
+  ],
+  "perspectives": [
+    {
+      "name": "IA Information architecture",
+      "result": "1 finding",
+      "note": "Routes against links; /signup is reached from the marketing site (decisions)."
+    },
+    {
+      "name": "LG Layout and grid",
+      "result": "2 findings, 1 excluded",
+      "note": "Off-scale literals and layers; safe areas N/A (no fixed bars)."
+    },
+    {
+      "name": "RS Responsive",
+      "result": "2 findings",
+      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is below WCAG 2.5.8's 24px; listed in next_steps with the delete-control fixes."
+    },
+    {
+      "name": "VH Visual hierarchy",
+      "result": "1 finding",
+      "note": "The dashboard has no h1 and the sidebar uses h3 for size; noted for the heading pass, no separate finding."
+    },
+    {
+      "name": "CC Components and consistency",
+      "result": "1 finding",
+      "note": "One Button component; no duplicates."
+    },
+    {
+      "name": "ST Interaction states",
+      "result": "2 findings",
+      "note": "Hover and selected states are not defined anywhere; recorded under decisions."
+    },
+    {
+      "name": "FM Forms and input",
+      "result": "3 findings",
+      "note": "Sign-up form, add-task and settings inputs."
+    },
+    {
+      "name": "FB Feedback and status",
+      "result": "2 findings",
+      "note": "Settings save() is a stub in the fixture, so its success feedback was not judged."
+    },
+    {
+      "name": "CP Content and microcopy",
+      "result": "1 finding",
+      "note": "Button labels are verb + object."
+    },
+    {
+      "name": "AX Accessibility",
+      "result": "3 findings",
+      "note": "html lang set; skip link present; contrast not measurable without rendered colours (limitations)."
+    },
+    {
+      "name": "MO Motion",
+      "result": "1 finding",
+      "note": "No auto-play or carousels."
+    },
+    {
+      "name": "IN Internationalized layout",
+      "result": "1 finding",
+      "note": "No RTL locale ships; ja strings are narrower than en."
+    },
+    {
+      "name": "PP Perceived performance",
+      "result": "1 finding",
+      "note": "Skeleton absence is part of U-010."
+    }
+  ],
+  "checked_ok": [
+    "Main navigation is a <nav> with a label, and NavLink sets aria-current on the active item.",
+    "Add-task and settings inputs have programmatic labels; settings name has autocomplete=\"name\".",
+    "<html lang=\"en\"> and a skip link to #main are present."
+  ],
+  "limitations": [
+    "This is fictional sample data for the renderer, not a review of a real product.",
+    "Static review: nothing was rendered, so contrast, exact truncation widths and overlap are inferred from code."
+  ],
+  "decisions": [
+    "Is /signup intentionally reachable only from the marketing site? It has no in-app link (inventory orphan_routes).",
+    "Hover and selected states are undefined in the tokens; decide whether the design system should own them."
+  ],
+  "next_steps": [
+    "Fix U-001 to U-005 first: they block the two primary flows.",
+    "Enlarge .icon-btn (app.css:12) to at least 24x24px, 44 preferred, with the U-003 and U-004 fixes.",
+    "Re-run inventory.py --flows after the fixes and render the dashboard at 360px to confirm U-005 and U-015."
+  ]
+}

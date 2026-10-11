@@ -1,0 +1,20 @@
+.skip-link { position: absolute; left: -999px; }
+.skip-link:focus { left: 8px; z-index: 9999; }
+.btn { padding: 8px 16px; border-radius: 6px; }
+.btn:focus { outline: none; }
+.layout { display: flex; }
+.sidebar { width: 480px; flex-shrink: 0; }
+.card { padding: 13px; margin-bottom: 18px; }
+.title { font-size: 15px; font-weight: 600; }
+.dropdown { position: absolute; z-index: 99999; }
+.modal { position: fixed; z-index: 100; }
+.toast { position: fixed; z-index: 1000; }
+.icon-btn { width: 20px; height: 20px; padding: 0; }
+.task-title, .btn-label { max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.avatar { border-radius: 50%; }
+.panel { transition: transform 600ms ease-in-out; }
+.spinner { animation: spin 1s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (max-width: 700px) {
+  .card { padding: 12px; }
+}

@@ -101,6 +101,14 @@ and update their target files.
 Reports retain the recorded review method even with zero findings, and the
 dashboard preserves line breaks and indentation in analysis commands.
 
+The dashboard uses the shared *-scan report format,
+[scan-report-kit](https://github.com/simota/scan-report-kit): its
+journal-style stylesheet (light and dark themes, serif text, booktabs tables,
+severity inks) followed only by rules for privacy-scan's own records. The kit
+is vendored in `skills/privacy-scan/scripts/scan_report_kit/`; change it
+upstream and re-vendor, never in place (`make check` verifies the copy
+against its MANIFEST).
+
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report for an owner or
 DPO). An open High goes to a private tracker. Filing or sending stays with you.
@@ -119,6 +127,7 @@ skills/privacy-scan/
   scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files
+  scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or DPO
 examples/findings.sample.json  fictional sample for make demo / make check

@@ -156,6 +156,15 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(
             [p for p in findings.contract_problems(out, ["notes.txt"]) if "notes.txt" in p], [])
 
+    def test_order_problems_name_renumber_as_the_remedy(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("A-001", "Low"), finding("A-003", "High")]
+        order = [p for p in findings.contract_problems(self.build(doc))
+                 if "gapless" in p or "severity order" in p]
+        self.assertEqual(len(order), 2, order)
+        for problem in order:
+            self.assertIn("run renumber", problem)
+
     def test_render_escapes_html_and_writes_both_languages(self):
         doc = complete_doc()
         doc["findings"][0]["title"] = "<b>raw</b>"

@@ -158,7 +158,7 @@ Never edit `findings.json` by hand; every correction is a fragment:
   `analysis` objects are replaced whole
 
 When `check` fails: correct the record with a fragment, `renumber` if a
-finding was added or regraded, render, and check again.
+finding was added, regraded or excluded, render, and check again.
 
 ## Numbering
 
@@ -174,12 +174,13 @@ segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
 text (`A-001を`) or joined to another ID (`A-002/A-001`, `A-002-A-001`) is
 rewritten. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
-merge that adds or regrades a finding, then render.
+merge that adds, regrades or excludes a finding (excluded verdicts sort
+last), then render.
 
 After a renumber, use only the new IDs it printed. Merge matches findings by
 ID alone, so a fragment written earlier that updates `A-002` would change
 whichever finding is `A-002` now; rewrite or discard unmerged fragments before
-merging them. If a finding is added or regraded later, merge it, renumber
+merging them. If a finding is added, regraded or excluded later, merge it, renumber
 again and re-render.
 
 ## Merge guarantees

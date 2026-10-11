@@ -158,7 +158,7 @@ class ReportRenderingTests(unittest.TestCase):
                     outputs = self.render_outputs(doc, lang)
                     self.assertIn(f"| C-01 | no PII in errors |  | policy | {status} |",
                                   outputs["report.md"])
-                    self.assertIn("<tr><td>C-01</td><td>no PII in errors</td>"
+                    self.assertIn("<tr><td class='nowrap'>C-01</td><td>no PII in errors</td>"
                                   f"<td></td><td>policy</td><td>{status}</td></tr>",
                                   outputs["dashboard.html"])
 

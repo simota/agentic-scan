@@ -26,6 +26,7 @@ from urllib.parse import quote, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
                       file_mode, read_json, resolve_path, validate)
+from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
     "en": {
@@ -385,75 +386,49 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# Visual language shared with the security-scan dashboard: serif argument,
-# sans apparatus, ruled tables and cards instead of boxes.
+# The shared *-scan dashboard style (scan-report-kit, vendored in
+# scan_report_kit/) comes first; these rules cover only what performance-scan
+# renders differently: <details> findings, severity filter buttons, h2 section
+# rules, five summary cards and plain data tables.
 CSS = """
-:root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--fg:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;
---tint:#efede6;--accent:#1f3f66;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;
---serif:"Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",Georgia,serif;
---sans:system-ui,-apple-system,"Hiragino Sans","Noto Sans CJK JP","Noto Sans JP",sans-serif;
---mono:ui-monospace,SFMono-Regular,Menlo,monospace}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#17171a;--panel:#1f1f23;
---fg:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--tint:#26252a;--accent:#a9c3e6;--high:#f2a19a;
---medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}}
-:root[data-theme="light"]{color-scheme:light}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--fg:#ece9e2;--muted:#b3aea4;--line:#3a3936;
---soft:#2a2a2e;--tint:#26252a;--accent:#a9c3e6;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4}
-*{box-sizing:border-box}[hidden]{display:none!important}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.7 var(--serif);font-variant-numeric:lining-nums tabular-nums}
-main{max-width:1180px;margin:0 auto;padding:32px 28px 48px}
-a{color:var(--accent);text-underline-offset:3px}
-:focus-visible{outline:3px solid var(--accent);outline-offset:3px}
-h1,h2,h3{font-family:var(--serif);font-weight:700;letter-spacing:0}
-h1{font-size:clamp(26px,3.2vw,36px);line-height:1.25;margin:3px 0 9px}
-h2{font-size:19px;margin:36px 0 12px;padding-top:14px;border-top:1.5px solid var(--fg)}
-h3{font-size:15px;margin:0 0 6px}
-button,th,dt,summary .muted,.brand,.eyebrow,.meta,.card span,.badge,.filters,.section-note,.hero-aside{font-family:var(--sans)}
-.muted,.meta,.eyebrow,.section-note,.hero-aside{color:var(--muted)}
-.masthead{display:flex;justify-content:space-between;align-items:center;gap:12px;
-border-bottom:1.5px solid var(--fg);padding-bottom:14px;margin-bottom:26px}
-.brand{font-size:11px;font-weight:750;letter-spacing:.2em}
-.hero{display:flex;justify-content:space-between;gap:24px;margin-bottom:18px}
-.eyebrow{font-size:13px}.meta{font-size:13px;margin:0;max-width:820px}
-.hero-aside{align-self:flex-end;font-size:12px;text-align:right;max-width:300px;margin:0}
-.summary-banner{border-top:1px solid var(--fg);border-bottom:1px solid var(--fg);padding:14px 4px;margin:0 0 16px}
-.summary-banner strong{display:block;font-size:17px}
-.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:28px;margin:20px 0}
-.card{border-top:1.5px solid var(--fg);padding:12px 2px 6px}
-.card span{display:block;font-size:11px;letter-spacing:.08em;margin-bottom:6px}
-.card b{display:block;font-size:34px;line-height:1.25;font-weight:400}
-.High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
-.badge{font-size:11px;font-weight:750;letter-spacing:.1em;margin-right:6px}
-.section-note{font-size:12px;margin:0 0 10px}
+h2{margin:36px 0 12px;padding-top:14px;border-top:1.5px solid var(--text)}
+.lists h2{font-size:19px}
+dt,.meta,.hero-aside,.section-note{font-family:var(--sans)}
+.meta{font-size:13px;margin:0}
+.hero-aside{margin:0;color:var(--muted)}
+.summary-banner{margin:0 0 16px}
+.cards{grid-template-columns:repeat(5,minmax(0,1fr));margin:20px 0}
+.card .l.High{color:var(--high)}.card .l.Medium{color:var(--medium)}.card .l.Low{color:var(--low)}.card .l.Info{color:var(--info)}
+.badge{margin-right:6px}
+.section-note{margin:0 0 10px}
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
-button{font:inherit;font-family:var(--sans);font-size:13px;background:var(--panel);color:var(--fg);
-border:1px solid var(--line);border-radius:2px;padding:6px 12px;cursor:pointer}
-button:hover{background:var(--soft)}button[aria-pressed="true"]{border-color:var(--fg);background:var(--soft)}
+button{font-size:13px;padding:6px 12px}
+button[aria-pressed="true"]{border-color:var(--text);background:var(--soft)}
 details{border-top:1px solid var(--line);padding:12px 0}
 details:last-of-type{border-bottom:1px solid var(--line)}
 details[data-sev="High"]{border-top:2px solid var(--high)}details[data-sev="Medium"]{border-top:2px solid var(--medium)}
-summary{cursor:pointer;font-weight:700}
-summary .muted{font-weight:400;font-size:13px}
-.detail-actions{display:flex;justify-content:flex-end;margin:10px 0 0}
-dl{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 18px;margin:12px 0 4px;padding:14px 18px;background:var(--tint)}
+summary .small{font-weight:400;font-size:13px;margin-left:0}
+.detail-actions{justify-content:flex-end;margin:10px 0 0}
+details dl{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 18px;margin:12px 0 4px;padding:14px 18px;background:var(--tint)}
 dt{font-size:12px;color:var(--muted)}dd{margin:0}
 h1,summary,p,dd,td,li{overflow-wrap:anywhere}
 h1,summary,p,dd,td,li{white-space:pre-wrap}
-pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--fg);padding:2px 0 2px 10px}
-code{font:12px/1.6 var(--mono)}
-.tablewrap{overflow-x:auto;border-top:1.5px solid var(--fg);border-bottom:1.5px solid var(--fg)}
-table{border-collapse:collapse;width:100%}
-td,th{border-bottom:1px solid var(--line);padding:10px;text-align:left;vertical-align:top}
-th{font-size:11px;letter-spacing:.06em;font-weight:700;border-bottom:1px solid var(--fg)}
+pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--text);padding:2px 0 2px 10px}
+code{line-height:1.6}
+.tablewrap table{table-layout:auto}
+.tablewrap th{width:auto;overflow-wrap:normal}
+td,th{padding:10px}
 tr:last-child td{border-bottom:0}
-.lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:0 28px}
+.lists{gap:0 28px;margin-top:0}
 .lists ul{margin:0;padding-left:20px}
-@media (max-width:850px){main{padding:22px 16px}.hero{display:block}.hero-aside{text-align:left;max-width:none;margin-top:12px}
-.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
-@media (max-width:480px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card b{font-size:28px}}
-@media print{body{background:#fff}.tools,.filters,.detail-actions{display:none}main{padding:0;max-width:none}
-details{break-inside:avoid}.tablewrap{overflow:visible}}
+@media (max-width:850px){.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
+details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}
+.tablewrap table{display:table}.tablewrap thead{display:table-header-group}.tablewrap tbody{display:table-row-group}
+.tablewrap tr{display:table-row}.tablewrap td{display:table-cell}}
+@media (max-width:480px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card{padding:12px 2px 6px}}
+@media print{.filters,.detail-actions{display:none}details{break-inside:avoid}}
 """
+CSS = kit_style.dashboard_css() + CSS
 
 JS = """
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
@@ -541,7 +516,7 @@ def html_finding(f, t, meta):
     v = f["validation"]
     group = finding_group(f)
     excluded = is_excluded(f)
-    exclusion = (f" <span class='muted'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
+    exclusion = (f" <span class='small'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
                  if excluded else "")
     step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
     # One location per line: a path may itself contain ", ".
@@ -557,7 +532,7 @@ def html_finding(f, t, meta):
         rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
     out = [f"<details data-sev='{group}'><summary><span class='badge {f['severity']}'>"
            f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-           f"<span class='muted'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
+           f"<span class='small'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
            f"{exclusion}</summary>"
            f"<div class='detail-actions'><button type='button' class='copy-finding' "
            f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
@@ -594,8 +569,8 @@ def render_html(doc, lang):
            f"<p class='summary-banner'><strong>{e(incomplete_high)}</strong>{e(verdicts)}</p>",
            "<div class='cards'>"]
     for s in SEVERITIES:
-        out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
-    out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
+        out.append(f"<div class='card'><span class='l {s}'>{s}</span><b class='n'>{by_sev[s]}</b></div>")
+    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>")
     out.append(f"<h2>{e(t['findings'])}</h2><p class='section-note'>{e(t['findings_note'])}</p>"
                f"<div class='filters'><button type='button' data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button>"

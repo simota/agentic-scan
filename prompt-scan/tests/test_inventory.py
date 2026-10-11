@@ -46,6 +46,9 @@ class InventoryTest(unittest.TestCase):
             "prompts/a.md": "{{ name }\n<rules>\nkeep it\n" + ("Always cite the title of the source document you used.\n" * 2),
             "prompts/b.md": f"Use key {token}\n",
             "prompts/c.md": "```\n<example>\nTODO\n{\"user\": {\"id\": 1}}\n```\n<b>bold</b> <other tenant's id>\n",
+            # Inline code holds examples, not markup; the same tag outside it still counts.
+            "skills/x/SKILL.md": "Run `render.py <out> --lang <lang>` and `{{ name` then `TODO`.\n",
+            "skills/y/SKILL.md": "Use `<rules>` here.\n<rules>\nkeep it\n",
         })
         hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
         self.assertIn(("unbalanced-template", "prompts/a.md:1"), hits)
@@ -53,6 +56,8 @@ class InventoryTest(unittest.TestCase):
         self.assertIn(("duplicate-line", "prompts/a.md:5"), hits)
         self.assertIn(("secret-literal", "prompts/b.md:1"), hits)
         self.assertFalse([h for h in hits if h[1].startswith("prompts/c.md")], hits)
+        self.assertFalse([h for h in hits if h[1].startswith("skills/x/SKILL.md")], hits)
+        self.assertIn(("unclosed-tag", "skills/y/SKILL.md:2"), hits)
         text = json.dumps(inventory.scan(root))
         self.assertNotIn(token, text)
 

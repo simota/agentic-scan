@@ -415,16 +415,13 @@ h1,summary,p,dd,td,li{overflow-wrap:anywhere}
 h1,summary,p,dd,td,li{white-space:pre-wrap}
 pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--text);padding:2px 0 2px 10px}
 code{line-height:1.6}
-.tablewrap table{table-layout:auto}
-.tablewrap th{width:auto;overflow-wrap:normal}
+.tablewrap th{overflow-wrap:normal}
 td,th{padding:10px}
 tr:last-child td{border-bottom:0}
 .lists{gap:0 28px;margin-top:0}
 .lists ul{margin:0;padding-left:20px}
 @media (max-width:850px){.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}
-.tablewrap table{display:table}.tablewrap thead{display:table-header-group}.tablewrap tbody{display:table-row-group}
-.tablewrap tr{display:table-row}.tablewrap td{display:table-cell}}
+details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
 @media (max-width:480px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card{padding:12px 2px 6px}}
 @media print{.filters,.detail-actions{display:none}details{break-inside:avoid}}
 """

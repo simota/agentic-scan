@@ -447,13 +447,15 @@ copyText(b.dataset.llm).then(()=>done(b.dataset.copied),()=>done(b.dataset.faile
 """
 
 
-def html_table(headers, rows):
+def html_table(headers, rows, id_column=False):
+    """id_column: the first column holds IDs (B-01), which never wrap at the hyphen."""
     e = html_text
+    first = "<td class='nowrap'>" if id_column else "<td>"
     return ("<div class='tablewrap'><table><thead><tr>"
             + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
             + "</tr></thead><tbody>"
-            + "".join("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>"
-                      for row in rows)
+            + "".join("<tr>" + "".join(f"{first if i == 0 else '<td>'}{e(cell)}</td>" for i, cell in enumerate(row))
+                      + "</tr>" for row in rows)
             + "</tbody></table></div>")
 
 
@@ -579,7 +581,7 @@ def render_html(doc, lang):
     if doc.get("budgets"):
         out.append(f"<h2>{e(t['budgets'])}</h2>"
                    + html_table(budget_headers(t),
-                                [budget_cells(b, t, findings) for b in doc["budgets"]]))
+                                [budget_cells(b, t, findings) for b in doc["budgets"]], id_column=True))
     out.append(f"<h2>{e(t['perspectives'])}</h2>"
                + html_table((t["perspective_col"], t["status_col"], t["note"]),
                             perspective_rows(doc, lang)))

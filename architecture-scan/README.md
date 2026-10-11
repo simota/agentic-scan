@@ -117,6 +117,7 @@ skills/architecture-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; renumbers; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/scan_report_kit/     vendored scan-report-kit: the shared dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -128,7 +129,8 @@ tests/                         offline tests for the scripts and the documents
 ```sh
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
-             # scripts parse, sample renders in ja/en and passes the run contract
+             # scripts parse, the vendored scan-report-kit matches its MANIFEST,
+             # sample renders in ja/en and passes the run contract
 make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
 ```
 
@@ -137,3 +139,11 @@ Requirements: Python 3.9+. No third-party packages.
 The format follows the sibling `security-scan` and `performance-scan` skills
 (same phases, run contract, verdicts and report shape), adapted to application
 design.
+
+The dashboard uses the shared *-scan report format,
+[scan-report-kit](https://github.com/simota/scan-report-kit): its stylesheet
+(light and dark themes, journal-style typography) comes first, and `render.py`
+adds only the rules for architecture-scan's own records (the findings register,
+coloured severity bars). The kit is vendored in
+`skills/architecture-scan/scripts/scan_report_kit/`; change it upstream and
+re-vendor, never in place (`make check` verifies the copy).

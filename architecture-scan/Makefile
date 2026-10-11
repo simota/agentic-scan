@@ -152,7 +152,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	misses=$$( \
 	for f in $(DOCS); do \
 	  grep -ohE '`(reference|scripts|templates)/[A-Za-z][A-Za-z0-9._-]*`' "$$f" | tr -d '`' | sort -u | while read -r ref; do \
-	    [ -f $(QSKILL)/"$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
+	    [ -f $(QSKILL)/"$$ref" ] || [ -d $(QSKILL)/"$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
 	  done; \
 	done); \
 	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
@@ -170,11 +170,13 @@ check: test ## verify the skill is self-contained and internally consistent
 	[ "$$d" -le 400 ] || { echo "MISS description is $$d chars; listings truncate well before that" >&2; fail=1; }; \
 	if grep -nE '`[^`]*\.\./' $(DOCS) >&2; then \
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
-	for p in $(QSKILL)/scripts/*.py; do \
+	for p in $(QSKILL)/scripts/*.py $(QSKILL)/scripts/scan_report_kit/*.py; do \
 	  [ -e "$$p" ] || continue; \
 	  $(PYTHON) -W error -c 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \
 	done; \
+	( cd $(QSKILL)/scripts/scan_report_kit && shasum -a 256 -c --quiet MANIFEST ) >&2 \
+	  || { echo "MISS scripts/scan_report_kit differs from its MANIFEST - change scan-report-kit upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  [ -e "$$sample" ] || { echo "MISS no examples/findings.sample*.json to render and check" >&2; fail=1; continue; }; \

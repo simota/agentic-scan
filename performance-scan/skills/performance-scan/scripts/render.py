@@ -389,7 +389,7 @@ def render_markdown(doc, lang):
 # The shared *-scan dashboard style (scan-report-kit, vendored in
 # scan_report_kit/) comes first; these rules cover only what performance-scan
 # renders differently: <details> findings, severity filter buttons, h2 section
-# rules, five summary cards and plain data tables.
+# rules, summary card spacing and plain data tables.
 CSS = """
 h2{margin:36px 0 12px;padding-top:14px;border-top:1.5px solid var(--text)}
 .lists h2{font-size:19px}
@@ -397,7 +397,7 @@ dt,.meta,.hero-aside,.section-note{font-family:var(--sans)}
 .meta{font-size:13px;margin:0}
 .hero-aside{margin:0;color:var(--muted)}
 .summary-banner{margin:0 0 16px}
-.cards{grid-template-columns:repeat(5,minmax(0,1fr));margin:20px 0}
+.cards{margin:20px 0}
 .card .l.High{color:var(--high)}.card .l.Medium{color:var(--medium)}.card .l.Low{color:var(--low)}.card .l.Info{color:var(--info)}
 .badge{margin-right:6px}
 .section-note{margin:0 0 10px}
@@ -411,18 +411,16 @@ summary .small{font-weight:400;font-size:13px;margin-left:0}
 .detail-actions{justify-content:flex-end;margin:10px 0 0}
 details dl{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 18px;margin:12px 0 4px;padding:14px 18px;background:var(--tint)}
 dt{font-size:12px;color:var(--muted)}dd{margin:0}
-h1,summary,p,dd,td,li{overflow-wrap:anywhere}
+h1,summary,p,dd,li{overflow-wrap:anywhere}
 h1,summary,p,dd,td,li{white-space:pre-wrap}
 pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--text);padding:2px 0 2px 10px}
 code{line-height:1.6}
-.tablewrap th{overflow-wrap:normal}
 td,th{padding:10px}
 tr:last-child td{border-bottom:0}
 .lists{gap:0 28px;margin-top:0}
 .lists ul{margin:0;padding-left:20px}
-@media (max-width:850px){.cards{grid-template-columns:repeat(3,minmax(0,1fr));gap:16px}
-details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
-@media (max-width:480px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.card{padding:12px 2px 6px}}
+@media (max-width:850px){details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
+@media (max-width:480px){.card{padding:12px 2px 6px}}
 @media print{.filters,.detail-actions{display:none}details{break-inside:avoid}}
 """
 CSS = kit_style.dashboard_css() + CSS

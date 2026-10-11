@@ -6,8 +6,10 @@
 With --repo, each finding's `location` excerpt is embedded: read from the blob
 at `meta.commit` when the record names one (never from later working-tree
 edits), otherwise from the working tree. Credential-shaped values in excerpts
-are masked. The PDF is printed by headless Chrome/Chromium (CHROME overrides
-the path), else WeasyPrint.
+are masked. Styles, PDF printing and safe writes come from the vendored
+scan-report-kit (scan_report_kit/): the PDF is printed by headless
+Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
+PROMPT_SCAN_PDF_TIMEOUT seconds (default: 120 plus 0.05 per finding, at most 900).
 
 Exit codes: 0 written, 2 unreadable input or schema error, 3 HTML written but
 no PDF (no engine, or the engine failed; the message says which).
@@ -20,11 +22,11 @@ import json
 import os
 from pathlib import Path
 import re
-import shutil
 import subprocess
 import sys
-import tempfile
-import time
+
+from scan_report_kit import pdf as kit_pdf, style as kit_style
+from scan_report_kit.output import unsafe_target, write_output
 
 SEVERITIES = ["High", "Medium", "Low", "Info"]
 CONFIDENCES = ["Confirmed", "Model-dependent", "Suspected"]
@@ -54,7 +56,9 @@ LABELS = {
         "assessor": "Assessor", "scope": "Scope", "abstract": "Summary",
         "summary_line": "{total} findings ({defects} defects, {improvements} improvements); "
                         "{high} High, {medium} Medium. {excluded} excluded with evidence.",
-        "table_counts": "Table 1. Findings by severity and kind",
+        "table_counts": "Findings by severity and kind",
+        "running_footer": "PROMPT REVIEW", "cap_inventory": "Prompts in scope",
+        "cap_perspectives": "Coverage by perspective", "cap_evals": "Eval runs against findings",
         "severity": "Severity", "kind": "Kind", "total": "Total",
         "defect": "Defect", "improvement": "Improvement",
         "s_inventory": "Prompt inventory", "s_perspectives": "Perspectives", "s_findings": "Findings",
@@ -79,7 +83,9 @@ LABELS = {
         "assessor": "診断者", "scope": "範囲", "abstract": "要旨",
         "summary_line": "指摘 {total} 件（不具合 {defects} 件、改善提案 {improvements} 件）。"
                         "High {high} 件、Medium {medium} 件。根拠付きで除外 {excluded} 件。",
-        "table_counts": "表 1. 深刻度と種別ごとの指摘数",
+        "table_counts": "深刻度と種別ごとの指摘数",
+        "running_footer": "プロンプト診断", "cap_inventory": "対象プロンプト",
+        "cap_perspectives": "観点ごとの確認結果", "cap_evals": "指摘ごとの評価実行",
         "severity": "深刻度", "kind": "種別", "total": "合計",
         "defect": "不具合", "improvement": "改善提案",
         "s_inventory": "プロンプト一覧", "s_perspectives": "観点", "s_findings": "指摘",
@@ -327,40 +333,39 @@ def esc(value):
 def para(value):
     if isinstance(value, list):
         return "<ul>" + "".join(f"<li>{esc(v)}</li>" for v in value) + "</ul>"
-    return "<p>" + esc(value).replace("\n", "<br>") + "</p>"
+    return f'<p class="prose">{esc(value)}</p>'
 
 
-def excerpt_html(excerpt):
+def snippet_html(excerpt):
+    """A source excerpt as the kit's captioned listing: numbered lines, the cited range highlighted."""
     first, lines, (start, end) = excerpt
-    rows = []
-    for offset, line in enumerate(lines):
-        number = first + offset
-        cls = " hl" if start <= number <= end else ""
-        rows.append(f'<div class="row{cls}"><span class="ln">{number}</span><span class="src">{esc(line) or " "}</span></div>')
-    return '<div class="excerpt">' + "".join(rows) + "</div>"
+    rows = "".join(f'<span class="{"hit" if start <= first + i <= end else ""}"><b>{first + i:>4}</b>  {esc(line)}</span>'
+                   for i, line in enumerate(lines))
+    return f'<pre class="snippet">{rows}</pre>'
 
 
-def meta_rows(data, L):
+def meta_lines(data, L):
     meta = data.get("meta", {})
     commit = meta.get("commit")
     revision = (commit[:12] + (f" ({L['dirty']})" if meta.get("dirty") else "")) if commit else "—"
-    rows = [(L["target"], meta.get("target", "—")), (L["commit"], revision), (L["date"], meta.get("date", "—")),
-            (L["assessor"], meta.get("assessor", "—")), (L["scope"], meta.get("scope", "—"))]
-    return "".join(f"<tr><th>{esc(k)}</th><td>{esc(v)}</td></tr>" for k, v in rows)
+    rows = [(L["commit"], revision), (L["date"], meta.get("date") or "—"),
+            (L["assessor"], meta.get("assessor") or "—"), (L["scope"], meta.get("scope") or "—")]
+    return "".join(f'<p class="meta-line"><strong>{esc(k)}</strong><span>{esc(v)}</span></p>' for k, v in rows)
 
 
 def counts_table(data, L):
     active, by = counts(data)
-    head = "".join(f"<th>{esc(L[k])}</th>" for k in KINDS) + f"<th>{esc(L['total'])}</th>"
+    head = "".join(f'<th scope="col" class="num">{esc(L[k])}</th>' for k in KINDS) + \
+        f'<th scope="col" class="num">{esc(L["total"])}</th>'
     rows = []
     for s in SEVERITIES:
         cells = "".join(f'<td class="num">{by[(s, k)]}</td>' for k in KINDS)
-        rows.append(f'<tr><th><span class="sev sev-{s.lower()}">{s}</span></th>{cells}'
+        rows.append(f'<tr><th scope="row"><span class="badge {s}">{s}</span></th>{cells}'
                     f'<td class="num">{sum(by[(s, k)] for k in KINDS)}</td></tr>')
     totals = "".join(f'<td class="num">{sum(by[(s, k)] for s in SEVERITIES)}</td>' for k in KINDS)
-    rows.append(f'<tr class="total"><th>{esc(L["total"])}</th>{totals}<td class="num">{len(active)}</td></tr>')
+    rows.append(f'<tr class="total"><th scope="row">{esc(L["total"])}</th>{totals}<td class="num">{len(active)}</td></tr>')
     return (f'<table class="counts"><caption>{esc(L["table_counts"])}</caption>'
-            f'<thead><tr><th>{esc(L["severity"])}</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>')
+            f'<thead><tr><th scope="col">{esc(L["severity"])}</th>{head}</tr></thead><tbody>{"".join(rows)}</tbody></table>')
 
 
 def summary_line(data, L):
@@ -373,11 +378,14 @@ def summary_line(data, L):
         excluded=len(data.get("findings", [])) - len(active))
 
 
-def finding_html(f, L, excerpts, number):
+def finding_html(f, L, excerpts):
+    """One finding entry in the kit's document vocabulary; its section number comes from CSS counters."""
     prompt = f.get("prompt")
     prompt = ", ".join(prompt) if isinstance(prompt, list) else prompt
     v = f["validation"]
-    rows = [(L["location"], f'<code>{esc(f["location"])}</code>'),
+    rows = [(L["severity"], f'<span class="badge {f["severity"]}">{f["severity"]}</span>'),
+            (L["kind"], f'<span class="kind kind-{f["kind"]}">{esc(L["kinds"][f["kind"]])}</span>'),
+            (L["location"], f'<code>{esc(f["location"])}</code>'),
             (L["prompt"], esc(prompt) if prompt else None),
             (L["perspective"], esc(f["category"])),
             (L["confidence"], esc(f["confidence"])),
@@ -385,75 +393,69 @@ def finding_html(f, L, excerpts, number):
                                                  if v.get("method") else "")),
             (L["status"], esc(f.get("status", "Open"))),
             (L["source"], esc(f["source"]) if f.get("source") else None)]
-    meta = "".join(f"<tr><th>{esc(k)}</th><td>{val}</td></tr>" for k, val in rows if val)
-    body = []
+    state = "".join(f'<tr><th scope="row">{esc(k)}</th><td>{val}</td></tr>' for k, val in rows if val)
+    fields = []
     for key in ("symptom", "cause", "impact", "fix"):
         if f.get(key):
-            body.append(f'<h4>{esc(L[key])}</h4>{para(f[key])}')
+            fields.append((L[key], para(f[key])))
     proposal = f.get("proposal")
     if proposal:
-        body.append(f'<h4>{esc(L["proposal"])}</h4><div class="proposal">'
-                    f'<figure><figcaption>{esc(L["before"])}</figcaption><pre>{esc(proposal.get("before", ""))}</pre></figure>'
-                    f'<figure><figcaption>{esc(L["after"])}</figcaption><pre>{esc(proposal.get("after", ""))}</pre></figure>'
-                    "</div>")
+        fields.append((L["proposal"], '<div class="proposal">'
+                       f'<figure><figcaption>{esc(L["before"])}</figcaption><pre>{esc(proposal.get("before", ""))}</pre></figure>'
+                       f'<figure><figcaption>{esc(L["after"])}</figcaption><pre>{esc(proposal.get("after", ""))}</pre></figure>'
+                       "</div>"))
     if f.get("test"):
-        body.append(f'<h4>{esc(L["test"])}</h4>{para(f["test"])}')
+        fields.append((L["test"], para(f["test"])))
     if v.get("evidence"):
-        body.append(f'<h4>{esc(L["evidence"])}</h4>{para(v["evidence"])}')
+        fields.append((L["evidence"], para(v["evidence"])))
     if f.get("previous_validation"):
         pv = f["previous_validation"]
-        body.append(f'<h4>{esc(L["previous"])}</h4>{para(pv["verdict"] + ": " + pv.get("evidence", ""))}')
+        fields.append((L["previous"], para(pv["verdict"] + ": " + pv.get("evidence", ""))))
     if f["id"] in excerpts:
-        body.append(f'<h4>{esc(L["excerpt"])}</h4>{excerpt_html(excerpts[f["id"]])}')
+        fields.append((L["excerpt"], snippet_html(excerpts[f["id"]])))
     if f.get("references"):
-        items = "".join(f'<li><a href="{esc(r["url"])}">{esc(r.get("title") or r["url"])}</a></li>'
+        items = "".join(f'<li><a href="{esc(r["url"])}" rel="noopener noreferrer">{esc(r.get("title") or r["url"])}</a></li>'
                         for r in f["references"])
-        body.append(f'<h4>{esc(L["references"])}</h4><ul>{items}</ul>')
-    excluded = " excluded" if v["verdict"] in EXCLUDED else ""
-    return (f'<article class="finding{excluded}" id="{esc(f["id"])}">'
-            f'<h3><span class="fnum">{number}</span> <span class="fid">{esc(f["id"])}</span> '
-            f'<span class="sev sev-{f["severity"].lower()}">{f["severity"]}</span> '
-            f'<span class="kind kind-{f["kind"]}">{esc(L["kinds"][f["kind"]])}</span> {esc(f["title"])}</h3>'
-            f'<table class="fmeta">{meta}</table>{"".join(body)}</article>')
+        fields.append((L["references"], f'<ul class="refs">{items}</ul>'))
+    body = "".join(f'<div class="finding-field"><h4>{esc(k)}</h4>{content}</div>' for k, content in fields)
+    cls = "finding excluded" if v["verdict"] in EXCLUDED else f'finding sev-{f["severity"]}'
+    return (f'<article class="{cls}" id="{esc(f["id"])}"><div class="finding-header">'
+            f'<span class="finding-id">{esc(f["id"])}</span><h3>{esc(f["title"])}</h3>'
+            f'<table class="finding-state"><tbody>{state}</tbody></table></div>{body}</article>')
 
 
 def list_section(items, L):
-    return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="muted">{esc(L["none"])}</p>'
+    return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="small">{esc(L["none"])}</p>'
 
 
+# The shared stylesheet (scan_report_kit/assets/document.css, design: scan-report-kit)
+# comes first; these add only the rules for prompt-scan record types: the
+# severity-by-kind counts table, the prompt inventory and eval-run tables, the
+# kind label and before/after proposals.
 REPORT_CSS = """
-:root{--ink:#1d1d1f;--muted:#5b5b60;--rule:#c9c9cf;--paper:#fff;--code:#f4f4f6;--hl:#fff3c4;
---high:#a3241b;--medium:#a35a00;--low:#2c5a8a;--info:#55595e}
-*{box-sizing:border-box}
-body{margin:0;background:var(--paper);color:var(--ink);font:10pt/1.65 "Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",serif}
-main{max-width:180mm;margin:0 auto;padding:16mm 0}
-h1{font-size:20pt;margin:0 0 4mm}h2{font-size:13pt;margin:9mm 0 3mm;border-bottom:.6pt solid var(--rule);padding-bottom:1mm}
-h3{font-size:11pt;margin:6mm 0 2mm;break-after:avoid}h4{font:600 8.5pt/1.4 system-ui,"Hiragino Sans","Noto Sans CJK JP",sans-serif;letter-spacing:.04em;color:var(--muted);margin:3mm 0 1mm;text-transform:uppercase}
-p{margin:0 0 2mm}ul{margin:0 0 2mm;padding-left:6mm}
-table{border-collapse:collapse;width:100%;margin:2mm 0 4mm;font-size:9pt}
-caption{caption-side:top;text-align:left;font-size:8.5pt;color:var(--muted);padding-bottom:1mm}
-th,td{text-align:left;vertical-align:top;padding:1mm 2mm;border-bottom:.4pt solid var(--rule)}
-thead th{border-top:1pt solid var(--ink);border-bottom:.6pt solid var(--ink);font-family:system-ui,"Hiragino Sans","Noto Sans CJK JP",sans-serif;font-size:8.5pt}
-tbody tr:last-child td,tbody tr:last-child th{border-bottom:1pt solid var(--ink)}
-.num{text-align:right;font-variant-numeric:tabular-nums}.total th,.total td{font-weight:700}
-.meta th{width:28mm;color:var(--muted);font-weight:400}.fmeta th{width:30mm;color:var(--muted);font-weight:400}
-code,pre,.fid{font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5pt}
-pre{background:var(--code);padding:2mm;white-space:pre-wrap;word-break:break-word;margin:0 0 2mm}
-.excerpt{background:var(--code);padding:2mm;margin:0 0 2mm;font-family:ui-monospace,"SF Mono",Menlo,Consolas,monospace;font-size:8.5pt}
-.row{display:flex}.row.hl{background:var(--hl)}.ln{flex:0 0 9mm;color:var(--muted);user-select:none}.src{flex:1;white-space:pre-wrap;word-break:break-word}
-td code{word-break:break-all}.fid{white-space:nowrap}.inv td:nth-child(2){min-width:34mm}
-.proposal{display:grid;grid-template-columns:1fr 1fr;gap:3mm}.proposal figure{margin:0}
-figcaption{font-size:8.5pt;color:var(--muted)}
-.sev{font:700 8pt system-ui,sans-serif;letter-spacing:.03em}.sev-high{color:var(--high)}.sev-medium{color:var(--medium)}
-.sev-low{color:var(--low)}.sev-info{color:var(--info)}
-.kind{font:8pt system-ui,sans-serif;color:var(--muted);border:.5pt solid var(--rule);padding:0 1.5mm;border-radius:1mm}
-.fnum{color:var(--muted)}.muted{color:var(--muted)}.finding{break-inside:auto;border-top:.4pt solid var(--rule);padding-top:1mm}
-.excluded h3{color:var(--muted);text-decoration:line-through}
-.abstract{border-left:1.5pt solid var(--ink);padding-left:3mm;margin:4mm 0}
-a{color:var(--low)}
-@page{size:A4;margin:16mm 15mm}
-@media print{main{padding:0;max-width:none}}
+.num{text-align:right}
+.counts .badge{margin:0}
+.counts tbody th{border-bottom:0;font-weight:400}
+.counts tbody tr+tr th{border-top:.3pt solid var(--hair)}
+.counts tr.total th,.counts tr.total td{font-weight:700;border-top:.6pt solid var(--rule)}
+.inv .id-col{width:8%}.evals .id-col{width:9%}
+.inv .name-col{width:20%}.inv .kind-col{width:11%}.inv .loc-col{width:20%}.inv .consumer-col{width:17%}.inv .model-col{width:24%}
+.evals .finding-col{width:10%}.evals .model-col{width:18%}.evals .date-col{width:13%}.evals .num-col{width:8%}.evals .note-col{width:26%}
+.fid{font:7.8pt/1.5 var(--mono);white-space:nowrap}
+.inv code{font-size:7.6pt}
+.kind{font:7.2pt/1.5 var(--sans);letter-spacing:.06em;color:var(--muted);border:.5pt solid var(--hair);padding:0 1.5mm;border-radius:.6mm;white-space:nowrap}
+.muted{color:var(--muted)}
+.finding.excluded h3{color:var(--muted);text-decoration:line-through}
+.proposal{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:4mm}
+.proposal figure{margin:0;min-width:0}
+.proposal figcaption{font:700 7.4pt/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin-bottom:1mm}
+.proposal pre{margin:0;padding:1.5mm 0 1.5mm 3mm;border-left:.6pt solid var(--rule);font:7.6pt/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;word-wrap:break-word;word-break:break-all}
+@media screen and (max-width:600px){.proposal{grid-template-columns:minmax(0,1fr)}.inv,.evals{table-layout:auto}}
 """
+
+
+def table_or_none(rows, html_table, L):
+    return html_table if rows else f'<p class="small">{esc(L["none"])}</p>'
 
 
 def render_report_html(data, L, lang, excerpts):
@@ -463,41 +465,68 @@ def render_report_html(data, L, lang, excerpts):
         f'<tr><td class="fid">{esc(p["id"])}</td><td>{esc(p["name"])}</td><td>{esc(p.get("kind", ""))}</td>'
         f'<td><code>{esc(p["location"])}</code></td><td><code>{esc(p.get("consumer", ""))}</code></td>'
         f'<td>{esc(p.get("model", ""))}</td></tr>' for p in prompts)
-    prompt_table = (f'<table class="inv"><thead><tr><th>{L["id"]}</th><th>{L["name"]}</th><th>{L["kind"]}</th>'
-                    f'<th>{L["location"]}</th><th>{L["consumer"]}</th><th>{L["model"]}</th></tr></thead>'
-                    f'<tbody>{prompt_rows}</tbody></table>') if prompts else f'<p class="muted">{esc(L["none"])}</p>'
+    prompt_table = table_or_none(prompts, (
+        f'<table class="inv"><caption>{esc(L["cap_inventory"])}</caption><colgroup><col class="id-col"><col class="name-col">'
+        '<col class="kind-col"><col class="loc-col"><col class="consumer-col"><col class="model-col"></colgroup>'
+        f'<thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["name"]}</th><th scope="col">{L["kind"]}</th>'
+        f'<th scope="col">{L["location"]}</th><th scope="col">{L["consumer"]}</th><th scope="col">{L["model"]}</th></tr></thead>'
+        f'<tbody>{prompt_rows}</tbody></table>'), L)
     persp_rows = "".join(
         f'<tr><td>{esc(p["name"])}</td><td>{esc(L["results"][p["result"]])}</td><td>{esc(p.get("note", ""))}</td></tr>'
         for p in data.get("perspectives", []))
-    persp_table = (f'<table><thead><tr><th>{L["perspective"]}</th><th>{L["result"]}</th><th>{L["note"]}</th></tr>'
-                   f'</thead><tbody>{persp_rows}</tbody></table>')
-    finding_parts = "".join(finding_html(f, L, excerpts, f"4.{i}") for i, f in enumerate(findings, 1)) \
-        or f'<p class="muted">{esc(L["none"])}</p>'
+    persp_table = (f'<table class="coverage"><caption>{esc(L["cap_perspectives"])}</caption>'
+                   '<colgroup><col class="perspective-col"><col class="result-col"><col class="note-col"></colgroup>'
+                   f'<thead><tr><th scope="col">{L["perspective"]}</th><th scope="col">{L["result"]}</th>'
+                   f'<th scope="col">{L["note"]}</th></tr></thead><tbody>{persp_rows}</tbody></table>')
+    finding_parts = "".join(finding_html(f, L, excerpts) for f in findings) \
+        or f'<p class="small">{esc(L["none"])}</p>'
     runs = data.get("eval_runs", [])
     eval_rows = "".join(
         f'<tr><td class="fid">{esc(r["id"])}</td><td class="fid">{esc(r["finding"])}</td><td>{esc(r["model"])}</td>'
         f'<td>{esc(r["date"])}</td><td class="num">{r["cases"]}</td><td class="num">{r["passed"]}</td>'
         f'<td class="num">{r["failed"]}</td><td>{esc(r.get("note", ""))}</td></tr>' for r in runs)
-    eval_part = (f'<table><thead><tr><th>{L["id"]}</th><th>{L["finding"]}</th><th>{L["model"]}</th><th>{L["date"]}</th>'
-                 f'<th>{L["cases"]}</th><th>{L["passed"]}</th><th>{L["failed"]}</th><th>{L["note"]}</th></tr></thead>'
-                 f'<tbody>{eval_rows}</tbody></table>') if runs else f'<p class="muted">{esc(L["none"])}</p>'
+    eval_part = table_or_none(runs, (
+        f'<table class="evals"><caption>{esc(L["cap_evals"])}</caption><colgroup><col class="id-col"><col class="finding-col">'
+        '<col class="model-col"><col class="date-col"><col class="num-col"><col class="num-col"><col class="num-col">'
+        '<col class="note-col"></colgroup>'
+        f'<thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["finding"]}</th><th scope="col">{L["model"]}</th>'
+        f'<th scope="col">{L["date"]}</th><th scope="col" class="num">{L["cases"]}</th>'
+        f'<th scope="col" class="num">{L["passed"]}</th><th scope="col" class="num">{L["failed"]}</th>'
+        f'<th scope="col">{L["note"]}</th></tr></thead><tbody>{eval_rows}</tbody></table>'), L)
     sections = [
-        ("1", L["s_inventory"], prompt_table), ("2", L["s_perspectives"], persp_table),
-        ("3", L["s_sound"], list_section(data.get("checked_ok", []), L)),
-        ("4", L["s_findings"], finding_parts), ("5", L["s_evals"], eval_part),
-        ("6", L["s_decisions"], list_section(data.get("decisions", []), L)),
-        ("7", L["s_limitations"], list_section(data.get("limitations", []), L)),
-        ("8", L["s_next"], list_section(data.get("next_steps", []), L)),
+        ("summary", L["abstract"], f'<p class="lead">{esc(summary_line(data, L))}</p>{counts_table(data, L)}'),
+        ("inventory", L["s_inventory"], prompt_table), ("perspectives", L["s_perspectives"], persp_table),
+        ("checked-ok", L["s_sound"], list_section(data.get("checked_ok", []), L)),
+        ("finding-details", L["s_findings"], finding_parts), ("eval-runs", L["s_evals"], eval_part),
+        ("decisions", L["s_decisions"], list_section(data.get("decisions", []), L)),
+        ("limitations", L["s_limitations"], list_section(data.get("limitations", []), L)),
+        ("next-steps", L["s_next"], list_section(data.get("next_steps", []), L)),
     ]
-    body = "".join(f'<section><h2>{n}. {esc(title)}</h2>{content}</section>' for n, title, content in sections)
-    title = f'{L["title"]} — {data.get("meta", {}).get("target", "")}'.rstrip(" —")
+    body = "".join(f'<section id="{sid}"' + (' class="summary-section"' if sid == "summary" else "") +
+                   f'><h2>{esc(title)}</h2>{content}</section>' for sid, title, content in sections)
+    target = data.get("meta", {}).get("target", "")
+    title = f'{L["title"]} — {target}'.rstrip(" —")
     return (f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title>'
-            f'<style>{REPORT_CSS}</style></head><body><main>'
-            f'<h1>{esc(L["title"])}</h1><table class="meta">{meta_rows(data, L)}</table>'
-            f'<div class="abstract"><h4>{esc(L["abstract"])}</h4><p>{esc(summary_line(data, L))}</p></div>'
-            f'{counts_table(data, L)}{body}</main></body></html>')
+            f'<style>{kit_style.document_css(L["running_footer"])}{REPORT_CSS}</style></head><body>'
+            f'<header class="report-header"><p class="kicker">{esc(L["running_footer"])}</p><h1>{esc(L["title"])}</h1>'
+            f'<p class="project">{esc(target or "—")}</p>{meta_lines(data, L)}</header>'
+            f'<main>{body}</main></body></html>')
 
+
+# The shared stylesheet (scan_report_kit/assets/dashboard.css, design: scan-report-kit)
+# comes first; these add only the rules for prompt-scan's dashboard pieces: the
+# decisions panel, the verify-first legend, paired counts on the closed card and
+# the earlier-validation history box.
+DASH_CSS = """
+#decisions-section h2{margin-bottom:8px}#decisions-section ul{margin:0;padding-left:20px}
+.verify-legend{margin:0 0 14px;color:var(--muted)}
+.verify-legend .action-label{font-family:var(--sans);font-size:12px;font-weight:700;color:var(--accent)}
+.card .n .pair{display:inline-block;white-space:nowrap;margin-right:18px}
+.card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
+.history{border:1px dashed var(--line);padding:12px;margin-top:16px}
+.history p{margin:5px 0;white-space:pre-wrap}
+"""
 
 DASHBOARD = r"""<!doctype html>
 <html lang="__LANG__">
@@ -506,48 +535,7 @@ DASHBOARD = r"""<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>__TITLE__</title>
 <style>
-:root{color-scheme:light;--bg:#f6f5f1;--panel:#fff;--text:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;--accent:#1f3f66;--tint:#efede6;--warn:#f6f5f1;--warn-line:#1b1b1b;--serif:"Hiragino Mincho ProN","Noto Serif CJK JP","Yu Mincho",Georgia,serif;--sans:system-ui,-apple-system,"Hiragino Sans","Noto Sans CJK JP","Noto Sans JP",sans-serif}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--text:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4;--accent:#a9c3e6;--tint:#26252a;--warn:#17171a;--warn-line:#ece9e2}}
-:root[data-theme="dark"]{color-scheme:dark;--bg:#17171a;--panel:#1f1f23;--text:#ece9e2;--muted:#b3aea4;--line:#3a3936;--soft:#2a2a2e;--high:#f2a19a;--medium:#e8bf7a;--low:#a9c3e6;--info:#b3aea4;--accent:#a9c3e6;--tint:#26252a;--warn:#17171a;--warn-line:#ece9e2}
-*{box-sizing:border-box}[hidden]{display:none!important}html{scroll-behavior:smooth;scroll-padding-top:20px}body{margin:0;overflow-wrap:anywhere;background:var(--bg);color:var(--text);font:14px/1.65 system-ui,-apple-system,"Hiragino Sans","Noto Sans JP",sans-serif}main{max-width:1320px;margin:auto;padding:32px 28px 48px}a{color:var(--accent);text-underline-offset:3px}button,input,select{font:inherit}button,a,input,select,summary{-webkit-tap-highlight-color:transparent}:focus-visible{outline:3px solid var(--accent);outline-offset:3px}button{cursor:pointer}button,.button{background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:8px 12px;text-decoration:none}button:hover,.button:hover{background:var(--soft)}.skip{position:absolute;left:20px;top:-100px}.skip:focus{top:8px;z-index:2}.masthead{display:flex;justify-content:space-between;align-items:center;gap:12px;border-bottom:1px solid var(--line);padding-bottom:18px;margin-bottom:26px}.brand{font-size:12px;font-weight:750;letter-spacing:.15em;color:var(--accent)}.tools{display:flex;gap:8px;flex-wrap:wrap}.hero{display:flex;justify-content:space-between;gap:24px;margin-bottom:20px}.hero h1{font-size:clamp(25px,3.5vw,38px);line-height:1.25;letter-spacing:-.04em;margin:3px 0 9px;overflow-wrap:anywhere}.eyebrow,.meta,.muted{color:var(--muted)}.eyebrow{font-size:13px}.meta{max-width:820px;overflow-wrap:anywhere}.hero-aside{align-self:flex-end;font-size:12px;text-align:right;max-width:280px}.summary-banner{padding:16px 20px;background:var(--tint);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;margin-bottom:16px}.summary-banner strong{display:block;font-size:18px}.summary-banner p{margin:5px 0 0}.cards{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin:16px 0}.cards.part-cards{grid-template-columns:repeat(2,minmax(0,1fr))}.part-heading{margin:18px 0 8px}.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:18px 20px;text-align:left}.card .n{font-size:32px;line-height:1.25;font-weight:750;letter-spacing:-.03em}.card .l{font-size:12px;color:var(--muted);display:block;margin-bottom:8px}.card .sub{font-size:12px;color:var(--muted);margin-top:6px}.card.urgent .n{color:var(--high)}.card.review .n{color:var(--medium)}.report-note{font-size:12px;color:var(--muted);margin:8px 0 22px}.section-head{display:flex;justify-content:space-between;gap:16px;align-items:baseline;margin:26px 0 12px}h2{font-size:19px;letter-spacing:-.02em;margin:0}h3{font-size:15px;margin:0 0 6px}.section-head p{margin:4px 0 0;color:var(--muted)}.panel{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px}.priority-list{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,330px),1fr));gap:12px}.hero>div,.priority-item,.panel{min-width:0}.priority-item h3{overflow-wrap:anywhere}.priority-item{border-top:3px solid var(--line)}.priority-item.sev-High{border-top-color:var(--high)}.priority-item.sev-Medium{border-top-color:var(--medium)}.priority-top{display:flex;justify-content:space-between;gap:8px;align-items:center;margin-bottom:10px}.priority-item h3 a{text-decoration:none;color:var(--text)}.priority-item h3 a:hover{text-decoration:underline}.priority-item p{margin:8px 0;overflow-wrap:anywhere}.priority-item .action-label{font-size:12px;font-weight:700;color:var(--accent)}.priority-item .impact{color:var(--muted)}.priority-item .action{padding-top:10px;border-top:1px solid var(--line)}.priority-item .location{font-size:12px;color:var(--muted)}.badge{display:inline-block;border:1px solid currentColor;border-radius:5px;padding:1px 7px;font-size:11px;line-height:1.7;font-weight:750;white-space:nowrap}.High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}.verdict{font-size:12px;color:var(--muted)}.section-note{font-size:12px;color:var(--muted);margin:10px 0}.coverage{margin:20px 0;background:var(--warn);border-color:var(--warn-line)}summary{cursor:pointer;font-weight:700}summary .small{font-weight:400;color:var(--muted);margin-left:10px}.coverage p{margin:10px 0}.scope-meta{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:5px 16px;margin:16px 0}.scope-meta dt{font-size:12px;color:var(--muted)}.scope-meta dd{margin:0;overflow-wrap:anywhere}.coverage-columns{display:grid;grid-template-columns:1fr 1fr;gap:24px}.coverage ul{margin:6px 0;padding-left:20px}.perspective{border-bottom:1px solid var(--warn-line);padding:9px 0}.perspective:last-child{border:0}.perspective strong{display:block}.perspective p{margin:3px 0;font-size:13px}.chart-section{margin:20px 0}.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-top:16px}.grid .panel{padding:16px}.grid h3{font-size:13px}.bar{display:grid;grid-template-columns:minmax(85px,46%) 1fr 26px;gap:8px;align-items:center;margin:7px 0;font-size:12px}.bar .t{overflow-wrap:anywhere}.bar .track{height:7px;background:var(--soft);border-radius:4px;overflow:hidden}.bar .fill{height:100%;background:var(--accent)}.bar .v{text-align:right;font-variant-numeric:tabular-nums}.filters{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px}.filters label{display:flex;flex-direction:column;gap:4px;font-size:12px;color:var(--muted)}.filters select,.filters input{width:100%;min-width:0;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:6px;padding:9px;font-size:13px}.filters .search{grid-column:span 2}.filter-bottom{display:flex;justify-content:space-between;align-items:center;gap:12px;margin-top:14px}.result-count{font-size:12px;color:var(--muted);margin:0}.tablewrap{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;margin-top:12px}table{border-collapse:collapse;width:100%;table-layout:fixed}th,td{text-align:left;padding:12px;border-bottom:1px solid var(--line);vertical-align:top;overflow-wrap:anywhere}th{font-size:11px;color:var(--muted);font-weight:700;background:var(--soft)}th:nth-child(1){width:9%}th:nth-child(2){width:9%}th:nth-child(3){width:14%}th:nth-child(4){width:9%}th:nth-child(5){width:11%}th:nth-child(6){width:30%}th:nth-child(7){width:18%}tr.row{cursor:pointer}tr.row:hover{background:var(--tint)}.finding-toggle{border:0;border-radius:3px;padding:0;background:transparent;text-align:left;font-weight:650;color:var(--text);width:100%}.finding-toggle:hover{background:transparent;color:var(--accent)}.finding-toggle .toggle-label{font-size:11px;display:block;font-weight:400;color:var(--accent);margin-top:4px}.location{display:block;overflow-wrap:anywhere;margin-top:4px;font-size:11px;color:var(--muted)}tr.detail>td{background:var(--tint);padding:18px 24px}tr.detail dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:12px 0}tr.detail dt{font-size:12px;color:var(--muted)}tr.detail dd{margin:0;white-space:pre-wrap;overflow-wrap:anywhere}.detail-actions{display:flex;justify-content:space-between;gap:12px;align-items:center}.detail-links{display:flex;gap:12px;align-items:center;flex-wrap:wrap;flex-shrink:0}.action-guidance{border-left:3px solid var(--accent);padding:8px 12px;background:var(--panel)}.action-guidance strong{display:block}.action-guidance p{margin:4px 0}.three-pass-summary{margin:16px 0;overflow-wrap:anywhere;break-inside:auto!important;page-break-inside:auto}.three-pass-summary .prose{white-space:pre-wrap;overflow-wrap:anywhere}.three-pass-summary h4{margin:12px 0 4px}.three-pass-stage{break-inside:avoid}.verification-record,.workflow-record{margin:16px 0;padding:16px;border:1px solid var(--line);border-radius:6px;min-width:0}.verification-record h4,.workflow-record h4{font-size:15px;margin:0 0 8px}.verification-record h5,.workflow-record h5{font-size:13px;margin:18px 0 6px}.verification-record .prose,.workflow-record .prose{white-space:pre-wrap;overflow-wrap:anywhere}.verification-level,.workflow-status,.workflow-next{display:block;font-size:12px;font-weight:600;margin-top:7px}.history{border:1px dashed var(--line);padding:12px;margin-top:16px}.history p{margin:5px 0;white-space:pre-wrap}.lists{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,280px),1fr));gap:12px;margin-top:24px}.lists h2{font-size:16px}.lists ul{margin:10px 0 0;padding-left:18px}.empty{color:var(--muted);padding:20px}.snippet{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow-x:auto;font:12px/1.6 ui-monospace,Menlo,monospace;white-space:pre}.snippet span{display:block}.snippet .hit{background:var(--warn)}.snippet b{color:var(--muted);font-weight:400}.refs{margin:0;padding-left:18px}.refs li{overflow-wrap:anywhere}.rt{display:inline-block;min-width:60px;color:var(--muted);font-size:12px}.footer{font-size:12px;color:var(--muted);border-top:1px solid var(--line);margin-top:32px;padding-top:16px}code{font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;overflow-wrap:anywhere}
-/* Academic layer (docs/report-design.md): serif argument, sans apparatus, booktabs rules, no boxes. */
-body{font-family:var(--serif);font-size:15px;line-height:1.7;font-variant-numeric:lining-nums tabular-nums}
-h1,h2,h3,h4{font-family:var(--serif);font-weight:700;letter-spacing:0}
-button,input,select,label,th,.badge,.brand,.eyebrow,.tools,.filters,.result-count,.card .l,.card .sub,.verdict,.location,.finding-toggle .toggle-label,.priority-item .action-label,.rt,tr.detail dt,.scope-meta dt,.bar,summary .small{font-family:var(--sans)}
-.brand{color:var(--muted);letter-spacing:.2em;font-size:11px}
-.masthead{border-bottom:1.5px solid var(--text)}
-.hero h1{font-size:clamp(26px,3.2vw,36px);letter-spacing:-.01em}
-.summary-banner{background:transparent;border:0;border-top:1px solid var(--text);border-bottom:1px solid var(--text);border-radius:0;padding:14px 4px}
-.summary-banner strong{font-size:17px}
-.cards{gap:28px}
-.card{background:transparent;border:0;border-top:1.5px solid var(--text);border-radius:0;padding:12px 2px 6px}
-.card .l{letter-spacing:.08em;font-size:11px}
-.card .n{font-family:var(--serif);font-weight:400;font-size:34px;letter-spacing:0}
-.panel{background:transparent;border:0;border-top:1px solid var(--line);border-radius:0;padding:18px 0}
-.priority-item{border-top-width:2px}
-.coverage{background:transparent;border:0;border-left:1px solid var(--text);border-radius:0;padding:4px 0 4px 18px}
-.coverage-columns{grid-template-columns:1fr;gap:8px}#perspectives{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr));column-gap:32px}.perspective,.perspective:last-child{border:0;border-top:1px solid var(--line)}
-.bar .fill{background:var(--text)}.bar .track{border-radius:0;height:5px}
-.tablewrap{background:transparent;border:0;border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text);border-radius:0}
-th{background:transparent;color:var(--text);letter-spacing:.06em;font-size:11px;border-bottom:1px solid var(--text)}
-.badge{border:0;padding:0;border-radius:0;letter-spacing:.1em;font-size:11px}
-button,.button,.filters select,.filters input{border-radius:2px}
-.action-guidance{background:transparent}
-.snippet{border:0;border-left:1px solid var(--text);border-radius:0;background:transparent}
-.verification-record,.workflow-record{border:0;border-left:1px solid var(--line);border-radius:0;padding:4px 0 4px 16px}
-.expert-summary h3,.three-pass-summary h3{margin-top:0}
-.footer{border-top:1.5px solid var(--text)}
-.priority-item .impact{color:var(--text)}
-.finding-toggle{font-family:var(--serif);font-weight:700}
-#verification-summary h2,#decisions-section h2{margin-bottom:8px}#decisions-section ul{margin:0;padding-left:20px}
-.verify-legend{margin:0 0 14px;color:var(--muted)}.verify-legend .action-label{font-family:var(--sans);font-size:12px;font-weight:700;color:var(--accent)}
-.card .n .pair{display:inline-block;white-space:nowrap;margin-right:18px}.card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
-td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;color:var(--muted);margin-top:4px}
-.snippet .hit{background:var(--tint)}
-@media(max-width:850px){main{padding:22px 18px}.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.hero{display:block}.hero-aside{text-align:left;max-width:none;margin-top:12px}.coverage-columns{grid-template-columns:1fr}.filters{grid-template-columns:repeat(2,minmax(0,1fr))}table,tbody,tr,td{display:block}thead{display:none}tr.row{padding:14px;border-bottom:1px solid var(--line);display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px}tr.row td{border:0;padding:0;font-size:12px}tr.row td:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;margin-bottom:3px}tr.row td:nth-child(6){grid-column:1/-1;grid-row:1}.finding-toggle{font-size:15px}tr.row td:nth-child(7){grid-column:span 2}.detail-actions{align-items:flex-start}tr.detail>td{padding:16px}tr.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}tr.detail dd{margin-bottom:10px}}
-@media(max-width:480px){main{padding:16px 12px}.masthead{align-items:flex-start;flex-direction:column;gap:12px}.tools{width:100%}.tools .button{flex:1}.card{padding:14px}.card .n{font-size:28px}.panel{padding:16px}.section-head{display:block}.filters{grid-template-columns:1fr 1fr;gap:10px}.filters label:first-child,.filters .search{grid-column:1/-1}.filter-bottom{align-items:flex-start;flex-direction:column}.scope-meta{grid-template-columns:1fr;gap:2px}.scope-meta dd{margin-bottom:8px}.priority-top{flex-wrap:wrap}}
-@media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
-@media print{body{background:white}.tools,.chart-section,.skip,.copy-finding,.toggle-label{display:none}.filters-panel{border:0;padding:0;box-shadow:none}.filters-panel *{display:none}.filters-panel .filter-bottom,.filters-panel #result-count{display:block}main{padding:0;max-width:none}.panel,.card{break-inside:avoid}.tablewrap{overflow:visible}.snippet{white-space:pre-wrap;overflow:visible}.footer{margin-top:16px}}
+__CSS__
 </style>
 </head>
 <body>
@@ -565,7 +553,7 @@ td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;co
 <section id="findings" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="findings_register"></h2><p data-l="findings_note"></p></div></div>
 <div class="panel filters-panel"><div class="filters">
 <label><span data-l="record_set"></span><select id="f-scope"></select></label><label><span data-l="part"></span><select id="f-part"></select></label><label><span data-l="severity"></span><select id="f-sev"></select></label><label><span data-l="confidence"></span><select id="f-conf"></select></label><label><span data-l="category"></span><select id="f-cat"></select></label><label><span data-l="prompt"></span><select id="f-prompt"></select></label><label><span data-l="status"></span><select id="f-status"></select></label><label><span data-l="verdict"></span><select id="f-verdict"></select></label><label><span data-l="sort"></span><select id="f-sort"></select></label><label class="search"><span data-l="search"></span><input id="f-q" type="search"></label></div><div class="filter-bottom"><p class="result-count" id="result-count" role="status" aria-live="polite"></p><button type="button" id="reset" data-l="reset"></button></div></div>
-<div class="tablewrap"><table><thead><tr><th scope="col">ID</th><th scope="col" data-l="severity"></th><th scope="col" data-l="part"></th><th scope="col" data-l="confidence"></th><th scope="col" data-l="verdict"></th><th scope="col" data-l="title_col"></th><th scope="col" data-l="category"></th></tr></thead><tbody id="rows"></tbody></table></div></section>
+<div class="tablewrap"><table class="register"><thead><tr><th scope="col">ID</th><th scope="col" data-l="severity"></th><th scope="col" data-l="part"></th><th scope="col" data-l="confidence"></th><th scope="col" data-l="verdict"></th><th scope="col" data-l="title_col"></th><th scope="col" data-l="category"></th></tr></thead><tbody id="rows"></tbody></table></div></section>
 <div class="lists" id="lists"></div><footer class="footer" data-l="source_note"></footer>
 <noscript><p>__NOSCRIPT__ <a href="report.html">__REPORT__</a></p></noscript>
 </main>
@@ -872,76 +860,31 @@ def render_dashboard(data, L, lang, excerpts):
     # Escape every less-than sign: <!-- and <script also change HTML parsing.
     blob = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    replacements = {"__LANG__": lang, "__TITLE__": esc(f'{labels["dash_title"]} - {meta.get("target", "")}'),
+    replacements = {"__CSS__": kit_style.dashboard_css() + DASH_CSS,
+                    "__LANG__": lang, "__TITLE__": esc(f'{labels["dash_title"]} - {meta.get("target", "")}'),
                     "__NOSCRIPT__": esc(labels["no_script"]), "__REPORT__": esc(labels["report_link"]),
                     "__DATA__": blob}
     # Substitute only template tokens, not token-like strings inside report data.
-    return re.sub(r"__(?:LANG|TITLE|NOSCRIPT|REPORT|DATA)__", lambda m: replacements[m.group(0)], DASHBOARD)
+    return re.sub(r"__(?:CSS|LANG|TITLE|NOSCRIPT|REPORT|DATA)__", lambda m: replacements[m.group(0)], DASHBOARD)
 
 
 # ---------------------------------------------------------------- PDF
 
-CHROME_CANDIDATES = [
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "/Applications/Chromium.app/Contents/MacOS/Chromium",
-    "google-chrome", "google-chrome-stable", "chromium", "chromium-browser",
-]
+TIMEOUT_ENV = "PROMPT_SCAN_PDF_TIMEOUT"
+OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 
 
-def to_pdf(html_path, pdf_path, failures, timeout=120.0):
-    """Print html_path with headless Chrome, else WeasyPrint. Returns the engine name or None."""
-    pdf = Path(pdf_path)
-    pdf.unlink(missing_ok=True)
-    chrome = os.environ.get("CHROME")
-    for c in [chrome] if chrome else CHROME_CANDIDATES:
-        exe = c if os.path.isabs(c) and os.path.exists(c) else shutil.which(c)
-        if not exe:
-            continue
-        sandbox = ["--no-sandbox"] if hasattr(os, "geteuid") and os.geteuid() == 0 else []
-        with tempfile.TemporaryDirectory() as profile:
-            try:
-                proc = subprocess.Popen([exe, "--headless=new", "--disable-gpu", *sandbox, "--no-pdf-header-footer",
-                                         f"--user-data-dir={profile}", f"--print-to-pdf={pdf}",
-                                         Path(html_path).resolve().as_uri()],
-                                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            except OSError as e:
-                failures.append(f"chrome could not be started ({e.strerror or e})")
-                continue
-            # Chrome sometimes keeps running after writing: wait until the file stops growing.
-            last, deadline = -1, time.monotonic() + timeout
-            while time.monotonic() < deadline:
-                size = pdf.stat().st_size if pdf.exists() else -1
-                if (size > 0 and size == last) or (proc.poll() is not None and size <= 0 and size == last):
-                    break
-                last = size
-                time.sleep(0.5)
-            if proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=10)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                    proc.wait()
-        if pdf.exists() and pdf.stat().st_size > 0:
-            return "chrome"
-        failures.append("chrome did not write a PDF")
-        pdf.unlink(missing_ok=True)
-    wp = shutil.which("weasyprint")
-    if wp:
-        try:
-            r = subprocess.run([wp, str(html_path), str(pdf)], capture_output=True, text=True, timeout=timeout)
-            if r.returncode == 0 and pdf.exists():
-                return "weasyprint"
-            failures.append(f"weasyprint exited with status {r.returncode}")
-        except (OSError, subprocess.TimeoutExpired) as e:
-            failures.append(f"weasyprint failed ({e})")
-    return None
+def to_pdf(html_path, pdf_path, failures, timeout=None):
+    """Print html_path with scan_report_kit.pdf (Chrome, else WeasyPrint). Returns the engine name or None.
 
-
-def write_output(path, text):
-    if path.is_symlink() or (os.path.lexists(path) and not path.is_file()):
-        raise OSError(f"refusing to write {path}: it exists as a symlink or non-regular file")
-    path.write_text(text, encoding="utf-8")
+    Each engine that was found but did not produce a PDF is appended to failures
+    as one readable string; engine stderr is masked (mask) before it is recorded.
+    """
+    found = []
+    timeout = kit_pdf.pdf_timeout(env=TIMEOUT_ENV) if timeout is None else timeout
+    engine = kit_pdf.to_pdf(html_path, pdf_path, found, timeout, redact=mask)
+    failures.extend(f"{name} {reason}" + (f": {detail}" if detail else "") for name, reason, detail in found)
+    return engine
 
 
 def main(argv=None):
@@ -966,17 +909,22 @@ def main(argv=None):
     out = Path(a.out)
     try:
         out.mkdir(parents=True, exist_ok=True)
+        unsafe = unsafe_target(out, OUTPUTS)
+        if unsafe:
+            raise OSError(f"refusing to write {unsafe}: it exists as a symlink or non-regular file")
+        # A previous run's PDF must never survive next to newer HTML.
+        (out / "report.pdf").unlink(missing_ok=True)
         for name, page in pages.items():
             write_output(out / name, page.replace("<head>", "<head>" + stamp, 1))
             print(f"wrote {out / name}")
         if a.no_pdf:
-            (out / "report.pdf").unlink(missing_ok=True)
             return 0
     except OSError as e:
         print(f"render.py: cannot write outputs to {out}: {e}", file=sys.stderr)
         return 2
     failures = []
-    engine = to_pdf(out / "report.html", out / "report.pdf", failures)
+    timeout = kit_pdf.pdf_timeout(len(data.get("findings", [])), env=TIMEOUT_ENV)
+    engine = to_pdf(out / "report.html", out / "report.pdf", failures, timeout)
     if not engine:
         reason = "; ".join(failures) if failures else "no PDF engine found (Chrome/Chromium or weasyprint)"
         print(f"render.py: {reason}. report.html is ready to print. Without an engine anywhere: merge the "

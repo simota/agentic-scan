@@ -82,18 +82,29 @@ review of it.
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json` |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |
+| `skills/prompt-scan/scripts/scan_report_kit/` | Vendored [scan-report-kit](https://github.com/simota/scan-report-kit): shared stylesheets, PDF engine, safe writes |
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |
-| `docs/report-design.md` | Why the report looks the way it does |
+| `docs/report-design.md` | How the report uses the shared *-scan report format |
 
 ## Requirements
 
 Python 3.9+ standard library only. The PDF needs Chrome/Chromium (or
 WeasyPrint); without one, `render.py` writes the HTML and exits 3, and the run
-records the limitation.
+records the limitation. Each engine gets `PROMPT_SCAN_PDF_TIMEOUT` seconds
+(default: 120 plus 0.05 per finding, at most 900).
+
+Report typography is the shared *-scan report format,
+[scan-report-kit](https://github.com/simota/scan-report-kit) (see
+`docs/report-design.md`): a journal-style report (numbered sections, captioned
+booktabs tables and listings, one mincho face for both scripts) and a
+dashboard in the same system. The kit is vendored in
+`skills/prompt-scan/scripts/scan_report_kit/`; change it upstream and
+re-vendor, never in place (`make check` verifies the copy against its
+`MANIFEST`).
 
 ## Development
 
 ```sh
 make test    # offline unit tests
-make check   # tests + consistency of SKILL.md, references and samples
+make check   # tests + consistency of SKILL.md, references, samples and the vendored kit
 ```

@@ -1,9 +1,11 @@
 import json
+import os
 from pathlib import Path
 import re
 import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from helpers import SAMPLE_APP, clone, render, run, sample, write_json
 
@@ -34,6 +36,52 @@ class RenderTest(unittest.TestCase):
         payload = re.search(r'<script id="data" type="application/json">(.*?)</script>', dashboard, re.S).group(1)
         self.assertNotIn("</script>", payload)
         self.assertEqual(json.loads(payload)["findings"][0]["title"], "</script><b>x</b>")
+
+    def test_report_uses_the_shared_format_and_escapes(self):
+        data = sample("ja")
+        data["findings"][0]["title"] = "<b>x</b> & y"
+        report = (self.render(data, "--lang", "ja") / "report.html").read_text(encoding="utf-8")
+        self.assertIn('content:"プロンプト診断"', report)  # The kit's running footer.
+        self.assertIn('<article class="finding sev-High" id="F-001">', report)
+        self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; y", report)
+        self.assertNotIn("<b>x</b>", report)
+
+    def test_no_pdf_removes_a_stale_pdf(self):
+        out = Path(tempfile.mkdtemp())
+        write_json(out / "findings.json", sample())
+        (out / "report.pdf").write_bytes(b"%PDF stale")
+        code, _, err = run(render.main, out / "findings.json", "--out", out, "--no-pdf")
+        self.assertEqual(code, 0, err)
+        self.assertFalse((out / "report.pdf").exists())
+
+    def test_refuses_to_write_through_a_symlink(self):
+        for name in ("dashboard.html", "report.html", "report.pdf"):
+            out, elsewhere = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp()) / "victim"
+            elsewhere.write_text("keep", encoding="utf-8")
+            write_json(out / "findings.json", sample())
+            (out / name).symlink_to(elsewhere)
+            code, _, err = run(render.main, out / "findings.json", "--out", out, "--no-pdf")
+            self.assertEqual(code, 2, name)
+            self.assertIn("symlink", err)
+            self.assertEqual(elsewhere.read_text(encoding="utf-8"), "keep")
+            self.assertTrue((out / name).is_symlink())
+
+    def test_failed_engine_exits_3_with_masked_stderr(self):
+        out, bin_dir = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
+        token = "sk-ant-" + "Qq7" * 10
+        chrome = bin_dir / "chrome"
+        chrome.write_text(f"#!/bin/sh\necho 'fatal {token}' >&2\nexit 1\n", encoding="utf-8")
+        chrome.chmod(0o755)
+        write_json(out / "findings.json", sample())
+        # PATH holds no weasyprint, so the failed Chrome is the only engine.
+        with mock.patch.dict(os.environ, {"CHROME": str(chrome), "PATH": str(bin_dir)}):
+            code, _, err = run(render.main, out / "findings.json", "--out", out)
+        self.assertEqual(code, 3, err)
+        self.assertIn("chrome exited with status 1", err)
+        self.assertIn("[REDACTED]", err)
+        self.assertNotIn(token, err)
+        self.assertTrue((out / "report.html").is_file())
+        self.assertFalse((out / "report.pdf").exists())
 
     def test_excerpts_mask_credentials(self):
         repo = Path(tempfile.mkdtemp())

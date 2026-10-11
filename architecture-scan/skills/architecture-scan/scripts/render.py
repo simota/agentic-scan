@@ -516,8 +516,7 @@ DASHBOARD_CSS = """
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 .coverage h2 .small{font-size:13px;font-weight:400;color:var(--muted);margin-left:10px}
 #decisions ul{margin:6px 0;padding-left:20px}
-.coverage-table,.rules{table-layout:auto}
-.coverage-table th,.rules th{width:auto;overflow-wrap:normal}
+.coverage-table th,.rules th{overflow-wrap:normal}
 .bar .fill{display:block;width:0}
 .bar .fill.High{background:var(--high)}
 .bar .fill.Medium{background:var(--medium)}
@@ -544,7 +543,7 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .action-guidance{margin-top:12px}
 .action-guidance strong{font-family:var(--sans);font-size:13px}
 .empty{padding:20px 12px;margin:0}
-@media(max-width:850px){.coverage-table,.rules{display:table}.coverage-table thead,.rules thead{display:table-header-group}.coverage-table tbody,.rules tbody{display:table-row-group}.coverage-table tr,.rules tr{display:table-row}.coverage-table td,.rules td{display:table-cell}.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary>span:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
+@media(max-width:850px){.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary>span:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
 @media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}}
 @media print{.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """

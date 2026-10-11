@@ -2,6 +2,7 @@
 """Merge finding fragments into findings.json without writing ad-hoc scripts.
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
+    python3 findings.py renumber FINDINGS
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). Its top-level keys:
@@ -23,11 +24,16 @@ that batch. `L-*` findings belong to inventory.py: a fragment may only add
 Finding text describes the weakness, not an attack: literal instruction-override
 strings and credential-shaped values in report prose are refused.
 
+`renumber` gives the F-* findings the order the run contract asks for, once
+severities are final: F-001.. by severity, then path and line, with
+FalsePositive / NotApplicable findings after the rest. Every F-* reference in
+the record (ids, eval_runs, prose) follows the new numbers.
+
 FINDINGS is created when absent and replaced atomically, only if no other
 writer changed it meanwhile. The merged report must pass render.py's schema.
 
-Exit codes: 0 merged, 1 a fragment was refused (reason on stderr), 2 unreadable
-input or schema error.
+Exit codes: 0 merged or renumbered, 1 a fragment was refused (reason on
+stderr), 2 unreadable input or schema error.
 """
 import argparse
 import copy
@@ -191,6 +197,37 @@ def merge(base, fragment):
     return base
 
 
+CODE_REF = re.compile(r"\bF-[0-9]{3}\b")
+
+
+def renumber_map(findings):
+    """Old F-* id -> new id: severity, then path and line; excluded findings last, in their old order."""
+    def key(f):
+        m = render.LOC_RE.match(f["location"])
+        path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
+        return render.SEVERITIES.index(f["severity"]), path, line, f["id"]
+    code = [f for f in findings if f["id"].startswith("F-")]
+    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=key)
+    excluded = sorted((f for f in code if f["validation"]["verdict"] in render.EXCLUDED), key=lambda f: f["id"])
+    return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
+
+
+def renumber(data, mapping):
+    """Rewrite every F-* reference in data's strings at once, then order the F-* records by id."""
+    def rewrite(value):
+        if isinstance(value, str):
+            return CODE_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+        if isinstance(value, dict):
+            return {k: rewrite(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [rewrite(v) for v in value]
+        return value
+    data = rewrite(data)
+    code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: f["id"])
+    data["findings"] = code + [f for f in data["findings"] if not f["id"].startswith("F-")]
+    return data
+
+
 class MergeConflict(Exception):
     pass
 
@@ -229,7 +266,11 @@ def main(argv=None):
     m = sub.add_parser("merge", help="merge fragments into FINDINGS")
     m.add_argument("findings", type=Path)
     m.add_argument("fragments", nargs="+", type=Path)
+    r = sub.add_parser("renumber", help="number F-* findings in severity order, then path and line")
+    r.add_argument("findings", type=Path)
     a = p.parse_args(argv)
+    if a.cmd == "renumber":
+        return main_renumber(a.findings)
     try:
         original = read_regular(a.findings) if os.path.lexists(a.findings) else None
         base = read_json(a.findings, original) if original is not None else {}
@@ -263,6 +304,25 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 2
     print(f"merged {len(fragments)} fragment(s) into {a.findings}: {len(base['findings'])} finding(s)")
+    return 0
+
+
+def main_renumber(path):
+    try:
+        original = read_regular(path)
+        data = render.validate_data(read_json(path, original))
+        mapping = renumber_map(data.get("findings", []))
+        if all(old == new for old, new in mapping.items()):
+            print(f"{path}: F-* findings already in order")
+            return 0
+        data = renumber(data, mapping)
+        render.validate_data(copy.deepcopy(data))
+        write_report(path, data, original)
+    except (render.SchemaError, MergeConflict, OSError) as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
+    print(f"renumbered {path}: {moved}")
     return 0
 
 

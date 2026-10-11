@@ -103,7 +103,7 @@ class BudgetInferredValidationTests(unittest.TestCase):
                                        if line.startswith(f"| {record['id']} |"))
                             self.assertIn(f"| {render.shown('violated', lang)} | {label} |", row)
                             row = next(row for row in re.findall(r"<tr>.*?</tr>", html)
-                                       if row.startswith(f"<tr><td>{record['id']}</td>"))
+                                       if row.startswith(f"<tr><td class='nowrap'>{record['id']}</td>"))
                             self.assertIn(f"<td>{render.shown('violated', lang)}</td><td>{label}</td>", row)
 
 

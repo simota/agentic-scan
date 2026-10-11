@@ -23,11 +23,14 @@
 # Quote complete paths before shell expansion; only host names are Make lists.
 shell_quote = '$(subst ','"'"',$(1))'
 
+# GNU Make before 4.3 reads a bare `#` inside a function call as a comment.
+HASH := \#
+
 # The current makefile is last, but its filename may contain spaces. Discard
 # earlier entries only until the remaining literal suffix names an existing file.
 INSTALL_MAKEFILE := $(shell candidate=$(call shell_quote,$(MAKEFILE_LIST)); \
   while [ ! -f "$$candidate" ]; do \
-    case "$$candidate" in (*' '*) candidate=$${candidate#* };; (*) break;; esac; \
+    case "$$candidate" in (*' '*) candidate=$${candidate$(HASH)* };; (*) break;; esac; \
   done; printf '%s\n' "$$candidate")
 NAME    := architecture-scan
 REPO    := $(shell CDPATH= cd -- "$$(dirname -- $(call shell_quote,$(INSTALL_MAKEFILE)))" && pwd)

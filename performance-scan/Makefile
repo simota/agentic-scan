@@ -93,7 +93,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	misses=$$( \
 	for f in $(DOCS); do \
 	  grep -ohE '`(reference|scripts|templates)/[A-Za-z][A-Za-z0-9._-]*`' "$$f" | tr -d '`' | sort -u | while read -r ref; do \
-	    [ -f $(call shell_quote,$(SKILL))/"$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
+	    [ -e $(call shell_quote,$(SKILL))/"$$ref" ] || echo "MISS $$f cites $$ref, which does not exist"; \
 	  done; \
 	done); \
 	if [ -n "$$misses" ]; then echo "$$misses" >&2; fail=1; fi; \
@@ -113,6 +113,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	  $(call shell_quote,$(PYTHON)) -c 'import ast,sys; ast.parse(open(sys.argv[1]).read(), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse" >&2; fail=1; }; \
 	done; \
+	( cd $(call shell_quote,$(SKILL)/scripts/scan_report_kit) && shasum -a 256 -c --quiet MANIFEST ) >&2 \
+	  || { echo "MISS scripts/scan_report_kit differs from its MANIFEST - change scan-report-kit upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  for lang in ja en; do \

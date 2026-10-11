@@ -146,6 +146,7 @@ skills/performance-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -159,6 +160,7 @@ tests/                         offline tests for the scripts and the documents
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, description <= 400 bytes, no cited ../ paths,
+             # vendored scan_report_kit matches its MANIFEST,
              # sample renders in ja/en and passes the run contract
 make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
 ```
@@ -169,3 +171,12 @@ GNU Make 3.81+ and a POSIX shell.
 The format follows the sibling `security-scan` skill (same phases, run
 contract, verdicts and report shape), adapted from vulnerabilities to
 performance.
+
+The dashboard uses the shared *-scan report format,
+[scan-report-kit](https://github.com/simota/scan-report-kit): its dashboard
+stylesheet (light and dark themes, journal-style typography) comes first, and
+`render.py` adds only the rules for what this skill renders differently
+(collapsible findings, severity filter buttons, budget and coverage tables).
+The kit is vendored in `skills/performance-scan/scripts/scan_report_kit/`;
+change it upstream and re-vendor, never in place (`make check` verifies the
+copy). `report.md` is unchanged.

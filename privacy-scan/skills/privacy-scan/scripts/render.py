@@ -371,7 +371,6 @@ dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
 li{white-space:pre-line}
 td{white-space:pre-line}
 details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
-.ledger th{width:auto}
 .commitments th:nth-child(1){width:9%}
 .commitments th:nth-child(2){width:33%}
 .commitments th:nth-child(3){width:12%}
@@ -381,7 +380,7 @@ details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:any
 .coverage-table th:nth-child(2){width:14%}
 .coverage-table th:nth-child(3){width:44%}
 .lists .panel ul{white-space:normal}
-@media(max-width:850px){table.ledger{display:table;min-width:620px}table.ledger thead{display:table-header-group}table.ledger tbody{display:table-row-group}table.ledger tr{display:table-row}table.ledger td{display:table-cell}details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
+@media(max-width:850px){table.ledger{min-width:620px}details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 

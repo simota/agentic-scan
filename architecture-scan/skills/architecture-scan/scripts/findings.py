@@ -913,11 +913,12 @@ def contract_problems(out, allow=()):
     findings = doc.get("findings", [])
     expected = [f"A-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
-        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}")
+        problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
+                        "run renumber")
     ranks = [SEVERITIES.index(f["severity"]) for f in findings if
              f["validation"]["verdict"] not in EXCLUDED]
     if ranks != sorted(ranks):
-        problems.append("findings must be numbered in severity order (High first)")
+        problems.append("findings must be numbered in severity order (High first); run renumber")
     excluded = [f["validation"]["verdict"] in EXCLUDED for f in findings]
     if excluded != sorted(excluded):
         problems.append("excluded findings (FalsePositive, NotApplicable) are numbered after "

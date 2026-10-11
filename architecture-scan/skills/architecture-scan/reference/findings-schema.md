@@ -20,8 +20,12 @@ python3 scripts/render.py <out>/findings.json --out <out>
 python3 scripts/findings.py check <out> --repo <checkout> [--allow NAME]
 ```
 
-`render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. The dashboard preserves line breaks
+`render.py` writes `<out>/dashboard.html` (self-contained, works offline; the
+same layout as security-scan's: open-risk cards, a "start here" queue, coverage
+and limitations, overview charts and a findings register filterable by record
+set, severity, confidence, perspective, status, verdict and text, with a
+copy-for-LLM button per finding) and `<out>/report.md`. Every value is in the
+HTML itself, so the dashboard reads in full without JavaScript. The dashboard preserves line breaks
 in recorded text, including multiline evidence and analysis commands; its
 Content-Security-Policy allows only its own inline style and script, so it
 fetches nothing. Both outputs show separate counts for each validation verdict,
@@ -43,7 +47,7 @@ delimiter; the one exception in `report.md` is a backslash directly before a
 backtick, the author's escape: `` \` `` shows a literal backtick and no
 backslash. The dashboard shows every recorded character verbatim. A blank
 optional field (including a rule's `reason`) gets no row in either output. The
-dashboard filters excluded findings separately from the severities, matching
+dashboard keeps excluded findings in their own record set, apart from the severities, matching
 the counts, says so when a filter leaves nothing to show, and opens every
 finding when printed. Bidirectional control characters (U+202A–202E,
 U+2066–2069) in recorded text are shown as `[U+202E]` in both outputs, so no

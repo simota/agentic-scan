@@ -254,7 +254,7 @@ class RenderConsistencyTests(unittest.TestCase):
         self.assertEqual(html.count("class='excluded'"), 1)
         self.assertIn("<details data-sev='excluded' class='excluded'>", html)
         self.assertEqual(html.count("<details data-sev='Low'"), 0)
-        self.assertIn("<button data-filter='excluded' aria-pressed='false'>Excluded</button>", html)
+        self.assertIn("<option value='excluded'>Excluded only</option>", html)
 
     def test_list_items_cannot_open_markdown_blocks(self):
         items = {

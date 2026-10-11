@@ -88,7 +88,7 @@ class RenderEdgeTests(unittest.TestCase):
         doc["findings"][1]["validation"].update(verdict="FalsePositive", evidence="a.py:1")
         html = render.render_html(doc, "ja")
         self.assertEqual(html.count("<details data-sev='excluded'"), 1)
-        self.assertIn("<button data-filter='excluded' aria-pressed='false'>除外</button>", html)
+        self.assertIn("<option value='excluded'>除外した検出事項のみ</option>", html)
 
 
 class EvidenceTokenTests(unittest.TestCase):

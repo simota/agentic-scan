@@ -11,12 +11,13 @@ from test_architecture_scan import REPO, complete_doc, make_env, render
 class DashboardTests(unittest.TestCase):
     def test_printing_opens_every_finding_and_hides_the_filter(self):
         self.assertIn("beforeprint", render.JS)
-        self.assertIn("d.open=true", render.JS)
-        self.assertIn("@media print{[data-filter]{display:none}}", render.CSS)
+        self.assertIn("f.hidden=false;d.open=true", render.JS)
+        printed = render.CSS.split("@media print{", 1)[1]
+        self.assertRegex(printed, r"\.filters-panel[^{]*\{display:none")
 
     def test_printing_hides_the_empty_message_and_restores_collapsed_findings(self):
         self.assertIn("if(m)m.hidden=true", render.JS)
-        self.assertIn("shut.forEach(d=>{d.open=false})", render.JS)
+        self.assertIn("shut.forEach(function(d){d.open=false;})", render.JS)
 
     def test_a_url_with_a_bidi_control_is_never_a_link(self):
         doc = complete_doc()
@@ -24,7 +25,8 @@ class DashboardTests(unittest.TestCase):
                                             {"url": "docs/\u2066a.md"}]
         for output in (render.render_html(doc, "en"), render.render_markdown(doc, "en")):
             self.assertNotRegex(output, "[\u202a-\u202e\u2066-\u2069]")
-            self.assertNotIn("href=", output.split("<details", 1)[-1])
+            # Only same-page anchors (permalinks) may link from a finding.
+            self.assertNotRegex(output.split("<details", 1)[-1], r"href=['\"](?!#)")
             self.assertNotIn("](<", output)
             self.assertIn("U+202E", output)
 
@@ -36,7 +38,7 @@ class DashboardTests(unittest.TestCase):
 
     def test_a_filter_with_no_match_has_a_message(self):
         html = render.render_html(complete_doc(), "en")
-        self.assertIn("<p data-empty hidden>None.</p>", html)
+        self.assertIn(f"<p class='empty' data-empty hidden>{render.DASH['en']['no_matches']}</p>", html)
         self.assertNotIn("<p data-empty", render.render_html({**complete_doc(), "findings": []}, "en"))
 
     def test_excluded_findings_keep_full_contrast(self):

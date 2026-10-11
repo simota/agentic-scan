@@ -80,7 +80,7 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity (excluded findings apart), design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, a priority queue, findings filterable by severity, confidence, perspective, status, verdict and text (excluded findings apart), design rules, perspective coverage, copy-for-LLM per finding |
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,

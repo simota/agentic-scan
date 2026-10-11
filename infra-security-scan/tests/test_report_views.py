@@ -30,8 +30,8 @@ class ReportViewTest(unittest.TestCase):
         # Printed excerpts wrap: inside the dashboard's print block; always in the paper document.
         self.assertRegex(dash, r"@media print\{[^@]*\.snippet\{white-space:pre-wrap;overflow:visible\}")
         self.assertRegex(report, r"\.snippet\{[^}]*white-space:pre-wrap;[^}]*overflow:visible")
-        # Print is light: the dashboard forces its light tokens; the document has no dark theme at all.
-        self.assertIn("@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light", dash)
+        # Print is light: the kit's dashboard CSS forces its light tokens; the document has no dark theme at all.
+        self.assertIn("@media print{html:root,html:root[data-theme]{color-scheme:light", dash)
         self.assertNotIn("prefers-color-scheme", report)
         self.assertNotIn("data-theme", report)
         self.assertIn("tr.row:not([hidden])+tr.detail{display:table-row!important}", dash)
@@ -55,6 +55,8 @@ class ReportViewTest(unittest.TestCase):
         self.assertIn("addEventListener('hashchange',reveal)", dash)
         self.assertIn('aria-controls="F-001-detail"', dash)
         self.assertIn('id="F-001-detail"', dash)
+        # The kit's fixed 7-column widths and mobile card layout apply only to .register.
+        self.assertEqual(dash.count('<table class="register"'), 1)
 
     def test_markdown_keeps_fields_out_of_multiline_sections(self):
         data = json.loads(SAMPLE.read_text(encoding="utf-8"))

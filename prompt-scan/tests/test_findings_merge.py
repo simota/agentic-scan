@@ -103,6 +103,31 @@ class MergeTest(unittest.TestCase):
         self.assertIn("needs validation.evidence", err)
         self.assertEqual(self.out.read_bytes(), before)
 
+    def test_renumber_orders_by_severity_then_location_and_follows_references(self):
+        excluded = {"verdict": "FalsePositive", "evidence": "handled in code", "method": "static"}
+        self.merge({"meta": META, "findings": [
+            finding(1, location="b.py:9"),
+            finding(2, severity="High", location="z.py:1", cause="same root as F-004"),
+            finding(3, severity="High", location="a.py:5", validation=excluded),
+            finding(4, location="b.py:2"),
+        ], "next_steps": ["fix F-002 first, then F-001"]})
+        write_json(self.dir / "eval.json", {"eval_runs": [
+            {"id": "E-001", "finding": "F-002", "model": "m", "date": "2026-10-12", "cases": 1, "passed": 1,
+             "failed": 0}]})
+        self.assertEqual(run(findings.main, "merge", self.out, self.dir / "eval.json")[0], 0)
+        code, out, err = run(findings.main, "renumber", self.out)
+        self.assertEqual(code, 0, err)
+        data = self.data()
+        # High z.py, then Low b.py:2 before b.py:9; the excluded High goes last.
+        self.assertEqual([(f["id"], f["location"]) for f in data["findings"]],
+                         [("F-001", "z.py:1"), ("F-002", "b.py:2"), ("F-003", "b.py:9"), ("F-004", "a.py:5")])
+        self.assertEqual(data["findings"][0]["cause"], "same root as F-002")
+        self.assertEqual(data["eval_runs"][0]["finding"], "F-001")
+        self.assertEqual(data["next_steps"], ["fix F-001 first, then F-003"])
+        code, out, _ = run(findings.main, "renumber", self.out)
+        self.assertEqual(code, 0)
+        self.assertIn("already in order", out)
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -79,7 +79,7 @@ review of it.
 | `skills/prompt-scan/SKILL.md` | The skill: scope, run contract, severity, phases, decisions |
 | `skills/prompt-scan/reference/` | Read per phase: recon, inventory, perspectives, validation, schema, report |
 | `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`) |
-| `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json` |
+| `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |
 | `skills/prompt-scan/scripts/scan_report_kit/` | Vendored [scan-report-kit](https://github.com/simota/scan-report-kit): shared stylesheets, PDF engine, safe writes |

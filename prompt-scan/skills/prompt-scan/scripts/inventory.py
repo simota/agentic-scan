@@ -73,6 +73,7 @@ details div dl dt em figcaption figure font footer form g h1 h2 h3 h4 h5 h6 head
 input ins kbd label li link main mark meta nav ol option p path picture pre q s samp script section select
 small source span strong style sub summary sup svg table tbody td textarea th thead time title tr u ul var
 video""".split())
+INLINE_CODE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")  # Markdown code span: an example, not markup
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD|XXX)\b|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
 SECRET_RE = render.SECRET_RE
 LARGE_PROMPT_TOKENS = 8000
@@ -233,12 +234,14 @@ def lint_tags(lines, fenced):
 def lint_file(rel, text, tokens):
     lines = text.splitlines()
     fenced = fenced_lines(lines)
+    # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
+    prose = [INLINE_CODE.sub("", line) for line in lines]
     hits = []
-    for number, detail in lint_template(lines, fenced):
+    for number, detail in lint_template(prose, fenced):
         hits.append(("unbalanced-template", number, detail))
-    for number, detail in lint_tags(lines, fenced):
+    for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))
-    marks = [n for n, line in enumerate(lines, 1) if n not in fenced and PLACEHOLDER_RE.search(line)]
+    marks = [n for n, line in enumerate(prose, 1) if n not in fenced and PLACEHOLDER_RE.search(line)]
     if marks:
         hits.append(("placeholder", marks[0], f"{len(marks)} line(s) with placeholder markers"))
     seen, repeats = {}, []

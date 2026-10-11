@@ -995,7 +995,6 @@ DASH_CSS = """
 .perspective .st{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-left:8px}
 .lists section{min-width:0}
 tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
-@media print{:root:not([data-print]),:root[data-theme]{color-scheme:light;--bg:#fff;--panel:#fff;--text:#1b1b1b;--muted:#5a5a5a;--line:#dcd9d2;--soft:#ecebe5;--high:#8a1c1c;--medium:#7a4800;--low:#24476e;--info:#5a5a5a;--accent:#1f3f66;--tint:#efede6;--warn:#f6f5f1;--warn-line:#1b1b1b}}
 @media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
 """
 
@@ -1147,7 +1146,7 @@ def render_dashboard(data, L, lang, sources):
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
 <label class="search">{L["search"]}<input id="f-q" type="search"></label>
 </div><div class="filter-bottom"><p class="result-count" id="result-count" data-l="{L["shown"]}" data-e="{L["excluded_n"]}" data-c="{L["covered_n"]}" aria-live="polite"></p></div></div>
-<div class="tablewrap"><table aria-labelledby="findings-h"><thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["severity"]}</th>
+<div class="tablewrap"><table class="register" aria-labelledby="findings-h"><thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["severity"]}</th>
 <th scope="col">{L["confidence"]}</th><th scope="col">{L["provider"]}</th><th scope="col">{L["verdict"]}</th><th scope="col">{L["title"]}</th>
 <th scope="col">{L["category"]}</th></tr></thead>
 <tbody>{table}</tbody></table></div></section>

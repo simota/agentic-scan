@@ -259,9 +259,6 @@ class PdfTest(unittest.TestCase):
                 fallback.assert_not_called()
                 self.assertEqual(self.pdf.read_bytes(), b"current chrome assessment")
 
-    # #TODO(agent): scan_report_kit.pdf.to_pdf accepts a non-empty PDF from a Chrome that exited
-    # non-zero; drop this marker once the kit checks the exit status (an unexpected success fails).
-    @unittest.expectedFailure
     def test_failed_chrome_output_is_removed_before_weasyprint_fallback(self):
         def chrome(*args, **kwargs):
             self.assertFalse(self.pdf.exists())

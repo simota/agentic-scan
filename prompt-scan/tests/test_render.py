@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 import re
+import subprocess
 import tempfile
 import unittest
 
@@ -49,6 +50,28 @@ class RenderTest(unittest.TestCase):
             self.assertNotIn(token, text)
             self.assertIn("[REDACTED]", text)
 
+    def test_excerpt_comes_from_the_recorded_commit(self):
+        root = Path(tempfile.mkdtemp())
+        repo = root / "svc"
+        (repo / "prompts").mkdir(parents=True)
+        (repo / "prompts" / "a.md").write_text("one\ncommitted line\nthree\n", encoding="utf-8")
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        commit = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        (repo / "prompts" / "a.md").write_text("one\nedited line\nthree\n", encoding="utf-8")
+        data = sample()
+        first = data["findings"][0]
+        first.pop("prompt")
+        first["location"] = "prompts/a.md:2"
+        data["prompts"], data["findings"] = [], [first]
+        data["meta"]["commit"] = commit
+        # --repo is a subdirectory of the work tree, as when inventory.py scanned svc/.
+        lines = render.attach_sources(data, repo)[first["id"]][1]
+        self.assertIn("committed line", lines)
+        self.assertNotIn("edited line", lines)
+
     def test_excerpt_path_cannot_leave_the_repository(self):
         data = sample()
         data["findings"][0]["location"] = "../outside.txt:1"
@@ -62,6 +85,9 @@ class RenderTest(unittest.TestCase):
             (lambda d: d["findings"][0].update(kind="bug"), "kind must be one of"),
             (lambda d: d["findings"][0]["validation"].update(evidence=""), "needs validation.evidence"),
             (lambda d: d["findings"][0].update(prompt="P-99"), "recorded prompt ids"),
+            (lambda d: d["findings"][0].update(prompt=[["P-01"]]), "recorded prompt ids"),
+            (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": ["F-001"], "model": "m", "date": "d",
+                                            "cases": 1, "passed": 1, "failed": 0}]), "name a recorded finding"),
             (lambda d: d.update(extra=1), "unknown top-level keys"),
             (lambda d: d["meta"].update(commit="abc"), "full Git object id"),
             (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": "F-001", "model": "m", "date": "d",

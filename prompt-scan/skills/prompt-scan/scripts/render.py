@@ -192,7 +192,7 @@ def validate_data(data):
             raise SchemaError(f"{where}.test must be a string or a list of strings")
         refs = f.get("prompt")
         refs = [refs] if isinstance(refs, str) else refs
-        if refs is not None and (not isinstance(refs, list) or any(r not in prompts for r in refs)):
+        if refs is not None and (not isinstance(refs, list) or any(not isinstance(r, str) or r not in prompts for r in refs)):
             raise SchemaError(f"{where}.prompt must name recorded prompt ids")
         proposal = f.get("proposal")
         if proposal is not None:
@@ -224,7 +224,7 @@ def validate_data(data):
         if run["id"] in seen:
             raise SchemaError(f"duplicate eval run id {run['id']}")
         seen.add(run["id"])
-        if run.get("finding") not in findings:
+        if not isinstance(run.get("finding"), str) or run["finding"] not in findings:
             raise SchemaError(f"{where}.finding must name a recorded finding")
         for key in ("model", "date"):
             _str(run, key, where, True)

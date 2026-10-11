@@ -74,9 +74,7 @@ input ins kbd label li link main mark meta nav ol option p path picture pre q s 
 small source span strong style sub summary sup svg table tbody td textarea th thead time title tr u ul var
 video""".split())
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD|XXX)\b|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
-SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|"
-                       r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
-                       r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+SECRET_RE = render.SECRET_RE
 LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
 
@@ -201,9 +199,11 @@ def fenced_lines(lines):
     return result
 
 
-def lint_template(lines):
+def lint_template(lines, fenced):
     stack, hits = [], []
     for number, line in enumerate(lines, 1):
+        if number in fenced:
+            continue
         for token in TEMPLATE_TOKEN.findall(line):
             if token in PAIRS:
                 stack.append((token, number))
@@ -234,7 +234,7 @@ def lint_file(rel, text, tokens):
     lines = text.splitlines()
     fenced = fenced_lines(lines)
     hits = []
-    for number, detail in lint_template(lines):
+    for number, detail in lint_template(lines, fenced):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(lines, fenced):
         hits.append(("unclosed-tag", number, detail))

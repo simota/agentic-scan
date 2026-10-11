@@ -45,7 +45,7 @@ class InventoryTest(unittest.TestCase):
         root = make_repo({
             "prompts/a.md": "{{ name }\n<rules>\nkeep it\n" + ("Always cite the title of the source document you used.\n" * 2),
             "prompts/b.md": f"Use key {token}\n",
-            "prompts/c.md": "```\n<example>\nTODO\n```\n<b>bold</b> <other tenant's id>\n",
+            "prompts/c.md": "```\n<example>\nTODO\n{\"user\": {\"id\": 1}}\n```\n<b>bold</b> <other tenant's id>\n",
         })
         hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
         self.assertIn(("unbalanced-template", "prompts/a.md:1"), hits)

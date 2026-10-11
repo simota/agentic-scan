@@ -89,6 +89,5 @@ Do not export `secrets`.
 - Match each snapshot resource to an IaC resource by ID, name or tag. Unmatched
   snapshot resources are drift (perspective *Coverage and drift*, CD2) and are
   reviewed like any other resource
-- A snapshot shows one moment; its capture time goes in `meta.inputs[].note`
 - A finding confirmed by a snapshot but absent from the IaC is still a
   finding; its fix includes bringing the resource under IaC

@@ -2,8 +2,8 @@
 
 An agent skill for a **static, read-only security review of cloud
 infrastructure from its configuration** — Terraform / OpenTofu (`.tf`, `.tofu`), plan JSON,
-CloudFormation, Kubernetes manifests, and read-only config exports — for AWS and
-GCP (Kubernetes and Azure by checklist). It maps exposure, identity and trust,
+CloudFormation, Kubernetes manifests, and read-only config exports — for AWS,
+GCP and Kubernetes (Azure by checklist only). It maps exposure, identity and trust,
 traces attack paths from entry actors to crown-jewel data, and delivers a chat
 summary, an interactive dashboard and an assessment PDF.
 

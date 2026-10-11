@@ -232,6 +232,9 @@ class PdfTest(unittest.TestCase):
             code, err = run([str(SAMPLE), "--out", str(self.out)])
         self.assertEqual(code, 0)
         self.assertIn("PDF not generated", err)
+        # The warning names the next steps SKILL.md prescribes.
+        self.assertIn("re-render with --no-pdf", err)
+        self.assertIn("contract_check.py OUT --no-pdf", err)
         self.assertIn(sample()["meta"]["project"], self.html.read_text(encoding="utf-8"))
         self.assertTrue((self.out / "dashboard.html").exists())
         self.assertFalse(self.pdf.exists())

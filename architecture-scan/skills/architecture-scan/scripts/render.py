@@ -516,7 +516,6 @@ DASHBOARD_CSS = """
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 .coverage h2 .small{font-size:13px;font-weight:400;color:var(--muted);margin-left:10px}
 #decisions ul{margin:6px 0;padding-left:20px}
-.coverage-table th,.rules th{overflow-wrap:normal}
 .bar .fill{display:block;width:0}
 .bar .fill.High{background:var(--high)}
 .bar .fill.Medium{background:var(--medium)}

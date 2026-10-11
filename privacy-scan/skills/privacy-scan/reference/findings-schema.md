@@ -32,6 +32,8 @@ point here. `check` refuses an output directory unless:
 - no two reported findings share their first `location` (one per fix location)
 - a nonblank `step` is one hunt step ID whose prefix belongs to `category`
 - an `Environment-dependent` reported finding names its `conditions`
+- every reported High and Medium finding has nonblank `validation.evidence`,
+  whatever its verdict (for `Likely` or `Unverified`, the hop not yet read)
 - a `commitment` that is a ledger ID (`C-01`…) exists in `commitments`
 - every perspective is recorded, and reported findings sit only under one
   recorded as `applied` or `partly applied`
@@ -188,8 +190,8 @@ long paths and keep line breaks.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
-| `meta.commit`, `meta.method` | Optional strings: the assessed revision and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en` |
+| `meta.commit`, `meta.method` | Optional strings: the assessed revision (`git rev-parse --short HEAD`, read-only) and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
 | `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts come last, by path |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected`. Confidence says how the claim follows from the code; the verdict says how far its verification got, so `Confirmed` with `Likely` means the code shows the gap but a hop was not traced. An excluded finding keeps the severity it would have had |
@@ -200,7 +202,7 @@ long paths and keep line breaks.
 | `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |
 | `contrast`, `commitment` | Strings the schema treats as optional but `SKILL.md` expects on every finding: the flow that keeps the commitment at `path:line` (or `none`); the ledger ID. `check` reports a ledger ID that is not in `commitments` |
 | `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence` |
-| `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`; an optional string for other verdicts |
+| `validation.evidence` | A nonblank string for `Valid`, `FalsePositive` and `NotApplicable`, and for every reported High and Medium finding (`check`); an optional string otherwise |
 | `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | `{tool, command, result}`, nonblank, from a read-only analysis of source; validated whenever present, and required for `analysed` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |

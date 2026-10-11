@@ -82,7 +82,7 @@ class RenderReadabilityTests(unittest.TestCase):
             with self.subTest(lang=lang):
                 self.assertIn(f"| R-01 · OWN | one writer ({marker}) |",
                               render.render_markdown(doc, lang))
-                self.assertIn(f"<td>R-01 · OWN</td><td>one writer ({marker})</td>",
+                self.assertIn(f"<td class='nowrap'>R-01 · OWN</td><td>one writer ({marker})</td>",
                               render.render_html(doc, lang))
 
     def test_japanese_labels_separate_source_evidence_and_method(self):

@@ -109,7 +109,7 @@ class RenderRegressionTests(unittest.TestCase):
                 self.assertEqual(len(row), 4)
                 self.assertEqual(plain_cell(row[3]), f"not checked\n{label}: {reason}")
                 html = render.render_html(doc, lang)
-                html_row = re.search(r"<tr><td>R-01</td>.*?</tr>", html).group(0)
+                html_row = re.search(r"<tr><td class='nowrap'>R-01</td>.*?</tr>", html).group(0)
                 self.assertIn(f"not checked\n{label}: {reason}", CellText(html_row).text)
                 self.assertNotIn("<manifest>", html_row)
 

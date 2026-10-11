@@ -73,6 +73,13 @@ in the cross-cutting unit, and domain units cite those rows:
 | Entry | Path | Driver | Hops (entry → loop → sink, `path:line`) | Cost | Mitigation | Verdict |
 |---|---|---|---|---|---|---|
 
+Example rows (fictional; one path iterating two drivers gives two rows):
+
+| Entry | Path | Driver | Hops (entry → loop → sink, `path:line`) | Cost | Mitigation | Verdict |
+|---|---|---|---|---|---|---|
+| GET /api/orders | list | N = orders per page (max 100) | app/orders/views.py:18 → app/orders/serializers.py:42 → `order.items.all()` | N item queries | NONE: no prefetch on this queryset | violated |
+| GET /api/orders | list | M = items per order (uncapped) | app/orders/serializers.py:42 → `item.product` per item | N × M product queries | NONE: no `select_related` | violated |
+
 - *Cost* is a formula in the driver: `1 + N` queries, `N × M` comparisons,
   `N` sequential HTTP calls, whole file in memory
 - *Mitigation* names the cap, eager load, index, batch, cache or timeout at

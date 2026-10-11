@@ -13,9 +13,9 @@ Write in the requester's language.
   questions for the requester
 - Then one section per perspective from `reference/perspectives.md`, most
   important first, listing only the hunt steps no ledger entry covers (a step
-  is covered when an entry of the family in its perspective's heading pays the
-  same paths); list the
-  ones judged N/A with a reason
+  is covered only when an entry's rows hunt that step's own construct on the
+  same paths, as `reference/perspectives.md` *Rules* defines; a shared family
+  is not enough); list the ones judged N/A with a reason
 - Each item: the question, concrete routes/files, and an optional
   `initial note (unverified)`
 - A limitations line: a static plan, nothing traced yet, data volumes unknown

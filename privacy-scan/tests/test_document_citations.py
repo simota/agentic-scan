@@ -7,7 +7,7 @@ REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "privacy-scan"
 DOCS = [REPO / "README.md", *SKILL.glob("*.md"), *SKILL.glob("reference/*.md"),
         *SKILL.glob("templates/*.md")]
-CITATION = re.compile(r"(?:skills/privacy-scan/)?((?:scripts|templates)/[A-Za-z0-9._{},<>-]+)")
+CITATION = re.compile(r"(?:skills/privacy-scan/)?((?:scripts|templates)/[A-Za-z0-9._{},<>-]+/?)")
 
 
 def expand(cited):
@@ -25,7 +25,9 @@ class CitationTests(unittest.TestCase):
             for match in CITATION.finditer(doc.read_text(encoding="utf-8")):
                 for path in expand(match.group(1)):
                     cited.add(path)
-                    self.assertTrue((SKILL / path).is_file(), f"{doc.name} cites {path}")
+                    # A trailing slash cites a directory (the vendored scan_report_kit/).
+                    exists = (SKILL / path).is_dir() if path.endswith("/") else (SKILL / path).is_file()
+                    self.assertTrue(exists, f"{doc.name} cites {path}")
         # Guard the pattern itself: it must see the files the docs rely on.
         self.assertTrue({"scripts/findings.py", "scripts/render.py",
                          "templates/issue.ja.md", "templates/report.en.md"} <= cited)

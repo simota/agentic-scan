@@ -14,7 +14,8 @@ python3 scripts/findings.py check <out> [--allow NAME]
 
 The scripts use only the standard library and also run under `python3 -I`.
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity) and `<out>/report.md`. Exit codes: `0` written, `1` an
+filter by severity, styled by the vendored scan-report-kit in
+`scripts/scan_report_kit/`) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
 is named). `render.py` still renders a draft that `check` would refuse, and
 prints each such problem on stderr as a warning. `findings.py check` exits `1`

@@ -26,10 +26,12 @@ from findings import (PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: 
                       prepare_cli, read_json, record_problems, validate)
 from findings import excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
+from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
     "en": {
         "title": "Privacy assessment", "scope": "Scope and method",
+        "brand": "privacy-scan", "theme": "Theme",
         "findings": "Findings", "commitments": "Privacy commitments", "perspectives": "Perspective coverage",
         "checked_ok": "Checked and sound", "limitations": "What could not be checked",
         "decisions": "Decisions for a human", "next_steps": "Next steps", "excluded": "Excluded",
@@ -53,6 +55,7 @@ LABELS = {
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
+        "brand": "privacy-scan", "theme": "表示切替",
         "findings": "検出事項", "commitments": "プライバシー上の約束", "perspectives": "観点のカバレッジ",
         "checked_ok": "確認して問題なかった項目", "limitations": "確認できなかったこと",
         "decisions": "人が判断すべき事項", "next_steps": "次の作業", "excluded": "除外",
@@ -344,32 +347,48 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-CSS = """
-:root{color-scheme:light dark;--bg:#fafaf9;--fg:#1c1917;--muted:#57534e;--card:#fff;--line:#e7e5e4;
---high:#b91c1c;--medium:#b45309;--low:#1d4ed8;--info:#57534e}
-@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1c1917;--fg:#f5f5f4;
---muted:#a8a29e;--card:#292524;--line:#44403c;--high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}}
-:root[data-theme="dark"]{--bg:#1c1917;--fg:#f5f5f4;--muted:#a8a29e;--card:#292524;--line:#44403c;
---high:#f87171;--medium:#fbbf24;--low:#93c5fd;--info:#d6d3d1}
-body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,sans-serif}
-main{max-width:1040px;margin:0 auto;padding:24px 16px}
-h1{font-size:1.5rem;margin:0 0 4px}h2{font-size:1.1rem;margin:28px 0 8px}
-.muted{color:var(--muted)}.cards{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}
-.card{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:10px 14px;min-width:96px}
-.card b{display:block;font-size:1.4rem}
-.High{color:var(--high)}.Medium{color:var(--medium)}.Low{color:var(--low)}.Info{color:var(--info)}
-details{background:var(--card);border:1px solid var(--line);border-radius:8px;margin:8px 0;padding:8px 12px}
-summary{cursor:pointer;font-weight:600}dl{display:grid;grid-template-columns:max-content 1fr;gap:4px 12px}
-dt{color:var(--muted)}dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+# Rules for privacy-scan record types only, after the shared dashboard
+# stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
+DASHBOARD_CSS = """
+@media(min-width:851px){.cards{grid-template-columns:repeat(5,minmax(0,1fr))}}
+.filter-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
+button[aria-pressed="true"]{border-color:var(--text);background:var(--soft)}
+.register{border-top:1.5px solid var(--text);border-bottom:1.5px solid var(--text)}
+.register [data-empty]{color:var(--muted);padding:14px 4px;margin:0}
+details[data-sev]{border-top:1px solid var(--line);padding:12px 4px 12px 16px;border-left:.6pt solid var(--line)}
+details[data-sev]:first-of-type{border-top:0}
+details[data-sev="High"]{border-left:2.4pt solid var(--high)}
+details[data-sev="Medium"]{border-left:1.2pt solid var(--medium)}
+details[data-sev="Low"]{border-left:.6pt solid var(--low)}
+details[data-sev="Info"]{border-left:.6pt solid var(--info)}
+details[data-sev="excluded"]{border-left:.6pt dashed var(--muted)}
+details[data-sev] summary{font-family:var(--serif)}
+details[data-sev] summary .badge{margin-right:8px}
+details[data-sev] summary .muted{font-family:var(--sans);font-size:12px;font-weight:400}
+details[data-sev] dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:14px 0 4px}
+details[data-sev] dt{font-family:var(--sans);font-size:12px;color:var(--muted)}
+dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
 li{white-space:pre-line}
-pre{margin:4px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
-table{border-collapse:collapse;width:100%}td,th{border-bottom:1px solid var(--line);padding:6px;text-align:left;vertical-align:top;overflow-wrap:anywhere}
 td{white-space:pre-line}
-button{background:var(--card);color:var(--fg);border:1px solid var(--line);border-radius:6px;padding:4px 10px;cursor:pointer}
-button[aria-pressed="true"]{border-color:var(--fg)}
+details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
+.ledger th{width:auto}
+.commitments th:nth-child(1){width:9%}
+.commitments th:nth-child(2){width:33%}
+.commitments th:nth-child(3){width:12%}
+.commitments th:nth-child(4){width:22%}
+.commitments th:nth-child(5){width:24%}
+.coverage-table th:nth-child(1){width:42%}
+.coverage-table th:nth-child(2){width:14%}
+.coverage-table th:nth-child(3){width:44%}
+.lists .panel ul{white-space:normal}
+@media(max-width:850px){table.ledger{display:table;min-width:620px}table.ledger thead{display:table-header-group}table.ledger tbody{display:table-row-group}table.ledger tr{display:table-row}table.ledger td{display:table-cell}details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
 """
+CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
 JS = """
+document.getElementById('theme').addEventListener('click',()=>{const root=document.documentElement,
+dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;
+root.dataset.theme=dark?'light':'dark';});
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
 let shown=0;document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s;shown+=!d.hidden});
@@ -387,31 +406,40 @@ def render_html(doc, lang):
     by_sev, excluded = counts(findings)
     method = review_method(meta, findings, t)
     e = lambda v: escape(as_text(v))  # noqa: E731
+    byline = " · ".join(as_text(meta.get(k, "")) for k in ("date", "assessor")
+                        if shown(meta.get(k, "")))
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{e(t['title'])}: {e(meta.get('project', ''))}</title>"
            f"<style>{CSS}</style></head><body><main>",
-           f"<h1>{e(t['title'])}: {e(meta.get('project', ''))}</h1>",
+           f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
+           f"<div class='tools'><button id='theme' type='button'>{e(t['theme'])}</button></div></header>",
+           f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
+           f"<h1>{e(meta.get('project', ''))}</h1><div class='meta'>{e(byline)}</div></div>"
+           f"<div class='hero-aside'>{e(t['disclaimer'])}</div></div>",
            "<div class='cards'>"]
     for s in SEVERITIES:
-        out.append(f"<div class='card'><span class='{s}'>{s}</span><b>{by_sev[s]}</b></div>")
-    out.append(f"<div class='card'><span>{e(t['excluded'])}</span><b>{excluded}</b></div></div>")
-    out.append(f"<p><strong>{e(t['verdict_counts'])}:</strong> {e(verdict_summary(findings))}</p>")
-    out.append(f"<p class='muted'>{e(t['disclaimer'])}</p>")
+        out.append(f"<div class='card'><span class='l'><span class='badge {s}'>{s}</span></span>"
+                   f"<div class='n'>{by_sev[s]}</div></div>")
+    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span>"
+               f"<div class='n'>{excluded}</div></div></div>")
+    out.append(f"<div class='summary-banner'><p><strong>{e(t['verdict_counts'])}:</strong> "
+               f"{e(verdict_summary(findings))}</p></div>")
     scope_rows = [(t['project'], meta.get('project', '')),
                   (t['scope_row'], meta.get('scope', '')),
                   (t['revision'], revision(meta)),
                   (t['review_method'], method),
                   (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
-    out.append(f"<h2>{e(t['scope'])}</h2><dl>"
+    out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"
                + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
-               + "</dl>")
-    out.append(f"<h2>{e(t['findings'])}</h2><p><button data-filter='all' aria-pressed='true'>"
+               + "</dl></section>")
+    out.append(f"<section id='findings'><div class='section-head'><div><h2>{e(t['findings'])}</h2>"
+               f"</div></div><div class='filter-buttons'><button data-filter='all' aria-pressed='true'>"
                f"{e(t['all'])}</button> "
                + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
                + (f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
                   if excluded else "")
-               + "</p>")
+               + "</div><div class='register'>")
     # Shown when there are no findings, and by the filter when none match.
     out.append(f"<p data-empty{'' if not findings else ' hidden'}>{e(t['none'])}</p>")
     for f in findings:
@@ -424,12 +452,12 @@ def render_html(doc, lang):
         if "analysis" in f:
             a = f["analysis"]
             analysis_html = (f"<dt>{e(t['analysis'])}</dt><dd>{e(a['result'])} — {e(a['tool'])}:"
-                             f"<pre><code>{e(a['command'])}</code></pre></dd>")
+                             f"<pre class='snippet'><code>{e(a['command'])}</code></pre></dd>")
         excluded_finding = is_excluded(f)
         # Excluded findings are not counted under their severity, so they are
         # filtered separately and labelled in the summary as well.
         out.append(f"<details data-sev='{'excluded' if excluded_finding else f['severity']}'>"
-                   f"<summary><span class='{f['severity']}'>"
+                   f"<summary><span class='badge {f['severity']}'>"
                    f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
                    f"· {e(v['verdict'])}"
                    + (f" ({e(t['excluded'])})" if excluded_finding else "")
@@ -441,22 +469,30 @@ def render_html(doc, lang):
                    + "".join(f"<dt>{e(t['references'])}</dt><dd>{html_reference(ref)}</dd>"
                              for ref in f.get("references", []))
                    + "</dl></details>")
+    out.append("</div></section>")
     if doc.get("commitments"):
-        out.append(f"<h2>{e(t['commitments'])}</h2><table>{html_head(t['commitment_columns'])}")
+        out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
+                   f"<div class='tablewrap'><table class='ledger commitments'>"
+                   f"{html_head(t['commitment_columns'])}")
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r.get("family", ""), r["source"], status)
             out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
-        out.append("</table>")
-    out.append(f"<h2>{e(t['perspectives'])}</h2><table>{html_head(t['perspective_columns'])}")
+        out.append("</table></div></section>")
+    out.append(f"<section><div class='section-head'><div><h2>{e(t['perspectives'])}</h2></div></div>"
+               f"<div class='tablewrap'><table class='ledger coverage-table'>"
+               f"{html_head(t['perspective_columns'])}")
     for row in perspective_rows(doc, t):
         out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>")
-    out.append("</table>")
+    out.append("</table></div></section><div class='lists'>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])
-        out.append(f"<h2>{e(t[key])}</h2>"
+        out.append(f"<section class='panel'><h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
-                      else f"<p>{e(t['none'])}</p>"))
+                      else f"<p class='muted'>{e(t['none'])}</p>")
+                   + "</section>")
+    out.append(f"</div><footer class='footer'>{e(t['title'])}: {e(meta.get('project', ''))}"
+               f" · {e(t['revision'])} {e(revision(meta))}</footer>")
     out.append(f"</main><script>{JS}</script></body></html>")
     return "".join(out)
 

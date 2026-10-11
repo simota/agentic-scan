@@ -66,10 +66,13 @@ class ExcludedFindingTests(unittest.TestCase):
 class LayoutTests(unittest.TestCase):
     def test_cells_wrap_and_keep_line_breaks(self):
         css = render.CSS
-        self.assertRegex(css, r"td,th\{[^}]*overflow-wrap:anywhere")
+        self.assertRegex(css, r"(?:td,th|th,td)\{[^}]*overflow-wrap:anywhere")
         for selector in ("dd", "li", "td"):
             self.assertRegex(css, selector + r"\{[^}]*white-space:pre-line")
-        self.assertIn("color-scheme:light dark", css)
+        # Light and dark themes come from scan-report-kit: the system setting and the toggle.
+        self.assertIn("color-scheme:light", css)
+        self.assertIn('@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark', css)
+        self.assertIn(':root[data-theme="dark"]{color-scheme:dark', css)
 
     def test_title_names_the_project_and_analysis_precedes_status(self):
         doc = complete_doc()

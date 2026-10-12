@@ -15,20 +15,28 @@ skipped tests, commented-out code blocks, deprecation and removal markers with
 dates, and SQL tables and columns no code names. With --units, every row is
 tagged with the review unit whose path covers it. Never prints the value of an
 environment variable. Read-only, standard library only (reference/inventory.md).
-Exit status: 0 written, 2 bad arguments or unreadable units, 1 output not written.
+Exit status: 0 written, 2 bad arguments or unreadable repository/units, 1 output not written.
 """
 
 import argparse
+import ast
 import datetime
 import json
 import os
 import re
+import stat
 import sys
+from array import array
+from bisect import bisect_left
 from collections import Counter, defaultdict
+from contextlib import ExitStack, contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, check_units, load_json  # noqa: E402
+from findings import RecordError, check_units, parse_json  # noqa: E402
+from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
+from safe_paths import open_directory  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -36,16 +44,18 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "
              ".turbo", ".cache", "bower_components", ".idea", ".vscode", "DerivedData", ".dart_tool",
              "storybook-static", ".output", ".tox", ".mypy_cache", ".pytest_cache", "site-packages"}
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
-              "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "uv.lock"}
+              "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
+              "npm-shrinkwrap.json", "Pipfile.lock"}
 SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
-                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
+                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
 ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
 MAX_ROWS = 200
+SAFE_DIR_OPEN = os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
 
 PY_EXT = {".py"}
-JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"}
+JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".vue", ".svelte"}
 GO_EXT = {".go"}
 RS_EXT = {".rs"}
 SOURCE_EXT = PY_EXT | JS_EXT | GO_EXT | RS_EXT | {".rb", ".java", ".kt", ".swift", ".php", ".cs", ".scala"}
@@ -59,8 +69,14 @@ ROOT_DOCS = {"readme", "changelog", "license", "licence", "contributing", "secur
              "code_of_conduct", "notice", "authors", "history", "requirements", "codeowners"}
 ENTRY_STEMS = {"main", "index", "app", "__init__", "__main__", "setup", "manage", "conftest", "wsgi", "asgi",
                "server", "cli", "lib", "mod", "build", "worker"}
-JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json",
-              "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs")
+# Include extensionless .mts/.cts imports accepted by some bundlers, beyond tsc's resolver.
+JS_RESOLVE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json", ".mts", ".cts")
+# Keep extensionless file and directory imports consistent for every supported source type.
+JS_RESOLVE = ("", *JS_RESOLVE_EXT, *("/index" + ext for ext in JS_RESOLVE_EXT))
+# TypeScript source imports name the emitted JavaScript files in Node's ESM modes.
+JS_SUBSTITUTIONS = {".js": (".ts", ".tsx", ".d.ts", ".js", ".jsx"),
+                    ".jsx": (".tsx", ".d.ts", ".jsx"),
+                    ".mjs": (".mts", ".d.mts", ".mjs"), ".cjs": (".cts", ".d.cts", ".cjs")}
 TEST_PATH = re.compile(r"(?i)(?:^|/)(?:tests?|__tests__|spec|e2e)/|(?:^|/)test_[^/]+$|_test\.\w+$|"
                        r"\.(?:test|spec)\.\w+$")
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
@@ -84,10 +100,16 @@ MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
 
 PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
-PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\([^)]*\)|[^\n#]+)", re.M)
-JS_IMPORT = re.compile(r"(?:\bimport|\bexport)\s[^'\"`;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|\bimport\s*[\"']([^\"'\n]+)[\"']|"
-                       r"\brequire\(\s*[\"']([^\"'\n]+)[\"']\s*\)|\bimport\(\s*[\"']([^\"'\n]+)[\"']\s*\)")
-GO_IMPORT = re.compile(r"^\s*(?:import\s+)?(?:\w+\s+)?\"([\w.\-/]+)\"\s*$", re.M)
+PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
+JS_IMPORT_START = re.compile(r"\b(?:import|export|require)\b")
+# Non-ASCII binding names remain opaque; ASCII operators delimit separate tokens.
+JS_BINDING_NAME = re.compile(r"(?:[$\w]+|[^\x00-\x7f\s\ufeff]+|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\}))+")
+JS_QUOTE_OR_ESCAPE = re.compile(r"\\[\s\S]|['\"]")
+JS_SPACE = re.compile(r"[\s\ufeff]+")
+JS_LINE_END = re.compile(r"[\r\n\u2028\u2029]")
+GO_PATH = re.compile(r"[\w.+~\-/]+\Z")
+GO_ESCAPE = re.compile(r"\\([0-7]{3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)")
+GO_SIMPLE_ESCAPES = dict(zip("abfnrtv\\\"'", (b"\a", b"\b", b"\f", b"\n", b"\r", b"\t", b"\v", b"\\", b'"', b"'")))
 RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)::")
 
 ENV_READ = re.compile(
@@ -115,6 +137,9 @@ ROUTE_DEFS = (
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
+NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare",
+                  "prepublishOnly", "prepack", "postpack", "publish", "postpublish", "dependencies",
+                  "preversion", "version", "postversion"}
 SKIPPED_TEST = re.compile(r"@pytest\.mark\.skip(?:if)?\b|@unittest\.skip\w*|\bpytest\.skip\(|"
                           r"\b(?:it|test|describe|context)\.(?:skip|todo)\(|\bx(?:it|describe|test)\(|#\[ignore\]|"
                           r"\bt\.Skip(?:f|Now)?\(|@Disabled\b|@Ignore\b|\bskip\(\s*[\"']")
@@ -130,25 +155,34 @@ CREATE_TABLE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
-    "dates": {"moment", "dayjs", "date-fns", "luxon", "moment-timezone"},
-    "http client (JS)": {"axios", "node-fetch", "got", "superagent", "request", "ky", "cross-fetch",
-                         "isomorphic-fetch", "undici"},
-    "utility belt": {"lodash", "lodash-es", "underscore", "ramda"},
-    "test runner (JS)": {"jest", "vitest", "mocha", "ava", "jasmine"},
-    "http client (Python)": {"requests", "httpx", "urllib3", "aiohttp"},
-    "json (Python)": {"simplejson", "ujson", "orjson", "rapidjson"},
-    "test runner (Python)": {"pytest", "nose", "nose2"},
-    "uuid": {"uuid", "nanoid", "shortid"},
-    "class names": {"classnames", "clsx"},
+    "javascript": {
+        "dates": {"moment", "dayjs", "date-fns", "luxon", "moment-timezone"},
+        "http client (JS)": {"axios", "node-fetch", "got", "superagent", "request", "ky", "cross-fetch",
+                             "isomorphic-fetch", "undici"},
+        "utility belt": {"lodash", "lodash-es", "underscore", "ramda"},
+        "test runner (JS)": {"jest", "vitest", "mocha", "ava", "jasmine"},
+        "uuid": {"uuid", "nanoid", "shortid"},
+        "class names": {"classnames", "clsx"},
+    },
+    "python": {
+        "http client (Python)": {"requests", "httpx", "urllib3", "aiohttp"},
+        "json (Python)": {"simplejson", "ujson", "orjson", "rapidjson"},
+        "test runner (Python)": {"pytest", "nose", "nose2"},
+    },
 }
 PLATFORM_REPLACEABLE = {
-    "node-fetch": "global fetch (Node 18+)", "cross-fetch": "global fetch", "isomorphic-fetch": "global fetch",
-    "left-pad": "String.prototype.padStart", "object-assign": "Object.assign", "es6-promise": "native Promise",
-    "uuid": "crypto.randomUUID()", "array-includes": "Array.prototype.includes", "abort-controller": "global AbortController",
-    "six": "Python 3 only code", "mock": "unittest.mock", "futures": "concurrent.futures", "enum34": "enum",
-    "pathlib2": "pathlib", "typing": "typing (stdlib)", "dataclasses": "dataclasses (stdlib, 3.7+)",
-    "simplejson": "json", "importlib-metadata": "importlib.metadata (3.8+)", "backports.zoneinfo": "zoneinfo (3.9+)",
-    "pytz": "zoneinfo (3.9+)",
+    "javascript": {
+        "node-fetch": "global fetch (Node 18+)", "cross-fetch": "global fetch", "isomorphic-fetch": "global fetch",
+        "left-pad": "String.prototype.padStart", "object-assign": "Object.assign", "es6-promise": "native Promise",
+        "uuid": "crypto.randomUUID()", "array-includes": "Array.prototype.includes",
+        "abort-controller": "global AbortController",
+    },
+    "python": {
+        "six": "Python 3 only code", "mock": "unittest.mock", "futures": "concurrent.futures", "enum34": "enum",
+        "pathlib2": "pathlib", "typing": "typing (stdlib)", "dataclasses": "dataclasses (stdlib, 3.7+)",
+        "simplejson": "json", "importlib-metadata": "importlib.metadata (3.8+)", "backports.zoneinfo": "zoneinfo (3.9+)",
+        "pytz": "zoneinfo (3.9+)",
+    },
 }
 PY_MODULE_NAMES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "python-dateutil": "dateutil",
                    "scikit-learn": "sklearn", "opencv-python": "cv2", "opencv-python-headless": "cv2",
@@ -166,7 +200,21 @@ TOOL_FILES = re.compile(r"(?i)(?:^|/)(?:Makefile|Dockerfile[\w.-]*|Procfile|just
                         r"[\w.-]+\.ya?ml|[\w.-]+\.sh|noxfile\.py|conftest\.py|setup\.py)$")
 
 
-def iter_files(root):
+def iter_files(root, *, directory=None):
+    if directory is not None:
+        # Walk the same pinned repository used by open_source, even if its pathname is replaced.
+        for dirpath, dirnames, filenames, dir_fd in os.fwalk(".", dir_fd=directory, follow_symlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            for name in sorted(filenames):
+                if name in SKIP_FILES:
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISREG(info.st_mode):
+                    yield root / dirpath / name
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
         for name in sorted(filenames):
@@ -176,18 +224,183 @@ def iter_files(root):
             yield path
 
 
-def read_text(path):
-    """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
-    if SECRET_FILE.match(path.name) or path.stat().st_size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
-        return None
-    data = path.read_bytes()
-    if b"\0" in data[:8192]:
-        return None
+def check_root_identity(root, expected):
+    """Refuse a changed repository when descriptor-relative discovery is unavailable."""
+    current = root.lstat()
+    if not stat.S_ISDIR(current.st_mode) or not os.path.samestat(current, expected):
+        raise OSError("repository root changed during the scan")
+
+
+@contextmanager
+def open_source(path, root, *, root_fd=None, root_stat=None):
+    """Open a regular repository file without following replaced files or parent directories."""
+    parts = path.relative_to(root).parts
+    if not parts or ".." in parts:
+        raise OSError("expected a file inside the repository")
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = None
+    if SAFE_DIR_OPEN:
+        directory_flags = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+                           | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            dir_fd = (os.dup(root_fd) if root_fd is not None
+                      else open_directory(root, readable=False, expected_stat=root_stat))
+            for part in parts[:-1]:
+                child_fd = os.open(part, directory_flags, dir_fd=dir_fd)
+                os.close(dir_fd)
+                dir_fd = child_fd
+            fd = os.open(parts[-1], flags, dir_fd=dir_fd)
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+    else:
+        # Platforms without descriptor-relative opens get path and inode checks before any read.
+        # The POSIX branch above additionally closes races in ancestor-directory resolution.
+        current, snapshots = root, []
+        if root_stat is not None:
+            check_root_identity(root, root_stat)
+        for part in ("", *parts):
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise OSError("repository symlinks are not scanned")
+            snapshots.append((current, info))
+        expected = snapshots[-1][1]
+        if not stat.S_ISREG(expected.st_mode):
+            raise OSError("expected a regular repository file")
+        fd = os.open(path, flags)
+        try:
+            actual = os.fstat(fd)
+            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                raise OSError("repository file changed before it could be read")
+            for current, previous in snapshots:
+                latest = current.lstat()
+                if (stat.S_ISLNK(latest.st_mode)
+                        or (latest.st_dev, latest.st_ino) != (previous.st_dev, previous.st_ino)):
+                    raise OSError("repository path changed before it could be read")
+        except BaseException:
+            os.close(fd)
+            raise
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise OSError("expected a regular repository file")
+        yield handle
+
+
+def read_file(path, root, *, root_fd=None, root_stat=None):
+    """Return (text or None, size or None), checking the opened file and bounding the read."""
+    if any(SECRET_FILE.match(part) for part in path.relative_to(root).parts):
+        return None, None
+    with open_source(path, root, root_fd=root_fd, root_stat=root_stat) as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
+            return None, size
+        data = handle.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        return None, size
+    if b"\0" in data:
+        return None, size
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
+        return None, size
+    return (env_names_only(text) if ENV_DECL_FILE.match(path.name) else text), size
+
+
+def read_text(path):
+    """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
+    path = Path(path)
+    return read_file(path, path.parent)[0]
+
+
+def go_lexemes(text):
+    """Keep comments and literals opaque, consuming even unterminated tokens only once."""
+    index, length = 0, len(text)
+    while index < length:
+        start, char = index, text[index]
+        if text.startswith(("//", "/*"), index):
+            block = text[index + 1] == "*"
+            end = text.find("*/" if block else "\n", index + 2)
+            index = length if end < 0 else end + (2 if block else 0)
+            kind = "comment"
+        elif char in "\"'`":
+            index += 1
+            kind = "invalid"
+            while index < length:
+                if text[index] == char:
+                    index += 1
+                    kind = "rune" if char == "'" else "string"
+                    break
+                index += 2 if char != "`" and text[index] == "\\" else 1
+            index = min(index, length)
+        elif char in " \t\r\n":
+            index += 1
+            while index < length and text[index] in " \t\r\n":
+                index += 1
+            kind = "space"
+        elif char.isalnum() or char == "_":
+            index += 1
+            while index < length and (text[index].isalnum() or text[index] == "_"):
+                index += 1
+            kind = "word"
+        else:
+            index += 1
+            kind = "punctuation"
+        yield kind, text[start:index]
+
+
+def go_string_value(token):
+    """Decode Go import strings, including byte escapes and raw-string carriage returns."""
+    value = token[1:-1]
+    if token.startswith("`"):
+        return value.replace("\r", "")
+    if "\\" not in value:
+        return value
+    parts, position = [], 0
+    try:
+        for match in GO_ESCAPE.finditer(value):
+            plain = value[position:match.start()]
+            if "\\" in plain:
+                return None
+            parts.append(plain.encode("utf-8"))
+            escape = match.group(1)
+            if escape[0] in "01234567":
+                parts.append(bytes([int(escape, 8)]))
+            elif escape[0] == "x":
+                parts.append(bytes([int(escape[1:], 16)]))
+            elif escape[0] in "uU":
+                parts.append(chr(int(escape[1:], 16)).encode("utf-8"))
+            else:
+                parts.append(GO_SIMPLE_ESCAPES[escape])
+            position = match.end()
+        if "\\" in value[position:]:
+            return None
+        parts.append(value[position:].encode("utf-8"))
+        return b"".join(parts).decode("utf-8")
+    except (KeyError, ValueError, UnicodeError, OverflowError):
         return None
-    return env_names_only(text) if ENV_DECL_FILE.match(path.name) else text
+
+
+def go_import_paths(text):
+    """Read only import declarations; strings elsewhere cannot invent dependency uses."""
+    importing, grouped = False, False
+    for kind, token in go_lexemes(text):
+        if kind in {"space", "comment"}:
+            continue
+        if kind == "word" and token == "import":
+            importing, grouped = True, False
+        elif importing:
+            if token == "(" and not grouped:
+                grouped = True
+            elif kind == "string":
+                path = go_string_value(token)
+                if path and GO_PATH.fullmatch(path):
+                    yield path
+                importing = grouped
+            elif token == ")" or (token == ";" and not grouped):
+                importing = False
+            elif kind != "word" and token not in {".", ";"}:
+                importing = False
 
 
 def env_names_only(text):
@@ -214,8 +427,14 @@ def env_names_only(text):
     return "\n".join(lines)
 
 
+@lru_cache(maxsize=1)
+def line_breaks(text):
+    """Index one source at a time; fixed-width offsets keep even newline-heavy files bounded."""
+    return array("I", (m.start() for m in re.finditer("\n", text)))
+
+
 def line_of(text, index):
-    return text.count("\n", 0, index) + 1
+    return bisect_left(line_breaks(text), index) + 1
 
 
 def is_test(rel):
@@ -254,6 +473,211 @@ def js_package(spec):
         return None
     parts = spec.split("/")
     return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
+def js_import_specs(text):
+    """Read import clauses without letting a spurious candidate hide a later one.
+
+    This remains a conservative text scan, including template expressions. Comment
+    and quote boundaries are indexed once; shared gaps and named clauses are cached
+    so repeated candidates cannot repeatedly scan the remaining source.
+    """
+    if not JS_IMPORT_START.search(text):
+        return
+    length = len(text)
+    names, candidates = {}, []
+    for match in JS_BINDING_NAME.finditer(text):
+        names[match.start()] = match.end()
+        if match.end() - match.start() in (6, 7):
+            kind = match.group(0)
+            if kind in ("import", "export", "require"):
+                candidates.append((kind, match.end()))
+    if not candidates:
+        return
+    comments = {}
+    close = -1
+    for match in re.finditer(r"/\*", text):
+        if close < match.end():
+            close = text.find("*/", match.end())
+            if close < 0:
+                close = length
+        comments[match.start()] = min(close + 2, length)
+    close = -1
+    for match in re.finditer(r"//", text):
+        if close < match.end():
+            newline = JS_LINE_END.search(text, match.end())
+            close = newline.start() if newline else length
+        comments[match.start()] = close
+    quotes, previous = {}, {}
+    for match in JS_QUOTE_OR_ESCAPE.finditer(text):
+        quote = match.group(0)
+        if quote in ("'", '"'):
+            if quote in previous:
+                quotes[previous[quote]] = match.start()
+            previous[quote] = match.start()
+    gaps = {length: length}
+
+    def gap(pos):
+        visited = []
+        while pos not in gaps:
+            visited.append(pos)
+            space = JS_SPACE.match(text, pos)
+            if space:
+                pos = space.end()
+            elif pos in comments:
+                pos = comments[pos]
+            else:
+                break
+        end = gaps.get(pos, pos)
+        for start in visited:
+            gaps[start] = end
+        return end
+
+    @lru_cache(maxsize=None)
+    def token_at(pos):
+        if pos >= length:
+            return "end", "", length
+        if text[pos] in ("'", '"'):
+            end = quotes.get(pos)
+            if end is None:
+                return "invalid", "", length
+            value = text[pos + 1:end]
+            # A quoted binding may continue after an escaped line ending.
+            if ("\n" in value or "\r" in value) and any(
+                    match.group(1) for match in re.finditer(r"\\(?:\r\n|[\s\S])|([\r\n])", value)):
+                return "invalid", "", end + 1
+            return "string", value, end + 1
+        end = names.get(pos)
+        if end is not None:
+            # Only contextual keywords affect the grammar; never copy a long name.
+            value = text[pos:end] if end - pos <= 6 else ""
+            return "name", value, end
+        return "punct", text[pos], pos + 1
+
+    def token(pos):
+        return token_at(gap(pos))
+
+    clauses = {}
+
+    def named_clause(pos):
+        visited = []
+        end = None
+        while True:
+            pos = gap(pos)
+            if pos in clauses:
+                end = clauses[pos]
+                break
+            visited.append(pos)
+            binding = token(pos)
+            if binding[:2] == ("punct", "}"):
+                end = binding[2]
+                break
+            if binding[0] not in ("name", "string"):
+                break
+            following = token(binding[2])
+            if (binding[0] == "name" and binding[1] in ("type", "typeof")
+                    and following[0] in ("name", "string")):
+                after = token(following[2])
+                # `as` may be the imported name, or introduce an ordinary alias.
+                if (following[:2] != ("name", "as")
+                        or after[:2] in (("punct", "}"), ("punct", ","))
+                        or (after[:2] == ("name", "as")
+                            and token(after[2])[0] in ("name", "string"))):
+                    following = after
+            if following[:2] == ("name", "as"):
+                alias = token(following[2])
+                if alias[0] not in ("name", "string"):
+                    break
+                following = token(alias[2])
+            if following[:2] == ("punct", "}"):
+                end = following[2]
+                break
+            if following[:2] != ("punct", ","):
+                break
+            pos = following[2]
+        for start in visited:
+            clauses[start] = end
+        return end
+
+    # The keyword scan advances independently of the candidate-local parser. Text
+    # such as "import /*" in a string or line comment must not swallow real code.
+    seen, emitted = set(), set()
+
+    def unseen(module):
+        if module[0] != "string" or not module[1] or module[2] in emitted:
+            return False
+        emitted.add(module[2])
+        return True
+
+    for kind, start in candidates:
+        pos = gap(start)
+        if (kind, pos) in seen:
+            continue
+        seen.add((kind, pos))
+        following = token_at(pos)
+        if kind in ("import", "require"):
+            source_call = False
+            if kind == "import" and following[:2] == ("punct", "."):
+                phase = token(following[2])
+                if phase[:2] not in (("name", "source"), ("name", "defer")):
+                    continue
+                source_call = phase[1] == "source"
+                following = token(phase[2])
+                if following[:2] != ("punct", "("):
+                    continue
+            if kind == "import" and following[0] == "string":
+                if unseen(following):
+                    yield following[1]
+                continue
+            if following[:2] == ("punct", "("):
+                module = token(following[2])
+                after = token(module[2])
+                # Source-phase calls take one argument; defer permits import options.
+                literal_end = (after[:2] == ("punct", ")") or
+                               (not source_call and after[:2] == ("punct", ",")))
+                if literal_end and unseen(module):
+                    yield module[1]
+                continue
+            if kind == "require":
+                continue
+            if following[:2] == ("name", "source"):
+                binding = token(following[2])
+                after = token(binding[2])
+                # Keep `import source from ...` as an ordinary default binding.
+                if binding[0] == "name" and after[:2] == ("name", "from"):
+                    module = token(after[2])
+                    if unseen(module):
+                        yield module[1]
+                    continue
+        if kind == "import" and following[:2] == ("name", "typeof"):
+            # Flow's reserved modifier may precede a binding named `from` or `type`.
+            following = token(following[2])
+        elif following[:2] == ("name", "type"):
+            after = token(following[2])
+            if kind == "export" or after[:2] not in (("name", "from"), ("punct", ",")):
+                following = after
+        if kind == "import" and following[0] == "name":
+            following = token(following[2])
+            if following[:2] == ("punct", ","):
+                following = token(following[2])
+        if following[:2] == ("punct", "{"):
+            end = named_clause(following[2])
+            if end is None:
+                continue
+            following = token(end)
+        elif following[:2] == ("punct", "*"):
+            following = token(following[2])
+            if following[:2] == ("name", "as"):
+                alias = token(following[2])
+                if alias[0] not in ("name", "string"):
+                    continue
+                following = token(alias[2])
+            elif kind == "import":
+                continue
+        if following[:2] == ("name", "from"):
+            module = token(following[2])
+            if unseen(module):
+                yield module[1]
 
 
 def py_dist_module(name):
@@ -321,12 +745,13 @@ def parse_toml_lists(rel, text):
 def package_sections(text):
     """Return usable package.json maps; invalid shapes cannot abort a best-effort scan."""
     try:
-        value = json.loads(text)
-    except (ValueError, RecursionError):
+        value = parse_json(text)
+    except RecordError:
         return {}
     if not isinstance(value, dict):
         return {}
-    return {key: section for key, section in value.items() if isinstance(section, dict)}
+    return {key: {name: entry for name, entry in section.items() if isinstance(entry, str)}
+            for key, section in value.items() if isinstance(section, dict)}
 
 
 def parse_go_mod(rel, text):
@@ -347,32 +772,40 @@ def parse_go_mod(rel, text):
 class Collector:
     """Per-file signals gathered in one pass, resolved across files at the end."""
 
-    def __init__(self, root, today):
+    def __init__(self, root, today, *, root_fd=None, root_stat=None):
         self.root, self.today = root, today
+        self.root_fd, self.root_stat = root_fd, root_stat
         self.texts = {}            # rel -> text, for every readable file
         self.assets = []           # (rel, bytes)
         self.skipped = 0
         self.locales = defaultdict(dict)
 
     def add(self, path):
+        if self.root_fd is None and self.root_stat is not None:
+            check_root_identity(self.root, self.root_stat)
         rel = path.relative_to(self.root).as_posix()
         try:
-            if path.suffix.lower() in ASSET_EXT:
-                self.assets.append((rel, path.stat().st_size))
-            text = read_text(path)
+            rel.encode("utf-8")
+        except UnicodeEncodeError:
+            self.skipped += 1
+            return  # Filesystem surrogateescape names cannot form valid UTF-8 JSON locations.
+        try:
+            text, size = read_file(path, self.root, root_fd=self.root_fd, root_stat=self.root_stat)
         except OSError:
             self.skipped += 1
             return
+        if path.suffix.lower() in ASSET_EXT and size is not None:
+            self.assets.append((rel, size))
         if text is None:
-            if path.suffix.lower() not in ASSET_EXT:
+            if path.suffix.lower() not in ASSET_EXT or size is None:
                 self.skipped += 1
             return
         self.texts[rel] = text
         bundle = locale_bundle(rel)
         if bundle:
             try:
-                self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(json.loads(text))))
-            except (ValueError, RecursionError):
+                self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(parse_json(text))))
+            except (RecordError, RecursionError):
                 pass
 
 
@@ -386,11 +819,24 @@ def suffix(rel):
 
 
 def inventory(root, units=None, today=None):
-    root = Path(root).resolve()
+    root = Path(root)
+    root_stat = root.stat()  # Capture the caller's selected repository before resolving any aliases.
+    root = root.resolve()
     today = today or datetime.date.today().isoformat()
-    col = Collector(root, today)
-    for path in iter_files(root):
-        col.add(path)
+    root_fd = None
+    try:
+        if SAFE_DIR_OPEN and hasattr(os, "fwalk"):
+            root_fd = open_directory(root, readable=False, expected_stat=root_stat)
+        else:
+            check_root_identity(root, root_stat)
+        col = Collector(root, today, root_fd=root_fd, root_stat=root_stat)
+        for path in iter_files(root, directory=root_fd):
+            col.add(path)
+        if root_fd is None:
+            check_root_identity(root, root_stat)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     texts = col.texts
     locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
     code_files = [r for r in texts if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
@@ -424,18 +870,33 @@ def inventory(root, units=None, today=None):
         if not regex:
             continue
         lang = {".py": "python", ".go": "go", ".rs": "rust"}.get(ext, "javascript")
+        python_defs = None
+        if ext in PY_EXT:
+            try:
+                python_defs = {node.lineno: bool(getattr(node, "decorator_list", []))
+                               for node in ast.parse(text).body
+                               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                                    ast.Assign, ast.AnnAssign))}
+            except (SyntaxError, ValueError, RecursionError):
+                pass  # Unsupported/newer Python syntax still gets the best-effort regex scan.
         for m in regex.finditer(text):
             name = next(g for g in m.groups() if g)
             if name in ENTRY_SYMBOLS or name.startswith("__"):
                 continue
-            before = text[:m.start()].rstrip("\n").rsplit("\n", 1)[-1].strip()
-            if before.startswith(("@", "#[")):
+            line = line_of(text, m.start())
+            if python_defs is not None and line not in python_defs:
+                continue  # A definition-shaped line in a docstring is not executable code.
+            end = m.start()
+            while end and text[end - 1] == "\n":
+                end -= 1
+            before = text[text.rfind("\n", 0, end) + 1:end].strip()
+            if (python_defs is not None and python_defs[line]) or before.startswith(("@", "#[")):
                 decorated_skipped += 1
                 continue
             words = [w for w in re.split(r"[\s(]+", m.group(0)) if w and w not in MODIFIERS and not w.startswith("pub")]
             kind = words[0].rstrip("*") if words and words[0] != name else "constant"
             defs[name].append({"name": name, "kind": kind, "language": lang,
-                               "location": f"{rel}:{line_of(text, m.start())}",
+                               "location": f"{rel}:{line}",
                                "exported": m.group(0).startswith(("export", "pub")) or (lang == "go" and name[0].isupper())})
     rows["unreferenced_symbols"] = sorted(
         (d for name, ds in defs.items() if idents[name] - len(ds) <= 0 for d in ds),
@@ -449,19 +910,29 @@ def inventory(root, units=None, today=None):
     def resolve_js(rel, spec):
         base = (Path(rel).parent / spec).as_posix() if spec.startswith(".") else spec.lstrip("/")
         base = os.path.normpath(base).replace(os.sep, "/")
-        for ext in JS_RESOLVE:
-            if base + ext in files:
-                return base + ext
-        return None
+        ext = Path(base).suffix
+        candidates = ([base[:-len(ext)] + replacement for replacement in JS_SUBSTITUTIONS[ext]]
+                      if ext in JS_SUBSTITUTIONS else [base + ending for ending in JS_RESOLVE])
+        # A dotted stem such as helper.client can still omit its source extension.
+        single_target = ext in JS_EXT or ext == ".json" or (bool(ext) and base in files)
+        targets = []
+        for candidate in candidates:
+            if candidate in files:
+                targets.append(candidate)
+                if single_target:
+                    break  # Preserve known-extension substitution and existing exact-file imports.
+        # Extensionless resolution depends on the bundler; each possible target is a reference.
+        return targets
 
     def resolve_py(rel, dots, module, names):
         if dots:
             pkg = Path(rel).parent
             for _ in range(len(dots) - 1):
                 pkg = pkg.parent
-            bases = [pkg.as_posix().strip(".") or ""]
+            bases = [pkg.as_posix() if pkg.as_posix() != "." else ""]
         else:
-            bases = ["", "src"]
+            # A file run as a script adds its own directory to Python's import path.
+            bases = ["", "src", Path(rel).parent.as_posix()]
         targets = []
         for base in bases:
             stem = "/".join(x for x in [base, module.replace(".", "/")] if x)
@@ -477,11 +948,9 @@ def inventory(root, units=None, today=None):
     for rel in code_files:
         ext, text = suffix(rel), texts[rel]
         if ext in JS_EXT or ext in (".html", ".htm"):
-            for m in JS_IMPORT.finditer(text):
-                spec = next(g for g in m.groups() if g)
+            for spec in js_import_specs(text):
                 if spec.startswith((".", "/")):
-                    target = resolve_js(rel, spec)
-                    if target:
+                    for target in resolve_js(rel, spec):
                         inbound[target].add(rel)
                 else:
                     pkg = js_package(spec)
@@ -490,20 +959,22 @@ def inventory(root, units=None, today=None):
         elif ext in PY_EXT:
             for m in PY_IMPORT.finditer(text):
                 for part in m.group(1).split(","):
-                    module = part.split(" as ")[0].strip()
+                    module = re.split(r"\s+as\s+", part, maxsplit=1)[0].strip()
                     py_modules[module.split(".")[0]] += 1
                     for target in resolve_py(rel, "", module, []):
                         inbound[target].add(rel)
             for m in PY_FROM.finditer(text):
                 dots, module = m.group(1), m.group(2)
-                names = [n.split(" as ")[0].strip() for n in m.group(3).strip("()").replace("\n", " ").split(",")]
+                imported_names = re.sub(r"#[^\n]*", "", m.group(3)).strip("()").replace("\n", " ")
+                names = [re.split(r"\s+as\s+", n, maxsplit=1)[0].strip()
+                         for n in imported_names.split(",")]
                 if not dots and module:
                     py_modules[module.split(".")[0]] += 1
                 for target in resolve_py(rel, dots, module, [n for n in names if n and n != "*"]):
                     inbound[target].add(rel)
         elif ext in GO_EXT:
-            for m in GO_IMPORT.finditer(text):
-                go_imports[m.group(1)] += 1
+            for module in go_import_paths(text):
+                go_imports[module] += 1
         elif ext in RS_EXT:
             for m in RS_USE.finditer(text):
                 rs_crates[m.group(1) or m.group(2)] += 1
@@ -511,12 +982,12 @@ def inventory(root, units=None, today=None):
     for rel in sorted(code_files):
         if suffix(rel) not in PY_EXT | JS_EXT or is_test(rel) or Path(rel).stem in ENTRY_STEMS:
             continue
-        if re.search(r"\.config\.\w+$|\.d\.ts$", rel) or named_elsewhere(rel):
+        if re.search(r"\.config\.\w+$|\.d\.(?:ts|mts|cts)$", rel) or named_elsewhere(rel):
             continue
         importers = inbound.get(rel, set()) - {rel}
         if any(not is_test(i) for i in importers):
             continue
-        orphans.append({"path": rel, "test_importers": sorted(importers)})
+        orphans.append({"path": rel, "test_importers": sorted(importers)[:MAX_LOCATIONS]})
     rows["orphan_files"] = orphans
 
     # Dependencies.
@@ -525,7 +996,9 @@ def inventory(root, units=None, today=None):
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         deps = []
+        ecosystem = None
         if name == "package.json":
+            ecosystem = "javascript"
             pkg = package_sections(text)
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
@@ -536,10 +1009,11 @@ def inventory(root, units=None, today=None):
                                  len(re.findall(r"(?<![\w@/-])%s(?![\w-])" % re.escape(dep.split("/")[-1]),
                                                 scripts + "\n" + tool_text.replace(text, "")))))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
+            ecosystem = "python"
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
             for dep, section, loc in parsed:
-                module = py_dist_module(dep)
-                deps.append((dep, section, loc, py_modules[module],
+                modules = {py_dist_module(dep), re.sub(r"[-.]", "_", dep.lower())}
+                deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
                              len(re.findall(r"(?<![\w-])%s(?![\w-])" % re.escape(dep), tool_text.replace(text, "")))))
         elif name == "go.mod":
             for dep, section, loc in parse_go_mod(rel, text):
@@ -552,13 +1026,14 @@ def inventory(root, units=None, today=None):
             continue
         declared.append({"manifest": rel, "count": len(deps)})
         names = {d[0].lower() for d in deps}
-        for group, members in DUPLICATE_GROUPS.items():
+        for group, members in DUPLICATE_GROUPS.get(ecosystem, {}).items():
             hit = sorted(names & members)
             if len(hit) > 1:
                 dup_rows.append({"group": group, "manifest": rel, "names": hit})
+        replacements = PLATFORM_REPLACEABLE.get(ecosystem, {})
         for dep, section, loc, imports, mentions in deps:
-            if dep.lower() in PLATFORM_REPLACEABLE:
-                platform_rows.append({"name": dep, "manifest": rel, "replacement": PLATFORM_REPLACEABLE[dep.lower()],
+            if dep.lower() in replacements:
+                platform_rows.append({"name": dep, "manifest": rel, "replacement": replacements[dep.lower()],
                                       "imports": imports, "location": loc})
             if imports == 0:
                 unimported.append({"name": dep, "manifest": rel, "section": section, "location": loc,
@@ -644,6 +1119,8 @@ def inventory(root, units=None, today=None):
             class_prefixes.add(m.group(1) or m.group(2))
     css_rows, seen_classes = [], set()
     for rel in sorted(r for r in texts if suffix(r) in CSS_EXT):
+        if Path(rel).stem.endswith(".module"):
+            continue
         text = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), texts[rel], flags=re.S)
         for m in re.finditer(r"([^{};]+)\{", text):
             selector = m.group(1)
@@ -651,7 +1128,7 @@ def inventory(root, units=None, today=None):
                 continue
             for c in re.finditer(r"(?<![\w-])\.(-?[A-Za-z_][\w-]*)", selector):
                 name = c.group(1)
-                if (name in seen_classes or name in css_tokens or rel.endswith(".module.css")
+                if (name in seen_classes or name in css_tokens
                         or any(name.startswith(p) for p in class_prefixes)):
                     continue
                 seen_classes.add(name)
@@ -710,13 +1187,14 @@ def inventory(root, units=None, today=None):
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
+            implicit_start = (Path(rel).parent / "server.js").as_posix() in files
             for script in scripts:
                 rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:\s+--?[\w-]+)*\s+(?:run(?:-script)?\s+)?%s(?![\w:.-])"
                                 % re.escape(script))
                 hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
                 hook = re.match(r"^(?:pre|post)(.+)$", script)
-                lifecycle = bool(hook and hook.group(1) in scripts
-                                 or script in ("install", "prepare", "prepublishOnly", "postinstall", "preinstall"))
+                lifecycle = bool(script in NPM_LIFECYCLES or hook and (
+                    hook.group(1) in scripts or hook.group(1) == "start" and implicit_start))
                 m = re.search(r"\"%s\"\s*:" % re.escape(script), text)
                 script_rows.append({"source": rel, "name": script, "location": f"{rel}:{line_of(text, m.start()) if m else 1}",
                                     "invocations": hits, "default": lifecycle})
@@ -801,8 +1279,10 @@ def inventory(root, units=None, today=None):
         if isinstance(value, list) and len(value) > MAX_ROWS:
             truncated[key] = len(value) - MAX_ROWS
             rows[key] = value[:MAX_ROWS]
+    line_breaks.cache_clear()
     return {
-        "tool": "inventory.py", "version": 1, "repository": root.name, "today": today,
+        "tool": "inventory.py", "version": 1,
+        "repository": root.name.encode("utf-8", "backslashreplace").decode("utf-8"), "today": today,
         "files_scanned": len(texts), "files_skipped": col.skipped,
         "env_declaration_files": decl_files, "decorated_symbols_skipped": decorated_skipped,
         **rows,
@@ -813,8 +1293,12 @@ def inventory(root, units=None, today=None):
 
 def tag_units(rows, units):
     """Tag every row that has a path with the most specific unit whose paths cover it; add per-unit counts."""
-    prefixes = sorted(((p.strip("/") if p not in (".", "./") else "", u["id"]) for u in units["units"] for p in u["paths"]),
-                      key=lambda x: -len(x[0]))
+    prefixes = []
+    for unit in units["units"]:
+        for path in unit["paths"]:
+            prefix = Path(path).as_posix()
+            prefixes.append(("" if prefix == "." else prefix, unit["id"]))
+    prefixes.sort(key=lambda item: -len(item[0]))
 
     def unit_of(rel):
         for prefix, uid in prefixes:
@@ -835,6 +1319,30 @@ def tag_units(rows, units):
     rows["by_unit"] = dict(sorted(counts.items()))
 
 
+@contextmanager
+def selected_units(path):
+    """Keep the identity of the regular file actually parsed until its output is committed."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RecordError(f"{path}: expected a regular JSON file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            units = check_units(parse_json(handle.read(), where=str(path)))
+        yield units, info
+    finally:
+        os.close(descriptor)
+
+
+def output_is_source(directory, name, source):
+    """Compare actual entries, including case aliases; a final output symlink is replaced safely."""
+    try:
+        existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return os.path.samestat(existing, source)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("repo")
@@ -853,19 +1361,45 @@ def main(argv=None):
         except ValueError:
             print("inventory.py: --today expects a valid calendar date (YYYY-MM-DD)", file=sys.stderr)
             return 2
-    units = None
-    if a.units:
+    if a.units and not SAFE_OUTPUT:
+        print("inventory.py: --units requires descriptor-relative output support to preserve its source",
+              file=sys.stderr)
+        return 2
+    output, directory, units, source = Path(a.out), None, None, None
+    with ExitStack() as resources:
+        if SAFE_OUTPUT:
+            try:
+                selected = output.parent.stat()
+                directory = open_directory(output.parent.resolve(strict=True), readable=False, expected_stat=selected)
+                resources.callback(os.close, directory)
+            except (OSError, ValueError, RuntimeError) as e:
+                print(f"inventory.py: --out: {e}", file=sys.stderr)
+                return 2 if a.units else 1
+        if a.units:
+            try:
+                units, source = resources.enter_context(selected_units(a.units))
+                if output_is_source(directory, output.name, source):
+                    print("inventory.py: output would overwrite the units source; choose a different --out file",
+                          file=sys.stderr)
+                    return 2
+            except (OSError, ValueError, RecordError) as e:
+                print(f"inventory.py: units: {e}", file=sys.stderr)
+                return 2
         try:
-            units = check_units(load_json(a.units))
-        except (OSError, ValueError, RecordError) as e:
-            print(f"inventory.py: units: {e}", file=sys.stderr)
+            result = inventory(a.repo, units, a.today)
+        except (OSError, RuntimeError) as e:
+            print(f"inventory.py: cannot read repository: {e}", file=sys.stderr)
             return 2
-    result = inventory(a.repo, units, a.today)
-    try:
-        write_output(Path(a.out), json.dumps(result, ensure_ascii=False, indent=2) + "\n")
-    except OSError as e:
-        print(f"inventory.py: cannot write {a.out}: {e.strerror or e}", file=sys.stderr)
-        return 1
+        try:
+            text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+            if directory is None:
+                # Preserve untagged scans on runtimes without descriptor-relative writes.
+                write_output(output, text)
+            else:
+                write_output_at(directory, output.name, text, protected=(source,) if source is not None else ())
+        except (OSError, ValueError) as e:
+            print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
+            return 1
     counts = ", ".join(f"{len(result[k])} {k.replace('_', ' ')}" for k in (
         "unreferenced_symbols", "orphan_files", "unimported_dependencies", "feature_flags", "unreferenced_routes",
         "i18n_unreferenced", "assets_unreferenced", "css_unreferenced"))

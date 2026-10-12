@@ -9,8 +9,9 @@ WeasyPrint; CHROME picks the binary, PRUNE_SCAN_PDF_TIMEOUT the seconds). The
 rendered next steps open with the subtraction summary (remove now, reduce or
 consolidate, decide with a human), computed from the findings. With --repo,
 each finding's location is embedded as a short excerpt; secret-looking files
-are never read and secret-looking lines are masked. Every page carries the
-SHA-256 of the findings.json and, when supplied, units.json it shows.
+are never read, and sources containing secret-looking names or private key
+blocks are omitted. Every page carries the SHA-256 of the findings.json and,
+when supplied, units.json it shows.
 Standard library only.
 Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
 """
@@ -19,24 +20,34 @@ import argparse
 import hashlib
 import os
 import re
+import stat
 import sys
+import tempfile
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import EXCLUDED, RecordError, check_findings, check_units, parse_json, read_json_source  # noqa: E402
+from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
+                      record_exists)
+from safe_paths import open_directory  # noqa: E402
+from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
 UNITS_STAMP = "prune-scan-units"
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|"
-                       r"id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|"
-                       r".*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
-SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
+                       r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
+                       r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc)(?:/|$)")
+SECRET_NAME = re.compile(r"(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
+                         r"api[_-]?key|private[_-]?key|client[_-]?secret)", re.I)
+SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
+PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 80
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
+NOFOLLOW_DIR_FD = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 
 FAMILIES = {
     "en": {"DC": "Dead code", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
@@ -76,7 +87,49 @@ LABELS = {
 }
 
 
-def snippet(repo, location):
+def read_source(root, relative, *, expected_stat, directory=None):
+    """Read a bounded regular source without following links planted after resolve.
+
+    Pin the selected repository identity and every directory on POSIX.
+    On platforms without descriptor-relative opens, verify each component and
+    the opened file's identity; excerpts remain optional on read errors.
+    """
+    path = root / relative
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if NOFOLLOW_DIR_FD:
+        parent = (open_directory(root, readable=False, expected_stat=expected_stat)
+                  if directory is None else os.dup(directory))
+        directories = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+                       | os.O_DIRECTORY | os.O_NOFOLLOW)
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, directories, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            fd = os.open(relative.name, flags, dir_fd=parent)
+        finally:
+            os.close(parent)
+    else:
+        components = [root, *(root / Path(*relative.parts[:i]) for i in range(1, len(relative.parts) + 1))]
+        before = [component.lstat() for component in components]
+        if (not os.path.samestat(expected_stat, before[0])
+                or any(stat.S_ISLNK(info.st_mode) for info in before) or not stat.S_ISREG(before[-1].st_mode)):
+            return None
+        fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE_BYTES:
+            return None
+        if not NOFOLLOW_DIR_FD:
+            if (not os.path.samestat(before[-1], info)
+                    or any(not os.path.samestat(old, component.lstat())
+                           for old, component in zip(before, components))):
+                return None
+        source = handle.read(MAX_SOURCE_BYTES + 1)
+    return source if len(source) <= MAX_SOURCE_BYTES and b"\0" not in source else None
+
+
+def snippet(repo, location, *, selected=None):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
@@ -85,46 +138,97 @@ def snippet(repo, location):
         start, end = int(m["start"]), int(m["end"] or m["start"])
         if start < 1 or end < start:
             return None
-        root = Path(repo).resolve()
+        directory = None
+        if selected is None:
+            requested = Path(repo)
+            selected_info = requested.stat()
+            root = requested.resolve()
+        else:
+            root, selected_info, directory = selected
+        # Resolve links through the same repository whose descriptor will read
+        # the source. A replacement tree can otherwise redirect beta.py to
+        # alpha.py, then make the original alpha.py appear as beta.py's excerpt.
+        identity = os.fstat(directory) if directory is not None else selected_info
+        if not os.path.samestat(identity, root.stat()):
+            return None
         path = (root / m["path"]).resolve()
-        resolved = path.relative_to(root).as_posix()
-        if SENSITIVE.search(resolved) or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
+        if not os.path.samestat(identity, root.stat()):
             return None
-        with path.open("rb") as handle:
-            source = handle.read(MAX_SOURCE_BYTES + 1)
-        if len(source) > MAX_SOURCE_BYTES or b"\0" in source:
+        relative = path.relative_to(root)
+        if SENSITIVE.search(relative.as_posix()):
             return None
-        lines = source.decode("utf-8").splitlines()
+        source = read_source(root, relative, expected_stat=selected_info, directory=directory)
+        if source is None:
+            return None
+        text = source.decode("utf-8")
+        # A recognized secret name suppresses the entire bounded source:
+        # values may continue across methods, operators and comments in
+        # different languages, even beyond the selected excerpt's lines.
+        if PRIVATE_KEY.search(text) or SECRET_NAME.search(text):
+            return None
+        lines = text.splitlines()
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
     first, last = max(1, start - CONTEXT), min(len(lines), end + CONTEXT)
     last = min(last, first + MAX_SNIPPET_LINES - 1)
-    shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
-             for line in lines[first - 1:last]]
+    shown = [line[:240] for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
-def pdf_complete(path):
-    """Check stored artifacts for the run contract too; not a full PDF parser."""
+@contextmanager
+def open_artifact(path, *, directory=None):
+    """Open a regular artifact in a pinned directory, without links or FIFO waits.
+
+    A contract check supplies one directory descriptor for all of its reads.
+    Standalone callers select the parent before inspection and pin that path.
+    """
     path = Path(path)
+    owned_directory = None
+    if directory is None and NOFOLLOW_DIR_FD:
+        try:
+            parent_info = path.parent.stat()
+            parent = path.parent.resolve(strict=True)
+        except RuntimeError as error:
+            raise OSError(str(error)) from error
+        owned_directory = directory = open_directory(parent, readable=False, expected_stat=parent_info)
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        with path.open("rb") as handle:
+        name = path if directory is None else path.name
+        options = {} if directory is None else {"dir_fd": directory}
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0), **options)
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            current = path.lstat() if directory is None else os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(current.st_mode) or not os.path.samestat(info, current):
+                raise OSError(f"{path}: expected a regular artifact file")
+            yield handle
+    finally:
+        if owned_directory is not None:
+            os.close(owned_directory)
+
+
+def pdf_envelope_complete(header, tail):
+    """Recognize the stored PDF envelope; this is not a full PDF parser."""
+    return bool(re.fullmatch(rb"%PDF-[12]\.[0-9]", header) and re.search(rb"%%EOF\s*\Z", tail))
+
+
+def pdf_complete(path, *, directory=None):
+    """Check stored artifacts for the run contract too; not a full PDF parser."""
+    try:
+        with open_artifact(path, directory=directory) as handle:
             header = handle.read(8)
             handle.seek(0, os.SEEK_END)
             handle.seek(max(0, handle.tell() - 1024))
             tail = handle.read()
-        return bool(re.fullmatch(rb"%PDF-[12]\.[0-9]", header) and re.search(rb"%%EOF\s*\Z", tail))
+        return pdf_envelope_complete(header, tail)
     except OSError:
         return False
 
 
 def redact_diagnostic(text):
     """Engine stderr may echo a secret value: mask the complete diagnostic."""
-    return "[masked: looks like a secret]" if SECRET_LINE.search(text) else text
+    return "[masked: looks like a secret]" if SECRET_LINE.search(text) or PRIVATE_KEY.search(text) else text
 
 
 def act_now(f):
@@ -155,8 +259,43 @@ def subtraction_lines(findings, lang):
             for key, ids in zip(("now", "reduce", "decide"), subtraction_groups(findings)) if ids]
 
 
+@contextmanager
+def selected_repository(repo):
+    """Retain one repository identity for every excerpt in a conversion.
+
+    The descriptor prevents both pathname replacement and inode reuse from
+    selecting another repository. Unsupported runtimes keep the original stat
+    for the per-read fallback checks. An unavailable selection stays unavailable.
+    """
+    directory = None
+    try:
+        if not repo:
+            selected = None
+        else:
+            requested = Path(repo)
+            info = requested.stat()
+            root = requested.resolve()
+            if not stat.S_ISDIR(info.st_mode):
+                raise OSError("repository is not a directory")
+            if NOFOLLOW_DIR_FD:
+                directory = open_directory(root, readable=False, expected_stat=info)
+            selected = root, info, directory
+    except (OSError, ValueError, RuntimeError):
+        selected = None
+    try:
+        yield selected
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
 def to_common(data, lang, units=None, repo=None):
     """data (findings.json) as a scan-report/1 record."""
+    with selected_repository(repo) as selected:
+        return _to_common(data, lang, units, repo if selected is not None else None, selected)
+
+
+def _to_common(data, lang, units, repo, selected):
     T, fam, acts, srcs = LABELS[lang], FAMILIES[lang], ACTIONS[lang], SOURCES[lang]
     by_unit = {u["id"]: u for u in (units or {}).get("units", [])}
     by_entry = {e["id"]: e for e in (units or {}).get("entry_points", [])}
@@ -190,7 +329,7 @@ def to_common(data, lang, units=None, repo=None):
         if f["status"] == "Open" and verdict not in EXCLUDED:
             item["action"] = ({"label": T["subtract"], "text": subtract_text} if ready
                               else {"label": T["verify"], "text": T["verify_text"]})
-        excerpt = snippet(repo, f["location"])
+        excerpt = snippet(repo, f["location"], selected=selected)
         if excerpt:
             item["snippet"] = excerpt
         findings.append(item)
@@ -207,20 +346,68 @@ def to_common(data, lang, units=None, repo=None):
     }
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("findings")
-    p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="en")
-    p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
-    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
-    a = p.parse_args(argv)
+@contextmanager
+def selected_json_source(path):
+    """Keep the actual regular input open through publication, including input aliases."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        source = read_json_source(a.findings)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RecordError(f"{path}: expected a regular JSON file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            source = handle.read()
+        yield source, info
+    finally:
+        os.close(descriptor)
+
+
+def check_selected_output(path, directory):
+    """Do not report success at a pathname that now denotes a different directory."""
+    if not os.path.samestat(path.stat(), os.fstat(directory)):
+        raise OSError(f"{path}: output directory changed since it was selected")
+
+
+def private_staging(out, repo):
+    """Keep vendor pathname-based generation outside the selected output and source tree."""
+    temporary = Path(tempfile.gettempdir()).resolve(strict=True)
+    excluded = [out]
+    if repo:
+        excluded.append(Path(repo).resolve())
+    if any(temporary == path or path in temporary.parents for path in excluded):
+        raise OSError("temporary storage must be outside --out and --repo; choose a different TMPDIR")
+    return tempfile.TemporaryDirectory(prefix="prune-scan-render-", dir=temporary)
+
+
+def render_outputs(a, resources):
+    """Read inputs once and retain the selected output directory through every commit."""
+    if not SAFE_OUTPUT:
+        print("render.py: descriptor-relative output support is required to preserve input sources",
+              file=sys.stderr)
+        return 2
+    try:
+        source, source_info = resources.enter_context(selected_json_source(a.findings))
+        protected = [source_info]
         units_path = Path(a.findings).with_name("units.json")
-        units_source = read_json_source(units_path) if units_path.exists() else None
+        units_source = None
+        if record_exists(units_path):
+            units_source, units_info = resources.enter_context(selected_json_source(units_path))
+            protected.append(units_info)
         units = check_units(parse_json(units_source, str(units_path))) if units_source is not None else None
         data = check_findings(parse_json(source, a.findings), units)
+    except (OSError, ValueError, RecordError) as e:
+        print(f"render.py: {e}", file=sys.stderr)
+        return 2
+    out = Path(a.out)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        selected = out.stat()
+        resolved = out.resolve(strict=True)
+        directory = open_directory(resolved, readable=False, expected_stat=selected)
+        resources.callback(os.close, directory)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"render.py: cannot select output directory {out}: {e}", file=sys.stderr)
+        return 2
+    try:
         common = report.validate(to_common(data, a.lang, units, a.repo))
         stamp = f'<meta name="{STAMP}" content="sha256:{hashlib.sha256(source).hexdigest()}">'
         if units_source is not None:
@@ -231,23 +418,16 @@ def main(argv=None):
     except (OSError, ValueError, RecordError, report.FormatError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2
-    out = Path(a.out)
     try:
-        sources = {Path(a.findings).resolve()}
-        if units_source is not None:
-            sources.add(units_path.resolve())
-        if sources & {(out / name).resolve() for name in OUTPUTS}:
-            print("render.py: output would overwrite a findings or units source; choose a different --out directory",
-                  file=sys.stderr)
-            return 2
-        out.mkdir(parents=True, exist_ok=True)
-        bad = output.unsafe_target(out, OUTPUTS)
-        if bad:
-            print(f"render.py: refusing to write {bad}: it exists as a symlink or non-regular file", file=sys.stderr)
-            return 2
-        # Stage both pages and remove the previous PDF in one rollback-capable
-        # update. A failed write or installation restores the old report.
-        output.write_outputs(out, pages, remove=("report.pdf",))
+        for name in OUTPUTS:
+            checked_target(directory, name, protected=protected, regular=True)
+        staging = Path(resources.enter_context(private_staging(resolved, a.repo)))
+        # Vendor staging and PDF engines never receive a mutable public path.
+        output.write_outputs(staging, pages, remove=("report.pdf",))
+        check_selected_output(out, directory)
+        publish_outputs_at(directory, {name: staging / name for name in pages},
+                           remove=("report.pdf",), protected=protected)
+        check_selected_output(out, directory)
         for name in pages:
             print(f"wrote {out / name}")
         if a.no_pdf:
@@ -258,18 +438,18 @@ def main(argv=None):
     failures = []
     timeout = pdf.pdf_timeout(len(data["findings"]), env="PRUNE_SCAN_PDF_TIMEOUT")
     try:
-        engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
+        engine = pdf.to_pdf(staging / "report.html", staging / "report.pdf", failures, timeout,
                             redact=redact_diagnostic)
-        if engine and not pdf_complete(out / "report.pdf"):
+        if engine and not pdf_complete(staging / "report.pdf"):
             failures.append((engine, "did not produce a complete PDF; its output was discarded", ""))
             engine = None
-        if not engine:
-            (out / "report.pdf").unlink(missing_ok=True)
+        check_selected_output(out, directory)
+        if engine:
+            publish_outputs_at(directory, {"report.pdf": staging / "report.pdf"}, protected=protected)
+            check_selected_output(out, directory)
+        # Old PDFs were removed with the HTML transaction. Failed engine output
+        # exists only in private staging, so no public-path unlink is needed.
     except (OSError, ValueError) as e:
-        try:
-            (out / "report.pdf").unlink(missing_ok=True)
-        except OSError:
-            pass
         print(f"render.py: cannot write PDF to {out}: {redact_diagnostic(str(e))}", file=sys.stderr)
         return 2
     if not engine:
@@ -282,6 +462,22 @@ def main(argv=None):
         return 3
     print(f"wrote {out / 'report.pdf'} ({engine})")
     return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("findings")
+    p.add_argument("--out", required=True)
+    p.add_argument("--lang", choices=sorted(LABELS), default="en")
+    p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
+    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
+    a = p.parse_args(argv)
+    try:
+        with ExitStack() as resources:
+            return render_outputs(a, resources)
+    except OSError as e:
+        print(f"render.py: cannot clean up temporary output: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

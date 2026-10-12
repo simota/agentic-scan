@@ -30,6 +30,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scan_report_kit.output import write_output  # noqa: E402
 from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
+from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
+from safe_paths import open_directory  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Externally-dependent", "Purpose-dependent", "Suspected")
@@ -401,11 +403,12 @@ def parse_json(source, where="JSON"):
         raise RecordError(f"{where}: {e}") from None
 
 
-def read_json_source(path):
+def read_json_source(path, *, directory=None):
     """Read bytes from a regular file; a symlink may resolve to one, but FIFOs and devices are refused."""
     try:
         # Open non-blocking before fstat so a FIFO, including one swapped in after a path check, cannot hang.
-        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+        name = Path(path).name if directory is not None else path
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0), dir_fd=directory)
         with os.fdopen(fd, "rb") as handle:
             if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
                 raise RecordError(f"{path}: expected a regular JSON file")
@@ -414,14 +417,27 @@ def read_json_source(path):
         raise RecordError(f"{path}: {e}") from None
 
 
-def load_json(path):
-    return parse_json(read_json_source(path), where=str(path))
+def load_json(path, *, directory=None):
+    return parse_json(read_json_source(path, directory=directory), where=str(path))
 
 
-def units_beside(findings_path):
+def record_exists(path, *, directory=None):
+    """Only an absent path is optional; broken links and inaccessible records must fail when read."""
+    try:
+        if directory is None:
+            Path(path).lstat()
+        else:
+            os.stat(Path(path).name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return True
+
+
+def units_beside(findings_path, *, directory=None):
     """The checked units.json next to findings_path, or None when there is none."""
     path = Path(findings_path).with_name("units.json")
-    return check_units(load_json(path)) if path.exists() else None
+    return (check_units(load_json(path, directory=directory))
+            if record_exists(path, directory=directory) else None)
 
 
 def merge_units(base, fragment):
@@ -492,46 +508,65 @@ def main(argv=None):
         print("usage:\n" + "\n".join(__doc__.splitlines()[2:6]), file=sys.stderr)
         return 2
     cmd, target, fragments = argv[0], Path(argv[1]), argv[2:]
+    directory = None
     try:
+        if SAFE_OUTPUT:
+            selected = target.parent.stat()
+            parent = target.parent.resolve(strict=True)
+            directory = open_directory(parent, readable=False, expected_stat=selected)
+
+        def write_record(data):
+            text = dump(data)
+            if directory is None:
+                write_output(target, text)
+            else:
+                write_output_at(directory, target.name, text)
+
         if cmd == "check":
-            check_findings(load_json(target), units_beside(target))
+            check_findings(load_json(target, directory=directory), units_beside(target, directory=directory))
             print(f"ok {target}")
             return 0
         if cmd == "units":
-            result = check_units(load_json(target)) if target.exists() else {}
+            result = (check_units(load_json(target, directory=directory))
+                      if record_exists(target, directory=directory) else {})
             for fragment in fragments:
                 result = merge_units(result, load_json(fragment))
             check_units(result)
             beside = target.with_name("findings.json")
-            if beside.exists():  # Every unit, entry and purpose reference in the record must stay valid.
-                check_findings(load_json(beside), result, ordered=False)
-            write_output(target, dump(result))
+            if record_exists(beside, directory=directory):  # Every cross-reference must stay valid.
+                check_findings(load_json(beside, directory=directory), result, ordered=False)
+            write_record(result)
             print(f"wrote {target} ({len(result['purpose'])} purpose items, {len(result['entry_points'])} entry points, "
                   f"{len(result['units'])} units)")
             return 0
         if cmd == "renumber":
-            data = check_findings(load_json(target), units_beside(target), ordered=False)
+            data = check_findings(load_json(target, directory=directory),
+                                  units_beside(target, directory=directory), ordered=False)
             mapping = renumber_map(data["findings"])
             moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
             if not moved and [f["id"] for f in data["findings"]] == list(mapping):
                 print(f"{target}: findings already in order")
                 return 0
             reordered = renumber(data, mapping)
-            data = check_findings(reordered, units_beside(target))
-            write_output(target, dump(data))
+            data = check_findings(reordered, units_beside(target, directory=directory))
+            write_record(data)
             print(f"renumbered {target}: {moved or 'reordered findings'}")
             return 0
-        data = (check_findings(load_json(target), units_beside(target), ordered=False)
-                if target.exists() else {"schema_version": 1, "findings": []})
+        data = (check_findings(load_json(target, directory=directory),
+                               units_beside(target, directory=directory), ordered=False)
+                if record_exists(target, directory=directory) else {"schema_version": 1, "findings": []})
         for fragment in fragments:
             data = merge(data, load_json(fragment))
-        check_findings(data, units_beside(target), ordered=False)
-        write_output(target, dump(data))
+        check_findings(data, units_beside(target, directory=directory), ordered=False)
+        write_record(data)
         print(f"wrote {target} ({len(data['findings'])} findings)")
         return 0
-    except (RecordError, OSError) as e:
+    except (RecordError, OSError, RuntimeError) as e:
         print(f"findings.py: {e}", file=sys.stderr)
         return 2
+    finally:
+        if directory is not None:
+            os.close(directory)
 
 
 if __name__ == "__main__":

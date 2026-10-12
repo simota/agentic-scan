@@ -421,8 +421,7 @@ class RenderTests(unittest.TestCase):
             (repo / "a.ts").write_text("const label = 'Hi';\nconst api_key = 'sk-123';\n", encoding="utf-8")
             self.assertIsNone(render.snippet(repo, ".env:1"))
             self.assertIsNone(render.snippet(repo, "../outside.ts:1"))
-            lines = render.snippet(repo, "a.ts:1")["lines"]
-            self.assertNotIn("sk-123", "\n".join(lines))
+            self.assertIsNone(render.snippet(repo, "a.ts:1"))
 
     def test_render_and_contract(self):
         with tempfile.TemporaryDirectory() as tmp:

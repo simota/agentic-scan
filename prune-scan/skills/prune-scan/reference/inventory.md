@@ -18,11 +18,58 @@ than assets; files over 2 MB; and secret-looking files such as `.env` — only
 only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
+Secret-looking directory names are excluded too. On POSIX, files are opened
+relative to pinned directory descriptors without following symlinks; a file or
+directory replaced during the scan cannot redirect a read through a link.
+The 2 MB limit is enforced on the opened file and on the read itself.
+Files whose names cannot be represented as UTF-8 are skipped and counted in
+`files_skipped`, so an unusual filesystem name cannot break the JSON output.
+`--out` cannot overwrite the source supplied through `--units`. On runtimes
+with descriptor-relative output operations, the selected output directory stays
+pinned from the input check through temporary-file creation and replacement;
+renaming it or replacing its path cannot redirect the write. Existing output
+symlinks are replaced as directory entries without changing their targets.
+An existing regular output file that shares the units input's identity is
+rejected, including another hard link to that input.
+`--units` requires this output protection and is rejected without writing when
+the runtime cannot provide it. An inventory without `--units` still works on
+those runtimes, using atomic pathname-based replacement, which cannot protect
+against concurrent replacement of the output parent.
+
 References are counted **by name**: an identifier anywhere in code or config,
 string contents included (a name built from a string still counts as a use), and
 a file counts as referenced when its file name appears in another file. That
 makes the lists conservative: a candidate is something nothing names, not
 something proven unused.
+
+When the running Python version can parse a file, its syntax tree distinguishes
+real top-level definitions from docstring examples and recognizes decorators
+that span multiple lines. Unsupported syntax retains the best-effort text
+scan. TypeScript imports that name emitted `.js`, `.mjs` or `.cjs` files also
+resolve to the corresponding source extensions, including `.mts` and `.cts`.
+Extensionless imports conservatively consider all supported JavaScript/TypeScript
+source extensions, including `.mts` and `.cts`, both as files and as directory
+`index` files, for runtimes and bundlers that support them. When several candidate
+files exist, all are recorded as references because the runtime's extension order
+can differ. Dotted names such as `helper.client` can still be extensionless source
+imports. Known source extensions retain their source-substitution order; an import
+naming an existing file with another suffix keeps its direct match. This inventory
+heuristic does not imply that the TypeScript compiler accepts those extensionless
+paths.
+
+JavaScript import signals include quoted binding names, Flow
+[`import typeof`](https://flow.org/en/docs/types/modules/) declarations and inline
+`typeof` specifiers, and static or dynamic
+[source-phase imports](https://nodejs.org/api/esm.html#wasm-source-phase-imports).
+The scan also retains literal `import.defer(...)` references from the
+[deferred-import draft](https://tc39.es/proposal-defer-import-eval/), alongside
+deferred namespace imports. Recognizing draft syntax does not imply runtime
+support. `source` and `defer` still work as ordinary binding names; these are
+conservative reference signals rather than full JavaScript syntax validation.
+
+Dependency overlap groups and platform replacements are specific to the
+manifest's ecosystem; an identically named package in another ecosystem does
+not inherit its replacement suggestion.
 
 | Key | What it collects | Perspective |
 |---|---|---|
@@ -47,7 +94,8 @@ something proven unused.
 
 With `--units`, every row with a path also gets `unit` (the unit whose paths
 cover it; the most specific prefix wins), and `by_unit` counts the candidates
-per unit.
+per unit. Prefixes normalize `.` components and repeated separators before
+matching, so `./server/` and `server/` cover the same files.
 
 ## Caps
 

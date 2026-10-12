@@ -16,15 +16,14 @@ in the shared design. Each finding shows its element, the basis, the purpose
 item (from `units.json`), the cost of keeping, the subtraction (what, what
 remains, what is lost), the risk, and its unit and entry point. An open `Valid`
 finding's next action is the subtraction itself; any other open finding's is
-"Verify first". With `--repo`, each finding's first `path:line` is embedded as
-a short excerpt (never from secret-looking files; secret-looking lines are
-masked). Secret-looking directories are excluded as well. If a secret
-assignment has a multiline or ambiguous value, or a private key block appears
-anywhere in the source, the source's excerpt is omitted. The whole bounded
-source is checked so a secret cannot lose its identifying line when the
-excerpt starts partway through the value. Sources containing both a secret
-name and block-comment syntax are also omitted because comment boundaries
-and string continuation differ across languages.
+"Verify first". With `--repo`, each finding's first `path:line` can be embedded
+as a short excerpt. Secret-looking files and directories are excluded. If a
+secret-looking name or a private key block appears anywhere in the bounded
+source, its entire optional excerpt is omitted, including apparently
+single-line assignments. Expression continuation and comment boundaries
+differ across languages, so a quoted value does not prove that the next line
+is safe to publish. This conservative check can also omit harmless source
+that uses a secret-looking name; the finding's prose and location remain.
 
 Rendering keeps the actual input files open and pins the selected output
 directory before building the pages. HTML and PDF engines write into a private
@@ -50,8 +49,12 @@ symlink, is an input error rather than an omitted baseline.
 On POSIX systems with descriptor-relative opens, the check captures the output
 directory's identity before resolving the path and verifies it when opening
 the directory. It pins every ancestor and uses the selected directory's
-descriptor for all artifact inspection and reads. It also rejects a directory
-that changes identity during the check. Ancestors need only search permission
+descriptor for all artifact inspection and reads. Before reporting success,
+it verifies that both the resolved path and the original requested path still
+identify the inspected directory. Retargeting an intentional alias, including
+an ancestor alias, therefore invalidates the check. Runtimes without
+descriptor-relative opens also compare both paths with the selected
+directory's initial identity at the end. Ancestors need only search permission
 when the runtime exposes `O_PATH` or `O_SEARCH`; otherwise they must also be
 readable.
 

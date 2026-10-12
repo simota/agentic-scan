@@ -114,13 +114,15 @@ def rendered_lang(out, *, directory=None):
 
 
 def problems(out, no_pdf=False, allow=()):
-    selected = Path(out)
     directory = None
     try:
+        # Keep the caller's lexical path as well as the resolved path used for
+        # traversal: retargeting an intentional alias must invalidate success.
+        requested = Path(out).absolute()
         # Capture identity before resolving intentional aliases: a normal
         # directory substitution is just as significant as a planted symlink.
-        selected_info = selected.stat()
-        selected = selected.resolve(strict=True)
+        selected_info = requested.stat()
+        selected = requested.resolve(strict=True)
         if NOFOLLOW_DIR_FD:
             directory = open_directory(selected, expected_stat=selected_info)
         elif not os.path.samestat(selected_info, selected.stat()):
@@ -130,17 +132,21 @@ def problems(out, no_pdf=False, allow=()):
         return
     try:
         yield from directory_problems(selected, no_pdf, allow, directory=directory)
-        if directory is not None:
-            try:
+        try:
+            expected = os.fstat(directory) if directory is not None else selected_info
+            if directory is not None:
                 current = open_directory(selected)
                 try:
-                    unchanged = os.path.samestat(os.fstat(directory), os.fstat(current))
+                    unchanged = os.path.samestat(expected, os.fstat(current))
                 finally:
                     os.close(current)
-            except OSError:
-                unchanged = False
-            if not unchanged:
-                yield f"{out}: directory changed during validation; run the check again"
+            else:
+                unchanged = os.path.samestat(expected, selected.stat())
+            unchanged = unchanged and os.path.samestat(expected, requested.stat())
+        except (OSError, RuntimeError):
+            unchanged = False
+        if not unchanged:
+            yield f"{out}: directory changed during validation; run the check again"
     finally:
         if directory is not None:
             os.close(directory)

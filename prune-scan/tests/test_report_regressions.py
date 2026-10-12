@@ -24,7 +24,7 @@ UNITS = json.loads((ROOT / "examples" / "units.sample.json").read_text(encoding=
 
 
 class SnippetRegressionTests(unittest.TestCase):
-    def test_secret_key_assignments_are_masked(self):
+    def test_secret_key_assignments_are_not_excerpted(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
             source = repo / "settings.py"
@@ -33,7 +33,7 @@ class SnippetRegressionTests(unittest.TestCase):
                 with self.subTest(assignment=assignment):
                     source.write_text(assignment + "\n", encoding="utf-8")
                     excerpt = render.snippet(repo, "settings.py:1")
-                    self.assertNotIn("DO_NOT_PUBLISH", json.dumps(excerpt))
+                    self.assertIsNone(excerpt)
 
     def test_multiline_secrets_are_not_excerpted_even_beyond_context(self):
         sources = (

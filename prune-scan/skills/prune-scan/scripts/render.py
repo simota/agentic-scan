@@ -9,8 +9,9 @@ WeasyPrint; CHROME picks the binary, PRUNE_SCAN_PDF_TIMEOUT the seconds). The
 rendered next steps open with the subtraction summary (remove now, reduce or
 consolidate, decide with a human), computed from the findings. With --repo,
 each finding's location is embedded as a short excerpt; secret-looking files
-are never read and secret-looking lines are masked. Every page carries the
-SHA-256 of the findings.json and, when supplied, units.json it shows.
+are never read, and sources containing secret-looking names or private key
+blocks are omitted. Every page carries the SHA-256 of the findings.json and,
+when supplied, units.json it shows.
 Standard library only.
 Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
 """
@@ -42,11 +43,6 @@ SECRET_NAME = re.compile(r"(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:
                          r"api[_-]?key|private[_-]?key|client[_-]?secret)", re.I)
 SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
 PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
-# Only an entire, single-line quoted value has an unambiguous local boundary
-# across the languages we excerpt. Omit the source for any other secret value.
-INLINE_SECRET = re.compile(r'''(?ix)[rubf]{0,2}(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')
-                              [\s,;\}\]\)]*(?:(?:\#|//).*)?''')
-SECRET_CONTINUATION = re.compile(r'''(?i)^(?:[rubf]{0,2}["']|[+`\\])''')
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 80
@@ -152,32 +148,19 @@ def snippet(repo, location):
         if source is None:
             return None
         text = source.decode("utf-8")
-        if PRIVATE_KEY.search(text):
-            return None
-        # Block comments can split assignments or continued values, with
-        # language-specific nesting rules. Excerpts are optional, so omit a
-        # source combining them with secret names instead of guessing a lexer.
-        if "/*" in text and SECRET_NAME.search(text):
+        # A recognized secret name suppresses the entire bounded source:
+        # values may continue across methods, operators and comments in
+        # different languages, even beyond the selected excerpt's lines.
+        if PRIVATE_KEY.search(text) or SECRET_NAME.search(text):
             return None
         lines = text.splitlines()
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
-    # A secret can start well before the excerpt. Inspect the whole bounded
-    # source so a block value cannot lose its identifying assignment line.
-    following = ""
-    for line in reversed(lines):
-        match = SECRET_LINE.search(line)
-        if match and (not INLINE_SECRET.fullmatch(line[match.end():].strip()) or SECRET_CONTINUATION.match(following)):
-            return None
-        stripped = line.lstrip()
-        if stripped and not stripped.startswith(("#", "//")):
-            following = stripped
     first, last = max(1, start - CONTEXT), min(len(lines), end + CONTEXT)
     last = min(last, first + MAX_SNIPPET_LINES - 1)
-    shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
-             for line in lines[first - 1:last]]
+    shown = [line[:240] for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 

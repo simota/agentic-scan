@@ -47,8 +47,15 @@ def units_record():
     }
 
 
-def run_cli(*args):
-    return subprocess.run([sys.executable, str(SCRIPTS / "findings.py"), *map(str, args)],
+def run_cli(*args, recursion_limit=None):
+    argv = [str(SCRIPTS / "findings.py"), *map(str, args)]
+    if recursion_limit is not None:
+        argv = ["-c", "import runpy, sys\n"
+                "sys.setrecursionlimit(int(sys.argv[1]))\n"
+                "sys.argv = sys.argv[2:]\n"
+                "runpy.run_path(sys.argv[0], run_name='__main__')",
+                str(recursion_limit), *argv]
+    return subprocess.run([sys.executable, *argv],
                           capture_output=True, text=True)
 
 
@@ -174,22 +181,59 @@ class JsonInputTests(unittest.TestCase):
             self.assertEqual(result.returncode, 2, result.stderr)
             self.assertNotIn("Traceback", result.stderr)
 
-    def test_deep_json_cannot_crash_or_partially_replace_a_record(self):
+    def assert_deep_update(self, command, fid, *, recursion_limit=None, expected_codes=(0, 2)):
+        depth = 1100
         with tempfile.TemporaryDirectory() as tmp:
             target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
             fragment.write_text('{"summary":"Updated"}', encoding="utf-8")
-            for command, fid in (("merge", "P-001"), ("renumber", "P-002"), ("renumber", "P-001")):
-                with self.subTest(command=command, fid=fid):
-                    data = record()
-                    data["findings"][0]["id"] = fid
-                    source = json.dumps(data)[:-1] + ',"extra":' + "[" * 1100 + "0" + "]" * 1100 + "}"
-                    target.write_text(source, encoding="utf-8")
-                    before = target.read_bytes()
-                    result = run_cli(command, target, *([fragment] if command == "merge" else []))
-                    # Decoder recursion limits differ by Python version; a no-op may finish before rewriting.
-                    self.assertIn(result.returncode, (0, 2) if (command, fid) == ("renumber", "P-001") else (2,))
-                    self.assertNotIn("Traceback", result.stderr)
-                    self.assertEqual(target.read_bytes(), before)
+            data = record()
+            data["findings"][0]["id"] = fid
+            source = json.dumps(data)[:-1] + ',"extra":' + "[" * depth + json.dumps(fid) + "]" * depth + "}"
+            target.write_text(source, encoding="utf-8")
+            before = target.read_bytes()
+            result = run_cli(command, target, *([fragment] if command == "merge" else []),
+                             recursion_limit=recursion_limit)
+            self.assertIn(result.returncode, expected_codes, result.stdout + result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            if result.returncode == 2:
+                self.assertTrue(result.stderr.startswith("findings.py:"), result.stderr)
+                self.assertEqual(target.read_bytes(), before)
+                return
+            if (command, fid) == ("renumber", "P-001"):
+                self.assertEqual(target.read_bytes(), before)
+            # The child may accept a depth beyond this interpreter's default limit.
+            previous_limit = sys.getrecursionlimit()
+            try:
+                sys.setrecursionlimit(max(previous_limit, 5000))
+                updated = json.loads(target.read_text(encoding="utf-8"))
+            finally:
+                sys.setrecursionlimit(previous_limit)
+            nested = updated.pop("extra")
+            for _ in range(depth):
+                self.assertIsInstance(nested, list)
+                self.assertEqual(len(nested), 1)
+                nested = nested[0]
+            self.assertEqual(nested, "P-001")
+            expected = copy.deepcopy(data)
+            if command == "merge":
+                expected["summary"] = "Updated"
+            else:
+                expected["findings"][0]["id"] = "P-001"
+            self.assertEqual(updated, expected)
+
+    def test_deep_json_cannot_crash_or_partially_replace_a_record(self):
+        # Decoding, encoding and rewrite limits vary across Python versions.
+        for command, fid in (("merge", "P-001"), ("renumber", "P-002"), ("renumber", "P-001")):
+            with self.subTest(command=command, fid=fid):
+                self.assert_deep_update(command, fid)
+
+    def test_deep_json_can_be_updated_with_sufficient_recursion_limit(self):
+        for command, fid in (("merge", "P-001"), ("renumber", "P-002"), ("renumber", "P-001")):
+            with self.subTest(command=command, fid=fid):
+                self.assert_deep_update(command, fid, recursion_limit=5000, expected_codes=(0,))
+
+    def test_deep_json_exceeding_rewrite_limit_preserves_the_original(self):
+        self.assert_deep_update("renumber", "P-002", recursion_limit=300, expected_codes=(2,))
 
 
 class RecordValidationTests(unittest.TestCase):

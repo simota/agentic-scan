@@ -186,6 +186,48 @@ class RenderPublicationTests(ReportFixture):
         self.assertEqual(source.read_bytes(), before)
         self.assertFalse((self.out / "dashboard.html").exists())
 
+    def test_render_refuses_to_overwrite_symlinked_units_source(self):
+        inputs = self.out / "input"
+        inputs.mkdir()
+        source = inputs / "findings.json"
+        source.write_text(json.dumps(self.data), encoding="utf-8")
+        source_before = source.read_bytes()
+        units = inputs / "units.json"
+        for target_name in render.OUTPUTS:
+            with self.subTest(target_name=target_name):
+                for name in render.OUTPUTS:
+                    (self.out / name).write_text(f"previous {name}", encoding="utf-8")
+                (self.out / target_name).write_text(json.dumps(UNITS), encoding="utf-8")
+                units.symlink_to(self.out / target_name)
+                originals = {name: (self.out / name).read_bytes() for name in render.OUTPUTS}
+                try:
+                    with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                        code = render.main([str(source), "--out", str(self.out), "--no-pdf"])
+                    self.assertEqual(code, 2)
+                    self.assertEqual(source.read_bytes(), source_before)
+                    self.assertTrue(units.is_symlink())
+                    self.assertEqual(units.read_bytes(), originals[target_name])
+                    for name, content in originals.items():
+                        self.assertEqual((self.out / name).read_bytes(), content)
+                finally:
+                    units.unlink()
+
+    def test_noncolliding_record_symlinks_can_still_be_rendered(self):
+        inputs = self.out / "input"
+        inputs.mkdir()
+        originals = {name: (self.out / name).read_bytes() for name in ("findings.json", "units.json")}
+        for name in originals:
+            (inputs / name).symlink_to(self.out / name)
+        stderr = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(stderr):
+            code = render.main([str(inputs / "findings.json"), "--out", str(self.out), "--no-pdf"])
+        self.assertEqual(code, 0, stderr.getvalue())
+        for name, content in originals.items():
+            self.assertTrue((inputs / name).is_symlink())
+            self.assertEqual((self.out / name).read_bytes(), content)
+        for name in ("dashboard.html", "report.html"):
+            self.assertIn(render.UNITS_STAMP, (self.out / name).read_text(encoding="utf-8"))
+
     def test_pdf_error_diagnostics_mask_values_as_well_as_names(self):
         def failing_engine(html_path, pdf_path, failures, timeout, redact):
             failures.append(("test", "failed", redact("api_key=SHOULD_NOT_APPEAR")))

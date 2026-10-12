@@ -233,8 +233,11 @@ def main(argv=None):
         return 2
     out = Path(a.out)
     try:
-        if Path(a.findings).resolve() in {(out / name).resolve() for name in OUTPUTS}:
-            print("render.py: output would overwrite the findings source; choose a different --out directory",
+        sources = {Path(a.findings).resolve()}
+        if units_source is not None:
+            sources.add(units_path.resolve())
+        if sources & {(out / name).resolve() for name in OUTPUTS}:
+            print("render.py: output would overwrite a findings or units source; choose a different --out directory",
                   file=sys.stderr)
             return 2
         out.mkdir(parents=True, exist_ok=True)

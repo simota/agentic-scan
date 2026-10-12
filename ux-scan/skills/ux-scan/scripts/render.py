@@ -8,7 +8,7 @@ DIR/dashboard.html, DIR/report.html and DIR/report.pdf (headless Chrome, else
 WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds). With
 --repo, each finding's location is embedded as a short excerpt; secret-looking
 files and symlinks are never read and secret-looking lines are masked. Every
-page fingerprints its findings, flows, render and (when produced) PDF.
+page fingerprints its findings, flows, render, complete HTML and (when produced) PDF.
 Outputs must be outside --repo. Standard library only.
 Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
 """
@@ -30,6 +30,8 @@ STAMP = "ux-scan-source"
 FLOWS_STAMP = "ux-scan-flows"
 RENDER_STAMP = "ux-scan-render"
 PDF_STAMP = "ux-scan-pdf"
+PAGE_STAMP = "ux-scan-page"
+PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">')
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
                        r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
 SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
@@ -105,9 +107,30 @@ def stamp_page(page, stamps):
     return page.replace("<head>", "<head>" + tags, 1)
 
 
+def seal_page(page):
+    """Fingerprint the final HTML bytes, omitting only the tag added here."""
+    # write_output uses text mode, which translates newlines on Windows.
+    source = page.replace("\n", os.linesep).encode("utf-8")
+    return stamp_page(page, {PAGE_STAMP: source_stamp(source)})
+
+
+def page_stamp(source):
+    """Fingerprint exact HTML bytes after removing its one canonical page tag.
+
+    Reject missing, malformed or repeated canonical tags rather than guessing
+    which bytes to exclude. The caller also verifies the tag is head metadata.
+    """
+    matches = list(PAGE_TAG.finditer(source))
+    if len(matches) != 1:
+        raise ValueError("expected exactly one canonical page fingerprint tag")
+    tag = matches[0]
+    return source_stamp(source[:tag.start()] + source[tag.end():])
+
+
 def redact_diagnostic(text):
-    # Mask the whole diagnostic: replacing only the key leaves its secret value behind.
-    return "[masked: looks like a secret]" if SECRET_LINE.search(text) else text
+    # Engines may echo report/source text, and the upstream callback receives a
+    # truncated tail that can already have lost a secret's identifying key.
+    return "[masked: PDF engine diagnostic]" if text else ""
 
 
 def snippet(repo, location):
@@ -229,7 +252,7 @@ def main(argv=None):
         # Once any new HTML is published, an earlier run's PDF must not survive.
         (out / "report.pdf").unlink(missing_ok=True)
         for name, page in pages.items():
-            output.write_output(out / name, page)
+            output.write_output(out / name, seal_page(page))
             print(f"wrote {out / name}")
         if a.no_pdf:
             return 0
@@ -251,7 +274,7 @@ def main(argv=None):
             (out / "report.pdf").unlink(missing_ok=True)
         else:
             for name, page in pages.items():
-                output.write_output(out / name, stamp_page(page, {PDF_STAMP: digest}))
+                output.write_output(out / name, seal_page(stamp_page(page, {PDF_STAMP: digest})))
     except OSError as e:
         try:
             (out / "report.pdf").unlink(missing_ok=True)
@@ -260,7 +283,9 @@ def main(argv=None):
         print(f"render.py: cannot write PDF outputs to {out}: {e.strerror or e}", file=sys.stderr)
         return 2
     if not engine:
-        detail = "; ".join(f"{n} {why}" + (f" [{tail}]" if tail else "") for n, why, tail in failures)
+        # Also cover engine-start failures that bypass the upstream callback.
+        detail = "; ".join(f"{n} {why}" + (f" {redact_diagnostic(tail)}" if tail else "")
+                           for n, why, tail in failures)
         print("render.py: " + (f"PDF engine failed: {detail}" if failures else "no PDF engine found (Chrome/Chromium or weasyprint)")
               + ". report.html is ready to print. If no engine can run: merge the limitation "
               "'report.pdf not produced: no PDF engine', re-run with --no-pdf, then contract_check.py <out> --no-pdf",

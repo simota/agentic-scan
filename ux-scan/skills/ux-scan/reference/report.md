@@ -28,12 +28,17 @@ covering the language and rendered data, including excerpts. After PDF
 generation succeeds, both pages record the PDF's SHA-256. The PDF must have a
 PDF header and an end-of-file trailer; this catches empty or visibly truncated
 engine output, but does not validate the full PDF syntax or visual layout.
+Each page also fingerprints its complete UTF-8 HTML bytes, omitting only its
+single `ux-scan-page` metadata tag in the renderer's exact format. The checker
+requires that tag once in the head and rejects missing, malformed or duplicate
+fingerprints, truncated pages, and changes to their markup, styles or scripts.
 
 `contract_check.py` rejects stale findings or flows, mixed render versions,
 replaced PDFs, and an inventory whose `flows_sha256` does not match the current
 flows. Rerun the inventory after changing flows, then render after the last
-record or flow change. Outputs created before these fingerprints were added
-must be regenerated. The checker reads actual metadata in the HTML head;
+record or flow change. Older outputs missing any required fingerprint,
+including the complete-page fingerprint, must be regenerated. The checker reads
+actual metadata in the HTML head;
 stamp-like comments or report prose do not satisfy the contract. These hashes
 track consistency between local outputs; they are not signatures that prove
 who created the files, and they do not detect later repository edits without
@@ -49,7 +54,9 @@ sharing the report.
 
 Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —
-the message says which. `UX_SCAN_PDF_TIMEOUT` overrides the engine's timeout in
+the message says which. Engine diagnostic text is withheld because it can echo
+source or report data; the engine, failure category and timeout remain visible.
+`UX_SCAN_PDF_TIMEOUT` overrides the engine's timeout in
 seconds for the one retry SKILL.md allows. With `--no-pdf`, the final record
 must contain `report.pdf not produced: <reason>` with a non-empty reason and
 the output directory must contain no PDF; `--allow report.pdf` does not waive

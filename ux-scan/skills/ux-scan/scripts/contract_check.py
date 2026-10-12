@@ -7,7 +7,7 @@ Passes when OUT holds exactly findings.json, flows.json, inventory.json,
 dashboard.html, report.html and report.pdf (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
-left Unverified; and both pages match the current findings, flows and PDF.
+left Unverified; and both complete pages match the current findings, flows and PDF.
 Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 """
 
@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
-from render import FLOWS_STAMP, PDF_STAMP, RENDER_STAMP, STAMP, pdf_stamp, read_regular, source_stamp  # noqa: E402
+from render import FLOWS_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp  # noqa: E402
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
@@ -169,6 +169,13 @@ def problems(out, no_pdf=False, allow=()):
         except ValueError as e:
             yield f"{name}: not valid UTF-8 HTML: {e}"
             continue
+        try:
+            digest = page_stamp(sources[name])
+        except ValueError as e:
+            yield f"{name}: invalid page fingerprint: {e}; run {rerender}"
+        else:
+            if page.stamps.get(PAGE_STAMP) != [digest]:
+                yield f"{name}: altered or incomplete HTML (page fingerprint mismatch); run {rerender}"
         for stamp, digest in expected_stamps.items():
             if page.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale {stamp}; re-render after the last input or PDF change ({rerender})"

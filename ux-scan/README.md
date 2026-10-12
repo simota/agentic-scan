@@ -78,6 +78,11 @@ including the no-PDF limitation from `examples/no-pdf.fragment.json`. It does
 not require a browser. GitHub Actions runs it on Linux and macOS with Python
 3.10 and 3.14, and separately renders both sample PDFs with Chrome.
 
+Inventory output includes `parse_warnings` for inputs that could not be fully
+measured; other files still get scanned. Review those warnings and `truncated`
+counts before interpreting the results. The output contract also verifies the
+complete HTML bytes, so older reports need to be rendered again after an upgrade.
+
 `skills/ux-scan/scripts/scan_report_kit/` is a vendored copy of
 scan-report-kit; `make check` verifies it against its MANIFEST. Change it
 upstream and re-vendor (`make vendor DEST=<this repo>/skills/ux-scan/scripts`

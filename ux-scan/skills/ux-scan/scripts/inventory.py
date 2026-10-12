@@ -16,16 +16,19 @@ Exit status: 0 written, 2 bad arguments or unreadable flows, 1 output not writte
 """
 
 import argparse
+import html
 import json
+import math
 import os
 import re
 import sys
 import unicodedata
+from bisect import bisect_left, bisect_right
 from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, canonical_digest, check_flows, load_json  # noqa: E402
+from findings import RecordError, canonical_digest, check_flows, load_json, loads_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -38,17 +41,22 @@ MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
 MAX_ROWS = 200
 MAX_KEYS = 50
+MAX_INTEGER_DIGITS = 1000
+MAX_LOCALE_DEPTH = 256
 
 CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
 EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro"}
 JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"}
 MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html", ".htm", ".erb", ".hbs",
               ".handlebars", ".ejs", ".php", ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".j2", ".mdx"}
+HTML_EXT = {".html", ".htm", ".erb", ".hbs", ".handlebars", ".ejs", ".php", ".njk", ".liquid",
+            ".twig", ".mustache", ".jinja", ".j2"}
+JSX_EXT = {".js", ".jsx", ".tsx", ".mjs", ".mdx"}
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
 LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
-LENGTH = re.compile(r"(?<![\w.#-])(-?\d*\.?\d+)(px|rem|em)\b")
+LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
 CSS_SPACING = re.compile(r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap)"
                          r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*([^;{}\n]+)")
 JS_SPACING = re.compile(r"\b(?:margin|padding|gap|rowGap|columnGap)(?:Top|Right|Bottom|Left|Inline|Block|X|Y)?"
@@ -58,7 +66,9 @@ JS_FONT_SIZE = re.compile(r"\bfontSize\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"
 MEDIA = re.compile(r"\(\s*(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*(\d+(?:\.\d+)?)(px|em|rem)\s*\)")
 CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
 JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
+# A parenthesized condition tests a width; it does not set an element's width.
+CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b"
+                       r"(?!\s*(?:(?i:!important)\s*)?\))")
 JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
 # Start at a selector boundary, not every character of a brace-free segment.
 # Otherwise even a long CSS comment causes quadratic failed matches.
@@ -108,6 +118,12 @@ VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
 VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.I)
 TAG_START = re.compile(r"<([A-Za-z][\w.:-]*)(?=[\s/>])")
 ATTR_NAME = re.compile(r"[^\s=>/{}\"']+")
+CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", re.S)
+MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
+JSX_TOKEN = re.compile(r"""\{/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S)
+STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style\s*>|$)", re.S | re.I)
+SCRIPT_BLOCK = re.compile(r"(<script\b[^>]*>)(.*?)(</script\s*>|$)", re.S | re.I)
+STYLE_ATTRIBUTE = re.compile(r"(?<![\w:-])style\s*=\s*([\"'])(.*?)\1", re.S | re.I)
 
 
 def iter_files(root):
@@ -133,8 +149,88 @@ def read_text(path):
         return None
 
 
-def line_of(text, index):
-    return text.count("\n", 0, index) + 1
+class SourceLines:
+    """Map offsets to lines without rescanning a file for every candidate."""
+
+    def __init__(self, text):
+        self.newlines = [m.start() for m in re.finditer("\n", text)]
+
+    def __call__(self, index):
+        return bisect_left(self.newlines, index) + 1
+
+
+def blank_comment(match):
+    """Mask a comment while preserving every source offset and newline."""
+    return re.sub(r"[^\n]", " ", match.group(0))
+
+
+def mask_css_comments(text):
+    # Quoted strings may legitimately contain /* and */ as visible content.
+    return CSS_COMMENTS.sub(lambda m: blank_comment(m) if m.group(0).startswith("/*") else m.group(0), text)
+
+
+def mask_markup_comments(text, *, jsx=False):
+    """Mask template comments, protecting quoted attributes and raw-text blocks."""
+    parts, end, cursor = [], 0, 0
+    token = JSX_TOKEN if jsx else MARKUP_TOKEN
+    while match := token.search(text, cursor):
+        if jsx and match.group(0) != "{/*":
+            cursor = match.end()  # A JS string, not a comment or an HTML fragment.
+            continue
+        name = None if jsx else match.group(1)
+        if name:
+            tag = parse_tag(text, match.end())
+            cursor = tag[2] if tag else match.end()
+            if tag and not tag[3] and name.lower() in ("style", "script"):
+                close = re.compile(r"</" + name + r"\s*>", re.I).search(text, cursor)
+                cursor = close.end() if close else len(text)
+        else:
+            marker = "-->" if match.group(0) == "<!--" else "*/}"
+            close = text.find(marker, match.end())
+            if close < 0:
+                break  # Do not erase the remaining source on ambiguous syntax.
+            cursor = close + len(marker)
+            parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", text[match.start():cursor])))
+            end = cursor
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def keep_regions(text, regions):
+    """Mask text outside nonoverlapping regions without shifting their offsets."""
+    parts, end = [], 0
+    for start, stop, body in sorted(regions):
+        if start < end:
+            continue
+        parts.extend((re.sub(r"[^\n]", " ", text[end:start]), body))
+        end = stop
+    parts.append(re.sub(r"[^\n]", " ", text[end:]))
+    return "".join(parts)
+
+
+def embedded_css(text):
+    """Keep style blocks and literal style attributes at their source offsets."""
+    regions = [(m.start(2), m.end(2), mask_css_comments(m.group(2))) for m in STYLE_BLOCK.finditer(text)]
+    # Replacing the closing attribute quote with a delimiter prevents one inline
+    # declaration from becoming part of the next style block's first selector.
+    regions.extend((m.start(2), m.end(2) + 1, mask_css_comments(m.group(2)) + ";")
+                   for m in STYLE_ATTRIBUTE.finditer(text))
+    return keep_regions(text, regions)
+
+
+def parse_warning(acc, location, reason):
+    acc["parse_warnings"].append({"location": location, "reason": reason})
+
+
+def integer(value, warn):
+    """Bound work independently of Python's configurable integer-string limit."""
+    try:
+        if len(value.lstrip("+-")) > MAX_INTEGER_DIGITS:
+            raise ValueError("too many digits")
+        return int(value)
+    except ValueError:
+        warn("integer literal exceeds the supported conversion limit; candidate skipped")
+        return None
 
 
 class Tally:
@@ -153,9 +249,13 @@ class Tally:
                 for v in sorted(self.count, key=lambda v: (-self.count[v], str(v)))]
 
 
-def px(number, unit):
+def px(number, unit, warn=None):
     """A CSS length in px (rem and em at 16px), formatted without trailing zeros."""
     value = float(number) * (16 if unit in ("rem", "em") else 1)
+    if not math.isfinite(value):
+        if warn:
+            warn("length literal exceeds the finite numeric range; candidate skipped")
+        return None
     return round(value, 2)
 
 
@@ -163,15 +263,16 @@ def fmt(value):
     return f"{value:g}px"
 
 
-def lengths(value):
+def lengths(value, warn=None):
     """px values of the lengths in a CSS value; bare numbers are not lengths in CSS."""
-    return [px(m.group(1), m.group(2)) for m in LENGTH.finditer(value)]
+    return [v for m in LENGTH.finditer(value) if (v := px(m.group(1), m.group(2), warn)) is not None]
 
 
-def js_lengths(bare, quoted):
+def js_lengths(bare, quoted, warn=None):
     if bare is not None:
-        return [px(bare, "px")]
-    return lengths(quoted or "")
+        value = px(bare, "px", warn)
+        return [value] if value is not None else []
+    return lengths(quoted or "", warn)
 
 
 def skip_braces(text, i, limit):
@@ -197,7 +298,7 @@ def skip_braces(text, i, limit):
     return None
 
 
-def parse_tag(text, i, limit=4000):
+def parse_tag(text, i, limit=4000, vue=False):
     """Parse an opening tag's attributes from i (just past its name).
 
     Returns (attrs, spread, end, self_closing) with attribute names lower-cased and
@@ -235,7 +336,7 @@ def parse_tag(text, i, limit=4000):
                     end = text.find(text[k], k + 1)
                     if end < 0:
                         return None
-                    value, i = text[k + 1:end], end + 1
+                    value, i = html.unescape(text[k + 1:end]), end + 1
                 elif k < n and text[k] == "{":
                     end = skip_braces(text, k, limit)
                     if end is None:
@@ -245,7 +346,15 @@ def parse_tag(text, i, limit=4000):
                     m = re.compile(r"[^\s>]+").match(text, k)
                     if not m:
                         return None
-                    value, i = m.group(0), m.end()
+                    value, i = html.unescape(m.group(0)), m.end()
+            if vue:
+                if name == "v-bind" or name.startswith("v-bind.") or name.startswith((":[", "v-bind:[")):
+                    spread = True  # An object or dynamic key can supply any missing attribute.
+                elif name.startswith((":", "v-bind:")):
+                    name = name.removeprefix("v-bind:").removeprefix(":").split(".", 1)[0]
+                    value = "{" + (value if isinstance(value, str) else name) + "}"
+                elif name.startswith(("@", "v-on:")):
+                    name = name.split(".", 1)[0]
             attrs[name] = value
     return None
 
@@ -271,26 +380,52 @@ def has_name(attrs, names=NAME_ATTRS):
     return False
 
 
-def tags(text):
+def tags(text, *, vue=False, html_names=False):
     """(name, attrs, spread, start, end, self_closing) for every parseable opening tag."""
     for m in TAG_START.finditer(text):
-        parsed = parse_tag(text, m.end())
+        parsed = parse_tag(text, m.end(), vue=vue)
         if parsed:
             attrs, spread, end, closing = parsed
-            yield m.group(1), attrs, spread, m.start(), end, closing
+            name = m.group(1).lower() if html_names else m.group(1)
+            yield name, attrs, spread, m.start(), end, closing
 
 
 def display_width(s):
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
 
 
+def check_locale_depth(text, where):
+    """Bound all JSON containers before decoding, independently of Python's parser."""
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "{[":
+            depth += 1
+            if depth > MAX_LOCALE_DEPTH:
+                raise RecordError(f"{where}: locale JSON exceeds {MAX_LOCALE_DEPTH} nested object/array containers")
+        elif char in "}]":
+            depth -= 1
+    # Syntax, matching delimiters and valid escapes are checked by loads_json.
+
+
 def flatten(value, prefix=""):
-    if isinstance(value, dict):
-        for k, v in value.items():
-            if not str(k).startswith("@"):
-                yield from flatten(v, f"{prefix}.{k}" if prefix else str(k))
-    elif isinstance(value, str):
-        yield prefix, value
+    pending = [(prefix, value)]
+    while pending:
+        key, item = pending.pop()
+        if isinstance(item, dict):
+            for k, v in reversed(item.items()):
+                if not str(k).startswith("@"):
+                    pending.append((f"{key}.{k}" if key else str(k), v))
+        elif isinstance(item, str):
+            yield key, item
 
 
 def locale_bundle(rel):
@@ -305,40 +440,47 @@ def locale_bundle(rel):
     return None
 
 
-def scan_css(rel, text, acc):
+def scan_css(rel, text, acc, source_lines=None):
     """Rule-level checks on CSS: tap targets and removed focus outlines."""
+    source_lines = source_lines or SourceLines(text)
     focus_visible = ":focus-visible" in text
     for m in BLOCK.finditer(text):
         selector = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S).strip()
         body = m.group(2)
         if not selector or selector.startswith("@"):
             continue
-        loc = f"{rel}:{line_of(text, m.start(1) + len(m.group(1)) - len(m.group(1).lstrip()))}"
+        loc = f"{rel}:{source_lines(m.start(1) + len(m.group(1)) - len(m.group(1).lstrip()))}"
+        warn = lambda reason: parse_warning(acc, loc, reason)  # noqa: E731
         if OUTLINE_NONE.search(body):
             acc["focus_outline"].append({"selector": selector[:120], "location": loc,
                                          "replacement_in_rule": bool(FOCUS_REPLACEMENT.search(OUTLINE_NONE.sub("", body))),
                                          "focus_visible_rule_in_file": focus_visible})
         if TAP_SELECTOR.search(selector):
-            sizes = {d.group(1): px(d.group(2), d.group(3)) for d in SIZE_DECL.finditer(body)}
+            sizes = {d.group(1): v for d in SIZE_DECL.finditer(body)
+                     if (v := px(d.group(2), d.group(3), warn)) is not None}
             small = {k: v for k, v in sizes.items() if 0 < v < 44}
             if small:
                 acc["tap_targets"].append({"selector": selector[:120], "sizes": {k: fmt(v) for k, v in sizes.items()},
                                            "below_24": any(v < 24 for v in small.values()), "location": loc})
 
 
-def scan_markup(rel, text, acc):
+def scan_markup(rel, text, acc, source_lines=None):
     """Element-level checks on templates and JSX."""
-    clean = re.sub(r"\{/\*.*?\*/\}|<!--.*?-->", lambda m: re.sub(r"[^\n]", " ", m.group(0)), text, flags=re.S)
+    clean = mask_markup_comments(text, jsx=Path(rel).suffix.lower() in JSX_EXT)
+    source_lines = source_lines or SourceLines(clean)
+    html_names = Path(rel).suffix.lower() in HTML_EXT
     labels_for = set()
-    label_spans = [(m.start(), m.end()) for m in re.finditer(r"<label\b.*?</label>", clean, re.S)]
-    parsed = list(tags(clean))
+    label_spans = [(m.start(), m.end()) for m in re.finditer(r"<label\b.*?</label\s*>", clean,
+                                                           re.S | (re.I if html_names else 0))]
+    label_starts = [s for s, _ in label_spans]
+    parsed = list(tags(clean, vue=Path(rel).suffix.lower() == ".vue", html_names=html_names))
     for name, attrs, _, _, _, _ in parsed:
         if name == "label":
             target = literal(attrs.get("for") or attrs.get("htmlfor"))
             if target:
                 labels_for.add(target)
     for name, attrs, spread, start, end, closing in parsed:
-        loc = f"{rel}:{line_of(clean, start)}"
+        loc = f"{rel}:{source_lines(start)}"
         lname = name.lower()
         if name == "meta" and (literal(attrs.get("name")) or "").lower() == "viewport":
             content = literal(attrs.get("content")) or ""
@@ -352,7 +494,9 @@ def scan_markup(rel, text, acc):
         tabindex = attrs.get("tabindex")
         tabindex = tabindex.strip("{}\"' ") if isinstance(tabindex, str) else ""
         if re.fullmatch(r"[1-9]\d*", tabindex):
-            acc["positive_tabindex"].append({"element": name, "value": int(tabindex), "location": loc})
+            value = integer(tabindex, lambda reason: parse_warning(acc, loc, reason))
+            if value is not None:
+                acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
         if any(a in attrs for a in CLICK_ATTRS) and (
                 (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs)):
             missing = [label for label, keys in (("role", ("role",)), ("tabindex", ("tabindex",)), ("key handler", KEY_ATTRS))
@@ -365,26 +509,29 @@ def scan_markup(rel, text, acc):
             if missing:
                 acc["images"].append({"missing": missing, "location": loc})
         if name in ("input", "select", "textarea"):
-            kind = (literal(attrs.get("type")) or "text").lower() if name == "input" else name
+            type_attr = attrs.get("type")
+            dynamic_type = isinstance(type_attr, str) and literal(type_attr) is None
+            kind = ("unknown" if dynamic_type else (literal(type_attr) or "text").lower()) if name == "input" else name
             if kind in ("hidden", "submit", "button", "reset", "image"):
                 continue
             ident = " ".join(x for x in (literal(attrs.get("name")), literal(attrs.get("id"))) if x)
-            labelled = (has_name(attrs) or literal(attrs.get("id")) in labels_for
-                        or any(s <= start < e for s, e in label_spans))
+            label_index = bisect_right(label_starts, start) - 1
+            in_label = label_index >= 0 and start < label_spans[label_index][1]
+            labelled = has_name(attrs) or literal(attrs.get("id")) in labels_for or in_label
             missing = [] if labelled else ["label"]
             if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
                 missing.append("autocomplete")
-            if name == "input" and re.search(r"(?i)e-?mail", ident) and kind != "email":
+            if name == "input" and not dynamic_type and re.search(r"(?i)e-?mail", ident) and kind != "email":
                 missing.append("type=email")
-            if name == "input" and re.search(r"(?i)\btel\b|phone|mobile", ident) and kind != "tel":
+            if name == "input" and not dynamic_type and re.search(r"(?i)\btel\b|phone|mobile", ident) and kind != "tel":
                 missing.append("type=tel")
             if missing:
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
         named = has_name(attrs)
         if name == "button" and not closing and not named:
-            close = clean.find("</button>", end, end + 1200)
-            inner = clean[end:close] if close >= 0 else ""
+            close = re.compile(r"</button\s*>", re.I if html_names else 0).search(clean, end, end + 1200)
+            inner = clean[end:close.start()] if close else ""
             if "<" in inner and not re.sub(r"<[^<>]*>", "", inner).strip():
                 acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
@@ -414,58 +561,78 @@ def inventory(root, flows=None):
         bundle = locale_bundle(rel)
         if bundle:
             try:
-                locales[bundle[0]][bundle[1]] = (rel, dict(flatten(json.loads(text))))
-            except ValueError:
-                pass
+                check_locale_depth(text, rel)
+                locales[bundle[0]][bundle[1]] = (rel, dict(flatten(loads_json(text, rel))))
+            except (ValueError, RecordError, RecursionError) as e:
+                scanned -= 1
+                skipped += 1
+                parse_warning(acc, f"{rel}:1", f"locale JSON could not be parsed; file skipped: {str(e)[:200]}")
             continue
         if suffix == ".json":
             if TOKEN_FILE.search("/" + rel):
                 tokens.append({"path": rel, "custom_properties": 0})
             continue
-        at = lambda i: f"{rel}:{line_of(text, i)}"  # noqa: E731
         css = suffix in CSS_EXT | EMBED_CSS_EXT
-        js = suffix in JS_EXT
-        props = len(CUSTOM_PROPERTY.findall(text))
+        js = suffix in JS_EXT or suffix in EMBED_CSS_EXT
+        if suffix in MARKUP_EXT:
+            text = mask_markup_comments(text, jsx=suffix in JSX_EXT)
+        if suffix in CSS_EXT:
+            text = mask_css_comments(text)
+        elif suffix in EMBED_CSS_EXT:
+            text = STYLE_BLOCK.sub(lambda m: m.group(1) + mask_css_comments(m.group(2)) + m.group(3), text)
+        css_text = embedded_css(text) if suffix in EMBED_CSS_EXT else text
+        js_text = (keep_regions(text, [(m.start(2), m.end(2), m.group(2)) for m in SCRIPT_BLOCK.finditer(text)])
+                   if suffix in EMBED_CSS_EXT - JS_EXT else text)
+        source_lines = SourceLines(text)
+        at = lambda i: f"{rel}:{source_lines(i)}"  # noqa: E731
+        warn_at = lambda i: lambda reason: parse_warning(acc, at(i), reason)  # noqa: E731
+        props = len(CUSTOM_PROPERTY.findall(css_text if css else text))
         if TOKEN_FILE.search("/" + rel) or props >= 3:
             tokens.append({"path": rel, "custom_properties": props})
         if css:
-            for m in CSS_SPACING.finditer(text):
-                for v in lengths(m.group(1)):
+            for m in CSS_SPACING.finditer(css_text):
+                for v in lengths(m.group(1), warn_at(m.start())):
                     if abs(v) > 2:
                         spacing.add(fmt(v), at(m.start()))
-            for m in CSS_FONT_SIZE.finditer(text):
-                for v in lengths(m.group(1)):
+            for m in CSS_FONT_SIZE.finditer(css_text):
+                for v in lengths(m.group(1), warn_at(m.start())):
                     font_sizes.add(fmt(v), at(m.start()))
-            for m in CSS_Z.finditer(text):
-                z_index.add(int(m.group(1)), at(m.start()))
-            for m in CSS_WIDTH.finditer(text):
-                v = px(m.group(2), m.group(3))
-                if v >= 320:
+            for m in CSS_Z.finditer(css_text):
+                value = integer(m.group(1), warn_at(m.start()))
+                if value is not None:
+                    z_index.add(value, at(m.start()))
+            for m in CSS_WIDTH.finditer(css_text):
+                v = px(m.group(2), m.group(3), warn_at(m.start()))
+                if v is not None and v >= 320:
                     widths.add(fmt(v), at(m.start()))
-            for m in CSS_MOTION.finditer(text):
+            for m in CSS_MOTION.finditer(css_text):
                 motion.append(at(m.start()))
-            scan_css(rel, text, acc)
+            scan_css(rel, css_text, acc, source_lines)
         if js:
-            for m in JS_SPACING.finditer(text):
-                for v in js_lengths(m.group(1), m.group(2)):
+            for m in JS_SPACING.finditer(js_text):
+                for v in js_lengths(m.group(1), m.group(2), warn_at(m.start())):
                     if abs(v) > 2:
                         spacing.add(fmt(v), at(m.start()))
-            for m in JS_FONT_SIZE.finditer(text):
-                for v in js_lengths(m.group(1), m.group(2)):
+            for m in JS_FONT_SIZE.finditer(js_text):
+                for v in js_lengths(m.group(1), m.group(2), warn_at(m.start())):
                     font_sizes.add(fmt(v), at(m.start()))
-            for m in JS_Z.finditer(text):
-                z_index.add(int(m.group(1)), at(m.start()))
-            for m in JS_WIDTH.finditer(text):
-                v = px(m.group(2) or m.group(3), "px")
-                if v >= 320:
+            for m in JS_Z.finditer(js_text):
+                value = integer(m.group(1), warn_at(m.start()))
+                if value is not None:
+                    z_index.add(value, at(m.start()))
+            for m in JS_WIDTH.finditer(js_text):
+                v = px(m.group(2) or m.group(3), "px", warn_at(m.start()))
+                if v is not None and v >= 320:
                     widths.add(fmt(v), at(m.start()))
-            for m in JS_MOTION.finditer(text):
+            for m in JS_MOTION.finditer(js_text):
                 motion.append(at(m.start()))
-            for m in JS_OUTLINE_NONE.finditer(text):
+            for m in JS_OUTLINE_NONE.finditer(js_text):
                 acc["focus_outline"].append({"selector": "(style object)", "location": at(m.start()),
                                              "replacement_in_rule": None, "focus_visible_rule_in_file": None})
         for m in MEDIA.finditer(text):
-            breakpoints.add(fmt(px(m.group(1), m.group(2))), at(m.start()))
+            value = px(m.group(1), m.group(2), warn_at(m.start()))
+            if value is not None:
+                breakpoints.add(fmt(value), at(m.start()))
         for m in REDUCED_MOTION.finditer(text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
@@ -478,12 +645,20 @@ def inventory(root, flows=None):
             links.add((m.group(1) or m.group(2)).rstrip("/") or "/")
         fr = FILE_ROUTE.search(rel)
         if fr:
-            segs = [s for s in (fr.group(1) or fr.group(2) or "").split("/") if s and not s.startswith("(")]
-            routes.append({"route": "/" + "/".join(segs), "location": f"{rel}:1"})
+            next_app = fr.group(1) is not None
+            segments = (fr.group(1) if next_app else fr.group(2)).split("/")
+            private = next_app and any(s.startswith("_") for s in segments)
+            intercepted = next_app and any(re.match(r"^\(\.{1,3}\)", s) for s in segments)
+            if intercepted and not private:
+                parse_warning(acc, f"{rel}:1", "Next.js interception route is not inferred; inspect routing manually")
+            elif not private:
+                segs = [s for s in segments if s and not s.startswith("(")
+                        and not (next_app and s.startswith("@"))]
+                routes.append({"route": "/" + "/".join(segs), "location": f"{rel}:1"})
         if SCREEN_DIR.search(rel) and suffix in MARKUP_EXT | JS_EXT:
             screens.append(rel)
         if suffix in MARKUP_EXT:
-            scan_markup(rel, text, acc)
+            scan_markup(rel, text, acc, source_lines)
             if FETCH.search(text):
                 missing = [k for k, rx in (("loading", LOADING), ("error", ERROR)) if not rx.search(text)]
                 if LIST_RENDER.search(text) and not EMPTY.search(text):
@@ -519,6 +694,7 @@ def inventory(root, flows=None):
         "tool": "inventory.py", "version": 1, "repository": root.name,
         "flows_sha256": canonical_digest(flows) if flows is not None else None,
         "files_scanned": scanned, "files_skipped": skipped,
+        "parse_warnings": acc["parse_warnings"],
         "routes": routes,
         "orphan_routes": [r for r in routes if r["route"] not in linked and r["route"] not in ("/", "*")
                           and not re.search(r"[:\[*]", r["route"])],
@@ -562,13 +738,14 @@ def inventory(root, flows=None):
         if len(rows) > limit:
             truncated[name] = len(rows) - limit
         return rows[:limit]
-    for key in ("spacing", "font_sizes"):
+    for key in ("spacing", "font_sizes", "parse_warnings"):
         result[key] = cap(result[key], MAX_ROWS, key)
     for key, rows in result.get("off_scale", {}).items():
         result["off_scale"][key] = cap(rows, MAX_ROWS, f"off_scale.{key}")
     for entry in result["locale_expansion"]:
         entry["keys"] = cap(entry["keys"], MAX_KEYS, f"locale_expansion {entry['bundle']} {entry['lang']}")
-    result["limits"] = {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "expansion_keys": MAX_KEYS}
+    result["limits"] = {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "expansion_keys": MAX_KEYS,
+                        "locale_container_depth": MAX_LOCALE_DEPTH}
     result["truncated"] = truncated
     return result
 

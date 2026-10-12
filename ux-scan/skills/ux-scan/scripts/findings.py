@@ -289,6 +289,73 @@ def check_findings(data, flow_ids=None, ordered=True):
 
 
 FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
+FINDING_RANGE = re.compile(
+    r"(?<![A-Za-z0-9_])(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
+    r"(?P<first>U-[0-9]{3})(?P=first_ticks)(?P=first_style)"
+    r"\s*(?:(?i:to|through)|[-–—−〜～~]|から)\s*"
+    r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`*)(?P<last>U-[0-9]{3})"
+    r"(?P=last_ticks)(?P=last_style)(?![A-Za-z0-9_])(?:まで)?")
+FINDING_MENTION = re.compile(
+    FINDING_RANGE.pattern
+    + r"|(?<![A-Za-z0-9_])(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)(?![A-Za-z0-9_])"
+    + "|" + FINDING_REF.pattern)
+FINDING_LIST = re.compile(
+    r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
+PROSE_PART = re.compile(
+    r"(?P<fence>^[ \t]{0,3}(?P<marker>(?P<marker_char>`|~)(?P=marker_char){2,})[^\n`]*\n.*?"
+    r"(?:\n[ \t]{0,3}(?P=marker)(?P=marker_char)*[ \t]*(?=\n|$)|\Z))"
+    r"|(?P<ticks>`+)(?P<code>.*?)(?P=ticks)"
+    r"|(?P<markup><(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
+    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
+    r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+
+
+def _source_token(token):
+    """Recognize paths/routes and source locations, without treating an ID list as a path."""
+    token = token.rstrip(".!?:").strip("[]{}*_~")
+    token = FINDING_LIST.sub("", token)
+    return ("/" in token or "\\" in token
+            or re.search(r"\.[A-Za-z][A-Za-z0-9_-]*(?::[1-9][0-9]*(?:-[1-9][0-9]*)?)?(?:[#?].*)?$", token)
+            or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?$", token))
+
+
+def _rewrite_prose(value, mapping):
+    """Update finding references without changing code, URLs or source-like tokens."""
+    def references(text):
+        def reference_range(match):
+            first, last = (int(match[key][2:]) for key in ("first", "last"))
+            step = 1 if first <= last else -1
+            old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
+            if not any(mapping.get(fid, fid) != fid for fid in old_ids):
+                return match.group(0)
+            missing = next((fid for fid in old_ids if fid not in mapping), None)
+            if missing:
+                raise RecordError(f"finding range {match.group(0)!r} includes unknown {missing}; "
+                                  "replace it with an explicit list of existing finding ids before renumbering")
+            ticks = match["first_ticks"] or match["last_ticks"]
+            style = match["first_style"] or match["last_style"]
+            return ", ".join(f"{style}{ticks}{mapping[fid]}{ticks}{style}" for fid in old_ids)
+
+        # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
+        def mention(match):
+            if match["first"]:
+                return reference_range(match)
+            if match["styled"]:
+                return match["style"] + mapping.get(match["styled"], match["styled"]) + match["style"]
+            return mapping.get(match[0], match[0])
+
+        return FINDING_MENTION.sub(mention, text)
+
+    parts, start = [], 0
+    for match in PROSE_PART.finditer(value):
+        protected = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
+                     or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip()))
+                     or (match["token"] is not None and _source_token(match["token"])))
+        if protected:
+            parts.extend((references(value[start:match.start()]), match[0]))
+            start = match.end()
+    parts.append(references(value[start:]))
+    return "".join(parts)
 
 
 def renumber_map(findings):
@@ -307,7 +374,7 @@ def renumber(data, mapping):
     """Rewrite finding references in prose and ids, preserving source locations and URLs."""
     def rewrite(value, replace=True):
         if isinstance(value, str):
-            return FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value) if replace else value
+            return _rewrite_prose(value, mapping) if replace else value
         if isinstance(value, dict):
             return {k: rewrite(v, replace and k not in ("location", "occurrences", "url"))
                     for k, v in value.items()}

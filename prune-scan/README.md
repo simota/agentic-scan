@@ -76,6 +76,11 @@ make demo       # render the sample (examples/larder) with PDF into $TMPDIR/prun
 make inventory TARGET=/path/to/repo UNITS=units.json OUT=inventory.json
 ```
 
+The [CI workflow](.github/workflows/ci.yml) runs `make check` on Linux with
+Python 3.10, 3.12 and 3.14, and on macOS with Python 3.14. The Linux/Python 3.12
+job also renders and verifies both the English and Japanese sample PDFs with
+Chrome. These checks run for every pull request and every push to `main`.
+
 `skills/prune-scan/scripts/scan_report_kit/` is a vendored copy of
 scan-report-kit; `make check` verifies it against its MANIFEST. Change it
 upstream and re-vendor (`make vendor DEST=<this repo>/skills/prune-scan/scripts`

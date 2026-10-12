@@ -51,7 +51,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 
 | Field | Rules |
 |---|---|
-| `id` | `P-` and three digits; unique; new ids follow merge order, and `scripts/findings.py renumber` puts them in severity order after VERIFY |
+| `id` | `P-` and three digits; unique; after VERIFY, `scripts/findings.py renumber` assigns consecutive ids from `P-001` in severity, path and line order, with `FalsePositive`/`NotApplicable` last in their previous id order. `merge` allows temporary gaps or different order; `check` and rendering require the restored order |
 | `severity` | `High`, `Medium`, `Low`, `Info` (SKILL.md table: the cost of keeping) |
 | `confidence` | `Confirmed`, `Externally-dependent`, `Purpose-dependent`, `Suspected` (`reference/validation.md`); `Purpose-dependent` whenever `purpose_ref` is an `inferred` item |
 | `status` | `Open`, `Fixed` (removed since), `Accepted` (kept by decision) |
@@ -81,3 +81,15 @@ It replaces `meta` and `summary` when a fragment carries them, appends new
 lines to `checked_ok`, `limitations`, `decisions` and `next_steps`, and replaces
 `perspectives` entries by `name`. To drop a line, send
 `{"remove": {"limitations": ["exact line"]}}`.
+
+Ambiguous input is rejected before any file is replaced: duplicate JSON keys,
+nonstandard numeric constants (`NaN`, `Infinity`), and duplicate finding ids or
+perspective names within one fragment. The same id or name may still be
+updated by a later fragment. Units fragments follow the same rule for purpose,
+entry point and unit ids, and consumer names. A refused batch leaves the
+existing record unchanged, even if an earlier fragment in the batch was valid.
+
+The three-digit id format supports at most 999 findings in one record,
+including excluded findings. Text must be valid Unicode without NUL characters;
+finding titles must fit on one line. Reference `type` and `title`, when supplied,
+must be strings, and URLs must also pass the shared renderer's http(s) checks.

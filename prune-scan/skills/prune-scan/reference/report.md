@@ -19,7 +19,9 @@ finding's next action is the subtraction itself; any other open finding's is
 "Verify first". With `--repo`, each finding's first `path:line` is embedded as
 a short excerpt (never from secret-looking files; secret-looking lines are
 masked). Every page is stamped with the SHA-256 of the `findings.json` it
-shows; `contract_check.py` rejects stale pages.
+shows and, when present, the adjacent `units.json` used for its purpose and
+unit labels. `contract_check.py` compares both stamps with the current records
+and rejects pages left stale by a change to either input.
 
 The rendered next steps open with the **subtraction summary**, computed from
 the open, counted findings (`Unlikely` ones are left out):

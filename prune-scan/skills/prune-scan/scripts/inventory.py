@@ -28,7 +28,7 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, check_units  # noqa: E402
+from findings import RecordError, check_units, load_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -38,7 +38,7 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "uv.lock"}
 SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
-                         r"keystore)|id_[rd]sa.*|\.netrc|.*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
+                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
 ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
@@ -184,9 +184,34 @@ def read_text(path):
     if b"\0" in data[:8192]:
         return None
     try:
-        return data.decode("utf-8")
+        text = data.decode("utf-8")
     except UnicodeDecodeError:
         return None
+    return env_names_only(text) if ENV_DECL_FILE.match(path.name) else text
+
+
+def env_names_only(text):
+    """Discard env example values before any collector sees them; retain line numbers."""
+    lines, quote = [], None
+    assignment = re.compile(r"^\s*(?:export\s+)?(?:[\w.-]+|'[^']+')\s*=")
+    for line in text.split("\n"):
+        binding = assignment.match(line) if quote is None else None
+        declaration = ENV_DECL.match(line) if binding else None
+        lines.append(declaration.group(0) if declaration else "")
+        value = line[binding.end():].lstrip() if binding else (line if quote else "")
+        if quote is None and value.startswith(("'", '"', "`")):
+            quote, value = value[0], value[1:]
+        if quote:
+            escaped = False
+            for char in value:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == quote:
+                    quote = None
+                    break
+    return "\n".join(lines)
 
 
 def line_of(text, index):
@@ -239,7 +264,7 @@ def py_dist_module(name):
 def parse_requirements(rel, text):
     for i, line in enumerate(text.splitlines(), 1):
         line = line.split("#", 1)[0].strip()
-        if not line or line.startswith(("-", "git+", "http")):
+        if not line or line.lower().startswith(("-", "git+", "http://", "https://")):
             continue
         m = re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)", line)
         if m:
@@ -250,32 +275,58 @@ def parse_toml_lists(rel, text):
     """pyproject.toml dependencies (PEP 621 and Poetry) and Cargo.toml dependency tables, by regex."""
     section = None
     in_list = None
+    list_depth = inline_depth = 0
+    # Keep punctuation inside strings out of the structural scan (extras, markers, URLs).
+    tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'[^\']*\'|\#.*$|[\[\]{}]')
     for i, line in enumerate(text.splitlines(), 1):
-        stripped = line.split("#", 1)[0].strip()
-        header = re.match(r"^\[+([^\]]+)\]+$", stripped)
-        if header:
-            section, in_list = header.group(1).strip(), None
-            continue
+        comment = next((m.start() for m in tokens.finditer(line) if m.group(0).startswith("#")), len(line))
+        stripped = line[:comment].strip()
+        if not in_list:
+            header = re.match(r"^\[+([^\]]+)\]+$", stripped)
+            if header:
+                section = header.group(1).strip()
+                continue
+            m = re.match(r"^([\w-]+)\s*=\s*\[(.*)$", stripped)
+            if m and ((section == "project" and m.group(1) == "dependencies") or section in (
+                    "project.optional-dependencies", "dependency-groups")):
+                in_list, list_depth, inline_depth = section, 1, 0
+                stripped = m.group(2)
+            elif section and (section.endswith("dependencies") and ("poetry" in section or section.startswith(
+                    ("dependencies", "dev-dependencies", "build-dependencies", "workspace.dependencies",
+                     "target.")))):
+                m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=", stripped)
+                if m and m.group(1) != "python":
+                    yield m.group(1), section, f"{rel}:{i}"
+                continue
         if in_list:
-            for m in re.finditer(r"[\"']([A-Za-z0-9][A-Za-z0-9._-]*)", stripped):
-                yield m.group(1), in_list, f"{rel}:{i}"
-            if "]" in stripped:
-                in_list = None
-            continue
-        m = re.match(r"^(dependencies|dev-dependencies|optional-dependencies|[\w-]+)\s*=\s*\[(.*)$", stripped)
-        if m and (section == "project" or (section or "").startswith(("project.optional-dependencies",
-                                                                       "dependency-groups"))):
-            for d in re.finditer(r"[\"']([A-Za-z0-9][A-Za-z0-9._-]*)", m.group(2)):
-                yield d.group(1), section, f"{rel}:{i}"
-            if "]" not in m.group(2):
-                in_list = section
-            continue
-        if section and (section.endswith("dependencies") and ("poetry" in section or section.startswith(
-                ("dependencies", "dev-dependencies", "build-dependencies", "workspace.dependencies",
-                 "target.")))):
-            m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=", stripped)
-            if m and m.group(1) != "python":
-                yield m.group(1), section, f"{rel}:{i}"
+            for token in tokens.finditer(stripped):
+                value = token.group(0)
+                if value == "[":
+                    list_depth += 1
+                elif value == "]":
+                    list_depth -= 1
+                    if list_depth == 0:
+                        in_list = None
+                        break
+                elif value == "{":
+                    inline_depth += 1
+                elif value == "}":
+                    inline_depth = max(0, inline_depth - 1)
+                elif value.startswith(('"', "'")) and list_depth == 1 and inline_depth == 0:
+                    dependency = re.match(r"[A-Za-z0-9][A-Za-z0-9._-]*", value[1:-1])
+                    if dependency:
+                        yield dependency.group(0), in_list, f"{rel}:{i}"
+
+
+def package_sections(text):
+    """Return usable package.json maps; invalid shapes cannot abort a best-effort scan."""
+    try:
+        value = json.loads(text)
+    except (ValueError, RecursionError):
+        return {}
+    if not isinstance(value, dict):
+        return {}
+    return {key: section for key, section in value.items() if isinstance(section, dict)}
 
 
 def parse_go_mod(rel, text):
@@ -305,12 +356,13 @@ class Collector:
 
     def add(self, path):
         rel = path.relative_to(self.root).as_posix()
-        if path.suffix.lower() in ASSET_EXT:
-            self.assets.append((rel, path.stat().st_size))
         try:
+            if path.suffix.lower() in ASSET_EXT:
+                self.assets.append((rel, path.stat().st_size))
             text = read_text(path)
         except OSError:
-            text = None
+            self.skipped += 1
+            return
         if text is None:
             if path.suffix.lower() not in ASSET_EXT:
                 self.skipped += 1
@@ -320,7 +372,7 @@ class Collector:
         if bundle:
             try:
                 self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(json.loads(text))))
-            except ValueError:
+            except (ValueError, RecursionError):
                 pass
 
 
@@ -474,13 +526,10 @@ def inventory(root, units=None, today=None):
         name = Path(rel).name
         deps = []
         if name == "package.json":
-            try:
-                pkg = json.loads(text)
-            except ValueError:
-                continue
-            scripts = " ".join(str(v) for v in (pkg.get("scripts") or {}).values())
+            pkg = package_sections(text)
+            scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
-                for dep in pkg.get(section) or {}:
+                for dep in pkg.get(section, {}):
                     m = re.search(r"\"%s\"\s*:" % re.escape(dep), text)
                     loc = f"{rel}:{line_of(text, m.start()) if m else 1}"
                     deps.append((dep, section, loc, js_packages[dep],
@@ -660,15 +709,13 @@ def inventory(root, units=None, today=None):
                 script_rows.append({"source": rel, "name": m.group(1), "location": f"{rel}:{line_of(text, m.start())}",
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
-            try:
-                scripts = json.loads(text).get("scripts") or {}
-            except ValueError:
-                continue
+            scripts = package_sections(text).get("scripts", {})
             for script in scripts:
                 rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:\s+--?[\w-]+)*\s+(?:run(?:-script)?\s+)?%s(?![\w:.-])"
                                 % re.escape(script))
                 hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
-                lifecycle = bool(re.match(r"^(?:pre|post)", script) and script[3:].lstrip("t") in scripts
+                hook = re.match(r"^(?:pre|post)(.+)$", script)
+                lifecycle = bool(hook and hook.group(1) in scripts
                                  or script in ("install", "prepare", "prepublishOnly", "postinstall", "preinstall"))
                 m = re.search(r"\"%s\"\s*:" % re.escape(script), text)
                 script_rows.append({"source": rel, "name": script, "location": f"{rel}:{line_of(text, m.start()) if m else 1}",
@@ -798,13 +845,18 @@ def main(argv=None):
     if not Path(a.repo).is_dir():
         print(f"inventory.py: {a.repo} is not a directory", file=sys.stderr)
         return 2
-    if a.today and not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", a.today):
-        print("inventory.py: --today expects YYYY-MM-DD", file=sys.stderr)
-        return 2
+    if a.today:
+        try:
+            if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", a.today):
+                raise ValueError
+            datetime.date.fromisoformat(a.today)
+        except ValueError:
+            print("inventory.py: --today expects a valid calendar date (YYYY-MM-DD)", file=sys.stderr)
+            return 2
     units = None
     if a.units:
         try:
-            units = check_units(json.loads(Path(a.units).read_text(encoding="utf-8")))
+            units = check_units(load_json(a.units))
         except (OSError, ValueError, RecordError) as e:
             print(f"inventory.py: units: {e}", file=sys.stderr)
             return 2

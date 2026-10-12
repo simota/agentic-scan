@@ -30,11 +30,6 @@ tgt_claude := '$(HOME)/.claude|$(HOME)/.claude/skills'
 tgt_codex  := '$(CODEX_HOME)|$(CODEX_HOME)/skills'
 tgt_agy    := '$(AGY_HOME)|$(AGY_HOME)/skills'
 
-UNKNOWN := $(filter-out claude codex agy,$(AGENT))
-ifneq ($(UNKNOWN),)
-$(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
-endif
-
 ifneq ($(SKILLS_DIR),)
 QTARGETS := '$(SKILLS_DIR)|$(SKILLS_DIR)'
 WHERE    := SKILLS_DIR=$(SKILLS_DIR)
@@ -42,6 +37,10 @@ else ifneq ($(PROJECT),)
 QTARGETS := '$(PROJECT)|$(PROJECT)/.claude/skills'
 WHERE    := PROJECT=$(PROJECT)
 else
+UNKNOWN := $(filter-out claude codex agy,$(AGENT))
+ifneq ($(UNKNOWN),)
+$(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
+endif
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(tgt_$(a)))
 WHERE    := $(AGENT)
 endif

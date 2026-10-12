@@ -8,20 +8,20 @@ dashboard.html, report.html and report.pdf (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and units are
 valid; every perspective family is recorded in perspectives; no finding is
 left Unverified; every open Purpose-dependent finding is named in decisions;
-and both pages carry the SHA-256 of the current findings.json.
+and both pages carry the SHA-256 of the current findings.json and units.json.
 Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 """
 
 import argparse
 import hashlib
-import json
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import EXCLUDED, FAMILIES, RecordError, check_findings, check_units  # noqa: E402
-from render import STAMP  # noqa: E402
+from findings import (EXCLUDED, FAMILIES, FINDING_REF, RecordError, check_findings,  # noqa: E402
+                      check_units, parse_json, read_json_source)
+from render import STAMP, UNITS_STAMP, pdf_complete  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
@@ -31,7 +31,10 @@ def rendered_lang(out):
     """The language the existing pages were rendered in, so a re-render keeps it."""
     for name in ("report.html", "dashboard.html"):
         try:
-            m = re.search(r'<html lang="([a-z]{2})"', (out / name).read_text(encoding="utf-8", errors="replace"))
+            path = out / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            m = re.search(r'<html lang="(ja|en)"', path.read_text(encoding="utf-8", errors="replace"))
         except OSError:
             continue
         if m:
@@ -41,7 +44,11 @@ def rendered_lang(out):
 
 def problems(out, no_pdf=False, allow=()):
     out = Path(out)
-    found = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    try:
+        found = {p.name for p in out.iterdir()} if out.is_dir() else set()
+    except OSError as e:
+        yield f"{out}: cannot inspect directory: {e.strerror or e}"
+        return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {out}/findings.json --out {out} --lang {rendered_lang(out)} --repo <repo>"
                 + (" --no-pdf" if no_pdf else ""))
@@ -54,19 +61,27 @@ def problems(out, no_pdf=False, allow=()):
         yield f"{name}: missing; {hint}"
     for name in sorted(found - expected - set(allow)):
         yield f"{name}: not part of the contract (contract_check.py --allow {name} if it was asked for)"
-    for name in found & expected:
+    regular = set()
+    for name in sorted(found & expected):
         path = out / name
-        if path.is_symlink() or not path.is_file():
-            yield f"{name}: must be a regular file"
-    if "findings.json" not in found:
+        try:
+            if path.is_symlink() or not path.is_file():
+                yield f"{name}: must be a regular file"
+            else:
+                regular.add(name)
+        except OSError as e:
+            yield f"{name}: cannot inspect file: {e.strerror or e}"
+    if "findings.json" not in regular:
         return
-    source = (out / "findings.json").read_bytes()
     try:
+        source = read_json_source(out / "findings.json")
         units = None
-        if "units.json" in found:
-            units = check_units(json.loads((out / "units.json").read_text(encoding="utf-8")))
-        data = check_findings(json.loads(source.decode("utf-8")), units)
-    except (ValueError, RecordError) as e:
+        units_source = None
+        if "units.json" in regular:
+            units_source = read_json_source(out / "units.json")
+            units = check_units(parse_json(units_source, "units.json"))
+        data = check_findings(parse_json(source, "findings.json"), units)
+    except (OSError, ValueError, RecordError) as e:
         yield f"record: {e}"
         return
     recorded = {p["name"][:2] for p in data.get("perspectives", [])}
@@ -74,32 +89,51 @@ def problems(out, no_pdf=False, allow=()):
     if missing:
         yield (f"perspectives: no entry for {', '.join(missing)}; record each family as applied, "
                "N/A with the reason, or not checked")
+    unfinished = [p["name"] for p in data.get("perspectives", []) if not p.get("result", "").strip()]
+    if unfinished:
+        yield (f"perspectives: no result for {', '.join(unfinished)}; record applied, "
+               "N/A with the reason, or not checked")
     unverified = [f["id"] for f in data["findings"] if f["validation"]["verdict"] == "Unverified"]
     if unverified:
         yield f"findings: {', '.join(unverified)} still Unverified; settle the verdict in VERIFY"
-    decisions = "\n".join(data.get("decisions", []))
+    decisions = set(FINDING_REF.findall("\n".join(data.get("decisions", []))))
     undecided = [f["id"] for f in data["findings"] if f["confidence"] == "Purpose-dependent" and f["status"] == "Open"
-                 and f["validation"]["verdict"] not in EXCLUDED and not re.search(r"\b%s\b" % f["id"], decisions)]
+                 and f["validation"]["verdict"] not in EXCLUDED and f["id"] not in decisions]
     if undecided:
         yield (f"decisions: {', '.join(undecided)} rest on an inferred purpose; name each in a decisions line "
                "so a human makes the keep or remove call")
-    if "inventory.json" in found:
+    if "inventory.json" in regular:
         try:
-            if json.loads((out / "inventory.json").read_text(encoding="utf-8")).get("tool") != "inventory.py":
+            inventory = parse_json(read_json_source(out / "inventory.json"), "inventory.json")
+            if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
                 yield "inventory.json: not written by inventory.py"
-        except ValueError:
-            yield "inventory.json: not valid JSON"
-    digest = "sha256:" + hashlib.sha256(source).hexdigest()
+        except (ValueError, RecordError) as e:
+            yield f"inventory.json: not valid JSON: {e}"
+        except OSError as e:
+            yield f"inventory.json: cannot read file: {e.strerror or e}"
+    digests = {STAMP: "sha256:" + hashlib.sha256(source).hexdigest()}
+    if units_source is not None:
+        digests[UNITS_STAMP] = "sha256:" + hashlib.sha256(units_source).hexdigest()
     for name in ("dashboard.html", "report.html"):
-        if name in found:
-            page = (out / name).read_text(encoding="utf-8", errors="replace")
-            m = re.search(r'<meta name="%s" content="([^"]+)">' % STAMP, page)
+        if name not in regular:
+            continue
+        try:
+            page = (out / name).read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as e:
+            yield f"{name}: cannot read file: {e}"
+            continue
+        for stamp, digest in digests.items():
+            m = re.search(r'<meta name="%s" content="([^"]+)">' % stamp, page)
             if not m or m.group(1) != digest:
-                yield f"{name}: stale; re-render after the last merge ({rerender})"
-    limited = any(line.startswith(NO_PDF) for line in data.get("limitations", []))
+                yield f"{name}: stale; re-render after the last findings or units change ({rerender})"
+                break
+    if "report.pdf" in regular and not pdf_complete(out / "report.pdf"):
+        yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
+    pdf_limitations = [line for line in data.get("limitations", []) if line.startswith(NO_PDF)]
+    limited = any(re.match(re.escape(NO_PDF) + r":\s*\S", line) for line in pdf_limitations)
     if no_pdf and not limited:
         yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
-    if not no_pdf and limited:
+    if not no_pdf and pdf_limitations:
         yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
 
 

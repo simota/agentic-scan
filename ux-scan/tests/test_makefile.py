@@ -16,7 +16,7 @@ class MakefileTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.base = Path(self.tmp.name)
+        self.base = Path(self.tmp.name).resolve()  # macOS: $TMPDIR under /var is a symlink to /private/var
         self.repo = self.base / "checkout with spaces"
         self.repo.mkdir()
         shutil.copy2(ROOT / "Makefile", self.repo / "Makefile")

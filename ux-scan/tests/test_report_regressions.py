@@ -247,6 +247,52 @@ class ReportRegressions(unittest.TestCase):
         path.write_text(source, encoding="utf-8")
         self.assertIn("report.html: stale ux-scan-source", "\n".join(contract_check.problems(self.out, no_pdf=True)))
 
+    def test_truncated_html_with_intact_input_stamps_is_rejected(self):
+        for name in ("dashboard.html", "report.html"):
+            with self.subTest(name=name):
+                self.assertEqual(self.invoke()[0], 0)
+                path = self.out / name
+                source = path.read_text(encoding="utf-8")
+                path.write_text(source[:source.index("</head>") + len("</head>")], encoding="utf-8")
+                errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                self.assertIn(f"{name}: altered or incomplete HTML", errors)
+
+    def test_complete_html_changes_cannot_keep_an_old_page_fingerprint(self):
+        for name in ("dashboard.html", "report.html"):
+            for closing in ("</style>", "</body>") + (("</script>",) if name == "dashboard.html" else ()):
+                with self.subTest(name=name, closing=closing):
+                    self.assertEqual(self.invoke()[0], 0)
+                    path = self.out / name
+                    source = path.read_text(encoding="utf-8")
+                    # Preserve valid HTML and every input stamp while changing its actual bytes.
+                    path.write_text(source.replace(closing, "\n " + closing, 1), encoding="utf-8")
+                    errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                    self.assertIn(f"{name}: altered or incomplete HTML", errors)
+
+    def test_page_fingerprint_requires_one_canonical_tag_in_the_head(self):
+        for change in ("missing", "duplicate", "duplicate-in-comment", "body", "malformed", "wrong-digest"):
+            with self.subTest(change=change):
+                self.assertEqual(self.invoke()[0], 0)
+                path = self.out / "report.html"
+                source = path.read_text(encoding="utf-8")
+                tag = re.search(r'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">', source)[0]
+                if change == "missing":
+                    changed = source.replace(tag, "", 1)
+                elif change == "duplicate":
+                    changed = source.replace(tag, tag + tag, 1)
+                elif change == "duplicate-in-comment":
+                    changed = source.replace(tag, tag + "<!--" + tag + "-->", 1)
+                elif change == "body":
+                    changed = source.replace(tag, "", 1).replace("<body>", "<body>" + tag, 1)
+                elif change == "malformed":
+                    changed = source.replace(tag, tag.replace("sha256:", "invalid:"), 1)
+                else:
+                    changed = source.replace(tag, '<meta name="ux-scan-page" content="sha256:' + "0" * 64 + '">', 1)
+                path.write_text(changed, encoding="utf-8")
+                errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                self.assertIn("report.html:", errors)
+                self.assertIn("page fingerprint", errors)
+
     def test_mixed_language_pages_are_not_a_complete_render(self):
         self.assertEqual(self.invoke(lang="en")[0], 0)
         english = (self.out / "dashboard.html").read_bytes()
@@ -319,6 +365,35 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(code, 3, error)
         self.assertIn("masked", error)
         self.assertNotIn("DO_NOT_LEAK_VALUE", error)
+
+    def test_pdf_diagnostic_callback_withholds_truncated_secret_values(self):
+        secret = "DO_NOT_LEAK_VALUE_" + "x" * 400
+        for text in ("api_key=" + secret, secret[-300:], "engine echoed report text"):
+            with self.subTest(text=text[:20]):
+                masked = render.redact_diagnostic(text)
+                self.assertIn("masked", masked)
+                self.assertNotIn(text, masked)
+
+    def test_pdf_failure_publication_masks_even_unredacted_engine_tails(self):
+        self.ready_for_pdf()
+        secret = "DO_NOT_LEAK_VALUE_" + "x" * 400
+
+        def failed_engine(html_path, pdf_path, failures, timeout, redact):
+            # The upstream engine truncates before its callback, so the key can be lost.
+            tail = render.pdf._tail("api_key=" + secret, redact)
+            failures.append(("chrome", "timed out after 10 s", tail))
+            # Some engine failure paths append diagnostics without calling redact at all.
+            failures.append(("weasyprint", "could not be started", secret))
+            return None
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=failed_engine):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 3, error)
+        self.assertIn("chrome timed out after 10 s", error)
+        self.assertIn("weasyprint could not be started", error)
+        self.assertIn("masked", error)
+        self.assertNotIn("DO_NOT_LEAK_VALUE", error)
+        self.assertNotIn("x" * 100, error)
 
     def test_pdf_io_failure_is_reported_and_partial_output_removed(self):
         self.ready_for_pdf()

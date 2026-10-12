@@ -79,5 +79,24 @@ List sections and removal lines contain strings. Use separate fragments to
 update the same id more than once. `renumber` rewrites references throughout
 the record's prose, including ids immediately beside Japanese text. Structured
 `location`, `occurrences` and reference `url` values stay unchanged: an id in a
-file name or external URL does not identify a finding. The command also repairs
-the array order when the ids themselves already have the correct values.
+file name or external URL does not identify a finding. Paths, routes, http(s)
+URLs, inline code, fenced code and HTML/JSX markup quoted in prose also stay
+unchanged within their delimiters (raw HTML tags are protected individually).
+An inline code span containing only a finding id, such as `U-002`,
+is a finding reference and is updated; mark other code literals as code so
+their ids are not mistaken for references. Separate prose references from
+source paths with whitespace, punctuation or code spans; unseparated text that
+looks like one path is preserved as a source token.
+
+When ids move, explicit finding ranges using `to`, `through`, a hyphen or dash,
+`~`, `〜`, `～`, or Japanese `から` (optionally followed by `まで`) expand to a
+comma-separated list of the same findings in their original range order.
+The endpoints may each be wrapped in backticks or Markdown emphasis; those
+delimiters still identify finding references, and the expanded list keeps that
+formatting.
+For example, if `U-001` becomes `U-003` and `U-002` becomes `U-001`,
+`Fix U-001 to U-002` becomes `Fix U-003, U-001`. A range containing a missing id
+is refused when any id in that range moves; replace it with an explicit list
+of existing finding ids and retry. Ranges whose ids do not move stay unchanged.
+The command also repairs the array order when the ids themselves already have
+the correct values.

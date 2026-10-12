@@ -265,6 +265,105 @@ class TransactionRegressions(unittest.TestCase):
         self.assertEqual(changed["next_steps"], ["Fix U-001."])
         findings.check_findings(changed)
 
+    def test_renumber_preserves_paths_urls_routes_and_code_in_prose(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        item = data["findings"][0]
+        item.update(id="U-002", location="src/U-002.tsx:1", occurrences=["src/U-002.tsx:1"],
+                    screen="Customer detail (/customers/U-002)",
+                    criterion="Pattern docs/U-002.md:12; https://example.com/spec/U-002",
+                    observed='src/U-002.tsx:1 contains <a href="/customers/U-002">Details</a>.')
+        item["validation"]["evidence"] = (
+            "U-002.tsx:1 and .U-002 and https://example.com/?issue=U-002 confirm U-002.")
+        data["next_steps"] = [
+            'Fix `U-002`, preserve `const id = "U-002"`, and inspect <div id="U-002"/>.',
+            'Check [U-002](https://example.com/spec/U-002) in src/[U-002].tsx:1.',
+            'Fix U-002.\n```tsx\nconst id = "U-002";\n```\nThen verify U-002.',
+            'Fix U-002.\n~~~tsx\nconst id = "U-002";\n~~~\nThen verify U-002.',
+            'Fix U-002.\n```tsx\nconst id = "U-002";\n',
+            'Fix U-002.\n```tsx\nconst id = "U-002";\n````\nThen verify U-002.',
+            "U-002（docs/U-002.md:12）を修正。https://example.com/U-002。U-002を確認。",
+            'Use <input data-key="U-002"> for U-002, then <button>.',
+            "U-002 は <div> で再現。U-002 を <button> に直す。",
+        ]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        updated = changed["findings"][0]
+        for key in ("location", "occurrences", "screen", "criterion", "observed"):
+            self.assertEqual(updated[key], original["findings"][0][key], key)
+        self.assertEqual(updated["validation"]["evidence"],
+                         "U-002.tsx:1 and .U-002 and https://example.com/?issue=U-002 confirm U-001.")
+        self.assertEqual(changed["next_steps"], [
+            'Fix `U-001`, preserve `const id = "U-002"`, and inspect <div id="U-002"/>.',
+            'Check [U-001](https://example.com/spec/U-002) in src/[U-002].tsx:1.',
+            'Fix U-001.\n```tsx\nconst id = "U-002";\n```\nThen verify U-001.',
+            'Fix U-001.\n~~~tsx\nconst id = "U-002";\n~~~\nThen verify U-001.',
+            'Fix U-001.\n```tsx\nconst id = "U-002";\n',
+            'Fix U-001.\n```tsx\nconst id = "U-002";\n````\nThen verify U-001.',
+            "U-001（docs/U-002.md:12）を修正。https://example.com/U-002。U-001を確認。",
+            'Use <input data-key="U-002"> for U-001, then <button>.',
+            "U-001 は <div> で再現。U-001 を <button> に直す。",
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_expands_ranges_without_changing_the_referenced_findings(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        data["next_steps"] = [
+            "Fix U-001 to U-002.", "Fix U-001 through U-003.", "Fix U-003 to U-001.",
+            "U-001からU-003までを修正。", "U-001〜U-003を修正。", "U-001～U-003を修正。",
+            "Fix U-001-U-003; then U-001/U-003.", "Fix U-001–U-003.", "Fix U-001—U-003.",
+            "Fix `U-001` to `U-002`.", "`U-001`から`U-003`までを修正。", "U-001/U-002を修正。",
+            "Fix **U-001** to **U-002**.", "Fix *U-001* to *U-002*.", "Fix __U-001__ to __U-002__.",
+            "Fix **`U-001`** to **`U-002`**.",
+            "Fix __U-001__, _U-002_ and ~~U-003~~; preserve U-001_extra and XU-002.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Fix U-003, U-001.", "Fix U-003, U-001, U-002.", "Fix U-002, U-001, U-003.",
+            "U-003, U-001, U-002を修正。", "U-003, U-001, U-002を修正。", "U-003, U-001, U-002を修正。",
+            "Fix U-003, U-001, U-002; then U-003/U-002.", "Fix U-003, U-001, U-002.", "Fix U-003, U-001, U-002.",
+            "Fix `U-003`, `U-001`.", "`U-003`, `U-001`, `U-002`を修正。", "U-003/U-001を修正。",
+            "Fix **U-003**, **U-001**.", "Fix *U-003*, *U-001*.", "Fix __U-003__, __U-001__.",
+            "Fix **`U-003`**, **`U-001`**.",
+            "Fix __U-003__, _U-001_ and ~~U-002~~; preserve U-001_extra and XU-002.",
+        ])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_leaves_unchanged_ranges_and_protects_source_ranges(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["next_steps"] = ["Fix U-001 to U-002."]
+        self.assertEqual(findings.renumber(data, findings.renumber_map(data["findings"])), data)
+        data["findings"][0]["severity"] = "Low"
+        data["next_steps"] = [
+            "Inspect src/U-001-U-002.tsx:1 and https://example.com/U-001-U-002; fix U-001 to U-002."]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Inspect src/U-001-U-002.tsx:1 and https://example.com/U-001-U-002; fix U-002, U-001."])
+        findings.check_findings(changed)
+
+    def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"] = "Low"
+        data["findings"][1]["id"] = "U-003"
+        data["next_steps"] = ["Fix U-001 to U-003."]
+        findings.check_findings(data, ordered=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            before = target.read_bytes()
+            result = run("renumber", target)
+            self.assert_refused(result)
+            self.assertIn("unknown U-002", result.stderr)
+            self.assertEqual(target.read_bytes(), before)
+            self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name})
+
     def test_failed_atomic_replace_keeps_target_and_removes_temporary_file(self):
         with tempfile.TemporaryDirectory() as tmp:
             target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"

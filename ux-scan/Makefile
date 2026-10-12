@@ -15,7 +15,11 @@
 #   make demo LANG_OUT=en NO_PDF=1     # English, HTML only
 
 NAME    := ux-scan
-REPO    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
+# Make's filename functions split on spaces, even inside an absolute path.
+# Capture this standalone Makefile before any includes and resolve it in the shell.
+shell_quote = '$(subst ','"'"',$(1))'
+SOURCE_MAKEFILE := $(MAKEFILE_LIST)
+REPO    := $(shell CDPATH= cd -- "$$(dirname -- $(call shell_quote,$(SOURCE_MAKEFILE)))" && pwd -P)
 SKILL   := $(REPO)/skills/$(NAME)
 PYTHON  ?= python3
 
@@ -26,22 +30,21 @@ CODEX_HOME ?= $(HOME)/.codex
 AGY_HOME   ?= $(HOME)/.gemini/antigravity-cli
 
 # Each target is one quoted 'guard|dir' word, so paths may contain spaces.
-tgt_claude := '$(HOME)/.claude|$(HOME)/.claude/skills'
-tgt_codex  := '$(CODEX_HOME)|$(CODEX_HOME)/skills'
-tgt_agy    := '$(AGY_HOME)|$(AGY_HOME)/skills'
+tgt_claude := $(call shell_quote,$(HOME)/.claude|$(HOME)/.claude/skills)
+tgt_codex  := $(call shell_quote,$(CODEX_HOME)|$(CODEX_HOME)/skills)
+tgt_agy    := $(call shell_quote,$(AGY_HOME)|$(AGY_HOME)/skills)
 
+ifneq ($(SKILLS_DIR),)
+QTARGETS := $(call shell_quote,$(SKILLS_DIR)|$(SKILLS_DIR))
+WHERE    := SKILLS_DIR=$(SKILLS_DIR)
+else ifneq ($(PROJECT),)
+QTARGETS := $(call shell_quote,$(PROJECT)|$(PROJECT)/.claude/skills)
+WHERE    := PROJECT=$(PROJECT)
+else
 UNKNOWN := $(filter-out claude codex agy,$(AGENT))
 ifneq ($(UNKNOWN),)
 $(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
 endif
-
-ifneq ($(SKILLS_DIR),)
-QTARGETS := '$(SKILLS_DIR)|$(SKILLS_DIR)'
-WHERE    := SKILLS_DIR=$(SKILLS_DIR)
-else ifneq ($(PROJECT),)
-QTARGETS := '$(PROJECT)|$(PROJECT)/.claude/skills'
-WHERE    := PROJECT=$(PROJECT)
-else
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(tgt_$(a)))
 WHERE    := $(AGENT)
 endif
@@ -58,7 +61,7 @@ NO_PDF   ?=
 help: ## list targets
 	@echo "$(NAME) - skill install"
 	@echo
-	@grep -E '^[a-z-]+:.*## ' $(lastword $(MAKEFILE_LIST)) \
+	@grep -E '^[a-z-]+:.*## ' $(call shell_quote,$(SOURCE_MAKEFILE)) \
 	  | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 	@echo
 	@echo "  skill:  $(SKILL)"

@@ -13,18 +13,23 @@ the other top-level keys (app, viewports, locales, tokens). Both check the
 result before replacing anything, then write it atomically; a refused fragment
 changes nothing. merge accepts findings in any order; renumber then numbers
 them U-001.. by severity, then path and line (FalsePositive / NotApplicable
-last), and rewrites every U-* reference in the record. check, render.py and
+last), and rewrites U-* finding references while preserving source locations
+and reference URLs. check, render.py and
 contract_check.py require that order. Standard library only.
-Exit status: 0 ok, 2 invalid input (reasons on stderr).
+Exit status: 0 ok, 2 invalid input or unwritable output (reasons on stderr).
 """
 
+import hashlib
 import json
+import math
 import re
 import sys
+from datetime import date
 from pathlib import Path
+from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_report_kit.output import write_output  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Runtime-dependent", "Suspected")
@@ -35,10 +40,12 @@ PRIORITIES = ("primary", "secondary", "shared")
 SOURCES = ("documented", "stated", "inferred")
 TOKEN_SCALES = ("spacing", "font_sizes", "breakpoints", "z_index")
 LIST_KEYS = ("checked_ok", "limitations", "decisions", "next_steps")
-FAMILIES = ("IA", "LG", "RS", "VH", "CC", "ST", "FM", "FB", "CP", "AX", "MO", "IN", "PP")
+HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
+              "FB": 5, "CP": 4, "AX": 6, "MO": 3, "IN": 4, "PP": 4}
+FAMILIES = tuple(HUNT_STEPS)
 FINDING_ID = re.compile(r"^U-[0-9]{3}\Z")
 FLOW_ID = re.compile(r"^FL-[0-9]{2,3}\Z")
-PERSPECTIVE = re.compile(r"^(?:%s)[0-9]\Z" % "|".join(FAMILIES))
+PERSPECTIVE = re.compile(r"^(?:%s)\Z" % "|".join(f"{family}[1-{last}]" for family, last in HUNT_STEPS.items()))
 LOCATION = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|:))[^\s:][^:\n]*:[1-9][0-9]*(?:-[1-9][0-9]*)?\Z")
 VIEWPORT = re.compile(r"^[1-9][0-9]{2,3}x[1-9][0-9]{2,3}\Z")
 TEXT_FIELDS = ("title", "category", "screen", "viewport", "criterion", "observed", "expected", "impact", "fix")
@@ -57,21 +64,80 @@ def _str(obj, key, where, required=False):
     return value
 
 
-def _strings(value, where):
-    if not isinstance(value, list) or not all(isinstance(x, str) and x.strip() for x in value):
-        raise RecordError(f"{where}: expected a list of non-empty strings")
+def _strings(value, where, nonempty=True):
+    if not isinstance(value, list) or not all(isinstance(x, str) and (x.strip() or not nonempty) for x in value):
+        raise RecordError(f"{where}: expected a list of {'non-empty ' if nonempty else ''}strings")
     return value
 
 
 def _location(value, where):
-    if not isinstance(value, str) or not LOCATION.match(value):
+    if (not isinstance(value, str) or not LOCATION.match(value) or "\\" in value
+            or any(ord(c) < 32 or ord(c) == 127 for c in value)):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
+    path, _, lines = value.rpartition(":")
+    if path.endswith("/") or path == ".":
+        raise RecordError(f"{where}: {value!r} is not a repository-relative file:line")
+    try:
+        start, _, end = lines.partition("-")
+        if end and int(end) < int(start):
+            raise RecordError(f"{where}: line range ends before it starts")
+        int(start)  # Also reject numbers too large for the numeric ordering below.
+    except ValueError:
+        raise RecordError(f"{where}: invalid line number") from None
     return value
 
 
 def _http(url, where):
-    if not isinstance(url, str) or not re.match(r"^https?://[^\s/]+", url):
-        raise RecordError(f"{where}: expected an http(s) URL")
+    if isinstance(url, str) and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+        try:
+            parts = urlsplit(url)
+            if parts.scheme in ("http", "https") and parts.hostname:
+                parts.port  # Access checks malformed and out-of-range ports.
+                return
+        except ValueError:
+            pass
+    raise RecordError(f"{where}: expected an http(s) URL")
+
+
+def _viewports(value, where):
+    for viewport in _strings(value, where):
+        if not VIEWPORT.match(viewport):
+            raise RecordError(f"{where}: {viewport!r} is not WIDTHxHEIGHT in CSS px (360x640)")
+
+
+def _finite_number(value):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        return math.isfinite(value)
+    except OverflowError:
+        return False
+
+
+def _indexed(items, where, key, pattern=None):
+    """Validate entries before indexing, so malformed or duplicate rows cannot disappear."""
+    if not isinstance(items, list):
+        raise RecordError(f"{where}: expected a list")
+    result = {}
+    for i, item in enumerate(items):
+        entry = f"{where}[{i}]"
+        if not isinstance(item, dict):
+            raise RecordError(f"{entry}: expected an object")
+        name = _str(item, key, entry, required=True)
+        if pattern is not None and not pattern.match(name):
+            raise RecordError(f"{entry}.{key}: invalid id {name!r}")
+        if name in result:
+            raise RecordError(f"{entry}.{key}: duplicate {name}")
+        result[name] = item
+    return result
+
+
+def _perspectives(items, where="perspectives"):
+    result = _indexed(items, where, "name")
+    for name, item in result.items():
+        _str(item, "result", f"{where} {name}")
+        _str(item, "note", f"{where} {name}")
+    return result
 
 
 def check_flows(flows):
@@ -79,21 +145,19 @@ def check_flows(flows):
     if not isinstance(flows, dict):
         raise RecordError("flows: expected an object")
     _str(flows, "app", "flows", required=True)
-    for v in _strings(flows.get("viewports", []), "flows.viewports"):
-        if not VIEWPORT.match(v):
-            raise RecordError(f"flows.viewports: {v!r} is not WIDTHxHEIGHT in CSS px (360x640)")
+    _viewports(flows.get("viewports", []), "flows.viewports")
     _strings(flows.get("locales", []), "flows.locales")
     tokens = flows.get("tokens", {})
     if not isinstance(tokens, dict):
         raise RecordError("flows.tokens: expected an object")
-    if tokens:
+    if "tokens" in flows:
         _location(_str(tokens, "source", "flows.tokens", required=True), "flows.tokens.source")
     for key in TOKEN_SCALES:
         if key in tokens:
             scale = tokens[key]
             if (not isinstance(scale, list) or not scale
-                    or not all(isinstance(x, (int, float)) and not isinstance(x, bool) for x in scale)):
-                raise RecordError(f"flows.tokens.{key}: expected a non-empty list of numbers (px; plain for z_index)")
+                    or not all(_finite_number(x) for x in scale)):
+                raise RecordError(f"flows.tokens.{key}: expected a non-empty list of numbers (finite; px; plain for z_index)")
     unknown = set(tokens) - {"source", *TOKEN_SCALES}
     if unknown:
         raise RecordError(f"flows.tokens: unknown key {sorted(unknown)[0]!r}; use {', '.join(TOKEN_SCALES)}")
@@ -137,11 +201,11 @@ def check_findings(data, flow_ids=None, ordered=True):
     """Raise RecordError unless data matches reference/findings-schema.md.
 
     flow_ids is the set of flows.json flow ids; None skips the flow checks.
-    ordered=False skips the severity order, which renumber restores after merging.
+    ordered=False skips the consecutive ids and canonical order, which renumber restores after merging.
     """
     if not isinstance(data, dict):
         raise RecordError("findings: expected an object")
-    if data.get("schema_version") != 1:
+    if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise RecordError("schema_version: expected 1")
     meta = data.get("meta")
     if not isinstance(meta, dict):
@@ -150,28 +214,26 @@ def check_findings(data, flow_ids=None, ordered=True):
         _str(meta, key, "meta", required=True)
     if not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z", meta["date"]):
         raise RecordError("meta.date: expected YYYY-MM-DD")
+    try:
+        date.fromisoformat(meta["date"])
+    except ValueError:
+        raise RecordError("meta.date: expected a valid calendar date (YYYY-MM-DD)") from None
     for key in ("scope", "method", "commit"):
         _str(meta, key, "meta")
-    for key in ("viewports", "locales"):
-        if key in meta:
-            _strings(meta[key], f"meta.{key}")
+    if "viewports" in meta:
+        _viewports(meta["viewports"], "meta.viewports")
+    if "locales" in meta:
+        _strings(meta["locales"], "meta.locales")
     _str(data, "summary", "findings")
     for key in LIST_KEYS:
         if key in data:
-            if not isinstance(data[key], list) or not all(isinstance(x, str) for x in data[key]):
-                raise RecordError(f"{key}: expected a list of strings")
-    perspectives = data.get("perspectives", [])
-    if not isinstance(perspectives, list):
-        raise RecordError("perspectives: expected a list")
-    for i, p in enumerate(perspectives):
-        if not isinstance(p, dict):
-            raise RecordError(f"perspectives[{i}]: expected an object")
-        _str(p, "name", f"perspectives[{i}]", required=True)
-        _str(p, "result", f"perspectives[{i}]")
-        _str(p, "note", f"perspectives[{i}]")
+            _strings(data[key], key, nonempty=False)
+    _perspectives(data.get("perspectives", []))
     findings = data.get("findings")
     if not isinstance(findings, list):
         raise RecordError("findings: expected a list")
+    if len(findings) > 999:
+        raise RecordError("findings: at most 999 findings can be numbered U-001 through U-999")
     seen = set()
     for i, f in enumerate(findings):
         where = f"findings[{i}]"
@@ -189,6 +251,8 @@ def check_findings(data, flow_ids=None, ordered=True):
                 raise RecordError(f"{where}.{key}: expected one of {', '.join(allowed)}")
         for key in TEXT_FIELDS:
             _str(f, key, where, required=key in ("title", "screen", "criterion"))
+        if f.get("viewport"):
+            _viewports([f["viewport"]], f"{where}.viewport")
         perspective = _str(f, "perspective", where, required=True)
         if not PERSPECTIVE.match(perspective):
             raise RecordError(f"{where}.perspective: expected a hunt step id such as AX2 or FM3")
@@ -214,19 +278,23 @@ def check_findings(data, flow_ids=None, ordered=True):
             if not isinstance(ref_, dict):
                 raise RecordError(f"{where}.references[{j}]: expected an object")
             _http(ref_.get("url"), f"{where}.references[{j}].url")
-    order = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
-    ranks = [SEVERITIES.index(f["severity"]) for f in order]
-    if ordered and ranks != sorted(ranks):
-        raise RecordError("findings: included findings must be numbered in severity order (High first); "
-                          "run findings.py renumber <out>/findings.json")
+            for key in ("type", "title"):
+                _str(ref_, key, f"{where}.references[{j}]")
+    if ordered:
+        mapping = renumber_map(findings)
+        if any(old != new for old, new in mapping.items()) or [f["id"] for f in findings] != list(mapping):
+            raise RecordError("findings: ids must be consecutive in severity order (High first), then path and line; "
+                              "excluded findings last; run findings.py renumber <out>/findings.json")
     return data
 
 
-FINDING_REF = re.compile(r"\bU-[0-9]{3}\b")
+FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
 
 
 def renumber_map(findings):
     """Old id -> new id: severity, then path and line; excluded findings last, in their old order."""
+    if len(findings) > 999:
+        raise RecordError("findings: at most 999 findings can be numbered U-001 through U-999")
     def key(f):
         path, _, lines = f["location"].rpartition(":")
         return SEVERITIES.index(f["severity"]), path, int(lines.split("-")[0]), f["id"]
@@ -236,25 +304,75 @@ def renumber_map(findings):
 
 
 def renumber(data, mapping):
-    """Rewrite every U-* reference in data's strings at once, then order the findings by id."""
-    def rewrite(value):
+    """Rewrite finding references in prose and ids, preserving source locations and URLs."""
+    def rewrite(value, replace=True):
         if isinstance(value, str):
-            return FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value) if replace else value
         if isinstance(value, dict):
-            return {k: rewrite(v) for k, v in value.items()}
+            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url"))
+                    for k, v in value.items()}
         if isinstance(value, list):
-            return [rewrite(v) for v in value]
+            return [rewrite(v, replace) for v in value]
         return value
     data = rewrite(data)
     data["findings"].sort(key=lambda f: f["id"])
     return data
 
 
+def loads_json(text, where="JSON"):
+    """Parse UTF-8-compatible JSON with unique object keys and finite numbers."""
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate object key {key!r}")
+            result[key] = value
+        return result
+
+    def finite_float(value):
+        number = float(value)
+        if not math.isfinite(number):
+            raise ValueError(f"non-finite JSON number {value}")
+        return number
+
+    def invalid_constant(value):
+        raise ValueError(f"non-finite JSON number {value}")
+
+    try:
+        data = json.loads(text, object_pairs_hook=unique_object, parse_float=finite_float,
+                          parse_constant=invalid_constant)
+        pending = [data]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, str):
+                value.encode("utf-8")  # Reject unpaired surrogates, including escaped JSON strings.
+            elif isinstance(value, dict):
+                pending.extend(value)
+                pending.extend(value.values())
+            elif isinstance(value, list):
+                pending.extend(value)
+        return data
+    except (ValueError, RecursionError) as e:
+        raise RecordError(f"{where}: {e}") from None
+
+
 def load_json(path):
     try:
-        return json.loads(Path(path).read_text(encoding="utf-8"))
+        path = Path(path)
+        if not path.is_file():
+            raise RecordError(f"{path}: expected a regular JSON file")
+        return loads_json(path.read_text(encoding="utf-8"), str(path))
     except (OSError, ValueError) as e:
         raise RecordError(f"{path}: {e}") from None
+
+
+def canonical_digest(data):
+    """A stable SHA-256 for the JSON data, independent of whitespace and object key order."""
+    try:
+        canonical = json.dumps(data, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        return "sha256:" + hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+    except (TypeError, ValueError, RecursionError) as e:
+        raise RecordError(f"JSON digest: {e}") from None
 
 
 def flow_ids(flows):
@@ -264,57 +382,61 @@ def flow_ids(flows):
 
 def flow_ids_beside(findings_path):
     flows = Path(findings_path).with_name("flows.json")
-    if not flows.exists():
+    if not flows.exists() and not flows.is_symlink():
         return None
     return flow_ids(check_flows(load_json(flows)))
 
 
 def merge_flows(base, fragment):
     """base with fragment's top-level keys replaced and its flows added or replaced by id."""
-    if not isinstance(fragment, dict) or not isinstance(fragment.get("flows", []), list):
+    if not isinstance(base, dict):
+        raise RecordError("flows: expected an object")
+    if not isinstance(fragment, dict):
         raise RecordError("flows fragment: expected an object with a flows list")
     out = {**base, **{k: v for k, v in fragment.items() if k != "flows"}}
-    by_id = {fl.get("id"): fl for fl in base.get("flows", []) if isinstance(fl, dict)}
-    for fl in fragment.get("flows", []):
-        if not isinstance(fl, dict) or "id" not in fl:
-            raise RecordError("flows fragment: flow without an id")
-        by_id[fl["id"]] = fl
+    by_id = _indexed(base.get("flows", []), "flows.flows", "id", FLOW_ID)
+    by_id.update(_indexed(fragment.get("flows", []), "flows fragment.flows", "id", FLOW_ID))
     out["flows"] = list(by_id.values())
     return out
 
 
 def merge(base, fragment):
+    if not isinstance(base, dict):
+        raise RecordError("findings: expected an object")
     if not isinstance(fragment, dict):
         raise RecordError("fragment: expected an object")
+    for key in LIST_KEYS:
+        if key in base:
+            _strings(base[key], key, nonempty=False)
+    perspectives = _perspectives(base.get("perspectives", []))
+    by_id = {key: dict(value) for key, value in _indexed(base.get("findings", []), "findings", "id", FINDING_ID).items()}
     out = dict(base)
     for key, value in fragment.items():
-        if key in LIST_KEYS and isinstance(value, list):
+        if key in LIST_KEYS:
+            _strings(value, f"fragment.{key}", nonempty=False)
             out[key] = list(dict.fromkeys([*base.get(key, []), *value]))
-        elif key == "perspectives" and isinstance(value, list):
-            by_name = {p.get("name"): p for p in base.get("perspectives", []) if isinstance(p, dict)}
-            by_name.update((p.get("name"), p) for p in value if isinstance(p, dict))
-            out[key] = list(by_name.values())
+        elif key == "perspectives":
+            perspectives.update(_perspectives(value, "fragment.perspectives"))
+            out[key] = list(perspectives.values())
         elif key not in ("findings", "remove"):
             out[key] = value
     remove = fragment.get("remove", {})
     if not isinstance(remove, dict) or not all(k in LIST_KEYS and isinstance(v, list) for k, v in remove.items()):
         raise RecordError(f"remove: expected {{section: [exact lines]}} for {', '.join(LIST_KEYS)}")
     for key, lines in remove.items():
+        _strings(lines, f"remove.{key}", nonempty=False)
         missing = [x for x in lines if x not in out.get(key, [])]
         if missing:
             raise RecordError(f"remove.{key}: no such line {missing[0]!r}")
-        out[key] = [x for x in out[key] if x not in lines]
-    by_id = {f["id"]: dict(f) for f in base.get("findings", [])}
-    for f in fragment.get("findings", []):
-        if not isinstance(f, dict) or "id" not in f:
-            raise RecordError("fragment finding without an id")
+        out[key] = [x for x in out.get(key, []) if x not in lines]
+    for f in _indexed(fragment.get("findings", []), "fragment.findings", "id", FINDING_ID).values():
         by_id[f["id"]] = {**by_id.get(f["id"], {}), **f}
     out["findings"] = sorted(by_id.values(), key=lambda f: f["id"])
     return out
 
 
 def dump(data):
-    return json.dumps(data, ensure_ascii=False, indent=2) + "\n"
+    return json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
 
 
 def main(argv=None):
@@ -330,36 +452,41 @@ def main(argv=None):
             check_findings(load_json(target), flow_ids_beside(target))
             print(f"ok {target}")
             return 0
+        bad = unsafe_target(target.parent, (target.name,))
+        if bad is not None:
+            raise RecordError(f"refusing to write {bad}: it exists as a symlink or non-regular file")
         if cmd == "flows":
             result = load_json(target) if target.exists() else {}
             for fragment in fragments:
                 result = merge_flows(result, load_json(fragment))
-            check_flows(result)
+                check_flows(result)
             beside = target.with_name("findings.json")
-            if beside.exists():  # Every flow_ref in the record must stay a flow.
+            if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
                 check_findings(load_json(beside), flow_ids(result), ordered=False)
             write_output(target, dump(result))
             print(f"wrote {target} ({len(result['flows'])} flows)")
             return 0
         if cmd == "renumber":
-            data = check_findings(load_json(target), flow_ids_beside(target), ordered=False)
+            ids = flow_ids_beside(target)
+            data = check_findings(load_json(target), ids, ordered=False)
             mapping = renumber_map(data["findings"])
             moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
-            if not moved:
+            normalized = check_findings(renumber(data, mapping), ids)
+            if normalized == data:
                 print(f"{target}: findings already in order")
                 return 0
-            data = check_findings(renumber(data, mapping), flow_ids_beside(target))
-            write_output(target, dump(data))
-            print(f"renumbered {target}: {moved}")
+            write_output(target, dump(normalized))
+            print(f"renumbered {target}: {moved or 'restored findings array order'}")
             return 0
         data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
+        ids = flow_ids_beside(target)
         for fragment in fragments:
             data = merge(data, load_json(fragment))
-        check_findings(data, flow_ids_beside(target), ordered=False)
+            check_findings(data, ids, ordered=False)
         write_output(target, dump(data))
         print(f"wrote {target} ({len(data['findings'])} findings)")
         return 0
-    except RecordError as e:
+    except (RecordError, OSError, ValueError, RecursionError) as e:
         print(f"findings.py: {e}", file=sys.stderr)
         return 2
 

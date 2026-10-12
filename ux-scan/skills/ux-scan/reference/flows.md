@@ -42,7 +42,12 @@ directory by absolute path, SKILL.md *Paths*): a flow is added, or
 replaces the flow with the same id; `app`, `viewports`, `locales` and `tokens`
 are replaced when a fragment carries them. The command refuses a change that
 would leave a finding in `findings.json` beside it citing a flow that no longer
-exists.
+exists. Each fragment must leave a valid flow map: for a new file, the first
+fragment includes `app` and at least one primary flow. The entire batch is
+written once, after all fragments pass; a rejected fragment leaves the target
+unchanged. Flow entries must be objects with unique ids within each fragment;
+use a later fragment to update an id again. JSON object keys must be unique,
+and all numbers must be finite.
 
 ```json
 {
@@ -65,7 +70,15 @@ exists.
 
 `viewports` are `WIDTHxHEIGHT` in CSS px. `tokens` is optional; when present it
 needs `source` (`path:line`) and any of `spacing`, `font_sizes` and
-`breakpoints` (px numbers) and `z_index` (plain numbers).
+`breakpoints` (px numbers) and `z_index` (plain numbers). Each supplied scale is
+a non-empty list of finite numbers. Omit `tokens` when there is no token source;
+an empty object does not supply one. Locations use repository-relative paths
+with `/` separators and positive line numbers; a line range cannot run backward.
 `scripts/inventory.py --flows` measures the repository against these scales and
 the smallest viewport, and lists physical direction properties only when a
 locale is right-to-left.
+
+The inventory and rendered pages record a SHA-256 of the flow data used. When
+the flow map, tokens, locales or viewports change, regenerate the inventory and
+pages before checking the run contract. Whitespace or object-key order changes
+alone do not change this digest.

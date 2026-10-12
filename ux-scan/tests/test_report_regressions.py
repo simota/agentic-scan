@@ -1,0 +1,357 @@
+"""Report publication, input boundaries and output freshness regressions."""
+
+import contextlib
+import copy
+import errno
+import html
+import io
+import json
+import os
+import re
+import subprocess
+import sys
+import tempfile
+import unittest
+from html.parser import HTMLParser
+from pathlib import Path
+from unittest import mock
+
+ROOT = Path(__file__).resolve().parents[1]
+SCRIPTS = ROOT / "skills" / "ux-scan" / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+import contract_check  # noqa: E402
+import findings  # noqa: E402
+import render  # noqa: E402
+
+SAMPLE = json.loads((ROOT / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+FLOWS = json.loads((ROOT / "examples" / "flows.sample.json").read_text(encoding="utf-8"))
+# The mocked engine tests the envelope check; full PDF syntax is an engine responsibility.
+PDF_ENVELOPE = b"%PDF-1.7\n% test engine output\n%%EOF\n"
+
+
+class Tags(HTMLParser):
+    def __init__(self, source):
+        super().__init__()
+        self.tags = []
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs)))
+
+
+class ReportRegressions(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.out = self.root / "out"
+        self.out.mkdir()
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+        self.data = copy.deepcopy(SAMPLE)
+        self.flows = copy.deepcopy(FLOWS)
+        self.data["limitations"].append("report.pdf not produced: no engine in this test")
+        self.save_inputs()
+
+    def save_inputs(self):
+        (self.out / "findings.json").write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
+        (self.out / "flows.json").write_text(json.dumps(self.flows), encoding="utf-8")
+        (self.out / "inventory.json").write_text(json.dumps({
+            "tool": "inventory.py", "flows_sha256": findings.canonical_digest(self.flows),
+        }), encoding="utf-8")
+
+    def invoke(self, *, no_pdf=True, lang="en", out=None):
+        stdout, stderr = io.StringIO(), io.StringIO()
+        args = [str(self.out / "findings.json"), "--out", str(out or self.out),
+                "--repo", str(self.repo), "--lang", lang]
+        if no_pdf:
+            args.append("--no-pdf")
+        with contextlib.redirect_stdout(stdout), contextlib.redirect_stderr(stderr):
+            code = render.main(args)
+        return code, stdout.getvalue(), stderr.getvalue()
+
+    def ready_for_pdf(self):
+        self.data["limitations"] = [line for line in self.data["limitations"]
+                                    if not line.startswith(contract_check.NO_PDF)]
+        self.save_inputs()
+
+    def successful_engine(self, html_path, pdf_path, *args, **kwargs):
+        Path(pdf_path).write_bytes(PDF_ENVELOPE)
+        return "test-engine"
+
+    def test_snippets_refuse_secret_links_directories_and_outside_paths(self):
+        (self.repo / ".env").write_text("DO_NOT_PUBLISH_THIS_VALUE\n", encoding="utf-8")
+        (self.repo / "alias.ts").symlink_to(".env")
+        (self.repo / "secrets").mkdir()
+        (self.repo / "secrets" / "config.ts").write_text("DO_NOT_PUBLISH_THIS_VALUE\n", encoding="utf-8")
+        (self.repo / "linked-dir").symlink_to("secrets", target_is_directory=True)
+        (self.repo / "loop.ts").symlink_to("loop.ts")
+        (self.repo / "id_ed25519").write_text("DO_NOT_PUBLISH_THIS_VALUE\n", encoding="utf-8")
+        outside = self.root / "outside.ts"
+        outside.write_text("DO_NOT_PUBLISH_THIS_VALUE\n", encoding="utf-8")
+        (self.repo / "outside.ts").symlink_to(outside)
+        for location in (".env:1", "alias.ts:1", "secrets/config.ts:1", "linked-dir/config.ts:1",
+                         "loop.ts:1", "id_ed25519:1", "outside.ts:1", "../outside.ts:1"):
+            with self.subTest(location=location):
+                self.assertIsNone(render.snippet(self.repo, location))
+
+    def test_excerpts_are_bounded_and_mask_secret_values(self):
+        (self.repo / "a.ts").write_text("const api_key = 'HIDDEN_VALUE';\n" + "safe line\n" * 1000,
+                                         encoding="utf-8")
+        excerpt = render.snippet(self.repo, "a.ts:1-1001")
+        self.assertLessEqual(len(excerpt["lines"]), render.MAX_SNIPPET_LINES)
+        self.assertNotIn("HIDDEN_VALUE", "\n".join(excerpt["lines"]))
+        self.assertLessEqual(excerpt["hit"][1], excerpt["start"] + len(excerpt["lines"]) - 1)
+        (self.repo / "binary.ts").write_bytes(b"value\x00tail")
+        self.assertIsNone(render.snippet(self.repo, "binary.ts:1"))
+
+    def test_untrusted_text_remains_text_in_both_reports(self):
+        payload = '</script><script>alert("report-injection")</script><img src=x onerror=alert(1)>'
+        self.data["findings"][0]["title"] = payload
+        self.data["findings"][0]["location"] = "a.ts:1"
+        self.data["summary"] = payload
+        (self.repo / "a.ts").write_text(payload, encoding="utf-8")
+        self.save_inputs()
+        code, _, error = self.invoke()
+        self.assertEqual(code, 0, error)
+        document = (self.out / "report.html").read_text(encoding="utf-8")
+        dashboard = (self.out / "dashboard.html").read_text(encoding="utf-8")
+        self.assertIn(html.escape(payload), document)
+        self.assertNotIn(payload, document)
+        self.assertNotIn(payload, dashboard)
+        self.assertEqual([tag for tag, _ in Tags(document).tags if tag in ("script", "img")], [])
+        self.assertEqual([tag for tag, _ in Tags(dashboard).tags if tag in ("script", "img")],
+                         ["script", "script"])
+        embedded = re.search(r'<script id="data" type="application/json">(.*?)</script>', dashboard, re.S)
+        self.assertEqual(json.loads(embedded.group(1))["findings"][0]["title"], payload)
+
+    def test_flow_changes_invalidate_inventory_and_both_pages(self):
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        # Formatting alone does not change the flow model.
+        (self.out / "flows.json").write_text(json.dumps(self.flows, indent=4), encoding="utf-8")
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        self.flows["flows"][0]["name"] = "A renamed primary flow"
+        self.flows["viewports"][0] = "320x640"
+        (self.out / "flows.json").write_text(json.dumps(self.flows), encoding="utf-8")
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+        self.assertIn("inventory.json: stale", errors)
+        self.assertIn("dashboard.html: stale ux-scan-flows", errors)
+        self.assertIn("report.html: stale ux-scan-flows", errors)
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_inventory_without_flows_cannot_satisfy_the_final_contract(self):
+        self.assertEqual(self.invoke()[0], 0)
+        (self.out / "inventory.json").write_text('{"tool":"inventory.py","flows_sha256":null}', encoding="utf-8")
+        self.assertIn("inventory.json: stale", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_coverage_requires_family_tokens_and_nonempty_results(self):
+        perspective = next(p for p in self.data["perspectives"] if p["name"].startswith("AX"))
+        original = perspective["name"]
+        perspective["name"] = "AXanything"
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+        self.assertIn("must start with a family token", errors)
+        self.assertIn("no entry for AX", errors)
+        perspective["name"] = original
+        perspective["result"] = " "
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertIn("needs a non-empty result", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_not_applicable_coverage_requires_a_reason(self):
+        perspective = self.data["perspectives"][0]
+        perspective.update(result="N/A", note="")
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertIn("N/A without a reason", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        perspective["note"] = "This family is outside the agreed surface."
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
+        self.assertEqual(self.invoke()[0], 0)
+        for source in (b"[]", b"null", b"42", b'"text"', b"\xff"):
+            with self.subTest(source=source):
+                (self.out / "inventory.json").write_bytes(source)
+                result = subprocess.run([sys.executable, str(SCRIPTS / "contract_check.py"), str(self.out), "--no-pdf"],
+                                        capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 1, result.stderr)
+                self.assertIn("inventory.json:", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+
+    def test_flow_digest_errors_are_reported_without_tracebacks(self):
+        self.assertEqual(self.invoke()[0], 0)
+        self.flows["app"] = "\ud800"
+        (self.out / "flows.json").write_text(json.dumps(self.flows), encoding="utf-8")
+        result = subprocess.run([sys.executable, str(SCRIPTS / "contract_check.py"), str(self.out), "--no-pdf"],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("flows.json:", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_contract_never_reads_symlinks_or_directories(self):
+        self.assertEqual(self.invoke()[0], 0)
+        protected = self.root / "protected.json"
+        protected.write_text("DO_NOT_READ_THIS_FILE", encoding="utf-8")
+        for name in contract_check.REQUIRED:
+            path = self.out / name
+            original = path.read_bytes()
+            for kind in ("symlink", "directory"):
+                with self.subTest(name=name, kind=kind):
+                    path.unlink()
+                    if kind == "symlink":
+                        path.symlink_to(protected)
+                    else:
+                        path.mkdir()
+                    errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                    self.assertIn("must be a regular file", errors)
+                    self.assertNotIn("DO_NOT_READ_THIS_FILE", errors)
+                    path.unlink() if kind == "symlink" else path.rmdir()
+                    path.write_bytes(original)
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFOs require POSIX")
+    def test_contract_refuses_fifo_without_waiting_for_a_writer(self):
+        self.assertEqual(self.invoke()[0], 0)
+        path = self.out / "findings.json"
+        path.unlink()
+        os.mkfifo(path)
+        result = subprocess.run([sys.executable, str(SCRIPTS / "contract_check.py"), str(self.out), "--no-pdf"],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 1, result.stderr)
+        self.assertIn("must be a regular file", result.stderr)
+        self.assertNotIn("Traceback", result.stderr)
+
+    def test_contract_reports_read_errors_without_crashing(self):
+        self.assertEqual(self.invoke()[0], 0)
+        reader = contract_check.read_regular
+
+        def fail_inventory(path, *args, **kwargs):
+            if Path(path).name == "inventory.json":
+                raise PermissionError(errno.EACCES, "permission denied")
+            return reader(path, *args, **kwargs)
+
+        with mock.patch.object(contract_check, "read_regular", side_effect=fail_inventory):
+            self.assertIn("inventory.json:", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_metadata_in_comments_does_not_count_as_a_source_stamp(self):
+        self.assertEqual(self.invoke()[0], 0)
+        path = self.out / "report.html"
+        source = path.read_text(encoding="utf-8")
+        source = re.sub(r'<meta name="ux-scan-source" content="[^"]+">', lambda m: "<!--" + m[0] + "-->", source)
+        path.write_text(source, encoding="utf-8")
+        self.assertIn("report.html: stale ux-scan-source", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_mixed_language_pages_are_not_a_complete_render(self):
+        self.assertEqual(self.invoke(lang="en")[0], 0)
+        english = (self.out / "dashboard.html").read_bytes()
+        self.assertEqual(self.invoke(lang="ja")[0], 0)
+        (self.out / "dashboard.html").write_bytes(english)
+        self.assertIn("pages: different render versions", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_no_pdf_requires_an_explanation_and_cannot_allow_an_old_pdf(self):
+        self.data["limitations"] = [contract_check.NO_PDF + ": "]
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+        self.assertIn("needs the line", errors)
+        (self.out / "report.pdf").write_bytes(PDF_ENVELOPE)
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["report.pdf"]))
+        self.assertIn("report.pdf: must be absent", errors)
+
+    def test_output_inside_the_reviewed_repository_is_refused(self):
+        code, _, error = self.invoke(out=self.repo / "report")
+        self.assertEqual(code, 2, error)
+        self.assertIn("outside --repo", error)
+        self.assertFalse((self.repo / "report").exists())
+
+    def test_unsafe_output_is_refused_before_any_write(self):
+        self.assertEqual(self.invoke()[0], 0)
+        old_dashboard = (self.out / "dashboard.html").read_bytes()
+        protected = self.root / "protected.html"
+        protected.write_bytes(b"keep this file")
+        (self.out / "report.html").unlink()
+        (self.out / "report.html").symlink_to(protected)
+        code, _, error = self.invoke()
+        self.assertEqual(code, 2, error)
+        self.assertIn("refusing to write", error)
+        self.assertEqual(protected.read_bytes(), b"keep this file")
+        self.assertEqual((self.out / "dashboard.html").read_bytes(), old_dashboard)
+
+    def test_pdf_is_fingerprinted_and_replacing_it_is_detected(self):
+        self.ready_for_pdf()
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 0, error)
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+        (self.out / "report.pdf").write_bytes(PDF_ENVELOPE.replace(b"test engine", b"another engine"))
+        errors = "\n".join(contract_check.problems(self.out))
+        self.assertIn("dashboard.html: stale ux-scan-pdf", errors)
+        self.assertIn("report.html: stale ux-scan-pdf", errors)
+
+    def test_empty_and_truncated_engine_outputs_are_failures(self):
+        self.ready_for_pdf()
+        for bad_pdf in (b"", b"not a PDF\n%%EOF\n", b"%PDF-1.7\npartial content"):
+            with self.subTest(pdf=bad_pdf):
+                def incomplete_engine(html_path, pdf_path, *args, **kwargs):
+                    Path(pdf_path).write_bytes(bad_pdf)
+                    return "test-engine"
+                with mock.patch.object(render.pdf, "to_pdf", side_effect=incomplete_engine):
+                    code, _, error = self.invoke(no_pdf=False)
+                self.assertEqual(code, 3, error)
+                self.assertIn("not a complete PDF", error)
+                self.assertFalse((self.out / "report.pdf").exists())
+
+    def test_pdf_failure_diagnostics_mask_values_as_well_as_keys(self):
+        self.ready_for_pdf()
+
+        def failed_engine(html_path, pdf_path, failures, timeout, redact):
+            failures.append(("test-engine", "failed", redact("api_key=DO_NOT_LEAK_VALUE")))
+            return None
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=failed_engine):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 3, error)
+        self.assertIn("masked", error)
+        self.assertNotIn("DO_NOT_LEAK_VALUE", error)
+
+    def test_pdf_io_failure_is_reported_and_partial_output_removed(self):
+        self.ready_for_pdf()
+
+        def failed_engine(html_path, pdf_path, *args, **kwargs):
+            Path(pdf_path).write_bytes(b"%PDF-1.7\npartial")
+            raise OSError(errno.EIO, "simulated disk failure")
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=failed_engine):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 2, error)
+        self.assertIn("simulated disk failure", error)
+        self.assertFalse((self.out / "report.pdf").exists())
+
+    def test_html_write_failure_cannot_leave_an_old_pdf_next_to_new_html(self):
+        self.ready_for_pdf()
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+        self.data["summary"] = "Changed report content"
+        self.save_inputs()
+        writer = render.output.write_output
+
+        def fail_second_page(path, text):
+            if Path(path).name == "report.html":
+                raise OSError(errno.ENOSPC, "simulated full disk")
+            return writer(path, text)
+
+        with mock.patch.object(render.output, "write_output", side_effect=fail_second_page):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 2, error)
+        self.assertFalse((self.out / "report.pdf").exists())
+        self.assertIn("stale", "\n".join(contract_check.problems(self.out)))
+
+
+if __name__ == "__main__":
+    unittest.main()

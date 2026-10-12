@@ -26,6 +26,16 @@ Then try to falsify it: search for the conforming form elsewhere on the same
 screen, for a later change that already fixes it, for the style or prop applied
 at run time.
 
+Before REPORT, settle every `Unverified` verdict, then renumber the findings.
+Each coverage entry starts with a family token (for example `AX Accessibility`)
+and has a non-empty result. For `N/A`, include the reason in the result or note.
+After a flow, viewport, locale or token change, rerun the inventory with the
+current flows before rendering. The final contract check verifies the recorded
+verdicts, output files and their fingerprints; it cannot establish that a
+flow was actually reviewed or that the evidence supports the conclusion.
+Account for every unreviewed flow or perspective in `limitations`, and inspect
+the rendered report before sharing it (`reference/report.md`).
+
 ## Verdicts
 
 | Verdict | When |

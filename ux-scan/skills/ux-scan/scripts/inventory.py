@@ -25,7 +25,7 @@ from collections import defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, check_flows  # noqa: E402
+from findings import RecordError, canonical_digest, check_flows, load_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -43,7 +43,7 @@ CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
 EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro"}
 JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"}
 MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html", ".htm", ".erb", ".hbs",
-              ".handlebars", ".ejs", ".php", ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".j2"}
+              ".handlebars", ".ejs", ".php", ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".j2", ".mdx"}
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
 LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
@@ -60,7 +60,9 @@ CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
 JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
 CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
 JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
-BLOCK = re.compile(r"([^{};]+)\{([^{}]*)\}")
+# Start at a selector boundary, not every character of a brace-free segment.
+# Otherwise even a long CSS comment causes quadratic failed matches.
+BLOCK = re.compile(r"(?<![^{};])([^{};]+)\{([^{}]*)\}")
 SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*(?:none|0)\b")
@@ -101,6 +103,9 @@ NON_INTERACTIVE = {"div", "span", "li", "td", "tr", "p", "img", "section", "arti
 CLICK_ATTRS = ("onclick", "@click", "v-on:click", "on:click", "(click)")
 KEY_ATTRS = ("onkeydown", "onkeyup", "onkeypress", "@keydown", "@keyup", "v-on:keydown", "on:keydown", "(keydown)")
 NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
+VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
+                            r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
+VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.I)
 TAG_START = re.compile(r"<([A-Za-z][\w.:-]*)(?=[\s/>])")
 ATTR_NAME = re.compile(r"[^\s=>/{}\"']+")
 
@@ -255,6 +260,17 @@ def literal(value):
     return None if value.startswith("{") else value
 
 
+def has_name(attrs, names=NAME_ATTRS):
+    """A nonblank name attribute, or an expression whose value is unknown."""
+    for name in names:
+        value = attrs.get(name)
+        if isinstance(value, str):
+            static = literal(value)
+            if static is None or static.strip():
+                return True
+    return False
+
+
 def tags(text):
     """(name, attrs, spread, start, end, self_closing) for every parseable opening tag."""
     for m in TAG_START.finditer(text):
@@ -324,10 +340,12 @@ def scan_markup(rel, text, acc):
     for name, attrs, spread, start, end, closing in parsed:
         loc = f"{rel}:{line_of(clean, start)}"
         lname = name.lower()
-        if name == "meta" and literal(attrs.get("name")) == "viewport":
+        if name == "meta" and (literal(attrs.get("name")) or "").lower() == "viewport":
             content = literal(attrs.get("content")) or ""
-            scale = re.search(r"maximum-scale\s*=\s*([\d.]+)", content)
-            blocks = bool(re.search(r"user-scalable\s*=\s*(?:no|0)\b", content)) or bool(scale and float(scale.group(1)) < 2)
+            # Viewport numbers use a numeric prefix; extra dots must not abort
+            # the whole scan. Negative scales are ignored by the viewport rules.
+            scale = VIEWPORT_SCALE.search(content)
+            blocks = bool(VIEWPORT_ZOOM_LOCK.search(content)) or bool(scale and 0 <= float(scale.group(1)) < 2)
             acc["viewport_meta"].append({"content": content, "blocks_zoom": blocks, "location": loc})
         if spread:
             continue  # Props passed through a spread are unknown here.
@@ -351,7 +369,7 @@ def scan_markup(rel, text, acc):
             if kind in ("hidden", "submit", "button", "reset", "image"):
                 continue
             ident = " ".join(x for x in (literal(attrs.get("name")), literal(attrs.get("id"))) if x)
-            labelled = (any(a in attrs for a in NAME_ATTRS) or literal(attrs.get("id")) in labels_for
+            labelled = (has_name(attrs) or literal(attrs.get("id")) in labels_for
                         or any(s <= start < e for s, e in label_spans))
             missing = [] if labelled else ["label"]
             if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
@@ -363,13 +381,13 @@ def scan_markup(rel, text, acc):
             if missing:
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
-        named = any(a in attrs for a in NAME_ATTRS)
+        named = has_name(attrs)
         if name == "button" and not closing and not named:
             close = clean.find("</button>", end, end + 1200)
             inner = clean[end:close] if close >= 0 else ""
             if "<" in inner and not re.sub(r"<[^<>]*>", "", inner).strip():
                 acc["icon_buttons"].append({"element": name, "location": loc})
-        elif re.fullmatch(r"[A-Z]\w*IconButton", name) and not named and "label" not in attrs:
+        elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
             acc["icon_buttons"].append({"element": name, "location": loc})
 
 
@@ -401,6 +419,8 @@ def inventory(root, flows=None):
                 pass
             continue
         if suffix == ".json":
+            if TOKEN_FILE.search("/" + rel):
+                tokens.append({"path": rel, "custom_properties": 0})
             continue
         at = lambda i: f"{rel}:{line_of(text, i)}"  # noqa: E731
         css = suffix in CSS_EXT | EMBED_CSS_EXT
@@ -497,6 +517,7 @@ def inventory(root, flows=None):
     linked = {r["route"] for r in routes if r["route"].rstrip("/") in links or r["route"] in links}
     result = {
         "tool": "inventory.py", "version": 1, "repository": root.name,
+        "flows_sha256": canonical_digest(flows) if flows is not None else None,
         "files_scanned": scanned, "files_skipped": skipped,
         "routes": routes,
         "orphan_routes": [r for r in routes if r["route"] not in linked and r["route"] not in ("/", "*")
@@ -561,16 +582,28 @@ def main(argv=None):
     if not Path(a.repo).is_dir():
         print(f"inventory.py: {a.repo} is not a directory", file=sys.stderr)
         return 2
+    root = Path(a.repo).resolve()
+    out = Path(a.out)
+    try:
+        # write_output replaces a final symlink rather than following it. Resolve
+        # only its parent so this check covers the entry that will be changed.
+        out = out.parent.resolve() / out.name
+    except (OSError, RuntimeError) as e:
+        print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
+        return 1
+    if out == root or root in out.parents:
+        print(f"inventory.py: --out must be outside the reviewed repository: {a.out}", file=sys.stderr)
+        return 2
     flows = None
     if a.flows:
         try:
-            flows = check_flows(json.loads(Path(a.flows).read_text(encoding="utf-8")))
+            flows = check_flows(load_json(a.flows))
         except (OSError, ValueError, RecordError) as e:
             print(f"inventory.py: flows: {e}", file=sys.stderr)
             return 2
-    result = inventory(a.repo, flows)
+    result = inventory(root, flows)
     try:
-        write_output(Path(a.out), json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+        write_output(out, json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     except OSError as e:
         print(f"inventory.py: cannot write {a.out}: {e.strerror or e}", file=sys.stderr)
         return 1

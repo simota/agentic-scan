@@ -455,28 +455,24 @@ class ReportRegressions(unittest.TestCase):
 
     def test_non_utf8_engine_output_is_a_failure_and_removes_partial_pdf(self):
         self.ready_for_pdf()
-        run_process = subprocess.run
+        bin_dir = self.out.parent / "engine-bin"
+        bin_dir.mkdir(exist_ok=True)
+        engine = bin_dir / "weasyprint"
         for stream in (1, 2):
             with self.subTest(stream=stream):
-                script = (
-                    "import os, sys; from pathlib import Path; "
-                    "Path(sys.argv[1]).write_bytes(b'%PDF-1.7\\npartial'); "
-                    f"os.write({stream}, b'DO_NOT_LEAK_ENGINE_OUTPUT\\xff'); sys.exit(1)"
-                )
-
-                def engine_process(command, **kwargs):
-                    self.assertEqual(command[0], "test-weasyprint")
-                    # Exercise the upstream capture/decode path with a real child
-                    # process, without requiring a PDF engine to be installed.
-                    return run_process([sys.executable, "-c", script, command[-1]], **kwargs)
-
-                with mock.patch.dict(os.environ, {"CHROME": "missing-test-chrome"}), \
-                        mock.patch.object(render.pdf.shutil, "which", side_effect=lambda name:
-                                          "test-weasyprint" if name == "weasyprint" else None), \
-                        mock.patch.object(render.pdf.subprocess, "run", side_effect=engine_process):
+                # A real child process on PATH, so the kit's own capture and decode path runs.
+                engine.write_text(
+                    "#!" + sys.executable + "\n"
+                    "import os, sys\nfrom pathlib import Path\n"
+                    "Path(sys.argv[-1]).write_bytes(b'%PDF-1.7\\npartial')\n"
+                    f"os.write({stream}, b'DO_NOT_LEAK_ENGINE_OUTPUT\\xff')\nsys.exit(1)\n",
+                    encoding="utf-8")
+                engine.chmod(0o755)
+                with mock.patch.dict(os.environ, {"CHROME": str(bin_dir / "missing-test-chrome"),
+                                                  "PATH": str(bin_dir)}):
                     code, _, error = self.invoke(no_pdf=False)
                 self.assertEqual(code, 3, error)
-                self.assertIn("invalid text encoding", error)
+                self.assertIn("weasyprint", error)
                 self.assertNotIn("DO_NOT_LEAK_ENGINE_OUTPUT", error)
                 self.assertNotIn("Traceback", error)
                 self.assertFalse((self.out / "report.pdf").exists())

@@ -1,5 +1,6 @@
-"""Exercise public Make targets from checkout and install paths containing spaces."""
+"""Exercise public Make targets with literal checkout, interpreter and output paths."""
 import json
+import shlex
 import shutil
 import subprocess
 import sys
@@ -24,9 +25,9 @@ class MakefileTests(unittest.TestCase):
             shutil.copytree(ROOT / name, self.repo / name,
                             ignore=shutil.ignore_patterns("__pycache__"))
 
-    def make(self, *args, cwd=None):
+    def make(self, *args, cwd=None, python=None):
         result = subprocess.run(
-            ["make", "--no-print-directory", *map(str, args), f"PYTHON={sys.executable}"],
+            ["make", "--no-print-directory", *map(str, args), f"PYTHON={python or shlex.quote(sys.executable)}"],
             cwd=cwd or self.repo, text=True, capture_output=True, timeout=30,
         )
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
@@ -46,10 +47,31 @@ class MakefileTests(unittest.TestCase):
         self.assertEqual([r["route"] for r in data["routes"]],
                          ["/", "/signup", "/settings", "/archive"])
 
+    def test_demo_rejects_output_inside_fixture_before_writing(self):
+        fixture = self.repo / "examples" / "tasklane"
+        alias = self.base / "fixture alias"
+        alias.symlink_to(fixture, target_is_directory=True)
+
+        def snapshot():
+            return {str(p.relative_to(fixture)): p.read_bytes() if p.is_file() else None
+                    for p in fixture.rglob("*")}
+
+        before = snapshot()
+        for out in (fixture, fixture / "new output", alias / "new output"):
+            with self.subTest(out=out):
+                result = subprocess.run(
+                    ["make", "--no-print-directory", "demo", "NO_PDF=1",
+                     f"DEMO_OUT={out}", f"PYTHON={shlex.quote(sys.executable)}"],
+                    cwd=self.repo, text=True, capture_output=True, timeout=30,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("read-only", result.stderr)
+                self.assertEqual(snapshot(), before)
+
     def test_literal_and_project_install_paths_ignore_unused_agent(self):
         for variable in ("SKILLS_DIR", "PROJECT"):
             with self.subTest(variable=variable):
-                target = self.base / f"{variable} user's directory"
+                target = self.base / f"{variable} user's \"quoted\" | directory"
                 target.mkdir()
                 args = (f"{variable}={target}", "AGENT=unused-host")
                 installed = (target if variable == "SKILLS_DIR"
@@ -62,6 +84,52 @@ class MakefileTests(unittest.TestCase):
                 self.make("unlink", *args)
                 self.assertFalse(installed.is_symlink())
                 self.assertFalse(installed.exists())
+
+    def test_shell_characters_in_paths_are_never_evaluated(self):
+        self.repo = self.repo.rename(
+            self.base / "checkout 'single' \"double\" `touch CHECKOUT_EVALUATED` | path"
+        )
+        interpreter = self.base / "python 'single' \"double\""
+        interpreter.symlink_to(sys.executable)
+        python_command = shlex.quote(str(interpreter))
+        help_result = self.make("-f", self.repo / "Makefile", "help", cwd=self.base)
+        self.assertIn(str(self.repo / "skills" / "ux-scan"), help_result.stdout)
+        out = self.base / "output 'single' \"double\" `touch OUTPUT_EVALUATED` | path"
+        self.make("demo", "NO_PDF=1", f"DEMO_OUT={out}", python=python_command)
+        self.assertTrue((out / "report.html").is_file())
+        inventory = out / "external 'quoted' inventory.json"
+        self.make("-f", self.repo / "Makefile", "inventory",
+                  f"TARGET={self.repo / 'examples' / 'tasklane'}",
+                  f"FLOWS={out / 'flows.json'}", f"OUT={inventory}",
+                  cwd=self.base, python=python_command)
+        self.assertTrue(inventory.is_file())
+        target = self.base / "skills 'single' \"double\" `touch INSTALL_EVALUATED` | path"
+        target.mkdir()
+        self.make("link", f"SKILLS_DIR={target}")
+        self.assertEqual((target / "ux-scan").resolve(), self.repo / "skills" / "ux-scan")
+        self.assertIn("already linked", self.make("link", f"SKILLS_DIR={target}").stdout)
+        self.assertIn("symlink", self.make("status", f"SKILLS_DIR={target}").stdout)
+        self.make("unlink", f"SKILLS_DIR={target}")
+        self.assertFalse((target / "ux-scan").is_symlink())
+        for directory in (self.base, self.repo):
+            for name in ("CHECKOUT_EVALUATED", "OUTPUT_EVALUATED", "INSTALL_EVALUATED"):
+                self.assertFalse((directory / name).exists(), str(directory / name))
+
+    def test_relative_install_path_starting_with_dash_is_literal(self):
+        target = self.repo / "-skills"
+        target.mkdir()
+        self.make("link", "SKILLS_DIR=-skills")
+        self.assertEqual((target / "ux-scan").resolve(), self.repo / "skills" / "ux-scan")
+        self.assertIn("already linked", self.make("link", "SKILLS_DIR=-skills").stdout)
+        self.assertIn("symlink", self.make("status", "SKILLS_DIR=-skills").stdout)
+        self.make("unlink", "SKILLS_DIR=-skills")
+        self.assertFalse((target / "ux-scan").is_symlink())
+
+    def test_python_command_can_include_interpreter_options(self):
+        out = self.base / "inventory with options.json"
+        self.make("inventory", f"TARGET={self.repo / 'examples' / 'tasklane'}",
+                  f"OUT={out}", python=f"{shlex.quote(sys.executable)} -B")
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["tool"], "inventory.py")
 
     def test_unknown_agent_is_rejected_when_selecting_hosts(self):
         result = subprocess.run(

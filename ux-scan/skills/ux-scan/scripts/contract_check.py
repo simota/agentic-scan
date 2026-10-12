@@ -20,7 +20,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
-from render import FLOWS_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp  # noqa: E402
+from render import (FLOWS_STAMP, PAGE_KIND_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP,  # noqa: E402
+                    page_stamp, pdf_stamp, read_regular, source_stamp)
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
@@ -176,6 +177,8 @@ def problems(out, no_pdf=False, allow=()):
         else:
             if page.stamps.get(PAGE_STAMP) != [digest]:
                 yield f"{name}: altered or incomplete HTML (page fingerprint mismatch); run {rerender}"
+        if page.stamps.get(PAGE_KIND_STAMP) != [name]:
+            yield f"{name}: wrong or missing page kind (expected {name}); run {rerender}"
         for stamp, digest in expected_stamps.items():
             if page.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale {stamp}; re-render after the last input or PDF change ({rerender})"

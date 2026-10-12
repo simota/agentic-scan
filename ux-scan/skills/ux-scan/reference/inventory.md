@@ -18,12 +18,25 @@ MDX), JSON token and JSON locale files under `<repo>` (skipping VCS and
 dependency/build directories, symlinks, lockfiles, minified bundles, binaries
 and files over 2 MB) and records
 **candidates** — never findings. Every row carries `path:line` locations.
+Source reads use `scripts/file_io.py` to open each path component relative to
+the selected repository. Replacing a checked directory with a symlink cannot
+redirect the read, and the byte limit also applies when a file grows during
+reading. This requires descriptor-relative no-follow reads (available on
+Linux and macOS); unsupported platforms refuse source reads and record
+`parse_warnings`. Refused reads and paths that cannot be represented in UTF-8
+are also counted as skipped with a warning.
 CSS block comments and closed HTML / JSX comments are masked without changing
 source locations. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
 review. In HTML, Vue, Svelte and Astro files, CSS measurements use style
 blocks and literal style attributes; script style objects are measured once.
+Template tag scans do not re-enter quoted attributes or raw-text elements
+such as script, style and textarea. Embedded CSS uses those same boundaries,
+so style examples in attribute or script strings are not measured as CSS.
+Closed wrapping labels are matched to actual template tags. JSX source and
+attribute expressions keep heuristic tag scanning: check their candidates
+in context, including nested JSX, strings and regular expressions.
 HTML template tag names are case-insensitive, while component names in JSX,
 Vue, Svelte and Astro keep their case. Attribute character references are decoded.
 Next.js route groups and [parallel-route slots](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes)

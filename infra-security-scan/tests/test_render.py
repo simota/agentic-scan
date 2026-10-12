@@ -7,9 +7,8 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import time
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
@@ -247,38 +246,35 @@ class PdfTest(unittest.TestCase):
         generate.assert_not_called()
         self.assertFalse(self.pdf.exists())
 
-    def test_successful_chrome_output_is_kept_after_exit_or_while_running(self):
-        for status in (0, None):
-            with self.subTest(exit_status=status):
-                def chrome(*args, **kwargs):
-                    self.pdf.write_bytes(b"current chrome assessment")
-                    return Mock(poll=Mock(return_value=status))
+    def engine(self, name, body):
+        """A fake PDF engine on PATH: the kit runs real processes, so fake them, not its internals."""
+        bin_dir = self.out / "bin"
+        bin_dir.mkdir(exist_ok=True)
+        exe = bin_dir / name
+        exe.write_text(
+            "#!" + sys.executable + "\n"
+            "import sys\nfrom pathlib import Path\n"
+            "out = Path(next((a.split('=', 1)[1] for a in sys.argv[1:] "
+            "if a.startswith('--print-to-pdf=')), sys.argv[-1]))\n" + body + "\n",
+            encoding="utf-8",
+        )
+        exe.chmod(0o755)
+        return exe
 
-                with patch.object(shutil, "which", side_effect=lambda name: name), \
-                        patch.object(subprocess, "Popen", side_effect=chrome), \
-                        patch.object(subprocess, "run") as fallback, \
-                        patch.object(time, "sleep"):
-                    self.assertEqual(render.to_pdf(self.html, self.pdf), "chrome")
-                fallback.assert_not_called()
-                self.assertEqual(self.pdf.read_bytes(), b"current chrome assessment")
+    def test_successful_chrome_output_replaces_the_previous_pdf(self):
+        chrome = self.engine("chrome", "out.write_bytes(b'%PDF-1.7\\ncurrent chrome assessment\\n%%EOF\\n')")
+        with patch.dict(os.environ, {"CHROME": str(chrome), "PATH": str(chrome.parent)}):
+            self.assertEqual(render.to_pdf(self.html, self.pdf), "chrome")
+        self.assertEqual(self.pdf.read_bytes(), b"%PDF-1.7\ncurrent chrome assessment\n%%EOF\n")
 
-    def test_failed_chrome_output_is_removed_before_weasyprint_fallback(self):
-        def chrome(*args, **kwargs):
-            self.assertFalse(self.pdf.exists())
-            self.pdf.write_bytes(b"partial chrome output")
-            return Mock(poll=Mock(return_value=1))
-
-        def weasyprint(args, **kwargs):
-            self.assertFalse(self.pdf.exists())
-            self.pdf.write_bytes(b"current assessment")
-            return subprocess.CompletedProcess(args, 0)
-
-        with patch.object(shutil, "which", side_effect=lambda name: name), \
-                patch.object(subprocess, "Popen", side_effect=chrome), \
-                patch.object(subprocess, "run", side_effect=weasyprint), \
-                patch.object(time, "sleep"):
-            self.assertEqual(render.to_pdf(self.html, self.pdf), "weasyprint")
-        self.assertEqual(self.pdf.read_bytes(), b"current assessment")
+    def test_failed_chrome_output_is_discarded_before_weasyprint_fallback(self):
+        chrome = self.engine("chrome", "out.write_bytes(b'%PDF-1.7\\npartial chrome output'); sys.exit(1)")
+        self.engine("weasyprint", "out.write_bytes(b'%PDF-1.7\\ncurrent assessment\\n%%EOF\\n')")
+        failures = []
+        with patch.dict(os.environ, {"CHROME": str(chrome), "PATH": str(chrome.parent)}):
+            self.assertEqual(render.to_pdf(self.html, self.pdf, failures), "weasyprint")
+        self.assertTrue(failures[0].startswith("chrome"), failures)
+        self.assertEqual(self.pdf.read_bytes(), b"%PDF-1.7\ncurrent assessment\n%%EOF\n")
 
     def test_failed_weasyprint_does_not_leave_partial_output(self):
         def fail(args, **kwargs):

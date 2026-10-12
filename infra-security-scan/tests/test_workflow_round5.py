@@ -119,6 +119,7 @@ resource "aws_s3_bucket_acl" "other" {
         self.assertEqual(code, 2)
         self.assertIn("is not a directory", out)
         failed = []
+        (self.root / "x.html").write_text("<p>x</p>", encoding="utf-8")
         import os
         old = os.environ.get("CHROME")
         os.environ["CHROME"] = str(self.root / "no-chrome")

@@ -106,6 +106,23 @@ class ReportRegressions(unittest.TestCase):
         (self.repo / "binary.ts").write_bytes(b"value\x00tail")
         self.assertIsNone(render.snippet(self.repo, "binary.ts:1"))
 
+    def test_source_directory_replaced_before_read_cannot_leak_an_outside_excerpt(self):
+        directory = self.repo / "src"
+        directory.mkdir()
+        (directory / "entry.ts").write_text("safe source", encoding="utf-8")
+        outside = self.root / "outside"
+        outside.mkdir()
+        (outside / "entry.ts").write_text("DO_NOT_PUBLISH_OUTSIDE_SOURCE", encoding="utf-8")
+        reader = render.read_regular
+
+        def replace_directory_then_read(path, *args, **kwargs):
+            directory.rename(self.repo / "saved-src")
+            directory.symlink_to(outside, target_is_directory=True)
+            return reader(path, *args, **kwargs)
+
+        with mock.patch.object(render, "read_regular", side_effect=replace_directory_then_read):
+            self.assertIsNone(render.snippet(self.repo, "src/entry.ts:1"))
+
     def test_untrusted_text_remains_text_in_both_reports(self):
         payload = '</script><script>alert("report-injection")</script><img src=x onerror=alert(1)>'
         self.data["findings"][0]["title"] = payload
@@ -300,6 +317,34 @@ class ReportRegressions(unittest.TestCase):
         (self.out / "dashboard.html").write_bytes(english)
         self.assertIn("pages: different render versions", "\n".join(contract_check.problems(self.out, no_pdf=True)))
 
+    def test_mixed_renderer_revisions_are_rejected_with_unchanged_record_and_language(self):
+        self.assertEqual(self.invoke()[0], 0)
+        old_dashboard = (self.out / "dashboard.html").read_bytes()
+        document = render.report.render_document
+
+        def changed_document(*args):
+            return document(*args).replace("</style>", "body { font-size: 18px; }</style>", 1)
+
+        with mock.patch.object(render.report, "render_document", side_effect=changed_document):
+            self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        (self.out / "dashboard.html").write_bytes(old_dashboard)
+        self.assertIn("pages: different render versions", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
+    def test_copied_or_swapped_pages_do_not_satisfy_their_output_roles(self):
+        for replacements in (("dashboard.html",), ("report.html",), ("dashboard.html", "report.html")):
+            with self.subTest(replacements=replacements):
+                self.assertEqual(self.invoke()[0], 0)
+                original = {name: (self.out / name).read_bytes() for name in ("dashboard.html", "report.html")}
+                other_page = {"dashboard.html": "report.html", "report.html": "dashboard.html"}
+                for name in replacements:
+                    (self.out / name).write_bytes(original[other_page[name]])
+                errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                for name in replacements:
+                    self.assertIn(f"{name}: wrong or missing page kind", errors)
+                # The copied pages retain valid hashes; the failure is their role.
+                self.assertNotIn("page fingerprint", errors)
+
     def test_no_pdf_requires_an_explanation_and_cannot_allow_an_old_pdf(self):
         self.data["limitations"] = [contract_check.NO_PDF + ": "]
         self.save_inputs()
@@ -407,6 +452,34 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(code, 2, error)
         self.assertIn("simulated disk failure", error)
         self.assertFalse((self.out / "report.pdf").exists())
+
+    def test_non_utf8_engine_output_is_a_failure_and_removes_partial_pdf(self):
+        self.ready_for_pdf()
+        run_process = subprocess.run
+        for stream in (1, 2):
+            with self.subTest(stream=stream):
+                script = (
+                    "import os, sys; from pathlib import Path; "
+                    "Path(sys.argv[1]).write_bytes(b'%PDF-1.7\\npartial'); "
+                    f"os.write({stream}, b'DO_NOT_LEAK_ENGINE_OUTPUT\\xff'); sys.exit(1)"
+                )
+
+                def engine_process(command, **kwargs):
+                    self.assertEqual(command[0], "test-weasyprint")
+                    # Exercise the upstream capture/decode path with a real child
+                    # process, without requiring a PDF engine to be installed.
+                    return run_process([sys.executable, "-c", script, command[-1]], **kwargs)
+
+                with mock.patch.dict(os.environ, {"CHROME": "missing-test-chrome"}), \
+                        mock.patch.object(render.pdf.shutil, "which", side_effect=lambda name:
+                                          "test-weasyprint" if name == "weasyprint" else None), \
+                        mock.patch.object(render.pdf.subprocess, "run", side_effect=engine_process):
+                    code, _, error = self.invoke(no_pdf=False)
+                self.assertEqual(code, 3, error)
+                self.assertIn("invalid text encoding", error)
+                self.assertNotIn("DO_NOT_LEAK_ENGINE_OUTPUT", error)
+                self.assertNotIn("Traceback", error)
+                self.assertFalse((self.out / "report.pdf").exists())
 
     def test_html_write_failure_cannot_leave_an_old_pdf_next_to_new_html(self):
         self.ready_for_pdf()

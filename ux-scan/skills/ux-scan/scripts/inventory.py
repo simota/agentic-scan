@@ -25,9 +25,11 @@ import sys
 import unicodedata
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
+from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from file_io import read_regular  # noqa: E402
 from findings import RecordError, canonical_digest, check_flows, load_json, loads_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -116,14 +118,13 @@ NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.I)
-TAG_START = re.compile(r"<([A-Za-z][\w.:-]*)(?=[\s/>])")
-ATTR_NAME = re.compile(r"[^\s=>/{}\"']+")
+TAG_TOKEN = re.compile(r"<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])")
+ATTR_NAME = re.compile(r"[^\s=<>/{}\"']+")
 CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", re.S)
 MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 JSX_TOKEN = re.compile(r"""\{/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S)
-STYLE_BLOCK = re.compile(r"(<style\b[^>]*>)(.*?)(</style\s*>|$)", re.S | re.I)
-SCRIPT_BLOCK = re.compile(r"(<script\b[^>]*>)(.*?)(</script\s*>|$)", re.S | re.I)
-STYLE_ATTRIBUTE = re.compile(r"(?<![\w:-])style\s*=\s*([\"'])(.*?)\1", re.S | re.I)
+RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"}
+RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 
 
 def iter_files(root):
@@ -136,12 +137,16 @@ def iter_files(root):
             yield path
 
 
-def read_text(path):
-    """The file's text, or None for binaries, minified bundles and oversized files."""
-    if path.stat().st_size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
+def read_text(path, root=None):
+    """Text or None for binaries, minified bundles and invalid UTF-8.
+
+    Unsafe, unreadable and oversized files raise so the caller can record why
+    they were skipped.
+    """
+    if re.search(r"\.min\.(?:js|css)$", path.name):
         return None
-    data = path.read_bytes()
-    if b"\0" in data[:8192]:
+    data = read_regular(path, max_bytes=MAX_BYTES, root=root)
+    if b"\0" in data:
         return None
     try:
         return data.decode("utf-8")
@@ -179,10 +184,9 @@ def mask_markup_comments(text, *, jsx=False):
             continue
         name = None if jsx else match.group(1)
         if name:
-            tag = parse_tag(text, match.end())
-            cursor = tag[2] if tag else match.end()
-            if tag and not tag[3] and name.lower() in ("style", "script"):
-                close = re.compile(r"</" + name + r"\s*>", re.I).search(text, cursor)
+            tag, cursor, _ = read_tag(text, match.end())
+            if tag and not tag[3] and name.lower() in RAW_TEXT_TAGS:
+                close = RAW_TEXT_CLOSE[name.lower()].search(text, cursor)
                 cursor = close.end() if close else len(text)
         else:
             marker = "-->" if match.group(0) == "<!--" else "*/}"
@@ -208,14 +212,33 @@ def keep_regions(text, regions):
     return "".join(parts)
 
 
-def embedded_css(text):
-    """Keep style blocks and literal style attributes at their source offsets."""
-    regions = [(m.start(2), m.end(2), mask_css_comments(m.group(2))) for m in STYLE_BLOCK.finditer(text)]
-    # Replacing the closing attribute quote with a delimiter prevents one inline
-    # declaration from becoming part of the next style block's first selector.
-    regions.extend((m.start(2), m.end(2) + 1, mask_css_comments(m.group(2)) + ";")
-                   for m in STYLE_ATTRIBUTE.finditer(text))
-    return keep_regions(text, regions)
+def replace_regions(text, regions):
+    """Replace disjoint regions in one pass, retaining all other source text."""
+    parts, end = [], 0
+    for start, stop, body in sorted(regions):
+        parts.extend((text[end:start], body))
+        end = stop
+    parts.append(text[end:])
+    return "".join(parts)
+
+
+def embedded_regions(text, parsed):
+    """Extract actual style/script regions, never markup-looking attribute text."""
+    css, js = [], []
+    for tag in parsed:
+        if tag.body is not None and tag.name in ("style", "script"):
+            start, stop = tag.body
+            target = css if tag.name == "style" else js
+            body = mask_css_comments(text[start:stop]) if target is css else text[start:stop]
+            target.append((start, stop, body))
+        for name, (start, stop, expression) in tag.attribute_spans.items():
+            if expression:
+                js.append((start, stop, text[start:stop]))
+            elif name == "style":
+                # The delimiter keeps an inline declaration out of the next
+                # style block's first selector, without shifting source offsets.
+                css.append((start, stop + 1, mask_css_comments(text[start:stop]) + ";"))
+    return css, js
 
 
 def parse_warning(acc, location, reason):
@@ -298,65 +321,81 @@ def skip_braces(text, i, limit):
     return None
 
 
-def parse_tag(text, i, limit=4000, vue=False):
-    """Parse an opening tag's attributes from i (just past its name).
+def read_tag(text, i, limit=None, vue=False):
+    """Read attributes once, returning the consumed offset even on malformed tags.
 
-    Returns (attrs, spread, end, self_closing) with attribute names lower-cased and
-    values as written (True for a bare attribute), or None when the tag does not close.
+    Attribute spans let embedded-language scans preserve source offsets. A raw
+    '<' outside a quoted value or expression begins the next token; malformed
+    prefixes therefore cannot repeatedly rescan the rest of the file.
     """
-    attrs, spread, n, stop = {}, False, len(text), min(len(text), i + limit)
+    attrs, spans, spread = {}, {}, False
+    stop = len(text) if limit is None else min(len(text), i + limit)
     while i < stop:
         c = text[i]
         if c.isspace():
             i += 1
         elif c == ">":
-            return attrs, spread, i + 1, False
+            return (attrs, spread, i + 1, False), i + 1, spans
         elif text.startswith("/>", i):
-            return attrs, spread, i + 2, True
+            return (attrs, spread, i + 2, True), i + 2, spans
         elif c == "{":
-            j = skip_braces(text, i, limit)
+            j = skip_braces(text, i, stop - i)
             if j is None:
-                return None
+                return None, stop, {}
             spread = spread or text[i + 1:j].lstrip().startswith("...")
             i = j
         else:
-            m = ATTR_NAME.match(text, i)
+            m = ATTR_NAME.match(text, i, stop)
             if not m:
-                return None
+                return None, i, {}
             name, i = m.group(0).lower(), m.end()
             k = i
-            while k < n and text[k].isspace():
+            while k < stop and text[k].isspace():
                 k += 1
-            value = True
-            if k < n and text[k] == "=":
+            value, span = True, None
+            if k < stop and text[k] == "=":
                 k += 1
-                while k < n and text[k].isspace():
+                while k < stop and text[k].isspace():
                     k += 1
-                if k < n and text[k] in "\"'":
-                    end = text.find(text[k], k + 1)
+                if k < stop and text[k] in "\"'":
+                    end = text.find(text[k], k + 1, stop)
                     if end < 0:
-                        return None
+                        return None, stop, {}
                     value, i = html.unescape(text[k + 1:end]), end + 1
-                elif k < n and text[k] == "{":
-                    end = skip_braces(text, k, limit)
+                    span = (k + 1, end, False)
+                elif k < stop and text[k] == "{":
+                    end = skip_braces(text, k, stop - k)
                     if end is None:
-                        return None
+                        return None, stop, {}
                     value, i = text[k:end], end
+                    span = (k, end, True)
                 else:
-                    m = re.compile(r"[^\s>]+").match(text, k)
+                    m = re.compile(r"[^\s<>]+").match(text, k, stop)
                     if not m:
-                        return None
+                        return None, k, {}
                     value, i = html.unescape(m.group(0)), m.end()
+                    span = (k, i, False)
             if vue:
                 if name == "v-bind" or name.startswith("v-bind.") or name.startswith((":[", "v-bind:[")):
                     spread = True  # An object or dynamic key can supply any missing attribute.
                 elif name.startswith((":", "v-bind:")):
                     name = name.removeprefix("v-bind:").removeprefix(":").split(".", 1)[0]
                     value = "{" + (value if isinstance(value, str) else name) + "}"
+                    if span:
+                        span = (*span[:2], True)
                 elif name.startswith(("@", "v-on:")):
                     name = name.split(".", 1)[0]
+                    if span:
+                        span = (*span[:2], True)
             attrs[name] = value
-    return None
+            if span:
+                spans[name] = span
+    return None, stop, {}
+
+
+def parse_tag(text, i, limit=4000, vue=False):
+    """Return (attrs, spread, end, self_closing), or None within a bounded tag."""
+    return read_tag(text, i, limit=limit, vue=vue)[0]
 
 
 def literal(value):
@@ -380,14 +419,76 @@ def has_name(attrs, names=NAME_ATTRS):
     return False
 
 
-def tags(text, *, vue=False, html_names=False):
-    """(name, attrs, spread, start, end, self_closing) for every parseable opening tag."""
-    for m in TAG_START.finditer(text):
-        parsed = parse_tag(text, m.end(), vue=vue)
-        if parsed:
-            attrs, spread, end, closing = parsed
-            name = m.group(1).lower() if html_names else m.group(1)
-            yield name, attrs, spread, m.start(), end, closing
+@dataclass
+class MarkupTag:
+    name: str
+    attrs: dict
+    spread: bool
+    start: int
+    end: int
+    self_closing: bool
+    closing: bool
+    attribute_spans: dict
+    body: tuple | None = None
+
+
+def expression_tags(text, start, stop, *, html_names=False, vue=False):
+    """Keep existing JSX candidate coverage without pretending to parse JavaScript.
+
+    Expressions may contain actual JSX in fallback/render props. Independently
+    inspect their tag candidates; a full JavaScript grammar is outside this
+    lightweight inventory's scope.
+    """
+    for match in TAG_TOKEN.finditer(text, start, stop):
+        parsed, _, spans = read_tag(text, match.end(), limit=min(4000, stop - match.end()), vue=vue)
+        if parsed is not None:
+            attrs, spread, end, self_closing = parsed
+            name = match.group(2).lower() if html_names else match.group(2)
+            yield MarkupTag(name, attrs, spread, match.start(), end, self_closing,
+                            bool(match.group(1)), spans)
+
+
+def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
+    """Walk HTML template boundaries while preserving existing JSX coverage."""
+    if jsx:
+        yield from expression_tags(text, 0, len(text), html_names=html_names, vue=vue)
+        return
+    cursor = 0
+    while m := TAG_TOKEN.search(text, cursor):
+        parsed, cursor, spans = read_tag(text, m.end(), vue=vue)
+        if parsed is None:
+            continue
+        attrs, spread, end, self_closing = parsed
+        name = m.group(2).lower() if html_names else m.group(2)
+        closing = bool(m.group(1))
+        body = None
+        if raw_text and not closing and not self_closing and name in RAW_TEXT_TAGS:
+            close = RAW_TEXT_CLOSE[name].search(text, end)
+            body = (end, close.start() if close else len(text))
+            cursor = close.end() if close else len(text)
+        yield MarkupTag(name, attrs, spread, m.start(), end, self_closing, closing, spans, body)
+        for start, stop, expression in spans.values():
+            if expression:
+                yield from expression_tags(text, start, stop, html_names=html_names, vue=vue)
+
+
+def label_regions(parsed):
+    """Disjoint ranges of complete wrapping labels, including nested templates."""
+    stack, regions = [], []
+    for tag in parsed:
+        if tag.name != "label":
+            continue
+        if tag.closing and stack:
+            regions.append((stack.pop(), tag.end))
+        elif not tag.closing and not tag.self_closing:
+            stack.append(tag.start)
+    merged = []
+    for start, stop in sorted(regions):
+        if merged and start <= merged[-1][1]:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], stop))
+        else:
+            merged.append((start, stop))
+    return merged
 
 
 def display_width(s):
@@ -464,22 +565,28 @@ def scan_css(rel, text, acc, source_lines=None):
                                            "below_24": any(v < 24 for v in small.values()), "location": loc})
 
 
-def scan_markup(rel, text, acc, source_lines=None):
+def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     """Element-level checks on templates and JSX."""
-    clean = mask_markup_comments(text, jsx=Path(rel).suffix.lower() in JSX_EXT)
+    suffix = Path(rel).suffix.lower()
+    clean = mask_markup_comments(text, jsx=suffix in JSX_EXT) if parsed is None else text
     source_lines = source_lines or SourceLines(clean)
-    html_names = Path(rel).suffix.lower() in HTML_EXT
+    html_names = suffix in HTML_EXT
+    if parsed is None:
+        parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
+                           raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
     labels_for = set()
-    label_spans = [(m.start(), m.end()) for m in re.finditer(r"<label\b.*?</label\s*>", clean,
-                                                           re.S | (re.I if html_names else 0))]
+    label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
-    parsed = list(tags(clean, vue=Path(rel).suffix.lower() == ".vue", html_names=html_names))
-    for name, attrs, _, _, _, _ in parsed:
-        if name == "label":
-            target = literal(attrs.get("for") or attrs.get("htmlfor"))
+    for tag in parsed:
+        if tag.name == "label" and not tag.closing:
+            target = literal(tag.attrs.get("for") or tag.attrs.get("htmlfor"))
             if target:
                 labels_for.add(target)
-    for name, attrs, spread, start, end, closing in parsed:
+    for tag in parsed:
+        if tag.closing:
+            continue
+        name, attrs, spread, start, end, closing = (
+            tag.name, tag.attrs, tag.spread, tag.start, tag.end, tag.self_closing)
         loc = f"{rel}:{source_lines(start)}"
         lname = name.lower()
         if name == "meta" and (literal(attrs.get("name")) or "").lower() == "viewport":
@@ -551,8 +658,16 @@ def inventory(root, flows=None):
         if suffix not in CSS_EXT | EMBED_CSS_EXT | JS_EXT | MARKUP_EXT | {".json"}:
             continue
         try:
-            text = read_text(path)
-        except OSError:
+            rel.encode("utf-8")
+        except UnicodeEncodeError:
+            skipped += 1
+            safe_rel = rel.encode("utf-8", errors="backslashreplace").decode("utf-8")
+            parse_warning(acc, f"{safe_rel}:1", "filename is not valid Unicode; file skipped")
+            continue
+        try:
+            text = read_text(path, root=root)
+        except (OSError, ValueError) as e:
+            parse_warning(acc, f"{rel}:1", f"file could not be read; file skipped: {str(e)[:200]}")
             text = None
         if text is None:
             skipped += 1
@@ -578,11 +693,24 @@ def inventory(root, flows=None):
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT)
         if suffix in CSS_EXT:
             text = mask_css_comments(text)
-        elif suffix in EMBED_CSS_EXT:
-            text = STYLE_BLOCK.sub(lambda m: m.group(1) + mask_css_comments(m.group(2)) + m.group(3), text)
-        css_text = embedded_css(text) if suffix in EMBED_CSS_EXT else text
-        js_text = (keep_regions(text, [(m.start(2), m.end(2), m.group(2)) for m in SCRIPT_BLOCK.finditer(text)])
-                   if suffix in EMBED_CSS_EXT - JS_EXT else text)
+        parsed = (list(tags(text, vue=suffix == ".vue", html_names=suffix in HTML_EXT,
+                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
+                  if suffix in MARKUP_EXT else None)
+        css_text, js_text = text, text
+        if suffix in EMBED_CSS_EXT:
+            css_regions, js_regions = embedded_regions(text, parsed)
+            css_text = keep_regions(text, css_regions)
+            # Astro frontmatter is JavaScript outside any script tag.
+            if suffix == ".astro":
+                frontmatter = re.match(r"\A(?:\ufeff)?---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", text, re.S)
+                if frontmatter:
+                    js_regions.append((frontmatter.start(1), frontmatter.end(1), frontmatter.group(1)))
+            js_text = keep_regions(text, js_regions)
+            # Whole-file heuristics also need CSS comments masked, while script
+            # strings and literal attributes retain their original contents.
+            style_regions = [(*tag.body, mask_css_comments(text[slice(*tag.body)]))
+                             for tag in parsed if tag.name == "style" and tag.body is not None]
+            text = replace_regions(text, style_regions)
         source_lines = SourceLines(text)
         at = lambda i: f"{rel}:{source_lines(i)}"  # noqa: E731
         warn_at = lambda i: lambda reason: parse_warning(acc, at(i), reason)  # noqa: E731
@@ -658,7 +786,7 @@ def inventory(root, flows=None):
         if SCREEN_DIR.search(rel) and suffix in MARKUP_EXT | JS_EXT:
             screens.append(rel)
         if suffix in MARKUP_EXT:
-            scan_markup(rel, text, acc, source_lines)
+            scan_markup(rel, text, acc, source_lines, parsed)
             if FETCH.search(text):
                 missing = [k for k, rx in (("loading", LOADING), ("error", ERROR)) if not rx.search(text)]
                 if LIST_RENDER.search(text) and not EMPTY.search(text):

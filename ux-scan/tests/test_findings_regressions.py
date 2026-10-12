@@ -69,6 +69,8 @@ class ValidationRegressions(unittest.TestCase):
             (lambda d: d["findings"][0].update(location="a.tsx:10-2"), "location"),
             (lambda d: d["findings"][0].update(location="a\\..\\b.tsx:1"), "location"),
             (lambda d: d["findings"][0].update(location="a\x00.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/.:1"), "location"),
+            (lambda d: d["findings"][0].update(occurrences=["./.:1"]), "occurrences"),
             (lambda d: d["findings"][0].update(references=[{"url": "https://example.com", "title": []}]), "title"),
             (lambda d: d["findings"][0].update(references=[{"url": "https://example.com", "type": 3}]), "type"),
             (lambda d: d["perspectives"].append(copy.deepcopy(d["perspectives"][0])), "duplicate"),
@@ -85,12 +87,25 @@ class ValidationRegressions(unittest.TestCase):
 
     def test_invalid_reference_urls_are_rejected(self):
         for url in ("https://example.com bad", "https://?q=host", "http://user@", "https://[broken",
-                    "https://example.com:bad/", "https://example.com\n/path"):
+                    "https://example.com:bad/", "https://example.com\n/path",
+                    "https://exam\\ple.com/", "https://example.com<bad>/",
+                    'https://example.com/"bad"', "https://[::1]example.com/"):
             with self.subTest(url=url):
                 data = copy.deepcopy(SAMPLE)
                 data["findings"][0]["references"] = [{"url": url}]
                 with self.assertRaisesRegex(findings.RecordError, "http"):
                     findings.check_findings(data)
+
+    def test_flow_locations_require_files_including_token_sources(self):
+        for target in ("screen", "tokens"):
+            with self.subTest(target=target):
+                data = copy.deepcopy(FLOWS)
+                if target == "screen":
+                    data["flows"][0]["screens"][0]["location"] = "src/.:1"
+                else:
+                    data["tokens"]["source"] = "styles/.:1"
+                with self.assertRaisesRegex(findings.RecordError, "repository-relative file"):
+                    findings.check_flows(data)
 
     def test_token_scales_require_finite_numbers_and_a_source(self):
         for key in findings.TOKEN_SCALES:
@@ -304,6 +319,50 @@ class TransactionRegressions(unittest.TestCase):
             "U-001（docs/U-002.md:12）を修正。https://example.com/U-002。U-001を確認。",
             'Use <input data-key="U-002"> for U-001, then <button>.',
             "U-001 は <div> で再現。U-001 を <button> に直す。",
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_preserves_grouped_source_paths_and_relative_link_targets(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        data["next_steps"] = [
+            "Inspect app/(U-002)/page.tsx:1; fix U-002.",
+            "Inspect app/(group)/sub/(U-002)/page.tsx:1; fix U-002.",
+            "Inspect (app/(U-002)/page.tsx:1), then fix U-002.",
+            "Inspect src/button(U-002).tsx:1; fix U-002.",
+            "Check [U-002](app/(U-002)/page.tsx:1), then fix U-002.",
+            "U-002(app/(U-002)/page.tsx:1)を修正。",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Inspect app/(U-002)/page.tsx:1; fix U-001.",
+            "Inspect app/(group)/sub/(U-002)/page.tsx:1; fix U-001.",
+            "Inspect (app/(U-002)/page.tsx:1), then fix U-001.",
+            "Inspect src/button(U-002).tsx:1; fix U-001.",
+            "Check [U-001](app/(U-002)/page.tsx:1), then fix U-001.",
+            "U-001(app/(U-002)/page.tsx:1)を修正。",
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_preserves_code_delimiters_and_html_comments(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        evidence = [
+            '``a ``` U-002``',
+            '~~~js`template`\nconst id = "U-002";\n~~~',
+            '```js\r\nconst id = "U-002";\r\n```',
+            '~~~~text\nU-002\n~~~\nU-002\n~~~~',
+            '```js\n```',
+            '~~~\n~~~',
+            '<!-- U-002 with <b>markup</b> -->',
+        ]
+        data["next_steps"] = [f"{code}\nFix U-002." for code in evidence]
+        data["next_steps"].extend(["Fix U-002. <!-- U-002 with <b>markup", "Fix `` U-002 ``."])
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [f"{code}\nFix U-001." for code in evidence] + [
+            "Fix U-001. <!-- U-002 with <b>markup", "Fix `` U-001 ``.",
         ])
         findings.check_findings(changed)
 

@@ -61,12 +61,12 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `screen` | Where the user meets it, with the route when there is one |
 | `viewport` | Optional: the viewport the defect shows at (`360x640`), when it depends on one |
 | `criterion` | What it fails: a WCAG 2.2 success criterion, the app's own token scale or documented pattern (with `path:line`), or a named usability heuristic. Never "looks bad" |
-| `location` | `path:line` or `path:line-line`, relative to the repository, using `/` separators; the fix location. Line numbers are positive and a range's end cannot precede its start |
+| `location` | `path:line` or `path:line-line`, relative to the repository, using `/` separators; the fix location must name a file, not a directory or a trailing `/.` component. Line numbers are positive and a range's end cannot precede its start |
 | `occurrences` | Optional: every `path:line` the same fix covers |
 | `observed` / `expected` | The code or behaviour as found, and as the criterion wants it |
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
-| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace; optional `type` and `title` are strings |
+| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, backslashes, raw angle brackets or double quotes; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
 as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
@@ -79,9 +79,12 @@ List sections and removal lines contain strings. Use separate fragments to
 update the same id more than once. `renumber` rewrites references throughout
 the record's prose, including ids immediately beside Japanese text. Structured
 `location`, `occurrences` and reference `url` values stay unchanged: an id in a
-file name or external URL does not identify a finding. Paths, routes, http(s)
-URLs, inline code, fenced code and HTML/JSX markup quoted in prose also stay
-unchanged within their delimiters (raw HTML tags are protected individually).
+file name or external URL does not identify a finding. Paths (including
+parenthesized route-group components), routes, relative Markdown link targets,
+http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
+in prose also stay unchanged within their delimiters (raw HTML tags are
+protected individually). Code spans close at a backtick run of the same
+length; a shorter or longer run inside the span remains literal code.
 An inline code span containing only a finding id, such as `U-002`,
 is a finding reference and is updated; mark other code literals as code so
 their ids are not mistaken for references. Separate prose references from

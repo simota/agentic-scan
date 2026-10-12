@@ -17,11 +17,11 @@ import argparse
 import hashlib
 import os
 import re
-import stat
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+from file_io import read_regular  # noqa: E402
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
@@ -31,6 +31,7 @@ FLOWS_STAMP = "ux-scan-flows"
 RENDER_STAMP = "ux-scan-render"
 PDF_STAMP = "ux-scan-pdf"
 PAGE_STAMP = "ux-scan-page"
+PAGE_KIND_STAMP = "ux-scan-page-kind"
 PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">')
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
                        r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
@@ -66,24 +67,6 @@ LABELS = {
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
            "evidence": "検証根拠", "intent": "意図の確認"},
 }
-
-
-def read_regular(path, max_bytes=None):
-    """Read a regular file without following a link or waiting on a FIFO."""
-    path = Path(path)
-    if not stat.S_ISREG(path.lstat().st_mode):
-        raise ValueError(f"{path}: must be a regular file (not a symlink)")
-    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
-    with os.fdopen(os.open(path, flags), "rb") as handle:
-        info = os.fstat(handle.fileno())
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError(f"{path}: must be a regular file")
-        if max_bytes is not None and info.st_size > max_bytes:
-            raise ValueError(f"{path}: exceeds {max_bytes} bytes")
-        source = handle.read() if max_bytes is None else handle.read(max_bytes + 1)
-        if max_bytes is not None and len(source) > max_bytes:
-            raise ValueError(f"{path}: exceeds {max_bytes} bytes")
-        return source
 
 
 def source_stamp(source):
@@ -143,17 +126,10 @@ def snippet(repo, location):
         relative = Path(m["path"])
         if relative.is_absolute() or ".." in relative.parts or not 1 <= start <= end:
             return None
-        root = Path(repo).resolve(strict=True)
-        path = root
-        for part in relative.parts:
-            path = path / part
-            if SENSITIVE.search(part) or path.is_symlink():
-                return None
-        path = path.resolve(strict=True)
-        relative = path.relative_to(root)
         if any(SENSITIVE.search(part) for part in relative.parts):
             return None
-        text = read_regular(path, MAX_SNIPPET_BYTES).decode("utf-8")
+        root = Path(repo).absolute()
+        text = read_regular(root / relative, MAX_SNIPPET_BYTES, root=root).decode("utf-8")
         if "\0" in text:
             return None
         lines = text.splitlines()
@@ -222,6 +198,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         out = Path(a.out)
+        repo = None
         if a.repo:
             repo = Path(a.repo).resolve(strict=True)
             if not repo.is_dir():
@@ -233,13 +210,17 @@ def main(argv=None):
         flows_source = read_regular(flows_path) if os.path.lexists(flows_path) else None
         flows = check_flows(loads_json(flows_source.decode("utf-8"), str(flows_path))) if flows_source is not None else None
         data = check_findings(loads_json(source.decode("utf-8"), str(a.findings)), flow_ids(flows) if flows else None)
-        common = report.validate(to_common(data, a.lang, flows, a.repo))
+        common = report.validate(to_common(data, a.lang, flows, repo))
+        pages = {"dashboard.html": report.render_dashboard(common, a.lang),
+                 "report.html": report.render_document(common, a.lang)}
         stamps = {STAMP: source_stamp(source),
                   FLOWS_STAMP: canonical_digest(flows) if flows is not None else "absent",
-                  RENDER_STAMP: canonical_digest({"lang": a.lang, "record": common})}
-        pages = {name: stamp_page(page, stamps) for name, page in (
-            ("dashboard.html", report.render_dashboard(common, a.lang)),
-            ("report.html", report.render_document(common, a.lang)))}
+                  RENDER_STAMP: canonical_digest({
+                      "lang": a.lang, "record": common,
+                      # Bind the pair even when only renderer assets changed.
+                      "pages": {name: source_stamp(page.encode("utf-8")) for name, page in pages.items()},
+                  })}
+        pages = {name: stamp_page(page, {**stamps, PAGE_KIND_STAMP: name}) for name, page in pages.items()}
     except (OSError, ValueError, RuntimeError, RecordError, report.FormatError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2
@@ -262,8 +243,15 @@ def main(argv=None):
     failures = []
     timeout = pdf.pdf_timeout(len(data["findings"]), env="UX_SCAN_PDF_TIMEOUT")
     try:
-        engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
-                            redact=redact_diagnostic)
+        try:
+            engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
+                                redact=redact_diagnostic)
+        except UnicodeError:
+            # The upstream WeasyPrint runner decodes captured process output.
+            # An encoding error is an engine failure, and may follow a partial
+            # PDF write. Keep its diagnostic private and use the normal cleanup.
+            failures.append(("PDF engine", "invalid text encoding in process output", ""))
+            engine = None
         if engine:
             try:
                 digest = pdf_stamp(read_regular(out / "report.pdf"))

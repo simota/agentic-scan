@@ -28,13 +28,15 @@ def main(argv=None):
         out = Path(args.out)
         if out.is_symlink():
             raise RecordError(f"{out}: output directory must not be a symlink")
+        if out.resolve().is_relative_to((ROOT / "examples" / "tasklane").resolve()):
+            raise RecordError("--out must be outside examples/tasklane; the reviewed repository is read-only")
         out.mkdir(parents=True, exist_ok=True)
         bad = unsafe_target(out, OUTPUTS)
         if bad:
             raise RecordError(f"{bad}: output must be a regular file, not a symlink or directory")
         write_output(out / "flows.json", dump(flows))
         write_output(out / "findings.json", dump(data))
-    except (OSError, RecordError) as error:
+    except (OSError, RuntimeError, RecordError) as error:
         print(f"prepare_sample.py: {error}", file=sys.stderr)
         return 2
     return 0

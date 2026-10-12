@@ -21,10 +21,16 @@ secret-looking assignment lines are masked in full. These name and text rules
 are conservative heuristics, not a complete credential audit. Report text and
 source excerpts remain escaped text in the HTML. `--out` must resolve outside
 `--repo`, which must name an existing directory.
+Excerpt reads are anchored to the selected repository with descriptor-relative
+no-follow operations, so a directory replacement cannot redirect them outside
+that root. On platforms without these operations, excerpts are omitted;
+record that limitation if source excerpts were needed.
 
 Both HTML pages record the SHA-256 of the exact `findings.json` bytes and the
 canonical JSON contents of `flows.json`. They also share a render identity
-covering the language and rendered data, including excerpts. After PDF
+covering the language, rendered data including excerpts, and both generated
+HTML pages before stamps are added. Renderer or style changes therefore
+invalidate mixed pages even when the findings are unchanged. After PDF
 generation succeeds, both pages record the PDF's SHA-256. The PDF must have a
 PDF header and an end-of-file trailer; this catches empty or visibly truncated
 engine output, but does not validate the full PDF syntax or visual layout.
@@ -32,12 +38,15 @@ Each page also fingerprints its complete UTF-8 HTML bytes, omitting only its
 single `ux-scan-page` metadata tag in the renderer's exact format. The checker
 requires that tag once in the head and rejects missing, malformed or duplicate
 fingerprints, truncated pages, and changes to their markup, styles or scripts.
+The sealed head also contains exactly one `ux-scan-page-kind` metadata tag,
+whose value must match the output filename (`dashboard.html` or `report.html`).
+Copying one page over the other or swapping their filenames fails the check.
 
 `contract_check.py` rejects stale findings or flows, mixed render versions,
 replaced PDFs, and an inventory whose `flows_sha256` does not match the current
 flows. Rerun the inventory after changing flows, then render after the last
-record or flow change. Older outputs missing any required fingerprint,
-including the complete-page fingerprint, must be regenerated. The checker reads
+record or flow change. Older outputs missing any required fingerprint or page
+kind, including the complete-page fingerprint, must be regenerated. The checker reads
 actual metadata in the HTML head;
 stamp-like comments or report prose do not satisfy the contract. These hashes
 track consistency between local outputs; they are not signatures that prove
@@ -56,6 +65,8 @@ Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —
 the message says which. Engine diagnostic text is withheld because it can echo
 source or report data; the engine, failure category and timeout remain visible.
+An engine's undecodable process output also returns exit 3 and removes any
+partial PDF; it does not publish the raw diagnostic or a traceback.
 `UX_SCAN_PDF_TIMEOUT` overrides the engine's timeout in
 seconds for the one retry SKILL.md allows. With `--no-pdf`, the final record
 must contain `report.pdf not produced: <reason>` with a non-empty reason and

@@ -73,6 +73,14 @@ make demo NO_PDF=1 # render HTML only, recording the limitation and checking the
 make inventory TARGET=/path/to/repo FLOWS=flows.json OUT=inventory.json
 ```
 
+Checkout, install and output paths are passed literally, including spaces,
+quotes and shell metacharacters. `PYTHON` remains a shell command, so options
+such as `PYTHON='python3 -B'` work; quote the interpreter path inside its value
+when that path contains spaces, for example `PYTHON="'/path with spaces/python3' -B"`.
+In Make variable values, write a literal dollar sign as `$$` because Make
+expands `$` before invoking the shell. The demo refuses output inside its
+reviewed fixture before creating or overwriting any records.
+
 `make check` validates both English and Japanese sample output contracts,
 including the no-PDF limitation from `examples/no-pdf.fragment.json`. It does
 not require a browser. GitHub Actions runs it on Linux and macOS with Python

@@ -75,7 +75,7 @@ def _location(value, where):
             or any(ord(c) < 32 or ord(c) == 127 for c in value)):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
     path, _, lines = value.rpartition(":")
-    if path.endswith("/") or path == ".":
+    if path.rsplit("/", 1)[-1] in ("", "."):
         raise RecordError(f"{where}: {value!r} is not a repository-relative file:line")
     try:
         start, _, end = lines.partition("-")
@@ -88,10 +88,15 @@ def _location(value, where):
 
 
 def _http(url, where):
-    if isinstance(url, str) and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 for c in url):
+    if isinstance(url, str) and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c in '\\<>"'
+                                        for c in url):
         try:
             parts = urlsplit(url)
             if parts.scheme in ("http", "https") and parts.hostname:
+                # Python versions differ in whether urlsplit rejects text after an IPv6 host.
+                authority = parts.netloc.rsplit("@", 1)[-1]
+                if authority.startswith("[") and not re.fullmatch(r"\[[^\]]+\](?::[0-9]*)?", authority):
+                    raise ValueError("invalid bracketed host")
                 parts.port  # Access checks malformed and out-of-range ports.
                 return
         except ValueError:
@@ -301,12 +306,21 @@ FINDING_MENTION = re.compile(
     + "|" + FINDING_REF.pattern)
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
+# Parentheses may be part of a path, especially Next.js route groups. Keep
+# balanced path components together without swallowing Markdown link labels.
+SOURCE_COMPONENT = r"(?:[^\s`<>\"'(),;/\\，、。；（）「」『』]|\([^()\s`<>\"',;/\\，、。；（）「」『』]*\))+"
 PROSE_PART = re.compile(
-    r"(?P<fence>^[ \t]{0,3}(?P<marker>(?P<marker_char>`|~)(?P=marker_char){2,})[^\n`]*\n.*?"
-    r"(?:\n[ \t]{0,3}(?P=marker)(?P=marker_char)*[ \t]*(?=\n|$)|\Z))"
-    r"|(?P<ticks>`+)(?P<code>.*?)(?P=ticks)"
+    r"(?P<fence>^[ \t]{0,3}(?:"
+    r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
+    r"(?:^[ \t]{0,3}(?P=backtick_marker)`*[ \t]*\r?(?=\n|$)|\Z)"
+    r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
+    r"(?:^[ \t]{0,3}(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
+    # A code span closes only at a backtick run of exactly the opening length.
+    r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
+    r"|(?P<comment><!--.*?(?:-->|\Z))"
     r"|(?P<markup><(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
     r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
+    r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 
 
@@ -348,8 +362,10 @@ def _rewrite_prose(value, mapping):
 
     parts, start = [], 0
     for match in PROSE_PART.finditer(value):
-        protected = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
+        protected = (match["fence"] is not None or match["comment"] is not None
+                     or match["markup"] is not None or match["url"] is not None
                      or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip()))
+                     or (match["path"] is not None and _source_token(match["path"]))
                      or (match["token"] is not None and _source_token(match["token"])))
         if protected:
             parts.extend((references(value[start:match.start()]), match[0]))

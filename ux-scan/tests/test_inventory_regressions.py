@@ -1,17 +1,20 @@
 """Regression coverage for repository inventory parsing and file boundaries."""
 
 import json
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "ux-scan" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
 import inventory  # noqa: E402
+from file_io import SUPPORTS_ROOT_READS  # noqa: E402
 
 
 class InventoryRegressionTests(unittest.TestCase):
@@ -133,6 +136,117 @@ class InventoryRegressionTests(unittest.TestCase):
             {"value": "16px", "count": 1, "locations": ["index.html:2"]},
             {"value": "8px", "count": 1, "locations": ["index.html:1"]},
         ])
+
+    def test_quoted_template_attributes_are_not_nested_elements(self):
+        for extension in ("html", "vue", "svelte", "astro"):
+            with self.subTest(extension=extension):
+                name = f"a.{extension}"
+                data = self.scan({name:
+                    '<div data-example="<input><img><button><svg></svg></button>">Example</div>\n'
+                    '<img src="real.png">\n'})
+                self.assertEqual(data["inputs"], [])
+                self.assertEqual(data["icon_buttons"], [])
+                self.assertEqual(data["images"], [{"location": f"{name}:2", "missing": ["alt", "dimensions"]}])
+
+    def test_raw_text_elements_do_not_create_markup_candidates(self):
+        for extension in ("html", "vue", "svelte", "astro"):
+            with self.subTest(extension=extension):
+                name = f"a.{extension}"
+                data = self.scan({name:
+                    '<script>const example = "<input><img>";</script>\n'
+                    '<style>.example::after { content: "<input><img>"; }</style>\n'
+                    '<textarea aria-label="Example"><input><img></textarea>\n'
+                    '<title><input><img></title>\n'
+                    '<img src="real.png">\n'})
+                self.assertEqual(data["inputs"], [])
+                self.assertEqual([row["location"] for row in data["images"]], [f"{name}:5"])
+
+    def test_raw_text_comments_do_not_hide_following_elements(self):
+        data = self.scan({"a.html":
+            '<TEXTAREA aria-label="Example"><!--</TEXTAREA>\n'
+            '<IMG src="real.png">\n'
+            '<div data-example="-->">Text</div>\n'})
+        self.assertEqual([row["location"] for row in data["images"]], ["a.html:2"])
+        self.assertEqual(data["inputs"], [])
+
+    def test_embedded_languages_ignore_fake_blocks_and_attributes(self):
+        for extension in ("html", "vue", "svelte", "astro"):
+            with self.subTest(extension=extension):
+                name = f"a.{extension}"
+                data = self.scan({name:
+                    '<div title="<style>.btn {padding: 37px; height: 9px}</style>">Example</div>\n'
+                    '<div title="<script>const style = {padding: 47}</script>">Example</div>\n'
+                    '<script>const example = `style="padding: 57px"`;</script>\n'
+                    '<textarea aria-label="Example"><style>.btn {padding: 67px}</style></textarea>\n'
+                    '<style data-example="a > b">.btn {padding: 8px; height: 40px}</style>\n'
+                    '<script data-example="a > b">const style = {padding: 16};</script>\n'})
+                self.assertEqual(data["spacing"], [
+                    {"value": "16px", "count": 1, "locations": [f"{name}:6"]},
+                    {"value": "8px", "count": 1, "locations": [f"{name}:5"]},
+                ])
+                self.assertEqual([(row["selector"], row["location"]) for row in data["tap_targets"]],
+                                 [(".btn", f"{name}:5")])
+
+    def test_embedded_javascript_keeps_style_expressions_and_astro_frontmatter(self):
+        data = self.scan({
+            "a.vue": '<div :style="{padding: 8}">Vue</div>\n'
+                     '<script setup>const style = {padding: 16};</script>\n',
+            "b.svelte": '<div style={{padding: 24}}>Svelte</div>\n'
+                        '<script>const style = {padding: 32};</script>\n',
+            "c.astro": '---\nconst style = {padding: 40};\n---\n'
+                       '<div style={{padding: 48}}>Astro</div>\n',
+        })
+        self.assertEqual({row["value"]: row["locations"] for row in data["spacing"]}, {
+            "8px": ["a.vue:1"], "16px": ["a.vue:2"], "24px": ["b.svelte:1"],
+            "32px": ["b.svelte:2"], "40px": ["c.astro:2"], "48px": ["c.astro:4"],
+        })
+
+    def test_wrapping_labels_use_actual_tag_boundaries(self):
+        data = self.scan({"a.html":
+            '<div data-example="<label>"><input /></div><span data-example="</label>" />\n'
+            '<label>Search<span data-example="</label>"><input /></span></label>\n'
+            '<label>Outer<label>Inner<input /></label><input /></label>\n'
+            '<input />\n'})
+        self.assertEqual([row["location"] for row in data["inputs"]], ["a.html:1", "a.html:4"])
+
+    def test_jsx_regex_and_markup_strings_do_not_hide_later_elements(self):
+        data = self.scan({"a.jsx":
+            '<input aria-label="URL" value={url.replace(/\\//g, "-")} />\n'
+            '<input aria-label="Pattern" value={/a\\/*b/.test(value)} />\n'
+            "const example = '<input title=\"';\n"
+            '<img src="real.png" />\n'})
+        self.assertEqual([row["location"] for row in data["images"]], ["a.jsx:4"])
+
+    def test_jsx_inside_fallback_and_render_props_remains_a_candidate(self):
+        for extension in ("jsx", "tsx", "astro", "svelte"):
+            with self.subTest(extension=extension):
+                name = f"a.{extension}"
+                data = self.scan({name:
+                    '<Suspense fallback={<img src="loading.png" />}><Content /></Suspense>\n'
+                    '<Field render={() => <input type="email" />} />\n'})
+                self.assertEqual([row["location"] for row in data["images"]], [f"{name}:1"])
+                self.assertEqual([(row["location"], row["missing"]) for row in data["inputs"]],
+                                 [(f"{name}:2", ["label", "autocomplete"])])
+
+    def test_dense_malformed_tags_and_long_attributes_complete(self):
+        cases = {
+            "labels": "<label>text\n" * 30_000,
+            "attribute": '<div title="' + '<input title=' * 50_000 + '">\n',
+            "prefixes": "<div " * 30_000 + "\n",
+        }
+        for name, prefix in cases.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "repo"
+                repo.mkdir()
+                (repo / "a.html").write_text(prefix + '<img src="real.png">\n', encoding="utf-8")
+                out = root / "inventory.json"
+                result = self.run_cli(repo, out)
+                self.assertEqual(result.returncode, 0, result.stderr)
+                data = json.loads(out.read_text(encoding="utf-8"))
+                self.assertEqual(data["inputs"], [])
+                self.assertEqual([row["location"] for row in data["images"]],
+                                 [f"a.html:{prefix.count(chr(10)) + 1}"])
 
     def test_html_comment_markers_in_strings_do_not_hide_real_styles(self):
         data = self.scan({"a.vue":
@@ -421,6 +535,7 @@ class InventoryRegressionTests(unittest.TestCase):
             root.mkdir()
             (root / "large.css").write_bytes(b"x" * (inventory.MAX_BYTES + 1))
             (root / "binary.css").write_bytes(b"\0.btn{width:20px}")
+            (root / "late-binary.css").write_bytes(b" " * 9000 + b"\0.btn{width:20px}")
             (root / "invalid.css").write_bytes(b"\xff.btn{width:20px}")
             outside = Path(tmp) / "outside"
             outside.mkdir()
@@ -428,8 +543,56 @@ class InventoryRegressionTests(unittest.TestCase):
             (root / "linked").symlink_to(outside, target_is_directory=True)
             data = inventory.inventory(root)
             self.assertEqual(data["files_scanned"], 0)
-            self.assertEqual(data["files_skipped"], 3)
+            self.assertEqual(data["files_skipped"], 4)
             self.assertEqual(data["tap_targets"], [])
+
+    @unittest.skipUnless(SUPPORTS_ROOT_READS, "requires descriptor-relative repository reads")
+    def test_inventory_rejects_an_ancestor_replaced_by_a_symlink_during_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            styles = root / "styles"
+            styles.mkdir(parents=True)
+            (styles / "a.css").write_text(".btn{padding:8px}", encoding="utf-8")
+            (root / "a.html").write_text('<img src="real.png">', encoding="utf-8")
+            outside = base / "outside"
+            outside.mkdir()
+            (outside / "a.css").write_text(".btn{padding:99px}", encoding="utf-8")
+            read_regular = inventory.read_regular
+
+            def replace_then_read(path, **kwargs):
+                if path.name == "a.css":
+                    styles.rename(base / "original")
+                    styles.symlink_to(outside, target_is_directory=True)
+                return read_regular(path, **kwargs)
+
+            with patch.object(inventory, "read_regular", side_effect=replace_then_read):
+                data = inventory.inventory(root)
+            self.assertEqual((data["files_scanned"], data["files_skipped"]), (1, 1))
+            self.assertEqual(data["spacing"], [])
+            self.assertEqual([row["location"] for row in data["images"]], ["a.html:1"])
+            self.assertEqual(data["parse_warnings"][0]["location"], "styles/a.css:1")
+            self.assertIn("file skipped", data["parse_warnings"][0]["reason"])
+
+    @unittest.skipIf(os.name == "nt", "requires a filesystem with arbitrary byte filenames")
+    def test_invalid_unicode_filename_does_not_abort_cli_or_hide_other_files(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            bad = os.fsencode(repo) + b"/invalid-\xff.css"
+            with open(bad, "wb") as handle:
+                handle.write(b".btn{padding:13px}")
+            (repo / "a.html").write_text('<img src="real.png">', encoding="utf-8")
+            out = root / "inventory.json"
+            result = self.run_cli(repo, out)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            data = json.loads(out.read_text(encoding="utf-8"))
+            self.assertEqual((data["files_scanned"], data["files_skipped"]), (1, 1))
+            self.assertEqual(data["spacing"], [])
+            self.assertEqual([row["location"] for row in data["images"]], ["a.html:1"])
+            self.assertIn("filename is not valid Unicode", data["parse_warnings"][0]["reason"])
 
     def test_cli_output_failures_are_clean_and_do_not_leave_temporary_files(self):
         with tempfile.TemporaryDirectory() as tmp:

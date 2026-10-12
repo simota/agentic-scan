@@ -1,5 +1,6 @@
 """Regression coverage for repository inventory parsing and file boundaries."""
 
+import errno
 import json
 import os
 import subprocess
@@ -581,8 +582,13 @@ class InventoryRegressionTests(unittest.TestCase):
             repo = root / "repo"
             repo.mkdir()
             bad = os.fsencode(repo) + b"/invalid-\xff.css"
-            with open(bad, "wb") as handle:
-                handle.write(b".btn{padding:13px}")
+            try:
+                with open(bad, "wb") as handle:
+                    handle.write(b".btn{padding:13px}")
+            except OSError as e:
+                if e.errno != errno.EILSEQ:
+                    raise
+                self.skipTest("this filesystem (e.g. APFS) refuses filenames that are not valid UTF-8")
             (repo / "a.html").write_text('<img src="real.png">', encoding="utf-8")
             out = root / "inventory.json"
             result = self.run_cli(repo, out)

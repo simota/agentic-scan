@@ -18,7 +18,8 @@ NAME    := ux-scan
 # Make's filename functions split on spaces, even inside an absolute path.
 # Capture this standalone Makefile before any includes and resolve it in the shell.
 shell_quote = '$(subst ','"'"',$(1))'
-SOURCE_MAKEFILE := $(MAKEFILE_LIST)
+# GNU Make 3.81 (macOS) prefixes MAKEFILE_LIST with a space; drop leading spaces in the shell.
+SOURCE_MAKEFILE := $(shell printf '%s' $(call shell_quote,$(MAKEFILE_LIST)) | sed 's/^ *//')
 REPO    := $(shell CDPATH= cd -- "$$(dirname -- $(call shell_quote,$(SOURCE_MAKEFILE)))" && pwd -P)
 SKILL   := $(REPO)/skills/$(NAME)
 # PYTHON is an intentional shell command: options and quoted paths are supported.

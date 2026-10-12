@@ -1,0 +1,8 @@
+{
+  "nav": { "home": "Pantry", "signin": "Sign in" },
+  "home": { "title": "Your pantry", "remove": "Remove", "leaderboard": "Top households this week" },
+  "item": { "price": "Check out", "label": "Print shelf label", "status": { "fresh": "Fresh", "expired": "Expired" } },
+  "reports": { "title": "Reports" },
+  "promo": { "holiday": "Holiday deals are here!" },
+  "checkout": { "legacy_notice": "You are using the old checkout." }
+}

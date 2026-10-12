@@ -1,0 +1,826 @@
+#!/usr/bin/env python3
+"""Inventory removal candidates in a repository: candidates for review, never findings.
+
+    python3 inventory.py REPO --out inventory.json [--units units.json] [--today YYYY-MM-DD]
+
+Collects, best effort and by name only: top-level symbols (Python, JS/TS, Go,
+Rust) with no reference outside their definition, source files nothing imports
+or names, declared dependencies never imported (package.json, requirements*.txt,
+pyproject.toml, go.mod, Cargo.toml), dependencies sharing a purpose or
+replaceable by the platform, environment variables read versus declared,
+feature flags with their values and checks, locale keys never referenced,
+asset files and CSS classes never named, routes nothing names, Makefile targets
+and package scripts nothing invokes, unreferenced scripts, SQL and docs,
+skipped tests, commented-out code blocks, deprecation and removal markers with
+dates, and SQL tables and columns no code names. With --units, every row is
+tagged with the review unit whose path covers it. Never prints the value of an
+environment variable. Read-only, standard library only (reference/inventory.md).
+Exit status: 0 written, 2 bad arguments or unreadable units, 1 output not written.
+"""
+
+import argparse
+import datetime
+import json
+import os
+import re
+import sys
+from collections import Counter, defaultdict
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from findings import RecordError, check_units  # noqa: E402
+from scan_report_kit.output import write_output  # noqa: E402
+
+SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
+             ".svelte-kit", "coverage", ".venv", "venv", "env", "__pycache__", "Pods", ".gradle", "target",
+             ".turbo", ".cache", "bower_components", ".idea", ".vscode", "DerivedData", ".dart_tool",
+             "storybook-static", ".output", ".tox", ".mypy_cache", ".pytest_cache", "site-packages"}
+SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
+              "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "uv.lock"}
+SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
+                         r"keystore)|id_[rd]sa.*|\.netrc|.*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
+ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
+MAX_BYTES = 2 * 1024 * 1024
+MAX_LOCATIONS = 5
+MAX_ROWS = 200
+
+PY_EXT = {".py"}
+JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"}
+GO_EXT = {".go"}
+RS_EXT = {".rs"}
+SOURCE_EXT = PY_EXT | JS_EXT | GO_EXT | RS_EXT | {".rb", ".java", ".kt", ".swift", ".php", ".cs", ".scala"}
+CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
+PROSE_EXT = {".md", ".rst", ".txt", ".adoc"}
+ASSET_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".avif", ".ico", ".bmp", ".svg", ".woff", ".woff2", ".ttf",
+             ".otf", ".eot", ".mp4", ".webm", ".mov", ".mp3", ".wav", ".ogg", ".pdf"}
+LOOSE_EXT = {".sh", ".bash", ".zsh", ".ps1", ".sql", ".md", ".rst", ".txt"}
+LOOSE_DIRS = {"scripts", "bin", "tools", "docs", "doc", "db", "seeds", "seed", "fixtures", "sql"}
+ROOT_DOCS = {"readme", "changelog", "license", "licence", "contributing", "security", "claude", "agents",
+             "code_of_conduct", "notice", "authors", "history", "requirements", "codeowners"}
+ENTRY_STEMS = {"main", "index", "app", "__init__", "__main__", "setup", "manage", "conftest", "wsgi", "asgi",
+               "server", "cli", "lib", "mod", "build", "worker"}
+JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json",
+              "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs")
+TEST_PATH = re.compile(r"(?i)(?:^|/)(?:tests?|__tests__|spec|e2e)/|(?:^|/)test_[^/]+$|_test\.\w+$|"
+                       r"\.(?:test|spec)\.\w+$")
+LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
+LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
+
+IDENT = re.compile(r"[A-Za-z_$][\w$]*")
+CSS_TOKEN = re.compile(r"[A-Za-z_][\w-]*")
+FILE_TOKEN = re.compile(r"[\w.-]+\.\w+")
+QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
+DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
+DYNAMIC_CLASS = re.compile(r"`[^`]*?\b([A-Za-z_][\w-]*-)\$\{|[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
+
+PY_DEF = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_]\w*)|^class\s+([A-Za-z_]\w*)|^([A-Z][A-Z0-9_]+)\s*(?::[^=\n]+)?=(?!=)",
+                    re.M)
+JS_DEF = re.compile(r"^export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|type|interface|enum|"
+                    r"abstract\s+class)\s+([A-Za-z_$][\w$]*)|^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)|"
+                    r"^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=", re.M)
+GO_DEF = re.compile(r"^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
+RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)", re.M)
+MODIFIERS = {"export", "default", "declare", "async", "abstract"}
+ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
+
+PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
+PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\([^)]*\)|[^\n#]+)", re.M)
+JS_IMPORT = re.compile(r"(?:\bimport|\bexport)\s[^'\"`;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|\bimport\s*[\"']([^\"'\n]+)[\"']|"
+                       r"\brequire\(\s*[\"']([^\"'\n]+)[\"']\s*\)|\bimport\(\s*[\"']([^\"'\n]+)[\"']\s*\)")
+GO_IMPORT = re.compile(r"^\s*(?:import\s+)?(?:\w+\s+)?\"([\w.\-/]+)\"\s*$", re.M)
+RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)::")
+
+ENV_READ = re.compile(
+    r"process\.env\.([A-Z_][A-Z0-9_]*)|process\.env\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+    r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|os\.environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+    r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
+    r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
+ENV_DECL = re.compile(r"^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=", re.M)
+FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_enabled|featureEnabled|"
+                        r"feature_enabled|flag_enabled|useFlag|useFeature|useFeatureFlag|useFeatureIsOn|getFlag|"
+                        r"get_flag|variation|boolVariation|isOn|is_on|active\?)\(\s*[\"'`:]([\w.-]+)[\"'`]?")
+FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|experiments)\.(?:py|ts|tsx|js|mjs|"
+                       r"json|ya?ml|toml)$")
+FLAG_DEF = re.compile(r"^\s*[\"']?([A-Za-z][\w.-]*)[\"']?\s*[:=]\s*(true|false|True|False|on|off)\b", re.M)
+ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
+ROUTE_DEFS = (
+    ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
+    ("server", re.compile(r"\b(?:app|router|server|api|routes)\.(get|post|put|patch|delete|all|head|options)\(\s*"
+                          r"[\"'`](/[^\"'`]*)[\"'`]")),
+    ("server", re.compile(r"\b(re_path|path)\(\s*r?[\"']([^\"']*)[\"']\s*,")),
+    ("client", re.compile(r"<(Route)\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']")),
+    ("client", re.compile(r"\b(path)\s*:\s*[\"'](/[^\"']*)[\"']")),
+)
+PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
+MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
+SKIPPED_TEST = re.compile(r"@pytest\.mark\.skip(?:if)?\b|@unittest\.skip\w*|\bpytest\.skip\(|"
+                          r"\b(?:it|test|describe|context)\.(?:skip|todo)\(|\bx(?:it|describe|test)\(|#\[ignore\]|"
+                          r"\bt\.Skip(?:f|Now)?\(|@Disabled\b|@Ignore\b|\bskip\(\s*[\"']")
+COMMENT_LINE = re.compile(r"^\s*(?:#|//|--)\s?(.*)$")
+CODE_LIKE = re.compile(r"[;{}()=\[\]]|^\s*(?:def|return|import|from|if|elif|else|for|while|class|const|let|var|"
+                       r"function|await|async|try|except|raise|throw|SELECT|INSERT|UPDATE)\b")
+MARKER = re.compile(r"(?i)\b(TODO|FIXME|HACK|XXX|deprecated|remove (?:after|by|once|when|in)|temporary|sunset|ended|"
+                    r"until)\b")
+ALWAYS_MARKERS = {"deprecated", "sunset"}
+DATE = re.compile(r"\b(20[0-9]{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12][0-9]|3[01]))?)\b")
+CREATE_TABLE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\w+)[`\"\]]?\s*\((.*?)\)\s*;",
+                          re.I | re.S)
+SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
+
+DUPLICATE_GROUPS = {
+    "dates": {"moment", "dayjs", "date-fns", "luxon", "moment-timezone"},
+    "http client (JS)": {"axios", "node-fetch", "got", "superagent", "request", "ky", "cross-fetch",
+                         "isomorphic-fetch", "undici"},
+    "utility belt": {"lodash", "lodash-es", "underscore", "ramda"},
+    "test runner (JS)": {"jest", "vitest", "mocha", "ava", "jasmine"},
+    "http client (Python)": {"requests", "httpx", "urllib3", "aiohttp"},
+    "json (Python)": {"simplejson", "ujson", "orjson", "rapidjson"},
+    "test runner (Python)": {"pytest", "nose", "nose2"},
+    "uuid": {"uuid", "nanoid", "shortid"},
+    "class names": {"classnames", "clsx"},
+}
+PLATFORM_REPLACEABLE = {
+    "node-fetch": "global fetch (Node 18+)", "cross-fetch": "global fetch", "isomorphic-fetch": "global fetch",
+    "left-pad": "String.prototype.padStart", "object-assign": "Object.assign", "es6-promise": "native Promise",
+    "uuid": "crypto.randomUUID()", "array-includes": "Array.prototype.includes", "abort-controller": "global AbortController",
+    "six": "Python 3 only code", "mock": "unittest.mock", "futures": "concurrent.futures", "enum34": "enum",
+    "pathlib2": "pathlib", "typing": "typing (stdlib)", "dataclasses": "dataclasses (stdlib, 3.7+)",
+    "simplejson": "json", "importlib-metadata": "importlib.metadata (3.8+)", "backports.zoneinfo": "zoneinfo (3.9+)",
+    "pytz": "zoneinfo (3.9+)",
+}
+PY_MODULE_NAMES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "python-dateutil": "dateutil",
+                   "scikit-learn": "sklearn", "opencv-python": "cv2", "opencv-python-headless": "cv2",
+                   "attrs": "attr", "psycopg2-binary": "psycopg2", "python-dotenv": "dotenv", "protobuf": "google",
+                   "python-jose": "jose", "pyjwt": "jwt", "python-multipart": "multipart", "msgpack-python": "msgpack",
+                   "mysqlclient": "MySQLdb", "pymongo": "pymongo", "google-cloud-storage": "google",
+                   "djangorestframework": "rest_framework", "typing-extensions": "typing_extensions",
+                   "importlib-metadata": "importlib_metadata", "backports.zoneinfo": "backports"}
+IMPLICIT_TOOLS = re.compile(r"^(?:typescript|tslib|ts-node|prettier|postcss|autoprefixer|tailwindcss|eslint(?:-.*)?|"
+                            r"@types/.*|@babel/.*|babel-.*|@eslint/.*|@typescript-eslint/.*|eslint-plugin-.*|"
+                            r"eslint-config-.*|stylelint.*|husky|lint-staged|mypy|ruff|black|flake8|isort|pylint|"
+                            r"types-.*|coverage|pre-commit|wheel|setuptools|pip)$")
+TOOL_FILES = re.compile(r"(?i)(?:^|/)(?:Makefile|Dockerfile[\w.-]*|Procfile|justfile|Taskfile\.ya?ml|tox\.ini|setup\.cfg|"
+                        r"pyproject\.toml|package\.json|[\w.-]*\.config\.(?:js|cjs|mjs|ts)|\.[\w-]*rc(?:\.\w+)?|"
+                        r"[\w.-]+\.ya?ml|[\w.-]+\.sh|noxfile\.py|conftest\.py|setup\.py)$")
+
+
+def iter_files(root):
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
+        for name in sorted(filenames):
+            path = Path(dirpath) / name
+            if name in SKIP_FILES or path.is_symlink() or not path.is_file():
+                continue
+            yield path
+
+
+def read_text(path):
+    """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
+    if SECRET_FILE.match(path.name) or path.stat().st_size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
+        return None
+    data = path.read_bytes()
+    if b"\0" in data[:8192]:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def line_of(text, index):
+    return text.count("\n", 0, index) + 1
+
+
+def is_test(rel):
+    return bool(TEST_PATH.search(rel))
+
+
+def locale_bundle(rel):
+    """(bundle, lang) for a JSON locale file, else None."""
+    p = Path(rel)
+    if p.suffix != ".json":
+        return None
+    if LANG.match(p.stem) and (LOCALE_DIR.search(rel) or p.parent.name.lower() in ("i18n", "locales", "lang")):
+        return (p.parent / "{lang}.json").as_posix(), p.stem.replace("_", "-")
+    if LANG.match(p.parent.name) and LOCALE_DIR.search(rel):
+        return (p.parent.parent / "{lang}" / p.name).as_posix(), p.parent.name.replace("_", "-")
+    return None
+
+
+def flatten(value, prefix=""):
+    if isinstance(value, dict):
+        for k, v in value.items():
+            if not str(k).startswith("@"):
+                yield from flatten(v, f"{prefix}.{k}" if prefix else str(k))
+    elif isinstance(value, (str, list)):
+        yield prefix
+
+
+def key_line(text, key):
+    """Line of the last segment of key in a JSON locale file (first match)."""
+    m = re.search(r"[\"']%s[\"']\s*:" % re.escape(key.rsplit(".", 1)[-1]), text)
+    return line_of(text, m.start()) if m else 1
+
+
+def js_package(spec):
+    if spec.startswith((".", "/", "~", "#", "@/", "node:")) or ":" in spec:
+        return None
+    parts = spec.split("/")
+    return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
+
+
+def py_dist_module(name):
+    lower = name.lower()
+    return PY_MODULE_NAMES.get(lower, re.sub(r"[-.]", "_", lower))
+
+
+def parse_requirements(rel, text):
+    for i, line in enumerate(text.splitlines(), 1):
+        line = line.split("#", 1)[0].strip()
+        if not line or line.startswith(("-", "git+", "http")):
+            continue
+        m = re.match(r"([A-Za-z0-9][A-Za-z0-9._-]*)", line)
+        if m:
+            yield m.group(1), "requirements", f"{rel}:{i}"
+
+
+def parse_toml_lists(rel, text):
+    """pyproject.toml dependencies (PEP 621 and Poetry) and Cargo.toml dependency tables, by regex."""
+    section = None
+    in_list = None
+    for i, line in enumerate(text.splitlines(), 1):
+        stripped = line.split("#", 1)[0].strip()
+        header = re.match(r"^\[+([^\]]+)\]+$", stripped)
+        if header:
+            section, in_list = header.group(1).strip(), None
+            continue
+        if in_list:
+            for m in re.finditer(r"[\"']([A-Za-z0-9][A-Za-z0-9._-]*)", stripped):
+                yield m.group(1), in_list, f"{rel}:{i}"
+            if "]" in stripped:
+                in_list = None
+            continue
+        m = re.match(r"^(dependencies|dev-dependencies|optional-dependencies|[\w-]+)\s*=\s*\[(.*)$", stripped)
+        if m and (section == "project" or (section or "").startswith(("project.optional-dependencies",
+                                                                       "dependency-groups"))):
+            for d in re.finditer(r"[\"']([A-Za-z0-9][A-Za-z0-9._-]*)", m.group(2)):
+                yield d.group(1), section, f"{rel}:{i}"
+            if "]" not in m.group(2):
+                in_list = section
+            continue
+        if section and (section.endswith("dependencies") and ("poetry" in section or section.startswith(
+                ("dependencies", "dev-dependencies", "build-dependencies", "workspace.dependencies",
+                 "target.")))):
+            m = re.match(r"^([A-Za-z0-9][A-Za-z0-9._-]*)\s*=", stripped)
+            if m and m.group(1) != "python":
+                yield m.group(1), section, f"{rel}:{i}"
+
+
+def parse_go_mod(rel, text):
+    block = False
+    for i, line in enumerate(text.splitlines(), 1):
+        s = line.split("//", 1)[0].strip()
+        if s.startswith("require ("):
+            block = True
+            continue
+        if block and s == ")":
+            block = False
+            continue
+        m = re.match(r"^(?:require\s+)?([\w.\-]+\.[\w.\-]+/[\w.\-/]+)\s+v", s) if (block or s.startswith("require")) else None
+        if m:
+            yield m.group(1), "require", f"{rel}:{i}"
+
+
+class Collector:
+    """Per-file signals gathered in one pass, resolved across files at the end."""
+
+    def __init__(self, root, today):
+        self.root, self.today = root, today
+        self.texts = {}            # rel -> text, for every readable file
+        self.assets = []           # (rel, bytes)
+        self.skipped = 0
+        self.locales = defaultdict(dict)
+
+    def add(self, path):
+        rel = path.relative_to(self.root).as_posix()
+        if path.suffix.lower() in ASSET_EXT:
+            self.assets.append((rel, path.stat().st_size))
+        try:
+            text = read_text(path)
+        except OSError:
+            text = None
+        if text is None:
+            if path.suffix.lower() not in ASSET_EXT:
+                self.skipped += 1
+            return
+        self.texts[rel] = text
+        bundle = locale_bundle(rel)
+        if bundle:
+            try:
+                self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(json.loads(text))))
+            except ValueError:
+                pass
+
+
+def loc_key(location):
+    path, _, line = location.rpartition(":")
+    return path, int(line.split("-")[0])
+
+
+def suffix(rel):
+    return Path(rel).suffix.lower()
+
+
+def inventory(root, units=None, today=None):
+    root = Path(root).resolve()
+    today = today or datetime.date.today().isoformat()
+    col = Collector(root, today)
+    for path in iter_files(root):
+        col.add(path)
+    texts = col.texts
+    locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
+    code_files = [r for r in texts if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
+
+    # Identifier counts over code and config (string contents included: names built from strings count as uses).
+    idents = Counter()
+    for rel in code_files:
+        idents.update(IDENT.findall(texts[rel]))
+
+    # File names mentioned anywhere: a file named elsewhere (HTML script src, Makefile, config) is referenced.
+    named_in = defaultdict(set)
+    for rel, text in texts.items():
+        for tok in set(FILE_TOKEN.findall(text)):
+            named_in[tok].add(rel)
+
+    def named_elsewhere(rel):
+        return bool(named_in.get(Path(rel).name, set()) - {rel})
+
+    rows = {}
+
+    # Symbols.
+    defs = defaultdict(list)
+    decorated_skipped = 0
+    for rel in code_files:
+        ext = suffix(rel)
+        if is_test(rel):
+            continue
+        text = texts[rel]
+        regex = {**{e: PY_DEF for e in PY_EXT}, **{e: JS_DEF for e in JS_EXT}, **{e: GO_DEF for e in GO_EXT},
+                 **{e: RS_DEF for e in RS_EXT}}.get(ext)
+        if not regex:
+            continue
+        lang = {".py": "python", ".go": "go", ".rs": "rust"}.get(ext, "javascript")
+        for m in regex.finditer(text):
+            name = next(g for g in m.groups() if g)
+            if name in ENTRY_SYMBOLS or name.startswith("__"):
+                continue
+            before = text[:m.start()].rstrip("\n").rsplit("\n", 1)[-1].strip()
+            if before.startswith(("@", "#[")):
+                decorated_skipped += 1
+                continue
+            words = [w for w in re.split(r"[\s(]+", m.group(0)) if w and w not in MODIFIERS and not w.startswith("pub")]
+            kind = words[0].rstrip("*") if words and words[0] != name else "constant"
+            defs[name].append({"name": name, "kind": kind, "language": lang,
+                               "location": f"{rel}:{line_of(text, m.start())}",
+                               "exported": m.group(0).startswith(("export", "pub")) or (lang == "go" and name[0].isupper())})
+    rows["unreferenced_symbols"] = sorted(
+        (d for name, ds in defs.items() if idents[name] - len(ds) <= 0 for d in ds),
+        key=lambda d: loc_key(d["location"]))
+
+    # Imports and orphan files.
+    files = set(texts)
+    inbound = defaultdict(set)
+    js_packages, py_modules, go_imports, rs_crates = Counter(), Counter(), Counter(), Counter()
+
+    def resolve_js(rel, spec):
+        base = (Path(rel).parent / spec).as_posix() if spec.startswith(".") else spec.lstrip("/")
+        base = os.path.normpath(base).replace(os.sep, "/")
+        for ext in JS_RESOLVE:
+            if base + ext in files:
+                return base + ext
+        return None
+
+    def resolve_py(rel, dots, module, names):
+        if dots:
+            pkg = Path(rel).parent
+            for _ in range(len(dots) - 1):
+                pkg = pkg.parent
+            bases = [pkg.as_posix().strip(".") or ""]
+        else:
+            bases = ["", "src"]
+        targets = []
+        for base in bases:
+            stem = "/".join(x for x in [base, module.replace(".", "/")] if x)
+            for cand in (stem + ".py", stem + "/__init__.py"):
+                if cand in files:
+                    targets.append(cand)
+            for name in names:
+                for cand in (f"{stem}/{name}.py" if stem else f"{name}.py", f"{stem}/{name}/__init__.py"):
+                    if cand in files:
+                        targets.append(cand)
+        return targets
+
+    for rel in code_files:
+        ext, text = suffix(rel), texts[rel]
+        if ext in JS_EXT or ext in (".html", ".htm"):
+            for m in JS_IMPORT.finditer(text):
+                spec = next(g for g in m.groups() if g)
+                if spec.startswith((".", "/")):
+                    target = resolve_js(rel, spec)
+                    if target:
+                        inbound[target].add(rel)
+                else:
+                    pkg = js_package(spec)
+                    if pkg:
+                        js_packages[pkg] += 1
+        elif ext in PY_EXT:
+            for m in PY_IMPORT.finditer(text):
+                for part in m.group(1).split(","):
+                    module = part.split(" as ")[0].strip()
+                    py_modules[module.split(".")[0]] += 1
+                    for target in resolve_py(rel, "", module, []):
+                        inbound[target].add(rel)
+            for m in PY_FROM.finditer(text):
+                dots, module = m.group(1), m.group(2)
+                names = [n.split(" as ")[0].strip() for n in m.group(3).strip("()").replace("\n", " ").split(",")]
+                if not dots and module:
+                    py_modules[module.split(".")[0]] += 1
+                for target in resolve_py(rel, dots, module, [n for n in names if n and n != "*"]):
+                    inbound[target].add(rel)
+        elif ext in GO_EXT:
+            for m in GO_IMPORT.finditer(text):
+                go_imports[m.group(1)] += 1
+        elif ext in RS_EXT:
+            for m in RS_USE.finditer(text):
+                rs_crates[m.group(1) or m.group(2)] += 1
+    orphans = []
+    for rel in sorted(code_files):
+        if suffix(rel) not in PY_EXT | JS_EXT or is_test(rel) or Path(rel).stem in ENTRY_STEMS:
+            continue
+        if re.search(r"\.config\.\w+$|\.d\.ts$", rel) or named_elsewhere(rel):
+            continue
+        importers = inbound.get(rel, set()) - {rel}
+        if any(not is_test(i) for i in importers):
+            continue
+        orphans.append({"path": rel, "test_importers": sorted(importers)})
+    rows["orphan_files"] = orphans
+
+    # Dependencies.
+    tool_text = "\n".join(t for r, t in texts.items() if TOOL_FILES.search(r))
+    declared, unimported, dup_rows, platform_rows = [], [], [], []
+    for rel, text in sorted(texts.items()):
+        name = Path(rel).name
+        deps = []
+        if name == "package.json":
+            try:
+                pkg = json.loads(text)
+            except ValueError:
+                continue
+            scripts = " ".join(str(v) for v in (pkg.get("scripts") or {}).values())
+            for section in ("dependencies", "devDependencies", "optionalDependencies"):
+                for dep in pkg.get(section) or {}:
+                    m = re.search(r"\"%s\"\s*:" % re.escape(dep), text)
+                    loc = f"{rel}:{line_of(text, m.start()) if m else 1}"
+                    deps.append((dep, section, loc, js_packages[dep],
+                                 len(re.findall(r"(?<![\w@/-])%s(?![\w-])" % re.escape(dep.split("/")[-1]),
+                                                scripts + "\n" + tool_text.replace(text, "")))))
+        elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
+            parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
+            for dep, section, loc in parsed:
+                module = py_dist_module(dep)
+                deps.append((dep, section, loc, py_modules[module],
+                             len(re.findall(r"(?<![\w-])%s(?![\w-])" % re.escape(dep), tool_text.replace(text, "")))))
+        elif name == "go.mod":
+            for dep, section, loc in parse_go_mod(rel, text):
+                deps.append((dep, section, loc, sum(n for p, n in go_imports.items() if p == dep or p.startswith(dep + "/")),
+                             0))
+        elif name == "Cargo.toml":
+            for dep, section, loc in parse_toml_lists(rel, text):
+                deps.append((dep, section, loc, rs_crates[dep.replace("-", "_")], 0))
+        if not deps:
+            continue
+        declared.append({"manifest": rel, "count": len(deps)})
+        names = {d[0].lower() for d in deps}
+        for group, members in DUPLICATE_GROUPS.items():
+            hit = sorted(names & members)
+            if len(hit) > 1:
+                dup_rows.append({"group": group, "manifest": rel, "names": hit})
+        for dep, section, loc, imports, mentions in deps:
+            if dep.lower() in PLATFORM_REPLACEABLE:
+                platform_rows.append({"name": dep, "manifest": rel, "replacement": PLATFORM_REPLACEABLE[dep.lower()],
+                                      "imports": imports, "location": loc})
+            if imports == 0:
+                unimported.append({"name": dep, "manifest": rel, "section": section, "location": loc,
+                                   "mentions": mentions, "status": "script_only" if mentions else "unreferenced",
+                                   "implicit_tool": bool(IMPLICIT_TOOLS.match(dep.lower()))})
+    rows["dependencies_declared"] = declared
+    rows["unimported_dependencies"] = unimported
+    rows["duplicate_purpose"] = dup_rows
+    rows["platform_replaceable"] = platform_rows
+
+    # Environment variables: names only, never values.
+    reads = defaultdict(list)
+    decl, decl_files = {}, []
+    for rel, text in sorted(texts.items()):
+        if ENV_DECL_FILE.match(Path(rel).name):
+            decl_files.append(rel)
+            for m in ENV_DECL.finditer(text):
+                decl.setdefault(m.group(1), f"{rel}:{line_of(text, m.start(1))}")
+            continue
+        if rel in code_files:
+            for m in ENV_READ.finditer(text):
+                reads[next(g for g in m.groups() if g)].append(f"{rel}:{line_of(text, m.start())}")
+    rows["env_read"] = [{"name": n, "count": len(locs), "locations": locs[:MAX_LOCATIONS]} for n, locs in sorted(reads.items())]
+    rows["env_declared_not_read"] = [{"name": n, "location": loc} for n, loc in sorted(decl.items()) if n not in reads]
+    rows["env_read_not_declared"] = ([{"name": n, "locations": reads[n][:MAX_LOCATIONS]}
+                                      for n in sorted(reads) if n not in decl] if decl_files else [])
+
+    # Feature flags.
+    flags = defaultdict(lambda: {"definitions": [], "values": set(), "checks": []})
+    for rel in code_files:
+        text = texts[rel]
+        if FLAG_FILE.search(rel):
+            for m in FLAG_DEF.finditer(text):
+                f = flags[m.group(1)]
+                f["definitions"].append(f"{rel}:{line_of(text, m.start(1))}")
+                f["values"].add(m.group(2).lower() in ("true", "on"))
+        for m in FLAG_CHECK.finditer(text):
+            flags[m.group(1)]["checks"].append(f"{rel}:{line_of(text, m.start())}")
+    for name, locs in reads.items():
+        if ENV_FLAG.match(name):
+            flags[name]["checks"].extend(locs)
+            flags[name]["source"] = "env"
+    rows["feature_flags"] = [
+        {"name": n, "value": (next(iter(f["values"])) if len(f["values"]) == 1 else ("mixed" if f["values"] else None)),
+         "source": f.get("source", "code"), "definitions": f["definitions"][:MAX_LOCATIONS],
+         "checks": len(f["checks"]), "locations": f["checks"][:MAX_LOCATIONS]}
+        for n, f in sorted(flags.items())]
+
+    # Locale keys.
+    quoted, prefixes = set(), set()
+    for rel in code_files:
+        if suffix(rel) == ".json":
+            continue
+        quoted.update(QUOTED.findall(texts[rel]))
+        prefixes.update(DYNAMIC_KEY.findall(texts[rel]))
+    i18n = []
+    for bundle, langs in sorted(col.locales.items()):
+        keys = defaultdict(list)
+        for lang, (rel, flat) in sorted(langs.items()):
+            for key in flat:
+                keys[key].append((lang, rel))
+        for key, where in sorted(keys.items()):
+            if key in quoted or any(key.startswith(p) for p in prefixes):
+                continue
+            first = where[0][1]
+            i18n.append({"key": key, "bundle": bundle, "langs": [lang for lang, _ in where],
+                         "location": f"{first}:{key_line(texts[first], key)}"})
+    rows["i18n_unreferenced"] = i18n
+    rows["i18n_dynamic_prefixes"] = sorted(prefixes)
+
+    # Assets.
+    rows["assets_unreferenced"] = [
+        {"path": rel, "bytes": size, "public": bool(re.match(r"(?:.*/)?(?:public|static|www)/", rel))}
+        for rel, size in sorted(col.assets) if not named_elsewhere(rel)]
+
+    # CSS classes.
+    css_tokens, class_prefixes = set(), set()
+    for rel in code_files:
+        if suffix(rel) in CSS_EXT:
+            continue
+        css_tokens.update(CSS_TOKEN.findall(texts[rel]))
+        for m in DYNAMIC_CLASS.finditer(texts[rel]):
+            class_prefixes.add(m.group(1) or m.group(2))
+    css_rows, seen_classes = [], set()
+    for rel in sorted(r for r in texts if suffix(r) in CSS_EXT):
+        text = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), texts[rel], flags=re.S)
+        for m in re.finditer(r"([^{};]+)\{", text):
+            selector = m.group(1)
+            if selector.strip().startswith("@"):
+                continue
+            for c in re.finditer(r"(?<![\w-])\.(-?[A-Za-z_][\w-]*)", selector):
+                name = c.group(1)
+                if (name in seen_classes or name in css_tokens or rel.endswith(".module.css")
+                        or any(name.startswith(p) for p in class_prefixes)):
+                    continue
+                seen_classes.add(name)
+                css_rows.append({"class": name, "location": f"{rel}:{line_of(text, m.start(1) + c.start())}"})
+    rows["css_unreferenced"] = css_rows
+    rows["css_dynamic_prefixes"] = sorted(class_prefixes)
+
+    # Routes.
+    route_rows, seen_routes = [], set()
+    for rel in code_files:
+        text = texts[rel]
+        for kind, regex in ROUTE_DEFS:
+            for m in regex.finditer(text):
+                route = m.group(2)
+                where = f"{rel}:{line_of(text, m.start())}"
+                if (kind == "client" and suffix(rel) not in JS_EXT) or (where, route) in seen_routes:
+                    continue
+                seen_routes.add((where, route))
+                route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
+                                   "kind": kind, "location": where})
+    for row in route_rows:
+        route = row["route"] if row["route"].startswith("/") or row["kind"] == "client" else "/" + row["route"]
+        parts = [re.escape(p) for p in PARAM.split(route)]
+        pattern = r"(?:\$\{[^}]*\}|[^/\"'`\s?#]+)".join(parts)
+        static = PARAM.sub("", route).strip("/^$")
+        row["dynamic"] = bool(PARAM.search(route))
+        if not static:
+            row["mentions"], row["mentioned_in"] = None, []
+            continue
+        rx = re.compile(r"(?<![\w/])%s(?![\w/-])" % pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", ""))
+        defined_at = row["location"].rsplit(":", 1)
+        where = []
+        for rel, text in texts.items():
+            hits = [m for m in rx.finditer(text)]
+            if rel == defined_at[0]:
+                hits = [m for m in hits if line_of(text, m.start()) != int(defined_at[1])]
+            if hits:
+                where.append(rel)
+        row["mentions"], row["mentioned_in"] = len(where), sorted(where)[:MAX_LOCATIONS]
+    route_rows.sort(key=lambda r: loc_key(r["location"]))
+    rows["routes"] = route_rows
+    rows["unreferenced_routes"] = [r for r in route_rows if r["mentions"] == 0]
+
+    # Make targets and package scripts.
+    all_text = list(texts.items())
+    script_rows = []
+    for rel, text in sorted(texts.items()):
+        name = Path(rel).name
+        if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):
+            targets = [m for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith(".")]
+            for n, m in enumerate(targets):
+                rx = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?:\s+-\S+)*(?:\s+[\w.-]+=\S+)*\s+(?:[\w.-]+\s+)*?"
+                                r"%s(?![\w.:-])" % re.escape(m.group(1)))
+                hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
+                script_rows.append({"source": rel, "name": m.group(1), "location": f"{rel}:{line_of(text, m.start())}",
+                                    "invocations": hits, "default": n == 0})
+        elif name == "package.json":
+            try:
+                scripts = json.loads(text).get("scripts") or {}
+            except ValueError:
+                continue
+            for script in scripts:
+                rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:\s+--?[\w-]+)*\s+(?:run(?:-script)?\s+)?%s(?![\w:.-])"
+                                % re.escape(script))
+                hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
+                lifecycle = bool(re.match(r"^(?:pre|post)", script) and script[3:].lstrip("t") in scripts
+                                 or script in ("install", "prepare", "prepublishOnly", "postinstall", "preinstall"))
+                m = re.search(r"\"%s\"\s*:" % re.escape(script), text)
+                script_rows.append({"source": rel, "name": script, "location": f"{rel}:{line_of(text, m.start()) if m else 1}",
+                                    "invocations": hits, "default": lifecycle})
+    rows["scripts"] = script_rows
+    rows["uninvoked_scripts"] = [r for r in script_rows if r["invocations"] == 0 and not r["default"]]
+
+    # Loose files: scripts, SQL and docs nothing names.
+    loose = []
+    for rel in sorted(texts):
+        p = Path(rel)
+        if p.suffix.lower() not in LOOSE_EXT or "migrations" in p.parts or p.stem.lower() in ROOT_DOCS:
+            continue
+        if not (set(x.lower() for x in p.parts[:-1]) & LOOSE_DIRS) or named_elsewhere(rel):
+            continue
+        loose.append({"path": rel, "kind": {".sql": "sql", ".md": "doc", ".rst": "doc", ".txt": "doc"}.get(
+            p.suffix.lower(), "script")})
+    rows["unreferenced_files"] = loose
+
+    # Skipped tests, commented-out code, dated markers.
+    skipped, commented, markers = [], [], []
+    for rel, text in sorted(texts.items()):
+        ext = suffix(rel)
+        if rel in code_files and is_test(rel):
+            for m in SKIPPED_TEST.finditer(text):
+                line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
+                skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": line[:120]})
+        if ext in SOURCE_EXT | {".sql", ".sh", ".yml", ".yaml", ".toml"} | CSS_EXT:
+            run = []
+            for n, line in enumerate(text.splitlines() + [""], 1):
+                m = COMMENT_LINE.match(line)
+                if m and not line.lstrip().startswith(("#!", "# -*-")):
+                    run.append((n, m.group(1)))
+                    continue
+                if len(run) >= 4:
+                    code = sum(1 for _, body in run if CODE_LIKE.search(body))
+                    if code / len(run) >= 0.6:
+                        commented.append({"location": f"{rel}:{run[0][0]}-{run[-1][0]}", "lines": len(run)})
+                run = []
+        if ext in PROSE_EXT or rel in locale_files or ext == ".json":
+            continue
+        for n, line in enumerate(text.splitlines(), 1):
+            m = MARKER.search(line)
+            if not m:
+                continue
+            word = m.group(1).lower()
+            date = DATE.search(line)
+            if not date and word not in ALWAYS_MARKERS and not word.startswith("remove"):
+                continue
+            row = {"marker": word, "location": f"{rel}:{n}", "text": line.strip()[:120]}
+            if date:
+                row["date"] = date.group(1)
+                row["overdue"] = date.group(1) < today[:len(date.group(1))]
+            markers.append(row)
+    rows["skipped_tests"] = skipped
+    rows["commented_code"] = commented
+    rows["markers"] = markers
+
+    # SQL schema: tables and columns no non-SQL code names.
+    tables, columns = [], []
+    for rel in sorted(r for r in texts if suffix(r) == ".sql"):
+        text = texts[rel]
+        for m in CREATE_TABLE.finditer(text):
+            table = m.group(1)
+            if idents[table] == 0:
+                tables.append({"table": table, "location": f"{rel}:{line_of(text, m.start())}"})
+                continue
+            for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", m.group(2)):
+                col_name = c.group(1)
+                if col_name.lower() in SQL_CONSTRAINT or idents[col_name]:
+                    continue
+                columns.append({"table": table, "column": col_name,
+                                "location": f"{rel}:{line_of(text, m.start(2) + c.start(1))}"})
+    rows["sql_tables_unreferenced"] = tables
+    rows["sql_columns_unreferenced"] = columns
+
+    if units:
+        tag_units(rows, units)
+
+    # Caps apply only after every list was measured; each cut is counted.
+    truncated = {}
+    for key, value in rows.items():
+        if isinstance(value, list) and len(value) > MAX_ROWS:
+            truncated[key] = len(value) - MAX_ROWS
+            rows[key] = value[:MAX_ROWS]
+    return {
+        "tool": "inventory.py", "version": 1, "repository": root.name, "today": today,
+        "files_scanned": len(texts), "files_skipped": col.skipped,
+        "env_declaration_files": decl_files, "decorated_symbols_skipped": decorated_skipped,
+        **rows,
+        "limits": {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "file_bytes": MAX_BYTES},
+        "truncated": truncated,
+    }
+
+
+def tag_units(rows, units):
+    """Tag every row that has a path with the most specific unit whose paths cover it; add per-unit counts."""
+    prefixes = sorted(((p.strip("/") if p not in (".", "./") else "", u["id"]) for u in units["units"] for p in u["paths"]),
+                      key=lambda x: -len(x[0]))
+
+    def unit_of(rel):
+        for prefix, uid in prefixes:
+            if not prefix or rel == prefix or rel.startswith(prefix + "/"):
+                return uid
+        return None
+    counts = Counter()
+    for value in rows.values():
+        if not isinstance(value, list):
+            continue
+        for row in value:
+            if not isinstance(row, dict):
+                continue
+            where = row.get("path") or (row.get("location") or "").rsplit(":", 1)[0] or row.get("manifest")
+            if where:
+                row["unit"] = unit_of(where.split(":")[0])
+                counts[row["unit"] or "none"] += 1
+    rows["by_unit"] = dict(sorted(counts.items()))
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("repo")
+    p.add_argument("--out", required=True)
+    p.add_argument("--units")
+    p.add_argument("--today", help="date that markers are judged overdue against (default: today)")
+    a = p.parse_args(argv)
+    if not Path(a.repo).is_dir():
+        print(f"inventory.py: {a.repo} is not a directory", file=sys.stderr)
+        return 2
+    if a.today and not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", a.today):
+        print("inventory.py: --today expects YYYY-MM-DD", file=sys.stderr)
+        return 2
+    units = None
+    if a.units:
+        try:
+            units = check_units(json.loads(Path(a.units).read_text(encoding="utf-8")))
+        except (OSError, ValueError, RecordError) as e:
+            print(f"inventory.py: units: {e}", file=sys.stderr)
+            return 2
+    result = inventory(a.repo, units, a.today)
+    try:
+        write_output(Path(a.out), json.dumps(result, ensure_ascii=False, indent=2) + "\n")
+    except OSError as e:
+        print(f"inventory.py: cannot write {a.out}: {e.strerror or e}", file=sys.stderr)
+        return 1
+    counts = ", ".join(f"{len(result[k])} {k.replace('_', ' ')}" for k in (
+        "unreferenced_symbols", "orphan_files", "unimported_dependencies", "feature_flags", "unreferenced_routes",
+        "i18n_unreferenced", "assets_unreferenced", "css_unreferenced"))
+    print(f"wrote {a.out}: {result['files_scanned']} files, {counts}"
+          + (f"; truncated {', '.join(result['truncated'])}" if result["truncated"] else ""))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

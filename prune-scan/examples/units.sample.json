@@ -1,0 +1,52 @@
+{
+  "app": "Larder (fictional sample)",
+  "purpose": [
+    {"id": "PB-01", "kind": "statement", "text": "Track what is in one household's pantry so food is used before it expires.",
+     "source": "documented", "evidence": "README.md:3"},
+    {"id": "PB-02", "kind": "user", "text": "One household (one to six people) using the web app.",
+     "source": "documented", "evidence": "README.md:4"},
+    {"id": "PB-03", "kind": "job", "text": "Add, list and remove pantry items.", "source": "documented", "evidence": "README.md:7"},
+    {"id": "PB-04", "kind": "job", "text": "Get an email reminder before an item expires.", "source": "documented",
+     "evidence": "README.md:8"},
+    {"id": "PB-05", "kind": "non_goal", "text": "Social, sharing or comparison features between households.",
+     "source": "documented", "evidence": "README.md:11"},
+    {"id": "PB-06", "kind": "scale", "text": "Ordinary household equipment: a browser or phone, no barcode or label printers.",
+     "source": "inferred", "evidence": "README.md:4 names only the web app; no doc, issue or config mentions printers"}
+  ],
+  "entry_points": [
+    {"id": "EP-01", "kind": "endpoint", "name": "Items API: GET and POST /api/items, DELETE /api/items/<id>",
+     "location": "server/app.py:19", "exposure": "public"},
+    {"id": "EP-02", "kind": "endpoint", "name": "GET /api/items/<id>/label", "location": "server/app.py:35", "exposure": "public"},
+    {"id": "EP-03", "kind": "endpoint", "name": "GET /api/leaderboard", "location": "server/app.py:40", "exposure": "public"},
+    {"id": "EP-04", "kind": "endpoint", "name": "GET /api/v1/items (deprecated)", "location": "server/app.py:45", "exposure": "public"},
+    {"id": "EP-05", "kind": "endpoint", "name": "GET /api/export/csv", "location": "server/app.py:51", "exposure": "public"},
+    {"id": "EP-06", "kind": "endpoint", "name": "GET /debug/dump", "location": "server/app.py:56", "exposure": "public"},
+    {"id": "EP-07", "kind": "webhook", "name": "POST /webhooks/stripe", "location": "server/app.py:61", "exposure": "partner"},
+    {"id": "EP-08", "kind": "endpoint", "name": "GET /auth/login and /auth/callback (Google sign-in)",
+     "location": "server/app.py:67", "exposure": "public"},
+    {"id": "EP-09", "kind": "hook", "name": "before_request: bucket_visitor", "location": "server/app.py:14", "exposure": "internal"},
+    {"id": "EP-10", "kind": "screen", "name": "Home (/)", "location": "web/src/App.tsx:12", "exposure": "public"},
+    {"id": "EP-11", "kind": "screen", "name": "Item (/items/:id)", "location": "web/src/App.tsx:13", "exposure": "public"},
+    {"id": "EP-12", "kind": "screen", "name": "Reports (/reports)", "location": "web/src/App.tsx:14", "exposure": "public"},
+    {"id": "EP-13", "kind": "cli", "name": "node scripts/seed.js (npm run seed)", "location": "scripts/seed.js:1", "exposure": "internal"},
+    {"id": "EP-14", "kind": "job", "name": "Make targets and CI jobs", "location": "Makefile:1", "exposure": "internal"}
+  ],
+  "consumers": [
+    {"name": "Web app (web/)", "kind": "web", "in_repo": true, "evidence": "docs/clients.md:5"},
+    {"name": "iOS app 2.x", "kind": "mobile", "in_repo": false, "evidence": "docs/clients.md:6"},
+    {"name": "Stripe (integration removed)", "kind": "partner", "in_repo": false,
+     "evidence": "requirements.txt:5 pins stripe; nothing imports it"},
+    {"name": "Google OAuth", "kind": "partner", "in_repo": false, "evidence": "server/oauth.py:13 redirects to Google, which calls /auth/callback"},
+    {"name": "Developers and CI", "kind": "ops", "in_repo": true, "evidence": ".github/workflows/ci.yml:1"}
+  ],
+  "units": [
+    {"id": "UN-01", "name": "Server API", "kind": "area", "paths": ["server/"],
+     "entry_points": ["EP-01", "EP-02", "EP-03", "EP-04", "EP-05", "EP-06", "EP-07", "EP-08", "EP-09"]},
+    {"id": "UN-02", "name": "Web app", "kind": "area", "paths": ["web/"], "entry_points": ["EP-10", "EP-11", "EP-12"]},
+    {"id": "UN-03", "name": "Data and schema", "kind": "area", "paths": ["server/db/"]},
+    {"id": "UN-04", "name": "Tests, tooling and docs", "kind": "shared",
+     "paths": ["tests/", "scripts/", ".github/", "Makefile", "docs/"], "entry_points": ["EP-13", "EP-14"]},
+    {"id": "UN-05", "name": "Dependencies and configuration", "kind": "shared",
+     "paths": ["package.json", "requirements.txt", ".env.example", "server/config.py"]}
+  ]
+}

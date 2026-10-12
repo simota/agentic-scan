@@ -1,0 +1,1148 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "Larder(架空のサンプル)",
+    "date": "2026-10-12",
+    "assessor": "prune-scan / サンプルデータ",
+    "scope": "examples/larder:サーバー API、Web アプリ、スキーマ、テスト、ツール、ドキュメント",
+    "method": "units.json の目的ベースライン・入口・利用者に照らした、静的な引き算(マイナスデザイン)のレビュー",
+    "commit": "sample"
+  },
+  "summary": "Larder の目的は 1 世帯の食品庫を管理し、期限前にメールで知らせることだが、リポジトリの多くはその役に立っていない。5 件は現役の負債である:終了した A/B テストが全リクエストで訪問者 IP を書き込み、/debug/dump が全シークレットを返し、Stripe 撤去後も Webhook が署名なしの書き込みを受け付け、廃止した連携の Mailchimp キーを保持し、ログインがカレンダーへの全権限を要求している。未使用のもの以外に、使われてはいるが役割に見合わない機能が 2 つある:明記された非目標に仕える世帯ランキングと、メールだけの仕事に 4 チャネルを備えた通知レジストリである。これらを引き算しても製品は同じで、より小さく変えやすくなる。",
+  "findings": [
+    {
+      "id": "P-001",
+      "title": "終了した A/B テストが全リクエストで動き、訪問者の IP を保存し続けている",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-09",
+      "element": "終了済みの価格 A/B テスト(assign_bucket)",
+      "location": "server/ab_test.py:7",
+      "occurrences": [
+        "server/ab_test.py:7",
+        "server/app.py:14"
+      ],
+      "observed": "@app.before_request bucket_visitor -> assign_bucket() INSERTs (remote_addr, bucket) when no cookie",
+      "basis": "モジュール自身が 2025-03-31 に実験終了・A 案採用と記している(server/ab_test.py:1、inventory markers で期限超過)。experiment_assignments もバケットもどこからも読まれていない(SELECT なし、ガード以外で cookie を読む箇所なし)。",
+      "impact": "bucket cookie のない全リクエストで DB 書き込みが発生し、目的を失った個人データ(IP アドレス)を集め続けている。",
+      "subtraction": {
+        "action": "remove",
+        "what": "server/ab_test.py と server/app.py:14 の before_request フック。",
+        "remains": "リクエストはそのままハンドラーへ届く。価格は既に A 案のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "コード上はなし。書き込み先テーブルは P-009 で扱い、保存義務の確認後に削除する。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "experiment_assignments の検索結果は server/ab_test.py:9 の INSERT と DDL のみ。bucket を読む箇所なし。",
+        "dynamic_checked": "assign_bucket とテーブル名を getattr・登録型ディスパッチ・テンプレート・CI・ドキュメントで検索。該当なし。"
+      }
+    },
+    {
+      "id": "P-002",
+      "title": "認証なしの /debug/dump がシークレットを含む設定全体を返す",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "UF3",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-06",
+      "element": "Route GET /debug/dump",
+      "location": "server/app.py:56",
+      "observed": "return jsonify({key: str(value) for key, value in app.config.items()})",
+      "basis": "クライアント・テスト・ドキュメント・スクリプトのどれも /debug/dump を参照しない(inventory unreferenced_routes)。デバッグ用の残骸で、どのコアジョブ(PB-03、PB-04)にも属さない。",
+      "impact": "パスを知った誰もが SECRET_KEY と MAILCHIMP_API_KEY を読める(app.config は server/config.py から読み込まれる)。",
+      "subtraction": {
+        "action": "remove",
+        "what": "/debug/dump ルート。",
+        "remains": "デバッグはローカルのログやデバッガーで行う。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。既に読まれた可能性があるため削除後に SECRET_KEY をローテーションする。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory routes で /debug/dump の言及は 0。認証デコレーターも before_request の検査もない。",
+        "dynamic_checked": "運用ドキュメント・CI・Makefile・監視設定でパスを検索。該当なし。"
+      }
+    },
+    {
+      "id": "P-003",
+      "title": "Stripe 撤去後も署名検証なしの Stripe Webhook が書き込みを受け付ける",
+      "severity": "High",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "PI2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-07",
+      "element": "Webhook POST /webhooks/stripe",
+      "location": "server/app.py:61",
+      "occurrences": [
+        "server/app.py:61",
+        "server/items.py:39"
+      ],
+      "observed": "stripe_webhook() passes request.json to record_payment(), which INSERTs into payments; no signature check",
+      "basis": "stripe を import するコードはなく(inventory unimported_dependencies)、支払い画面もなく、payments を読む箇所もない。",
+      "impact": "誰でも payments に行を書き込める。攻撃面として残っているだけのエンドポイント。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルート、items.record_payment、stripe の固定(P-020)。",
+        "remains": "支払い機能を持たない、製品どおりの形。",
+        "loses": "アプリ側はなし。Stripe 側でエンドポイントを消すまで配信失敗が記録されうる。"
+      },
+      "risk": "Stripe 側にまだ配信設定が残っている可能性がある。Stripe ダッシュボードで確認する(decisions)。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "stripe の検索結果はルート・payments.stripe_id・固定のみ。import も payments の SELECT もない。",
+        "dynamic_checked": "考えうる呼び出し元はリポジトリ外(Stripe)のみで、静的には観測できない。"
+      }
+    },
+    {
+      "id": "P-004",
+      "title": "廃止済み連携の Mailchimp API キーをまだ読み込んでいる",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CF2",
+      "unit_ref": "UN-05",
+      "element": "Setting MAILCHIMP_API_KEY",
+      "location": "server/config.py:6",
+      "occurrences": [
+        "server/config.py:6",
+        ".env.example:3"
+      ],
+      "observed": "MAILCHIMP_API_KEY = os.getenv(\"MAILCHIMP_API_KEY\")",
+      "basis": "config.MAILCHIMP_API_KEY を読むコードもメーリングリスト関連のコードもない。通知は server/notify.py 経由。",
+      "impact": "外部サービスの有効なシークレットを全環境で保持し、/debug/dump(P-002)からも漏れる。",
+      "subtraction": {
+        "action": "remove",
+        "what": "設定と .env.example の行。Mailchimp 側でキーを失効させる。",
+        "remains": "設定には実際に呼ぶサービスだけが残る。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "コード上はなし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory env_read では定義箇所の 1 件のみ。MAILCHIMP の検索結果は config.py と .env.example のみ。",
+        "dynamic_checked": "app.config.from_object で全定数が名前で公開されるため、app.config[...] と .get(...) を検索。該当なし。"
+      }
+    },
+    {
+      "id": "P-005",
+      "title": "ログインで Google カレンダーへの全権限を要求しているが使っていない",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "PI1",
+      "unit_ref": "UN-01",
+      "element": "OAuth scope https://www.googleapis.com/auth/calendar",
+      "location": "server/oauth.py:9",
+      "observed": "SCOPES = [\"openid\", \"email\", \"https://www.googleapis.com/auth/calendar\"]",
+      "basis": "Calendar API を呼ぶコードはなく、on_login はメールアドレスしか保存しない。カレンダーを使うコアジョブもない(PB-03、PB-04)。",
+      "impact": "全利用者がカレンダーの読み書き権限を許可させられ、同意画面が製品に必要な範囲を超える。",
+      "subtraction": {
+        "action": "reduce",
+        "what": "calendar スコープ。",
+        "remains": "ログインに足りる openid と email。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "既に許可した利用者には許可が残るが、アプリは何も壊れない。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "googleapis と calendar の検索結果はこの行のみ。requests を使うのは server/notify.py だけ。",
+        "dynamic_checked": "トークンを保存していないため、他サービスからも使えない。"
+      }
+    },
+    {
+      "id": "P-006",
+      "title": "moment は dayjs と役割が重複し、フラグが通らない分岐でしか使われていない",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP2",
+      "unit_ref": "UN-05",
+      "element": "Dependency moment",
+      "location": "package.json:15",
+      "occurrences": [
+        "package.json:15",
+        "web/src/pages/Item.tsx:1"
+      ],
+      "observed": "import moment from \"moment\" — used once, in the else branch of isEnabled(\"new_checkout\")",
+      "basis": "inventory duplicate_purpose の dates(dayjs, moment)。dayjs は web/src/lib/date.ts で使用中。moment の唯一の呼び出しは P-010 のデッド分岐内。",
+      "impact": "2 つ目の日付ライブラリ(dayjs の約 10 倍のサイズ)を Web バンドルに抱えている。",
+      "subtraction": {
+        "action": "remove",
+        "what": "P-010 と同時に package.json の moment と import。",
+        "remains": "日付ライブラリは dayjs のみ。",
+        "loses": "誰も見ない旧チェックアウトの相対時刻表示。"
+      },
+      "risk": "P-010 の後に行わないと旧分岐がコンパイルできない。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "moment の検索結果は package.json と web/src/pages/Item.tsx のみ。",
+        "dynamic_checked": "moment の動的 import()・require・CDN の script タグなし。"
+      }
+    },
+    {
+      "id": "P-007",
+      "title": "世帯ランキングは明記された非目標のための機能",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "PX2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-03",
+      "purpose_ref": "PB-05",
+      "element": "Household leaderboard (GET /api/leaderboard and its widget)",
+      "location": "server/app.py:40",
+      "occurrences": [
+        "server/app.py:40",
+        "server/leaderboard.py:5",
+        "web/src/components/Leaderboard.tsx:6",
+        "web/src/pages/Home.tsx:27",
+        "server/db/schema.sql:6"
+      ],
+      "observed": "Home renders <Leaderboard />, which ranks households by items saved via GET /api/leaderboard",
+      "basis": "README.md:11 は世帯間の比較を非目標と明記し、Larder は 1 世帯向け(PB-02)。機能は使われている(Home が表示)からこそ、デッドコードではなく引き算の対象になる。",
+      "impact": "ルート・モジュール・コンポーネント・列(items.household)・世帯横断クエリを保守し続け、製品が自ら否定する方向へ引っ張られる。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルート、server/leaderboard.py、Leaderboard.tsx と Home での利用。",
+        "remains": "Home は自分の世帯の食品庫だけを表示する。",
+        "loses": "非目標である世帯の週間ランキング。"
+      },
+      "risk": "ウィジェットを気に入っていた利用者は失う。items.household が未使用になる(P-024 の移行で併せて削除)。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "非目標が明記されている(README.md:11)。/api/leaderboard の呼び出し元は Leaderboard.tsx のみ。",
+        "dynamic_checked": "units.json の他の利用者は呼ばない。iOS アプリ 2.x は /api/v1/items のみ(docs/clients.md:6)。"
+      }
+    },
+    {
+      "id": "P-008",
+      "title": "CSV エクスポートの呼び出し元がアプリ内にない",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "UF1",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-05",
+      "element": "Route GET /api/export/csv",
+      "location": "server/app.py:51",
+      "occurrences": [
+        "server/app.py:51",
+        "server/items.py:31"
+      ],
+      "observed": "export_csv() writes every item as CSV; no screen links to it",
+      "basis": "inventory unreferenced_routes で言及 0。画面・スクリプト・ドキュメントのどれも名指ししない。エクスポートを求めるコアジョブもない。",
+      "impact": "公開エンドポイントと整形コードを品目モデルの変更に合わせ続ける必要がある。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルートと items.export_csv。",
+        "remains": "品目は /api/items で読む。",
+        "loses": "ブックマークしている人がいれば、その CSV ダウンロード。"
+      },
+      "risk": "リポジトリ外の手作業やスクリプトから呼ばれている可能性がある。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "export/csv の検索結果はルートのみ。",
+        "dynamic_checked": "外部からの呼び出しは静的には見えない。アクセスログで決着する。"
+      }
+    },
+    {
+      "id": "P-009",
+      "title": "終了した実験の訪問者 IP を書き込むだけのテーブル",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA2",
+      "unit_ref": "UN-03",
+      "element": "Table experiment_assignments",
+      "location": "server/db/schema.sql:22",
+      "observed": "CREATE TABLE experiment_assignments (visitor TEXT, bucket TEXT)",
+      "basis": "P-001 からの書き込みのみで、読むコードはない。",
+      "impact": "目的のない個人データを保持し、トラフィックに比例して増える。",
+      "subtraction": {
+        "action": "remove",
+        "what": "P-001 の後、マイグレーションでテーブルを削除。",
+        "remains": "実験データなし。",
+        "loses": "分析したい人がいれば、その生の割り当てデータ。"
+      },
+      "risk": "個人データの保存・削除義務がありうる。その方針に従ってエクスポートまたは削除する。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "experiment_assignments の検索結果は DDL と INSERT 1 件。",
+        "dynamic_checked": "リポジトリ外の分析者や BI ツールが読む可能性があり、ここからは見えない。"
+      }
+    },
+    {
+      "id": "P-010",
+      "title": "new_checkout は全環境で有効なのに、新旧両方のチェックアウト経路を保守している",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF1",
+      "unit_ref": "UN-01",
+      "element": "Feature flag new_checkout (server and web)",
+      "location": "server/flags.py:4",
+      "occurrences": [
+        "server/flags.py:4",
+        "web/src/flags.ts:3",
+        "server/items.py:16",
+        "web/src/pages/Item.tsx:17"
+      ],
+      "observed": "FLAGS = {\"new_checkout\": True} and flags.ts new_checkout: true; both if/else branches kept",
+      "basis": "inventory feature_flags で new_checkout は両定義とも true、上書きなし、判定 2 箇所。旧分岐は決して実行されない。utils.py:9 も「new_checkout is on everywhere」と記す。",
+      "impact": "価格やチェックアウトの変更を毎回 2 回行う必要があり、旧分岐が moment を延命させている(P-006)。",
+      "subtraction": {
+        "action": "remove",
+        "what": "フラグ、2 つの定義、旧分岐。",
+        "remains": "新チェックアウトの経路だけが無条件に残る。",
+        "loses": "旧チェックアウトへ戻す切り替え。全面展開以降使われていない。"
+      },
+      "risk": "コード上はなし。旧価格形式を前提にしたテストは併せて修正する。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "FLAGS を上書きする環境変数・リモートフラグサービス・設定ファイルはない。",
+        "dynamic_checked": "FLAGS[...] への代入と、文字列から組み立てた is_enabled 呼び出しを検索。該当なし。"
+      }
+    },
+    {
+      "id": "P-011",
+      "title": "パートナー向け XML エクスポートは自身のテストからしか import されない",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC2",
+      "unit_ref": "UN-01",
+      "element": "Module server/legacy_export.py",
+      "location": "server/legacy_export.py:1",
+      "occurrences": [
+        "server/legacy_export.py:1",
+        "tests/test_legacy_export.py:1"
+      ],
+      "observed": "export_xml() builds an <items> feed; tests/test_legacy_export.py is its only importer",
+      "basis": "inventory orphan_files で import 元はテストのみ。docstring がパートナー契約の終了を記す。",
+      "impact": "モジュール 1 つとテスト 1 つが CI で動き続け、list_items の変更に追従させる必要がある。",
+      "subtraction": {
+        "action": "remove",
+        "what": "モジュールと tests/test_legacy_export.py。",
+        "remains": "XML フィードなし。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。公開しているルートもない。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "legacy_export と export_xml の検索結果はモジュールとテストのみ。",
+        "dynamic_checked": "importlib・エントリーポイント・文字列で組み立てたモジュール名による参照なし。"
+      }
+    },
+    {
+      "id": "P-012",
+      "title": "メール通知が仕事の製品に 4 種類の通知チャネルがある",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "OB1",
+      "unit_ref": "UN-01",
+      "purpose_ref": "PB-04",
+      "element": "Notification channel registry (email, Slack, SMS, webhook)",
+      "location": "server/notify.py:23",
+      "occurrences": [
+        "server/notify.py:23",
+        "server/notify.py:28",
+        "server/notify.py:33",
+        "server/notify.py:38"
+      ],
+      "observed": "NOTIFIERS = {email, slack, sms, webhook}; NOTIFY_CHANNELS defaults to \"email\"",
+      "basis": "コアジョブはメール通知(PB-04)。.env.example は NOTIFY_CHANNELS=email と SMTP_HOST だけを宣言し、SLACK_WEBHOOK_URL・SMS_GATEWAY_URL・NOTIFY_WEBHOOK_URL は読まれるがどこにも宣言されていない(inventory env_read_not_declared)。",
+      "impact": "設定した利用者のいない 3 チャネルについて、シークレット・失敗時の挙動・HTTP 呼び出しを保守し続ける。",
+      "subtraction": {
+        "action": "reduce",
+        "what": "SlackNotifier・SmsNotifier・WebhookNotifier とレジストリ。",
+        "remains": "リマインダーをメールで送る 1 つの send()。",
+        "loses": "既知のどのデプロイでも設定されていない Slack・SMS・Webhook 配信。"
+      },
+      "risk": "本番環境で email 以外の NOTIFY_CHANNELS を設定している可能性がある。デプロイ設定を確認する(decisions)。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "units.json の PB-04(文書化済み)。inventory env_read_not_declared に 3 チャネルの URL が並ぶ。",
+        "dynamic_checked": "デプロイ環境の環境変数はリポジトリ外。"
+      }
+    },
+    {
+      "id": "P-013",
+      "title": "レポート画面はどこからもリンクされず、存在しない API を呼んでいる",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "UF2",
+      "unit_ref": "UN-02",
+      "entry_ref": "EP-12",
+      "element": "Screen /reports (Reports.tsx)",
+      "location": "web/src/App.tsx:14",
+      "occurrences": [
+        "web/src/App.tsx:14",
+        "web/src/pages/Reports.tsx:1"
+      ],
+      "observed": "<Route path=\"/reports\" element={<Reports />} />; Reports fetches /api/reports/summary",
+      "basis": "inventory unreferenced_routes で /reports の言及は 0。Nav は / とログインのみ。/api/reports/summary を提供するサーバールートはなく、画面は動作し得ない。",
+      "impact": "URL で到達できる壊れた画面と、保守対象のルートとページ。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルートと web/src/pages/Reports.tsx。",
+        "remains": "Home と品目画面。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。現状でも画面はエラーになる。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "/reports と reports/summary の検索結果はルート・ページ・ロケールキーのみ。",
+        "dynamic_checked": "文字列から組み立てた navigate() や href で /reports に至るものはない。"
+      }
+    },
+    {
+      "id": "P-014",
+      "title": "価格整形が 2 つあり食い違う:Home は $2.50、品目画面は $3",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DU1",
+      "unit_ref": "UN-02",
+      "element": "Price formatter toCurrency (beside formatPrice)",
+      "location": "web/src/lib/currency.ts:2",
+      "occurrences": [
+        "web/src/lib/currency.ts:2",
+        "web/src/lib/money.ts:1"
+      ],
+      "observed": "toCurrency rounds to whole dollars; formatPrice keeps cents",
+      "basis": "1 つの機能に 2 つの実装があり、両方とも使用中(Home は formatPrice、Item は toCurrency)。コメントは toCurrency がレポート画面(P-013)用に追加されたと記す。",
+      "impact": "同じ品目が 2 つの価格で表示され、通貨関連の変更を毎回 2 回行う必要がある。",
+      "subtraction": {
+        "action": "consolidate",
+        "what": "web/src/lib/currency.ts を formatPrice に統合。",
+        "remains": "セント単位で整形する 1 つの関数。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "品目画面の表示が「$3」から「$2.50」に変わるが、これが本来の表示。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "toCurrency の利用は Item.tsx と Reports.tsx、formatPrice は Home.tsx。",
+        "dynamic_checked": "どちらも静的 import。"
+      }
+    },
+    {
+      "id": "P-015",
+      "title": "LEGACY_CDN_URL は宣言されているが読まれていない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CF1",
+      "unit_ref": "UN-05",
+      "element": "Setting LEGACY_CDN_URL",
+      "location": ".env.example:4",
+      "basis": "inventory env_declared_not_read。アセットは web/public から配信。",
+      "subtraction": {
+        "action": "remove",
+        "what": ".env.example の行。",
+        "remains": "コードが読む設定のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "LEGACY_CDN の検索結果は .env.example のみ。",
+        "dynamic_checked": "コード内に環境変数名を組み立てる処理(接頭辞 + 名前)はない。"
+      }
+    },
+    {
+      "id": "P-016",
+      "title": "deploy-heroku の CI ジョブは if: false で無効化されている",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT3",
+      "unit_ref": "UN-04",
+      "element": "CI job deploy-heroku and Make target",
+      "location": ".github/workflows/ci.yml:10",
+      "occurrences": [
+        ".github/workflows/ci.yml:10",
+        "Makefile:15"
+      ],
+      "observed": "if: false; runs make deploy-heroku (git push heroku main)",
+      "basis": "ジョブは決して実行されず、Make ターゲットはこのジョブからしか呼ばれない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ジョブと Make ターゲット。",
+        "remains": "テストを実行する CI。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory scripts で deploy-heroku の呼び出しは無効化されたジョブからの 1 件。",
+        "dynamic_checked": "workflow_call などでジョブを再利用するワークフローはない。"
+      }
+    },
+    {
+      "id": "P-017",
+      "title": "protos ターゲットは存在しない proto/ からスタブを生成しようとする",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT4",
+      "unit_ref": "UN-04",
+      "element": "Make target protos and scripts/gen_protos.sh",
+      "location": "Makefile:12",
+      "occurrences": [
+        "Makefile:12",
+        "scripts/gen_protos.sh:1"
+      ],
+      "basis": "inventory uninvoked_scripts に protos。スクリプト自身のコメントが 2024 年に proto/ を削除したと記す。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ターゲットとスクリプト。",
+        "remains": "動作する Makefile ターゲットのみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "proto/ ディレクトリも server/gen の import もない。",
+        "dynamic_checked": "CI・ドキュメント・他ターゲットからの呼び出しなし。"
+      }
+    },
+    {
+      "id": "P-018",
+      "title": "lodash と jest は宣言されているが使われていない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP1",
+      "unit_ref": "UN-05",
+      "element": "Dependencies lodash and jest (and script test:jest)",
+      "location": "package.json:14",
+      "occurrences": [
+        "package.json:14",
+        "package.json:22",
+        "package.json:9"
+      ],
+      "basis": "inventory unimported_dependencies で lodash は参照なし、jest は test:jest 経由のみ(script_only)で、test:jest を呼ぶものはない(uninvoked_scripts)。テストは vitest で動く。",
+      "subtraction": {
+        "action": "remove",
+        "what": "lodash・jest・test:jest スクリプト。",
+        "remains": "テストランナーは vitest のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "lodash の import なし。jest.config や jest のグローバルもない。",
+        "dynamic_checked": "文字列で組み立てた require() も CDN タグもない。"
+      }
+    },
+    {
+      "id": "P-019",
+      "title": "node-fetch は Node 20 の組み込み fetch で置き換えられる",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP3",
+      "unit_ref": "UN-05",
+      "element": "Dependency node-fetch",
+      "location": "package.json:16",
+      "occurrences": [
+        "package.json:16",
+        "scripts/seed.js:2"
+      ],
+      "basis": "inventory platform_replaceable。engines は Node >= 20 を要求(package.json:4)。使用は scripts/seed.js のみ。",
+      "subtraction": {
+        "action": "remove",
+        "what": "依存とその require。",
+        "remains": "プラットフォームの fetch。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "seed スクリプトの単純な POST には影響なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "seed.js が使うのは fetch(url, {method, headers, body}) のみ。",
+        "dynamic_checked": "Web コードからの import なし。"
+      }
+    },
+    {
+      "id": "P-020",
+      "title": "simplejson・six・stripe は固定されているが import されていない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP1",
+      "unit_ref": "UN-05",
+      "element": "Dependencies simplejson, six and stripe",
+      "location": "requirements.txt:3",
+      "occurrences": [
+        "requirements.txt:3",
+        "requirements.txt:4",
+        "requirements.txt:5"
+      ],
+      "basis": "inventory unimported_dependencies で 3 つとも参照なし。simplejson と six は platform_replaceable にも該当。",
+      "subtraction": {
+        "action": "remove",
+        "what": "3 つの固定。",
+        "remains": "コードが import する依存のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。stripe は P-003 と併せて外す。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "simplejson・six・stripe の import は検索結果なし。",
+        "dynamic_checked": "これらの名前での importlib.import_module もプラグインのエントリーポイントもない。"
+      }
+    },
+    {
+      "id": "P-021",
+      "title": "サーマルプリンター用の棚ラベル印刷は家庭向け食品庫アプリの目的の外にある",
+      "severity": "Low",
+      "confidence": "Purpose-dependent",
+      "status": "Open",
+      "perspective": "PX1",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-02",
+      "purpose_ref": "PB-06",
+      "element": "Shelf-label printing (GET /api/items/<id>/label)",
+      "location": "server/app.py:35",
+      "occurrences": [
+        "server/app.py:35",
+        "server/labels.py:5",
+        "web/src/pages/Item.tsx:16"
+      ],
+      "observed": "zpl_label() returns ZPL for barcode printers; the item page links \"Print shelf label\"",
+      "basis": "Larder の利用者はブラウザーを使う 1 世帯(PB-02)。プリンターに触れる文書はなく PB-06 は推定。ZPL 出力はサーマルバーコードプリンターでしか役に立たない。",
+      "impact": "大半の利用者が使えないルート・モジュール・ボタン。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルート、server/labels.py、品目画面のリンク。",
+        "remains": "印刷操作のない品目画面。",
+        "loses": "ZPL プリンターを持つ世帯のラベル印刷。"
+      },
+      "risk": "ラベルを印刷している世帯がいれば失う。判断はオーナーに委ねる(decisions)。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "機能は品目画面から到達でき使われている。問題は目的との適合だけ。",
+        "dynamic_checked": "units.json の他の利用者はラベルのルートを呼ばない。"
+      }
+    },
+    {
+      "id": "P-022",
+      "title": "非推奨の /api/v1/items を iOS 2.x のために提供し続けている",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "AP2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-04",
+      "element": "Route GET /api/v1/items",
+      "location": "server/app.py:45",
+      "observed": "# Deprecated 2024-01; kept for the iOS app 2.x",
+      "basis": "2024-01 から非推奨(inventory markers で期限超過)。iOS 3.0 は 2025-02 に /api/items へ移行済み(docs/clients.md:6)。パスを名指しするのはドキュメントのみ。",
+      "impact": "/api/items に合わせ続ける 2 つ目のレスポンス形式。",
+      "subtraction": {
+        "action": "remove",
+        "what": "v1 ルート。",
+        "remains": "/api/items のみ。",
+        "loses": "更新していない iOS 2.x では品目一覧が表示されなくなる。"
+      },
+      "risk": "iOS 2.x の利用割合は不明(docs/clients.md:6)。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "/api/v1 の検索結果はルート・docs/clients.md・docs/v1-migration.md。",
+        "dynamic_checked": "モバイルクライアントはリポジトリ外。最低サポートバージョンで決まる。"
+      }
+    },
+    {
+      "id": "P-023",
+      "title": "0.x クライアント向けの互換シムが削除期限を過ぎている",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DU3",
+      "unit_ref": "UN-01",
+      "element": "Compatibility shim get_items_v0",
+      "location": "server/compat.py:1",
+      "observed": "get_items_v0(*args, **kwargs) only forwards to list_items; \"Remove after 2025-06-30\"",
+      "basis": "inventory orphan_files と unreferenced_symbols で import 元なし。inventory markers で削除期限超過。",
+      "subtraction": {
+        "action": "remove",
+        "what": "server/compat.py。",
+        "remains": "呼び出し側は list_items を直接使う。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "compat と get_items_v0 はファイル外に検索結果なし。",
+        "dynamic_checked": "ルートや文字列で組み立てた import からの利用なし。"
+      }
+    },
+    {
+      "id": "P-024",
+      "title": "どのコードも読み書きしない 2 つの列と 1 つのインデックス",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA1",
+      "unit_ref": "UN-03",
+      "element": "Columns items.legacy_sku and users.fax_number, index idx_items_legacy_sku",
+      "location": "server/db/schema.sql:7",
+      "occurrences": [
+        "server/db/schema.sql:7",
+        "server/db/schema.sql:9",
+        "server/db/schema.sql:14"
+      ],
+      "basis": "inventory sql_columns_unreferenced に legacy_sku と fax_number。",
+      "impact": "挿入のたびに更新されるインデックスと、意味なく保持される個人データの列(FAX 番号)。",
+      "subtraction": {
+        "action": "remove",
+        "what": "マイグレーションで 2 列とインデックスを削除。",
+        "remains": "コードが使う列だけを持つ items と users。",
+        "loses": "列に残っている古いデータ。"
+      },
+      "risk": "既存行に保存義務のあるデータが残っている可能性がある。該当すれば削除前にエクスポートする。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "SQL 以外で legacy_sku と fax_number の検索結果なし。",
+        "dynamic_checked": "リポジトリ外のレポートやツールが参照する可能性があり、ここからは見えない。"
+      }
+    },
+    {
+      "id": "P-025",
+      "title": "old_audit_log は読み書きされていない",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA1",
+      "unit_ref": "UN-03",
+      "element": "Table old_audit_log",
+      "location": "server/db/schema.sql:27",
+      "basis": "inventory sql_tables_unreferenced。",
+      "subtraction": {
+        "action": "remove",
+        "what": "マイグレーションでテーブルを削除。",
+        "remains": "使われているスキーマのみ。",
+        "loses": "過去の監査ログ(あれば)。"
+      },
+      "risk": "監査ログには保存義務があることが多い。該当すれば先にアーカイブする。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "SQL 以外で old_audit_log の検索結果なし。",
+        "dynamic_checked": "リポジトリ外のコンプライアンス用ツールが読む可能性がある。"
+      }
+    },
+    {
+      "id": "P-026",
+      "title": "どこからも読み込まれない展示会用のシードファイル",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DA3",
+      "unit_ref": "UN-03",
+      "element": "Seed file server/db/seed_demo.sql",
+      "location": "server/db/seed_demo.sql:1",
+      "basis": "inventory unreferenced_files。legacy_sku(P-024)に値を入れており、シード投入は npm run seed が担う。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ファイル。",
+        "remains": "シード投入は scripts/seed.js のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "seed_demo の検索結果なし。",
+        "dynamic_checked": "Makefile・CI・ドキュメントからの言及なし。"
+      }
+    },
+    {
+      "id": "P-027",
+      "title": "実装が 1 つしかないストレージバックエンドのインターフェースとレジストリ",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "OB2",
+      "unit_ref": "UN-01",
+      "purpose_ref": "PB-03",
+      "element": "StorageBackend abstraction and BACKENDS registry",
+      "location": "server/store.py:8",
+      "occurrences": [
+        "server/store.py:8",
+        "server/store.py:23",
+        "server/store.py:26"
+      ],
+      "observed": "class StorageBackend(ABC); BACKENDS = {\"sqlite\": SqliteBackend}; backend(name=\"sqlite\")",
+      "basis": "実装 1 つ・登録 1 件で、名前を渡す呼び出し元もない。docstring は予定の Postgres 移行に触れるが、追跡する文書も issue もない。品目の追加・一覧・削除(PB-03)に必要なストアは 1 つ。",
+      "impact": "誰も選ばない選択肢のために、読む人全員が間接層をたどる必要がある。",
+      "subtraction": {
+        "action": "reduce",
+        "what": "ABC・レジストリ・name 引数。",
+        "remains": "SQLite に対する query() 関数 1 つ。",
+        "loses": "2 つ目のバックエンド用の継ぎ目。移行が決まれば再導入は容易。"
+      },
+      "risk": "呼び出し側は backend().query から query への機械的な変更。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "backend( の呼び出しはすべて引数なし。BACKENDS は定義と利用箇所のみ。",
+        "dynamic_checked": "バックエンドを選ぶ設定や環境変数はない。"
+      }
+    },
+    {
+      "id": "P-028",
+      "title": "utils.py の 2 つのヘルパーに呼び出し元がない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC1",
+      "unit_ref": "UN-01",
+      "element": "Functions format_price_legacy and slugify",
+      "location": "server/utils.py:8",
+      "occurrences": [
+        "server/utils.py:8",
+        "server/utils.py:13"
+      ],
+      "basis": "inventory unreferenced_symbols で、どちらも定義以外の参照がない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "2 つの関数。",
+        "remains": "価格ヘルパーは format_price のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "format_price_legacy と slugify の検索結果は定義のみ。",
+        "dynamic_checked": "utils への getattr もテンプレートフィルター登録もない。"
+      }
+    },
+    {
+      "id": "P-029",
+      "title": "コメントアウトされた parse_price のブロック",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC3",
+      "unit_ref": "UN-01",
+      "element": "Commented-out parse_price",
+      "location": "server/utils.py:17-22",
+      "basis": "inventory commented_code でコメント内のコード 6 行。履歴はバージョン管理に残る。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ブロック。",
+        "remains": "生きているコードだけの utils.py。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "17〜22 行はすべてコメント。",
+        "dynamic_checked": "コメントは実行されない。"
+      }
+    },
+    {
+      "id": "P-030",
+      "title": "2024-02 からスキップされているテストは何も検証していない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT2",
+      "unit_ref": "UN-04",
+      "element": "Skipped test test_delete_item",
+      "location": "tests/test_items.py:10",
+      "observed": "@pytest.mark.skip(reason=\"flaky since 2024-02\") def test_delete_item(): items.delete_item(1)",
+      "basis": "inventory skipped_tests。本体にアサーションがなく、スキップを外しても何も確認しない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "スキップされたテスト。",
+        "remains": "実行され、検証するテストのみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "delete_item は未テストのまま(現状と実質同じ)。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "テスト本体はアサーションのない呼び出し 1 行。",
+        "dynamic_checked": "他のスイートからの import なし。"
+      }
+    },
+    {
+      "id": "P-031",
+      "title": "使われていないフォントファイル OldSans.woff2",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS1",
+      "unit_ref": "UN-02",
+      "element": "Font web/public/fonts/OldSans.woff2",
+      "location": "web/public/fonts/OldSans.woff2:1",
+      "basis": "inventory assets_unreferenced。@font-face でも preload でも名指しされない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ファイル。",
+        "remains": "ページが読み込むアセットのみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "public/ 配下のため外部からの直リンクはありうるが、フォントでは考えにくい。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "OldSans の検索結果なし。",
+        "dynamic_checked": "実行時に組み立てる CSS url() はない。"
+      }
+    },
+    {
+      "id": "P-032",
+      "title": "OldButton はどこからも import されていない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC2",
+      "unit_ref": "UN-02",
+      "element": "Component OldButton",
+      "location": "web/src/components/OldButton.tsx:2",
+      "basis": "inventory orphan_files。コメントは存在しない設定画面の移行を待っている。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ファイル。",
+        "remains": "ボタンは Button のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "OldButton の検索結果はファイル自身のみ。",
+        "dynamic_checked": "lazy() や動的 import でのパス参照なし。"
+      }
+    },
+    {
+      "id": "P-033",
+      "title": "holiday_banner は常に無効だが、バナー・スタイル・画像は出荷され続けている",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF1",
+      "unit_ref": "UN-02",
+      "element": "Feature flag holiday_banner",
+      "location": "web/src/flags.ts:4",
+      "occurrences": [
+        "web/src/flags.ts:4",
+        "web/src/pages/Home.tsx:18",
+        "web/src/styles/app.css:5",
+        "web/public/img/holiday-banner.png:1"
+      ],
+      "basis": "inventory feature_flags で値は false、判定 1 箇所、上書きなし。",
+      "subtraction": {
+        "action": "remove",
+        "what": "フラグ、バナーの JSX、.promo-banner、holiday-banner.png。",
+        "remains": "バナー枠のない Home。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "マーケティングが季節バナーを再び望む可能性はあるが、休眠フラグではなくコンテンツとして戻せる。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "フラグの値の出所は flags.ts のみ。",
+        "dynamic_checked": "リモート設定や URL パラメーターでフラグを切り替える仕組みはない。"
+      }
+    },
+    {
+      "id": "P-034",
+      "title": "2 つのロケールキーが参照されていない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS3",
+      "unit_ref": "UN-02",
+      "element": "Locale keys promo.holiday and checkout.legacy_notice",
+      "location": "web/src/i18n/en.json:6",
+      "occurrences": [
+        "web/src/i18n/en.json:6",
+        "web/src/i18n/en.json:7",
+        "web/src/i18n/ja.json:6",
+        "web/src/i18n/ja.json:7"
+      ],
+      "basis": "inventory i18n_unreferenced(en と ja)。動的な接頭辞は item.status. のみ。",
+      "subtraction": {
+        "action": "remove",
+        "what": "全ロケールの 2 キー。",
+        "remains": "UI が表示する文字列のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "誰も見ない文言を翻訳者が保守しなくて済む。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "promo.holiday と legacy_notice の検索結果はロケールファイルのみ。",
+        "dynamic_checked": "テンプレートリテラルで組み立てる t() 呼び出しを確認。item.status.* のみ。"
+      }
+    },
+    {
+      "id": "P-035",
+      "title": "CSS クラス .legacy-grid を使うマークアップがない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS2",
+      "unit_ref": "UN-02",
+      "element": "CSS class .legacy-grid",
+      "location": "web/src/styles/app.css:7",
+      "basis": "inventory css_unreferenced。動的なクラス接頭辞も見つからない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ルール。",
+        "remains": "画面が使うスタイルのみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "legacy-grid の検索結果は app.css のみ。",
+        "dynamic_checked": "この名前を文字列で組み立てる classList や className はない。"
+      }
+    },
+    {
+      "id": "P-036",
+      "title": "完了済み移行のメモで、どこからもリンクされていない",
+      "severity": "Info",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS4",
+      "unit_ref": "UN-04",
+      "element": "Document docs/v1-migration.md",
+      "location": "docs/v1-migration.md:1",
+      "basis": "inventory unreferenced_files。記載の移行は 2024-01 に完了。",
+      "subtraction": {
+        "action": "remove",
+        "what": "ファイル。必要なら 1 行を docs/clients.md に統合。",
+        "remains": "クライアント文書は docs/clients.md のみ。",
+        "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
+      },
+      "risk": "なし。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "v1-migration の検索結果なし。",
+        "dynamic_checked": "ドキュメントサイトの設定で公開されてもいない。"
+      }
+    },
+    {
+      "id": "P-037",
+      "title": "on_startup は未参照に見えるが名前でディスパッチされている",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC1",
+      "unit_ref": "UN-01",
+      "element": "Function hooks.on_startup",
+      "location": "server/hooks.py:4",
+      "basis": "inventory unreferenced_symbols に on_startup。名前は定義にしか現れない。",
+      "subtraction": {
+        "action": "remove",
+        "what": "なし(使われている)。",
+        "remains": "変更なし。",
+        "loses": "該当なし。"
+      },
+      "risk": "削除すると起動処理が壊れる。",
+      "validation": {
+        "verdict": "FalsePositive",
+        "evidence": "server/app.py:10-11 が config.STARTUP_EVENTS = (\"startup\",) の各要素に getattr(hooks, f\"on_{event}\") を呼ぶ。",
+        "dynamic_checked": "getattr によるディスパッチが動的利用そのもの。"
+      }
+    }
+  ],
+  "perspectives": [
+    {
+      "name": "DC デッドコード",
+      "result": "3件、除外1件",
+      "note": "inventory のシンボル・孤立ファイル・コメントブロックを、それぞれ動的利用の有無まで検索。"
+    },
+    {
+      "name": "UF 未使用の機能",
+      "result": "3件",
+      "note": "units.json の全ルート・全画面を呼び出し元と照合。"
+    },
+    {
+      "name": "FF フィーチャーフラグ・実験",
+      "result": "3件",
+      "note": "コード内フラグ 2 つと実験 1 つ。リモートのフラグサービスなし。"
+    },
+    {
+      "name": "DP 依存関係",
+      "result": "4件",
+      "note": "package.json と requirements.txt。typescript・vite・vitest は使用中のツール。"
+    },
+    {
+      "name": "CF 設定・環境変数",
+      "result": "2件",
+      "note": "環境変数の読み取りを .env.example と照合。PAGE_SIZE は読まれ使われている。"
+    },
+    {
+      "name": "DA データ・スキーマ",
+      "result": "4件",
+      "note": "スキーマのみ。データベースには問い合わせていない。"
+    },
+    {
+      "name": "AS アセット・コンテンツ",
+      "result": "4件",
+      "note": "画像・フォント・CSS クラス・ロケールキー・ドキュメント。"
+    },
+    {
+      "name": "TT テスト・ツール",
+      "result": "3件",
+      "note": "Make ターゲット・package スクリプト・CI ジョブ・スキップされたテスト。"
+    },
+    {
+      "name": "DU 重複",
+      "result": "2件",
+      "note": "価格整形と 0.x 用シム。"
+    },
+    {
+      "name": "AP API 表面",
+      "result": "1件",
+      "note": "公開エンドポイントを宣言済みの利用者と照合。クライアントごとのレスポンス項目までは未監査。"
+    },
+    {
+      "name": "PI 権限・外部連携",
+      "result": "2件",
+      "note": "OAuth スコープ・Webhook・外部 SDK。"
+    },
+    {
+      "name": "PX 目的との適合",
+      "result": "2件",
+      "note": "使われている機能すべてに、なくなったときコアジョブ(PB-03、PB-04)が何を失うかを問うた。"
+    },
+    {
+      "name": "OB 作り込み過剰",
+      "result": "2件",
+      "note": "レジストリ・抽象化・設定を units.json の規模と照合。i18n は使われている 2 ロケールを出荷しているため残す。"
+    }
+  ],
+  "checked_ok": [
+    "PAGE_SIZE は読まれ使われている(server/items.py:11)。.env.example にないのは文書の問題で、削除対象ではない。",
+    "/auth/callback にリポジトリ内の呼び出し元はないが、ログイン後に Google が呼ぶ(利用者 Google OAuth)。",
+    "typescript・vite・vitest はツール。.tsx のソースと package スクリプトが使っている。",
+    "ロケールキー item.status.* は t(`item.status.${status}`) で到達する(web/src/pages/Item.tsx:13)。",
+    "make dev と make lint は文書化された開発用コマンド(README.md:16、README.md:20)。",
+    "i18n は UI が使う 2 ロケールを出荷しており、この製品にとって作り込み過剰ではない。"
+  ],
+  "limitations": [
+    "静的な読解のみ。本番トラフィック、デプロイ環境の環境変数、データベースの中身、Stripe と Google の管理画面は見ていない。",
+    "iOS 2.x の利用割合は不明(docs/clients.md:6)。",
+    "参照数は名前ベース。ビルド時に生成されるコードはリポジトリになかった。",
+    "サンプルの記録のため meta.commit は仮の値。"
+  ],
+  "decisions": [
+    "P-021:ラベル印刷は推定の目的項目(PB-06)に基づく。世帯が棚ラベルを印刷するかどうかはオーナーが判断する。",
+    "P-003:Stripe ダッシュボードで Webhook エンドポイントが削除済みかを確認してからルートを削除する。",
+    "P-008 と P-022:/api/export/csv を呼ぶ外部クライアントがないことを確認し、iOS の最低サポートバージョンを決める。",
+    "P-009・P-024・P-025:実験の割り当て、FAX 番号、監査ログの保存義務を確認してからデータを削除する。",
+    "P-012:本番の NOTIFY_CHANNELS が email のみであることを確認する。"
+  ],
+  "next_steps": [
+    "まず /debug/dump と Mailchimp 設定を削除し、その後 SECRET_KEY のローテーションと Mailchimp キーの失効を行う(P-002、P-004)。",
+    "削除後に inventory.py を再実行する。孤立した要素は段階的に現れることが多い。"
+  ]
+}

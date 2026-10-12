@@ -89,25 +89,32 @@ LABELS = {
 }
 
 
-def read_source(root, relative):
+def read_source(root, relative, *, expected_stat):
     """Read a bounded regular source without following links planted after resolve.
 
-    Pin every directory on POSIX, including ancestors of the repository root.
+    Pin the selected repository identity and every directory on POSIX.
     On platforms without descriptor-relative opens, verify each component and
     the opened file's identity; excerpts remain optional on read errors.
     """
     path = root / relative
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     if NOFOLLOW_DIR_FD:
-        parent = open_directory(path.parent, readable=False)
+        parent = open_directory(root, readable=False, expected_stat=expected_stat)
+        directories = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+                       | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, directories, dir_fd=parent)
+                os.close(parent)
+                parent = child
             fd = os.open(relative.name, flags, dir_fd=parent)
         finally:
             os.close(parent)
     else:
         components = [root, *(root / Path(*relative.parts[:i]) for i in range(1, len(relative.parts) + 1))]
         before = [component.lstat() for component in components]
-        if any(stat.S_ISLNK(info.st_mode) for info in before) or not stat.S_ISREG(before[-1].st_mode):
+        if (not os.path.samestat(expected_stat, before[0])
+                or any(stat.S_ISLNK(info.st_mode) for info in before) or not stat.S_ISREG(before[-1].st_mode)):
             return None
         fd = os.open(path, flags)
     with os.fdopen(fd, "rb") as handle:
@@ -132,12 +139,14 @@ def snippet(repo, location):
         start, end = int(m["start"]), int(m["end"] or m["start"])
         if start < 1 or end < start:
             return None
-        root = Path(repo).resolve()
+        selected = Path(repo)
+        selected_info = selected.stat()
+        root = selected.resolve()
         path = (root / m["path"]).resolve()
         relative = path.relative_to(root)
         if SENSITIVE.search(relative.as_posix()):
             return None
-        source = read_source(root, relative)
+        source = read_source(root, relative, expected_stat=selected_info)
         if source is None:
             return None
         text = source.decode("utf-8")
@@ -181,10 +190,11 @@ def open_artifact(path, *, directory=None):
     owned_directory = None
     if directory is None and NOFOLLOW_DIR_FD:
         try:
+            parent_info = path.parent.stat()
             parent = path.parent.resolve(strict=True)
         except RuntimeError as error:
             raise OSError(str(error)) from error
-        owned_directory = directory = open_directory(parent, readable=False)
+        owned_directory = directory = open_directory(parent, readable=False, expected_stat=parent_info)
     try:
         name = path if directory is None else path.name
         options = {} if directory is None else {"dir_fd": directory}

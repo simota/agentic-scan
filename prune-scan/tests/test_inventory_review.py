@@ -59,8 +59,8 @@ class TraversalBoundaryTests(unittest.TestCase):
             outside.write_text("# deprecated outside-secret-value\n", encoding="utf-8")
             original = inventory.iter_files
 
-            def swap_after_discovery(repo):
-                for path in original(repo):
+            def swap_after_discovery(repo, **kwargs):
+                for path in original(repo, **kwargs):
                     path.unlink()
                     try:
                         path.symlink_to(outside)
@@ -83,8 +83,8 @@ class TraversalBoundaryTests(unittest.TestCase):
             (outside / "ordinary.py").write_text("# deprecated outside-secret-value\n", encoding="utf-8")
             original = inventory.iter_files
 
-            def swap_after_discovery(repo):
-                for path in original(repo):
+            def swap_after_discovery(repo, **kwargs):
+                for path in original(repo, **kwargs):
                     (root / "src").rename(root / "saved")
                     try:
                         (root / "src").symlink_to(outside, target_is_directory=True)
@@ -96,6 +96,114 @@ class TraversalBoundaryTests(unittest.TestCase):
                 result = inventory.inventory(root)
             self.assertEqual(result["files_scanned"], 0)
             self.assertNotIn("outside-secret-value", json.dumps(result))
+
+    @unittest.skipUnless(inventory.SAFE_DIR_OPEN and hasattr(os, "fwalk"), "requires descriptor-relative walking")
+    def test_directory_replacement_before_or_after_discovery_keeps_the_selected_repository(self):
+        for replaced in ("root", "ancestor"):
+            for timing in ("before", "after"):
+                with self.subTest(replaced=replaced, timing=timing), tempfile.TemporaryDirectory() as tmp:
+                    parent = Path(tmp)
+                    workspace = parent / "workspace"
+                    root = workspace / "repo"
+                    root.mkdir(parents=True)
+                    (root / "ordinary.py").write_text("def selected_function():\n    pass\n", encoding="utf-8")
+                    original = inventory.iter_files
+
+                    def replace_directory():
+                        (root if replaced == "root" else workspace).rename(parent / "saved")
+                        root.mkdir(parents=True)
+                        (root / "ordinary.py").write_text("# deprecated outside-content\n", encoding="utf-8")
+                        (root / "outside-name.py").write_text("# deprecated outside-content\n", encoding="utf-8")
+
+                    def swap_at_discovery(repo, **kwargs):
+                        if timing == "before":
+                            replace_directory()
+                        for path in original(repo, **kwargs):
+                            if timing == "after":
+                                replace_directory()
+                            yield path
+
+                    with mock.patch.object(inventory, "iter_files", side_effect=swap_at_discovery):
+                        result = inventory.inventory(root)
+                    self.assertNotIn("outside-content", json.dumps(result))
+                    self.assertNotIn("outside-name", json.dumps(result))
+                    self.assertEqual(result["files_scanned"], 1)
+                    self.assertEqual(result["files_skipped"], 0)
+                    self.assertEqual([row["name"] for row in result["unreferenced_symbols"]], ["selected_function"])
+
+    def test_repository_replaced_during_resolution_is_an_argument_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            root = parent / "repo"
+            root.mkdir()
+            (root / "ordinary.py").write_text("pass\n", encoding="utf-8")
+            output = parent / "inventory.json"
+            original = Path.resolve
+            replaced = False
+
+            def swap_after_resolution(path, *args, **kwargs):
+                nonlocal replaced
+                resolved = original(path, *args, **kwargs)
+                if path == root and not replaced:
+                    replaced = True
+                    root.rename(parent / "saved")
+                    root.mkdir()
+                    (root / "ordinary.py").write_text("# deprecated outside-content\n", encoding="utf-8")
+                return resolved
+
+            errors = io.StringIO()
+            with mock.patch.object(Path, "resolve", swap_after_resolution), \
+                    contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                status = inventory.main([str(root), "--out", str(output)])
+            self.assertTrue(replaced)
+            self.assertEqual(status, 2)
+            self.assertNotIn("Traceback", errors.getvalue())
+            self.assertFalse(output.exists())
+
+    @unittest.skipUnless(inventory.SAFE_DIR_OPEN and hasattr(os, "fwalk"), "requires descriptor-relative walking")
+    def test_source_stays_pinned_if_repository_changes_just_before_file_open(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            root = parent / "repo"
+            root.mkdir()
+            selected = "def selected_function():\n    pass\n"
+            (root / "ordinary.py").write_text(selected, encoding="utf-8")
+            original = inventory.read_file
+            read_texts = []
+
+            def swap_before_read(path, repo, **kwargs):
+                root.rename(parent / "saved")
+                root.mkdir()
+                (root / "ordinary.py").write_text("# deprecated outside-content\n", encoding="utf-8")
+                result = original(path, repo, **kwargs)
+                read_texts.append(result[0])
+                return result
+
+            with mock.patch.object(inventory, "read_file", side_effect=swap_before_read):
+                result = inventory.inventory(root)
+            self.assertEqual(read_texts, [selected])
+            self.assertNotIn("outside-content", json.dumps(result))
+            self.assertEqual(result["files_scanned"], 1)
+
+    def test_directory_replacement_is_rejected_without_descriptor_relative_walking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            root = parent / "repo"
+            root.mkdir()
+            (root / "ordinary.py").write_text("pass\n", encoding="utf-8")
+            original = inventory.iter_files
+
+            def swap_after_discovery(repo, **kwargs):
+                for path in original(repo, **kwargs):
+                    root.rename(parent / "saved")
+                    root.mkdir()
+                    (root / "ordinary.py").write_text("# deprecated outside-content\n", encoding="utf-8")
+                    yield path
+
+            with mock.patch.object(inventory, "SAFE_DIR_OPEN", False), \
+                    mock.patch.object(inventory, "iter_files", side_effect=swap_after_discovery):
+                with self.assertRaises(OSError):
+                    inventory.inventory(root)
 
     @unittest.skipUnless(inventory.SAFE_DIR_OPEN, "requires descriptor-relative directory opens")
     def test_symlink_replacing_a_repository_root_ancestor_is_not_read(self):
@@ -110,8 +218,8 @@ class TraversalBoundaryTests(unittest.TestCase):
                 "# deprecated outside-secret-value\n", encoding="utf-8")
             original = inventory.iter_files
 
-            def swap_after_discovery(repo):
-                for path in original(repo):
+            def swap_after_discovery(repo, **kwargs):
+                for path in original(repo, **kwargs):
                     workspace.rename(parent / "saved")
                     try:
                         workspace.symlink_to(outside, target_is_directory=True)
@@ -122,8 +230,8 @@ class TraversalBoundaryTests(unittest.TestCase):
             with mock.patch.object(inventory, "iter_files", side_effect=swap_after_discovery):
                 result = inventory.inventory(root)
             self.assertNotIn("outside-secret-value", json.dumps(result))
-            self.assertEqual(result["files_scanned"], 0)
-            self.assertEqual(result["files_skipped"], 1)
+            self.assertEqual(result["files_scanned"], 1)
+            self.assertEqual(result["files_skipped"], 0)
 
     @unittest.skipUnless(hasattr(os, "mkfifo"), "named pipes require POSIX")
     def test_fifo_replacing_a_discovered_file_does_not_wait_for_a_writer(self):
@@ -136,8 +244,8 @@ root = Path(sys.argv[2])
 source = root / "ordinary.py"
 source.write_text("pass\\n", encoding="utf-8")
 original = inventory.iter_files
-def swapped(repo):
-    for path in original(repo):
+def swapped(repo, **kwargs):
+    for path in original(repo, **kwargs):
         path.unlink()
         os.mkfifo(path)
         yield path
@@ -403,6 +511,90 @@ class ConservativeCandidateTests(unittest.TestCase):
                 'package main\nimport (\n. "example.com/dot"\n_ "example.com/blank"\n)\n', encoding="utf-8")
             result = inventory.inventory(root)
             self.assertEqual(result["unimported_dependencies"], [])
+
+    def test_go_block_comments_around_import_specs_keep_used_dependencies(self):
+        declarations = (
+            'import _ "example.com/plugin" /* registers plugin */\n',
+            'import _ `example.com/plugin` /* registers plugin */\n',
+            'import ( /* registration */ _ `example.com/plugin` /* plugin */ )\n',
+            '/* registration */ import /* optional name */ _ /* plugin */ "example.com/plugin"\n',
+            'import (\n/* registration */ _ /* plugin */ "example.com/plugin" /* registers plugin */\n)\n',
+            'import /* documentation\ncontinued */ _ "example.com/plugin" /* registration\ncontinued */\n',
+        )
+        for declaration in declarations:
+            with self.subTest(declaration=declaration), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "go.mod").write_text(
+                    "module example.com/app\nrequire example.com/plugin v1.0.0\n", encoding="utf-8")
+                (root / "main.go").write_text("package main\n" + declaration, encoding="utf-8")
+                self.assertEqual(inventory.inventory(root)["unimported_dependencies"], [])
+
+    def test_commented_go_imports_do_not_count_as_dependency_uses(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "go.mod").write_text(
+                "module example.com/app\nrequire example.com/unused v1.0.0\n", encoding="utf-8")
+            (root / "main.go").write_text(
+                'package main\n/*\nimport _ "example.com/unused"\n*/\n', encoding="utf-8")
+            rows = inventory.inventory(root)["unimported_dependencies"]
+            self.assertEqual([row["name"] for row in rows], ["example.com/unused"])
+
+    def test_go_literal_contents_do_not_count_as_import_declarations(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "go.mod").write_text(
+                "module example.com/app\nrequire example.com/unused v1.0.0\n", encoding="utf-8")
+            (root / "main.go").write_text(
+                'package main\nconst example = `\nimport _ "example.com/unused"\n`\n', encoding="utf-8")
+            rows = inventory.inventory(root)["unimported_dependencies"]
+            self.assertEqual([row["name"] for row in rows], ["example.com/unused"])
+
+    def test_go_import_paths_decode_raw_and_interpreted_string_literals(self):
+        literals = ('`example.com/plu\rgin`', r'"example.com\x2fplugin"',
+                    r'"example.com\057plugin"', r'"example.com/\u0070lugin"')
+        for literal in literals:
+            with self.subTest(literal=literal), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "go.mod").write_text(
+                    "module example.com/app\nrequire example.com/plugin v1.0.0\n", encoding="utf-8")
+                (root / "main.go").write_text("package main\nimport\n_ " + literal + "\n", encoding="utf-8")
+                self.assertEqual(inventory.inventory(root)["unimported_dependencies"], [])
+
+    def test_go_import_paths_accept_plus_and_tilde(self):
+        for package in ("a+b", "a~b"):
+            with self.subTest(package=package), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "go.mod").write_text(
+                    "module example.com/app\nrequire example.com/plugin v1.0.0\n", encoding="utf-8")
+                (root / "main.go").write_text(
+                    f'package main\nimport _ "example.com/plugin/{package}"\n', encoding="utf-8")
+                self.assertEqual(inventory.inventory(root)["unimported_dependencies"], [])
+
+    def test_invalid_go_unicode_escapes_do_not_stop_the_scan(self):
+        literals = (r'"example.com/plugin/\UFFFFFFFF"', r'"example.com/plugin/\U80000000"',
+                    r'"example.com/plugin/\U00110000"', r'"example.com/plugin/\uD800"')
+        for literal in literals:
+            with self.subTest(literal=literal), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "go.mod").write_text(
+                    "module example.com/app\nrequire example.com/plugin v1.0.0\n", encoding="utf-8")
+                (root / "main.go").write_text("package main\nimport _ " + literal + "\n", encoding="utf-8")
+                rows = inventory.inventory(root)["unimported_dependencies"]
+                self.assertEqual([row["name"] for row in rows], ["example.com/plugin"])
+
+    def test_unterminated_go_literals_and_comments_have_bounded_scan_time(self):
+        program = r'''import sys
+sys.path.insert(0, sys.argv[1])
+import inventory
+for opening in ('"', "'"):
+    source = opening + ('\\' + opening) * 65536
+    assert list(inventory.go_import_paths(source)) == []
+source = "/* \n" * 65536
+assert list(inventory.go_import_paths(source)) == []
+'''
+        result = subprocess.run([sys.executable, "-c", program, str(SCRIPTS)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_test_importer_locations_obey_the_per_row_cap(self):
         with tempfile.TemporaryDirectory() as tmp:

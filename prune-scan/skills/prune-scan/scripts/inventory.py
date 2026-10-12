@@ -15,7 +15,7 @@ skipped tests, commented-out code blocks, deprecation and removal markers with
 dates, and SQL tables and columns no code names. With --units, every row is
 tagged with the review unit whose path covers it. Never prints the value of an
 environment variable. Read-only, standard library only (reference/inventory.md).
-Exit status: 0 written, 2 bad arguments or unreadable units, 1 output not written.
+Exit status: 0 written, 2 bad arguments or unreadable repository/units, 1 output not written.
 """
 
 import argparse
@@ -100,7 +100,9 @@ PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:
 PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
 JS_IMPORT = re.compile(r"(?:\bimport|\bexport)\s[^'\"`;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|\bimport\s*[\"']([^\"'\n]+)[\"']|"
                        r"\brequire\(\s*[\"']([^\"'\n]+)[\"']\s*\)|\bimport\(\s*[\"']([^\"'\n]+)[\"']\s*\)")
-GO_IMPORT = re.compile(r"^[ \t]*(?:import[ \t]+)?(?:(?:\w+|\.)[ \t]+)?\"([\w.\-/]+)\"[ \t\r]*(?://[^\n]*)?$", re.M)
+GO_PATH = re.compile(r"[\w.+~\-/]+\Z")
+GO_ESCAPE = re.compile(r"\\([0-7]{3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)")
+GO_SIMPLE_ESCAPES = dict(zip("abfnrtv\\\"'", (b"\a", b"\b", b"\f", b"\n", b"\r", b"\t", b"\v", b"\\", b'"', b"'")))
 RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)::")
 
 ENV_READ = re.compile(
@@ -191,7 +193,21 @@ TOOL_FILES = re.compile(r"(?i)(?:^|/)(?:Makefile|Dockerfile[\w.-]*|Procfile|just
                         r"[\w.-]+\.ya?ml|[\w.-]+\.sh|noxfile\.py|conftest\.py|setup\.py)$")
 
 
-def iter_files(root):
+def iter_files(root, *, directory=None):
+    if directory is not None:
+        # Walk the same pinned repository used by open_source, even if its pathname is replaced.
+        for dirpath, dirnames, filenames, dir_fd in os.fwalk(".", dir_fd=directory, follow_symlinks=False):
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            for name in sorted(filenames):
+                if name in SKIP_FILES:
+                    continue
+                try:
+                    info = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    continue
+                if stat.S_ISREG(info.st_mode):
+                    yield root / dirpath / name
+        return
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
         for name in sorted(filenames):
@@ -201,8 +217,15 @@ def iter_files(root):
             yield path
 
 
+def check_root_identity(root, expected):
+    """Refuse a changed repository when descriptor-relative discovery is unavailable."""
+    current = root.lstat()
+    if not stat.S_ISDIR(current.st_mode) or not os.path.samestat(current, expected):
+        raise OSError("repository root changed during the scan")
+
+
 @contextmanager
-def open_source(path, root):
+def open_source(path, root, *, root_fd=None, root_stat=None):
     """Open a regular repository file without following replaced files or parent directories."""
     parts = path.relative_to(root).parts
     if not parts or ".." in parts:
@@ -210,8 +233,15 @@ def open_source(path, root):
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     dir_fd = None
     if SAFE_DIR_OPEN:
+        directory_flags = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+                           | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
-            dir_fd = open_directory(path.parent, readable=False)
+            dir_fd = (os.dup(root_fd) if root_fd is not None
+                      else open_directory(root, readable=False, expected_stat=root_stat))
+            for part in parts[:-1]:
+                child_fd = os.open(part, directory_flags, dir_fd=dir_fd)
+                os.close(dir_fd)
+                dir_fd = child_fd
             fd = os.open(parts[-1], flags, dir_fd=dir_fd)
         finally:
             if dir_fd is not None:
@@ -220,6 +250,8 @@ def open_source(path, root):
         # Platforms without descriptor-relative opens get path and inode checks before any read.
         # The POSIX branch above additionally closes races in ancestor-directory resolution.
         current, snapshots = root, []
+        if root_stat is not None:
+            check_root_identity(root, root_stat)
         for part in ("", *parts):
             current = current / part
             info = current.lstat()
@@ -248,11 +280,11 @@ def open_source(path, root):
         yield handle
 
 
-def read_file(path, root):
+def read_file(path, root, *, root_fd=None, root_stat=None):
     """Return (text or None, size or None), checking the opened file and bounding the read."""
     if any(SECRET_FILE.match(part) for part in path.relative_to(root).parts):
         return None, None
-    with open_source(path, root) as handle:
+    with open_source(path, root, root_fd=root_fd, root_stat=root_stat) as handle:
         size = os.fstat(handle.fileno()).st_size
         if size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
             return None, size
@@ -272,6 +304,96 @@ def read_text(path):
     """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
     path = Path(path)
     return read_file(path, path.parent)[0]
+
+
+def go_lexemes(text):
+    """Keep comments and literals opaque, consuming even unterminated tokens only once."""
+    index, length = 0, len(text)
+    while index < length:
+        start, char = index, text[index]
+        if text.startswith(("//", "/*"), index):
+            block = text[index + 1] == "*"
+            end = text.find("*/" if block else "\n", index + 2)
+            index = length if end < 0 else end + (2 if block else 0)
+            kind = "comment"
+        elif char in "\"'`":
+            index += 1
+            kind = "invalid"
+            while index < length:
+                if text[index] == char:
+                    index += 1
+                    kind = "rune" if char == "'" else "string"
+                    break
+                index += 2 if char != "`" and text[index] == "\\" else 1
+            index = min(index, length)
+        elif char in " \t\r\n":
+            index += 1
+            while index < length and text[index] in " \t\r\n":
+                index += 1
+            kind = "space"
+        elif char.isalnum() or char == "_":
+            index += 1
+            while index < length and (text[index].isalnum() or text[index] == "_"):
+                index += 1
+            kind = "word"
+        else:
+            index += 1
+            kind = "punctuation"
+        yield kind, text[start:index]
+
+
+def go_string_value(token):
+    """Decode Go import strings, including byte escapes and raw-string carriage returns."""
+    value = token[1:-1]
+    if token.startswith("`"):
+        return value.replace("\r", "")
+    if "\\" not in value:
+        return value
+    parts, position = [], 0
+    try:
+        for match in GO_ESCAPE.finditer(value):
+            plain = value[position:match.start()]
+            if "\\" in plain:
+                return None
+            parts.append(plain.encode("utf-8"))
+            escape = match.group(1)
+            if escape[0] in "01234567":
+                parts.append(bytes([int(escape, 8)]))
+            elif escape[0] == "x":
+                parts.append(bytes([int(escape[1:], 16)]))
+            elif escape[0] in "uU":
+                parts.append(chr(int(escape[1:], 16)).encode("utf-8"))
+            else:
+                parts.append(GO_SIMPLE_ESCAPES[escape])
+            position = match.end()
+        if "\\" in value[position:]:
+            return None
+        parts.append(value[position:].encode("utf-8"))
+        return b"".join(parts).decode("utf-8")
+    except (KeyError, ValueError, UnicodeError, OverflowError):
+        return None
+
+
+def go_import_paths(text):
+    """Read only import declarations; strings elsewhere cannot invent dependency uses."""
+    importing, grouped = False, False
+    for kind, token in go_lexemes(text):
+        if kind in {"space", "comment"}:
+            continue
+        if kind == "word" and token == "import":
+            importing, grouped = True, False
+        elif importing:
+            if token == "(" and not grouped:
+                grouped = True
+            elif kind == "string":
+                path = go_string_value(token)
+                if path and GO_PATH.fullmatch(path):
+                    yield path
+                importing = grouped
+            elif token == ")" or (token == ";" and not grouped):
+                importing = False
+            elif kind != "word" and token not in {".", ";"}:
+                importing = False
 
 
 def env_names_only(text):
@@ -438,14 +560,17 @@ def parse_go_mod(rel, text):
 class Collector:
     """Per-file signals gathered in one pass, resolved across files at the end."""
 
-    def __init__(self, root, today):
+    def __init__(self, root, today, *, root_fd=None, root_stat=None):
         self.root, self.today = root, today
+        self.root_fd, self.root_stat = root_fd, root_stat
         self.texts = {}            # rel -> text, for every readable file
         self.assets = []           # (rel, bytes)
         self.skipped = 0
         self.locales = defaultdict(dict)
 
     def add(self, path):
+        if self.root_fd is None and self.root_stat is not None:
+            check_root_identity(self.root, self.root_stat)
         rel = path.relative_to(self.root).as_posix()
         try:
             rel.encode("utf-8")
@@ -453,7 +578,7 @@ class Collector:
             self.skipped += 1
             return  # Filesystem surrogateescape names cannot form valid UTF-8 JSON locations.
         try:
-            text, size = read_file(path, self.root)
+            text, size = read_file(path, self.root, root_fd=self.root_fd, root_stat=self.root_stat)
         except OSError:
             self.skipped += 1
             return
@@ -482,11 +607,24 @@ def suffix(rel):
 
 
 def inventory(root, units=None, today=None):
-    root = Path(root).resolve()
+    root = Path(root)
+    root_stat = root.stat()  # Capture the caller's selected repository before resolving any aliases.
+    root = root.resolve()
     today = today or datetime.date.today().isoformat()
-    col = Collector(root, today)
-    for path in iter_files(root):
-        col.add(path)
+    root_fd = None
+    try:
+        if SAFE_DIR_OPEN and hasattr(os, "fwalk"):
+            root_fd = open_directory(root, readable=False, expected_stat=root_stat)
+        else:
+            check_root_identity(root, root_stat)
+        col = Collector(root, today, root_fd=root_fd, root_stat=root_stat)
+        for path in iter_files(root, directory=root_fd):
+            col.add(path)
+        if root_fd is None:
+            check_root_identity(root, root_stat)
+    finally:
+        if root_fd is not None:
+            os.close(root_fd)
     texts = col.texts
     locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
     code_files = [r for r in texts if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
@@ -619,8 +757,8 @@ def inventory(root, units=None, today=None):
                 for target in resolve_py(rel, dots, module, [n for n in names if n and n != "*"]):
                     inbound[target].add(rel)
         elif ext in GO_EXT:
-            for m in GO_IMPORT.finditer(text):
-                go_imports[m.group(1)] += 1
+            for module in go_import_paths(text):
+                go_imports[module] += 1
         elif ext in RS_EXT:
             for m in RS_USE.finditer(text):
                 rs_crates[m.group(1) or m.group(2)] += 1
@@ -1001,7 +1139,11 @@ def main(argv=None):
         except (OSError, ValueError, RuntimeError) as e:
             print(f"inventory.py: --out: {e}", file=sys.stderr)
             return 2
-    result = inventory(a.repo, units, a.today)
+    try:
+        result = inventory(a.repo, units, a.today)
+    except (OSError, RuntimeError) as e:
+        print(f"inventory.py: cannot read repository: {e}", file=sys.stderr)
+        return 2
     try:
         write_output(Path(a.out), json.dumps(result, ensure_ascii=False, indent=2) + "\n")
     except OSError as e:

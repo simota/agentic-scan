@@ -224,6 +224,93 @@ class SnippetRegressionTests(unittest.TestCase):
             with mock.patch.object(Path, "resolve", replace_ancestor):
                 self.assertIsNone(render.snippet(repo, "source.py:1"))
 
+    def check_regular_repository_replacement(self, *, ancestor, boundary, fallback=False):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            checkout = base / "checkout"
+            repo = checkout / "repo"
+            source = repo / "src" / "source.py"
+            source.parent.mkdir(parents=True)
+            source.write_text("print('selected repository')\n", encoding="utf-8")
+            replacement = base / "replacement"
+            target = checkout if ancestor else repo
+            substitute = replacement / source.relative_to(target)
+            substitute.parent.mkdir(parents=True)
+            substitute.write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
+            replaced = False
+            opened = []
+            resolve, open_directory, open_file = Path.resolve, render.open_directory, os.open
+
+            def replace_repository():
+                nonlocal replaced
+                self.assertFalse(replaced)
+                target.rename(base / "selected")
+                replacement.rename(target)
+                replaced = True
+
+            def resolve_with_replacement(path, *args, **kwargs):
+                if boundary == "before_resolve" and path == repo:
+                    replace_repository()
+                selected = resolve(path, *args, **kwargs)
+                if boundary == "after_resolve" and path == source:
+                    replace_repository()
+                return selected
+
+            def pin_with_replacement(path, *args, **kwargs):
+                descriptor = open_directory(path, *args, **kwargs)
+                if boundary == "after_pin":
+                    replace_repository()
+                return descriptor
+
+            def track_open(*args, **kwargs):
+                descriptor = open_file(*args, **kwargs)
+                opened.append(descriptor)
+                return descriptor
+
+            with mock.patch.object(Path, "resolve", resolve_with_replacement), \
+                    mock.patch.object(render, "open_directory", pin_with_replacement), \
+                    mock.patch.object(render, "NOFOLLOW_DIR_FD", False if fallback else render.NOFOLLOW_DIR_FD), \
+                    mock.patch.object(os, "open", track_open):
+                excerpt = render.snippet(repo, "src/source.py:1")
+            self.assertTrue(replaced)
+            if boundary == "after_pin":
+                self.assertIsNotNone(excerpt)
+                self.assertEqual(excerpt["lines"], ["print('selected repository')"])
+            else:
+                self.assertIsNone(excerpt)
+            for descriptor in opened:
+                with self.assertRaises(OSError, msg=f"descriptor {descriptor} was not closed"):
+                    os.fstat(descriptor)
+
+    def test_repository_identity_is_selected_before_resolving_paths(self):
+        for ancestor in (False, True):
+            for fallback in (False, True):
+                with self.subTest(ancestor=ancestor, fallback=fallback):
+                    self.check_regular_repository_replacement(ancestor=ancestor, boundary="before_resolve",
+                                                              fallback=fallback)
+
+    def test_regular_repository_replacement_after_resolution_is_not_read(self):
+        for ancestor in (False, True):
+            for fallback in (False, True):
+                with self.subTest(ancestor=ancestor, fallback=fallback):
+                    self.check_regular_repository_replacement(ancestor=ancestor, boundary="after_resolve",
+                                                              fallback=fallback)
+
+    @unittest.skipUnless(render.NOFOLLOW_DIR_FD, "requires descriptor-relative directory opens")
+    def test_pinned_repository_survives_regular_directory_replacement(self):
+        for ancestor in (False, True):
+            with self.subTest(ancestor=ancestor):
+                self.check_regular_repository_replacement(ancestor=ancestor, boundary="after_pin")
+
+    def test_repository_symlink_alias_can_still_be_excerpted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            (repo / "source.py").write_text("print('selected repository')\n", encoding="utf-8")
+            alias = Path(tmp) / "alias"
+            alias.symlink_to(repo, target_is_directory=True)
+            self.assertEqual(render.snippet(alias, "source.py:1")["lines"], ["print('selected repository')"])
+
 
 class ReportFixture(unittest.TestCase):
     def setUp(self):

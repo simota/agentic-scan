@@ -117,10 +117,14 @@ def problems(out, no_pdf=False, allow=()):
     selected = Path(out)
     directory = None
     try:
-        # Select intentional aliases once, before inspecting any directory entries.
+        # Capture identity before resolving intentional aliases: a normal
+        # directory substitution is just as significant as a planted symlink.
+        selected_info = selected.stat()
         selected = selected.resolve(strict=True)
         if NOFOLLOW_DIR_FD:
-            directory = open_directory(selected)
+            directory = open_directory(selected, expected_stat=selected_info)
+        elif not os.path.samestat(selected_info, selected.stat()):
+            raise OSError("directory changed before validation")
     except (OSError, RuntimeError) as e:
         yield f"{out}: cannot inspect directory: {getattr(e, 'strerror', None) or e}"
         return

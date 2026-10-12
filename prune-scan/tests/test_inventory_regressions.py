@@ -99,8 +99,8 @@ class InventoryInputTests(unittest.TestCase):
             (root / "unused.py").write_text("def unused_function():\n    pass\n", encoding="utf-8")
             iter_files = inventory.iter_files
 
-            def remove_asset_after_discovery(repo):
-                for path in iter_files(repo):
+            def remove_asset_after_discovery(repo, **kwargs):
+                for path in iter_files(repo, **kwargs):
                     if path.name == "gone.png":
                         path.unlink()
                     yield path

@@ -34,11 +34,13 @@ unique metadata in the document head; text in a comment or another element
 does not count. Incomplete HTML documents are rejected even when their input
 stamps match. A present but unreadable `units.json`, including a broken
 symlink, is an input error rather than an omitted baseline.
-On POSIX systems with descriptor-relative opens, the check pins the selected
-output directory through every ancestor and uses that descriptor for all
-artifact inspection and reads. It also rejects a directory that changes
-identity during the check. Ancestors need only search permission when the
-runtime exposes `O_PATH` or `O_SEARCH`; otherwise they must also be readable.
+On POSIX systems with descriptor-relative opens, the check captures the output
+directory's identity before resolving the path and verifies it when opening
+the directory. It pins every ancestor and uses the selected directory's
+descriptor for all artifact inspection and reads. It also rejects a directory
+that changes identity during the check. Ancestors need only search permission
+when the runtime exposes `O_PATH` or `O_SEARCH`; otherwise they must also be
+readable.
 
 The rendered next steps open with the **subtraction summary**, computed from
 the open, counted findings (`Unlikely` ones are left out):

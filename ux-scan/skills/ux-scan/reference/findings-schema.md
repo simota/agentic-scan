@@ -85,6 +85,9 @@ http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually). Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
+Markdown destinations are preserved even for extensionless paths, query-only
+URLs and reference-link definitions; link labels and titles remain prose and
+their finding references are updated.
 An inline code span containing only a finding id, such as `U-002`,
 is a finding reference and is updated; mark other code literals as code so
 their ids are not mistaken for references. Separate prose references from

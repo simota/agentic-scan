@@ -1,5 +1,6 @@
 """Exercise public Make targets with literal checkout, interpreter and output paths."""
 import json
+import os
 import shlex
 import shutil
 import subprocess
@@ -124,6 +125,25 @@ class MakefileTests(unittest.TestCase):
         self.assertIn("symlink", self.make("status", "SKILLS_DIR=-skills").stdout)
         self.make("unlink", "SKILLS_DIR=-skills")
         self.assertFalse((target / "ux-scan").is_symlink())
+
+    def test_unlink_failure_does_not_report_success(self):
+        target = self.base / "installed skills"
+        target.mkdir()
+        self.make("link", f"SKILLS_DIR={target}")
+        commands = self.base / "commands"
+        commands.mkdir()
+        remove = commands / "rm"
+        remove.write_text("#!/bin/sh\necho 'simulated unlink failure' >&2\nexit 1\n", encoding="utf-8")
+        remove.chmod(0o755)
+        result = subprocess.run(
+            ["make", "--no-print-directory", "unlink", f"SKILLS_DIR={target}"],
+            cwd=self.repo, text=True, capture_output=True, timeout=30,
+            env={**os.environ, "PATH": str(commands) + os.pathsep + os.environ.get("PATH", "")},
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("simulated unlink failure", result.stderr)
+        self.assertNotIn("unlinked", result.stdout)
+        self.assertTrue((target / "ux-scan").is_symlink())
 
     def test_python_command_can_include_interpreter_options(self):
         out = self.base / "inventory with options.json"

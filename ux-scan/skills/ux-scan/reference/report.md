@@ -20,7 +20,9 @@ symlinks (including directory links), and secret-looking paths are omitted;
 secret-looking assignment lines are masked in full. These name and text rules
 are conservative heuristics, not a complete credential audit. Report text and
 source excerpts remain escaped text in the HTML. `--out` must resolve outside
-`--repo`, which must name an existing directory.
+`--repo`, which must name an existing directory. The findings input must not
+occupy any generated output path, including through a directory symlink or hardlink;
+collisions are rejected before any output is changed.
 Excerpt reads are anchored to the selected repository with descriptor-relative
 no-follow operations, so a directory replacement cannot redirect them outside
 that root. On platforms without these operations, excerpts are omitted;
@@ -56,8 +58,13 @@ a fresh review and render.
 Exit 2 means invalid input or an output I/O failure. Input records and required
 outputs must be regular files; symlinks, directories and FIFOs are refused.
 Validation and output-target checks happen before publication. Once HTML
-publication starts, the previous PDF is removed, so a failed run cannot leave
-it beside newer HTML. An interrupted run can leave an incomplete set of
+pages are ready, they are staged and published together with removal of the
+previous PDF. A staging or publication failure restores the previous pages
+and PDF together. The pages' PDF fingerprints are likewise published as a
+pair after the PDF succeeds; if that publication fails, the new PDF is removed
+and both current HTML pages remain ready to print without PDF metadata.
+If restoring files also fails, the error names the directory containing
+recovery files. An interrupted run can still leave an incomplete set of
 outputs: fix the reported error, rerender and pass the contract checker before
 sharing the report.
 

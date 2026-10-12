@@ -322,6 +322,58 @@ PROSE_PART = re.compile(
     r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
+MARKDOWN_DESTINATION = re.compile(
+    r"(?P<inline>\]\()[ \t]*(?:\r?\n[ \t]*)?"
+    r"|^[ \t]{0,3}\[(?:\\.|[^\]\\\r\n])+\]:[ \t]*(?:\r?\n[ \t]*)?", re.MULTILINE)
+MARKDOWN_TITLE = r"(?:\"(?:\\.|[^\"\\])*\"|'(?:\\.|[^'\\])*'|\((?:\\.|[^()\\])*\))"
+MARKDOWN_LINK_END = re.compile(r"(?:[ \t\r\n]+" + MARKDOWN_TITLE + r")?[ \t\r\n]*\)", re.DOTALL)
+MARKDOWN_REFERENCE_END = re.compile(
+    r"(?:[ \t]+" + MARKDOWN_TITLE + r")?[ \t]*(?=\r?\n|\Z)", re.DOTALL)
+
+
+def _markdown_destinations(value, literal_spans):
+    """Locate link destinations, including extensionless paths and reference definitions."""
+    cursor, literal = 0, 0
+    while (match := MARKDOWN_DESTINATION.search(value, cursor)) is not None:
+        while literal < len(literal_spans) and literal_spans[literal][1] <= match.start():
+            literal += 1
+        if literal < len(literal_spans) and literal_spans[literal][0] <= match.start():
+            cursor = literal_spans[literal][1]
+            continue
+        start = end = match.end()
+        if start == len(value):
+            break
+        bracketed = value[start] == "<"
+        if bracketed:
+            end += 1
+        depth, closed = 0, False
+        while end < len(value):
+            char = value[end]
+            if char == "\\" and end + 1 < len(value):
+                end += 2
+                continue
+            if bracketed:
+                if char == ">":
+                    end += 1
+                    closed = True
+                    break
+                if char in "<\r\n":
+                    break
+            else:
+                if char.isspace() or ord(char) < 32 or char in "<>":
+                    break
+                if char == "(":
+                    depth += 1
+                elif char == ")":
+                    if not depth:
+                        break
+                    depth -= 1
+            end += 1
+        valid = closed if bracketed else not depth and end > start
+        if valid and ((match["inline"] and MARKDOWN_LINK_END.match(value, end))
+                      or (not match["inline"] and MARKDOWN_REFERENCE_END.match(value, end))):
+            yield start, end
+        cursor = max(end, match.end())
 
 
 def _source_token(token):
@@ -360,16 +412,27 @@ def _rewrite_prose(value, mapping):
 
         return FINDING_MENTION.sub(mention, text)
 
-    parts, start = [], 0
+    protected_spans, literal_spans = [], []
     for match in PROSE_PART.finditer(value):
-        protected = (match["fence"] is not None or match["comment"] is not None
-                     or match["markup"] is not None or match["url"] is not None
-                     or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip()))
+        literal = (match["fence"] is not None or match["comment"] is not None
+                   or match["markup"] is not None or match["url"] is not None
+                   or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
+        protected = (literal
                      or (match["path"] is not None and _source_token(match["path"]))
                      or (match["token"] is not None and _source_token(match["token"])))
         if protected:
-            parts.extend((references(value[start:match.start()]), match[0]))
-            start = match.end()
+            protected_spans.append((match.start(), match.end()))
+        if literal:
+            literal_spans.append((match.start(), match.end()))
+    protected_spans.extend(_markdown_destinations(value, literal_spans))
+    parts, start = [], 0
+    for left, right in sorted(protected_spans):
+        if right <= start:
+            continue
+        if left > start:
+            parts.append(references(value[start:left]))
+        parts.append(value[max(start, left):right])
+        start = right
     parts.append(references(value[start:]))
     return "".join(parts)
 

@@ -35,7 +35,7 @@ class InventoryRegressionTests(unittest.TestCase):
         )
 
     def test_css_comment_without_braces_completes(self):
-        # A valid large comment used to trigger quadratic retries in BLOCK.
+        # A valid large comment used to trigger quadratic rule-scanning retries.
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = root / "repo"
@@ -59,6 +59,67 @@ class InventoryRegressionTests(unittest.TestCase):
             (".close", "a.css:3"), (".toggle", "a.css:6"),
         ])
         self.assertEqual(data["focus_outline"][0]["location"], "a.css:4")
+
+    def test_nested_css_keeps_only_each_rules_direct_declarations(self):
+        data = self.scan({"a.scss":
+            '.btn {\n'
+            '  width: 20px; outline: none;\n'
+            '  .child { height: 10px; border: 1px solid red; }\n'
+            '  min-height: 30px;\n'
+            '}\n'})
+        self.assertEqual(data["tap_targets"], [{
+            "selector": ".btn", "sizes": {"width": "20px", "min-height": "30px"},
+            "below_24": True, "location": "a.scss:1",
+        }])
+        self.assertEqual(data["focus_outline"], [{
+            "selector": ".btn", "location": "a.scss:1", "replacement_in_rule": False,
+            "focus_visible_rule_in_file": False,
+        }])
+
+    def test_nested_css_preserves_explicit_selectors_through_media_wrappers(self):
+        data = self.scan({"a.css":
+            '@media (max-width: 600px) {\n'
+            '  .icon {\n'
+            '    width: 22px;\n'
+            '    @supports (height: 10px) { .nested-btn { height: 18px; } }\n'
+            '    height: 32px;\n'
+            '  }\n'
+            '}\n'})
+        self.assertEqual(data["tap_targets"], [
+            {"selector": ".icon", "sizes": {"width": "22px", "height": "32px"},
+             "below_24": True, "location": "a.css:2"},
+            {"selector": ".nested-btn", "sizes": {"height": "18px"},
+             "below_24": True, "location": "a.css:4"},
+        ])
+
+    def test_css_rule_delimiters_ignore_strings_escapes_and_function_values(self):
+        data = self.scan({"a.css":
+            '.btn[data-note="};{"] {\n'
+            '  content: "};{";\n'
+            '  background: url(data:image/svg+xml;<svg>{}</svg>);\n'
+            '  width: 20px;\n'
+            '  .child { content: ";{}"; height: 10px; }\n'
+            '  height: 30px;\n'
+            '}\n'
+            '.btn\\{compact { width: 21px; }\n'})
+        self.assertEqual([(r["selector"], r["sizes"], r["location"]) for r in data["tap_targets"]], [
+            ('.btn[data-note="};{"]', {"width": "20px", "height": "30px"}, "a.css:1"),
+            ('.btn\\{compact', {"width": "21px"}, "a.css:8"),
+        ])
+
+    def test_nested_css_with_a_large_declaration_completes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = root / "repo"
+            repo.mkdir()
+            (repo / "a.css").write_text('.btn { --content: ' + 'x' * 1_000_000
+                                        + '; width: 20px; .child {height: 10px} height: 30px; }\n',
+                                        encoding="utf-8")
+            out = root / "inventory.json"
+            result = self.run_cli(repo, out)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["tap_targets"][0]["sizes"],
+                             {"width": "20px", "height": "30px"})
 
     def test_css_conditions_are_not_element_fixed_widths(self):
         data = self.scan({"a.css":
@@ -463,11 +524,75 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual(len(data["viewport_meta"]), 1)
         self.assertTrue(data["viewport_meta"][0]["blocks_zoom"])
 
+    def test_positive_tabindex_uses_html_integer_parsing(self):
+        values = ["01", "+2", " \t003tail", "4.5", "0", "-1", "", "\u0661", "{5}", "\u00a06"]
+        data = self.scan({"index.html": "\n".join(f'<div tabindex="{value}"></div>' for value in values)})
+        self.assertEqual([(r["value"], r["location"]) for r in data["positive_tabindex"]],
+                         [(1, "index.html:1"), (2, "index.html:2"),
+                          (3, "index.html:3"), (4, "index.html:4")])
+
+    def test_positive_tabindex_keeps_static_and_unknown_template_expressions_separate(self):
+        data = self.scan({"a.jsx":
+            '<div tabIndex={+2} />\n'
+            '<div tabIndex={"03"} />\n'
+            '<div tabIndex={4 - 5} />\n'
+            '<div tabIndex={`5${index}`} />\n'
+            '<div tabIndex={index} />\n'
+            '<div tabIndex="{6}" />\n',
+            "b.vue": '<div :tabindex="+7" /><div :tabindex="8 - 9" />\n'})
+        self.assertEqual([(r["value"], r["location"]) for r in data["positive_tabindex"]],
+                         [(2, "a.jsx:1"), (3, "a.jsx:2"), (7, "b.vue:1")])
+
+    def test_destructive_calls_in_nested_handlers_and_modified_events(self):
+        data = self.scan({
+            "a.jsx": '<button onClick={() => {\n  api.deleteItem(id);\n}}>Delete</button>\n'
+                     '<Button onPress={async () => { await removeItem(id); }} />\n'
+                     '<Button onTap={() => discardDraft()} />\n'
+                     '<button {...props} onClick={() => deleteItem(id)}>Delete</button>\n',
+            "b.vue": '<button @click.stop="deleteItem(id)">Delete</button>\n'
+                     "<button v-on:click.prevent='removeItem(id)'>Remove</button>\n",
+            "c.svelte": '<button on:click={() => { destroyItem(id); }}>Destroy</button>\n',
+            "d.html": '<button onclick="deleteItem(id)">Delete</button>\n',
+        })
+        self.assertEqual([(r["call"], r["location"]) for r in data["destructive_actions"]], [
+            ("api.deleteItem", "a.jsx:2"), ("removeItem", "a.jsx:4"), ("discardDraft", "a.jsx:5"),
+            ("deleteItem", "a.jsx:6"),
+            ("deleteItem", "b.vue:1"), ("removeItem", "b.vue:2"),
+            ("destroyItem", "c.svelte:1"), ("deleteItem", "d.html:1"),
+        ])
+
+    def test_destructive_calls_stay_inside_actual_handlers(self):
+        data = self.scan({
+            "a.html": '<div title="onClick={deleteExample()}">Example</div>\n'
+                      '<script>const example = "onClick={removeExample()}";</script>\n'
+                      '<button data-onclick="destroyExample()">Example</button>\n'
+                      '<button onclick="save()" title="discardExample()">Save</button>\n',
+            "b.jsx": '<button onClick={() => { if (confirm("Delete?")) deleteItem(id); }}>Delete</button>\n',
+        })
+        self.assertEqual(data["destructive_actions"], [])
+
+    def test_nested_handler_attributes_do_not_duplicate_the_same_destructive_call(self):
+        data = self.scan({"a.jsx":
+            '<Button onClick={() => setContent(<button onClick={() => removeItem(id)}>Remove</button>)} />\n'
+            '<button onClick={() => { removeItem(first); removeItem(second); }}>Remove both</button>\n'})
+        self.assertEqual(data["destructive_actions"], [
+            {"call": "removeItem", "location": "a.jsx:1"},
+            {"call": "removeItem", "location": "a.jsx:2"},
+            {"call": "removeItem", "location": "a.jsx:2"},
+        ])
+
     def test_mdx_pages_are_routes_and_markup_candidates(self):
         data = self.scan({"app/(public)/help/page.mdx": '# Help\n\n<img src="guide.png" />\n'})
         self.assertEqual(data["files_scanned"], 1)
         self.assertEqual(data["routes"], [{"route": "/help", "location": "app/(public)/help/page.mdx:1"}])
         self.assertEqual(data["images"][0]["location"], "app/(public)/help/page.mdx:3")
+
+    def test_next_typescript_pages_are_routes(self):
+        data = self.scan({
+            "src/app/(public)/help/page.ts": 'export default function Page() { return "Help"; }\n',
+            "src/app/_private/page.ts": 'export default function Page() { return null; }\n',
+        })
+        self.assertEqual(data["routes"], [{"route": "/help", "location": "src/app/(public)/help/page.ts:1"}])
 
     def test_next_routes_exclude_slots_private_folders_and_unsupported_interception(self):
         files = {
@@ -546,6 +671,32 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertEqual(data["files_scanned"], 0)
             self.assertEqual(data["files_skipped"], 4)
             self.assertEqual(data["tap_targets"], [])
+
+    def test_directory_scan_failures_are_visible_and_other_files_still_scan(self):
+        for blocked_name in (".", "private"):
+            with self.subTest(blocked=blocked_name), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "private").mkdir()
+                (root / "private" / "hidden.html").write_text('<img src="hidden.png">', encoding="utf-8")
+                (root / "visible.html").write_text('<img src="visible.png">', encoding="utf-8")
+                blocked = root / blocked_name
+                scandir = inventory.os.scandir
+
+                def refuse_directory(path):
+                    if Path(path) == blocked:
+                        raise PermissionError(errno.EACCES, "Permission denied", str(path))
+                    return scandir(path)
+
+                with patch.object(inventory.os, "scandir", side_effect=refuse_directory):
+                    data = inventory.inventory(root)
+                expected_scanned = 0 if blocked_name == "." else 1
+                self.assertEqual((data["files_scanned"], data["files_skipped"]), (expected_scanned, 0))
+                self.assertEqual([row["location"] for row in data["images"]],
+                                 [] if blocked_name == "." else ["visible.html:1"])
+                self.assertEqual(data["parse_warnings"], [{
+                    "location": f"{blocked_name}:1",
+                    "reason": "directory could not be scanned; contents skipped: Permission denied",
+                }])
 
     @unittest.skipUnless(SUPPORTS_ROOT_READS, "requires descriptor-relative repository reads")
     def test_inventory_rejects_an_ancestor_replaced_by_a_symlink_during_read(self):

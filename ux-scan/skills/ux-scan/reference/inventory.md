@@ -25,12 +25,20 @@ reading. This requires descriptor-relative no-follow reads (available on
 Linux and macOS); unsupported platforms refuse source reads and record
 `parse_warnings`. Refused reads and paths that cannot be represented in UTF-8
 are also counted as skipped with a warning.
+Directory traversal errors also produce a warning, including a failure to
+scan the repository root. They do not increase `files_skipped`, because the
+number of files inside an unreadable directory is unknown.
 CSS block comments and closed HTML / JSX comments are masked without changing
 source locations. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
 review. In HTML, Vue, Svelte and Astro files, CSS measurements use style
 blocks and literal style attributes; script style objects are measured once.
+CSS rule checks keep each selector's direct declarations, including those
+before and after nested rules; child declarations are not attributed to the
+parent. Quoted or escaped punctuation and function values do not split rules.
+Nested selectors are inspected as written: `&` inheritance, preprocessor
+interpolation and the computed cascade are not expanded.
 Template tag scans do not re-enter quoted attributes or raw-text elements
 such as script, style and textarea. Embedded CSS uses those same boundaries,
 so style examples in attribute or script strings are not measured as CSS.
@@ -39,7 +47,9 @@ attribute expressions keep heuristic tag scanning: check their candidates
 in context, including nested JSX, strings and regular expressions.
 HTML template tag names are case-insensitive, while component names in JSX,
 Vue, Svelte and Astro keep their case. Attribute character references are decoded.
-Next.js route groups and [parallel-route slots](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes)
+Next.js pages include its default `.js`, `.jsx`, `.ts` and `.tsx`
+[page extensions](https://nextjs.org/docs/app/api-reference/config/next-config-js/pageExtensions),
+plus `.mdx`. Route groups and [parallel-route slots](https://nextjs.org/docs/app/api-reference/file-conventions/parallel-routes)
 (`@name`) are omitted from the inferred URL, and
 [private folders](https://nextjs.org/docs/14/app/building-your-application/routing/colocation)
 (`_name`) are excluded from route inference.
@@ -61,9 +71,9 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `images` | `<img>` without `alt`, or without `width` and `height` | AX4, PP2 |
 | `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
 | `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
-| `positive_tabindex` | `tabindex` greater than 0 | AX3 |
+| `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1 |
-| `destructive_actions` | Click handlers calling delete / remove / destroy / discard… in a file with no confirm, dialog or undo | FB4 |
+| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes | IN1, IN2 |
 | `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present) and 5 columns wider; East Asian wide characters count as two | IN1 |
@@ -96,8 +106,10 @@ when it is not empty, say so in `limitations` or search for the rest.
 
 ## Limits
 
-Elements that receive props through a spread (`{...props}`) are skipped: what
-they get is unknown here. Vue object bindings (`v-bind="props"`) and bindings
+Attribute-completeness and tabindex checks skip elements that receive props
+through a spread (`{...props}`): what they get is unknown here. Explicit
+viewport declarations and destructive handler bodies remain candidates.
+Vue object bindings (`v-bind="props"`) and bindings
 with dynamic attribute names are also treated as spreads. Vue named bindings
 (`:aria-label="label"`, `v-bind:aria-label="label"`) preserve the expression;
 event modifiers such as `@click.stop` do not hide the event. Dynamic name
@@ -106,7 +118,9 @@ only statically blank name attributes are rejected, and referenced label text
 is not resolved. A dynamic input type is recorded as `unknown` and does not
 produce a wrong-type candidate. Viewport declarations are candidates, not a browser's computed
 zoom behavior. The numeric-prefix and case rules follow the
-[viewport parsing algorithm](https://www.w3.org/TR/css-viewport-1/#meta-viewport),
+[viewport parsing algorithm](https://www.w3.org/TR/css-viewport-1/#meta-viewport).
+Literal `tabindex` values follow the HTML
+[integer parsing algorithm](https://html.spec.whatwg.org/multipage/common-microsyntaxes.html#rules-for-parsing-integers),
 and blank names follow the
 [accessible name computation](https://www.w3.org/TR/accname-1.2/#computation-steps).
 Small declared dimensions alone do not establish a failure of

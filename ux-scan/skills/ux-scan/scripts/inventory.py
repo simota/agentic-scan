@@ -72,9 +72,9 @@ JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
 CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
 JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
-# Start at a selector boundary, not every character of a brace-free segment.
-# Otherwise even a long CSS comment causes quadratic failed matches.
-BLOCK = re.compile(r"(?<![^{};])([^{};]+)\{([^{}]*)\}")
+# Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
+# and bracketed regions are tracked by css_rules, including unquoted data URLs.
+CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{};()[\]]''', re.S)
 SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*(?:none|0)\b")
@@ -100,19 +100,19 @@ ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary
 LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
 EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
-DESTRUCTIVE = re.compile(r"(?i)(?:on(?:click|press|tap)\s*=\s*\{[^{}]*?|@click\s*=\s*\"[^\"]*?|on:click\s*=\s*\{[^{}]*?)"
-                         r"\b((?:\w+\.)?(?:delete|remove|destroy|discard|erase|purge|drop)\w*)\s*\(")
+DESTRUCTIVE = re.compile(r"(?i)\b((?:\w+\.)?(?:delete|remove|destroy|discard|erase|purge|drop)\w*)\s*\(")
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 ROUTE = re.compile(r"<Route\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 LINK = re.compile(r"(?<![\w-])(?:to|href)\s*=\s*\{?\s*[\"'`](/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)")
-FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|jsx|js|mdx)$|(?:^|/)routes/((?:[^/]+/)*)\+page\.svelte$")
+FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|(?:^|/)routes/((?:[^/]+/)*)\+page\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
 PERSONAL = re.compile(r"(?i)e-?mail|passw|\btel\b|phone|mobile|(?:first|last|full|given|family|user)[-_ ]?name|^name$|"
                       r"address|street|postal|zip|city|country|cc-|card|\botp\b|one-time")
 NON_INTERACTIVE = {"div", "span", "li", "td", "tr", "p", "img", "section", "article", "header", "footer", "main",
                    "i", "svg", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
 CLICK_ATTRS = ("onclick", "@click", "v-on:click", "on:click", "(click)")
+DESTRUCTIVE_ATTRS = (*CLICK_ATTRS, "onpress", "ontap")
 KEY_ATTRS = ("onkeydown", "onkeyup", "onkeypress", "@keydown", "@keyup", "v-on:keydown", "on:keydown", "(keydown)")
 NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
@@ -127,8 +127,8 @@ RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noemb
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 
 
-def iter_files(root):
-    for dirpath, dirnames, filenames in os.walk(root):
+def iter_files(root, onerror=None):
+    for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
         for name in sorted(filenames):
             path = Path(dirpath) / name
@@ -404,8 +404,21 @@ def literal(value):
         return None
     m = re.fullmatch(r"\{\s*([\"'`])([^\"'`]*)\1\s*\}", value)
     if m:
-        return m.group(2)
+        return None if m.group(1) == "`" and "${" in m.group(2) else m.group(2)
     return None if value.startswith("{") else value
+
+
+def tabindex_integer(value, expression, warn):
+    """HTML integer prefix, after resolving only simple literal expressions."""
+    if not isinstance(value, str):
+        return None
+    if expression:
+        number = re.fullmatch(r"\{\s*([+-]?[0-9]+)\s*\}", value)
+        value = number.group(1) if number else literal(value)
+        if value is None:
+            return None
+    match = re.match(r"[\t\n\f\r ]*([+-]?[0-9]+)", value)
+    return integer(match.group(1), warn) if match else None
 
 
 def has_name(attrs, names=NAME_ATTRS):
@@ -541,16 +554,64 @@ def locale_bundle(rel):
     return None
 
 
+@dataclass
+class CssRule:
+    start: int
+    selector: str
+    declarations: list
+    closed: bool = False
+
+
+def css_rules(text):
+    """Closed rules in source order, with only their own direct declarations.
+
+    A brace stack keeps child declarations out of their parent while retaining
+    declarations on either side of a nested rule. No selector expansion or CSS
+    cascade is attempted, and every source segment is visited only once.
+    """
+    stack, rules, brackets = [], [], []
+    boundary = 0
+    for match in CSS_RULE_TOKEN.finditer(text):
+        token = match.group(0)
+        if len(token) != 1:
+            continue
+        if token in "([":
+            brackets.append(token)
+        elif token in ")]":
+            if brackets:
+                brackets.pop()
+        elif brackets:
+            continue
+        elif token == "{":
+            header = text[boundary:match.start()]
+            start = boundary + len(header) - len(header.lstrip())
+            rule = CssRule(start, header.strip(), [])
+            stack.append(rule)
+            rules.append(rule)
+            boundary = match.end()
+        elif token == ";":
+            if stack:
+                stack[-1].declarations.append(text[boundary:match.end()])
+            boundary = match.end()
+        else:  # A closing brace.
+            if stack:
+                rule = stack.pop()
+                rule.declarations.append(text[boundary:match.start()])
+                rule.closed = True
+            boundary = match.end()
+    for rule in rules:
+        if rule.closed:
+            yield rule.start, rule.selector, "".join(rule.declarations)
+
+
 def scan_css(rel, text, acc, source_lines=None):
     """Rule-level checks on CSS: tap targets and removed focus outlines."""
     source_lines = source_lines or SourceLines(text)
     focus_visible = ":focus-visible" in text
-    for m in BLOCK.finditer(text):
-        selector = re.sub(r"/\*.*?\*/", "", m.group(1), flags=re.S).strip()
-        body = m.group(2)
+    for start, selector, body in css_rules(text):
         if not selector or selector.startswith("@"):
             continue
-        loc = f"{rel}:{source_lines(m.start(1) + len(m.group(1)) - len(m.group(1).lstrip()))}"
+        loc = f"{rel}:{source_lines(start)}"
         warn = lambda reason: parse_warning(acc, loc, reason)  # noqa: E731
         if OUTLINE_NONE.search(body):
             acc["focus_outline"].append({"selector": selector[:120], "location": loc,
@@ -575,6 +636,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
     labels_for = set()
+    has_confirmation = bool(CONFIRM.search(clean))
+    destructive_offsets = set()
     label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
     for tag in parsed:
@@ -596,14 +659,21 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             scale = VIEWPORT_SCALE.search(content)
             blocks = bool(VIEWPORT_ZOOM_LOCK.search(content)) or bool(scale and 0 <= float(scale.group(1)) < 2)
             acc["viewport_meta"].append({"content": content, "blocks_zoom": blocks, "location": loc})
+        if not has_confirmation:
+            for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
+                if attr in DESTRUCTIVE_ATTRS:
+                    for match in DESTRUCTIVE.finditer(clean, handler_start, handler_end):
+                        if match.start(1) not in destructive_offsets:
+                            destructive_offsets.add(match.start(1))
+                            acc["destructive_actions"].append({"call": match.group(1),
+                                                               "location": f"{rel}:{source_lines(match.start(1))}"})
         if spread:
             continue  # Props passed through a spread are unknown here.
-        tabindex = attrs.get("tabindex")
-        tabindex = tabindex.strip("{}\"' ") if isinstance(tabindex, str) else ""
-        if re.fullmatch(r"[1-9]\d*", tabindex):
-            value = integer(tabindex, lambda reason: parse_warning(acc, loc, reason))
-            if value is not None:
-                acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
+        tabindex_span = tag.attribute_spans.get("tabindex")
+        value = tabindex_integer(attrs.get("tabindex"), bool(tabindex_span and tabindex_span[2]),
+                                 lambda reason: parse_warning(acc, loc, reason))
+        if value is not None and value > 0:
+            acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
         if any(a in attrs for a in CLICK_ATTRS) and (
                 (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs)):
             missing = [label for label, keys in (("role", ("role",)), ("tabindex", ("tabindex",)), ("key handler", KEY_ATTRS))
@@ -652,7 +722,14 @@ def inventory(root, flows=None):
     acc = defaultdict(list)
     routes, links, screens, tokens, motion, reduced, locales = [], set(), [], [], [], [], defaultdict(dict)
     scanned = skipped = 0
-    for path in iter_files(root):
+
+    def directory_warning(error):
+        relative = Path(error.filename or root).relative_to(root).as_posix()
+        location = relative.encode("utf-8", errors="backslashreplace").decode("utf-8") + ":1"
+        reason = str(error.strerror or error).encode("utf-8", errors="backslashreplace").decode("utf-8")
+        parse_warning(acc, location, f"directory could not be scanned; contents skipped: {reason[:200]}")
+
+    for path in iter_files(root, onerror=directory_warning):
         rel = path.relative_to(root).as_posix()
         suffix = path.suffix.lower()
         if suffix not in CSS_EXT | EMBED_CSS_EXT | JS_EXT | MARKUP_EXT | {".json"}:
@@ -794,9 +871,6 @@ def inventory(root, flows=None):
                 if missing:
                     acc["state_branches"].append({"file": rel, "missing": missing,
                                                   "location": at(FETCH.search(text).start())})
-            if not CONFIRM.search(text):
-                for m in DESTRUCTIVE.finditer(text):
-                    acc["destructive_actions"].append({"call": m.group(1), "location": at(m.start(1))})
 
     expansion = []
     for bundle, langs in sorted(locales.items()):

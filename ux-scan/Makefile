@@ -93,7 +93,7 @@ unlink: ## remove the symlinks this Makefile created
 	while [ "$$#" -gt 0 ]; do \
 	  dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink -- "$$d")" = "$$skill" ]; then rm -f -- "$$d"; echo "unlinked $$d"; \
+	    if [ "$$(readlink -- "$$d")" = "$$skill" ]; then rm -f -- "$$d" || exit 1; echo "unlinked $$d"; \
 	    else echo "left     $$d - points at $$(readlink -- "$$d"), not this repo"; fi; \
 	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
 	  else echo "absent   $$d"; fi; \

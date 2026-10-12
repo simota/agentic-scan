@@ -70,8 +70,9 @@ ROOT_DOCS = {"readme", "changelog", "license", "licence", "contributing", "secur
 ENTRY_STEMS = {"main", "index", "app", "__init__", "__main__", "setup", "manage", "conftest", "wsgi", "asgi",
                "server", "cli", "lib", "mod", "build", "worker"}
 # Include extensionless .mts/.cts imports accepted by some bundlers, beyond tsc's resolver.
-JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json", ".mts", ".cts",
-              "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs", "/index.mts", "/index.cts")
+JS_RESOLVE_EXT = (".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json", ".mts", ".cts")
+# Keep extensionless file and directory imports consistent for every supported source type.
+JS_RESOLVE = ("", *JS_RESOLVE_EXT, *("/index" + ext for ext in JS_RESOLVE_EXT))
 # TypeScript source imports name the emitted JavaScript files in Node's ESM modes.
 JS_SUBSTITUTIONS = {".js": (".ts", ".tsx", ".d.ts", ".js", ".jsx"),
                     ".jsx": (".tsx", ".d.ts", ".jsx"),
@@ -100,8 +101,18 @@ ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__a
 
 PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
 PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
-JS_IMPORT = re.compile(r"(?:\bimport|\bexport)\s[^'\"`;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|\bimport\s*[\"']([^\"'\n]+)[\"']|"
-                       r"\brequire\(\s*[\"']([^\"'\n]+)[\"']\s*\)|\bimport\(\s*[\"']([^\"'\n]+)[\"']\s*\)")
+# A block comment must stop at its first terminator, even when a following specifier is absent.
+JS_COMMENT = r"/\*(?:[^*]|\*(?!/))*(?:\*/|\Z)|//[^\n]*(?:\n|\Z)"
+JS_GAP = r"(?:\s|" + JS_COMMENT + r")*"
+# Consume unsuccessful clauses too: retrying every import/export word against the
+# remainder of a comment or malformed statement makes a small file quadratic.
+JS_FROM_IMPORT = re.compile(
+    r"\b(?:import|export)\b(?:" + JS_COMMENT + r"|/(?![/*])|[^/'\"`;])*?"
+    r"(?:\bfrom" + JS_GAP + r"[\"']([^\"'\n]+)[\"']|(?=[\"'`;]|\Z))")
+# A literal first argument ends at ')' or ','; import options need no further parsing.
+JS_DIRECT_IMPORT = re.compile(
+    r"\b(import|require)\b" + JS_GAP + r"(?:\(" + JS_GAP + r"[\"']([^\"'\n]+)[\"']"
+    + JS_GAP + r"[),]|[\"']([^\"'\n]+)[\"'])?")
 GO_PATH = re.compile(r"[\w.+~\-/]+\Z")
 GO_ESCAPE = re.compile(r"\\([0-7]{3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)")
 GO_SIMPLE_ESCAPES = dict(zip("abfnrtv\\\"'", (b"\a", b"\b", b"\f", b"\n", b"\r", b"\t", b"\v", b"\\", b'"', b"'")))
@@ -470,6 +481,17 @@ def js_package(spec):
     return "/".join(parts[:2]) if spec.startswith("@") else parts[0]
 
 
+def js_import_specs(text):
+    """Scan non-overlapping clauses; separately keep calls inside exports and templates."""
+    for match in JS_FROM_IMPORT.finditer(text):
+        if match.group(1):
+            yield match.group(1)
+    for match in JS_DIRECT_IMPORT.finditer(text):
+        kind, called, side_effect = match.groups()
+        if called or kind == "import" and side_effect:
+            yield called or side_effect
+
+
 def py_dist_module(name):
     lower = name.lower()
     return PY_MODULE_NAMES.get(lower, re.sub(r"[-.]", "_", lower))
@@ -738,8 +760,7 @@ def inventory(root, units=None, today=None):
     for rel in code_files:
         ext, text = suffix(rel), texts[rel]
         if ext in JS_EXT or ext in (".html", ".htm"):
-            for m in JS_IMPORT.finditer(text):
-                spec = next(g for g in m.groups() if g)
+            for spec in js_import_specs(text):
                 if spec.startswith((".", "/")):
                     for target in resolve_js(rel, spec):
                         inbound[target].add(rel)

@@ -38,6 +38,57 @@ def read_json_source(path, *, directory=None):
         return handle.read()
 
 
+def artifact_version(info):
+    """Identify the file and its content-changing metadata, excluding read atime."""
+    return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+
+
+def artifact_digest(handle):
+    """Hash one newly opened artifact in bounded chunks, rejecting size changes."""
+    remaining = os.fstat(handle.fileno()).st_size
+    digest = hashlib.sha256()
+    while remaining:
+        chunk = handle.read(min(remaining, 1024 * 1024))
+        if not chunk:
+            raise OSError("artifact shortened while being read")
+        digest.update(chunk)
+        remaining -= len(chunk)
+    if handle.read(1):
+        raise OSError("artifact grew while being read")
+    return digest.digest()
+
+
+def artifact_changes(out, regular, hashes, found, expected, allow, *, directory=None):
+    """Recheck the actual bytes validated, then their current names and versions."""
+    changed = set()
+    for name, digest in hashes.items():
+        try:
+            with open_artifact(out / name, directory=directory) as handle:
+                before = artifact_version(os.fstat(handle.fileno()))
+                if (before != artifact_version(regular[name]) or artifact_digest(handle) != digest
+                        or artifact_version(os.fstat(handle.fileno())) != before):
+                    changed.add(name)
+        except OSError:
+            changed.add(name)
+    # A later read can race with a previously rechecked artifact. Check every
+    # pathname again after all hashes, using the pinned directory when available.
+    for name, before in regular.items():
+        try:
+            current = ((out / name).lstat() if directory is None
+                       else os.stat(name, dir_fd=directory, follow_symlinks=False))
+            if artifact_version(current) != artifact_version(before):
+                changed.add(name)
+        except OSError:
+            changed.add(name)
+    try:
+        current = set(os.listdir(directory)) if directory is not None else {p.name for p in out.iterdir()}
+        changed.update((found ^ current) - (set(allow) - expected))
+    except OSError as error:
+        yield f"{out}: cannot recheck artifact set: {error.strerror or error}"
+    for name in sorted(changed):
+        yield f"{name}: changed during validation; run the check again"
+
+
 class PageMetadata(HTMLParser):
     """Read real head stamps and the complete envelope of a generated page.
 
@@ -48,19 +99,22 @@ class PageMetadata(HTMLParser):
     VOID_TAGS = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                            "param", "source", "track", "wbr"))
     HEAD_TAGS = frozenset(("base", "link", "meta", "title", "style", "script", "template"))
-    HTML_WHITESPACE = "\t\n\f\r "
+    HTML_WHITESPACE = " \t\n\r\f"
     NUMERIC_REFERENCES = re.compile(r"&#(?:[xX][0-9a-fA-F]+|[0-9]+);?")
     SCRIPT_OPEN = re.compile(r"<script(?=[\t\n\f\r />])", re.IGNORECASE | re.ASCII)
 
     def __init__(self, page):
-        # Python's automatic unescape can discard controls that a browser
-        # retains. Handle references explicitly before checking head text.
+        # Keep references observable: html.unescape silently drops some control
+        # references (for example &#11;) which browsers treat as non-whitespace.
         super().__init__(convert_charrefs=False)
+        page = page.removeprefix("\ufeff")  # A leading UTF-8 BOM is an encoding signature.
         self.source_lines = page.split("\n")
         self.envelope = []
-        self.head_seen = False
         self.in_head = False
+        self.in_body = False
         self.head_children = []
+        self.script_tail = None
+        self.script_comment = False
         self.stamps = {}
         self.lang = None
         self.invalid = False
@@ -73,23 +127,29 @@ class PageMetadata(HTMLParser):
             self.invalid = True
 
     def handle_starttag(self, tag, attrs):
-        if not self.head_seen and tag not in ("html", "head"):
-            self.invalid = True
-        if self.in_head and not self.head_children and tag not in self.HEAD_TAGS:
-            self.invalid = True
+        if tag == "script":
+            self.script_tail = ""
+            self.script_comment = False
         if tag in ("html", "head", "body"):
             self.envelope.append(tag)
         if tag == "head":
-            self.in_head = self.head_seen = True
+            self.in_head = True
+        elif tag == "body":
+            self.in_body = True
+        elif tag != "html" and not (self.in_head or self.in_body):
+            self.invalid = True
         duplicate_attrs = len({key for key, _ in attrs}) != len(attrs)
         attrs = dict(attrs)
         if tag == "html":
             self.lang = attrs.get("lang")
         if self.in_head and tag != "head":
+            if not self.head_children and tag not in self.HEAD_TAGS:
+                # Body content implicitly closes a browser's head. This checker
+                # requires the explicit envelope emitted by the renderer.
+                self.invalid = True
             if tag == "meta" and not self.head_children and attrs.get("name") in (STAMP, UNITS_STAMP):
-                # Attribute values are unescaped even with convert_charrefs=False.
-                # Reject references Python erases, rather than trusting a hash
-                # or stamp name that contains an extra character in a browser.
+                # Attribute values are decoded even with convert_charrefs=False.
+                # Reject references that HTMLParser drops but browsers preserve.
                 if any(not unescape(match.group()) for match in self.NUMERIC_REFERENCES.finditer(
                         self.get_starttag_text())):
                     self.invalid = True
@@ -106,45 +166,65 @@ class PageMetadata(HTMLParser):
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
-        if tag == "br" and (not self.head_seen or self.in_head and not self.head_children):
-            self.invalid = True
+        if tag == "script":
+            self.script_tail = None
+            self.script_comment = False
         if tag in ("html", "head", "body"):
             self.envelope.append("/" + tag)
         if tag == "head":
             if self.head_children:
                 self.invalid = True
             self.in_head = False
+        elif tag == "body":
+            self.in_body = False
+        elif not self.in_body and not self.head_children and tag == "br":
+            self.invalid = True
         elif self.in_head and self.head_children and self.head_children[-1] == tag:
             self.head_children.pop()
 
     def handle_data(self, data):
-        if self.in_head and self.head_children and self.head_children[-1] == "script":
-            # HTMLParser lacks HTML's script double-escaped state. Reject
-            # generated scripts that may enter it: the next </script> can be
-            # text in a browser, leaving apparent stamps inside the script.
-            escaped = data.find("<!--")
-            if escaped >= 0 and self.SCRIPT_OPEN.search(data, escaped + 4):
+        if self.script_tail is not None:
+            # HTMLParser lacks browser script double-escaping. Reject scripts
+            # that may enter it, including body scripts and split callbacks,
+            # while retaining harmless comments and text such as <scripture>.
+            script_data = self.script_tail + data
+            escaped = 0 if self.script_comment else script_data.find("<!--")
+            if escaped >= 0:
+                start = 0 if self.script_comment else escaped + 4
+                self.script_comment = True
+            else:
+                start = len(script_data)
+            if self.SCRIPT_OPEN.search(script_data, start):
                 self.invalid = True
-        # Non-ASCII whitespace, including NBSP and vertical tab, closes the
-        # browser's head. Text inside title/style/script/template is content.
-        if (not self.head_seen or self.in_head and not self.head_children) and data.strip(self.HTML_WHITESPACE):
+            self.script_tail = script_data[-7:]
+        if (not self.in_body and not (self.in_head and self.head_children)
+                and data.strip(self.HTML_WHITESPACE)):
+            # Only HTML's five ASCII whitespace characters keep the head open;
+            # they are also the only text around the explicit document envelope.
+            # str.isspace()/strip() would incorrectly allow body text such as NBSP.
             self.invalid = True
 
     def handle_entityref(self, name):
-        # The callback omits whether a semicolon was present. Preserve it:
-        # &Tab; is whitespace, but the literal &Tab without ';' is not.
         line, column = self.getpos()
+        # Preserve whether the source has a semicolon: &Tab; is whitespace, but
+        # &Tab without a semicolon remains text in the browser.
         end = column + len(name) + 1
         semicolon = self.source_lines[line - 1][end:end + 1] == ";"
         self.handle_data(unescape("&" + name + (";" if semicolon else "")))
 
     def handle_charref(self, name):
-        number = int(name[1:], 16) if name[:1].lower() == "x" else int(name)
+        try:
+            number = int(name[1:], 16) if name[:1].lower() == "x" else int(name)
+        except (ValueError, OverflowError):
+            number = -1
+        # C1 replacement rules do not change whether a reference is HTML
+        # whitespace, so a code point check is sufficient for this contract.
         self.handle_data(chr(number) if number in (9, 10, 12, 13, 32) else "\ufffd")
 
     @property
     def complete(self):
-        return not self.invalid and self.envelope == ["html", "head", "/head", "body", "/body", "/html"]
+        return (not self.invalid and not self.head_children
+                and self.envelope == ["html", "head", "/head", "body", "/body", "/html"])
 
 
 def rendered_lang(out, *, directory=None):
@@ -220,7 +300,8 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
         yield f"{name}: missing; {hint}"
     for name in sorted(found - expected - set(allow)):
         yield f"{name}: not part of the contract (contract_check.py --allow {name} if it was asked for)"
-    regular = set()
+    regular = {}
+    hashes = {}
     for name in sorted(found & expected):
         path = out / name
         try:
@@ -228,17 +309,19 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
             if not stat.S_ISREG(info.st_mode):
                 yield f"{name}: must be a regular file"
             else:
-                regular.add(name)
+                regular[name] = info
         except OSError as e:
             yield f"{name}: cannot inspect file: {e.strerror or e}"
     if "findings.json" not in regular:
         return
     try:
         source = read_json_source(out / "findings.json", directory=directory)
+        hashes["findings.json"] = hashlib.sha256(source).digest()
         units = None
         units_source = None
         if "units.json" in regular:
             units_source = read_json_source(out / "units.json", directory=directory)
+            hashes["units.json"] = hashlib.sha256(units_source).digest()
             units = check_units(parse_json(units_source, "units.json"))
         data = check_findings(parse_json(source, "findings.json"), units)
     except (OSError, ValueError, RecordError) as e:
@@ -264,7 +347,9 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
                "so a human makes the keep or remove call")
     if "inventory.json" in regular:
         try:
-            inventory = parse_json(read_json_source(out / "inventory.json", directory=directory), "inventory.json")
+            inventory_source = read_json_source(out / "inventory.json", directory=directory)
+            hashes["inventory.json"] = hashlib.sha256(inventory_source).digest()
+            inventory = parse_json(inventory_source, "inventory.json")
             if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
                 yield "inventory.json: not written by inventory.py"
         except (ValueError, RecordError) as e:
@@ -279,7 +364,9 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
             continue
         try:
             with open_artifact(out / name, directory=directory) as handle:
-                page = handle.read().decode("utf-8")
+                page_source = handle.read()
+            hashes[name] = hashlib.sha256(page_source).digest()
+            page = page_source.decode("utf-8")
         except (OSError, UnicodeError) as e:
             yield f"{name}: cannot read file: {e}"
             continue
@@ -291,14 +378,21 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
             if metadata.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale; re-render after the last findings or units change ({rerender})"
                 break
-    if "report.pdf" in regular and not pdf_complete(out / "report.pdf", directory=directory):
-        yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
+    if "report.pdf" in regular:
+        try:
+            with open_artifact(out / "report.pdf", directory=directory) as handle:
+                hashes["report.pdf"] = artifact_digest(handle)
+        except OSError as error:
+            yield f"report.pdf: cannot read file: {error.strerror or error}"
+        if not pdf_complete(out / "report.pdf", directory=directory):
+            yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
     pdf_limitations = [line for line in data.get("limitations", []) if line.startswith(NO_PDF)]
     limited = any(re.match(re.escape(NO_PDF) + r":\s*\S", line) for line in pdf_limitations)
     if no_pdf and not limited:
         yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
     if not no_pdf and pdf_limitations:
         yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
+    yield from artifact_changes(out, regular, hashes, found, expected, allow, directory=directory)
 
 
 def main(argv=None):

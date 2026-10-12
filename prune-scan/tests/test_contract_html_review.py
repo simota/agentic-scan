@@ -1,4 +1,4 @@
-"""Contract metadata must stay inside the actual document head."""
+"""Regression tests for browser-incompatible contract HTML."""
 
 import hashlib
 import json
@@ -6,6 +6,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "prune-scan" / "scripts"))
@@ -48,6 +49,119 @@ class ContractHtmlReviewTests(unittest.TestCase):
                                         for error in errors), errors)
                 finally:
                     path.write_text(self.page, encoding="utf-8")
+
+    def assert_accepted(self, page):
+        for name in ("dashboard.html", "report.html"):
+            (self.out / name).write_text(page, encoding="utf-8")
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_direct_head_text_invalidates_the_envelope_before_or_after_stamps(self):
+        for text in ("unexpected text", "日本語", "<", "\ntext\t"):
+            for position in ("<head>", "</head>"):
+                with self.subTest(text=text, position=position):
+                    inserted = position + text if position == "<head>" else text + position
+                    self.assert_rejected(self.page.replace(position, inserted, 1))
+
+    def test_only_html_ascii_whitespace_can_remain_directly_in_head(self):
+        for text in ("\v", "\x1c", "\x85", "\xa0", "\u2003", "\u2028", "\u202f", "\u3000", "\ufeff"):
+            with self.subTest(text=repr(text)):
+                self.assert_rejected(self.page.replace("<head>", "<head>" + text, 1))
+
+    def test_non_whitespace_references_cannot_keep_the_head_open(self):
+        for text in ("&amp;", "&nbsp;", "&emsp;", "&#65;", "&#x3000;", "&#11;", "&#x1f;",
+                     "&#127;", "&#xFFFF;", "&#0;", "&#x110000;", "&unknown;", "&Tab", "&NewLine"):
+            with self.subTest(text=text):
+                self.assert_rejected(self.page.replace("<head>", "<head>" + text, 1))
+
+    def test_html_whitespace_and_its_references_preserve_valid_stamps(self):
+        for text in (" \t\n\r\f", "&#9;&#10;&#12;&#13;&#32;", "&#x09;&#x0a;&#x0C;&#x0D;&#x20;",
+                     "&#00032;", "&#32", "&Tab;&NewLine;", "\n&Tab;\n&NewLine;\n"):
+            with self.subTest(text=text):
+                self.assert_accepted(self.page.replace("<head>", "<head>" + text, 1))
+
+    def test_head_text_elements_keep_their_text_and_comments_out_of_direct_head_data(self):
+        for content in ('<title>Report &amp; analysis &nbsp; &#11;</title>',
+                        '<style>body::before { content: "text &nbsp; &#11;"; }</style>',
+                        '<script>const example = "text &nbsp; &#11;";</script>',
+                        '<!-- text &nbsp; &#11; <br> -->'):
+            with self.subTest(content=content):
+                self.assert_accepted(self.page.replace("<head>", "<head>" + content, 1))
+
+    def test_script_legacy_comments_cannot_make_stamps_or_closing_tags_inert(self):
+        for script in ('<script><!--<script></script>',
+                       '<SCRIPT><!--\n<ScRiPt data-demo="x">\n</SCRIPT>',
+                       '<script type="application/json"><!--<script></script>'):
+            for position in ("<head>", "<body>"):
+                with self.subTest(script=script, position=position):
+                    self.assert_rejected(self.page.replace(position, position + script, 1))
+
+    def test_normal_scripts_and_escaped_html_comments_preserve_the_contract(self):
+        for script in ('<script>const marker = "<script>";</script>',
+                       '<script>// ordinary line comment\n/* ordinary block comment */\nconst x = 1;</script>',
+                       '<script>const marker = "\\u003c!--";</script>',
+                       '<script type="application/json">{"marker": "\\u003c!--"}</script>',
+                       '<script>const marker = "&lt;!--";</script>',
+                       '<style>/* <!-- <script> */</style><!-- <script><!-- text </script> -->'):
+            for position in ("<head>", "<body>"):
+                with self.subTest(script=script, position=position):
+                    self.assert_accepted(self.page.replace(position, position + script, 1))
+
+    def test_script_boundaries_survive_fragmented_data_callbacks(self):
+        handle_data = contract_check.PageMetadata.handle_data
+
+        def fragmented(parser, data):
+            for character in data:
+                handle_data(parser, character)
+
+        with mock.patch.object(contract_check.PageMetadata, "handle_data", fragmented):
+            for position in ("<head>", "<body>"):
+                with self.subTest(position=position):
+                    script = '<script><!-- <ScRiPt\t></script>'
+                    self.assert_rejected(self.page.replace(position, position + script, 1))
+                    script = '<script><!-- const example = "<scripture>"; // --></script>'
+                    self.assert_accepted(self.page.replace(position, position + script, 1))
+
+    def test_body_only_elements_cannot_restore_the_head_for_later_stamps(self):
+        for content in ("<br>", "<hr/>", '<img src="icon.png">', '<input type="hidden">',
+                        "<div></div>", "<p></p>", "<textarea></textarea>", "<svg></svg>"):
+            with self.subTest(content=content):
+                self.assert_rejected(self.page.replace("<head>", "<head>" + content, 1))
+
+    def test_br_end_tag_cannot_keep_the_head_open(self):
+        self.assert_rejected(self.page.replace("<head>", "<head></br>", 1))
+
+    def test_text_outside_the_explicit_head_and_body_cannot_supply_a_false_envelope(self):
+        for page in ("text" + self.page, self.page.replace("<head>", "text<head>", 1),
+                     self.page.replace("<body>", "text<body>", 1), self.page + "text"):
+            with self.subTest(page=page):
+                self.assert_rejected(page)
+
+    def test_body_elements_before_the_head_cannot_supply_head_metadata(self):
+        for content in ("<br>", "</br>", "<div></div>", "<template></template>"):
+            for page in (content + self.page, self.page.replace("<head>", content + "<head>", 1)):
+                with self.subTest(content=content, page=page):
+                    self.assert_rejected(page)
+
+    def test_unclosed_head_children_cannot_hide_in_a_complete_envelope(self):
+        for tag in ("title", "style", "script", "template", "noscript", "noframes"):
+            with self.subTest(tag=tag):
+                self.assert_rejected(self.page.replace("</head>", f"<{tag}></head>", 1))
+
+    def test_control_references_cannot_be_dropped_from_stamp_attributes(self):
+        for reference in ("&#11;", "&#x1f;", "&#127;", "&#xFFFF;"):
+            for value in (contract_check.STAMP, "sha256:"):
+                with self.subTest(reference=reference, value=value):
+                    self.assert_rejected(self.page.replace(value, value + reference, 1))
+
+    def test_valid_numeric_references_in_stamp_attributes_still_match_the_digest(self):
+        page = self.page.replace(contract_check.STAMP, contract_check.STAMP.replace("-", "&#45;"), 1)
+        page = page.replace("sha256:", "sh&#97;256&#x3a;", 1)
+        self.assert_accepted(page)
+
+    def test_document_whitespace_bom_comments_and_closed_head_children_remain_valid(self):
+        content = '<template><div>Text &nbsp; &#11;</div></template>'
+        page = self.page.replace("<head>", "<head>" + content, 1)
+        self.assert_accepted('\ufeff\n<!doctype html><!-- document -->\n' + page + '\n<!-- end -->')
 
     def test_self_closing_non_void_head_elements_cannot_validate_inert_stamps(self):
         for tag in ("style", "script", "title", "template", "textarea", "iframe", "div"):

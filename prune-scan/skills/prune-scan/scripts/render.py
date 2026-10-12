@@ -87,7 +87,7 @@ LABELS = {
 }
 
 
-def read_source(root, relative, *, expected_stat):
+def read_source(root, relative, *, expected_stat, directory=None):
     """Read a bounded regular source without following links planted after resolve.
 
     Pin the selected repository identity and every directory on POSIX.
@@ -97,7 +97,8 @@ def read_source(root, relative, *, expected_stat):
     path = root / relative
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     if NOFOLLOW_DIR_FD:
-        parent = open_directory(root, readable=False, expected_stat=expected_stat)
+        parent = (open_directory(root, readable=False, expected_stat=expected_stat)
+                  if directory is None else os.dup(directory))
         directories = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
                        | os.O_DIRECTORY | os.O_NOFOLLOW)
         try:
@@ -128,7 +129,7 @@ def read_source(root, relative, *, expected_stat):
     return source if len(source) <= MAX_SOURCE_BYTES and b"\0" not in source else None
 
 
-def snippet(repo, location):
+def snippet(repo, location, *, selected=None):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
@@ -137,14 +138,26 @@ def snippet(repo, location):
         start, end = int(m["start"]), int(m["end"] or m["start"])
         if start < 1 or end < start:
             return None
-        selected = Path(repo)
-        selected_info = selected.stat()
-        root = selected.resolve()
+        directory = None
+        if selected is None:
+            requested = Path(repo)
+            selected_info = requested.stat()
+            root = requested.resolve()
+        else:
+            root, selected_info, directory = selected
+        # Resolve links through the same repository whose descriptor will read
+        # the source. A replacement tree can otherwise redirect beta.py to
+        # alpha.py, then make the original alpha.py appear as beta.py's excerpt.
+        identity = os.fstat(directory) if directory is not None else selected_info
+        if not os.path.samestat(identity, root.stat()):
+            return None
         path = (root / m["path"]).resolve()
+        if not os.path.samestat(identity, root.stat()):
+            return None
         relative = path.relative_to(root)
         if SENSITIVE.search(relative.as_posix()):
             return None
-        source = read_source(root, relative, expected_stat=selected_info)
+        source = read_source(root, relative, expected_stat=selected_info, directory=directory)
         if source is None:
             return None
         text = source.decode("utf-8")
@@ -241,8 +254,43 @@ def subtraction_lines(findings, lang):
             for key, ids in zip(("now", "reduce", "decide"), subtraction_groups(findings)) if ids]
 
 
+@contextmanager
+def selected_repository(repo):
+    """Retain one repository identity for every excerpt in a conversion.
+
+    The descriptor prevents both pathname replacement and inode reuse from
+    selecting another repository. Unsupported runtimes keep the original stat
+    for the per-read fallback checks. An unavailable selection stays unavailable.
+    """
+    directory = None
+    try:
+        if not repo:
+            selected = None
+        else:
+            requested = Path(repo)
+            info = requested.stat()
+            root = requested.resolve()
+            if not stat.S_ISDIR(info.st_mode):
+                raise OSError("repository is not a directory")
+            if NOFOLLOW_DIR_FD:
+                directory = open_directory(root, readable=False, expected_stat=info)
+            selected = root, info, directory
+    except (OSError, ValueError, RuntimeError):
+        selected = None
+    try:
+        yield selected
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
 def to_common(data, lang, units=None, repo=None):
     """data (findings.json) as a scan-report/1 record."""
+    with selected_repository(repo) as selected:
+        return _to_common(data, lang, units, repo if selected is not None else None, selected)
+
+
+def _to_common(data, lang, units, repo, selected):
     T, fam, acts, srcs = LABELS[lang], FAMILIES[lang], ACTIONS[lang], SOURCES[lang]
     by_unit = {u["id"]: u for u in (units or {}).get("units", [])}
     by_entry = {e["id"]: e for e in (units or {}).get("entry_points", [])}
@@ -276,7 +324,7 @@ def to_common(data, lang, units=None, repo=None):
         if f["status"] == "Open" and verdict not in EXCLUDED:
             item["action"] = ({"label": T["subtract"], "text": subtract_text} if ready
                               else {"label": T["verify"], "text": T["verify_text"]})
-        excerpt = snippet(repo, f["location"])
+        excerpt = snippet(repo, f["location"], selected=selected)
         if excerpt:
             item["snippet"] = excerpt
         findings.append(item)

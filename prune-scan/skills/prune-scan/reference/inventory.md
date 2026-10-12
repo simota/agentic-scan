@@ -47,15 +47,15 @@ real top-level definitions from docstring examples and recognizes decorators
 that span multiple lines. Unsupported syntax retains the best-effort text
 scan. TypeScript imports that name emitted `.js`, `.mjs` or `.cjs` files also
 resolve to the corresponding source extensions, including `.mts` and `.cts`.
-Extensionless imports conservatively consider `.mts` and `.cts` files and
-directory indexes as possible references for runtimes and bundlers that
-support them. When several candidate files exist, all are recorded as
-references because the runtime's extension order can differ. Dotted names
-such as `helper.client` can still be extensionless source imports. Known
-source extensions retain their source-substitution order; an import naming
-an existing file with another suffix keeps its direct match. This inventory
-heuristic does not imply that the TypeScript compiler accepts those
-extensionless paths.
+Extensionless imports conservatively consider all supported JavaScript/TypeScript
+source extensions, including `.mts` and `.cts`, both as files and as directory
+`index` files, for runtimes and bundlers that support them. When several candidate
+files exist, all are recorded as references because the runtime's extension order
+can differ. Dotted names such as `helper.client` can still be extensionless source
+imports. Known source extensions retain their source-substitution order; an import
+naming an existing file with another suffix keeps its direct match. This inventory
+heuristic does not imply that the TypeScript compiler accepts those extensionless
+paths.
 Dependency overlap groups and platform replacements are specific to the
 manifest's ecosystem; an identically named package in another ecosystem does
 not inherit its replacement suggestion.

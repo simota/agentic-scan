@@ -25,6 +25,13 @@ differ across languages, so a quoted value does not prove that the next line
 is safe to publish. This conservative check can also omit harmless source
 that uses a secret-looking name; the finding's prose and location remain.
 
+All excerpts in one report conversion use a single repository selection.
+Where descriptor-relative opens are available, the repository directory stays
+open until conversion finishes; changing its pathname or an intentional alias
+cannot switch later excerpts to another repository. An unavailable initial
+selection omits excerpts for the entire conversion. Other runtimes retain the
+original canonical path and identity for the per-read fallback checks.
+
 Rendering keeps the actual input files open and pins the selected output
 directory before building the pages. HTML and PDF engines write into a private
 temporary directory; publication, stale-PDF removal, and any rollback use the
@@ -56,7 +63,11 @@ On POSIX systems with descriptor-relative opens, the check captures the output
 directory's identity before resolving the path and verifies it when opening
 the directory. It pins every ancestor and uses the selected directory's
 descriptor for all artifact inspection and reads. Before reporting success,
-it verifies that both the resolved path and the original requested path still
+it rechecks each required artifact's identity, file version and content digest
+through the same directory. Replacing or editing an artifact during validation
+invalidates the check. The artifact set is checked again; `--allow` exempts
+changes only to additional permitted entries, never to required artifacts.
+It also verifies that both the resolved path and the original requested path still
 identify the inspected directory. Retargeting an intentional alias, including
 an ancestor alias, therefore invalidates the check. Runtimes without
 descriptor-relative opens also compare both paths with the selected

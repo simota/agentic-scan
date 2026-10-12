@@ -57,7 +57,9 @@ naming an existing file with another suffix keeps its direct match. This invento
 heuristic does not imply that the TypeScript compiler accepts those extensionless
 paths.
 
-JavaScript import signals include quoted binding names and static or dynamic
+JavaScript import signals include quoted binding names, Flow
+[`import typeof`](https://flow.org/en/docs/types/modules/) declarations and inline
+`typeof` specifiers, and static or dynamic
 [source-phase imports](https://nodejs.org/api/esm.html#wasm-source-phase-imports).
 The scan also retains literal `import.defer(...)` references from the
 [deferred-import draft](https://tc39.es/proposal-defer-import-eval/), alongside

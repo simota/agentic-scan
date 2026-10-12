@@ -575,9 +575,15 @@ def js_import_specs(text):
             if binding[0] not in ("name", "string"):
                 break
             following = token(binding[2])
-            if (binding[:2] == ("name", "type") and following[0] in ("name", "string")
-                    and following[:2] != ("name", "as")):
-                following = token(following[2])
+            if (binding[0] == "name" and binding[1] in ("type", "typeof")
+                    and following[0] in ("name", "string")):
+                after = token(following[2])
+                # `as` may be the imported name, or introduce an ordinary alias.
+                if (following[:2] != ("name", "as")
+                        or after[:2] in (("punct", "}"), ("punct", ","))
+                        or (after[:2] == ("name", "as")
+                            and token(after[2])[0] in ("name", "string"))):
+                    following = after
             if following[:2] == ("name", "as"):
                 alias = token(following[2])
                 if alias[0] not in ("name", "string"):
@@ -643,7 +649,10 @@ def js_import_specs(text):
                     if unseen(module):
                         yield module[1]
                     continue
-        if following[:2] == ("name", "type"):
+        if kind == "import" and following[:2] == ("name", "typeof"):
+            # Flow's reserved modifier may precede a binding named `from` or `type`.
+            following = token(following[2])
+        elif following[:2] == ("name", "type"):
             after = token(following[2])
             if kind == "export" or after[:2] not in (("name", "from"), ("punct", ",")):
                 following = after

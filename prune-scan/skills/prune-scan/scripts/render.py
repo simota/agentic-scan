@@ -208,6 +208,11 @@ def open_artifact(path, *, directory=None):
             os.close(owned_directory)
 
 
+def pdf_envelope_complete(header, tail):
+    """Recognize the stored PDF envelope; this is not a full PDF parser."""
+    return bool(re.fullmatch(rb"%PDF-[12]\.[0-9]", header) and re.search(rb"%%EOF\s*\Z", tail))
+
+
 def pdf_complete(path, *, directory=None):
     """Check stored artifacts for the run contract too; not a full PDF parser."""
     try:
@@ -216,7 +221,7 @@ def pdf_complete(path, *, directory=None):
             handle.seek(0, os.SEEK_END)
             handle.seek(max(0, handle.tell() - 1024))
             tail = handle.read()
-        return bool(re.fullmatch(rb"%PDF-[12]\.[0-9]", header) and re.search(rb"%%EOF\s*\Z", tail))
+        return pdf_envelope_complete(header, tail)
     except OSError:
         return False
 

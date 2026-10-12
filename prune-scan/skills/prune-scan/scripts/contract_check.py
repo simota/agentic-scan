@@ -18,6 +18,7 @@ import os
 import re
 import stat
 import sys
+from contextlib import ExitStack
 from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
@@ -25,17 +26,27 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FAMILIES, FINDING_REF, RecordError, check_findings,  # noqa: E402
                       check_units, parse_json)
-from render import NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact, pdf_complete  # noqa: E402
+from render import (NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
+                    pdf_complete as stored_pdf_complete, pdf_envelope_complete)
 from safe_paths import open_directory  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
 
 
-def read_json_source(path, *, directory=None):
+def read_json_source(path, *, directory=None, snapshots=None):
     """Contract records must stay regular artifacts, even if replaced after inspection."""
+    if snapshots is not None:
+        return snapshots.read(path)
     with open_artifact(path, directory=directory) as handle:
         return handle.read()
+
+
+def pdf_complete(path, *, directory=None, snapshots=None):
+    """Check the exact PDF bytes captured for this contract, when supplied."""
+    if snapshots is not None:
+        return snapshots.read(path, pdf=True)
+    return stored_pdf_complete(path, directory=directory)
 
 
 def artifact_version(info):
@@ -43,50 +54,86 @@ def artifact_version(info):
     return (info.st_dev, info.st_ino, info.st_mode, info.st_size, info.st_mtime_ns, info.st_ctime_ns)
 
 
-def artifact_digest(handle):
-    """Hash one newly opened artifact in bounded chunks, rejecting size changes."""
-    remaining = os.fstat(handle.fileno()).st_size
+def fingerprint(handle, size):
+    """Hash a bounded read and retain the PDF envelope from those same bytes."""
     digest = hashlib.sha256()
+    header, tail = b"", b""
+    remaining = size + 1
     while remaining:
-        chunk = handle.read(min(remaining, 1024 * 1024))
+        chunk = handle.read(min(65536, remaining))
         if not chunk:
-            raise OSError("artifact shortened while being read")
+            break
         digest.update(chunk)
+        header = (header + chunk[:8])[:8]
+        tail = (tail + chunk)[-1024:]
         remaining -= len(chunk)
-    if handle.read(1):
-        raise OSError("artifact grew while being read")
-    return digest.digest()
+    return digest.digest(), header, tail, size + 1 - remaining
 
 
-def artifact_changes(out, regular, hashes, found, expected, allow, *, directory=None):
-    """Recheck the actual bytes validated, then their current names and versions."""
-    changed = set()
-    for name, digest in hashes.items():
-        try:
-            with open_artifact(out / name, directory=directory) as handle:
-                before = artifact_version(os.fstat(handle.fileno()))
-                if (before != artifact_version(regular[name]) or artifact_digest(handle) != digest
-                        or artifact_version(os.fstat(handle.fileno())) != before):
-                    changed.add(name)
-        except OSError:
-            changed.add(name)
-    # A later read can race with a previously rechecked artifact. Check every
-    # pathname again after all hashes, using the pinned directory when available.
-    for name, before in regular.items():
-        try:
-            current = ((out / name).lstat() if directory is None
-                       else os.stat(name, dir_fd=directory, follow_symlinks=False))
-            if artifact_version(current) != artifact_version(before):
+class ArtifactSnapshots:
+    """Bind inspected bytes to open files and recheck them before success.
+
+    Holding descriptors prevents inode reuse while checking. This detects
+    observed changes; it does not lock publishers or create an atomic set.
+    """
+
+    def __init__(self, stack, directory):
+        self.stack = stack
+        self.directory = directory
+        self.files = {}
+        self.regular = {}
+        self.names = None
+
+    def read(self, path, *, pdf=False):
+        handle = self.stack.enter_context(open_artifact(path, directory=self.directory))
+        before = os.fstat(handle.fileno())
+        if artifact_version(before) != artifact_version(self.regular[path.name]):
+            raise OSError(f"{path.name}: changed during validation; run the check again")
+        if pdf:
+            digest, header, tail, size = fingerprint(handle, before.st_size)
+            value = pdf_envelope_complete(header, tail)
+        else:
+            value = handle.read(before.st_size + 1)
+            digest, size = hashlib.sha256(value).digest(), len(value)
+        if size != before.st_size or artifact_version(before) != artifact_version(os.fstat(handle.fileno())):
+            raise OSError(f"{path.name}: changed during validation; run the check again")
+        self.files[path.name] = handle, before, digest
+        return value
+
+    def problems(self, out, allow):
+        changed = set()
+        for name, (_, expected, digest) in self.files.items():
+            try:
+                with open_artifact(out / name, directory=self.directory) as handle:
+                    before = os.fstat(handle.fileno())
+                    unchanged = artifact_version(expected) == artifact_version(before)
+                    if unchanged:
+                        current, _, _, size = fingerprint(handle, before.st_size)
+                        unchanged = (current == digest and size == before.st_size
+                                     and artifact_version(before) == artifact_version(os.fstat(handle.fileno())))
+            except (OSError, RuntimeError):
+                unchanged = False
+            if not unchanged:
                 changed.add(name)
-        except OSError:
-            changed.add(name)
-    try:
-        current = set(os.listdir(directory)) if directory is not None else {p.name for p in out.iterdir()}
-        changed.update((found ^ current) - (set(allow) - expected))
-    except OSError as error:
-        yield f"{out}: cannot recheck artifact set: {error.strerror or error}"
-    for name in sorted(changed):
-        yield f"{name}: changed during validation; run the check again"
+        # A later read can race with a previously rechecked artifact. Check
+        # every pathname again after all hashes, through the selected directory.
+        for name, before in self.regular.items():
+            try:
+                current = ((out / name).lstat() if self.directory is None else
+                           os.stat(name, dir_fd=self.directory, follow_symlinks=False))
+                if artifact_version(current) != artifact_version(before):
+                    changed.add(name)
+            except OSError:
+                changed.add(name)
+        if self.names is not None:
+            try:
+                current = (set(os.listdir(self.directory)) if self.directory is not None
+                           else {path.name for path in out.iterdir()})
+                changed.update((current ^ self.names) - allow)
+            except OSError as error:
+                yield f"{out}: cannot recheck artifact set: {error.strerror or error}"
+        for name in sorted(changed):
+            yield f"{name}: changed during validation; run the check again"
 
 
 class PageMetadata(HTMLParser):
@@ -268,28 +315,32 @@ def problems(out, no_pdf=False, allow=()):
         yield f"{out}: cannot inspect directory: {getattr(e, 'strerror', None) or e}"
         return
     try:
-        yield from directory_problems(selected, no_pdf, allow, directory=directory)
-        try:
-            expected = os.fstat(directory) if directory is not None else selected_info
-            if directory is not None:
-                current = open_directory(selected)
-                try:
-                    unchanged = os.path.samestat(expected, os.fstat(current))
-                finally:
-                    os.close(current)
-            else:
-                unchanged = os.path.samestat(expected, selected.stat())
-            unchanged = unchanged and os.path.samestat(expected, requested.stat())
-        except (OSError, RuntimeError):
-            unchanged = False
-        if not unchanged:
-            yield f"{out}: directory changed during validation; run the check again"
+        with ExitStack() as stack:
+            snapshots = ArtifactSnapshots(stack, directory)
+            yield from directory_problems(selected, no_pdf, allow, directory=directory, snapshots=snapshots)
+            expected_names = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
+            yield from snapshots.problems(selected, set(allow) - expected_names)
+            try:
+                expected = os.fstat(directory) if directory is not None else selected_info
+                if directory is not None:
+                    current = open_directory(selected)
+                    try:
+                        unchanged = os.path.samestat(expected, os.fstat(current))
+                    finally:
+                        os.close(current)
+                else:
+                    unchanged = os.path.samestat(expected, selected.stat())
+                unchanged = unchanged and os.path.samestat(expected, requested.stat())
+            except (OSError, RuntimeError):
+                unchanged = False
+            if not unchanged:
+                yield f"{out}: directory changed during validation; run the check again"
     finally:
         if directory is not None:
             os.close(directory)
 
 
-def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
+def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots):
     """Inspect and read the artifact set through the same directory descriptor."""
     try:
         found = (set(os.listdir(directory)) if directory is not None
@@ -297,6 +348,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
     except OSError as e:
         yield f"{out}: cannot inspect directory: {e.strerror or e}"
         return
+    snapshots.names = found
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {out}/findings.json --out {out} --lang {rendered_lang(out, directory=directory)} --repo <repo>"
                 + (" --no-pdf" if no_pdf else ""))
@@ -309,8 +361,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
         yield f"{name}: missing; {hint}"
     for name in sorted(found - expected - set(allow)):
         yield f"{name}: not part of the contract (contract_check.py --allow {name} if it was asked for)"
-    regular = {}
-    hashes = {}
+    regular = snapshots.regular
     for name in sorted(found & expected):
         path = out / name
         try:
@@ -324,13 +375,11 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
     if "findings.json" not in regular:
         return
     try:
-        source = read_json_source(out / "findings.json", directory=directory)
-        hashes["findings.json"] = hashlib.sha256(source).digest()
+        source = read_json_source(out / "findings.json", directory=directory, snapshots=snapshots)
         units = None
         units_source = None
         if "units.json" in regular:
-            units_source = read_json_source(out / "units.json", directory=directory)
-            hashes["units.json"] = hashlib.sha256(units_source).digest()
+            units_source = read_json_source(out / "units.json", directory=directory, snapshots=snapshots)
             units = check_units(parse_json(units_source, "units.json"))
         data = check_findings(parse_json(source, "findings.json"), units)
     except (OSError, ValueError, RecordError) as e:
@@ -356,9 +405,8 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
                "so a human makes the keep or remove call")
     if "inventory.json" in regular:
         try:
-            inventory_source = read_json_source(out / "inventory.json", directory=directory)
-            hashes["inventory.json"] = hashlib.sha256(inventory_source).digest()
-            inventory = parse_json(inventory_source, "inventory.json")
+            inventory = parse_json(read_json_source(out / "inventory.json", directory=directory,
+                                                     snapshots=snapshots), "inventory.json")
             if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
                 yield "inventory.json: not written by inventory.py"
         except (ValueError, RecordError) as e:
@@ -372,10 +420,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
         if name not in regular:
             continue
         try:
-            with open_artifact(out / name, directory=directory) as handle:
-                page_source = handle.read()
-            hashes[name] = hashlib.sha256(page_source).digest()
-            page = page_source.decode("utf-8")
+            page = snapshots.read(out / name).decode("utf-8")
         except (OSError, UnicodeError) as e:
             yield f"{name}: cannot read file: {e}"
             continue
@@ -389,11 +434,10 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
                 break
     if "report.pdf" in regular:
         try:
-            with open_artifact(out / "report.pdf", directory=directory) as handle:
-                hashes["report.pdf"] = artifact_digest(handle)
-        except OSError as error:
-            yield f"report.pdf: cannot read file: {error.strerror or error}"
-        if not pdf_complete(out / "report.pdf", directory=directory):
+            complete = pdf_complete(out / "report.pdf", directory=directory, snapshots=snapshots)
+        except OSError:
+            complete = False
+        if not complete:
             yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
     pdf_limitations = [line for line in data.get("limitations", []) if line.startswith(NO_PDF)]
     limited = any(re.match(re.escape(NO_PDF) + r":\s*\S", line) for line in pdf_limitations)
@@ -401,7 +445,6 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
         yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
     if not no_pdf and pdf_limitations:
         yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
-    yield from artifact_changes(out, regular, hashes, found, expected, allow, directory=directory)
 
 
 def main(argv=None):

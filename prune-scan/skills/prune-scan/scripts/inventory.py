@@ -101,32 +101,12 @@ ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__a
 
 PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
 PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
-# A block comment must stop at its first terminator, even when a following specifier is absent.
-JS_COMMENT = r"/\*(?:[^*]|\*(?!/))*(?:\*/|\Z)|//[^\n]*(?:\n|\Z)"
-JS_GAP = r"(?:\s|" + JS_COMMENT + r")*"
-# Quoted binding names are opaque: their contents may contain braces, `from`,
-# escaped quotes or line continuations. No decoding is needed to find the source.
-JS_STRING = r'"(?:\\[\s\S]|[^"\\])*"' + r"|'(?:\\[\s\S]|[^'\\])*'"
-# Consume incomplete clauses too, so a missing closing brace cannot cause each
-# import/export word within it to rescan the same remainder of the file.
-JS_NAMED_BINDINGS = (r"\{(?:" + JS_COMMENT + "|" + JS_STRING
-                     + r"|/(?![/*])|[^/'\"`;{}])*(?:\}|(?=['\"`;{]|\Z))")
-JS_NAMESPACE_ALIAS = r"\*" + JS_GAP + r"as\b" + JS_GAP + "(?:" + JS_STRING + ")"
-# Only a declaration's initial bindings may contain these opaque strings.
-# Treating arbitrary exported objects as bindings would misread regex literals.
-JS_BINDING_PREFIX = (JS_GAP + r"(?:type\b" + JS_GAP + r")?(?:"
-                     r"(?:[^/\s'\"`;{},*]+" + JS_GAP + "," + JS_GAP + r")?" + JS_NAMED_BINDINGS
-                     + "|" + JS_NAMESPACE_ALIAS + ")")
-# Consume unsuccessful clauses too: retrying every import/export word against the
-# remainder of a comment or malformed statement makes a small file quadratic.
-JS_FROM_IMPORT = re.compile(
-    r"\b(?:import|export)\b(?:" + JS_BINDING_PREFIX + r")?(?:" + JS_COMMENT
-    + r"|/(?![/*])|[^/'\"`;])*?"
-    r"(?:\bfrom" + JS_GAP + r"[\"']([^\"'\n]+)[\"']|(?=[\"'`;]|\Z))")
-# A literal first argument ends at ')' or ','; import options need no further parsing.
-JS_DIRECT_IMPORT = re.compile(
-    r"\b(import|require)\b" + JS_GAP + r"(?:\(" + JS_GAP + r"[\"']([^\"'\n]+)[\"']"
-    + JS_GAP + r"[),]|[\"']([^\"'\n]+)[\"'])?")
+JS_IMPORT_START = re.compile(r"\b(?:import|export|require)\b")
+# Non-ASCII binding names remain opaque; ASCII operators delimit separate tokens.
+JS_BINDING_NAME = re.compile(r"(?:[$\w]+|[^\x00-\x7f\s\ufeff]+|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\}))+")
+JS_QUOTE_OR_ESCAPE = re.compile(r"\\[\s\S]|['\"]")
+JS_SPACE = re.compile(r"[\s\ufeff]+")
+JS_LINE_END = re.compile(r"[\r\n\u2028\u2029]")
 GO_PATH = re.compile(r"[\w.+~\-/]+\Z")
 GO_ESCAPE = re.compile(r"\\([0-7]{3}|x[0-9a-fA-F]{2}|u[0-9a-fA-F]{4}|U[0-9a-fA-F]{8}|.)")
 GO_SIMPLE_ESCAPES = dict(zip("abfnrtv\\\"'", (b"\a", b"\b", b"\f", b"\n", b"\r", b"\t", b"\v", b"\\", b'"', b"'")))
@@ -496,14 +476,178 @@ def js_package(spec):
 
 
 def js_import_specs(text):
-    """Scan non-overlapping clauses; separately keep calls inside exports and templates."""
-    for match in JS_FROM_IMPORT.finditer(text):
-        if match.group(1):
-            yield match.group(1)
-    for match in JS_DIRECT_IMPORT.finditer(text):
-        kind, called, side_effect = match.groups()
-        if called or kind == "import" and side_effect:
-            yield called or side_effect
+    """Read import clauses without letting a spurious candidate hide a later one.
+
+    This remains a conservative text scan, including template expressions. Comment
+    and quote boundaries are indexed once; shared gaps and named clauses are cached
+    so repeated candidates cannot repeatedly scan the remaining source.
+    """
+    if not JS_IMPORT_START.search(text):
+        return
+    length = len(text)
+    names, candidates = {}, []
+    for match in JS_BINDING_NAME.finditer(text):
+        names[match.start()] = match.end()
+        if match.end() - match.start() in (6, 7):
+            kind = match.group(0)
+            if kind in ("import", "export", "require"):
+                candidates.append((kind, match.end()))
+    if not candidates:
+        return
+    comments = {}
+    close = -1
+    for match in re.finditer(r"/\*", text):
+        if close < match.end():
+            close = text.find("*/", match.end())
+            if close < 0:
+                close = length
+        comments[match.start()] = min(close + 2, length)
+    close = -1
+    for match in re.finditer(r"//", text):
+        if close < match.end():
+            newline = JS_LINE_END.search(text, match.end())
+            close = newline.start() if newline else length
+        comments[match.start()] = close
+    quotes, previous = {}, {}
+    for match in JS_QUOTE_OR_ESCAPE.finditer(text):
+        quote = match.group(0)
+        if quote in ("'", '"'):
+            if quote in previous:
+                quotes[previous[quote]] = match.start()
+            previous[quote] = match.start()
+    gaps = {length: length}
+
+    def gap(pos):
+        visited = []
+        while pos not in gaps:
+            visited.append(pos)
+            space = JS_SPACE.match(text, pos)
+            if space:
+                pos = space.end()
+            elif pos in comments:
+                pos = comments[pos]
+            else:
+                break
+        end = gaps.get(pos, pos)
+        for start in visited:
+            gaps[start] = end
+        return end
+
+    @lru_cache(maxsize=None)
+    def token_at(pos):
+        if pos >= length:
+            return "end", "", length
+        if text[pos] in ("'", '"'):
+            end = quotes.get(pos)
+            if end is None:
+                return "invalid", "", length
+            value = text[pos + 1:end]
+            # A quoted binding may continue after an escaped line ending.
+            if ("\n" in value or "\r" in value) and any(
+                    match.group(1) for match in re.finditer(r"\\(?:\r\n|[\s\S])|([\r\n])", value)):
+                return "invalid", "", end + 1
+            return "string", value, end + 1
+        end = names.get(pos)
+        if end is not None:
+            # Only contextual keywords affect the grammar; never copy a long name.
+            value = text[pos:end] if end - pos <= 4 else ""
+            return "name", value, end
+        return "punct", text[pos], pos + 1
+
+    def token(pos):
+        return token_at(gap(pos))
+
+    clauses = {}
+
+    def named_clause(pos):
+        visited = []
+        end = None
+        while True:
+            pos = gap(pos)
+            if pos in clauses:
+                end = clauses[pos]
+                break
+            visited.append(pos)
+            binding = token(pos)
+            if binding[:2] == ("punct", "}"):
+                end = binding[2]
+                break
+            if binding[0] not in ("name", "string"):
+                break
+            following = token(binding[2])
+            if (binding[:2] == ("name", "type") and following[0] in ("name", "string")
+                    and following[:2] != ("name", "as")):
+                following = token(following[2])
+            if following[:2] == ("name", "as"):
+                alias = token(following[2])
+                if alias[0] not in ("name", "string"):
+                    break
+                following = token(alias[2])
+            if following[:2] == ("punct", "}"):
+                end = following[2]
+                break
+            if following[:2] != ("punct", ","):
+                break
+            pos = following[2]
+        for start in visited:
+            clauses[start] = end
+        return end
+
+    # The keyword scan advances independently of the candidate-local parser. Text
+    # such as "import /*" in a string or line comment must not swallow real code.
+    seen, emitted = set(), set()
+
+    def unseen(module):
+        if module[0] != "string" or not module[1] or module[2] in emitted:
+            return False
+        emitted.add(module[2])
+        return True
+
+    for kind, start in candidates:
+        pos = gap(start)
+        if (kind, pos) in seen:
+            continue
+        seen.add((kind, pos))
+        following = token_at(pos)
+        if kind in ("import", "require"):
+            if kind == "import" and following[0] == "string":
+                if unseen(following):
+                    yield following[1]
+                continue
+            if following[:2] == ("punct", "("):
+                module = token(following[2])
+                after = token(module[2])
+                if after[:2] in (("punct", ")"), ("punct", ",")) and unseen(module):
+                    yield module[1]
+                continue
+            if kind == "require":
+                continue
+        if following[:2] == ("name", "type"):
+            after = token(following[2])
+            if kind == "export" or after[:2] not in (("name", "from"), ("punct", ",")):
+                following = after
+        if kind == "import" and following[0] == "name":
+            following = token(following[2])
+            if following[:2] == ("punct", ","):
+                following = token(following[2])
+        if following[:2] == ("punct", "{"):
+            end = named_clause(following[2])
+            if end is None:
+                continue
+            following = token(end)
+        elif following[:2] == ("punct", "*"):
+            following = token(following[2])
+            if following[:2] == ("name", "as"):
+                alias = token(following[2])
+                if alias[0] not in ("name", "string"):
+                    continue
+                following = token(alias[2])
+            elif kind == "import":
+                continue
+        if following[:2] == ("name", "from"):
+            module = token(following[2])
+            if unseen(module):
+                yield module[1]
 
 
 def py_dist_module(name):

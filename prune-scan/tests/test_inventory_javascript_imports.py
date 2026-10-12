@@ -28,9 +28,18 @@ class JavaScriptImportTests(unittest.TestCase):
     def test_import_and_reexport_forms_keep_referenced_modules_in_scripts(self):
         statements = (
             'import value from "./helper";',
+            '\ufeffimport value from "./helper";',
+            'import\ufeffvalue\ufefffrom\ufeff"./helper";',
             'import { value as selected } from "./helper";',
             'import * as values from "./helper";',
             'import type { Value } from "./helper";',
+            'import type Value from "./helper";',
+            'import type from "./helper";',
+            'import from from "./helper";',
+            'import \u03c0 from "./helper";',
+            r'import \u0068 from "./helper";',
+            r'import \u{68} from "./helper";',
+            'import { type Value, type as alias } from "./helper";',
             'export { value } from "./helper";',
             'export * from "./helper";',
             'export * as helpers from "./helper";',
@@ -68,6 +77,57 @@ class JavaScriptImportTests(unittest.TestCase):
         for statement in statements:
             with self.subTest(statement=statement):
                 self.assert_referenced_helper_is_kept(statement)
+
+    def test_import_words_in_literal_text_and_comments_cannot_hide_later_imports(self):
+        prefixes = (
+            'const note = "import /*";\n',
+            'const note = `import /*`;\n',
+            '// import /*\n',
+        )
+        statements = (
+            'import value from "./helper";',
+            '''import /* "quoted" */ { value } from /* 'words' */ "./helper";''',
+            '''const value = import /* "quoted" */ ("./helper", {});''',
+        )
+        for prefix in prefixes:
+            for statement in statements:
+                with self.subTest(prefix=prefix, statement=statement):
+                    self.assert_referenced_helper_is_kept(prefix + statement)
+
+    def test_string_named_imports_and_exports_keep_local_sources_and_packages(self):
+        statements = (
+            'export { "x" as "y" } from "{module}";',
+            'export { "from" as "public-name" } from "{module}";',
+            'import { "x" as x } from "{module}";',
+            r'import { "a\"b" as local } from "{module}";',
+            'import value, { "x" as x } from "{module}";',
+            'export * as "named exports" from "{module}";',
+        )
+        for statement in statements:
+            for extension in (".mts", ".cts"):
+                with self.subTest(statement=statement, extension=extension), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    (root / "main.ts").write_text(statement.replace("{module}", "./helper"), encoding="utf-8")
+                    for name in ("helper", "unused"):
+                        (root / f"{name}{extension}").write_text("export default 1;\n", encoding="utf-8")
+                    result = inventory.inventory(root)
+                    self.assertEqual(result["orphan_files"],
+                                     [{"path": f"unused{extension}", "test_importers": []}])
+            with self.subTest(statement=statement, package=True), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                (root / "main.ts").write_text(statement.replace("{module}", "used-package"), encoding="utf-8")
+                (root / "package.json").write_text(json.dumps({
+                    "dependencies": {"used-package": "1", "unused-package": "1"},
+                }), encoding="utf-8")
+                result = inventory.inventory(root)
+                self.assertEqual([row["name"] for row in result["unimported_dependencies"]], ["unused-package"])
+
+    def test_shared_quoted_module_is_reported_once_without_hiding_real_imports(self):
+        module = "x" * 50000
+        source = '/*\n' + 'import /*\n' * 300 + '*/ "' + module + '";\nimport "./helper";\n'
+        specs = list(inventory.js_import_specs(source))
+        self.assertEqual(len(specs), 2)
+        self.assertEqual(specs, [module, "./helper"])
 
     def test_dynamic_import_options_keep_referenced_sources(self):
         statements = (
@@ -147,6 +207,32 @@ class JavaScriptImportTests(unittest.TestCase):
                 self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
                 self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["orphan_files"],
                                  [{"path": "unused.ts", "test_importers": []}])
+
+    def test_malformed_and_overlapping_candidates_finish_within_timeout(self):
+        payloads = {
+            "unterminated_comment": "import /* " * 30000,
+            "unterminated_string": '"' + '\\"import ' * 30000,
+            "unterminated_named_clause": "import { " * 30000,
+            "shared_named_clause": ("import /* " * 15000 + "*/ {\n"
+                                    + "value,\n" * 30000 + '} from "./helper";\n'),
+            "overlapping_named_tails": ("import { a, /* " * 15000 + "*/\n"
+                                        + "value,\n" * 30000 + '} from "./helper";\n'),
+            "operator_suffixes": ('const note = "' + "import-" * 30000
+                                  + '";\nimport value from "./helper";\n'),
+            "identifier_suffixes": ('const note = "' + "$import\u200d\\u{24}" * 30000
+                                    + '";\nimport value from "./helper";\n'),
+        }
+        script = (
+            f"import sys; sys.path.insert(0, {str(SCRIPTS)!r}); import inventory; "
+            "source = sys.stdin.read(); specs = list(inventory.js_import_specs(source)); "
+            "assert all(spec == './helper' for spec in specs)"
+        )
+        for kind, source in payloads.items():
+            with self.subTest(kind=kind):
+                self.assertLess(len(source.encode("utf-8")), inventory.MAX_BYTES)
+                result = subprocess.run([sys.executable, "-c", script], input=source,
+                                        capture_output=True, text=True, timeout=10)
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
     def test_large_quoted_bindings_and_incomplete_clauses_finish_within_timeout(self):
         quoted_name = json.dumps('from "unused-pkg"')

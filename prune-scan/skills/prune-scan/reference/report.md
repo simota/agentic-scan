@@ -66,17 +66,23 @@ On POSIX systems with descriptor-relative opens, the check captures the output
 directory's identity before resolving the path and verifies it when opening
 the directory. It pins every ancestor and uses the selected directory's
 descriptor for all artifact inspection and reads. Before reporting success,
-it rechecks each required artifact's identity, file version and content digest
-through the same directory. Replacing or editing an artifact during validation
-invalidates the check. The artifact set is checked again; `--allow` exempts
-changes only to additional permitted entries, never to required artifacts.
-It also verifies that both the resolved path and the original requested path still
+it verifies that both the resolved path and the original requested path still
 identify the inspected directory. Retargeting an intentional alias, including
 an ancestor alias, therefore invalidates the check. Runtimes without
 descriptor-relative opens also compare both paths with the selected
 directory's initial identity at the end. Ancestors need only search permission
 when the runtime exposes `O_PATH` or `O_SEARCH`; otherwise they must also be
 readable.
+
+The check keeps each inspected artifact open and fingerprints the bytes it
+validates. Before reporting success, it rechecks each file's identity, version
+and content, then checks every artifact pathname again after all content
+reads. The directory's artifact names are also rechecked. Replacements,
+removals, writes during inspection, and newly appearing unapproved artifacts
+require another check. Explicitly allowed extras remain outside these checks;
+`--allow` never exempts a required artifact. These checks detect observed
+changes without locking writers or providing an atomic snapshot of the entire
+report set.
 
 The rendered next steps open with the **subtraction summary**, computed from
 the open, counted findings (`Unlikely` ones are left out):

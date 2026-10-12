@@ -314,6 +314,17 @@ FINDING_RANGE = re.compile(
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
     r"(?:まで)?(?P=range_style)(?![A-Za-z0-9_])")
+# Capture each underscore run once, then split outer and endpoint emphasis by
+# position. Adjacent unbounded style groups would backtrack quadratically.
+UNDERSCORE_RANGE = re.compile(
+    r"(?<![A-Za-z0-9_`])(?P<first_open>_*)(?P<first_ticks>`+)?"
+    r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
+    r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
+    r"\s*(?:(?i:to|through)|[-–—−〜～~]|から)\s*"
+    r"(?P<last_open>_*)(?P<last_ticks>`+)?"
+    r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
+    r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
+    r"(?P<until>まで(?P<outer_close>_*))?(?![A-Za-z0-9_`])")
 FINDING_MENTION = re.compile(
     FINDING_RANGE.pattern
     + r"|(?<![A-Za-z0-9_])(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)(?![A-Za-z0-9_])"
@@ -321,6 +332,7 @@ FINDING_MENTION = re.compile(
     # during rewriting; identifier underscores must remain literal.
     + r"|(?<![A-Za-z0-9])U-[0-9]{3}(?![A-Za-z0-9])")
 UNDERSCORE_RUN = re.compile(r"_+")
+PROSE_BLOCK_BREAK = re.compile(r"\r?\n[ \t]*\r?\n")
 # Other_ID_Start + Other_ID_Continue, Unicode 18.0.0 PropList.txt:
 # https://www.unicode.org/Public/18.0.0/ucd/PropList.txt
 # UAX #31 includes ID_Start in ID_Continue; both exception sets are needed.
@@ -418,7 +430,7 @@ def _word_character(char):
                            or char in OTHER_IDENTIFIER_CHARACTERS)
 
 
-def _underscore_delimiters(value, literal_spans):
+def _underscore_delimiters(value, literal_spans, block_spans=()):
     """Find paired emphasis boundaries without taking delimiters from quoted code."""
     if "_" not in value:
         return set()
@@ -432,56 +444,107 @@ def _underscore_delimiters(value, literal_spans):
         start = right
     parts.append(value[start:])
     text = "".join(parts)
-    delimiters, pending = set(), {1: None, 2: None, 3: None}
-    # Keep at most one opener per width. Repeated unclosed markers must not
-    # rescan the rest of a long paragraph for each possible opening position.
+    delimiters, pending = set(), []
+    barriers = iter(sorted(right for _, right in block_spans))
+    barrier = next(barriers, None)
+    # Six buckets find the nearest compatible opener without repeatedly
+    # scanning an unmatched stack. The rule of three uses original run lengths.
+    buckets = {(can_close, remainder): [] for can_close in (False, True) for remainder in range(3)}
+
+    def discard():
+        opener = pending.pop()
+        buckets[opener[2]].pop()
+
     for match in UNDERSCORE_RUN.finditer(text):
         left, right = match.span()
-        width = right - left
-        if width not in pending:
+        while barrier is not None and barrier <= left:
+            pending.clear()
+            for candidates in buckets.values():
+                candidates.clear()
+            barrier = next(barriers, None)
+        backslash = left
+        while backslash and text[backslash - 1] == "\\":
+            backslash -= 1
+        escaped = (left - backslash) % 2
+        if escaped:
+            left += 1  # An escaped first underscore is not part of the run.
+        if left == right:
             continue
+        width = right - left
         before = text[left - 1] if left else ""
         after = text[right] if right < len(text) else ""
-        before_word, after_word = _word_character(before), _word_character(after)
-        if before and not before.isspace() and not after_word and pending[width] is not None:
-            opener = pending[width]
-            delimiters.update(range(opener, opener + width))
-            delimiters.update(range(left, right))
-            pending[width] = None
-        elif after and not after.isspace() and not before_word and pending[width] is None:
-            pending[width] = left
+        before_space, after_space = not before or before.isspace(), not after or after.isspace()
+        before_punct = bool(before) and unicode_category(before)[0] in ("P", "S")
+        after_punct = bool(after) and unicode_category(after)[0] in ("P", "S")
+        left_flanking = not after_space and (not after_punct or before_space or before_punct)
+        right_flanking = not before_space and (not before_punct or after_space or after_punct)
+        can_open = (left_flanking and (not right_flanking or before_punct)
+                    and (escaped or not _word_character(before)))
+        can_close = right_flanking and (not left_flanking or after_punct) and not _word_character(after)
+        while can_close and left < right:
+            opener = None
+            for (also_closes, remainder), candidates in buckets.items():
+                if (candidates and not ((can_open or also_closes) and width % 3
+                                       and (remainder + width) % 3 == 0)
+                        and (opener is None or candidates[-1][0] > opener[0])):
+                    opener = candidates[-1]
+            if opener is None:
+                break
+            # Delimiters inside a completed pair cannot match outside it.
+            while pending[-1] is not opener:
+                discard()
+            used = 2 if opener[1] - opener[0] >= 2 and right - left >= 2 else 1
+            delimiters.update(range(opener[1] - used, opener[1]))
+            delimiters.update(range(left, left + used))
+            opener[1] -= used
+            left += used
+            if opener[0] == opener[1]:
+                discard()
+        if can_open and left < right:
+            opener = [left, right, (can_close, width % 3)]
+            pending.append(opener)
+            buckets[opener[2]].append(opener)
     return delimiters
 
 
 def _rewrite_prose(value, mapping):
     """Update finding references without changing code, URLs or source-like tokens."""
+    def mapped_range(first, last, source):
+        first, last = int(first[2:]), int(last[2:])
+        step = 1 if first <= last else -1
+        old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
+        if not any(mapping.get(fid, fid) != fid for fid in old_ids):
+            return None
+        missing = next((fid for fid in old_ids if fid not in mapping), None)
+        if missing:
+            raise RecordError(f"finding range {source!r} includes unknown {missing}; "
+                              "replace it with an explicit list of existing finding ids before renumbering")
+        return [mapping[fid] for fid in old_ids]
+
+    def identifier_boundary(source, left, right):
+        return ((source.startswith("_") and left >= 0 and _word_character(value[left]))
+                or (source.endswith("_") and right < len(value) and _word_character(value[right])))
+
     def references(text, offset):
         def reference_range(match):
-            first, last = (int(match[key][2:]) for key in ("first", "last"))
-            step = 1 if first <= last else -1
-            old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
-            if not any(mapping.get(fid, fid) != fid for fid in old_ids):
+            ids = mapped_range(match["first"], match["last"], match[0])
+            if ids is None:
                 return match.group(0)
-            missing = next((fid for fid in old_ids if fid not in mapping), None)
-            if missing:
-                raise RecordError(f"finding range {match.group(0)!r} includes unknown {missing}; "
-                                  "replace it with an explicit list of existing finding ids before renumbering")
             ticks = match["first_ticks"] or match["last_ticks"] or ""
             style = match["first_style"] or match["last_style"]
             padded = "first" if match["first_ticks"] else "last"
             left, right = (match[padded + suffix] or "" for suffix in ("_left", "_right"))
-            expanded = ", ".join(f"{style}{ticks}{left}{mapping[fid]}{right}{ticks}{style}" for fid in old_ids)
+            expanded = ", ".join(f"{style}{ticks}{left}{fid}{right}{ticks}{style}" for fid in ids)
             return match["range_style"] + expanded + match["range_style"]
 
         # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
-        def mention(match):
+        def mention(match, relative):
             source = match[0]
-            left, right = offset + match.start() - 1, offset + match.end()
+            left, right = offset + relative + match.start() - 1, offset + relative + match.end()
             # The range and styled-ID alternatives also consume their formatting
             # underscores. Apply the same Unicode word boundary as plain IDs
             # before accepting those underscores as emphasis.
-            if ((source.startswith("_") and left >= 0 and _word_character(value[left]))
-                    or (source.endswith("_") and right < len(value) and _word_character(value[right]))):
+            if identifier_boundary(source, left, right):
                 return source
             if match["first"]:
                 return reference_range(match)
@@ -491,23 +554,79 @@ def _rewrite_prose(value, mapping):
                 return source
             return mapping.get(source, source)
 
-        return FINDING_MENTION.sub(mention, text)
+        def underscore_range(match):
+            if not any(match[key] for key in ("first_open", "first_close", "last_open", "last_close", "outer_close")):
+                return None
+            if identifier_boundary(match[0], offset + match.start() - 1, offset + match.end()):
+                return match[0]
 
-    protected_spans, literal_spans = [], []
+            def paired_width(key, opening=False):
+                left, right = match.span(key)
+                cursor = right if opening else left
+                if opening:
+                    while cursor > left and offset + cursor - 1 in emphasis:
+                        cursor -= 1
+                    return right - cursor
+                while cursor < right and offset + cursor in emphasis:
+                    cursor += 1
+                return cursor - left
+
+            first_open = paired_width("first_open", opening=True)
+            first_close = paired_width("first_close")
+            last_open = paired_width("last_open", opening=True)
+            last_close = paired_width("last_close")
+            outer = first_open - first_close
+            closing = paired_width("outer_close") if match["until"] else last_close - last_open
+            if (not first_open and not last_close or outer < 0 or closing != outer
+                    or first_close != len(match["first_close"]) or last_open != len(match["last_open"])
+                    or (match["until"] and (last_close != last_open or last_close != len(match["last_close"])))):
+                return None
+            ids = mapped_range(match["first"], match["last"], match[0])
+            if ids is None:
+                return match[0]
+            style, whole = "_" * (first_close or last_open), "_" * outer
+            ticks = match["first_ticks"] or match["last_ticks"] or ""
+            padded = "first" if match["first_ticks"] else "last"
+            left, right = (match[padded + suffix] or "" for suffix in ("_left", "_right"))
+            expanded = ", ".join(f"{style}{ticks}{left}{fid}{right}{ticks}{style}" for fid in ids)
+            prefix = match["first_open"][:len(match["first_open"]) - first_open]
+            suffix = match["outer_close"][closing:] if match["until"] else match["last_close"][last_close:]
+            return prefix + whole + expanded + whole + suffix
+
+        def regular(left, right):
+            return FINDING_MENTION.sub(lambda match: mention(match, left), text[left:right])
+
+        parts, start = [], 0
+        for match in UNDERSCORE_RANGE.finditer(text):
+            rewritten = underscore_range(match)
+            if rewritten is not None:
+                parts.extend((regular(start, match.start()), rewritten))
+                start = match.end()
+        parts.append(regular(start, len(text)))
+        return "".join(parts)
+
+    block_spans = [match.span() for match in PROSE_BLOCK_BREAK.finditer(value)]
+    protected_spans, literal_spans, source_spans = list(block_spans), [], []
     for match in PROSE_PART.finditer(value):
         literal = (match["fence"] is not None or match["comment"] is not None
                    or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
-        protected = (literal
-                     or (match["path"] is not None and _source_token(match["path"]))
-                     or (match["token"] is not None and _source_token(match["token"])))
-        if protected:
-            protected_spans.append((match.start(), match.end()))
         if literal:
+            protected_spans.append(match.span())
             literal_spans.append((match.start(), match.end()))
+        elif ((match["path"] is not None and _source_token(match["path"]))
+              or (match["token"] is not None and _source_token(match["token"]))):
+            source_spans.append(match.span())
+        if match["fence"] is not None:
+            block_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)
-    emphasis = _underscore_delimiters(value, literal_spans + destinations)
+    emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)
+    for left, right in source_spans:
+        # Real formatting in U-001/__U-002__ is not a source-path component.
+        unstyled = "".join(value[i] for i in range(left, right) if i not in emphasis)
+        if _source_token(unstyled):
+            protected_spans.append((left, right))
     parts, start = [], 0
     for left, right in sorted(protected_spans):
         if right <= start:

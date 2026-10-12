@@ -106,6 +106,11 @@ formatting. Spaces inside ID-only code spans are retained. Emphasis wrapping
 the entire range is retained around the expanded list. References in
 underscore-emphasized lists and prose are updated while underscore identifiers,
 including Unicode identifiers, keep their original text.
+Nested underscore emphasis is supported, including a delimiter run that closes
+multiple levels, such as `_U-001 and __U-003___`. Escaped underscores and
+unmatched delimiters remain literal. Underscore emphasis and finding ranges do
+not cross blank lines or fenced-code blocks; a single line break may remain
+inside them.
 Identifier boundary protection uses the running Python's Unicode character
 categories plus all `Other_ID_Start` and `Other_ID_Continue` exceptions from
 [Unicode 18.0.0](https://www.unicode.org/Public/18.0.0/ucd/PropList.txt), including

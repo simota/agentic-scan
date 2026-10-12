@@ -563,6 +563,18 @@ class TransactionRegressions(unittest.TestCase):
             ("Fix ___U-001_ to _U-003___.", "Fix ___U-003_, _U-001_, _U-002___."),
             ("Fix __**U-001** to **U-003**__.", "Fix __**U-003**, **U-001**, **U-002**__."),
             ("Fix **__U-001__ to __U-003__**.", "Fix **__U-003__, __U-001__, __U-002__**."),
+            ("Fix _U-001 to __U-003___.", "Fix ___U-003__, __U-001__, __U-002___."),
+            ("Fix __U-001 to _U-003___.", "Fix ___U-003_, _U-001_, _U-002___."),
+            ("Fix ____U-001 to U-003____.", "Fix ____U-003, U-001, U-002____."),
+            ("Fix ____U-003 to U-001____.", "Fix ____U-002, U-001, U-003____."),
+            ("Fix ______U-001____ to _U-003___.", "Fix ______U-003____, ____U-001____, ____U-002______."),
+            ("Fix ____U-001____ to _____U-003_____.", "Fix ____U-003____, ____U-001____, ____U-002____."),
+            ("Fix ____` U-001 ` to ` U-003 `____.", "Fix ____` U-003 `, ` U-001 `, ` U-002 `____."),
+            ("Fix ____U-001からU-003まで____.", "Fix ____U-003, U-001, U-002____."),
+            ("Fix _____U-001____ through ___U-003____.", "Fix _____U-003____, ____U-001____, ____U-002_____."),
+            # Unused delimiter characters remain literal outside the range.
+            ("Fix __U-001 to U-003_.", "Fix __U-003, U-001, U-002_."),
+            ("Fix _U-001 to U-003__.", "Fix _U-003, U-001, U-002__."),
             # A whole range inside one code span stays literal source text.
             ("Keep ` U-001 to U-003 `; fix U-001.", "Keep ` U-001 to U-003 `; fix U-003."),
         )
@@ -584,6 +596,16 @@ class TransactionRegressions(unittest.TestCase):
             ("__U-001/U-003__", "__U-003/U-002__"),
             ("_U-001, U-003_", "_U-003, U-002_"),
             ("___U-001 and U-003___", "___U-003 and U-002___"),
+            ("_U-001 and __U-003___", "_U-003 and __U-002___"),
+            ("__U-001 and _U-003___", "__U-003 and _U-002___"),
+            ("___U-001_ and U-003__", "___U-003_ and U-002__"),
+            ("___U-001__ and U-003_", "___U-003__ and U-002_"),
+            ("____U-001__ and U-003__", "____U-003__ and U-002__"),
+            ("___U-001 and ___U-003______", "___U-003 and ___U-002______"),
+            ("__U-001 and ___U-003_____", "__U-003 and ___U-002_____"),
+            ("_U-001 and __U-003__ and U-002_", "_U-003 and __U-002__ and U-001_"),
+            ("_U-001/__U-003___", "_U-003/__U-002___"),
+            ("__U-001__/_U-003_", "__U-003__/_U-002_"),
             ("__U-001 and `const id = U-003`__", "__U-003 and `const id = U-003`__"),
             ("__`const id = U-001` and U-003__", "__`const id = U-001` and U-002__"),
             ("__U-001 and `U-003`__", "__U-003 and `U-002`__"),
@@ -599,7 +621,10 @@ class TransactionRegressions(unittest.TestCase):
             ("head\u203f_U-001 and U-003_\u203ftail", "head\u203f_U-001 and U-003_\u203ftail"),
             ("先にU-001を修正し、次にU-003を確認。", "先にU-003を修正し、次にU-002を確認。"),
             ("__é U-001 and U-003 e\u0301__", "__é U-003 and U-002 e\u0301__"),
-            ("Keep ____U-001 and U-003____.", "Keep ____U-001 and U-003____."),
+            ("Fix ____U-001 and U-003____.", "Fix ____U-003 and U-002____."),
+            ("__U-001 and src/__U-003__.tsx:1__", "__U-003 and src/__U-003__.tsx:1__"),
+            ("__U-001 and src/_U-003__", "__U-003 and src/_U-003__"),
+            ("Keep U-001/_U-003 and U-001/U-003_suffix.", "Keep U-001/_U-003 and U-001/U-003_suffix."),
             ("Keep `__U-001 and U-003__`; fix U-002.", "Keep `__U-001 and U-003__`; fix U-001."),
         )
         data["next_steps"] = [source for source, _ in cases]
@@ -607,6 +632,38 @@ class TransactionRegressions(unittest.TestCase):
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(data, original)
         self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_respects_escaped_underscores_and_block_boundaries(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        cases = (
+            (r"\_U-001 and U-003_", r"\_U-001 and U-003_"),
+            (r"_U-001 and U-003\_", r"_U-001 and U-003\_"),
+            (r"_U-001 to U-003\_", r"_U-001 to U-003\_"),
+            (r"_U-001 and \_literal and U-003_", r"_U-003 and \_literal and U-002_"),
+            # Escaped source tokens stay literal; the remaining delimiter run,
+            # or a run after an even number of backslashes, still opens emphasis.
+            (r"\__U-001 and U-003__", r"\__U-001 and U-002__"),
+            (r"\\_U-001 and U-003_", r"\\_U-001 and U-002_"),
+            ("_U-001\nU-003_", "_U-003\nU-002_"),
+            ("_U-001\n\nU-003_", "_U-001\n\nU-003_"),
+            ("__U-001\n \t\nU-003__", "__U-001\n \t\nU-003__"),
+            ("_U-001\n```\nU-002\n```\nU-003_", "_U-001\n```\nU-002\n```\nU-003_"),
+            ("____U-001\n\n to U-003____", "____U-001\n\n to U-003____"),
+            ("____U-001\n~~~\nU-002\n~~~\n to U-003____", "____U-001\n~~~\nU-002\n~~~\n to U-003____"),
+            ("U-001\n\n to U-003", "U-003\n\n to U-002"),
+            ("__U-001__\n\n to __U-003__", "__U-003__\n\n to __U-002__"),
+            ("U-001\n to \nU-003", "U-003, U-001, U-002"),
+        )
+        data["next_steps"] = [source + "; then U-002." for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected + "; then U-001." for _, expected in cases])
         findings.check_findings(changed)
         self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
 
@@ -628,7 +685,7 @@ class TransactionRegressions(unittest.TestCase):
         )
         contexts += tuple(pair for char in other_identifier_chars
                           for pair in (("foo" + char, char + "bar"), ("foo" + char, ""), ("", char + "bar")))
-        patterns = ("_U-001 to U-003_", "__U-001 to U-003__", "__U-001__",
+        patterns = ("_U-001 to U-003_", "__U-001 to U-003__", "____U-001 to U-003____", "__U-001__",
                     "_U-001_ to U-003", "U-001 to _U-003_", "__U-001/U-003__", "_U-001 and U-003_")
         cases = []
         for before, after in contexts:
@@ -649,21 +706,27 @@ class TransactionRegressions(unittest.TestCase):
         findings.check_findings(changed)
         self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
 
-    def test_renumber_handles_many_unclosed_emphasis_markers(self):
+    def test_renumber_handles_long_underscore_inputs(self):
         data = copy.deepcopy(SAMPLE)
         data["findings"] = data["findings"][:1]
         data["findings"][0]["id"] = "U-002"
-        prefix = "_item " * 20_000
-        data["summary"] = prefix + "U-002"
         data["next_steps"] = ["Fix U-002."]
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "findings.json"
-            target.write_text(json.dumps(data), encoding="utf-8")
-            result = run("renumber", target)  # The CLI has a bounded completion timeout.
-            self.assertEqual(result.returncode, 0, result.stderr)
-            changed = json.loads(target.read_text(encoding="utf-8"))
-            self.assertEqual(changed["summary"], prefix + "U-001")
-            findings.check_findings(changed)
+        markers = "_" * 20_000
+        cases = (
+            ("_item " * 20_000 + "U-002", "_item " * 20_000 + "U-001"),
+            (markers + "U-002 and U-002" + markers, markers + "U-001 and U-001" + markers),
+            (markers + "U-002 to U-002" + markers, markers + "U-001" + markers),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source[:40]), tempfile.TemporaryDirectory() as tmp:
+                data["summary"] = source
+                target = Path(tmp) / "findings.json"
+                target.write_text(json.dumps(data), encoding="utf-8")
+                result = run("renumber", target)  # The CLI has a bounded completion timeout.
+                self.assertEqual(result.returncode, 0, result.stderr)
+                changed = json.loads(target.read_text(encoding="utf-8"))
+                self.assertEqual(changed["summary"], expected)
+                findings.check_findings(changed)
 
     def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):
         data = copy.deepcopy(SAMPLE)
@@ -671,7 +734,8 @@ class TransactionRegressions(unittest.TestCase):
         data["findings"][0]["severity"] = "Low"
         data["findings"][1]["id"] = "U-003"
         for text in ("Fix U-001 to U-003.", "Fix ` U-001 ` to ` U-003 `.",
-                     "Fix __U-001 to U-003__.", "Fix __` U-001 ` to ` U-003 `__."):
+                     "Fix __U-001 to U-003__.", "Fix __` U-001 ` to ` U-003 `__.",
+                     "Fix ____U-001 to U-003____.", "Fix _U-001 to ____U-003_____."):
             with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
                 data["next_steps"] = [text]
                 findings.check_findings(data, ordered=False)

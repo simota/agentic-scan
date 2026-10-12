@@ -94,6 +94,14 @@ def snippet(repo, location):
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
+def act_now(f):
+    """An open finding ready to subtract: Valid, which findings.py allows only with Confirmed confidence.
+
+    The one rule behind both the card's next action and the subtraction summary.
+    """
+    return f["status"] == "Open" and f["validation"]["verdict"] == "Valid"
+
+
 def subtraction_groups(findings):
     """Open, counted findings as (remove now, reduce or consolidate, decide with a human) id lists."""
     now, reduce, decide = [], [], []
@@ -101,7 +109,7 @@ def subtraction_groups(findings):
         verdict = f["validation"]["verdict"]
         if f["status"] != "Open" or verdict in EXCLUDED or verdict == "Unlikely":
             continue
-        if verdict == "Valid" and f["confidence"] == "Confirmed":
+        if act_now(f):
             (now if f["subtraction"]["action"] == "remove" else reduce).append(f["id"])
         else:
             decide.append(f["id"])
@@ -137,8 +145,8 @@ def to_common(data, lang, units=None, repo=None):
                   (T["occurrences"], "\n".join(f.get("occurrences", []))),
                   (T["evidence"], f["validation"].get("evidence", "")),
                   (T["dynamic"], f["validation"].get("dynamic_checked", ""))]
-        act_now = f["status"] == "Open" and verdict == "Valid"
-        if act_now:  # Shown once, as the next action.
+        ready = act_now(f)
+        if ready:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["subtraction"]]
         item = {"id": f["id"], "title": f["title"], "severity": f["severity"], "status": f["status"],
                 "confidence": f["confidence"], "verdict": verdict,
@@ -147,7 +155,7 @@ def to_common(data, lang, units=None, repo=None):
                 "fields": [{"label": k, "text": v} for k, v in fields if v],
                 "references": f.get("references", [])}
         if f["status"] == "Open" and verdict not in EXCLUDED:
-            item["action"] = ({"label": T["subtract"], "text": subtract_text} if act_now
+            item["action"] = ({"label": T["subtract"], "text": subtract_text} if ready
                               else {"label": T["verify"], "text": T["verify_text"]})
         excerpt = snippet(repo, f["location"])
         if excerpt:

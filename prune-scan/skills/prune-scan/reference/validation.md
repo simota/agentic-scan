@@ -38,8 +38,8 @@ files, and for a "do not remove" note or an open issue that keeps it.
 
 | Verdict | When |
 |---|---|
-| `Valid` | All four answered with evidence; no dynamic or external use; the element does not earn its place. Only with confidence `Confirmed` or `Suspected` |
-| `Likely` | Non-use or excess shown in the repository, but external use or the purpose call is not settled (`Externally-dependent`, `Purpose-dependent`) |
+| `Valid` | All four answered with evidence; no dynamic or external use; the element does not earn its place. Only with confidence `Confirmed` |
+| `Likely` | Non-use or excess shown in the repository, but external use, the purpose call or an unread part is not settled (`Externally-dependent`, `Purpose-dependent`, `Suspected`) |
 | `Unverified` | A candidate not yet read in context. A working state only: `scripts/contract_check.py` rejects a record that still has one |
 | `Unlikely` | Evidence points to use (a dynamic caller, a consumer, an intent note) or to a place it earns; kept, counted, never in the subtraction summary |
 | `FalsePositive` | Not unneeded (the inventory missed a dynamic or framework use) — kept, excluded from counts |
@@ -54,6 +54,10 @@ files, and for a "do not remove" note or an open issue that keeps it.
 | `Purpose-dependent` | The finding rests on an `inferred` purpose item; a human decides keep or remove. The finding id goes in a `decisions` line |
 | `Suspected` | It rests on something not read: generated code, a library's internals, configuration not in the repository |
 
-`Externally-dependent` and `Purpose-dependent` findings are at most `Likely`
-(`findings.py` refuses `Valid`). A finding citing an `inferred` purpose item
-cannot be `Confirmed`.
+`Valid` needs `Confirmed`: `Externally-dependent`, `Purpose-dependent` and
+`Suspected` findings are at most `Likely` (`findings.py` refuses `Valid` with
+them). A finding citing an `inferred` purpose item must be `Purpose-dependent`
+(`findings.py` refuses any other confidence), so it always lands in `decisions`.
+`render.py` uses the same rule: an open `Valid` finding is "remove now" or
+"reduce or consolidate"; every other open, counted finding is "decide with a
+human".

@@ -227,10 +227,14 @@ class RecordTests(unittest.TestCase):
     def test_purpose_and_confidence_rules(self):
         self.bad(lambda f: f.pop("purpose_ref"), "purpose_ref: required", "P-007")  # PX needs its purpose item.
         self.bad(lambda f: f.update(purpose_ref="PB-99"), "not a purpose item", "P-007")
-        self.bad(lambda f: f.update(confidence="Confirmed"), "cannot be Confirmed", "P-021")  # PB-06 is inferred.
+        # PB-06 is inferred: any confidence but Purpose-dependent is refused, so the finding always reaches decisions.
+        for confidence in ("Confirmed", "Externally-dependent", "Suspected"):
+            self.bad(lambda f, c=confidence: f.update(confidence=c), "must be Purpose-dependent", "P-021")
         self.bad(lambda f: f.pop("purpose_ref"), "purpose_ref: required", "P-021")
         self.bad(lambda f: f["validation"].update(verdict="Valid"), "at most Likely", "P-003")
         self.bad(lambda f: f["validation"].update(verdict="Valid"), "at most Likely", "P-021")
+        # Valid needs Confirmed: Suspected is capped at Likely too.
+        self.bad(lambda f: f.update(confidence="Suspected"), "Valid needs Confirmed", "P-002")
 
     def test_units_rules(self):
         def bad(mutate, message):
@@ -359,7 +363,7 @@ class RecordTests(unittest.TestCase):
             frag.write_text(json.dumps(inferred), encoding="utf-8")
             r = run("findings.py", "units", target, frag)
             self.assertEqual(r.returncode, 2)
-            self.assertIn("cannot be Confirmed", r.stderr)
+            self.assertIn("must be Purpose-dependent", r.stderr)
 
 
 class RenderTests(unittest.TestCase):
@@ -393,6 +397,19 @@ class RenderTests(unittest.TestCase):
         self.assertEqual(common["next_steps"][3:], SAMPLE["next_steps"])
         ja = render.to_common(copy.deepcopy(SAMPLE_JA), "ja", UNITS)
         self.assertTrue(ja["next_steps"][1].startswith("引き算 - 縮小・統合 (3件)"))
+        # One rule for the card and the summary: a Suspected (hence Likely) finding is "decide", with "Verify first".
+        suspected = copy.deepcopy(SAMPLE)
+        target = next(f for f in suspected["findings"] if f["id"] == "P-002")
+        target["confidence"], target["validation"]["verdict"] = "Suspected", "Likely"
+        findings.check_findings(copy.deepcopy(suspected), findings.check_units(copy.deepcopy(UNITS)))
+        now2, _, decide2 = render.subtraction_groups(suspected["findings"])
+        self.assertNotIn("P-002", now2)
+        self.assertIn("P-002", decide2)
+        card = next(f for f in render.to_common(suspected, "en", UNITS)["findings"] if f["id"] == "P-002")
+        self.assertEqual(card["action"]["label"], "Verify first")
+        for f in SAMPLE["findings"]:
+            if render.act_now(f):
+                self.assertEqual(f["confidence"], "Confirmed")
         unlikely = copy.deepcopy(SAMPLE["findings"])
         unlikely[0]["validation"]["verdict"] = "Unlikely"
         self.assertNotIn("P-001", sum(render.subtraction_groups(unlikely), []))

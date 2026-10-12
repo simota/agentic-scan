@@ -1,6 +1,6 @@
 ---
 name: prune-scan
-description: "Read-only minus-design review of an app's repo: records its purpose, entry points and consumers, then finds what does not earn its place: dead code, unused features, flags, deps, config, data, assets, tests, duplicates, API surface, integrations, over-built or out-of-purpose features. Dashboard + PDF. Reports, never deletes. Not for speed, structure or security."
+description: "Read-only minus-design review of an app's repo: maps purpose and consumers, then finds what does not earn its place: dead code, unused features, flags, deps, config, data, assets, tests, duplicates, API surface, integrations, over-built or out-of-purpose features. Dashboard + PDF; never deletes. Use when asked what can be deleted, removed or simplified. Not for speed, structure or security."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -46,8 +46,9 @@ Phases: `RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Name the consumers**: every client, service, partner and operator that
   calls the app, in and outside the repository. Removal is risky exactly where
   a consumer cannot be seen
-- **Create a new, empty output directory** outside the reviewed repository and
-  follow the *Run contract* below
+- **Unless only a checklist was asked for** (*Decide first*: that run writes
+  no files), create a new, empty output directory outside the reviewed
+  repository and follow the *Run contract* below
 
 ## Run contract
 
@@ -93,7 +94,7 @@ confidence and verdict, never severity.
 | CHECKLIST | The perspective families that apply to these units, as a coverage plan; attach inventory candidates marked unverified | `reference/perspectives.md` |
 | REVIEW | One pass per unit. From each entry point inward: who calls it, what it reaches, what the core jobs would lose without it. Sweep every applicable hunt step; decide each inventory candidate in context; write the subtraction for each finding | `reference/perspectives.md` |
 | VERIFY | For every finding, hunt for dynamic and external use (reflection, string-built names, DI and plugin registration, routes from config, templates, serialization, cron and infrastructure outside the repo, external API consumers, other repos, old mobile versions, data retention and legal duties); try to falsify it; settle the verdict and the confidence | `reference/validation.md` |
-| REPORT | Merge findings with `path:line` locations, `unit_ref`, `basis`, `subtraction` and `risk`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Merge findings with `path:line` locations, `unit_ref`, `basis`, `subtraction` and `risk`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja\|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
 
 ## Outputs
 

@@ -28,7 +28,6 @@ from scan_report_kit.output import write_output  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Externally-dependent", "Purpose-dependent", "Suspected")
-UNSETTLED = ("Externally-dependent", "Purpose-dependent")  # At most Likely: a human or an outside fact decides.
 STATUSES = ("Open", "Fixed", "Accepted")
 VERDICTS = ("Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable")
 EXCLUDED = ("FalsePositive", "NotApplicable")
@@ -241,9 +240,9 @@ def check_findings(data, units=None, ordered=True):
             if purpose is not None:
                 if pref not in purpose:
                     raise RecordError(f"{where}.purpose_ref: {pref} is not a purpose item in units.json")
-                if purpose[pref]["source"] == "inferred" and f["confidence"] == "Confirmed":
+                if purpose[pref]["source"] == "inferred" and f["confidence"] != "Purpose-dependent":
                     raise RecordError(f"{where}.confidence: {pref} is an inferred purpose item; "
-                                      "a finding resting on it cannot be Confirmed (use Purpose-dependent)")
+                                      "a finding resting on it must be Purpose-dependent (a human decides)")
         sub = f.get("subtraction")
         if not isinstance(sub, dict):
             raise RecordError(f"{where}.subtraction: required ({{action, what, remains, loses}})")
@@ -262,9 +261,9 @@ def check_findings(data, units=None, ordered=True):
             raise RecordError(f"{where}.validation.verdict: expected one of {', '.join(VERDICTS)}")
         _str(validation, "evidence", f"{where}.validation", required=verdict != "Unverified")
         _str(validation, "dynamic_checked", f"{where}.validation", required=verdict in ("Valid", "Likely"))
-        if verdict == "Valid" and f["confidence"] in UNSETTLED:
-            raise RecordError(f"{where}.validation.verdict: a {f['confidence']} finding is at most Likely; "
-                              "its non-use rests on something outside the repository or on a human decision")
+        if verdict == "Valid" and f["confidence"] != "Confirmed":
+            raise RecordError(f"{where}.validation.verdict: Valid needs Confirmed confidence; a {f['confidence']} "
+                              "finding is at most Likely")
         refs = f.get("references", [])
         if not isinstance(refs, list):
             raise RecordError(f"{where}.references: expected a list")

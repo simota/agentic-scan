@@ -28,8 +28,8 @@ the purpose items.
 | `source` | `documented` (a file in the repository or a document the requester supplied), `stated` (the requester said so), `inferred` (navigation, landing copy, usage of entry points) |
 | `evidence` | `path:line`, or a short reason for `stated` and `inferred` |
 
-A finding resting on an `inferred` item cannot be `Confirmed`
-(`findings.py` refuses it); it is `Purpose-dependent`, at most `Likely`, and is
+A finding resting on an `inferred` item must be `Purpose-dependent`
+(`findings.py` refuses any other confidence); it is at most `Likely` and is
 named in `decisions` so a human makes the keep or remove call.
 
 ## 3. Entry points, consumers, units
@@ -56,8 +56,8 @@ directory by absolute path, SKILL.md *Paths*): purpose items, entry points and
 units are added or replace the one with the same id, consumers the one with the
 same name; `app` is replaced when a fragment carries it. The command refuses a
 change that would leave a finding in `findings.json` beside it citing a unit,
-entry point or purpose item that no longer exists, or a `Confirmed` finding
-resting on a purpose item that became `inferred`.
+entry point or purpose item that no longer exists, or a finding other than
+`Purpose-dependent` resting on a purpose item that became `inferred`.
 
 ```json
 {

@@ -12,7 +12,7 @@ fragment before it changes anything. With `units.json` beside it, every
   "schema_version": 1,
   "meta": {"project": "Larder", "date": "2026-10-12", "assessor": "Claude Code (<model>)",
            "scope": "server, web app, schema, tooling at the recorded commit",
-           "method": "Static subtraction review against units.json", "commit": "0a1b2c3"},
+           "method": "Static subtraction review against units.json", "commit": "0a1b2c3d4e5f60718293a4b5c6d7e8f901234567"},
   "summary": "One paragraph for the abstract: what the product is for, what does not serve it, the two or three subtractions that matter most.",
   "findings": [
     {"id": "P-007", "title": "The household leaderboard serves a documented non-goal", "severity": "Medium",
@@ -53,7 +53,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 |---|---|
 | `id` | `P-` and three digits; unique; new ids follow merge order, and `scripts/findings.py renumber` puts them in severity order after VERIFY |
 | `severity` | `High`, `Medium`, `Low`, `Info` (SKILL.md table: the cost of keeping) |
-| `confidence` | `Confirmed`, `Externally-dependent`, `Purpose-dependent`, `Suspected` (`reference/validation.md`) |
+| `confidence` | `Confirmed`, `Externally-dependent`, `Purpose-dependent`, `Suspected` (`reference/validation.md`); `Purpose-dependent` whenever `purpose_ref` is an `inferred` item |
 | `status` | `Open`, `Fixed` (removed since), `Accepted` (kept by decision) |
 | `perspective` | A hunt step id from `reference/perspectives.md` (`DC1`, `OB2`…) |
 | `unit_ref` | A unit id in `units.json` |
@@ -71,7 +71,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `subtraction.loses` | What is lost: "Nothing…", a named capability, or named users |
 | `risk` | What could break if it is removed: dynamic or external use not ruled out, data duties, ordering against other findings |
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
-| `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it; `Valid` is refused for `Externally-dependent` and `Purpose-dependent` |
+| `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it; `Valid` needs `Confirmed` confidence |
 | `validation.dynamic_checked` | The dynamic-use and external-consumer patterns searched (`reference/validation.md`) |
 | `references` | Optional; `url` must be http(s) |
 

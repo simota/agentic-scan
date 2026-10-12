@@ -72,7 +72,7 @@ LABELS = {
 
 
 def snippet(repo, location):
-    """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
+    """Lines around location from repo, or None when unreadable, binary, outside repo or secret-looking."""
     m = LOC.match(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
         return None
@@ -82,9 +82,12 @@ def snippet(repo, location):
         path.relative_to(root)
         if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
             return None
-        lines = path.read_text(encoding="utf-8").splitlines()
+        text = path.read_text(encoding="utf-8")
     except (ValueError, OSError, UnicodeDecodeError):
         return None
+    if "\0" in text:  # A binary file (font, image) that happens to decode: no excerpt.
+        return None
+    lines = text.splitlines()
     start, end = int(m["start"]), int(m["end"] or m["start"])
     if start > len(lines):
         return None

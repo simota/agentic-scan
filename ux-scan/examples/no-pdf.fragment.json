@@ -1,0 +1,5 @@
+{
+  "limitations": [
+    "report.pdf not produced: PDF generation was explicitly disabled for this sample run."
+  ]
+}

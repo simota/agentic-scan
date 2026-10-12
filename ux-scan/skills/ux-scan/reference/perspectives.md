@@ -9,6 +9,10 @@ per family in `perspectives` (`name`, `result`, `note`), the `name` starting
 with the family id (`AX Accessibility`), for all thirteen families — one with nothing to check as `N/A` with the reason, one not reached
 as `not checked`. Inventory keys that feed a step are named in brackets.
 
+Separate requirements from heuristics. For a WCAG finding, check the cited
+success criterion's scope and exceptions before settling its verdict. A platform
+guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
+
 ## Information architecture and navigation (`IA`)
 
 - IA1 Every primary flow starts from the navigation or the landing screen in
@@ -44,9 +48,11 @@ as `not checked`. Inventory keys that feed a step are named in brackets.
   [`breakpoints`]
 - RS2 Fixed widths and min-widths wider than the smallest supported viewport;
   tables, code and media without a small-screen strategy [`fixed_widths`]
-- RS3 Touch targets at least 24 × 24 CSS px (WCAG 2.2 SC 2.5.8) and the
-  platform's 44 / 48 px for primary controls; spacing between adjacent targets
-  [`tap_targets`]
+- RS3 Pointer targets: measure the actual activation area against 24 × 24 CSS
+  px, then check the spacing, equivalent-control, inline, user-agent and essential
+  exceptions in [SC 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html).
+  Apply the product's platform target-size guidance in its stated units;
+  a small CSS width alone does not prove a failure [`tap_targets`]
 - RS4 Zoom and orientation: `user-scalable=no`, `maximum-scale`, orientation
   locks, text that does not reflow at 320 CSS px (SC 1.4.10) [`viewport_meta`]
 - RS5 Hover-only affordances (menus, tooltips, row actions revealed on hover)
@@ -58,8 +64,9 @@ as `not checked`. Inventory keys that feed a step are named in brackets.
   styled as the primary
 - VH2 Type scale: font sizes against the scale; body text size on small
   screens; line length and line height for reading [`font_sizes`]
-- VH3 Heading levels follow the visual hierarchy: one `h1`, no levels skipped
-  or chosen for their size
+- VH3 Heading levels express the content hierarchy rather than visual size;
+  assess whether the page title and section relationships are clear. Treat the
+  number of `h1` elements as a hierarchy review prompt, not an automatic failure
 - VH4 Grouping and density: related controls grouped, groups separated by
   space, scanning order matching task order
 
@@ -78,8 +85,9 @@ as `not checked`. Inventory keys that feed a step are named in brackets.
 
 - ST1 Hover, active and selected states present on interactive components and
   distinct from one another and from disabled
-- ST2 Focus visible on every focusable element, with 3:1 contrast against its
-  surroundings [`focus_outline`]
+- ST2 Visible keyboard focus on interactive controls; evaluate custom focus
+  indicators against the applicable non-text contrast requirement and its
+  user-agent exception (AX5) [`focus_outline`]
 - ST3 Pending and disabled: submit controls during a request (double submit),
   disabled controls that never explain why [`state_branches`]
 - ST4 Selected, current, expanded and pressed states exposed both visually and
@@ -127,13 +135,17 @@ as `not checked`. Inventory keys that feed a step are named in brackets.
   `lang` on `<html>`
 - AX2 Keyboard: every interactive element reachable and operable without a
   mouse [`click_handlers`]
-- AX3 Focus management: order follows the visual order; dialogs move focus in,
-  keep it inside, close on Escape and return it; focus moves on route change
-  [`positive_tabindex`]
+- AX3 Focus management: order follows the task; modal dialogs move focus in,
+  contain it, support Escape and restore it appropriately, following the
+  [modal dialog pattern](https://www.w3.org/WAI/ARIA/apg/patterns/dialog-modal/).
+  Do not require a focus trap in non-modal dialogs; check the focus destination
+  after client-side navigation [`positive_tabindex`]
 - AX4 Accessible names: icon-only buttons, links, images (`alt`), form
   controls; names that contain the visible label [`icon_buttons`, `images`]
-- AX5 Contrast: text 4.5:1 (3:1 for large text), UI components and focus
-  indicators 3:1, in every theme
+- AX5 Contrast: text 4.5:1 (3:1 for qualifying large text); visual information
+  needed to identify controls and their states 3:1 against adjacent colours in
+  each supported theme. Check inactive-control and unmodified user-agent
+  exceptions before citing [SC 1.4.11](https://www.w3.org/WAI/WCAG22/Understanding/non-text-contrast.html)
 - AX6 ARIA misuse: roles that contradict the element, `aria-hidden` on focusable
   content, missing live regions for asynchronous updates
 
@@ -143,8 +155,12 @@ as `not checked`. Inventory keys that feed a step are named in brackets.
   nothing animates in the way of the task [`motion`]
 - MO2 `prefers-reduced-motion` honoured for large movement, parallax and
   auto-playing animation [`motion`]
-- MO3 Anything that moves for more than five seconds can be paused (SC 2.2.2);
-  nothing flashes more than three times a second
+- MO3 Automatically moving, blinking or scrolling content lasting over five
+  seconds alongside other content needs a pause, stop or hide mechanism unless
+  essential; auto-updating content has no five-second exemption
+  ([SC 2.2.2](https://www.w3.org/WAI/WCAG22/Understanding/pause-stop-hide.html)).
+  Check flashes against both rate and the general/red flash thresholds before
+  citing [SC 2.3.1](https://www.w3.org/WAI/WCAG22/Understanding/three-flashes-or-below-threshold.html)
 
 ## Internationalized layout (`IN`)
 

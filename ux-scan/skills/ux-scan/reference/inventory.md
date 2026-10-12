@@ -9,27 +9,31 @@ python3 <skill-dir>/scripts/inventory.py <repo> --out <out>/inventory.json [--fl
 
 Paths in this file are relative to the skill's directory, not the reviewed
 repository (SKILL.md *Paths*).
+The `--out` file must be outside the reviewed repository. The CLI rejects
+in-repository destinations, including parent-directory symlink aliases,
+before writing anything.
 
-Standard library only, read-only. It walks style, script, template and JSON
-locale files under `<repo>` (skipping VCS and dependency/build directories,
-symlinks, lockfiles, minified bundles, binaries and files over 2 MB) and records
+Standard library only, read-only. It walks style, script, template (including
+MDX), JSON token and JSON locale files under `<repo>` (skipping VCS and
+dependency/build directories, symlinks, lockfiles, minified bundles, binaries
+and files over 2 MB) and records
 **candidates** — never findings. Every row carries `path:line` locations.
 
 | Key | What it collects | Perspective |
 |---|---|---|
 | `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`); routes that no `href`, `to=` or `navigate()` / `push()` reaches (dynamic segments excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
-| `token_sources` | Files named like tokens / theme / variables / `tailwind.config`, or defining three or more CSS custom properties | LG2, CC2 |
+| `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` and `font-size` literals (CSS and JS style objects), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment | LG2, VH2 |
 | `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`), in CSS and in script strings | RS1 |
 | `z_index` | `z-index` / `zIndex` values | LG3 |
 | `fixed_widths` | `width` / `min-width` of 320 px or more | RS2 |
-| `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` marks WCAG 2.5.8 failures | RS3 |
+| `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` flags dimensions under 24 px for review, with the actual hit area and WCAG 2.5.8 exceptions still to verify | RS3 |
 | `focus_outline` | `outline: none` / `0`, with whether the same rule restyles focus and whether the file has a `:focus-visible` rule | ST2 |
-| `viewport_meta` | Viewport meta tags; `blocks_zoom` for `user-scalable=no` or `maximum-scale` under 2 | RS4 |
+| `viewport_meta` | Viewport meta tags; `blocks_zoom` for `user-scalable=no` / `0` or a nonnegative numeric `maximum-scale` under 2; names are case-insensitive and numeric prefixes are parsed without aborting on trailing text | RS4 |
 | `click_handlers` | Click handlers on non-interactive elements (`div`, `span`, `li`, `img`…) or `<a>` without `href`, with what is missing (role, tabindex, key handler) | AX2 |
 | `images` | `<img>` without `alt`, or without `width` and `height` | AX4, PP2 |
-| `inputs` | `input` / `select` / `textarea` without a programmatic label (no `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
-| `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no `aria-label`, `aria-labelledby` or `title`; `*IconButton` components without a label prop | AX4 |
+| `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
+| `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0 | AX3 |
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1 |
 | `destructive_actions` | Click handlers calling delete / remove / destroy / discard… in a file with no confirm, dialog or undo | FB4 |
@@ -45,6 +49,12 @@ With `--flows`, also:
 | `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it |
 | `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left |
 
+`flows_sha256` records a SHA-256 digest of the complete flows record using
+canonical JSON (sorted object keys, compact separators, UTF-8, no non-finite
+numbers), prefixed with `sha256:`. It is `null` during RECON without `--flows`.
+The run contract uses it to detect an inventory that predates the current
+flows, tokens or supported viewports; rerun with `--flows` after changing them.
+
 ## Caps
 
 Each row keeps its full `count` but at most 5 `locations`; find the rest with
@@ -59,7 +69,17 @@ when it is not empty, say so in `limitations` or search for the rest.
 ## Limits
 
 Elements that receive props through a spread (`{...props}`) are skipped: what
-they get is unknown here. Limits, to state in `limitations` when they matter:
+they get is unknown here. Dynamic name expressions are also treated as unknown;
+only statically blank name attributes are rejected, and referenced label text
+is not resolved. Viewport declarations are candidates, not a browser's computed
+zoom behavior. The numeric-prefix and case rules follow the
+[viewport parsing algorithm](https://www.w3.org/TR/css-viewport-1/#meta-viewport),
+and blank names follow the
+[accessible name computation](https://www.w3.org/TR/accname-1.2/#computation-steps).
+Small declared dimensions alone do not establish a failure of
+[WCAG 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html),
+which includes spacing and other exceptions.
+Limits, to state in `limitations` when they matter:
 styles computed at run time, Tailwind utility classes other than `truncate`,
 native mobile UI code (SwiftUI, Compose, Flutter), components from a library
 whose source is not in the repository, and rendering itself (contrast,

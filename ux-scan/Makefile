@@ -133,7 +133,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for lang in en ja; do \
 	  sample=examples/findings.sample$$([ $$lang = ja ] && echo .ja).json; o="$$out/$$lang"; mkdir -p "$$o"; \
-	  cp examples/flows.sample.json "$$o/flows.json" && cp "$$sample" "$$o/findings.json" || fail=1; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) scripts/ci/prepare_sample.py "$$sample" --out "$$o" --no-pdf \
+	    || { echo "MISS cannot prepare $$sample" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" examples/tasklane --flows "$$o/flows.json" --out "$$o/inventory.json" >/dev/null \
 	    || { echo "MISS inventory.py fails on examples/tasklane" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$$o/findings.json" --out "$$o" --lang $$lang --repo examples/tasklane --no-pdf >/dev/null \
@@ -142,9 +143,11 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { echo "MISS findings.py check fails on $$sample" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/findings.py" renumber "$$o/findings.json" | grep -q 'already in order' \
 	    || { echo "MISS $$sample is not numbered in severity order" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/contract_check.py" "$$o" --no-pdf >/dev/null \
+	    || { echo "MISS $$sample does not satisfy the output contract" >&2; fail=1; }; \
 	done; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, doc refs resolve, samples inventory and render"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, doc refs resolve, sample output contracts pass"; \
 	exit $$fail
 
 inventory: ## UI/UX inventory of TARGET (FLOWS=flows.json, OUT=inventory.json)
@@ -153,10 +156,10 @@ inventory: ## UI/UX inventory of TARGET (FLOWS=flows.json, OUT=inventory.json)
 	  $(if $(FLOWS),--flows "$(FLOWS)",) --out "$(or $(OUT),inventory.json)"
 
 demo: ## render the sample (dashboard + report + PDF) into DEMO_OUT
-	@mkdir -p "$(DEMO_OUT)" && cp "$(REPO)/examples/flows.sample.json" "$(DEMO_OUT)/flows.json" \
-	  && cp "$(DEMO_INPUT)" "$(DEMO_OUT)/findings.json" \
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(REPO)/scripts/ci/prepare_sample.py" "$(DEMO_INPUT)" \
+	       --out "$(DEMO_OUT)" $(if $(NO_PDF),--no-pdf,) \
 	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" "$(REPO)/examples/tasklane" \
 	       --flows "$(DEMO_OUT)/flows.json" --out "$(DEMO_OUT)/inventory.json" \
 	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$(DEMO_OUT)/findings.json" \
 	       --out "$(DEMO_OUT)" --lang $(LANG_OUT) --repo "$(REPO)/examples/tasklane" $(if $(NO_PDF),--no-pdf,) \
-	  $(if $(NO_PDF),,&& PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/contract_check.py" "$(DEMO_OUT)")
+	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/contract_check.py" "$(DEMO_OUT)" $(if $(NO_PDF),--no-pdf,)

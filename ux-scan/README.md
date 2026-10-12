@@ -62,12 +62,21 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 
 ## Develop
 
+Use Python 3.10 or later and GNU Make. The scan scripts have no third-party
+Python dependencies. PDF output additionally needs Chrome/Chromium or WeasyPrint.
+
 ```sh
 make test       # unit tests
 make check      # tests + doc refs + skill consistency + sample inventory and render
 make demo       # render the sample (examples/tasklane) with PDF into $TMPDIR/ux-scan-demo
+make demo NO_PDF=1 # render HTML only, recording the limitation and checking the contract
 make inventory TARGET=/path/to/repo FLOWS=flows.json OUT=inventory.json
 ```
+
+`make check` validates both English and Japanese sample output contracts,
+including the no-PDF limitation from `examples/no-pdf.fragment.json`. It does
+not require a browser. GitHub Actions runs it on Linux and macOS with Python
+3.10 and 3.14, and separately renders both sample PDFs with Chrome.
 
 `skills/ux-scan/scripts/scan_report_kit/` is a vendored copy of
 scan-report-kit; `make check` verifies it against its MANIFEST. Change it

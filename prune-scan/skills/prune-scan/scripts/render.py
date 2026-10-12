@@ -19,24 +19,35 @@ import argparse
 import hashlib
 import os
 import re
+import stat
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import EXCLUDED, RecordError, check_findings, check_units, parse_json, read_json_source  # noqa: E402
+from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
+                      read_json_source, record_exists)
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
 UNITS_STAMP = "prune-scan-units"
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|"
-                       r"id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|"
-                       r".*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
-SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
+                       r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
+                       r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc)(?:/|$)")
+SECRET_LINE = re.compile(r"(?i)(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
+                         r"api[_-]?key|private[_-]?key|client[_-]?secret)[\s\"'\]]*[:=]")
+PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
+# Only an entire, single-line quoted value has an unambiguous local boundary
+# across the languages we excerpt. Omit the source for any other secret value.
+INLINE_SECRET = re.compile(r'''(?ix)[rubf]{0,2}(?:"(?:[^"\\]|\\.)*"|'(?:[^'\\]|\\.)*')
+                              [\s,;\}\]\)]*(?:(?:\#|//).*)?''')
+SECRET_CONTINUATION = re.compile(r'''(?i)^(?:[rubf]{0,2}["']|[+`\\])''')
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 80
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
+NOFOLLOW_DIR_FD = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 
 FAMILIES = {
     "en": {"DC": "Dead code", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
@@ -76,6 +87,45 @@ LABELS = {
 }
 
 
+def read_source(root, relative):
+    """Read a bounded regular source without following links planted after resolve.
+
+    Pin every directory on POSIX, including the repository root. On platforms
+    without descriptor-relative opens, verify each component and the opened
+    file's identity before reading; excerpts remain optional on read errors.
+    """
+    path = root / relative
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if NOFOLLOW_DIR_FD:
+        directories = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        parent = os.open(root, directories)
+        try:
+            for part in relative.parts[:-1]:
+                child = os.open(part, directories, dir_fd=parent)
+                os.close(parent)
+                parent = child
+            fd = os.open(relative.name, flags, dir_fd=parent)
+        finally:
+            os.close(parent)
+    else:
+        components = [root, *(root / Path(*relative.parts[:i]) for i in range(1, len(relative.parts) + 1))]
+        before = [component.lstat() for component in components]
+        if any(stat.S_ISLNK(info.st_mode) for info in before) or not stat.S_ISREG(before[-1].st_mode):
+            return None
+        fd = os.open(path, flags)
+    with os.fdopen(fd, "rb") as handle:
+        info = os.fstat(handle.fileno())
+        if not stat.S_ISREG(info.st_mode) or info.st_size > MAX_SOURCE_BYTES:
+            return None
+        if not NOFOLLOW_DIR_FD:
+            if (not os.path.samestat(before[-1], info)
+                    or any(not os.path.samestat(old, component.lstat())
+                           for old, component in zip(before, components))):
+                return None
+        source = handle.read(MAX_SOURCE_BYTES + 1)
+    return source if len(source) <= MAX_SOURCE_BYTES and b"\0" not in source else None
+
+
 def snippet(repo, location):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
@@ -87,18 +137,30 @@ def snippet(repo, location):
             return None
         root = Path(repo).resolve()
         path = (root / m["path"]).resolve()
-        resolved = path.relative_to(root).as_posix()
-        if SENSITIVE.search(resolved) or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
+        relative = path.relative_to(root)
+        if SENSITIVE.search(relative.as_posix()):
             return None
-        with path.open("rb") as handle:
-            source = handle.read(MAX_SOURCE_BYTES + 1)
-        if len(source) > MAX_SOURCE_BYTES or b"\0" in source:
+        source = read_source(root, relative)
+        if source is None:
             return None
-        lines = source.decode("utf-8").splitlines()
+        text = source.decode("utf-8")
+        if PRIVATE_KEY.search(text):
+            return None
+        lines = text.splitlines()
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
+    # A secret can start well before the excerpt. Inspect the whole bounded
+    # source so a block value cannot lose its identifying assignment line.
+    following = ""
+    for line in reversed(lines):
+        match = SECRET_LINE.search(line)
+        if match and (not INLINE_SECRET.fullmatch(line[match.end():].strip()) or SECRET_CONTINUATION.match(following)):
+            return None
+        stripped = line.lstrip()
+        if stripped and not stripped.startswith(("#", "//")):
+            following = stripped
     first, last = max(1, start - CONTEXT), min(len(lines), end + CONTEXT)
     last = min(last, first + MAX_SNIPPET_LINES - 1)
     shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
@@ -106,13 +168,22 @@ def snippet(repo, location):
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
+@contextmanager
+def open_artifact(path):
+    """Open a regular generated artifact without following a replaced link or blocking on a FIFO."""
+    path = Path(path)
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd, "rb") as handle:
+        info, current = os.fstat(handle.fileno()), path.lstat()
+        if not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(current.st_mode) or not os.path.samestat(info, current):
+            raise OSError(f"{path}: expected a regular artifact file")
+        yield handle
+
+
 def pdf_complete(path):
     """Check stored artifacts for the run contract too; not a full PDF parser."""
-    path = Path(path)
     try:
-        if path.is_symlink() or not path.is_file():
-            return False
-        with path.open("rb") as handle:
+        with open_artifact(path) as handle:
             header = handle.read(8)
             handle.seek(0, os.SEEK_END)
             handle.seek(max(0, handle.tell() - 1024))
@@ -124,7 +195,7 @@ def pdf_complete(path):
 
 def redact_diagnostic(text):
     """Engine stderr may echo a secret value: mask the complete diagnostic."""
-    return "[masked: looks like a secret]" if SECRET_LINE.search(text) else text
+    return "[masked: looks like a secret]" if SECRET_LINE.search(text) or PRIVATE_KEY.search(text) else text
 
 
 def act_now(f):
@@ -218,7 +289,7 @@ def main(argv=None):
     try:
         source = read_json_source(a.findings)
         units_path = Path(a.findings).with_name("units.json")
-        units_source = read_json_source(units_path) if units_path.exists() else None
+        units_source = read_json_source(units_path) if record_exists(units_path) else None
         units = check_units(parse_json(units_source, str(units_path))) if units_source is not None else None
         data = check_findings(parse_json(source, a.findings), units)
         common = report.validate(to_common(data, a.lang, units, a.repo))

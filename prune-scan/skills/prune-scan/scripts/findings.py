@@ -418,10 +418,19 @@ def load_json(path):
     return parse_json(read_json_source(path), where=str(path))
 
 
+def record_exists(path):
+    """Only an absent path is optional; broken links and inaccessible records must fail when read."""
+    try:
+        Path(path).lstat()
+    except FileNotFoundError:
+        return False
+    return True
+
+
 def units_beside(findings_path):
     """The checked units.json next to findings_path, or None when there is none."""
     path = Path(findings_path).with_name("units.json")
-    return check_units(load_json(path)) if path.exists() else None
+    return check_units(load_json(path)) if record_exists(path) else None
 
 
 def merge_units(base, fragment):
@@ -498,12 +507,12 @@ def main(argv=None):
             print(f"ok {target}")
             return 0
         if cmd == "units":
-            result = check_units(load_json(target)) if target.exists() else {}
+            result = check_units(load_json(target)) if record_exists(target) else {}
             for fragment in fragments:
                 result = merge_units(result, load_json(fragment))
             check_units(result)
             beside = target.with_name("findings.json")
-            if beside.exists():  # Every unit, entry and purpose reference in the record must stay valid.
+            if record_exists(beside):  # Every unit, entry and purpose reference in the record must stay valid.
                 check_findings(load_json(beside), result, ordered=False)
             write_output(target, dump(result))
             print(f"wrote {target} ({len(result['purpose'])} purpose items, {len(result['entry_points'])} entry points, "
@@ -522,7 +531,7 @@ def main(argv=None):
             print(f"renumbered {target}: {moved or 'reordered findings'}")
             return 0
         data = (check_findings(load_json(target), units_beside(target), ordered=False)
-                if target.exists() else {"schema_version": 1, "findings": []})
+                if record_exists(target) else {"schema_version": 1, "findings": []})
         for fragment in fragments:
             data = merge(data, load_json(fragment))
         check_findings(data, units_beside(target), ordered=False)

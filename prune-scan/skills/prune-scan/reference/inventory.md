@@ -18,11 +18,28 @@ than assets; files over 2 MB; and secret-looking files such as `.env` — only
 only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
+Secret-looking directory names are excluded too. On POSIX, files are opened
+relative to pinned directory descriptors without following symlinks; a file or
+directory replaced during the scan cannot redirect a read through a link.
+The 2 MB limit is enforced on the opened file and on the read itself.
+Files whose names cannot be represented as UTF-8 are skipped and counted in
+`files_skipped`, so an unusual filesystem name cannot break the JSON output.
+`--out` cannot overwrite the source supplied through `--units`.
+
 References are counted **by name**: an identifier anywhere in code or config,
 string contents included (a name built from a string still counts as a use), and
 a file counts as referenced when its file name appears in another file. That
 makes the lists conservative: a candidate is something nothing names, not
 something proven unused.
+
+When the running Python version can parse a file, its syntax tree distinguishes
+real top-level definitions from docstring examples and recognizes decorators
+that span multiple lines. Unsupported syntax retains the best-effort text
+scan. TypeScript imports that name emitted `.js`, `.mjs` or `.cjs` files also
+resolve to the corresponding source extensions, including `.mts` and `.cts`.
+Dependency overlap groups and platform replacements are specific to the
+manifest's ecosystem; an identically named package in another ecosystem does
+not inherit its replacement suggestion.
 
 | Key | What it collects | Perspective |
 |---|---|---|
@@ -47,7 +64,8 @@ something proven unused.
 
 With `--units`, every row with a path also gets `unit` (the unit whose paths
 cover it; the most specific prefix wins), and `by_unit` counts the candidates
-per unit.
+per unit. Prefixes normalize `.` components and repeated separators before
+matching, so `./server/` and `server/` cover the same files.
 
 ## Caps
 

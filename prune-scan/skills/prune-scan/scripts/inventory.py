@@ -19,16 +19,22 @@ Exit status: 0 written, 2 bad arguments or unreadable units, 1 output not writte
 """
 
 import argparse
+import ast
 import datetime
 import json
 import os
 import re
+import stat
 import sys
+from array import array
+from bisect import bisect_left
 from collections import Counter, defaultdict
+from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, check_units, load_json  # noqa: E402
+from findings import RecordError, check_units, load_json, parse_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -36,16 +42,18 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "
              ".turbo", ".cache", "bower_components", ".idea", ".vscode", "DerivedData", ".dart_tool",
              "storybook-static", ".output", ".tox", ".mypy_cache", ".pytest_cache", "site-packages"}
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
-              "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "uv.lock"}
+              "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
+              "npm-shrinkwrap.json", "Pipfile.lock"}
 SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
-                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
+                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
 ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
 MAX_ROWS = 200
+SAFE_DIR_OPEN = os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
 
 PY_EXT = {".py"}
-JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte"}
+JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".vue", ".svelte"}
 GO_EXT = {".go"}
 RS_EXT = {".rs"}
 SOURCE_EXT = PY_EXT | JS_EXT | GO_EXT | RS_EXT | {".rb", ".java", ".kt", ".swift", ".php", ".cs", ".scala"}
@@ -61,6 +69,10 @@ ENTRY_STEMS = {"main", "index", "app", "__init__", "__main__", "setup", "manage"
                "server", "cli", "lib", "mod", "build", "worker"}
 JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json",
               "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs")
+# TypeScript source imports name the emitted JavaScript files in Node's ESM modes.
+JS_SUBSTITUTIONS = {".js": (".ts", ".tsx", ".d.ts", ".js", ".jsx"),
+                    ".jsx": (".tsx", ".d.ts", ".jsx"),
+                    ".mjs": (".mts", ".d.mts", ".mjs"), ".cjs": (".cts", ".d.cts", ".cjs")}
 TEST_PATH = re.compile(r"(?i)(?:^|/)(?:tests?|__tests__|spec|e2e)/|(?:^|/)test_[^/]+$|_test\.\w+$|"
                        r"\.(?:test|spec)\.\w+$")
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
@@ -84,10 +96,10 @@ MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
 
 PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
-PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\([^)]*\)|[^\n#]+)", re.M)
+PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
 JS_IMPORT = re.compile(r"(?:\bimport|\bexport)\s[^'\"`;]*?\bfrom\s*[\"']([^\"'\n]+)[\"']|\bimport\s*[\"']([^\"'\n]+)[\"']|"
                        r"\brequire\(\s*[\"']([^\"'\n]+)[\"']\s*\)|\bimport\(\s*[\"']([^\"'\n]+)[\"']\s*\)")
-GO_IMPORT = re.compile(r"^\s*(?:import\s+)?(?:\w+\s+)?\"([\w.\-/]+)\"\s*$", re.M)
+GO_IMPORT = re.compile(r"^[ \t]*(?:import[ \t]+)?(?:(?:\w+|\.)[ \t]+)?\"([\w.\-/]+)\"[ \t\r]*(?://[^\n]*)?$", re.M)
 RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)::")
 
 ENV_READ = re.compile(
@@ -115,6 +127,9 @@ ROUTE_DEFS = (
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
+NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare",
+                  "prepublishOnly", "prepack", "postpack", "publish", "postpublish", "dependencies",
+                  "preversion", "version", "postversion"}
 SKIPPED_TEST = re.compile(r"@pytest\.mark\.skip(?:if)?\b|@unittest\.skip\w*|\bpytest\.skip\(|"
                           r"\b(?:it|test|describe|context)\.(?:skip|todo)\(|\bx(?:it|describe|test)\(|#\[ignore\]|"
                           r"\bt\.Skip(?:f|Now)?\(|@Disabled\b|@Ignore\b|\bskip\(\s*[\"']")
@@ -130,25 +145,34 @@ CREATE_TABLE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
-    "dates": {"moment", "dayjs", "date-fns", "luxon", "moment-timezone"},
-    "http client (JS)": {"axios", "node-fetch", "got", "superagent", "request", "ky", "cross-fetch",
-                         "isomorphic-fetch", "undici"},
-    "utility belt": {"lodash", "lodash-es", "underscore", "ramda"},
-    "test runner (JS)": {"jest", "vitest", "mocha", "ava", "jasmine"},
-    "http client (Python)": {"requests", "httpx", "urllib3", "aiohttp"},
-    "json (Python)": {"simplejson", "ujson", "orjson", "rapidjson"},
-    "test runner (Python)": {"pytest", "nose", "nose2"},
-    "uuid": {"uuid", "nanoid", "shortid"},
-    "class names": {"classnames", "clsx"},
+    "javascript": {
+        "dates": {"moment", "dayjs", "date-fns", "luxon", "moment-timezone"},
+        "http client (JS)": {"axios", "node-fetch", "got", "superagent", "request", "ky", "cross-fetch",
+                             "isomorphic-fetch", "undici"},
+        "utility belt": {"lodash", "lodash-es", "underscore", "ramda"},
+        "test runner (JS)": {"jest", "vitest", "mocha", "ava", "jasmine"},
+        "uuid": {"uuid", "nanoid", "shortid"},
+        "class names": {"classnames", "clsx"},
+    },
+    "python": {
+        "http client (Python)": {"requests", "httpx", "urllib3", "aiohttp"},
+        "json (Python)": {"simplejson", "ujson", "orjson", "rapidjson"},
+        "test runner (Python)": {"pytest", "nose", "nose2"},
+    },
 }
 PLATFORM_REPLACEABLE = {
-    "node-fetch": "global fetch (Node 18+)", "cross-fetch": "global fetch", "isomorphic-fetch": "global fetch",
-    "left-pad": "String.prototype.padStart", "object-assign": "Object.assign", "es6-promise": "native Promise",
-    "uuid": "crypto.randomUUID()", "array-includes": "Array.prototype.includes", "abort-controller": "global AbortController",
-    "six": "Python 3 only code", "mock": "unittest.mock", "futures": "concurrent.futures", "enum34": "enum",
-    "pathlib2": "pathlib", "typing": "typing (stdlib)", "dataclasses": "dataclasses (stdlib, 3.7+)",
-    "simplejson": "json", "importlib-metadata": "importlib.metadata (3.8+)", "backports.zoneinfo": "zoneinfo (3.9+)",
-    "pytz": "zoneinfo (3.9+)",
+    "javascript": {
+        "node-fetch": "global fetch (Node 18+)", "cross-fetch": "global fetch", "isomorphic-fetch": "global fetch",
+        "left-pad": "String.prototype.padStart", "object-assign": "Object.assign", "es6-promise": "native Promise",
+        "uuid": "crypto.randomUUID()", "array-includes": "Array.prototype.includes",
+        "abort-controller": "global AbortController",
+    },
+    "python": {
+        "six": "Python 3 only code", "mock": "unittest.mock", "futures": "concurrent.futures", "enum34": "enum",
+        "pathlib2": "pathlib", "typing": "typing (stdlib)", "dataclasses": "dataclasses (stdlib, 3.7+)",
+        "simplejson": "json", "importlib-metadata": "importlib.metadata (3.8+)", "backports.zoneinfo": "zoneinfo (3.9+)",
+        "pytz": "zoneinfo (3.9+)",
+    },
 }
 PY_MODULE_NAMES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "python-dateutil": "dateutil",
                    "scikit-learn": "sklearn", "opencv-python": "cv2", "opencv-python-headless": "cv2",
@@ -176,18 +200,82 @@ def iter_files(root):
             yield path
 
 
-def read_text(path):
-    """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
-    if SECRET_FILE.match(path.name) or path.stat().st_size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
-        return None
-    data = path.read_bytes()
-    if b"\0" in data[:8192]:
-        return None
+@contextmanager
+def open_source(path, root):
+    """Open a regular repository file without following replaced files or parent directories."""
+    parts = path.relative_to(root).parts
+    if not parts or ".." in parts:
+        raise OSError("expected a file inside the repository")
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
+    dir_fd = None
+    if SAFE_DIR_OPEN:
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        try:
+            dir_fd = os.open(root, directory_flags)
+            for part in parts[:-1]:
+                child_fd = os.open(part, directory_flags, dir_fd=dir_fd)
+                os.close(dir_fd)
+                dir_fd = child_fd
+            fd = os.open(parts[-1], flags, dir_fd=dir_fd)
+        finally:
+            if dir_fd is not None:
+                os.close(dir_fd)
+    else:
+        # Platforms without descriptor-relative opens get path and inode checks before any read.
+        # The POSIX branch above additionally closes races in ancestor-directory resolution.
+        current, snapshots = root, []
+        for part in ("", *parts):
+            current = current / part
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise OSError("repository symlinks are not scanned")
+            snapshots.append((current, info))
+        expected = snapshots[-1][1]
+        if not stat.S_ISREG(expected.st_mode):
+            raise OSError("expected a regular repository file")
+        fd = os.open(path, flags)
+        try:
+            actual = os.fstat(fd)
+            if (actual.st_dev, actual.st_ino) != (expected.st_dev, expected.st_ino):
+                raise OSError("repository file changed before it could be read")
+            for current, previous in snapshots:
+                latest = current.lstat()
+                if (stat.S_ISLNK(latest.st_mode)
+                        or (latest.st_dev, latest.st_ino) != (previous.st_dev, previous.st_ino)):
+                    raise OSError("repository path changed before it could be read")
+        except BaseException:
+            os.close(fd)
+            raise
+    with os.fdopen(fd, "rb") as handle:
+        if not stat.S_ISREG(os.fstat(handle.fileno()).st_mode):
+            raise OSError("expected a regular repository file")
+        yield handle
+
+
+def read_file(path, root):
+    """Return (text or None, size or None), checking the opened file and bounding the read."""
+    if any(SECRET_FILE.match(part) for part in path.relative_to(root).parts):
+        return None, None
+    with open_source(path, root) as handle:
+        size = os.fstat(handle.fileno()).st_size
+        if size > MAX_BYTES or re.search(r"\.min\.(?:js|css)$", path.name):
+            return None, size
+        data = handle.read(MAX_BYTES + 1)
+    if len(data) > MAX_BYTES:
+        return None, size
+    if b"\0" in data:
+        return None, size
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError:
-        return None
-    return env_names_only(text) if ENV_DECL_FILE.match(path.name) else text
+        return None, size
+    return (env_names_only(text) if ENV_DECL_FILE.match(path.name) else text), size
+
+
+def read_text(path):
+    """The file's text, or None for binaries, minified bundles, oversized and secret-looking files."""
+    path = Path(path)
+    return read_file(path, path.parent)[0]
 
 
 def env_names_only(text):
@@ -214,8 +302,14 @@ def env_names_only(text):
     return "\n".join(lines)
 
 
+@lru_cache(maxsize=1)
+def line_breaks(text):
+    """Index one source at a time; fixed-width offsets keep even newline-heavy files bounded."""
+    return array("I", (m.start() for m in re.finditer("\n", text)))
+
+
 def line_of(text, index):
-    return text.count("\n", 0, index) + 1
+    return bisect_left(line_breaks(text), index) + 1
 
 
 def is_test(rel):
@@ -321,12 +415,13 @@ def parse_toml_lists(rel, text):
 def package_sections(text):
     """Return usable package.json maps; invalid shapes cannot abort a best-effort scan."""
     try:
-        value = json.loads(text)
-    except (ValueError, RecursionError):
+        value = parse_json(text)
+    except RecordError:
         return {}
     if not isinstance(value, dict):
         return {}
-    return {key: section for key, section in value.items() if isinstance(section, dict)}
+    return {key: {name: entry for name, entry in section.items() if isinstance(entry, str)}
+            for key, section in value.items() if isinstance(section, dict)}
 
 
 def parse_go_mod(rel, text):
@@ -357,22 +452,27 @@ class Collector:
     def add(self, path):
         rel = path.relative_to(self.root).as_posix()
         try:
-            if path.suffix.lower() in ASSET_EXT:
-                self.assets.append((rel, path.stat().st_size))
-            text = read_text(path)
+            rel.encode("utf-8")
+        except UnicodeEncodeError:
+            self.skipped += 1
+            return  # Filesystem surrogateescape names cannot form valid UTF-8 JSON locations.
+        try:
+            text, size = read_file(path, self.root)
         except OSError:
             self.skipped += 1
             return
+        if path.suffix.lower() in ASSET_EXT and size is not None:
+            self.assets.append((rel, size))
         if text is None:
-            if path.suffix.lower() not in ASSET_EXT:
+            if path.suffix.lower() not in ASSET_EXT or size is None:
                 self.skipped += 1
             return
         self.texts[rel] = text
         bundle = locale_bundle(rel)
         if bundle:
             try:
-                self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(json.loads(text))))
-            except (ValueError, RecursionError):
+                self.locales[bundle[0]][bundle[1]] = (rel, list(flatten(parse_json(text))))
+            except (RecordError, RecursionError):
                 pass
 
 
@@ -424,18 +524,33 @@ def inventory(root, units=None, today=None):
         if not regex:
             continue
         lang = {".py": "python", ".go": "go", ".rs": "rust"}.get(ext, "javascript")
+        python_defs = None
+        if ext in PY_EXT:
+            try:
+                python_defs = {node.lineno: bool(getattr(node, "decorator_list", []))
+                               for node in ast.parse(text).body
+                               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                                    ast.Assign, ast.AnnAssign))}
+            except (SyntaxError, ValueError, RecursionError):
+                pass  # Unsupported/newer Python syntax still gets the best-effort regex scan.
         for m in regex.finditer(text):
             name = next(g for g in m.groups() if g)
             if name in ENTRY_SYMBOLS or name.startswith("__"):
                 continue
-            before = text[:m.start()].rstrip("\n").rsplit("\n", 1)[-1].strip()
-            if before.startswith(("@", "#[")):
+            line = line_of(text, m.start())
+            if python_defs is not None and line not in python_defs:
+                continue  # A definition-shaped line in a docstring is not executable code.
+            end = m.start()
+            while end and text[end - 1] == "\n":
+                end -= 1
+            before = text[text.rfind("\n", 0, end) + 1:end].strip()
+            if (python_defs is not None and python_defs[line]) or before.startswith(("@", "#[")):
                 decorated_skipped += 1
                 continue
             words = [w for w in re.split(r"[\s(]+", m.group(0)) if w and w not in MODIFIERS and not w.startswith("pub")]
             kind = words[0].rstrip("*") if words and words[0] != name else "constant"
             defs[name].append({"name": name, "kind": kind, "language": lang,
-                               "location": f"{rel}:{line_of(text, m.start())}",
+                               "location": f"{rel}:{line}",
                                "exported": m.group(0).startswith(("export", "pub")) or (lang == "go" and name[0].isupper())})
     rows["unreferenced_symbols"] = sorted(
         (d for name, ds in defs.items() if idents[name] - len(ds) <= 0 for d in ds),
@@ -449,9 +564,12 @@ def inventory(root, units=None, today=None):
     def resolve_js(rel, spec):
         base = (Path(rel).parent / spec).as_posix() if spec.startswith(".") else spec.lstrip("/")
         base = os.path.normpath(base).replace(os.sep, "/")
-        for ext in JS_RESOLVE:
-            if base + ext in files:
-                return base + ext
+        ext = Path(base).suffix
+        candidates = ([base[:-len(ext)] + replacement for replacement in JS_SUBSTITUTIONS[ext]]
+                      if ext in JS_SUBSTITUTIONS else [base + ending for ending in JS_RESOLVE])
+        for candidate in candidates:
+            if candidate in files:
+                return candidate
         return None
 
     def resolve_py(rel, dots, module, names):
@@ -459,9 +577,10 @@ def inventory(root, units=None, today=None):
             pkg = Path(rel).parent
             for _ in range(len(dots) - 1):
                 pkg = pkg.parent
-            bases = [pkg.as_posix().strip(".") or ""]
+            bases = [pkg.as_posix() if pkg.as_posix() != "." else ""]
         else:
-            bases = ["", "src"]
+            # A file run as a script adds its own directory to Python's import path.
+            bases = ["", "src", Path(rel).parent.as_posix()]
         targets = []
         for base in bases:
             stem = "/".join(x for x in [base, module.replace(".", "/")] if x)
@@ -490,13 +609,15 @@ def inventory(root, units=None, today=None):
         elif ext in PY_EXT:
             for m in PY_IMPORT.finditer(text):
                 for part in m.group(1).split(","):
-                    module = part.split(" as ")[0].strip()
+                    module = re.split(r"\s+as\s+", part, maxsplit=1)[0].strip()
                     py_modules[module.split(".")[0]] += 1
                     for target in resolve_py(rel, "", module, []):
                         inbound[target].add(rel)
             for m in PY_FROM.finditer(text):
                 dots, module = m.group(1), m.group(2)
-                names = [n.split(" as ")[0].strip() for n in m.group(3).strip("()").replace("\n", " ").split(",")]
+                imported_names = re.sub(r"#[^\n]*", "", m.group(3)).strip("()").replace("\n", " ")
+                names = [re.split(r"\s+as\s+", n, maxsplit=1)[0].strip()
+                         for n in imported_names.split(",")]
                 if not dots and module:
                     py_modules[module.split(".")[0]] += 1
                 for target in resolve_py(rel, dots, module, [n for n in names if n and n != "*"]):
@@ -511,12 +632,12 @@ def inventory(root, units=None, today=None):
     for rel in sorted(code_files):
         if suffix(rel) not in PY_EXT | JS_EXT or is_test(rel) or Path(rel).stem in ENTRY_STEMS:
             continue
-        if re.search(r"\.config\.\w+$|\.d\.ts$", rel) or named_elsewhere(rel):
+        if re.search(r"\.config\.\w+$|\.d\.(?:ts|mts|cts)$", rel) or named_elsewhere(rel):
             continue
         importers = inbound.get(rel, set()) - {rel}
         if any(not is_test(i) for i in importers):
             continue
-        orphans.append({"path": rel, "test_importers": sorted(importers)})
+        orphans.append({"path": rel, "test_importers": sorted(importers)[:MAX_LOCATIONS]})
     rows["orphan_files"] = orphans
 
     # Dependencies.
@@ -525,7 +646,9 @@ def inventory(root, units=None, today=None):
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         deps = []
+        ecosystem = None
         if name == "package.json":
+            ecosystem = "javascript"
             pkg = package_sections(text)
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
@@ -536,10 +659,11 @@ def inventory(root, units=None, today=None):
                                  len(re.findall(r"(?<![\w@/-])%s(?![\w-])" % re.escape(dep.split("/")[-1]),
                                                 scripts + "\n" + tool_text.replace(text, "")))))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
+            ecosystem = "python"
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
             for dep, section, loc in parsed:
-                module = py_dist_module(dep)
-                deps.append((dep, section, loc, py_modules[module],
+                modules = {py_dist_module(dep), re.sub(r"[-.]", "_", dep.lower())}
+                deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
                              len(re.findall(r"(?<![\w-])%s(?![\w-])" % re.escape(dep), tool_text.replace(text, "")))))
         elif name == "go.mod":
             for dep, section, loc in parse_go_mod(rel, text):
@@ -552,13 +676,14 @@ def inventory(root, units=None, today=None):
             continue
         declared.append({"manifest": rel, "count": len(deps)})
         names = {d[0].lower() for d in deps}
-        for group, members in DUPLICATE_GROUPS.items():
+        for group, members in DUPLICATE_GROUPS.get(ecosystem, {}).items():
             hit = sorted(names & members)
             if len(hit) > 1:
                 dup_rows.append({"group": group, "manifest": rel, "names": hit})
+        replacements = PLATFORM_REPLACEABLE.get(ecosystem, {})
         for dep, section, loc, imports, mentions in deps:
-            if dep.lower() in PLATFORM_REPLACEABLE:
-                platform_rows.append({"name": dep, "manifest": rel, "replacement": PLATFORM_REPLACEABLE[dep.lower()],
+            if dep.lower() in replacements:
+                platform_rows.append({"name": dep, "manifest": rel, "replacement": replacements[dep.lower()],
                                       "imports": imports, "location": loc})
             if imports == 0:
                 unimported.append({"name": dep, "manifest": rel, "section": section, "location": loc,
@@ -644,6 +769,8 @@ def inventory(root, units=None, today=None):
             class_prefixes.add(m.group(1) or m.group(2))
     css_rows, seen_classes = [], set()
     for rel in sorted(r for r in texts if suffix(r) in CSS_EXT):
+        if Path(rel).stem.endswith(".module"):
+            continue
         text = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), texts[rel], flags=re.S)
         for m in re.finditer(r"([^{};]+)\{", text):
             selector = m.group(1)
@@ -651,7 +778,7 @@ def inventory(root, units=None, today=None):
                 continue
             for c in re.finditer(r"(?<![\w-])\.(-?[A-Za-z_][\w-]*)", selector):
                 name = c.group(1)
-                if (name in seen_classes or name in css_tokens or rel.endswith(".module.css")
+                if (name in seen_classes or name in css_tokens
                         or any(name.startswith(p) for p in class_prefixes)):
                     continue
                 seen_classes.add(name)
@@ -710,13 +837,14 @@ def inventory(root, units=None, today=None):
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
+            implicit_start = (Path(rel).parent / "server.js").as_posix() in files
             for script in scripts:
                 rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:\s+--?[\w-]+)*\s+(?:run(?:-script)?\s+)?%s(?![\w:.-])"
                                 % re.escape(script))
                 hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
                 hook = re.match(r"^(?:pre|post)(.+)$", script)
-                lifecycle = bool(hook and hook.group(1) in scripts
-                                 or script in ("install", "prepare", "prepublishOnly", "postinstall", "preinstall"))
+                lifecycle = bool(script in NPM_LIFECYCLES or hook and (
+                    hook.group(1) in scripts or hook.group(1) == "start" and implicit_start))
                 m = re.search(r"\"%s\"\s*:" % re.escape(script), text)
                 script_rows.append({"source": rel, "name": script, "location": f"{rel}:{line_of(text, m.start()) if m else 1}",
                                     "invocations": hits, "default": lifecycle})
@@ -801,8 +929,10 @@ def inventory(root, units=None, today=None):
         if isinstance(value, list) and len(value) > MAX_ROWS:
             truncated[key] = len(value) - MAX_ROWS
             rows[key] = value[:MAX_ROWS]
+    line_breaks.cache_clear()
     return {
-        "tool": "inventory.py", "version": 1, "repository": root.name, "today": today,
+        "tool": "inventory.py", "version": 1,
+        "repository": root.name.encode("utf-8", "backslashreplace").decode("utf-8"), "today": today,
         "files_scanned": len(texts), "files_skipped": col.skipped,
         "env_declaration_files": decl_files, "decorated_symbols_skipped": decorated_skipped,
         **rows,
@@ -813,8 +943,12 @@ def inventory(root, units=None, today=None):
 
 def tag_units(rows, units):
     """Tag every row that has a path with the most specific unit whose paths cover it; add per-unit counts."""
-    prefixes = sorted(((p.strip("/") if p not in (".", "./") else "", u["id"]) for u in units["units"] for p in u["paths"]),
-                      key=lambda x: -len(x[0]))
+    prefixes = []
+    for unit in units["units"]:
+        for path in unit["paths"]:
+            prefix = Path(path).as_posix()
+            prefixes.append(("" if prefix == "." else prefix, unit["id"]))
+    prefixes.sort(key=lambda item: -len(item[0]))
 
     def unit_of(rel):
         for prefix, uid in prefixes:
@@ -859,6 +993,17 @@ def main(argv=None):
             units = check_units(load_json(a.units))
         except (OSError, ValueError, RecordError) as e:
             print(f"inventory.py: units: {e}", file=sys.stderr)
+            return 2
+        try:
+            output = Path(a.out)
+            # write_output replaces the final directory entry, not a symlink's target.
+            destination = output.parent.resolve(strict=True) / output.name
+            if destination == Path(a.units).resolve(strict=True):
+                print("inventory.py: output would overwrite the units source; choose a different --out file",
+                      file=sys.stderr)
+                return 2
+        except (OSError, ValueError, RuntimeError) as e:
+            print(f"inventory.py: --out: {e}", file=sys.stderr)
             return 2
     result = inventory(a.repo, units, a.today)
     try:

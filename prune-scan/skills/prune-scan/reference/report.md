@@ -18,10 +18,20 @@ remains, what is lost), the risk, and its unit and entry point. An open `Valid`
 finding's next action is the subtraction itself; any other open finding's is
 "Verify first". With `--repo`, each finding's first `path:line` is embedded as
 a short excerpt (never from secret-looking files; secret-looking lines are
-masked). Every page is stamped with the SHA-256 of the `findings.json` it
+masked). Secret-looking directories are excluded as well. If a secret
+assignment has a multiline or ambiguous value, or a private key block appears
+anywhere in the source, the source's excerpt is omitted. The whole bounded
+source is checked so a secret cannot lose its identifying line when the
+excerpt starts partway through the value.
+
+Every page is stamped with the SHA-256 of the `findings.json` it
 shows and, when present, the adjacent `units.json` used for its purpose and
 unit labels. `contract_check.py` compares both stamps with the current records
-and rejects pages left stale by a change to either input.
+and rejects pages left stale by a change to either input. Stamps must be real,
+unique metadata in the document head; text in a comment or another element
+does not count. Incomplete HTML documents are rejected even when their input
+stamps match. A present but unreadable `units.json`, including a broken
+symlink, is an input error rather than an omitted baseline.
 
 The rendered next steps open with the **subtraction summary**, computed from
 the open, counted findings (`Unlikely` ones are left out):

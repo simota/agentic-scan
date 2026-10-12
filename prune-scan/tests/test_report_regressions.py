@@ -24,6 +24,58 @@ UNITS = json.loads((ROOT / "examples" / "units.sample.json").read_text(encoding=
 
 
 class SnippetRegressionTests(unittest.TestCase):
+    def test_secret_key_assignments_are_masked(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            source = repo / "settings.py"
+            for assignment in ("SECRET_KEY = 'DO_NOT_PUBLISH'", "AWS_SECRET_ACCESS_KEY = 'DO_NOT_PUBLISH'",
+                               "config['api_key'] = 'DO_NOT_PUBLISH'"):
+                with self.subTest(assignment=assignment):
+                    source.write_text(assignment + "\n", encoding="utf-8")
+                    excerpt = render.snippet(repo, "settings.py:1")
+                    self.assertNotIn("DO_NOT_PUBLISH", json.dumps(excerpt))
+
+    def test_multiline_secrets_are_not_excerpted_even_beyond_context(self):
+        sources = (
+            "API_TOKEN = (\n" + "\n" * 5 + "    'DO_NOT_PUBLISH'\n)\n",
+            'api_key: |\n' + '\n' * 5 + '  DO_NOT_PUBLISH\n',
+            'api_key = """\n' + '\n' * 5 + 'DO_NOT_PUBLISH\n"""\n',
+            'const apiKey = `\n' + '\n' * 5 + 'DO_NOT_PUBLISH\n`;\n',
+            'password: unquoted\n' + '\n' * 5 + '  DO_NOT_PUBLISH\n',
+            'const apiKey = "first"\n' + '\n' * 5 + '+ "DO_NOT_PUBLISH";\n',
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for source in sources:
+                with self.subTest(source=source[:30]):
+                    (repo / "settings.txt").write_text(source, encoding="utf-8")
+                    excerpt = render.snippet(repo, "settings.txt:7")
+                    self.assertIsNone(excerpt)
+
+    def test_embedded_private_keys_are_not_excerpted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for kind in ("PRIVATE KEY", "RSA PRIVATE KEY", "EC PRIVATE KEY", "OPENSSH PRIVATE KEY",
+                         "ENCRYPTED PRIVATE KEY", "PGP PRIVATE KEY BLOCK"):
+                with self.subTest(kind=kind):
+                    source = f'key = """-----BEGIN {kind}-----\n' + "\n" * 5 + "DO_NOT_PUBLISH\n"
+                    (repo / "settings.py").write_text(source, encoding="utf-8")
+                    self.assertIsNone(render.snippet(repo, "settings.py:7"))
+
+    def test_secret_files_and_directories_are_never_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for name in ("secret", "secrets", "config/secrets", ".secrets/value", "credentials/value",
+                         "secrets/key.txt", ".env/value"):
+                with self.subTest(name=name):
+                    path = repo / name
+                    if path.parent.exists() and not path.parent.is_dir():
+                        path.parent.unlink()
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
+                    with mock.patch.object(render.os, "open", side_effect=AssertionError("secret file read")):
+                        self.assertIsNone(render.snippet(repo, f"{name}:1"))
+
     def test_sensitive_symlink_targets_are_never_excerpted(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -71,6 +123,51 @@ class SnippetRegressionTests(unittest.TestCase):
             (repo / "data.bin").write_bytes(b"public text\n\0private binary bytes\n")
             self.assertIsNone(render.snippet(repo, "data.bin:1"))
 
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd,
+                         "descriptor-relative no-follow opens require POSIX")
+    def test_source_replaced_by_symlink_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            repo.mkdir()
+            source = repo / "source.py"
+            source.write_text("print('public')\n", encoding="utf-8")
+            outside = Path(tmp) / "outside.py"
+            outside.write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
+            resolve = Path.resolve
+
+            def replace_source(path, *args, **kwargs):
+                resolved = resolve(path, *args, **kwargs)
+                if path == source:
+                    source.unlink()
+                    source.symlink_to(outside)
+                return resolved
+
+            with mock.patch.object(Path, "resolve", replace_source):
+                self.assertIsNone(render.snippet(repo, "source.py:1"))
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd,
+                         "descriptor-relative no-follow opens require POSIX")
+    def test_source_parent_replaced_by_symlink_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp) / "repo"
+            source_dir = repo / "src"
+            source_dir.mkdir(parents=True)
+            (source_dir / "source.py").write_text("print('public')\n", encoding="utf-8")
+            outside = Path(tmp) / "outside"
+            outside.mkdir()
+            (outside / "source.py").write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
+            resolve = Path.resolve
+
+            def replace_parent(path, *args, **kwargs):
+                resolved = resolve(path, *args, **kwargs)
+                if path == source_dir / "source.py":
+                    source_dir.rename(repo / "original")
+                    source_dir.symlink_to(outside, target_is_directory=True)
+                return resolved
+
+            with mock.patch.object(Path, "resolve", replace_parent):
+                self.assertIsNone(render.snippet(repo, "src/source.py:1"))
+
 
 class ReportFixture(unittest.TestCase):
     def setUp(self):
@@ -98,6 +195,45 @@ class ReportFixture(unittest.TestCase):
 
 
 class RenderPublicationTests(ReportFixture):
+    def test_pdf_validation_does_not_follow_a_replaced_source(self):
+        path = self.out / "report.pdf"
+        path.write_bytes(b"not a PDF")
+        outside = self.out / "outside.pdf"
+        outside.write_bytes(b"%PDF-1.7\n%%EOF\n")
+        lstat = Path.lstat
+
+        def replace_after_stat(target, *args, **kwargs):
+            info = lstat(target, *args, **kwargs)
+            if target == path:
+                path.unlink()
+                path.symlink_to(outside)
+            return info
+
+        with mock.patch.object(Path, "lstat", replace_after_stat):
+            self.assertFalse(render.pdf_complete(path))
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO checks require POSIX")
+    def test_artifact_open_refuses_fifo_without_blocking(self):
+        path = self.out / "report.pdf"
+        os.mkfifo(path)
+        result = subprocess.run([sys.executable, "-c",
+                                 "import sys; sys.path.insert(0, sys.argv[1]); import render; "
+                                 "assert not render.pdf_complete(sys.argv[2])", str(SCRIPTS), str(path)],
+                                capture_output=True, text=True, timeout=5)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_dangling_units_symlink_cannot_disable_validation(self):
+        self.render_html()
+        originals = {name: (self.out / name).read_bytes() for name in ("dashboard.html", "report.html")}
+        units = self.out / "units.json"
+        units.unlink()
+        units.symlink_to("missing-units.json")
+        code, _, error = self.render("--no-pdf")
+        self.assertEqual(code, 2, error)
+        self.assertIn("units.json", error)
+        for name, content in originals.items():
+            self.assertEqual((self.out / name).read_bytes(), content)
+
     def test_invalid_json_is_rejected_before_any_output_is_changed(self):
         source = json.dumps(self.data)
         invalid = (source.replace('"schema_version": 1', '"schema_version": 1, "schema_version": 1', 1),
@@ -301,6 +437,69 @@ class ContractRegressionTests(ReportFixture):
                 finally:
                     path.rmdir()
                     path.write_bytes(before)
+
+    def test_language_detection_does_not_follow_a_replaced_page(self):
+        self.render("--lang", "ja", "--no-pdf")
+        path = self.out / "report.html"
+        outside = self.out / "outside.html"
+        outside.write_text('<html lang="en"><head></head><body></body></html>', encoding="utf-8")
+        lstat = Path.lstat
+
+        def replace_after_stat(target, *args, **kwargs):
+            info = lstat(target, *args, **kwargs)
+            if target == path:
+                path.unlink()
+                path.symlink_to(outside)
+            return info
+
+        with mock.patch.object(Path, "lstat", replace_after_stat):
+            self.assertEqual(contract_check.rendered_lang(self.out), "ja")
+
+    def test_contract_rejects_record_replaced_by_symlink_after_inspection(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            source = self.out / "findings.json"
+            outside = Path(tmp) / "findings.json"
+            outside.write_bytes(source.read_bytes())
+            read_source = contract_check.read_json_source
+
+            def replace_before_read(path):
+                if path == source:
+                    source.unlink()
+                    source.symlink_to(outside)
+                return read_source(path)
+
+            with mock.patch.object(contract_check, "read_json_source", side_effect=replace_before_read):
+                errors = list(contract_check.problems(self.out, no_pdf=True))
+            self.assertTrue(any("record:" in error for error in errors), errors)
+
+    def test_truncated_pages_cannot_satisfy_contract_with_current_stamps(self):
+        for name in ("dashboard.html", "report.html"):
+            with self.subTest(name=name):
+                path = self.out / name
+                before = path.read_text(encoding="utf-8")
+                path.write_text(before.split("</head>", 1)[0], encoding="utf-8")
+                try:
+                    errors = list(contract_check.problems(self.out, no_pdf=True))
+                    self.assertTrue(any(name in error and "incomplete" in error for error in errors), errors)
+                finally:
+                    path.write_text(before, encoding="utf-8")
+
+    def test_inert_stamps_do_not_hide_stale_pages(self):
+        for name in ("dashboard.html", "report.html"):
+            path = self.out / name
+            before = path.read_text(encoding="utf-8")
+            first = before.index(f'<meta name="{render.STAMP}"')
+            last = before.index(">", first) + 1
+            for opening, closing in (("<!-- ", " -->"), ("<template>", "</template>"),
+                                     ("<script>", "</script>")):
+                with self.subTest(name=name, wrapper=opening):
+                    page = before[:first] + opening + before[first:last] + closing + before[last:]
+                    path.write_text(page, encoding="utf-8")
+                    try:
+                        errors = list(contract_check.problems(self.out, no_pdf=True))
+                        self.assertTrue(any(name in error and "stale" in error for error in errors), errors)
+                    finally:
+                        path.write_text(before, encoding="utf-8")
 
     def test_symlink_contract_files_are_not_read(self):
         outside = self.out / "outside.txt"

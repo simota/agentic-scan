@@ -173,6 +173,50 @@ class JsonInputTests(unittest.TestCase):
                 self.skipTest("File symlinks are not supported")
             self.assertEqual(findings.load_json(link), data)
 
+    def test_broken_adjacent_record_links_cannot_skip_reference_validation(self):
+        for command in ("check", "merge", "renumber", "units"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp)
+                target = out / ("units.json" if command == "units" else "findings.json")
+                beside = out / ("findings.json" if command == "units" else "units.json")
+                target.write_text(json.dumps(units_record() if command == "units" else record()),
+                                  encoding="utf-8")
+                before = target.read_bytes()
+                try:
+                    beside.symlink_to(out / "missing.json")
+                except OSError:
+                    self.skipTest("File symlinks are not supported")
+                source = out / "fragment.json"
+                source.write_text(json.dumps({"app": "Updated"} if command == "units"
+                                             else {"summary": "Updated"}), encoding="utf-8")
+                fragments = [source] if command in ("merge", "units") else []
+                result = run_cli(command, target, *fragments)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertIn(beside.name, result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(target.read_bytes(), before)
+                self.assertTrue(beside.is_symlink())
+
+    def test_broken_target_links_are_not_replaced_as_new_records(self):
+        for command in ("merge", "units"):
+            with self.subTest(command=command), tempfile.TemporaryDirectory() as tmp:
+                out = Path(tmp)
+                target = out / ("units.json" if command == "units" else "findings.json")
+                missing = out / "missing.json"
+                try:
+                    target.symlink_to(missing)
+                except OSError:
+                    self.skipTest("File symlinks are not supported")
+                source = out / "fragment.json"
+                source.write_text(json.dumps(units_record() if command == "units" else record()),
+                                  encoding="utf-8")
+                result = run_cli(command, target, source)
+                self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertTrue(target.is_symlink())
+                self.assertEqual(target.readlink(), missing)
+                self.assertFalse(missing.exists())
+
     def test_output_failure_is_reported_without_a_traceback(self):
         with tempfile.TemporaryDirectory() as tmp:
             source = Path(tmp) / "fragment.json"

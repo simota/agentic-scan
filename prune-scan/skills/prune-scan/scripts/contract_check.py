@@ -16,15 +16,76 @@ import argparse
 import hashlib
 import re
 import sys
+from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FAMILIES, FINDING_REF, RecordError, check_findings,  # noqa: E402
-                      check_units, parse_json, read_json_source)
-from render import STAMP, UNITS_STAMP, pdf_complete  # noqa: E402
+                      check_units, parse_json)
+from render import STAMP, UNITS_STAMP, open_artifact, pdf_complete  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
+
+
+def read_json_source(path):
+    """Contract records must stay regular artifacts, even if replaced after inspection."""
+    with open_artifact(path) as handle:
+        return handle.read()
+
+
+class PageMetadata(HTMLParser):
+    """Read real head stamps and the complete envelope of a generated page.
+
+    Hashes in comments or script text are not metadata. A matching input hash
+    alone also cannot prove that writing the rest of the page completed.
+    """
+
+    VOID_TAGS = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
+                           "param", "source", "track", "wbr"))
+
+    def __init__(self, page):
+        super().__init__(convert_charrefs=True)
+        self.envelope = []
+        self.in_head = False
+        self.head_children = []
+        self.stamps = {}
+        self.lang = None
+        self.invalid = False
+        try:
+            self.feed(page)
+            self.close()
+        except (AssertionError, ValueError):
+            # Some Python versions reject malformed marked sections or numeric
+            # character references while parsing otherwise readable text.
+            self.invalid = True
+
+    def handle_starttag(self, tag, attrs):
+        if tag in ("html", "head", "body"):
+            self.envelope.append(tag)
+        if tag == "head":
+            self.in_head = True
+        duplicate_attrs = len({key for key, _ in attrs}) != len(attrs)
+        attrs = dict(attrs)
+        if tag == "html":
+            self.lang = attrs.get("lang")
+        if self.in_head and tag != "head":
+            if tag == "meta" and not self.head_children and attrs.get("name") in (STAMP, UNITS_STAMP):
+                self.stamps.setdefault(attrs["name"], []).append(None if duplicate_attrs else attrs.get("content"))
+            if tag not in self.VOID_TAGS:
+                self.head_children.append(tag)
+
+    def handle_endtag(self, tag):
+        if tag in ("html", "head", "body"):
+            self.envelope.append("/" + tag)
+        if tag == "head":
+            self.in_head = False
+        elif self.in_head and self.head_children and self.head_children[-1] == tag:
+            self.head_children.pop()
+
+    @property
+    def complete(self):
+        return not self.invalid and self.envelope == ["html", "head", "/head", "body", "/body", "/html"]
 
 
 def rendered_lang(out):
@@ -32,13 +93,12 @@ def rendered_lang(out):
     for name in ("report.html", "dashboard.html"):
         try:
             path = out / name
-            if path.is_symlink() or not path.is_file():
-                continue
-            m = re.search(r'<html lang="(ja|en)"', path.read_text(encoding="utf-8", errors="replace"))
+            with open_artifact(path) as handle:
+                lang = PageMetadata(handle.read().decode("utf-8", errors="replace")).lang
         except OSError:
             continue
-        if m:
-            return m.group(1)
+        if lang in ("ja", "en"):
+            return lang
     return "<ja|en>"
 
 
@@ -118,13 +178,17 @@ def problems(out, no_pdf=False, allow=()):
         if name not in regular:
             continue
         try:
-            page = (out / name).read_text(encoding="utf-8")
+            with open_artifact(out / name) as handle:
+                page = handle.read().decode("utf-8")
         except (OSError, UnicodeError) as e:
             yield f"{name}: cannot read file: {e}"
             continue
+        metadata = PageMetadata(page)
+        if not metadata.complete:
+            yield f"{name}: invalid or incomplete HTML; re-render the page ({rerender})"
+            continue
         for stamp, digest in digests.items():
-            m = re.search(r'<meta name="%s" content="([^"]+)">' % stamp, page)
-            if not m or m.group(1) != digest:
+            if metadata.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale; re-render after the last findings or units change ({rerender})"
                 break
     if "report.pdf" in regular and not pdf_complete(out / "report.pdf"):

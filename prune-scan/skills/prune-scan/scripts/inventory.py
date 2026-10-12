@@ -69,8 +69,9 @@ ROOT_DOCS = {"readme", "changelog", "license", "licence", "contributing", "secur
              "code_of_conduct", "notice", "authors", "history", "requirements", "codeowners"}
 ENTRY_STEMS = {"main", "index", "app", "__init__", "__main__", "setup", "manage", "conftest", "wsgi", "asgi",
                "server", "cli", "lib", "mod", "build", "worker"}
-JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json",
-              "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs")
+# Include extensionless .mts/.cts imports accepted by some bundlers, beyond tsc's resolver.
+JS_RESOLVE = ("", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".vue", ".svelte", ".json", ".mts", ".cts",
+              "/index.ts", "/index.tsx", "/index.js", "/index.jsx", "/index.mjs", "/index.mts", "/index.cts")
 # TypeScript source imports name the emitted JavaScript files in Node's ESM modes.
 JS_SUBSTITUTIONS = {".js": (".ts", ".tsx", ".d.ts", ".js", ".jsx"),
                     ".jsx": (".tsx", ".d.ts", ".jsx"),
@@ -702,10 +703,16 @@ def inventory(root, units=None, today=None):
         ext = Path(base).suffix
         candidates = ([base[:-len(ext)] + replacement for replacement in JS_SUBSTITUTIONS[ext]]
                       if ext in JS_SUBSTITUTIONS else [base + ending for ending in JS_RESOLVE])
+        # A dotted stem such as helper.client can still omit its source extension.
+        single_target = ext in JS_EXT or ext == ".json" or (bool(ext) and base in files)
+        targets = []
         for candidate in candidates:
             if candidate in files:
-                return candidate
-        return None
+                targets.append(candidate)
+                if single_target:
+                    break  # Preserve known-extension substitution and existing exact-file imports.
+        # Extensionless resolution depends on the bundler; each possible target is a reference.
+        return targets
 
     def resolve_py(rel, dots, module, names):
         if dots:
@@ -734,8 +741,7 @@ def inventory(root, units=None, today=None):
             for m in JS_IMPORT.finditer(text):
                 spec = next(g for g in m.groups() if g)
                 if spec.startswith((".", "/")):
-                    target = resolve_js(rel, spec)
-                    if target:
+                    for target in resolve_js(rel, spec):
                         inbound[target].add(rel)
                 else:
                     pkg = js_package(spec)

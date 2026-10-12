@@ -1,4 +1,4 @@
-"""Regression tests for browser-incompatible self-closing contract HTML."""
+"""Contract metadata must stay inside the actual document head."""
 
 import hashlib
 import json
@@ -80,6 +80,76 @@ class ContractHtmlReviewTests(unittest.TestCase):
     def test_self_closing_text_in_comments_and_scripts_is_not_markup(self):
         content = '<!-- <head/> --><script>const example = "<style/>";</script>'
         page = self.page.replace("<head>", "<head>" + content, 1)
+        for name in ("dashboard.html", "report.html"):
+            (self.out / name).write_text(page, encoding="utf-8")
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_script_double_escape_cannot_validate_stamps_in_script_text(self):
+        for nested in ("<script>", "<ScRiPt/>", "<script \tdata-example>", "<script\n>"):
+            with self.subTest(nested=nested):
+                content = "<script><!-- " + nested + "</script>"
+                self.assert_rejected(self.page.replace("<head>", "<head>" + content, 1))
+
+    def test_script_markup_without_double_escape_preserves_real_stamps(self):
+        for script in ('const example = "<script>";',
+                       '<!-- const example = "<style/>"; // -->',
+                       '<!-- const example = "<scripture>"; // -->'):
+            with self.subTest(script=script):
+                page = self.page.replace("<head>", "<head><script>" + script + "</script>", 1)
+                for name in ("dashboard.html", "report.html"):
+                    (self.out / name).write_text(page, encoding="utf-8")
+                self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_non_whitespace_head_text_cannot_leave_stamps_in_a_browser_body(self):
+        for text in ("unexpected text", "&amp;", "&#65;", "&#x41;", "&nbsp;", "&#160;", "\u00a0",
+                     "\v", "&#11;", "&#x0b;", "&#31;", "\u2003", "&unknown;", "&Tab", "&NewLine"):
+            with self.subTest(text=text):
+                self.assert_rejected(self.page.replace("<head>", "<head>" + text, 1))
+
+    def test_body_elements_and_stray_br_end_tags_cannot_implicitly_close_head(self):
+        for content in ("<div></div>", "<div>body text</div>", "<br>", "</br>",
+                        '<img src="icon.png">', "<iframe></iframe>", "<custom-element></custom-element>"):
+            with self.subTest(content=content):
+                self.assert_rejected(self.page.replace("<head>", "<head>" + content, 1))
+
+    def test_text_or_body_markup_before_head_cannot_validate_later_stamps(self):
+        for content in ("unexpected text", "&#11;", "<div></div>", "</br>"):
+            for position in ("before-html", "before-head"):
+                with self.subTest(content=content, position=position):
+                    page = (content + self.page if position == "before-html"
+                            else self.page.replace("<head>", content + "<head>", 1))
+                    self.assert_rejected(page)
+
+    def test_discarded_numeric_references_cannot_forge_stamp_attributes(self):
+        for entity in ("&#11;", "&#x0b;", "&#31;", "&#xFFFF;", "&#xFDD0;"):
+            for attribute in ("name", "content"):
+                with self.subTest(entity=entity, attribute=attribute):
+                    if attribute == "name":
+                        page = self.page.replace('name="prune-scan-', 'name="' + entity + 'prune-scan-', 1)
+                    else:
+                        page = self.page.replace('content="sha256:', 'content="sha256:' + entity, 1)
+                    self.assert_rejected(page)
+
+    def test_html_whitespace_and_valid_character_references_preserve_head(self):
+        for content in (" \t\n\f\r", "&#9;&#10;&#12;&#13;&#32;", "&Tab;&NewLine;",
+                        "<!-- text, &nbsp; and <div> inside a comment -->"):
+            with self.subTest(content=content):
+                page = self.page.replace("<head>", "<head>" + content, 1)
+                page = " \n<!doctype html>\n" + page
+                for name in ("dashboard.html", "report.html"):
+                    (self.out / name).write_text(page, encoding="utf-8")
+                self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_normal_head_elements_keep_text_in_their_own_context(self):
+        content = ('<base href="https://example.com/"><link rel="stylesheet" href="report.css">'
+                   '<meta charset="utf-8"><title>Report &amp; details &#160; </br> &lt;body&gt;</title>'
+                   '<style>body::before { content: "<div> &nbsp;"; }</style>'
+                   '<script>const example = "<div> &nbsp; &#11;";</script>'
+                   '<template><div>Template text &nbsp;</div></template>')
+        page = self.page.replace("<head>", "<head>" + content, 1)
+        # Ordinary entity spelling of an ASCII stamp is identical in a browser.
+        page = page.replace('name="prune-scan-', 'name="&#112;rune-scan-')
+        page = page.replace('content="sha256:', 'content="&#x73;ha256:')
         for name in ("dashboard.html", "report.html"):
             (self.out / name).write_text(page, encoding="utf-8")
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])

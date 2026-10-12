@@ -18,6 +18,7 @@ import os
 import re
 import stat
 import sys
+from html import unescape
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -46,10 +47,18 @@ class PageMetadata(HTMLParser):
 
     VOID_TAGS = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                            "param", "source", "track", "wbr"))
+    HEAD_TAGS = frozenset(("base", "link", "meta", "title", "style", "script", "template"))
+    HTML_WHITESPACE = "\t\n\f\r "
+    NUMERIC_REFERENCES = re.compile(r"&#(?:[xX][0-9a-fA-F]+|[0-9]+);?")
+    SCRIPT_OPEN = re.compile(r"<script(?=[\t\n\f\r />])", re.IGNORECASE | re.ASCII)
 
     def __init__(self, page):
-        super().__init__(convert_charrefs=True)
+        # Python's automatic unescape can discard controls that a browser
+        # retains. Handle references explicitly before checking head text.
+        super().__init__(convert_charrefs=False)
+        self.source_lines = page.split("\n")
         self.envelope = []
+        self.head_seen = False
         self.in_head = False
         self.head_children = []
         self.stamps = {}
@@ -64,16 +73,26 @@ class PageMetadata(HTMLParser):
             self.invalid = True
 
     def handle_starttag(self, tag, attrs):
+        if not self.head_seen and tag not in ("html", "head"):
+            self.invalid = True
+        if self.in_head and not self.head_children and tag not in self.HEAD_TAGS:
+            self.invalid = True
         if tag in ("html", "head", "body"):
             self.envelope.append(tag)
         if tag == "head":
-            self.in_head = True
+            self.in_head = self.head_seen = True
         duplicate_attrs = len({key for key, _ in attrs}) != len(attrs)
         attrs = dict(attrs)
         if tag == "html":
             self.lang = attrs.get("lang")
         if self.in_head and tag != "head":
             if tag == "meta" and not self.head_children and attrs.get("name") in (STAMP, UNITS_STAMP):
+                # Attribute values are unescaped even with convert_charrefs=False.
+                # Reject references Python erases, rather than trusting a hash
+                # or stamp name that contains an extra character in a browser.
+                if any(not unescape(match.group()) for match in self.NUMERIC_REFERENCES.finditer(
+                        self.get_starttag_text())):
+                    self.invalid = True
                 self.stamps.setdefault(attrs["name"], []).append(None if duplicate_attrs else attrs.get("content"))
             if tag not in self.VOID_TAGS:
                 self.head_children.append(tag)
@@ -87,12 +106,41 @@ class PageMetadata(HTMLParser):
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
+        if tag == "br" and (not self.head_seen or self.in_head and not self.head_children):
+            self.invalid = True
         if tag in ("html", "head", "body"):
             self.envelope.append("/" + tag)
         if tag == "head":
+            if self.head_children:
+                self.invalid = True
             self.in_head = False
         elif self.in_head and self.head_children and self.head_children[-1] == tag:
             self.head_children.pop()
+
+    def handle_data(self, data):
+        if self.in_head and self.head_children and self.head_children[-1] == "script":
+            # HTMLParser lacks HTML's script double-escaped state. Reject
+            # generated scripts that may enter it: the next </script> can be
+            # text in a browser, leaving apparent stamps inside the script.
+            escaped = data.find("<!--")
+            if escaped >= 0 and self.SCRIPT_OPEN.search(data, escaped + 4):
+                self.invalid = True
+        # Non-ASCII whitespace, including NBSP and vertical tab, closes the
+        # browser's head. Text inside title/style/script/template is content.
+        if (not self.head_seen or self.in_head and not self.head_children) and data.strip(self.HTML_WHITESPACE):
+            self.invalid = True
+
+    def handle_entityref(self, name):
+        # The callback omits whether a semicolon was present. Preserve it:
+        # &Tab; is whitespace, but the literal &Tab without ';' is not.
+        line, column = self.getpos()
+        end = column + len(name) + 1
+        semicolon = self.source_lines[line - 1][end:end + 1] == ";"
+        self.handle_data(unescape("&" + name + (";" if semicolon else "")))
+
+    def handle_charref(self, name):
+        number = int(name[1:], 16) if name[:1].lower() == "x" else int(name)
+        self.handle_data(chr(number) if number in (9, 10, 12, 13, 32) else "\ufffd")
 
     @property
     def complete(self):

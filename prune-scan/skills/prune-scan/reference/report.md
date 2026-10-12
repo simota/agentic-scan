@@ -43,9 +43,15 @@ shows and, when present, the adjacent `units.json` used for its purpose and
 unit labels. `contract_check.py` compares both stamps with the current records
 and rejects pages left stale by a change to either input. Stamps must be real,
 unique metadata in the document head; text in a comment or another element
-does not count. Incomplete HTML documents are rejected even when their input
-stamps match. A present but unreadable `units.json`, including a broken
-symlink, is an input error rather than an omitted baseline.
+does not count. Unexpected text or elements before or directly inside the
+head are rejected, including content that would implicitly move subsequent
+metadata into the body. Ordinary title, style and script contents remain
+valid. Ambiguous script markup that can keep a closing tag and subsequent
+metadata inside script text is conservatively rejected. Character references
+that the Python parser would silently discard cannot make a corrupted stamp
+match the expected hash. Incomplete HTML documents are rejected even when
+their input stamps match. A present but unreadable `units.json`, including a
+broken symlink, is an input error rather than an omitted baseline.
 On POSIX systems with descriptor-relative opens, the check captures the output
 directory's identity before resolving the path and verifies it when opening
 the directory. It pins every ancestor and uses the selected directory's

@@ -36,6 +36,13 @@ the runtime cannot provide it. An inventory without `--units` still works on
 those runtimes, using atomic pathname-based replacement, which cannot protect
 against concurrent replacement of the output parent.
 
+The optional `text` excerpts in `markers` and `skipped_tests` use the same
+source-level secret-name and private-key checks as report excerpts. If a
+source looks sensitive anywhere, these fields contain
+`[omitted: source may contain secrets]`; the candidate, location, counts and
+date remain available. This avoids guessing where a continued secret
+expression ends. Ordinary source excerpts are preserved.
+
 References are counted **by name**: an identifier anywhere in code or config,
 string contents included (a name built from a string still counts as a use), and
 a file counts as referenced when its file name appears in another file. That
@@ -44,8 +51,12 @@ something proven unused.
 
 When the running Python version can parse a file, its syntax tree distinguishes
 real top-level definitions from docstring examples and recognizes decorators
-that span multiple lines. Unsupported syntax retains the best-effort text
-scan. TypeScript imports that name emitted `.js`, `.mjs` or `.cjs` files also
+that span multiple lines. The same tree records imports in one-line suites,
+after semicolons and across explicit line continuations, including imports in
+tests; import examples inside strings or comments do not create module
+references. Unsupported syntax and parser-complexity errors retain the
+best-effort text scan.
+TypeScript imports that name emitted `.js`, `.mjs` or `.cjs` files also
 resolve to the corresponding source extensions, including `.mts` and `.cts`.
 Extensionless imports conservatively consider all supported JavaScript/TypeScript
 source extensions, including `.mts` and `.cts`, both as files and as directory
@@ -66,6 +77,11 @@ The scan also retains literal `import.defer(...)` references from the
 deferred namespace imports. Recognizing draft syntax does not imply runtime
 support. `source` and `defer` still work as ordinary binding names; these are
 conservative reference signals rather than full JavaScript syntax validation.
+Literal module names are decoded before resolving files or packages, so
+hexadecimal and Unicode escapes, escaped quotes and line continuations retain
+their actual references. Escaped UTF-16 surrogate pairs resolve to the matching
+Unicode name; malformed escapes, lone surrogate halves and NUL names do not
+create invalid output. Quoted binding names remain separate from module names.
 
 Dependency overlap groups and platform replacements are specific to the
 manifest's ecosystem; an identically named package in another ecosystem does
@@ -103,6 +119,11 @@ Every list is measured in full first; then each list keeps at most 200 rows
 and each row at most 5 locations. `limits` states the caps; `truncated` names
 each list that was cut and how many rows were left out (empty when nothing was
 cut) — when it is not empty, say so in `limitations` or search for the rest.
+
+Locale key locations use a per-file index of decoded JSON keys. Escaped key
+names retain their source lines; repeated leaf names use their first matching
+key, as before. File-name tokens, CSS selectors and comments, and SQL table
+blocks are scanned without repeatedly searching the same unfinished suffix.
 
 ## Limits
 

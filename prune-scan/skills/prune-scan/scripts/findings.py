@@ -24,6 +24,9 @@ import os
 import re
 import stat
 import sys
+import unicodedata
+from bisect import bisect_left
+from collections import deque
 from datetime import date
 from pathlib import Path
 
@@ -325,6 +328,315 @@ def check_findings(data, units=None, ordered=True):
 
 # ASCII identifier boundaries also recognize references next to Japanese prose.
 FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?![A-Za-z0-9_])")
+PROSE_TOKEN = re.compile(r"[A-Za-z0-9_./\\:~%+$@?=&#!-]+")
+PROSE_LABEL = re.compile(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})*:")
+PROSE_LINE_RANGE = re.compile(r"[1-9][0-9]*(?:-[1-9][0-9]*)?")
+PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[0-9]{3}")
+PROSE_BRACKETS = {"(": ")", "[": "]", "{": "}"}
+PROSE_BRACKET_TOKEN = re.compile(r"[\s()\[\]{}]")
+# Longer particles precede their prefixes. Include decomposed spellings
+# without normalizing source text or changing its character offsets.
+PROSE_PARTICLE = re.compile("|".join(
+    re.escape(form) for particle in "では には とは から まで より を は が の に へ と で も や".split()
+    for form in dict.fromkeys((particle, unicodedata.normalize("NFD", particle)))
+))
+PROSE_URL = re.compile(r"https?://", re.IGNORECASE)
+
+
+def source_literal_tokens(text):
+    """Mark source boundaries without splitting adjacent ASCII word characters."""
+    previous_word = False
+    for char in text:
+        word = char.isascii() and (char.isalnum() or char == "_")
+        if not (previous_word and word):
+            yield None  # A boundary marker cannot collide with a string character.
+        yield char
+        previous_word = word
+    yield None
+
+
+class SourceLiteralIndex:
+    """Match complete known sources in one pass, sharing a trie across fields."""
+
+    def __init__(self, sources):
+        self.children, self.failure, self.longest = [{}], [0], [0]
+        for source in sources:
+            if not source:
+                continue
+            state = 0
+            for token in source_literal_tokens(source):
+                child = self.children[state].get(token)
+                if child is None:
+                    child = len(self.children)
+                    self.children[state][token] = child
+                    self.children.append({})
+                    self.failure.append(0)
+                    self.longest.append(0)
+                state = child
+            self.longest[state] = len(source)
+
+        pending = deque(self.children[0].values())
+        while pending:
+            state = pending.popleft()
+            for token, child in self.children[state].items():
+                fallback = self.failure[state]
+                while fallback and token not in self.children[fallback]:
+                    fallback = self.failure[fallback]
+                self.failure[child] = self.children[fallback].get(token, 0)
+                # Boundaries are part of every pattern, so an invalid longer
+                # source cannot hide a valid shorter suffix at the same end.
+                self.longest[child] = max(self.longest[child], self.longest[self.failure[child]])
+                pending.append(child)
+
+    def spans(self, text):
+        """Yield at most one match per character, retaining overlapping sources."""
+        children, failure, longest = self.children, self.failure, self.longest
+        if len(children) == 1:
+            return
+        state = end = 0
+        for token in source_literal_tokens(text):
+            while state and token not in children[state]:
+                state = failure[state]
+            state = children[state].get(token, 0)
+            if token is not None:
+                end += 1
+            elif longest[state]:
+                # Keep offsets in original Unicode characters, not token count.
+                yield end - longest[state], end
+
+
+def prose_name_char(char):
+    """Allow Unicode names without treating surrounding prose punctuation as a name."""
+    return (char.isalnum() or char in "_-\u200c\u200d"
+            or (not char.isascii() and unicodedata.category(char)[0] in "MS"))
+
+
+def starts_prose_particle(text, start):
+    """Recognize a complete hiragana particle, not a prefix of a filename word."""
+    match = PROSE_PARTICLE.match(text, start)
+    if not match:
+        return False
+    if match.end() == len(text):
+        return True
+    char = text[match.end()]
+    return not ("\u3040" <= char <= "\u309f" or char in "\u200c\u200d\u30fc"
+                or unicodedata.category(char)[0] == "M")
+
+
+def prose_bracket_ends(text):
+    """Index balanced, space-free source brackets once, including nested pairs."""
+    ends, pending = {}, []
+    for match in PROSE_BRACKET_TOKEN.finditer(text):
+        char = match.group()
+        if char in PROSE_BRACKETS:
+            pending.append((char, match.start()))
+        elif pending and PROSE_BRACKETS[pending[-1][0]] == char:
+            _, start = pending.pop()
+            ends[start] = match.end()
+        else:
+            # Whitespace and mismatched closings end the connected name.
+            pending.clear()
+    return ends
+
+
+def prose_source_start(text, lower, reference, bracket_ends):
+    """Find a connected prefix in the unconsumed gap, jumping over bracket pairs."""
+    start = cursor = lower
+    while cursor < reference:
+        char = text[cursor]
+        if char in PROSE_BRACKETS:
+            end = bracket_ends.get(cursor)
+            if end is not None:
+                if end > reference:
+                    break  # The forward parser will consume the containing pair.
+                cursor = end
+                continue
+        elif prose_name_char(char) or char in "./\\":
+            cursor += 1
+            continue
+        cursor += 1
+        start = cursor
+    return start
+
+
+def prose_source_candidate(text, start, reference, limit, bracket_ends):
+    """Scan one source candidate; return its end, literal status and child notes."""
+    end, path, literal, stem, notes = start, False, False, False, []
+    while end < limit:
+        if end == reference:
+            # Slashes between only IDs are reference lists until an extension,
+            # line number or an additional source separator establishes a path.
+            end = PROSE_FILENAME_CANDIDATE.match(text, end, limit).end()
+            stem = True
+            if not path and starts_prose_particle(text, end):
+                break
+            continue
+        char = text[end]
+        if char == "." and stem:
+            extension = end
+            end += 1
+            while end < limit:
+                char = text[end]
+                if not (prose_name_char(char) or (char == "." and end > extension + 1)):
+                    break
+                # In .資料を削除してP-001, the final ID is a prose reference.
+                # A hyphen explicitly continues a name: .資料-P-001.
+                # An explicit path prefix still protects its first ID, as in
+                # ./report.資料P-002; later prose references keep their boundary.
+                if (char == "P" and not text[end - 1].isascii() and not (path and end == reference)
+                        and FINDING_REF.match(text, end)):
+                    break
+                end += 1
+            literal = end > extension + 1
+            if end < reference and text[end] in "/\\([{":
+                # Dotted directories and bracketed stems can precede the ID:
+                # archive.v1/資料.P-002 or 資料.md(P-002).backup. Keep advancing
+                # without lending a preceding extension to a bare annotation
+                # such as foo.md(P-002), which has no following source syntax.
+                literal = False
+                continue
+            break
+        if char == ":":
+            line = PROSE_LINE_RANGE.match(text, end + 1, limit)
+            if line and (line.end() == limit or not (text[line.end()].isascii()
+                         and (text[line.end()].isalnum() or text[line.end()] in "_-"))):
+                literal = True
+                end = line.end()
+            break
+        if char in "/\\":
+            path = True
+            stem = False
+            end += 1
+            continue
+        if char in PROSE_BRACKETS:
+            note_start, note_end = end, bracket_ends.get(end)
+            if note_end is None or note_end > limit:
+                break
+            notes.append((note_start + 1, note_end - 1))
+            end = note_end
+            stem = True
+            if not path and starts_prose_particle(text, end):
+                break
+            # A finding's annotation does not join a following ASCII word.
+            # A preceding basename, as in report(P-002).md, is source syntax.
+            if (not path and (note_start >= reference or note_start == start)
+                    and end < limit and text[end].isascii() and text[end].isalnum()):
+                break
+            continue
+        if not (prose_name_char(char) or char == "."):
+            break
+        stem = stem or char != "."
+        end += 1
+    return end, literal or path, notes
+
+
+def prose_filename_spans(text):
+    """Find source names around IDs with bounded prefix and nested-bracket scans."""
+    references = [match.start() for match in FINDING_REF.finditer(text)]
+    bracket_ends = prose_bracket_ends(text)
+    pending = [(0, len(text))]
+    while pending:
+        lower, upper = pending.pop()
+        scanned_end = lower
+        index = bisect_left(references, lower)
+        while index < len(references) and references[index] < upper:
+            reference = references[index]
+            start = prose_source_start(text, scanned_end, reference, bracket_ends)
+            end, literal, notes = prose_source_candidate(text, start, reference, upper, bracket_ends)
+            if end <= reference:
+                # An earlier filename can end before a later prose reference:
+                # foo.mdを削除してP-002. It must not lend that ID its extension.
+                start = reference
+                end, literal, notes = prose_source_candidate(text, start, reference, upper, bracket_ends)
+            scanned_end = max(end, reference + 5)
+            if literal:
+                yield start, end
+            else:
+                # Each failed candidate passes its direct notes to a worklist.
+                # Shared text, pair and ID indexes avoid recursion, copied
+                # substrings and repeated scans of deeply nested ID groups.
+                pending.extend(notes)
+            index = bisect_left(references, scanned_end, lo=index + 1)
+
+
+def rewrite_prose(text, mapping, source_literals):
+    """Renumber bare finding references, keeping explicit source identities literal.
+
+    Paths, filenames, path:line locations and URLs also appear in narrative
+    evidence and subtraction instructions. ID-only slash lists remain finding
+    references; a bare P-* cannot unambiguously name both a source and a finding.
+    Known location/occurrence paths and citation URLs cover source identities
+    containing spaces, Unicode or punctuation that also delimits prose.
+    """
+    if not FINDING_REF.search(text):
+        return text
+    literal = []
+    url_end = 0
+    for match in PROSE_URL.finditer(text):
+        if match.start() < url_end:
+            continue
+        # Balance URL brackets so a Markdown link's closing ')' does not absorb
+        # adjacent finding references, while parentheses within a URL survive.
+        closing, end = [], match.end()
+        brackets = {"(": ")", "[": "]", "{": "}"}
+        while end < len(text):
+            char = text[end]
+            if char.isspace() or char in "<>\"'`、。，「」『』（）【】":
+                break
+            if char in brackets:
+                closing.append(brackets[char])
+            elif char in ")]}":
+                if not closing or closing.pop() != char:
+                    break
+            end += 1
+        literal.append((match.start(), end))
+        url_end = end
+    for match in PROSE_TOKEN.finditer(text):
+        token = match.group().rstrip(".:!?")
+        # A finding label can directly precede a source: P-002:src/P-001.py.
+        # Keep only the source inside the protected range. A numeric suffix
+        # instead means a file location, including P-002:10 or P-002/P-001:10.
+        # Advance an offset so long label chains do not copy every suffix.
+        offset = 0
+        while True:
+            label = PROSE_LABEL.match(token, offset)
+            if not label or PROSE_LINE_RANGE.fullmatch(token, label.end()):
+                break
+            offset = label.end()
+        start = match.start() + offset
+        token = token[offset:]
+        if not FINDING_REF.search(token):
+            continue
+        id_list = re.fullmatch(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})+", token)
+        path = ("/" in token or "\\" in token) and not id_list
+        if (path or re.search(r"[^.]\.[A-Za-z0-9_]", token)
+                or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?\Z", token)):
+            literal.append((start, start + len(token)))
+    # Unicode stems, notes and extensions can contain finding-shaped IDs.
+    # The filename scanner also recognizes Japanese prose boundaries and
+    # consumes failed candidates once instead of retrying every embedded ID.
+    literal.extend(prose_filename_spans(text))
+    if not isinstance(source_literals, SourceLiteralIndex):
+        source_literals = SourceLiteralIndex(source_literals)
+    literal.extend(source_literals.spans(text))
+
+    spans = []
+    for start, end in sorted(literal):
+        if spans and start <= spans[-1][1]:
+            spans[-1] = spans[-1][0], max(end, spans[-1][1])
+        else:
+            spans.append((start, end))
+    index = 0
+
+    def replace(match):
+        nonlocal index
+        while index < len(spans) and spans[index][1] <= match.start():
+            index += 1
+        if index < len(spans) and spans[index][0] <= match.start() and match.end() <= spans[index][1]:
+            return match.group()
+        return mapping.get(match.group(), match.group())
+
+    return FINDING_REF.sub(replace, text)
 
 
 def renumber_map(findings):
@@ -348,10 +660,15 @@ def renumber(data, mapping):
         "perspective": ("name",),
     }
     sections = {"findings": "finding", "perspectives": "perspective"}
+    source_literals = {location.rpartition(":")[0] for finding in data["findings"]
+                       for location in [finding["location"], *finding.get("occurrences", [])]}
+    source_literals.update(ref["url"] for finding in data["findings"] for ref in finding.get("references", []))
+    source_literals = SourceLiteralIndex(source for source in source_literals
+                                         if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
 
     def rewrite(value, section=None, literal=False):
         if isinstance(value, str):
-            return value if literal else FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return value if literal else rewrite_prose(value, mapping, source_literals)
         if isinstance(value, dict):
             return {k: rewrite(v, sections.get(k) if section == "record" else None,
                                literal or k in literal_fields.get(section, ()))

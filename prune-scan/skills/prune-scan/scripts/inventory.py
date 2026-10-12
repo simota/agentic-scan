@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
+from safe_source import sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -84,10 +85,12 @@ LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
 
 IDENT = re.compile(r"[A-Za-z_$][\w$]*")
 CSS_TOKEN = re.compile(r"[A-Za-z_][\w-]*")
-FILE_TOKEN = re.compile(r"[\w.-]+\.\w+")
+# A failed extension match must not retry at every suffix of a long token.
+FILE_TOKEN = re.compile(r"(?<![\w.-])[\w.-]+\.\w+")
 QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
-DYNAMIC_CLASS = re.compile(r"`[^`]*?\b([A-Za-z_][\w-]*-)\$\{|[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
+DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
+CONCAT_CLASS = re.compile(r"[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
 
 PY_DEF = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_]\w*)|^class\s+([A-Za-z_]\w*)|^([A-Z][A-Z0-9_]+)\s*(?::[^=\n]+)?=(?!=)",
                     re.M)
@@ -99,8 +102,8 @@ RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|t
 MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
 
-PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
-PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
+PY_IMPORT = re.compile(r"^[^\S\r\n]*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
+PY_FROM = re.compile(r"^[^\S\r\n]*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
 JS_IMPORT_START = re.compile(r"\b(?:import|export|require)\b")
 # Non-ASCII binding names remain opaque; ASCII operators delimit separate tokens.
 JS_BINDING_NAME = re.compile(r"(?:[$\w]+|[^\x00-\x7f\s\ufeff]+|\\u(?:[0-9a-fA-F]{4}|\{[0-9a-fA-F]+\}))+")
@@ -119,13 +122,13 @@ ENV_READ = re.compile(
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
-ENV_DECL = re.compile(r"^\s*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=", re.M)
+ENV_DECL = re.compile(r"^[^\S\r\n]*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=", re.M)
 FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_enabled|featureEnabled|"
                         r"feature_enabled|flag_enabled|useFlag|useFeature|useFeatureFlag|useFeatureIsOn|getFlag|"
                         r"get_flag|variation|boolVariation|isOn|is_on|active\?)\(\s*[\"'`:]([\w.-]+)[\"'`]?")
 FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|experiments)\.(?:py|ts|tsx|js|mjs|"
                        r"json|ya?ml|toml)$")
-FLAG_DEF = re.compile(r"^\s*[\"']?([A-Za-z][\w.-]*)[\"']?\s*[:=]\s*(true|false|True|False|on|off)\b", re.M)
+FLAG_DEF = re.compile(r"^[^\S\r\n]*[\"']?([A-Za-z][\w.-]*)[\"']?\s*[:=]\s*(true|false|True|False|on|off)\b", re.M)
 ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
@@ -150,8 +153,8 @@ MARKER = re.compile(r"(?i)\b(TODO|FIXME|HACK|XXX|deprecated|remove (?:after|by|o
                     r"until)\b")
 ALWAYS_MARKERS = {"deprecated", "sunset"}
 DATE = re.compile(r"\b(20[0-9]{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12][0-9]|3[01]))?)\b")
-CREATE_TABLE = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\w+)[`\"\]]?\s*\((.*?)\)\s*;",
-                          re.I | re.S)
+CREATE_TABLE_START = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\w+)[`\"\]]?\s*\(", re.I)
+CREATE_TABLE_END = re.compile(r"\)\s*;")
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
@@ -462,10 +465,25 @@ def flatten(value, prefix=""):
         yield prefix
 
 
-def key_line(text, key):
+def json_key_lines(text):
+    """Index the first occurrence of each decoded key in an already validated JSON file."""
+    lines = {}
+    # Consume values as well as keys so escaped quotes inside a value stay opaque.
+    for token in re.finditer(r'"(?:[^"\\]|\\.)*"', text):
+        end = token.end()
+        while end < len(text) and text[end] in " \t\r\n":
+            end += 1
+        if end < len(text) and text[end] == ":":
+            key = json.loads(token.group())
+            lines.setdefault(key, line_of(text, token.start()))
+    return lines
+
+
+def key_line(text, key, *, lines=None):
     """Line of the last segment of key in a JSON locale file (first match)."""
-    m = re.search(r"[\"']%s[\"']\s*:" % re.escape(key.rsplit(".", 1)[-1]), text)
-    return line_of(text, m.start()) if m else 1
+    if lines is None:
+        lines = json_key_lines(text)
+    return lines.get(key.rsplit(".", 1)[-1], 1)
 
 
 def js_package(spec):
@@ -603,11 +621,69 @@ def js_import_specs(text):
     # such as "import /*" in a string or line comment must not swallow real code.
     seen, emitted = set(), set()
 
+    def specifier_value(value):
+        """Decode a module's StringLiteral once, without reinterpreting produced backslashes."""
+        if "\\" not in value:
+            return None if re.search(r"[\x00\ud800-\udfff]", value) else value
+        parts, position = [], 0
+        escapes = {"b": "\b", "f": "\f", "n": "\n", "r": "\r", "t": "\t", "v": "\v"}
+        while position < len(value):
+            slash = value.find("\\", position)
+            if slash < 0:
+                parts.append(value[position:])
+                break
+            parts.append(value[position:slash])
+            position = slash + 1
+            if position == len(value):
+                return None
+            escape = value[position]
+            position += 1
+            if escape in "\r\n\u2028\u2029":
+                if escape == "\r" and value.startswith("\n", position):
+                    position += 1
+                continue
+            if escape in "xu":
+                if escape == "u" and value.startswith("{", position):
+                    end = value.find("}", position + 1)
+                    if end < 0:
+                        return None
+                    digits = value[position + 1:end]
+                    if not re.fullmatch(r"[0-9a-fA-F]+", digits):
+                        return None
+                    # Leading zeroes are permitted; never construct an unbounded integer.
+                    digits = digits.lstrip("0") or "0"
+                    position = end + 1
+                    if len(digits) > 6 or int(digits, 16) > 0x10ffff:
+                        return None
+                else:
+                    count = 2 if escape == "x" else 4
+                    digits = value[position:position + count]
+                    if len(digits) != count or not re.fullmatch(r"[0-9a-fA-F]+", digits):
+                        return None
+                    position += count
+                parts.append(chr(int(digits, 16)))
+            elif escape in "01234567":
+                # CommonJS and other non-strict scripts also admit legacy octal escapes.
+                digits, count = escape, 3 if escape in "0123" else 2
+                while len(digits) < count and position < len(value) and value[position] in "01234567":
+                    digits += value[position]
+                    position += 1
+                parts.append(chr(int(digits, 8)))
+            else:
+                parts.append(escapes.get(escape, escape))
+        try:
+            # JavaScript strings use UTF-16. Join escaped surrogate pairs, rejecting lone halves.
+            decoded = "".join(parts).encode("utf-16-le", "surrogatepass").decode("utf-16-le")
+        except UnicodeError:
+            return None
+        return None if "\0" in decoded else decoded
+
     def unseen(module):
         if module[0] != "string" or not module[1] or module[2] in emitted:
-            return False
+            return None
+        # Mark before decoding: overlapping candidates must never decode the same long literal again.
         emitted.add(module[2])
-        return True
+        return specifier_value(module[1])
 
     for kind, start in candidates:
         pos = gap(start)
@@ -626,8 +702,8 @@ def js_import_specs(text):
                 if following[:2] != ("punct", "("):
                     continue
             if kind == "import" and following[0] == "string":
-                if unseen(following):
-                    yield following[1]
+                if spec := unseen(following):
+                    yield spec
                 continue
             if following[:2] == ("punct", "("):
                 module = token(following[2])
@@ -635,8 +711,8 @@ def js_import_specs(text):
                 # Source-phase calls take one argument; defer permits import options.
                 literal_end = (after[:2] == ("punct", ")") or
                                (not source_call and after[:2] == ("punct", ",")))
-                if literal_end and unseen(module):
-                    yield module[1]
+                if literal_end and (spec := unseen(module)):
+                    yield spec
                 continue
             if kind == "require":
                 continue
@@ -646,8 +722,8 @@ def js_import_specs(text):
                 # Keep `import source from ...` as an ordinary default binding.
                 if binding[0] == "name" and after[:2] == ("name", "from"):
                     module = token(after[2])
-                    if unseen(module):
-                        yield module[1]
+                    if spec := unseen(module):
+                        yield spec
                     continue
         if kind == "import" and following[:2] == ("name", "typeof"):
             # Flow's reserved modifier may precede a binding named `from` or `type`.
@@ -676,13 +752,44 @@ def js_import_specs(text):
                 continue
         if following[:2] == ("name", "from"):
             module = token(following[2])
-            if unseen(module):
-                yield module[1]
+            if spec := unseen(module):
+                yield spec
 
 
 def py_dist_module(name):
     lower = name.lower()
     return PY_MODULE_NAMES.get(lower, re.sub(r"[-.]", "_", lower))
+
+
+def dynamic_class_prefixes(text):
+    """Retain every literal class prefix, including several in one template."""
+    # Treat each backtick as a possible opening, conservatively including nested templates.
+    # Segments are disjoint, and prefixes cannot restart inside the same hyphenated token.
+    for template in re.finditer(r"`[^`]*", text):
+        for match in DYNAMIC_CLASS.finditer(text, template.start() + 1, template.end()):
+            yield match.group(1)
+    for match in CONCAT_CLASS.finditer(text):
+        yield match.group(1)
+
+
+def py_import_specs(text, *, tree=None):
+    """Keep valid Python imports in inline suites and continued statements; fall back for newer syntax."""
+    if tree is not None:
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    yield "", alias.name, []
+            elif isinstance(node, ast.ImportFrom):
+                yield "." * node.level, node.module or "", [alias.name for alias in node.names if alias.name != "*"]
+        return
+    for match in PY_IMPORT.finditer(text):
+        for part in match.group(1).split(","):
+            module = re.split(r"\s+as\s+", part, maxsplit=1)[0].strip()
+            yield "", module, []
+    for match in PY_FROM.finditer(text):
+        imported = re.sub(r"#[^\n]*", "", match.group(3)).strip("()").replace("\n", " ")
+        names = [re.split(r"\s+as\s+", name, maxsplit=1)[0].strip() for name in imported.split(",")]
+        yield match.group(1), match.group(2), [name for name in names if name and name != "*"]
 
 
 def parse_requirements(rel, text):
@@ -767,6 +874,20 @@ def parse_go_mod(rel, text):
         m = re.match(r"^(?:require\s+)?([\w.\-]+\.[\w.\-]+/[\w.\-/]+)\s+v", s) if (block or s.startswith("require")) else None
         if m:
             yield m.group(1), "require", f"{rel}:{i}"
+
+
+def sql_table_specs(text):
+    """Find table bodies once; repeated starts cannot rescan a missing terminator."""
+    position = 0
+    while True:
+        opening = CREATE_TABLE_START.search(text, position)
+        if opening is None:
+            return
+        closing = CREATE_TABLE_END.search(text, opening.end())
+        if closing is None:
+            return
+        yield opening.group(1), opening.start(), opening.end(), text[opening.end():closing.start()]
+        position = closing.end()
 
 
 class Collector:
@@ -859,26 +980,29 @@ def inventory(root, units=None, today=None):
 
     # Symbols.
     defs = defaultdict(list)
+    python_imports = {}
     decorated_skipped = 0
     for rel in code_files:
         ext = suffix(rel)
+        text = texts[rel]
+        python_defs = None
+        if ext in PY_EXT:
+            try:
+                tree = ast.parse(text)
+                python_defs = {node.lineno: bool(getattr(node, "decorator_list", []))
+                               for node in tree.body
+                               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
+                                                    ast.Assign, ast.AnnAssign))}
+                python_imports[rel] = list(py_import_specs(text, tree=tree))
+            except (SyntaxError, ValueError, RecursionError, MemoryError):
+                pass  # Unsupported syntax and parser resource limits retain the best-effort scan.
         if is_test(rel):
             continue
-        text = texts[rel]
         regex = {**{e: PY_DEF for e in PY_EXT}, **{e: JS_DEF for e in JS_EXT}, **{e: GO_DEF for e in GO_EXT},
                  **{e: RS_DEF for e in RS_EXT}}.get(ext)
         if not regex:
             continue
         lang = {".py": "python", ".go": "go", ".rs": "rust"}.get(ext, "javascript")
-        python_defs = None
-        if ext in PY_EXT:
-            try:
-                python_defs = {node.lineno: bool(getattr(node, "decorator_list", []))
-                               for node in ast.parse(text).body
-                               if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef,
-                                                    ast.Assign, ast.AnnAssign))}
-            except (SyntaxError, ValueError, RecursionError):
-                pass  # Unsupported/newer Python syntax still gets the best-effort regex scan.
         for m in regex.finditer(text):
             name = next(g for g in m.groups() if g)
             if name in ENTRY_SYMBOLS or name.startswith("__"):
@@ -957,20 +1081,11 @@ def inventory(root, units=None, today=None):
                     if pkg:
                         js_packages[pkg] += 1
         elif ext in PY_EXT:
-            for m in PY_IMPORT.finditer(text):
-                for part in m.group(1).split(","):
-                    module = re.split(r"\s+as\s+", part, maxsplit=1)[0].strip()
-                    py_modules[module.split(".")[0]] += 1
-                    for target in resolve_py(rel, "", module, []):
-                        inbound[target].add(rel)
-            for m in PY_FROM.finditer(text):
-                dots, module = m.group(1), m.group(2)
-                imported_names = re.sub(r"#[^\n]*", "", m.group(3)).strip("()").replace("\n", " ")
-                names = [re.split(r"\s+as\s+", n, maxsplit=1)[0].strip()
-                         for n in imported_names.split(",")]
+            imports = python_imports[rel] if rel in python_imports else py_import_specs(text)
+            for dots, module, names in imports:
                 if not dots and module:
                     py_modules[module.split(".")[0]] += 1
-                for target in resolve_py(rel, dots, module, [n for n in names if n and n != "*"]):
+                for target in resolve_py(rel, dots, module, names):
                     inbound[target].add(rel)
         elif ext in GO_EXT:
             for module in go_import_paths(text):
@@ -1090,6 +1205,7 @@ def inventory(root, units=None, today=None):
         quoted.update(QUOTED.findall(texts[rel]))
         prefixes.update(DYNAMIC_KEY.findall(texts[rel]))
     i18n = []
+    locale_lines = {}
     for bundle, langs in sorted(col.locales.items()):
         keys = defaultdict(list)
         for lang, (rel, flat) in sorted(langs.items()):
@@ -1099,8 +1215,10 @@ def inventory(root, units=None, today=None):
             if key in quoted or any(key.startswith(p) for p in prefixes):
                 continue
             first = where[0][1]
+            if first not in locale_lines:
+                locale_lines[first] = json_key_lines(texts[first])
             i18n.append({"key": key, "bundle": bundle, "langs": [lang for lang, _ in where],
-                         "location": f"{first}:{key_line(texts[first], key)}"})
+                         "location": f"{first}:{key_line(texts[first], key, lines=locale_lines[first])}"})
     rows["i18n_unreferenced"] = i18n
     rows["i18n_dynamic_prefixes"] = sorted(prefixes)
 
@@ -1115,14 +1233,16 @@ def inventory(root, units=None, today=None):
         if suffix(rel) in CSS_EXT:
             continue
         css_tokens.update(CSS_TOKEN.findall(texts[rel]))
-        for m in DYNAMIC_CLASS.finditer(texts[rel]):
-            class_prefixes.add(m.group(1) or m.group(2))
+        class_prefixes.update(dynamic_class_prefixes(texts[rel]))
     css_rows, seen_classes = [], set()
     for rel in sorted(r for r in texts if suffix(r) in CSS_EXT):
         if Path(rel).stem.endswith(".module"):
             continue
-        text = re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), texts[rel], flags=re.S)
-        for m in re.finditer(r"([^{};]+)\{", text):
+        # An unclosed comment runs through EOF; never retry its nested opening markers.
+        text = re.sub(r"/\*.*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), texts[rel], flags=re.S)
+        # Start after a delimiter, without consuming it: nested selectors still get a turn.
+        # Retrying every suffix of a long brace-free segment would take quadratic time.
+        for m in re.finditer(r"(?:\A|(?<=[{};]))([^{};]+)\{", text):
             selector = m.group(1)
             if selector.strip().startswith("@"):
                 continue
@@ -1217,10 +1337,13 @@ def inventory(root, units=None, today=None):
     skipped, commented, markers = [], [], []
     for rel, text in sorted(texts.items()):
         ext = suffix(rel)
+        # Preserve candidates and their metadata, but do not export arbitrary
+        # source text when a value elsewhere in the file may continue here.
+        omitted_text = "[omitted: source may contain secrets]" if sensitive_source(text) else None
         if rel in code_files and is_test(rel):
             for m in SKIPPED_TEST.finditer(text):
                 line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
-                skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": line[:120]})
+                skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": omitted_text or line[:120]})
         if ext in SOURCE_EXT | {".sql", ".sh", ".yml", ".yaml", ".toml"} | CSS_EXT:
             run = []
             for n, line in enumerate(text.splitlines() + [""], 1):
@@ -1243,7 +1366,7 @@ def inventory(root, units=None, today=None):
             date = DATE.search(line)
             if not date and word not in ALWAYS_MARKERS and not word.startswith("remove"):
                 continue
-            row = {"marker": word, "location": f"{rel}:{n}", "text": line.strip()[:120]}
+            row = {"marker": word, "location": f"{rel}:{n}", "text": omitted_text or line.strip()[:120]}
             if date:
                 row["date"] = date.group(1)
                 row["overdue"] = date.group(1) < today[:len(date.group(1))]
@@ -1256,17 +1379,16 @@ def inventory(root, units=None, today=None):
     tables, columns = [], []
     for rel in sorted(r for r in texts if suffix(r) == ".sql"):
         text = texts[rel]
-        for m in CREATE_TABLE.finditer(text):
-            table = m.group(1)
+        for table, start, body_start, body in sql_table_specs(text):
             if idents[table] == 0:
-                tables.append({"table": table, "location": f"{rel}:{line_of(text, m.start())}"})
+                tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
-            for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", m.group(2)):
+            for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
                 if col_name.lower() in SQL_CONSTRAINT or idents[col_name]:
                     continue
                 columns.append({"table": table, "column": col_name,
-                                "location": f"{rel}:{line_of(text, m.start(2) + c.start(1))}"})
+                                "location": f"{rel}:{line_of(text, body_start + c.start(1))}"})
     rows["sql_tables_unreferenced"] = tables
     rows["sql_columns_unreferenced"] = columns
 

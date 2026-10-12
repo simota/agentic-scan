@@ -119,9 +119,30 @@ For example, a source named `P-002 note` does not keep `P-002 noteworthy` from
 being renumbered. Whitespace, punctuation and Japanese text can surround a
 complete source name, so `P-002 noteを削除する。` keeps the actual filename.
 
-Filename extensions can contain Unicode letters, combining marks and symbols,
-including `P-002.資料` and `P-002.📄`. Whitespace and surrounding prose punctuation
-delimit extensions. A bare finding id following Unicode prose still starts a
-new reference: in `P-002.資料を削除してP-001を直す。`, the filename remains unchanged
-and the final finding reference is renumbered. An ID-only directory prefix is
-part of a filename when an extension follows, as in `P-002/P-001.資料`.
+Filename stems and extensions can mix Unicode letters, combining marks,
+symbols and ASCII text, including `P-002資料v2.md`, `P-002はじめに.md`,
+`P-002.資料` and `P-002.📄`. Unicode stems also work in explicit paths and line
+locations such as `P-002資料/P-001` and `P-002資料:5-7`. Whitespace and surrounding
+prose punctuation delimit names. A bare finding id following Unicode prose
+after an extension starts a new reference: in
+`P-002資料.mdを削除してP-001を直す。`, the filename remains unchanged and the final
+finding reference is renumbered. An ID-only directory prefix is part of a
+filename when an extension follows, as in `P-002/P-001.資料`. Unicode text alone
+after an ID-only list does not turn it into a path: `P-002/P-001について確認。`
+still renumbers both references. Write `./P-002/P-001資料` to name a path with
+that ambiguous extensionless basename.
+
+To separate Japanese references from unlisted filenames, a hiragana sequence
+immediately after an id or its parenthesized note is treated as prose when the
+whole sequence is one of `では`, `には`, `とは`, `から`, `まで`, `より`, `を`, `は`,
+`が`, `の`, `に`, `へ`, `と`, `で`, `も` or `や`. Composed and decomposed spellings
+are recognized, and combining marks and joiners do not split the sequence.
+This keeps the reference in `P-002では不要なlegacy.py` up to date while preserving
+the filename `P-002はじめにv2.md`. A known source name or an explicit path takes
+precedence over this rule.
+
+Ambiguous names and sentences need an explicit separator. For a filename such
+as `P-002の仕様.md`, write `./P-002の仕様.md` or include the source in `location` or
+`occurrences`. A sequence outside the listed particles can instead look like
+a filename, as in `P-002にあるapp.py`: write `P-002 にあるapp.py` when the id is a
+finding reference, or `./P-002にあるapp.py` when the whole string is a source name.

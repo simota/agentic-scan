@@ -330,8 +330,14 @@ FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?![A-Za-z0-9_])")
 PROSE_TOKEN = re.compile(r"[A-Za-z0-9_./\\:~%+$@?=&#!-]+")
 PROSE_LABEL = re.compile(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})*:")
 PROSE_LINE_RANGE = re.compile(r"[1-9][0-9]*(?:-[1-9][0-9]*)?")
-PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[0-9]{3}"
-                                      r"(?:-[\w-]*)?(?:\([^()\s]*\)(?:-[\w-]*)?)*")
+PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[0-9]{3}")
+PROSE_NOTE = re.compile(r"\(([^()\s]*)\)")
+# Longer particles precede their prefixes. Include decomposed spellings
+# without normalizing source text or changing its character offsets.
+PROSE_PARTICLE = re.compile("|".join(
+    re.escape(form) for particle in "では には とは から まで より を は が の に へ と で も や".split()
+    for form in dict.fromkeys((particle, unicodedata.normalize("NFD", particle)))
+))
 PROSE_URL = re.compile(r"https?://", re.IGNORECASE)
 
 
@@ -397,41 +403,96 @@ class SourceLiteralIndex:
                 yield end - longest[state], end
 
 
+def prose_name_char(char):
+    """Allow Unicode names without treating surrounding prose punctuation as a name."""
+    return (char.isalnum() or char in "_-\u200c\u200d"
+            or (not char.isascii() and unicodedata.category(char)[0] in "MS"))
+
+
+def starts_prose_particle(text, start):
+    """Recognize a complete hiragana particle, not a prefix of a filename word."""
+    match = PROSE_PARTICLE.match(text, start)
+    if not match:
+        return False
+    if match.end() == len(text):
+        return True
+    char = text[match.end()]
+    return not ("\u3040" <= char <= "\u309f" or char in "\u200c\u200d\u30fc"
+                or unicodedata.category(char)[0] == "M")
+
+
 def prose_filename_spans(text):
-    """Find explicit filenames without absorbing adjacent finding references."""
-    protected_end = 0
+    """Find explicit source names, consuming successful and failed candidates once."""
+    scanned_end = 0
     for match in PROSE_FILENAME_CANDIDATE.finditer(text):
-        if match.start() < protected_end:
+        if match.start() < scanned_end:
             continue
-        extension = match.end()
-        if extension < len(text) and text[extension] == ".":
-            end = extension + 1
-            while end < len(text):
-                char = text[end]
-                # Support letters, marks and symbols in Unicode extensions,
-                # including decomposed accents and joined emoji. Ordinary
-                # prose punctuation still ends the filename.
-                if not (char.isalnum() or char in "_-\u200c\u200d"
-                        or (not char.isascii() and unicodedata.category(char)[0] in "MS")
-                        or (char == "." and end > extension + 1)):
-                    break
-                # In .資料を削除してP-001, the final ID is a prose reference.
-                # A hyphen instead explicitly continues a name: .資料-P-001.
-                if (char == "P" and not text[end - 1].isascii()
-                        and FINDING_REF.match(text, end)):
-                    break
+        start, end = match.span()
+        # Only inspect the gap since the last consumed candidate. This covers
+        # ./資料P-002の仕様.md without rescanning a growing prefix at every ID.
+        slash = max(text.rfind("/", scanned_end, start), text.rfind("\\", scanned_end, start))
+        explicit_path = (slash >= 0 and all(prose_name_char(char) or char == "."
+                                           for char in text[slash + 1:start]))
+        path = explicit_path
+        literal = False
+        notes = []
+        if not explicit_path and starts_prose_particle(text, end):
+            scanned_end = end
+            continue
+        while end < len(text):
+            char = text[end]
+            if char == ".":
+                extension = end
                 end += 1
-            if end > extension + 1:
-                protected_end = end
-                yield match.start(), end
+                while end < len(text):
+                    char = text[end]
+                    if not (prose_name_char(char) or (char == "." and end > extension + 1)):
+                        break
+                    # In .資料を削除してP-001, the final ID is a prose reference.
+                    # A hyphen explicitly continues a name: .資料-P-001.
+                    if (char == "P" and not text[end - 1].isascii()
+                            and FINDING_REF.match(text, end)):
+                        break
+                    end += 1
+                literal = end > extension + 1
+                break
+            if char == ":":
+                line = PROSE_LINE_RANGE.match(text, end + 1)
+                if line and (line.end() == len(text) or not (text[line.end()].isascii()
+                             and (text[line.end()].isalnum() or text[line.end()] in "_-"))):
+                    literal = True
+                    end = line.end()
+                break
+            if char in "/\\":
+                path = True
+                end += 1
                 continue
+            if char == "(":
+                note = PROSE_NOTE.match(text, end)
+                if not note:
+                    break
+                notes.append(note.span(1))
+                end = note.end()
+                if not path and starts_prose_particle(text, end):
+                    break
+                # Preserve the existing distinction between a note followed
+                # by an ASCII word and an explicitly continued filename.
+                if end < len(text) and text[end].isascii() and text[end].isalnum():
+                    break
+                continue
+            if not prose_name_char(char):
+                break
+            end += 1
+        scanned_end = end
+        if literal or path:
+            yield start, end
+            continue
         # A non-file note may itself name a file: P-002(P-001.資料).
         # Candidate notes contain no nested parentheses, so their disjoint
         # contents add only one bounded extra scan.
-        for note in re.finditer(r"\(([^()\s]*)\)", match.group()):
-            offset = match.start() + note.start(1)
-            for start, end in prose_filename_spans(note.group(1)):
-                yield offset + start, offset + end
+        for note_start, note_end in notes:
+            for start, end in prose_filename_spans(text[note_start:note_end]):
+                yield note_start + start, note_start + end
 
 
 def rewrite_prose(text, mapping, source_literals):
@@ -487,13 +548,9 @@ def rewrite_prose(text, mapping, source_literals):
         if (path or re.search(r"[^.]\.[A-Za-z0-9_]", token)
                 or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?\Z", token)):
             literal.append((start, start + len(token)))
-    # Protect explicitly continued names such as P-002-仕様.md or P-002(old).md.
-    # A bare ID followed by a Japanese particle remains a finding reference,
-    # even if the sentence later names a file.
-    # Parentheses need the same explicit continuation: P-002(checked)はapp.py
-    # is a finding with a note, not a file name.
-    # Consume candidates even without an extension, so P-002-P-002-... is
-    # scanned once instead of retrying the same suffix at every embedded ID.
+    # Unicode stems, notes and extensions can contain finding-shaped IDs.
+    # The filename scanner also recognizes Japanese prose boundaries and
+    # consumes failed candidates once instead of retrying every embedded ID.
     literal.extend(prose_filename_spans(text))
     if not isinstance(source_literals, SourceLiteralIndex):
         source_literals = SourceLiteralIndex(source_literals)

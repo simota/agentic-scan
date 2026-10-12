@@ -190,6 +190,115 @@ class RenumberProseTests(unittest.TestCase):
             self.assertEqual(updated["summary"], "P-002.資料を削除してP-002を直す。")
             self.assertEqual(updated["decisions"], [after for _, after in cases])
 
+    def test_cli_preserves_unicode_stems_and_their_source_identity(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        item = data["findings"][0]
+        item["element"] = "P-002資料.md"
+        item["subtraction"]["what"] = "P-002資料.mdを削除してP-002を解決する。"
+        sources = (
+            "P-002資料.md", "資料P-002補足.md", "P-002まとめ.md", "P-002はじめに.md",
+            "P-002資料v2.md", "P-002はじめにv2.md", "P-002данные.md", "P-002école.md", "P-002\u0301.md",
+            "P-002テ\u3099ータ.md", "P-002📄.md", "P-002👩\u200d💻.md", "P-002資料.資料",
+            "P-002は\u3099じめに.md", "P-002は\u0301じめに.md", "P-002て\u3099はじめに.md",
+            "P-002資料(archive).md", "P-002(archive)資料.md", "P-002資料P-001.md",
+            "P-002資料-P-001.md", "P-002資料/P-001.md", "P-002/P-001資料.md",
+            "P-002資料/P-001補足.md", "P-002資料\\P-001補足.md", "P-002資料/P-001",
+            "./P-002ではlegacy.py", "./P-002はP-001資料.md", "P-002資料:5", "P-002資料:5-7",
+        )
+        data["decisions"] = [f"{source} を削除してP-001を直す。" for source in sources]
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / "P-002資料.md"
+            source.write_text("Reviewed source.\n", encoding="utf-8")
+            target = directory / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["findings"][0]["element"], "P-002資料.md")
+            self.assertEqual(updated["findings"][0]["subtraction"]["what"],
+                             "P-002資料.mdを削除してP-001を解決する。")
+            self.assertEqual(updated["decisions"],
+                             [f"{source} を削除してP-002を直す。" for source in sources])
+            self.assertEqual(source.read_text(encoding="utf-8"), "Reviewed source.\n")
+            checked = run_cli("check", target)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            before = target.read_bytes()
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(target.read_bytes(), before)
+
+    def test_cli_disambiguates_unicode_names_and_japanese_references(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        cases = (
+            ("P-002資料.mdを削除してP-001を直す。", "P-002資料.mdを削除してP-002を直す。"),
+            ("P-002ではP-001資料.mdを削除する。", "P-001ではP-001資料.mdを削除する。"),
+            ("P-002では不要なlegacy.pyを削除する。", "P-001では不要なlegacy.pyを削除する。"),
+            ("P-002の指摘はlegacy.pyにある。", "P-001の指摘はlegacy.pyにある。"),
+            ("P-002て\u3099はlegacy.pyを確認。", "P-001て\u3099はlegacy.pyを確認。"),
+            ("P-002か\u3099app.pyを対象にする。", "P-001か\u3099app.pyを対象にする。"),
+            ("P-002て\u3099test.pyを検証。", "P-001て\u3099test.pyを検証。"),
+            ("P-002まて\u3099test.pyで確認。", "P-001まて\u3099test.pyで確認。"),
+            ("P-002(P-001資料.md)を確認。", "P-001(P-001資料.md)を確認。"),
+            ("P-002(確認済み)ではP-001資料.mdを削除。", "P-001(確認済み)ではP-001資料.mdを削除。"),
+            ("P-002資料についてP-001を直す。", "P-001資料についてP-002を直す。"),
+            ("P-002/P-001を確認。P-002/P-001ではapp.pyを削除。",
+             "P-001/P-002を確認。P-001/P-002ではapp.pyを削除。"),
+            ("P-002/P-001について確認。P-002/P-001にある処理を確認。",
+             "P-001/P-002について確認。P-001/P-002にある処理を確認。"),
+            ("P-002/P-001資料 を確認してP-001を直す。", "P-001/P-002資料 を確認してP-002を直す。"),
+            ("./P-002/P-001資料 を削除してP-001を直す。", "./P-002/P-001資料 を削除してP-002を直す。"),
+            ("P-002の仕様.mdを確認。", "P-001の仕様.mdを確認。"),
+            ("./P-002の仕様.mdを削除してP-001を直す。", "./P-002の仕様.mdを削除してP-002を直す。"),
+            ("./資料P-002の仕様.mdを削除してP-001を直す。", "./資料P-002の仕様.mdを削除してP-002を直す。"),
+            ("P-002にあるapp.py を削除してP-001を直す。", "P-002にあるapp.py を削除してP-002を直す。"),
+            ("P-002 にあるapp.pyを削除。", "P-001 にあるapp.pyを削除。"),
+            ("./P-002にあるapp.py を削除してP-001を直す。", "./P-002にあるapp.py を削除してP-002を直す。"),
+            ("P-002資料:5-7を確認してP-001を直す。", "P-002資料:5-7を確認してP-002を直す。"),
+        )
+        data["decisions"] = [before for before, _ in cases]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            for actual, (before, expected) in zip(updated["decisions"], cases):
+                with self.subTest(before=before):
+                    self.assertEqual(actual, expected)
+
+    def test_known_source_names_override_the_japanese_particle_boundary(self):
+        data = self.findings_record(location="P-002の仕様.md:10")
+        data["summary"] = "P-002の仕様.mdを削除してP-002を直す。"
+        self.assertEqual(self.renumbered(data)["summary"], "P-002の仕様.mdを削除してP-001を直す。")
+
+    def test_cli_scans_long_unicode_stems_and_failed_candidates_once(self):
+        data = self.findings_record(location="src/app.py:10")
+        stem = "-".join(["P-002資料"] * 16000)
+        filename = stem + ".md"
+        data["summary"] = stem
+        data["decisions"] = [f"{filename}を削除してP-002を直す。", f"P-002({filename})を確認。"]
+        data["next_steps"] = ["P-002では" * 16000 + "P-002資料.mdを削除。"]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "findings.py"), "renumber", str(target)],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["summary"], "-".join(["P-001資料"] * 16000))
+            self.assertEqual(updated["decisions"],
+                             [f"{filename}を削除してP-001を直す。", f"P-001({filename})を確認。"])
+            self.assertEqual(updated["next_steps"], ["P-001では" * 16000 + "P-002資料.mdを削除。"])
+
     def test_known_source_matches_preserve_overlaps_and_unicode_offsets(self):
         data = self.findings_record(location="app.py:10")
         second = copy.deepcopy(data["findings"][0])

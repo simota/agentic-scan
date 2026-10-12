@@ -121,7 +121,12 @@ complete source name, so `P-002 noteを削除する。` keeps the actual filenam
 
 Filename stems and extensions can mix Unicode letters, combining marks,
 symbols and ASCII text, including `P-002資料v2.md`, `P-002はじめに.md`,
-`P-002.資料` and `P-002.📄`. Unicode stems also work in explicit paths and line
+`P-002.資料` and `P-002.📄`. An id-shaped extension after a Unicode basename,
+such as `資料.P-002`, also stays literal. Balanced `()`, `[]` and `{}` can
+occur inside source names, including `資料(P-002).md`, `report[P-002].md`
+and the nested route name `src/[[...P-002]].tsx`. Brackets around a reference
+alone, such as `[P-002]`, do not make it a source name.
+Unicode stems also work in explicit paths and line
 locations such as `P-002資料/P-001` and `P-002資料:5-7`. Whitespace and surrounding
 prose punctuation delimit names. A bare finding id following Unicode prose
 after an extension starts a new reference: in
@@ -133,13 +138,14 @@ still renumbers both references. Write `./P-002/P-001資料` to name a path with
 that ambiguous extensionless basename.
 
 To separate Japanese references from unlisted filenames, a hiragana sequence
-immediately after an id or its parenthesized note is treated as prose when the
+immediately after an id or its bracketed note is treated as prose when the
 whole sequence is one of `では`, `には`, `とは`, `から`, `まで`, `より`, `を`, `は`,
 `が`, `の`, `に`, `へ`, `と`, `で`, `も` or `や`. Composed and decomposed spellings
 are recognized, and combining marks and joiners do not split the sequence.
 This keeps the reference in `P-002では不要なlegacy.py` up to date while preserving
-the filename `P-002はじめにv2.md`. A known source name or an explicit path takes
-precedence over this rule.
+the filename `P-002はじめにv2.md`. A known source name, an explicit path or a
+filename extension that begins before the id takes precedence over this rule;
+`資料.P-002の指摘` keeps the id in the filename.
 
 Ambiguous names and sentences need an explicit separator. For a filename such
 as `P-002の仕様.md`, write `./P-002の仕様.md` or include the source in `location` or

@@ -231,6 +231,120 @@ class RenumberProseTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             self.assertEqual(target.read_bytes(), before)
 
+    def test_cli_preserves_ids_after_unicode_stems_and_inside_source_brackets(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        data["findings"][0]["element"] = "資料.P-002"
+        data["findings"][0]["subtraction"]["what"] = "資料.P-002を削除してP-002を解決する。"
+        sources = (
+            "資料.P-002", "report.P-002", "é.P-002", "e\u0301.P-002", "\u0301.P-002", "📄.P-002",
+            "👩\u200d💻.P-002", "資料.P-002補足", "資料.P-002\u0301", "資料.P-002📄",
+            "資料.P-002-P-001", "資料.P-002.P-001", "P-002資料.P-001", "資料P-002.P-001",
+            "資料.P-002/別.P-001", "資料.P-002\\別.P-001", "資料.P-002:10-12",
+            "資料(P-002).md", "report(P-002).md", "資料(P-002).P-001", "資料(P-002)/P-001",
+            "資料(archive).P-002", "src/[P-002].tsx", "資料[P-002].md", "report[P-002].md",
+            "src/{P-002}.js", "src/[[...P-002]].tsx", "資料[{P-002}].P-001",
+            "archive.v1/資料.P-002", "archive.v1/part.v2/資料.P-002", "src/app.v1/[P-002].tsx",
+            "src/v1.0/{P-002}.js", "資料.md(P-002).backup", "src/資料.md(P-002).backup",
+            "./report.資料P-002", "src/report.資料P-002", "src/資料.補足P-002",
+            "./資料.補足P-002", "src/資料.補足P-002/P-001",
+        )
+        data["decisions"] = [f"{source} を確認してP-001を直す。" for source in sources]
+        data["summary"] = "資料.P-002を削除してP-001を直す。"
+        with tempfile.TemporaryDirectory() as temporary:
+            directory = Path(temporary)
+            source = directory / "資料.P-002"
+            source.write_text("Reviewed source.\n", encoding="utf-8")
+            target = directory / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["findings"][0]["element"], "資料.P-002")
+            self.assertEqual(updated["findings"][0]["subtraction"]["what"],
+                             "資料.P-002を削除してP-001を解決する。")
+            self.assertEqual(updated["summary"], "資料.P-002を削除してP-002を直す。")
+            self.assertEqual(updated["decisions"],
+                             [f"{source} を確認してP-002を直す。" for source in sources])
+            self.assertEqual(source.read_text(encoding="utf-8"), "Reviewed source.\n")
+            checked = run_cli("check", target)
+            self.assertEqual(checked.returncode, 0, checked.stderr)
+            before = target.read_bytes()
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            self.assertEqual(target.read_bytes(), before)
+
+    def test_cli_separates_source_brackets_from_finding_annotations(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        cases = (
+            ("[P-002]はapp.pyを確認。", "[P-001]はapp.pyを確認。"),
+            ("{P-002}ではlegacy.pyを確認。", "{P-001}ではlegacy.pyを確認。"),
+            ("(P-002)はapp.pyを確認。", "(P-001)はapp.pyを確認。"),
+            ("[P-002] と {P-001}", "[P-001] と {P-002}"),
+            ("P-002(checked)ではlegacy.pyを確認。", "P-001(checked)ではlegacy.pyを確認。"),
+            ("P-002(資料.P-001)を確認。", "P-001(資料.P-001)を確認。"),
+            ("P-002((資料.P-001))を確認。", "P-001((資料.P-001))を確認。"),
+            ("(資料.P-002)P-001を確認。", "(資料.P-002)P-002を確認。"),
+            ("P-002:資料.P-001", "P-001:資料.P-001"),
+            ("P-002/P-001:資料.P-002", "P-001/P-002:資料.P-002"),
+            ("[P-002](https://example.test/資料.P-002)P-001",
+             "[P-001](https://example.test/資料.P-002)P-002"),
+            ("../資料P-002の仕様.mdを削除してP-001を直す。",
+             "../資料P-002の仕様.mdを削除してP-002を直す。"),
+            (".P-002 と P-001.", ".P-001 と P-002."),
+            ("P-002/P-001について確認。", "P-001/P-002について確認。"),
+            ("foo.mdを削除してP-002を直す。", "foo.mdを削除してP-001を直す。"),
+            ("foo.md(P-002)を確認。", "foo.md(P-001)を確認。"),
+            ("./report.資料P-002を削除してP-001を直す。", "./report.資料P-002を削除してP-002を直す。"),
+            ("src/report.資料P-002を削除してP-001を直す。", "src/report.資料P-002を削除してP-002を直す。"),
+        )
+        data["decisions"] = [before for before, _ in cases]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["decisions"], [after for _, after in cases])
+
+    def test_cli_bounds_unicode_prefix_and_nested_bracket_scans(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        extension = "資料." + "-".join(["P-002"] * 16000)
+        prefix = "資料" * 32000 + ".P-002"
+        nested = "src/" + "[{" * 8000 + "...P-002" + "}]" * 8000 + ".tsx"
+        dotted_path = "archive.v1/" * 16000 + "資料.P-002"
+        dense_notes = "資料(" * 8000 + "-".join(["P-002"] * 8000) + ")" * 8000
+        cases = (
+            (extension + " を確認してP-001を直す。", extension + " を確認してP-002を直す。"),
+            (prefix + " を確認してP-001を直す。", prefix + " を確認してP-002を直す。"),
+            (nested + " を確認してP-001を直す。", nested + " を確認してP-002を直す。"),
+            (dotted_path + " を確認してP-001を直す。", dotted_path + " を確認してP-002を直す。"),
+            (dense_notes, dense_notes.replace("P-002", "P-001")),
+            ("資料(P-002)" * 16000, "資料(P-001)" * 16000),
+            ("資料[P-002" * 16000, "資料[P-001" * 16000),
+            ("{P-002" * 16000, "{P-001" * 16000),
+            ("資料P-002では" * 16000 + "P-001.md", "資料P-001では" * 16000 + "P-001.md"),
+        )
+        data["decisions"] = [before for before, _ in cases]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "findings.py"), "renumber", str(target)],
+                capture_output=True, text=True, timeout=10,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["decisions"], [after for _, after in cases])
+
     def test_cli_disambiguates_unicode_names_and_japanese_references(self):
         data = self.findings_record(location="src/app.py:10")
         second = copy.deepcopy(data["findings"][0])

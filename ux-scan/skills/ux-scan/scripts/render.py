@@ -20,6 +20,7 @@ import os
 import re
 import shlex
 import sys
+import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -29,6 +30,7 @@ from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 OUTPUT_LOCK = ".ux-scan-render.lock"
+OUTPUT_GENERATION = ".ux-scan-render-generation"
 STAMP = "ux-scan-source"
 FLOWS_STAMP = "ux-scan-flows"
 RENDER_STAMP = "ux-scan-render"
@@ -227,7 +229,7 @@ def main(argv=None):
     try:
         out = Path(a.out)
         source_path = Path(a.findings).resolve()
-        for name in OUTPUTS:
+        for name in (*OUTPUTS, OUTPUT_GENERATION):
             target = out / name
             if source_path == target.resolve() or (target.exists() and source_path.samefile(target)):
                 raise ValueError("findings input must be different from every generated output")
@@ -268,10 +270,14 @@ def main(argv=None):
 def write_reports(out, pages, finding_count, no_pdf):
     """Publish one render while its output-directory lock is held."""
     try:
-        bad = output.unsafe_target(out, OUTPUTS)
+        bad = output.unsafe_target(out, (*OUTPUTS, OUTPUT_GENERATION))
         if bad:
             print(f"render.py: refusing to write {bad}: it exists as a symlink or non-regular file", file=sys.stderr)
             return 2
+        # Announce this attempt atomically before changing any report bytes.
+        # Keep the new generation even if publication fails: restoring it
+        # would hide a render that started and finished during a contract check.
+        output.write_output(out / OUTPUT_GENERATION, uuid.uuid4().hex)
         # Stage both pages before replacing either. A failed publication must
         # restore the old pair and PDF together, not leave mixed report versions.
         output.write_outputs(out, {name: seal_page(page) for name, page in pages.items()},

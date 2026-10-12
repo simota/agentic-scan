@@ -3,8 +3,9 @@
 
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
-Passes when OUT holds exactly findings.json, flows.json, inventory.json,
-dashboard.html, report.html and report.pdf (no PDF with --no-pdf, which then
+Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
+report.html and report.pdf, plus optional reserved .ux-scan-render-generation
+metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
 left Unverified; and both complete pages match the current findings, flows and PDF.
@@ -20,8 +21,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
-from render import (FLOWS_STAMP, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP,  # noqa: E402
-                    page_stamp, pdf_stamp, read_regular, source_stamp)
+from render import (FLOWS_STAMP, OUTPUT_GENERATION, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP,  # noqa: E402
+                    PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp)
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
@@ -64,8 +65,26 @@ def rendered_lang(out):
     return "<ja|en>"
 
 
+def read_generation(out):
+    """Read the optional render generation; reports made before it remain valid."""
+    try:
+        generation = read_regular(out / OUTPUT_GENERATION, 32)
+    except FileNotFoundError:
+        return None
+    if not re.fullmatch(rb"[0-9a-f]{32}", generation):
+        raise ValueError("expected a 32-character lowercase hexadecimal render generation")
+    return generation
+
+
 def problems(out, no_pdf=False, allow=()):
     out = Path(out)
+    # Read before looking for the lock, so even a complete intervening render
+    # that acquires and releases it cannot leave an undetected old snapshot.
+    try:
+        generation = read_generation(out)
+    except (OSError, ValueError) as e:
+        yield f"{OUTPUT_GENERATION}: cannot read render generation: {e}"
+        return
     try:
         found = {p.name for p in out.iterdir()}
     except OSError as e:
@@ -88,7 +107,7 @@ def problems(out, no_pdf=False, allow=()):
                     name, f"run {rerender}")
         yield f"{name}: missing; {hint}"
     forbidden = {"report.pdf"} if no_pdf else set()
-    for name in sorted(found - expected - set(allow) - forbidden):
+    for name in sorted(found - expected - set(allow) - forbidden - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")
     if no_pdf and "report.pdf" in found:
@@ -208,9 +227,21 @@ def problems(out, no_pdf=False, allow=()):
         pass
     except OSError as e:
         yield f"{out}: cannot recheck output lock: {e.strerror or e}"
+        return
     else:
         yield (f"{out}: a render started during the contract check; wait for it to finish, "
                "then run contract_check.py again")
+        return
+    # Pair this with the read before the initial lock check. The marker changes
+    # before output mutations and is never rolled back, including failed runs.
+    try:
+        current_generation = read_generation(out)
+    except (OSError, ValueError) as e:
+        yield f"{OUTPUT_GENERATION}: cannot recheck render generation: {e}"
+    else:
+        if current_generation != generation:
+            yield (f"{out}: render generation changed during the contract check; "
+                   "run contract_check.py again after rendering finishes")
 
 
 def main(argv=None):

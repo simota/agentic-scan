@@ -58,7 +58,7 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
 | `scripts/findings.py flows|merge|check|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
-| `scripts/contract_check.py OUT [--no-pdf]` | Exactly the contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record |
+| `scripts/contract_check.py OUT [--no-pdf]` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; detects concurrent renders |
 
 ## Develop
 
@@ -92,6 +92,11 @@ Inventory output includes `parse_warnings` for inputs that could not be fully
 measured; other files still get scanned. Review those warnings and `truncated`
 counts before interpreting the results. The output contract also verifies the
 complete HTML bytes, so older reports need to be rendered again after an upgrade.
+
+Concurrent renders to one output directory are refused. The renderer keeps a
+`.ux-scan-render-generation` file so the contract checker also detects renders
+that start and finish during verification. Keep it with the report outputs;
+recovery and compatibility details are in `skills/ux-scan/reference/report.md`.
 
 `skills/ux-scan/scripts/scan_report_kit/` is a vendored copy of
 scan-report-kit; `make check` verifies it against its MANIFEST. Change it

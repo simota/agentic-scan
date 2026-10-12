@@ -76,8 +76,19 @@ forcibly terminated process can leave it behind: verify that no renderer still
 uses that directory before removing the empty lock with the diagnostic's
 `rmdir` command and rerendering. The contract checker checks for the lock at
 both the start and end of verification and refuses locked outputs, including
-when that name is passed through `--allow`. If it observes a render that began
-during verification, wait for that render to finish and check again.
+when that name is passed through `--allow`.
+
+The renderer also publishes a new `.ux-scan-render-generation` token under the
+lock before changing any report files. It keeps this file after releasing the
+lock, so the checker can detect a render that both starts and finishes during
+verification. The checker reads the token before its first lock check and
+compares it after its last lock check. If a render overlaps verification, wait
+for that render to finish and check again. Keep the generation file with the
+outputs; it is permitted without `--allow`. Older output directories without
+one still work, but a malformed token or non-regular generation file is refused,
+even with `--allow`. A generation-publication failure leaves the reports
+unchanged; later report failures keep the new token so a concurrent check must
+retry.
 
 Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —

@@ -364,12 +364,13 @@ class ReportRegressions(unittest.TestCase):
 
     def test_findings_input_cannot_be_replaced_or_deleted_as_an_output(self):
         record = (self.out / "findings.json").read_bytes()
-        for name in render.OUTPUTS:
+        outputs = (*render.OUTPUTS, render.OUTPUT_GENERATION)
+        for name in outputs:
             for alias_at in (None, "input", "output", "hardlink"):
                 with self.subTest(name=name, alias_at=alias_at):
                     directory = self.root / (name + "-" + str(alias_at))
                     directory.mkdir()
-                    for output_name in render.OUTPUTS:
+                    for output_name in outputs:
                         (directory / output_name).write_bytes(record if output_name == name else b"previous output")
                     before = {path.name: path.read_bytes() for path in directory.iterdir()}
                     source, out = directory / name, directory
@@ -520,6 +521,146 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(len(rendered), 1)
         self.assertEqual(rendered[0][0], 0, rendered[0][2])
         self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_contract_refuses_a_render_that_finishes_after_previous_outputs_were_read(self):
+        self.ready_for_pdf()
+        reader = contract_check.read_regular
+        for legacy in (False, True):
+            with self.subTest(legacy=legacy):
+                with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+                    self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+                if legacy:
+                    (self.out / render.OUTPUT_GENERATION).unlink()
+                self.assertEqual(list(contract_check.problems(self.out)), [])
+                rendered = []
+
+                def read_then_finish_render(path, *args, **kwargs):
+                    contents = reader(path, *args, **kwargs)
+                    if Path(path).name == "report.pdf":
+                        # Complete the whole second render synchronously, so
+                        # neither lock check can observe its transient lock.
+                        rendered.append(self.invoke(no_pdf=True, lang="ja"))
+                    return contents
+
+                with mock.patch.object(contract_check, "read_regular", side_effect=read_then_finish_render):
+                    errors = list(contract_check.problems(self.out))
+                self.assertEqual(len(rendered), 1)
+                self.assertEqual(rendered[0][0], 0, rendered[0][2])
+                self.assertFalse((self.out / render.OUTPUT_LOCK).exists())
+                self.assertFalse((self.out / "report.pdf").exists())
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("render generation changed during the contract check", errors[0])
+
+    def test_generation_is_captured_before_the_initial_directory_listing(self):
+        self.assertEqual(self.invoke()[0], 0)
+        iterdir = Path.iterdir
+        rendered = []
+
+        def rerender_before_listing(path):
+            if path == self.out:
+                rendered.append(self.invoke(lang="ja"))
+            return iterdir(path)
+
+        with mock.patch.object(Path, "iterdir", rerender_before_listing):
+            errors = list(contract_check.problems(self.out, no_pdf=True))
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0][0], 0, rendered[0][2])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("render generation changed during the contract check", errors[0])
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_generation_is_rechecked_after_the_final_lock_check(self):
+        self.assertEqual(self.invoke()[0], 0)
+        lstat = Path.lstat
+        rendered = []
+
+        def rerender_after_lock_check(path, *args, **kwargs):
+            if path == self.out / render.OUTPUT_LOCK:
+                try:
+                    return lstat(path, *args, **kwargs)
+                finally:
+                    rendered.append(self.invoke(lang="ja"))
+            return lstat(path, *args, **kwargs)
+
+        with mock.patch.object(Path, "lstat", rerender_after_lock_check):
+            errors = list(contract_check.problems(self.out, no_pdf=True))
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0][0], 0, rendered[0][2])
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("render generation changed during the contract check", errors[0])
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_bad_generation_markers_cannot_be_allowed_or_redirect_render_writes(self):
+        self.assertEqual(self.invoke()[0], 0)
+        marker = self.out / render.OUTPUT_GENERATION
+        original = marker.read_bytes()
+        before = {name: (self.out / name).read_bytes() for name in ("dashboard.html", "report.html")}
+        for value in (b"", b"not-a-generation", b"A" * 32, b"a" * 33):
+            with self.subTest(value=value):
+                marker.write_bytes(value)
+                errors = list(contract_check.problems(self.out, no_pdf=True, allow=[render.OUTPUT_GENERATION]))
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("cannot read render generation", errors[0])
+        marker.unlink()
+        protected = self.root / "protected-generation"
+        protected.write_bytes(original)
+        for kind in ("symlink", "directory"):
+            with self.subTest(kind=kind):
+                if kind == "symlink":
+                    marker.symlink_to(protected)
+                else:
+                    marker.mkdir()
+                errors = list(contract_check.problems(self.out, no_pdf=True, allow=[render.OUTPUT_GENERATION]))
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("must be a regular file", errors[0])
+                code, _, error = self.invoke()
+                self.assertEqual(code, 2, error)
+                self.assertIn("refusing to write", error)
+                self.assertEqual({name: (self.out / name).read_bytes() for name in before}, before)
+                self.assertEqual(protected.read_bytes(), original)
+                marker.unlink() if kind == "symlink" else marker.rmdir()
+        marker.write_bytes(original)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_generation_write_failure_preserves_existing_reports_and_releases_lock(self):
+        self.ready_for_pdf()
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+        before = {path.name: path.read_bytes() for path in self.out.iterdir()}
+        writer = render.output.write_output
+
+        def fail_generation(path, text):
+            if Path(path).name == render.OUTPUT_GENERATION:
+                raise OSError(errno.ENOSPC, "simulated full disk writing generation")
+            return writer(path, text)
+
+        with mock.patch.object(render.output, "write_output", side_effect=fail_generation):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 2, error)
+        self.assertIn("simulated full disk writing generation", error)
+        self.assertEqual({path.name: path.read_bytes() for path in self.out.iterdir()}, before)
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_a_failed_publication_does_not_restore_the_previous_generation(self):
+        self.assertEqual(self.invoke()[0], 0)
+        marker = self.out / render.OUTPUT_GENERATION
+        previous = marker.read_bytes()
+        before = {name: (self.out / name).read_bytes() for name in ("dashboard.html", "report.html")}
+        writer = render.output.write_output
+
+        def fail_second_page(path, text):
+            if Path(path).name == "report.html":
+                self.assertNotEqual(marker.read_bytes(), previous)
+                raise OSError(errno.ENOSPC, "simulated full disk staging report")
+            return writer(path, text)
+
+        with mock.patch.object(render.output, "write_output", side_effect=fail_second_page):
+            code, _, error = self.invoke()
+        self.assertEqual(code, 2, error)
+        self.assertNotEqual(marker.read_bytes(), previous)
+        self.assertRegex(marker.read_bytes(), rb"^[0-9a-f]{32}$")
+        self.assertEqual({name: (self.out / name).read_bytes() for name in before}, before)
+        self.assertFalse((self.out / render.OUTPUT_LOCK).exists())
 
     def test_output_lock_is_released_after_pdf_errors_and_python_interruption(self):
         self.ready_for_pdf()

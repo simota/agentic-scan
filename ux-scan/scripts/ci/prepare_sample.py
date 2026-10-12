@@ -8,9 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "skills" / "ux-scan" / "scripts"))
 
 from findings import RecordError, check_findings, check_flows, dump, flow_ids, load_json, merge  # noqa: E402
+from render import OUTPUT_GENERATION  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_outputs  # noqa: E402
 
-OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf")
+OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf",
+           OUTPUT_GENERATION)
 
 
 def main(argv=None):

@@ -321,6 +321,14 @@ FINDING_MENTION = re.compile(
     # during rewriting; identifier underscores must remain literal.
     + r"|(?<![A-Za-z0-9])U-[0-9]{3}(?![A-Za-z0-9])")
 UNDERSCORE_RUN = re.compile(r"_+")
+# Other_ID_Start + Other_ID_Continue, Unicode 18.0.0 PropList.txt:
+# https://www.unicode.org/Public/18.0.0/ucd/PropList.txt
+# UAX #31 includes ID_Start in ID_Continue; both exception sets are needed.
+OTHER_IDENTIFIER_CHARACTERS = frozenset(
+    "\u1885\u1886\u2118\u212e\u309b\u309c"
+    "\u00b7\u0387\u1369\u136a\u136b\u136c\u136d\u136e\u136f\u1370\u1371"
+    "\u19da\u200c\u200d\u30fb\uff65"
+)
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
@@ -403,9 +411,11 @@ def _source_token(token):
 
 
 def _word_character(char):
-    # Combining marks and connector punctuation can continue Unicode
-    # identifiers, so their adjacent underscore is not emphasis either.
-    return bool(char) and (char.isalnum() or unicode_category(char) in ("Mn", "Mc", "Me", "Pc"))
+    # Normal character categories follow the runtime's Unicode database. Keep
+    # existing alphanumeric/mark protection and include all Other_ID exceptions,
+    # even where an older Python's narrower XID/isidentifier test excludes them.
+    return bool(char) and (char.isalnum() or unicode_category(char) in ("Mn", "Mc", "Me", "Pc")
+                           or char in OTHER_IDENTIFIER_CHARACTERS)
 
 
 def _underscore_delimiters(value, literal_spans):

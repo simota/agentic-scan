@@ -619,8 +619,17 @@ class TransactionRegressions(unittest.TestCase):
                     ("é", "é"), ("é", ""), ("", "é"),
                     ("e\u0301", "\u0301e"), ("e\u0301", ""), ("", "\u0301e"),
                     ("head\u203f", "\u203ftail"))
+        # Every Other_ID_Start / Other_ID_Continue character in Unicode 18.0.0,
+        # including ID characters that Python's narrower XID test rejects.
+        other_identifier_chars = (
+            "\u1885\u1886\u2118\u212e\u309b\u309c"
+            "\u00b7\u0387\u1369\u136a\u136b\u136c\u136d\u136e\u136f\u1370\u1371"
+            "\u19da\u200c\u200d\u30fb\uff65"
+        )
+        contexts += tuple(pair for char in other_identifier_chars
+                          for pair in (("foo" + char, char + "bar"), ("foo" + char, ""), ("", char + "bar")))
         patterns = ("_U-001 to U-003_", "__U-001 to U-003__", "__U-001__",
-                    "_U-001_ to U-003", "U-001 to _U-003_", "__U-001/U-003__")
+                    "_U-001_ to U-003", "U-001 to _U-003_", "__U-001/U-003__", "_U-001 and U-003_")
         cases = []
         for before, after in contexts:
             for pattern in patterns:

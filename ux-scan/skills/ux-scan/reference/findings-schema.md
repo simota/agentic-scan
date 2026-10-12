@@ -106,6 +106,11 @@ formatting. Spaces inside ID-only code spans are retained. Emphasis wrapping
 the entire range is retained around the expanded list. References in
 underscore-emphasized lists and prose are updated while underscore identifiers,
 including Unicode identifiers, keep their original text.
+Identifier boundary protection uses the running Python's Unicode character
+categories plus all `Other_ID_Start` and `Other_ID_Continue` exceptions from
+[Unicode 18.0.0](https://www.unicode.org/Public/18.0.0/ucd/PropList.txt), including
+join controls. It does not normalize the text; ordinary character categories
+still follow that Python version's Unicode database.
 For example, if `U-001` becomes `U-003` and `U-002` becomes `U-001`,
 `Fix U-001 to U-002` becomes `Fix U-003, U-001`. A range containing a missing id
 is refused when any id in that range moves; replace it with an explicit list

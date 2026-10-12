@@ -165,6 +165,7 @@ class PageMetadata(HTMLParser):
         self.in_head = False
         self.in_body = False
         self.head_children = []
+        self.template_depth = 0
         self.script_tail = None
         self.script_comment = False
         self.stamps = {}
@@ -179,6 +180,8 @@ class PageMetadata(HTMLParser):
             self.invalid = True
 
     def handle_starttag(self, tag, attrs):
+        if tag == "template":
+            self.template_depth += 1
         if tag == "plaintext":
             # Plaintext never returns to markup, so the explicit envelope
             # required by this contract cannot close after it starts.
@@ -222,6 +225,13 @@ class PageMetadata(HTMLParser):
         self.handle_starttag(tag, attrs)
 
     def handle_endtag(self, tag):
+        if tag == "template" and self.template_depth:
+            self.template_depth -= 1
+        elif tag in ("html", "head", "body") and self.template_depth:
+            # Template children still produce parser callbacks, but their
+            # document end tags are inert. Closing the template later cannot
+            # turn those tags into the document's explicit closing envelope.
+            self.invalid = True
         if tag == "script":
             self.script_tail = None
             self.script_comment = False
@@ -279,7 +289,7 @@ class PageMetadata(HTMLParser):
 
     @property
     def complete(self):
-        return (not self.invalid and not self.head_children
+        return (not self.invalid and not self.head_children and not self.template_depth
                 and self.envelope == ["html", "head", "/head", "body", "/body", "/html"])
 
 

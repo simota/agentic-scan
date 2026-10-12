@@ -325,6 +325,106 @@ def check_findings(data, units=None, ordered=True):
 
 # ASCII identifier boundaries also recognize references next to Japanese prose.
 FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?![A-Za-z0-9_])")
+PROSE_TOKEN = re.compile(r"[A-Za-z0-9_./\\:~%+$@?=&#!-]+")
+PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?:-[\w-]*)?"
+                                      r"(?:\([^()\s]*\)(?:-[\w-]*)?)*(?P<extension>\.[A-Za-z0-9_-]+)?")
+PROSE_URL = re.compile(r"https?://", re.IGNORECASE)
+
+
+def rewrite_prose(text, mapping, source_literals):
+    """Renumber bare finding references, keeping explicit source identities literal.
+
+    Paths, filenames, path:line locations and URLs also appear in narrative
+    evidence and subtraction instructions. ID-only slash lists remain finding
+    references; a bare P-* cannot unambiguously name both a source and a finding.
+    Known location/occurrence paths and citation URLs cover source identities
+    containing spaces, Unicode or punctuation that also delimits prose.
+    """
+    if not FINDING_REF.search(text):
+        return text
+    literal = []
+    url_end = 0
+    for match in PROSE_URL.finditer(text):
+        if match.start() < url_end:
+            continue
+        # Balance URL brackets so a Markdown link's closing ')' does not absorb
+        # adjacent finding references, while parentheses within a URL survive.
+        closing, end = [], match.end()
+        brackets = {"(": ")", "[": "]", "{": "}"}
+        while end < len(text):
+            char = text[end]
+            if char.isspace() or char in "<>\"'`、。，「」『』（）【】":
+                break
+            if char in brackets:
+                closing.append(brackets[char])
+            elif char in ")]}":
+                if not closing or closing.pop() != char:
+                    break
+            end += 1
+        literal.append((match.start(), end))
+        url_end = end
+    for match in PROSE_TOKEN.finditer(text):
+        token = match.group().rstrip(".:!?")
+        start = match.start()
+        # A finding label can directly precede a source: P-002:src/P-001.py.
+        # Keep only the source inside the protected range. A numeric suffix
+        # instead means a file location, including P-002:10 or P-002/P-001:10.
+        while True:
+            label = re.match(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})*:", token)
+            if not label or re.fullmatch(r"[1-9][0-9]*(?:-[1-9][0-9]*)?", token[label.end():]):
+                break
+            start += label.end()
+            token = token[label.end():]
+        if not FINDING_REF.search(token):
+            continue
+        id_list = re.fullmatch(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})+", token)
+        path = ("/" in token or "\\" in token) and not id_list
+        if (path or re.search(r"[^.]\.[A-Za-z0-9_]", token)
+                or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?\Z", token)):
+            literal.append((start, start + len(token)))
+    # Protect explicitly continued names such as P-002-仕様.md or P-002(old).md.
+    # A bare ID followed by a Japanese particle remains a finding reference,
+    # even if the sentence later names a file. Stop at the ASCII extension so
+    # Japanese prose and another reference after the file stay outside it.
+    # Parentheses need the same explicit continuation: P-002(checked)はapp.py
+    # is a finding with a note, not a file name.
+    # Consume candidates even without an extension, so P-002-P-002-... is
+    # scanned once instead of retrying the same suffix at every embedded ID.
+    for match in PROSE_FILENAME_CANDIDATE.finditer(text):
+        if match["extension"]:
+            literal.append(match.span())
+        else:
+            # A non-file note may itself name a file: P-002(P-001-仕様.md).
+            # Candidate notes contain no nested parentheses, so rechecking
+            # their disjoint contents adds only one bounded extra scan.
+            for note in re.finditer(r"\(([^()\s]*)\)", match.group()):
+                offset = match.start() + note.start(1)
+                for source in PROSE_FILENAME_CANDIDATE.finditer(note.group(1)):
+                    if source["extension"]:
+                        literal.append((offset + source.start(), offset + source.end()))
+    for source in source_literals:
+        start = text.find(source)
+        while start >= 0:
+            literal.append((start, start + len(source)))
+            start = text.find(source, start + len(source))
+
+    spans = []
+    for start, end in sorted(literal):
+        if spans and start <= spans[-1][1]:
+            spans[-1] = spans[-1][0], max(end, spans[-1][1])
+        else:
+            spans.append((start, end))
+    index = 0
+
+    def replace(match):
+        nonlocal index
+        while index < len(spans) and spans[index][1] <= match.start():
+            index += 1
+        if index < len(spans) and spans[index][0] <= match.start() and match.end() <= spans[index][1]:
+            return match.group()
+        return mapping.get(match.group(), match.group())
+
+    return FINDING_REF.sub(replace, text)
 
 
 def renumber_map(findings):
@@ -348,10 +448,15 @@ def renumber(data, mapping):
         "perspective": ("name",),
     }
     sections = {"findings": "finding", "perspectives": "perspective"}
+    source_literals = {location.rpartition(":")[0] for finding in data["findings"]
+                       for location in [finding["location"], *finding.get("occurrences", [])]}
+    source_literals.update(ref["url"] for finding in data["findings"] for ref in finding.get("references", []))
+    source_literals = tuple(source for source in source_literals
+                            if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
 
     def rewrite(value, section=None, literal=False):
         if isinstance(value, str):
-            return value if literal else FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return value if literal else rewrite_prose(value, mapping, source_literals)
         if isinstance(value, dict):
             return {k: rewrite(v, sections.get(k) if section == "record" else None,
                                literal or k in literal_fields.get(section, ()))

@@ -31,6 +31,7 @@ from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_
                       record_exists)
 from safe_paths import open_directory  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at  # noqa: E402
+from safe_source import PRIVATE_KEY, SECRET_NAME, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
@@ -39,10 +40,7 @@ UNITS_STAMP = "prune-scan-units"
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
                        r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
                        r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc)(?:/|$)")
-SECRET_NAME = re.compile(r"(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
-                         r"api[_-]?key|private[_-]?key|client[_-]?secret)", re.I)
 SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
-PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 80
@@ -164,7 +162,7 @@ def snippet(repo, location, *, selected=None):
         # A recognized secret name suppresses the entire bounded source:
         # values may continue across methods, operators and comments in
         # different languages, even beyond the selected excerpt's lines.
-        if PRIVATE_KEY.search(text) or SECRET_NAME.search(text):
+        if sensitive_source(text):
             return None
         lines = text.splitlines()
     except (ValueError, OSError, RuntimeError):

@@ -105,3 +105,10 @@ Renumbering updates finding ids and narrative references. Repository locations,
 target names, observed code or configuration, classification labels, external
 reference metadata and review metadata remain unchanged, even when they contain
 a string shaped like a finding id (for example, `docs/P-002.md:1`).
+In narrative prose, explicit URLs, paths, filenames with extensions and
+`path:line` locations also remain literal, as do known paths from `location`
+and `occurrences` and URLs from `references.url`. Markdown link labels are
+updated while their source destinations are preserved. Bare references next
+to Japanese text and ID-only lists such as `P-001/P-002` are renumbered. When
+a real file is named only `P-002`, write `./P-002` or `P-002:10` in prose to
+distinguish the file from a finding reference.

@@ -388,11 +388,69 @@ class RenumberRegressionTests(unittest.TestCase):
         data["summary"] = "関連するP-002を先に確認し、P-001は後にする。"
         data["decisions"] = ["P-002とP-001の依存を確認。"]
         data["next_steps"] = ["XP-002 P-0020 P-002_extra"]
+        data["extra"] = {"location": ["P-002を確認"], "meta": {"note": "P-001の補足"}}
+        before = copy.deepcopy(data)
         result = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(result["summary"], "関連するP-001を先に確認し、P-002は後にする。")
         self.assertEqual(result["decisions"], ["P-001とP-002の依存を確認。"])
         self.assertEqual(result["next_steps"], data["next_steps"])
+        self.assertEqual(result["extra"], {"location": ["P-001を確認"], "meta": {"note": "P-002の補足"}})
+        self.assertEqual(data, before)
         findings.check_findings(result)
+
+    def test_renumber_preserves_source_identities_and_updates_finding_references(self):
+        data = record()
+        data["meta"].update(project="P-002", assessor="Reviewer P-002", repo="https://example.com/P-002",
+                            scope="docs/P-002.md", method="P-002 audit method", commit="0a1b2c3d4e5f60718293a4b5c6d7e8f901234567")
+        literal_fields = {
+            "location": "docs/P-002.md:1", "occurrences": ["docs/P-002.md:2"],
+            "element": "Document docs/P-002.md", "observed": "open('docs/P-002.md')",
+            "category": "P-002 package",
+            "references": [{"url": "https://example.com/docs/P-002.md", "type": "P-002 specification",
+                            "title": "P-002 API documentation"}],
+        }
+        item = data["findings"][0]
+        item.update(id="P-002", **literal_fields)
+        for field in ("title", "basis", "impact", "risk"):
+            item[field] = "P-002を確認。"
+        for field in ("what", "remains", "loses"):
+            item["subtraction"][field] = "P-002と関連。"
+        for field in ("evidence", "dynamic_checked"):
+            item["validation"][field] = "P-002で検証済み。"
+        data["perspectives"] = [{"name": "DC P-002 package", "result": "P-002を報告", "note": "P-002を確認"}]
+        data["summary"] = "P-002を先に確認。"
+        data["decisions"] = ["P-002を削除。"]
+        findings.check_findings(data, ordered=False)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            document = root / "docs" / "P-002.md"
+            document.parent.mkdir()
+            document.write_text("source first line\nsource second line\n", encoding="utf-8")
+            target = root / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            result = run_cli("renumber", target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            findings.check_findings(updated)
+            self.assertEqual(updated["meta"], data["meta"])
+            actual = updated["findings"][0]
+            self.assertEqual(actual["id"], "P-001")
+            self.assertEqual({field: actual[field] for field in literal_fields}, literal_fields)
+            self.assertTrue((root / actual["location"].rpartition(":")[0]).is_file())
+            for field in ("title", "basis", "impact", "risk"):
+                self.assertEqual(actual[field], "P-001を確認。")
+            for field in ("what", "remains", "loses"):
+                self.assertEqual(actual["subtraction"][field], "P-001と関連。")
+            for field in ("evidence", "dynamic_checked"):
+                self.assertEqual(actual["validation"][field], "P-001で検証済み。")
+            self.assertEqual(updated["summary"], "P-001を先に確認。")
+            self.assertEqual(updated["decisions"], ["P-001を削除。"])
+            self.assertEqual(updated["perspectives"],
+                             [{"name": "DC P-002 package", "result": "P-001を報告", "note": "P-001を確認"}])
+            before = target.read_bytes()
+            result = run_cli("renumber", target)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(target.read_bytes(), before)
 
 
 if __name__ == "__main__":

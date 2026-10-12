@@ -13,8 +13,8 @@ points and units by id and consumers by name, and replaces app. Both check the
 result before replacing anything, then write it atomically; a refused fragment
 changes nothing. merge accepts findings in any order; renumber then numbers
 them P-001.. by severity, then path and line (FalsePositive / NotApplicable
-last), and rewrites every P-* reference in the record. check, render.py and
-contract_check.py require that order. Standard library only.
+last), and rewrites P-* finding references while preserving source identities.
+check, render.py and contract_check.py require that order. Standard library only.
 Exit status: 0 ok, 2 invalid input (reasons on stderr).
 """
 
@@ -336,17 +336,29 @@ def renumber_map(findings):
 
 
 def renumber(data, mapping):
-    """Rewrite every P-* reference in data's strings at once, then order the findings by id."""
-    def rewrite(value):
+    """Rewrite finding ids and prose references, retaining the identities of the reviewed sources."""
+    # These schema fields describe the review's provenance, actual source data,
+    # external citations or category names. An embedded P-* is not a finding id.
+    # Match their schema locations, so names in unknown extensions still rewrite.
+    literal_fields = {
+        "record": ("meta",),
+        "finding": ("element", "observed", "location", "occurrences", "references", "category"),
+        "perspective": ("name",),
+    }
+    sections = {"findings": "finding", "perspectives": "perspective"}
+
+    def rewrite(value, section=None, literal=False):
         if isinstance(value, str):
-            return FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return value if literal else FINDING_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
         if isinstance(value, dict):
-            return {k: rewrite(v) for k, v in value.items()}
+            return {k: rewrite(v, sections.get(k) if section == "record" else None,
+                               literal or k in literal_fields.get(section, ()))
+                    for k, v in value.items()}
         if isinstance(value, list):
-            return [rewrite(v) for v in value]
+            return [rewrite(v, section, literal) for v in value]
         return value
     try:
-        data = rewrite(data)
+        data = rewrite(data, "record")
     except RecursionError:
         raise RecordError("findings: JSON nesting is too deep to renumber") from None
     data["findings"].sort(key=lambda f: f["id"])

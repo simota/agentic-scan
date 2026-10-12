@@ -93,3 +93,8 @@ The three-digit id format supports at most 999 findings in one record,
 including excluded findings. Text must be valid Unicode without NUL characters;
 finding titles must fit on one line. Reference `type` and `title`, when supplied,
 must be strings, and URLs must also pass the shared renderer's http(s) checks.
+
+Renumbering updates finding ids and narrative references. Repository locations,
+target names, observed code or configuration, classification labels, external
+reference metadata and review metadata remain unchanged, even when they contain
+a string shaped like a finding id (for example, `docs/P-002.md:1`).

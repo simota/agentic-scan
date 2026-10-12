@@ -146,6 +146,71 @@ class RenumberProseTests(unittest.TestCase):
             for name in ("P-002(archive).md", "P-002-仕様.md"):
                 self.assertEqual((directory / name).read_text(encoding="utf-8"), "Reviewed source.\n")
 
+    def test_cli_preserves_unicode_extensions_beside_finding_references(self):
+        data = self.findings_record(location="src/app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        data["findings"][0]["element"] = "P-002.資料"
+        data["findings"][0]["subtraction"]["what"] = "P-002.資料 を削除して P-002 を解決する。"
+        data["summary"] = "P-002.資料を削除してP-001を直す。"
+        cases = (
+            ("P-002(archive).資料を削除してP-001を直す。",
+             "P-002(archive).資料を削除してP-002を直す。"),
+            ("foo-P-002.資料 を確認してP-001を直す。",
+             "foo-P-002.資料 を確認してP-002を直す。"),
+            ("P-002(P-001.資料)を確認。", "P-001(P-001.資料)を確認。"),
+            ("P-002.данные と P-002.résumé-P-001 を削除してP-001を直す。",
+             "P-002.данные と P-002.résumé-P-001 を削除してP-002を直す。"),
+            ("P-002.📄を削除してP-001を直す。", "P-002.📄を削除してP-002を直す。"),
+            ("P-002.\u0301txtを削除してP-001を直す。", "P-002.\u0301txtを削除してP-002を直す。"),
+            ("P-002.re\u0301sume\u0301-P-001 を削除してP-001を直す。",
+             "P-002.re\u0301sume\u0301-P-001 を削除してP-002を直す。"),
+            ("P-002(P-001.📄)を確認。", "P-001(P-001.📄)を確認。"),
+            ("P-002.👩\u200d💻-P-001 を削除してP-001を直す。",
+             "P-002.👩\u200d💻-P-001 を削除してP-002を直す。"),
+            ("P-002/P-001.資料 と P-002\\P-001.資料 を削除してP-001を直す。",
+             "P-002/P-001.資料 と P-002\\P-001.資料 を削除してP-002を直す。"),
+            ("P-002/P-001(archive).md と P-002\\P-001(archive).📄 を削除してP-001を直す。",
+             "P-002/P-001(archive).md と P-002\\P-001(archive).📄 を削除してP-002を直す。"),
+            ("P-002/P-001. P-001 を直す。P-002。P-002.",
+             "P-001/P-002. P-002 を直す。P-001。P-001."),
+            ("P-002/P-001(確認済み)を確認。", "P-001/P-002(確認済み)を確認。"),
+        )
+        data["decisions"] = [before for before, _ in cases]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = run_cli("renumber", target)
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["findings"][0]["element"], "P-002.資料")
+            self.assertEqual(updated["findings"][0]["subtraction"]["what"],
+                             "P-002.資料 を削除して P-001 を解決する。")
+            self.assertEqual(updated["summary"], "P-002.資料を削除してP-002を直す。")
+            self.assertEqual(updated["decisions"], [after for _, after in cases])
+
+    def test_known_source_matches_preserve_overlaps_and_unicode_offsets(self):
+        data = self.findings_record(location="app.py:10")
+        second = copy.deepcopy(data["findings"][0])
+        second.update(id="P-001", severity="Info")
+        data["findings"].append(second)
+        data["findings"][0]["occurrences"] = ["P-002 P-002:1", "P-002 P-001 note:1",
+                                               "P-001 note:1", "note P-002 end:1"]
+        data["summary"] = "😀P-002 P-002 P-002 と P-002 P-001 note P-002 end。P-001を直す。"
+        self.assertEqual(self.renumbered(data)["summary"],
+                         "😀P-002 P-002 P-002 と P-002 P-001 note P-002 end。P-002を直す。")
+
+    def test_known_source_matching_restarts_at_each_narrative_field(self):
+        data = self.findings_record(location="P-002 note P-002:1")
+        data["summary"] = "P-002 note "
+        data["findings"][0]["basis"] = "P-002"
+        data["extra"] = {"note": "P-002 note P-002"}
+        updated = self.renumbered(data)
+        self.assertEqual(updated["summary"], "P-001 note ")
+        self.assertEqual(updated["findings"][0]["basis"], "P-001")
+        self.assertEqual(updated["extra"], {"note": "P-002 note P-002"})
+
     def test_cli_updates_id_labels_without_absorbing_the_following_path(self):
         data = self.findings_record(location="src/app.py:10")
         second = copy.deepcopy(data["findings"][0])
@@ -153,7 +218,8 @@ class RenumberProseTests(unittest.TestCase):
         data["findings"].append(second)
         data["summary"] = "P-002:src/app.py の問題。P-001:src/other.py の問題。"
         data["decisions"] = ["P-002/P-001:done", "P-002:src/P-001.py:10 を根拠に P-001を確認。",
-                             "P-002:123 と P-002/P-001:10 はファイル位置。"]
+                             "P-002:123 と P-002/P-001:10 はファイル位置。",
+                             "P-002:P-001:done", "P-002:P-001:10"]
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "findings.json"
             target.write_text(json.dumps(data), encoding="utf-8")
@@ -163,7 +229,8 @@ class RenumberProseTests(unittest.TestCase):
             self.assertEqual(updated["summary"], "P-001:src/app.py の問題。P-002:src/other.py の問題。")
             self.assertEqual(updated["decisions"],
                              ["P-001/P-002:done", "P-001:src/P-001.py:10 を根拠に P-002を確認。",
-                              "P-002:123 と P-002/P-001:10 はファイル位置。"])
+                              "P-002:123 と P-002/P-001:10 はファイル位置。",
+                              "P-001:P-002:done", "P-001:P-001:10"])
 
     def test_cli_updates_japanese_references_beside_source_names(self):
         data = self.findings_record(location="src/app.py:10")
@@ -220,6 +287,8 @@ class RenumberProseTests(unittest.TestCase):
     def test_cli_renumbers_long_hyphenated_id_list_without_rescanning_suffixes(self):
         data = self.findings_record(location="app.py:10")
         data["summary"] = "-".join(["P-002"] * 16000)
+        filename = "P-002(archive)." + ".".join(["P-002"] * 16000)
+        data["decisions"] = [f"{filename} を確認してP-002を直す。"]
         with tempfile.TemporaryDirectory() as temporary:
             target = Path(temporary) / "findings.json"
             target.write_text(json.dumps(data), encoding="utf-8")
@@ -230,6 +299,57 @@ class RenumberProseTests(unittest.TestCase):
             self.assertEqual(completed.returncode, 0, completed.stderr)
             updated = json.loads(target.read_text(encoding="utf-8"))
             self.assertEqual(updated["summary"], "-".join(["P-001"] * 16000))
+            self.assertEqual(updated["decisions"], [f"{filename} を確認してP-001を直す。"])
+
+    def test_cli_indexes_many_sources_once_for_all_narrative_fields(self):
+        data = self.findings_record(location="app.py:10")
+        item = data["findings"][0]
+        item["occurrences"] = [f"docs/path-{index:05d}/P-002.md:10" for index in range(10000)]
+        item["occurrences"].append("P-002 appendix:1")
+        prose = "P-002 " + "x" * 1000000 + " P-002 appendix; resolve P-002."
+        expected = "P-001 " + "x" * 1000000 + " P-002 appendix; resolve P-001."
+        for field in ("basis", "impact", "risk"):
+            item[field] = prose
+        for field in findings.SUBTRACTION_FIELDS:
+            item["subtraction"][field] = prose
+        for field in ("evidence", "dynamic_checked"):
+            item["validation"][field] = prose
+        data["summary"] = prose
+        for field in ("next_steps", "decisions", "checked_ok"):
+            data[field] = [prose]
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "findings.py"), "renumber", str(target)],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            item = updated["findings"][0]
+            for field in ("basis", "impact", "risk"):
+                self.assertEqual(item[field], expected)
+            for field in findings.SUBTRACTION_FIELDS:
+                self.assertEqual(item["subtraction"][field], expected)
+            for field in ("evidence", "dynamic_checked"):
+                self.assertEqual(item["validation"][field], expected)
+            self.assertEqual(updated["summary"], expected)
+            for field in ("next_steps", "decisions", "checked_ok"):
+                self.assertEqual(updated[field], [expected])
+
+    def test_cli_renumbers_long_label_chain_without_copying_each_suffix(self):
+        data = self.findings_record(location="app.py:10")
+        data["summary"] = "P-002:" * 250000 + "done"
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            completed = subprocess.run(
+                [sys.executable, str(SCRIPTS / "findings.py"), "renumber", str(target)],
+                capture_output=True, text=True, timeout=5,
+            )
+            self.assertEqual(completed.returncode, 0, completed.stderr)
+            updated = json.loads(target.read_text(encoding="utf-8"))
+            self.assertEqual(updated["summary"], "P-001:" * 250000 + "done")
 
     def test_cli_keeps_evidence_and_removal_targets_consistent_and_is_idempotent(self):
         data = self.findings_record()

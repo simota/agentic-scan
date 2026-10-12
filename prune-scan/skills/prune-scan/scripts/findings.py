@@ -24,6 +24,8 @@ import os
 import re
 import stat
 import sys
+import unicodedata
+from collections import deque
 from datetime import date
 from pathlib import Path
 
@@ -326,9 +328,94 @@ def check_findings(data, units=None, ordered=True):
 # ASCII identifier boundaries also recognize references next to Japanese prose.
 FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?![A-Za-z0-9_])")
 PROSE_TOKEN = re.compile(r"[A-Za-z0-9_./\\:~%+$@?=&#!-]+")
-PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])P-[0-9]{3}(?:-[\w-]*)?"
-                                      r"(?:\([^()\s]*\)(?:-[\w-]*)?)*(?P<extension>\.[A-Za-z0-9_-]+)?")
+PROSE_LABEL = re.compile(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})*:")
+PROSE_LINE_RANGE = re.compile(r"[1-9][0-9]*(?:-[1-9][0-9]*)?")
+PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[0-9]{3}"
+                                      r"(?:-[\w-]*)?(?:\([^()\s]*\)(?:-[\w-]*)?)*")
 PROSE_URL = re.compile(r"https?://", re.IGNORECASE)
+
+
+class SourceLiteralIndex:
+    """Match known source substrings in one pass, sharing a trie across fields."""
+
+    def __init__(self, sources):
+        self.children, self.failure, self.longest = [{}], [0], [0]
+        for source in sources:
+            if not source:
+                continue
+            state = 0
+            for char in source:
+                child = self.children[state].get(char)
+                if child is None:
+                    child = len(self.children)
+                    self.children[state][char] = child
+                    self.children.append({})
+                    self.failure.append(0)
+                    self.longest.append(0)
+                state = child
+            self.longest[state] = len(source)
+
+        pending = deque(self.children[0].values())
+        while pending:
+            state = pending.popleft()
+            for char, child in self.children[state].items():
+                fallback = self.failure[state]
+                while fallback and char not in self.children[fallback]:
+                    fallback = self.failure[fallback]
+                self.failure[child] = self.children[fallback].get(char, 0)
+                # At a shared end, the longest literal covers all its suffixes.
+                self.longest[child] = max(self.longest[child], self.longest[self.failure[child]])
+                pending.append(child)
+
+    def spans(self, text):
+        """Yield at most one match per character, retaining overlapping sources."""
+        children, failure, longest = self.children, self.failure, self.longest
+        if len(children) == 1:
+            return
+        state = 0
+        for end, char in enumerate(text, 1):
+            while state and char not in children[state]:
+                state = failure[state]
+            state = children[state].get(char, 0)
+            if longest[state]:
+                yield end - longest[state], end
+
+
+def prose_filename_spans(text):
+    """Find explicit filenames without absorbing adjacent finding references."""
+    protected_end = 0
+    for match in PROSE_FILENAME_CANDIDATE.finditer(text):
+        if match.start() < protected_end:
+            continue
+        extension = match.end()
+        if extension < len(text) and text[extension] == ".":
+            end = extension + 1
+            while end < len(text):
+                char = text[end]
+                # Support letters, marks and symbols in Unicode extensions,
+                # including decomposed accents and joined emoji. Ordinary
+                # prose punctuation still ends the filename.
+                if not (char.isalnum() or char in "_-\u200c\u200d"
+                        or (not char.isascii() and unicodedata.category(char)[0] in "MS")
+                        or (char == "." and end > extension + 1)):
+                    break
+                # In .資料を削除してP-001, the final ID is a prose reference.
+                # A hyphen instead explicitly continues a name: .資料-P-001.
+                if (char == "P" and not text[end - 1].isascii()
+                        and FINDING_REF.match(text, end)):
+                    break
+                end += 1
+            if end > extension + 1:
+                protected_end = end
+                yield match.start(), end
+                continue
+        # A non-file note may itself name a file: P-002(P-001.資料).
+        # Candidate notes contain no nested parentheses, so their disjoint
+        # contents add only one bounded extra scan.
+        for note in re.finditer(r"\(([^()\s]*)\)", match.group()):
+            offset = match.start() + note.start(1)
+            for start, end in prose_filename_spans(note.group(1)):
+                yield offset + start, offset + end
 
 
 def rewrite_prose(text, mapping, source_literals):
@@ -365,16 +452,18 @@ def rewrite_prose(text, mapping, source_literals):
         url_end = end
     for match in PROSE_TOKEN.finditer(text):
         token = match.group().rstrip(".:!?")
-        start = match.start()
         # A finding label can directly precede a source: P-002:src/P-001.py.
         # Keep only the source inside the protected range. A numeric suffix
         # instead means a file location, including P-002:10 or P-002/P-001:10.
+        # Advance an offset so long label chains do not copy every suffix.
+        offset = 0
         while True:
-            label = re.match(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})*:", token)
-            if not label or re.fullmatch(r"[1-9][0-9]*(?:-[1-9][0-9]*)?", token[label.end():]):
+            label = PROSE_LABEL.match(token, offset)
+            if not label or PROSE_LINE_RANGE.fullmatch(token, label.end()):
                 break
-            start += label.end()
-            token = token[label.end():]
+            offset = label.end()
+        start = match.start() + offset
+        token = token[offset:]
         if not FINDING_REF.search(token):
             continue
         id_list = re.fullmatch(r"P-[0-9]{3}(?:[/\\]P-[0-9]{3})+", token)
@@ -384,29 +473,15 @@ def rewrite_prose(text, mapping, source_literals):
             literal.append((start, start + len(token)))
     # Protect explicitly continued names such as P-002-仕様.md or P-002(old).md.
     # A bare ID followed by a Japanese particle remains a finding reference,
-    # even if the sentence later names a file. Stop at the ASCII extension so
-    # Japanese prose and another reference after the file stay outside it.
+    # even if the sentence later names a file.
     # Parentheses need the same explicit continuation: P-002(checked)はapp.py
     # is a finding with a note, not a file name.
     # Consume candidates even without an extension, so P-002-P-002-... is
     # scanned once instead of retrying the same suffix at every embedded ID.
-    for match in PROSE_FILENAME_CANDIDATE.finditer(text):
-        if match["extension"]:
-            literal.append(match.span())
-        else:
-            # A non-file note may itself name a file: P-002(P-001-仕様.md).
-            # Candidate notes contain no nested parentheses, so rechecking
-            # their disjoint contents adds only one bounded extra scan.
-            for note in re.finditer(r"\(([^()\s]*)\)", match.group()):
-                offset = match.start() + note.start(1)
-                for source in PROSE_FILENAME_CANDIDATE.finditer(note.group(1)):
-                    if source["extension"]:
-                        literal.append((offset + source.start(), offset + source.end()))
-    for source in source_literals:
-        start = text.find(source)
-        while start >= 0:
-            literal.append((start, start + len(source)))
-            start = text.find(source, start + len(source))
+    literal.extend(prose_filename_spans(text))
+    if not isinstance(source_literals, SourceLiteralIndex):
+        source_literals = SourceLiteralIndex(source_literals)
+    literal.extend(source_literals.spans(text))
 
     spans = []
     for start, end in sorted(literal):
@@ -451,8 +526,8 @@ def renumber(data, mapping):
     source_literals = {location.rpartition(":")[0] for finding in data["findings"]
                        for location in [finding["location"], *finding.get("occurrences", [])]}
     source_literals.update(ref["url"] for finding in data["findings"] for ref in finding.get("references", []))
-    source_literals = tuple(source for source in source_literals
-                            if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
+    source_literals = SourceLiteralIndex(source for source in source_literals
+                                         if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
 
     def rewrite(value, section=None, literal=False):
         if isinstance(value, str):

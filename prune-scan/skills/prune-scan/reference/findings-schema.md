@@ -112,3 +112,10 @@ updated while their source destinations are preserved. Bare references next
 to Japanese text and ID-only lists such as `P-001/P-002` are renumbered. When
 a real file is named only `P-002`, write `./P-002` or `P-002:10` in prose to
 distinguish the file from a finding reference.
+
+Filename extensions can contain Unicode letters, combining marks and symbols,
+including `P-002.資料` and `P-002.📄`. Whitespace and surrounding prose punctuation
+delimit extensions. A bare finding id following Unicode prose still starts a
+new reference: in `P-002.資料を削除してP-001を直す。`, the filename remains unchanged
+and the final finding reference is renumbered. An ID-only directory prefix is
+part of a filename when an extension follows, as in `P-002/P-001.資料`.

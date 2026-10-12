@@ -99,6 +99,11 @@ class PageMetadata(HTMLParser):
     VOID_TAGS = frozenset(("area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta",
                            "param", "source", "track", "wbr"))
     HEAD_TAGS = frozenset(("base", "link", "meta", "title", "style", "script", "template"))
+    # Older supported Python releases only recognize script/style as text.
+    # Keep other text elements opaque too, using scripting-enabled noscript,
+    # so their contents cannot supply the document's closing tags.
+    CDATA_CONTENT_ELEMENTS = HTMLParser.CDATA_CONTENT_ELEMENTS + (
+        "title", "textarea", "xmp", "iframe", "noembed", "noframes", "noscript")
     HTML_WHITESPACE = " \t\n\r\f"
     NUMERIC_REFERENCES = re.compile(r"&#(?:[xX][0-9a-fA-F]+|[0-9]+);?")
     SCRIPT_OPEN = re.compile(r"<script(?=[\t\n\f\r />])", re.IGNORECASE | re.ASCII)
@@ -127,6 +132,10 @@ class PageMetadata(HTMLParser):
             self.invalid = True
 
     def handle_starttag(self, tag, attrs):
+        if tag == "plaintext":
+            # Plaintext never returns to markup, so the explicit envelope
+            # required by this contract cannot close after it starts.
+            self.invalid = True
         if tag == "script":
             self.script_tail = ""
             self.script_comment = False

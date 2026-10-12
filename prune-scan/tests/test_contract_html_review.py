@@ -147,6 +147,20 @@ class ContractHtmlReviewTests(unittest.TestCase):
             with self.subTest(tag=tag):
                 self.assert_rejected(self.page.replace("</head>", f"<{tag}></head>", 1))
 
+    def test_unclosed_body_text_elements_cannot_supply_document_closing_tags(self):
+        for tag in ("textarea", "title", "xmp", "iframe", "noembed", "noframes", "plaintext", "noscript"):
+            with self.subTest(tag=tag):
+                self.assert_rejected(self.page.replace("<body>", f"<body><{tag}>", 1))
+        self.assert_rejected(self.page.replace("Report", "<plaintext>Report</plaintext>", 1))
+
+    def test_closed_body_text_elements_keep_apparent_closing_tags_as_text(self):
+        for tag in ("textarea", "title", "xmp", "iframe", "noembed", "noframes", "noscript"):
+            with self.subTest(tag=tag):
+                content = f'<{tag}>Text &amp; <p>fallback</p> </body></html></{tag}><p>Report</p>'
+                self.assert_accepted(self.page.replace("Report", content, 1))
+        fallback = '<noscript><p>Enable scripts or <a href="report.html">read the report</a>.</p></noscript>'
+        self.assert_accepted(self.page.replace("Report", fallback, 1))
+
     def test_control_references_cannot_be_dropped_from_stamp_attributes(self):
         for reference in ("&#11;", "&#x1f;", "&#127;", "&#xFFFF;"):
             for value in (contract_check.STAMP, "sha256:"):

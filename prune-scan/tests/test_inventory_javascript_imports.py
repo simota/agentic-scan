@@ -148,6 +148,40 @@ class JavaScriptImportTests(unittest.TestCase):
                 self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["orphan_files"],
                                  [{"path": "unused.ts", "test_importers": []}])
 
+    def test_large_quoted_bindings_and_incomplete_clauses_finish_within_timeout(self):
+        quoted_name = json.dumps('from "unused-pkg"')
+        bindings = "".join(f"  {quoted_name} as local{index},\n" for index in range(30000))
+        sources = {
+            "quoted_import": 'import {\n' + bindings + '} from "./helper";\n',
+            "unclosed_brace": "import { " + "import export " * 50000,
+            "nested_braces": "import { " * 60000,
+            "unclosed_quote": 'import { "' + "import { export " * 50000,
+        }
+        for kind, source in sources.items():
+            with self.subTest(kind=kind), tempfile.TemporaryDirectory() as tmp:
+                parent = Path(tmp)
+                root = parent / "repo"
+                root.mkdir()
+                self.assertLess(len(source.encode("utf-8")), inventory.MAX_BYTES)
+                (root / "main.ts").write_text(source, encoding="utf-8")
+                (root / "helper.ts").write_text(
+                    f"const value = 1; export {{ value as {quoted_name} }};\n", encoding="utf-8")
+                (root / "unused.ts").write_text("export default 1;\n", encoding="utf-8")
+                (root / "package.json").write_text(json.dumps({
+                    "dependencies": {"unused-pkg": "1"},
+                }), encoding="utf-8")
+                output = parent / "inventory.json"
+                result = subprocess.run(
+                    [sys.executable, str(SCRIPTS / "inventory.py"), str(root), "--out", str(output)],
+                    capture_output=True, text=True, timeout=10,
+                )
+                self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+                document = json.loads(output.read_text(encoding="utf-8"))
+                expected = ["unused.ts"] if kind == "quoted_import" else ["helper.ts", "unused.ts"]
+                self.assertEqual([row["path"] for row in document["orphan_files"]], expected)
+                self.assertEqual([row["name"] for row in document["unimported_dependencies"]],
+                                 ["unused-pkg"])
+
 
 if __name__ == "__main__":
     unittest.main()

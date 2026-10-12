@@ -104,10 +104,24 @@ PY_FROM = re.compile(r"^\s*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)
 # A block comment must stop at its first terminator, even when a following specifier is absent.
 JS_COMMENT = r"/\*(?:[^*]|\*(?!/))*(?:\*/|\Z)|//[^\n]*(?:\n|\Z)"
 JS_GAP = r"(?:\s|" + JS_COMMENT + r")*"
+# Quoted binding names are opaque: their contents may contain braces, `from`,
+# escaped quotes or line continuations. No decoding is needed to find the source.
+JS_STRING = r'"(?:\\[\s\S]|[^"\\])*"' + r"|'(?:\\[\s\S]|[^'\\])*'"
+# Consume incomplete clauses too, so a missing closing brace cannot cause each
+# import/export word within it to rescan the same remainder of the file.
+JS_NAMED_BINDINGS = (r"\{(?:" + JS_COMMENT + "|" + JS_STRING
+                     + r"|/(?![/*])|[^/'\"`;{}])*(?:\}|(?=['\"`;{]|\Z))")
+JS_NAMESPACE_ALIAS = r"\*" + JS_GAP + r"as\b" + JS_GAP + "(?:" + JS_STRING + ")"
+# Only a declaration's initial bindings may contain these opaque strings.
+# Treating arbitrary exported objects as bindings would misread regex literals.
+JS_BINDING_PREFIX = (JS_GAP + r"(?:type\b" + JS_GAP + r")?(?:"
+                     r"(?:[^/\s'\"`;{},*]+" + JS_GAP + "," + JS_GAP + r")?" + JS_NAMED_BINDINGS
+                     + "|" + JS_NAMESPACE_ALIAS + ")")
 # Consume unsuccessful clauses too: retrying every import/export word against the
 # remainder of a comment or malformed statement makes a small file quadratic.
 JS_FROM_IMPORT = re.compile(
-    r"\b(?:import|export)\b(?:" + JS_COMMENT + r"|/(?![/*])|[^/'\"`;])*?"
+    r"\b(?:import|export)\b(?:" + JS_BINDING_PREFIX + r")?(?:" + JS_COMMENT
+    + r"|/(?![/*])|[^/'\"`;])*?"
     r"(?:\bfrom" + JS_GAP + r"[\"']([^\"'\n]+)[\"']|(?=[\"'`;]|\Z))")
 # A literal first argument ends at ')' or ','; import options need no further parsing.
 JS_DIRECT_IMPORT = re.compile(

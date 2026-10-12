@@ -29,12 +29,13 @@ import sys
 from array import array
 from bisect import bisect_left
 from collections import Counter, defaultdict
-from contextlib import contextmanager
+from contextlib import ExitStack, contextmanager
 from functools import lru_cache
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import RecordError, check_units, load_json, parse_json  # noqa: E402
+from findings import RecordError, check_units, parse_json  # noqa: E402
+from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -1103,6 +1104,30 @@ def tag_units(rows, units):
     rows["by_unit"] = dict(sorted(counts.items()))
 
 
+@contextmanager
+def selected_units(path):
+    """Keep the identity of the regular file actually parsed until its output is committed."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+    try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RecordError(f"{path}: expected a regular JSON file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            units = check_units(parse_json(handle.read(), where=str(path)))
+        yield units, info
+    finally:
+        os.close(descriptor)
+
+
+def output_is_source(directory, name, source):
+    """Compare actual entries, including case aliases; a final output symlink is replaced safely."""
+    try:
+        existing = os.stat(name, dir_fd=directory, follow_symlinks=False)
+    except FileNotFoundError:
+        return False
+    return os.path.samestat(existing, source)
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("repo")
@@ -1121,34 +1146,45 @@ def main(argv=None):
         except ValueError:
             print("inventory.py: --today expects a valid calendar date (YYYY-MM-DD)", file=sys.stderr)
             return 2
-    units = None
-    if a.units:
-        try:
-            units = check_units(load_json(a.units))
-        except (OSError, ValueError, RecordError) as e:
-            print(f"inventory.py: units: {e}", file=sys.stderr)
-            return 2
-        try:
-            output = Path(a.out)
-            # write_output replaces the final directory entry, not a symlink's target.
-            destination = output.parent.resolve(strict=True) / output.name
-            if destination == Path(a.units).resolve(strict=True):
-                print("inventory.py: output would overwrite the units source; choose a different --out file",
-                      file=sys.stderr)
-                return 2
-        except (OSError, ValueError, RuntimeError) as e:
-            print(f"inventory.py: --out: {e}", file=sys.stderr)
-            return 2
-    try:
-        result = inventory(a.repo, units, a.today)
-    except (OSError, RuntimeError) as e:
-        print(f"inventory.py: cannot read repository: {e}", file=sys.stderr)
+    if a.units and not SAFE_OUTPUT:
+        print("inventory.py: --units requires descriptor-relative output support to preserve its source",
+              file=sys.stderr)
         return 2
-    try:
-        write_output(Path(a.out), json.dumps(result, ensure_ascii=False, indent=2) + "\n")
-    except OSError as e:
-        print(f"inventory.py: cannot write {a.out}: {e.strerror or e}", file=sys.stderr)
-        return 1
+    output, directory, units, source = Path(a.out), None, None, None
+    with ExitStack() as resources:
+        if SAFE_OUTPUT:
+            try:
+                selected = output.parent.stat()
+                directory = open_directory(output.parent.resolve(strict=True), readable=False, expected_stat=selected)
+                resources.callback(os.close, directory)
+            except (OSError, ValueError, RuntimeError) as e:
+                print(f"inventory.py: --out: {e}", file=sys.stderr)
+                return 2 if a.units else 1
+        if a.units:
+            try:
+                units, source = resources.enter_context(selected_units(a.units))
+                if output_is_source(directory, output.name, source):
+                    print("inventory.py: output would overwrite the units source; choose a different --out file",
+                          file=sys.stderr)
+                    return 2
+            except (OSError, ValueError, RecordError) as e:
+                print(f"inventory.py: units: {e}", file=sys.stderr)
+                return 2
+        try:
+            result = inventory(a.repo, units, a.today)
+        except (OSError, RuntimeError) as e:
+            print(f"inventory.py: cannot read repository: {e}", file=sys.stderr)
+            return 2
+        try:
+            text = json.dumps(result, ensure_ascii=False, indent=2) + "\n"
+            if directory is None:
+                # Preserve untagged scans on runtimes without descriptor-relative writes.
+                write_output(output, text)
+            else:
+                write_output_at(directory, output.name, text, protected=(source,) if source is not None else ())
+        except (OSError, ValueError) as e:
+            print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
+            return 1
     counts = ", ".join(f"{len(result[k])} {k.replace('_', ' ')}" for k in (
         "unreferenced_symbols", "orphan_files", "unimported_dependencies", "feature_flags", "unreferenced_routes",
         "i18n_unreferenced", "assets_unreferenced", "css_unreferenced"))

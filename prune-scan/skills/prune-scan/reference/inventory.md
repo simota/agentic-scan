@@ -24,7 +24,17 @@ directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
 Files whose names cannot be represented as UTF-8 are skipped and counted in
 `files_skipped`, so an unusual filesystem name cannot break the JSON output.
-`--out` cannot overwrite the source supplied through `--units`.
+`--out` cannot overwrite the source supplied through `--units`. On runtimes
+with descriptor-relative output operations, the selected output directory stays
+pinned from the input check through temporary-file creation and replacement;
+renaming it or replacing its path cannot redirect the write. Existing output
+symlinks are replaced as directory entries without changing their targets.
+An existing regular output file that shares the units input's identity is
+rejected, including another hard link to that input.
+`--units` requires this output protection and is rejected without writing when
+the runtime cannot provide it. An inventory without `--units` still works on
+those runtimes, using atomic pathname-based replacement, which cannot protect
+against concurrent replacement of the output parent.
 
 References are counted **by name**: an identifier anywhere in code or config,
 string contents included (a name built from a string still counts as a use), and

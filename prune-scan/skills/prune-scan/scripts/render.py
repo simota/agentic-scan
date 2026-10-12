@@ -21,13 +21,15 @@ import os
 import re
 import stat
 import sys
-from contextlib import contextmanager
+import tempfile
+from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
-                      read_json_source, record_exists)
+                      record_exists)
 from safe_paths import open_directory  # noqa: E402
+from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
@@ -308,20 +310,68 @@ def to_common(data, lang, units=None, repo=None):
     }
 
 
-def main(argv=None):
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("findings")
-    p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="en")
-    p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
-    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
-    a = p.parse_args(argv)
+@contextmanager
+def selected_json_source(path):
+    """Keep the actual regular input open through publication, including input aliases."""
+    descriptor = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
     try:
-        source = read_json_source(a.findings)
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise RecordError(f"{path}: expected a regular JSON file")
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            source = handle.read()
+        yield source, info
+    finally:
+        os.close(descriptor)
+
+
+def check_selected_output(path, directory):
+    """Do not report success at a pathname that now denotes a different directory."""
+    if not os.path.samestat(path.stat(), os.fstat(directory)):
+        raise OSError(f"{path}: output directory changed since it was selected")
+
+
+def private_staging(out, repo):
+    """Keep vendor pathname-based generation outside the selected output and source tree."""
+    temporary = Path(tempfile.gettempdir()).resolve(strict=True)
+    excluded = [out]
+    if repo:
+        excluded.append(Path(repo).resolve())
+    if any(temporary == path or path in temporary.parents for path in excluded):
+        raise OSError("temporary storage must be outside --out and --repo; choose a different TMPDIR")
+    return tempfile.TemporaryDirectory(prefix="prune-scan-render-", dir=temporary)
+
+
+def render_outputs(a, resources):
+    """Read inputs once and retain the selected output directory through every commit."""
+    if not SAFE_OUTPUT:
+        print("render.py: descriptor-relative output support is required to preserve input sources",
+              file=sys.stderr)
+        return 2
+    try:
+        source, source_info = resources.enter_context(selected_json_source(a.findings))
+        protected = [source_info]
         units_path = Path(a.findings).with_name("units.json")
-        units_source = read_json_source(units_path) if record_exists(units_path) else None
+        units_source = None
+        if record_exists(units_path):
+            units_source, units_info = resources.enter_context(selected_json_source(units_path))
+            protected.append(units_info)
         units = check_units(parse_json(units_source, str(units_path))) if units_source is not None else None
         data = check_findings(parse_json(source, a.findings), units)
+    except (OSError, ValueError, RecordError) as e:
+        print(f"render.py: {e}", file=sys.stderr)
+        return 2
+    out = Path(a.out)
+    try:
+        out.mkdir(parents=True, exist_ok=True)
+        selected = out.stat()
+        resolved = out.resolve(strict=True)
+        directory = open_directory(resolved, readable=False, expected_stat=selected)
+        resources.callback(os.close, directory)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"render.py: cannot select output directory {out}: {e}", file=sys.stderr)
+        return 2
+    try:
         common = report.validate(to_common(data, a.lang, units, a.repo))
         stamp = f'<meta name="{STAMP}" content="sha256:{hashlib.sha256(source).hexdigest()}">'
         if units_source is not None:
@@ -332,23 +382,16 @@ def main(argv=None):
     except (OSError, ValueError, RecordError, report.FormatError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2
-    out = Path(a.out)
     try:
-        sources = {Path(a.findings).resolve()}
-        if units_source is not None:
-            sources.add(units_path.resolve())
-        if sources & {(out / name).resolve() for name in OUTPUTS}:
-            print("render.py: output would overwrite a findings or units source; choose a different --out directory",
-                  file=sys.stderr)
-            return 2
-        out.mkdir(parents=True, exist_ok=True)
-        bad = output.unsafe_target(out, OUTPUTS)
-        if bad:
-            print(f"render.py: refusing to write {bad}: it exists as a symlink or non-regular file", file=sys.stderr)
-            return 2
-        # Stage both pages and remove the previous PDF in one rollback-capable
-        # update. A failed write or installation restores the old report.
-        output.write_outputs(out, pages, remove=("report.pdf",))
+        for name in OUTPUTS:
+            checked_target(directory, name, protected=protected, regular=True)
+        staging = Path(resources.enter_context(private_staging(resolved, a.repo)))
+        # Vendor staging and PDF engines never receive a mutable public path.
+        output.write_outputs(staging, pages, remove=("report.pdf",))
+        check_selected_output(out, directory)
+        publish_outputs_at(directory, {name: staging / name for name in pages},
+                           remove=("report.pdf",), protected=protected)
+        check_selected_output(out, directory)
         for name in pages:
             print(f"wrote {out / name}")
         if a.no_pdf:
@@ -359,18 +402,18 @@ def main(argv=None):
     failures = []
     timeout = pdf.pdf_timeout(len(data["findings"]), env="PRUNE_SCAN_PDF_TIMEOUT")
     try:
-        engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
+        engine = pdf.to_pdf(staging / "report.html", staging / "report.pdf", failures, timeout,
                             redact=redact_diagnostic)
-        if engine and not pdf_complete(out / "report.pdf"):
+        if engine and not pdf_complete(staging / "report.pdf"):
             failures.append((engine, "did not produce a complete PDF; its output was discarded", ""))
             engine = None
-        if not engine:
-            (out / "report.pdf").unlink(missing_ok=True)
+        check_selected_output(out, directory)
+        if engine:
+            publish_outputs_at(directory, {"report.pdf": staging / "report.pdf"}, protected=protected)
+            check_selected_output(out, directory)
+        # Old PDFs were removed with the HTML transaction. Failed engine output
+        # exists only in private staging, so no public-path unlink is needed.
     except (OSError, ValueError) as e:
-        try:
-            (out / "report.pdf").unlink(missing_ok=True)
-        except OSError:
-            pass
         print(f"render.py: cannot write PDF to {out}: {redact_diagnostic(str(e))}", file=sys.stderr)
         return 2
     if not engine:
@@ -383,6 +426,22 @@ def main(argv=None):
         return 3
     print(f"wrote {out / 'report.pdf'} ({engine})")
     return 0
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("findings")
+    p.add_argument("--out", required=True)
+    p.add_argument("--lang", choices=sorted(LABELS), default="en")
+    p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
+    p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
+    a = p.parse_args(argv)
+    try:
+        with ExitStack() as resources:
+            return render_outputs(a, resources)
+    except OSError as e:
+        print(f"render.py: cannot clean up temporary output: {e}", file=sys.stderr)
+        return 2
 
 
 if __name__ == "__main__":

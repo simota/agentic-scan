@@ -426,6 +426,263 @@ class StructuredInputTests(unittest.TestCase):
             self.assertEqual([row["name"] for row in result["unimported_dependencies"]], ["real-package"])
 
 
+class OutputBoundaryTests(unittest.TestCase):
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_output_parent_replacement_during_scan_cannot_redirect_the_write(self):
+        for level in ("parent", "ancestor"):
+            for replacement in ("symlink", "directory"):
+                with self.subTest(level=level, replacement=replacement), tempfile.TemporaryDirectory() as tmp:
+                    base = Path(tmp)
+                    root = base / "repo"
+                    root.mkdir()
+                    units_parent = base / "source-tree" / "reports"
+                    output_parent = base / "output-tree" / "reports"
+                    units_parent.mkdir(parents=True)
+                    output_parent.mkdir(parents=True)
+                    source = units_parent / "units.json"
+                    contents = (ROOT / "examples" / "units.sample.json").read_bytes()
+                    source.write_bytes(contents)
+                    output = output_parent / source.name
+                    output.write_text("previous inventory", encoding="utf-8")
+                    selected = output_parent if level == "parent" else output_parent.parent
+                    moved = selected.with_name(selected.name + "-original")
+                    actual_output = moved / (output.name if level == "parent" else "reports/" + output.name)
+                    scan = inventory.inventory
+
+                    def swap_during_scan(*args, **kwargs):
+                        result = scan(*args, **kwargs)
+                        selected.rename(moved)
+                        if replacement == "symlink":
+                            target = units_parent if level == "parent" else units_parent.parent
+                            try:
+                                selected.symlink_to(target, target_is_directory=True)
+                            except (OSError, NotImplementedError):
+                                self.skipTest("Directory symlinks are not supported")
+                        else:
+                            output_parent.mkdir(parents=True)
+                            output.write_text("replacement inventory", encoding="utf-8")
+                        return result
+
+                    with mock.patch.object(inventory, "inventory", side_effect=swap_during_scan), \
+                            contextlib.redirect_stdout(io.StringIO()):
+                        status = inventory.main([str(root), "--out", str(output), "--units", str(source)])
+                    self.assertEqual(status, 0)
+                    self.assertEqual(source.read_bytes(), contents)
+                    if replacement == "directory":
+                        self.assertEqual(output.read_text(encoding="utf-8"), "replacement inventory")
+                    self.assertEqual(json.loads(actual_output.read_text(encoding="utf-8"))["tool"], "inventory.py")
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_output_parent_replaced_during_resolution_is_rejected(self):
+        for level in ("parent", "ancestor"):
+            for replacement in ("symlink", "directory"):
+                with self.subTest(level=level, replacement=replacement), tempfile.TemporaryDirectory() as tmp:
+                    base = Path(tmp)
+                    root = base / "repo"
+                    root.mkdir()
+                    output_parent = base / "output-tree" / "reports"
+                    output_parent.mkdir(parents=True)
+                    output = output_parent / "inventory.json"
+                    source = base / "units.json"
+                    contents = (ROOT / "examples" / "units.sample.json").read_bytes()
+                    source.write_bytes(contents)
+                    selected = output_parent if level == "parent" else output_parent.parent
+                    moved = selected.with_name(selected.name + "-original")
+                    resolve = Path.resolve
+                    swapped = False
+
+                    def swap_during_resolution(path, *args, **kwargs):
+                        nonlocal swapped
+                        result = resolve(path, *args, **kwargs)
+                        if path == output_parent and not swapped:
+                            swapped = True
+                            selected.rename(moved)
+                            if replacement == "symlink":
+                                try:
+                                    selected.symlink_to(moved, target_is_directory=True)
+                                except (OSError, NotImplementedError):
+                                    self.skipTest("Directory symlinks are not supported")
+                            else:
+                                output_parent.mkdir(parents=True)
+                        return result
+
+                    errors = io.StringIO()
+                    with mock.patch.object(Path, "resolve", swap_during_resolution), \
+                            contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                        status = inventory.main([str(root), "--out", str(output), "--units", str(source)])
+                    self.assertEqual(status, 2)
+                    self.assertIn("--out", errors.getvalue())
+                    self.assertNotIn("Traceback", errors.getvalue())
+                    self.assertEqual(source.read_bytes(), contents)
+                    self.assertFalse(output.exists())
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_an_existing_output_parent_alias_can_change_without_redirecting_the_write(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root, selected, outside = base / "repo", base / "selected", base / "outside"
+            root.mkdir()
+            selected.mkdir()
+            outside.mkdir()
+            alias = base / "alias"
+            try:
+                alias.symlink_to(selected, target_is_directory=True)
+            except (OSError, NotImplementedError):
+                self.skipTest("Directory symlinks are not supported")
+            source = outside / "units.json"
+            contents = (ROOT / "examples" / "units.sample.json").read_bytes()
+            source.write_bytes(contents)
+            scan = inventory.inventory
+
+            def change_alias(*args, **kwargs):
+                result = scan(*args, **kwargs)
+                alias.unlink()
+                alias.symlink_to(outside, target_is_directory=True)
+                return result
+
+            with mock.patch.object(inventory, "inventory", side_effect=change_alias), \
+                    contextlib.redirect_stdout(io.StringIO()):
+                status = inventory.main([str(root), "--out", str(alias / source.name), "--units", str(source)])
+            self.assertEqual(status, 0)
+            self.assertEqual(source.read_bytes(), contents)
+            self.assertEqual(json.loads((selected / source.name).read_text(encoding="utf-8"))["tool"], "inventory.py")
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_output_commit_and_failure_cleanup_keep_the_pinned_parent(self):
+        for fail in (False, True):
+            with self.subTest(fail=fail), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                root = base / "repo"
+                root.mkdir()
+                source_parent, output_parent = base / "sources", base / "output"
+                source_parent.mkdir()
+                output_parent.mkdir()
+                source = source_parent / "units.json"
+                contents = (ROOT / "examples" / "units.sample.json").read_bytes()
+                source.write_bytes(contents)
+                output = output_parent / source.name
+                output.write_text("previous inventory", encoding="utf-8")
+                moved = base / "original-output"
+                replace, open_file = os.replace, os.open
+                descriptors = []
+
+                def record_open(*args, **kwargs):
+                    descriptor = open_file(*args, **kwargs)
+                    descriptors.append(descriptor)
+                    return descriptor
+
+                def swap_before_replace(*args, **kwargs):
+                    output_parent.rename(moved)
+                    try:
+                        output_parent.symlink_to(source_parent, target_is_directory=True)
+                    except (OSError, NotImplementedError):
+                        self.skipTest("Directory symlinks are not supported")
+                    if fail:
+                        raise OSError("injected commit failure")
+                    return replace(*args, **kwargs)
+
+                with mock.patch.object(os, "open", side_effect=record_open), \
+                        mock.patch.object(os, "replace", side_effect=swap_before_replace), \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+                    status = inventory.main([str(root), "--out", str(output), "--units", str(source)])
+                self.assertEqual(status, 1 if fail else 0)
+                self.assertEqual(source.read_bytes(), contents)
+                self.assertEqual(sorted(path.name for path in moved.iterdir()), [output.name])
+                self.assertEqual(sorted(path.name for path in source_parent.iterdir()), [source.name])
+                if fail:
+                    self.assertEqual((moved / output.name).read_text(encoding="utf-8"), "previous inventory")
+                else:
+                    self.assertEqual(json.loads((moved / output.name).read_text(encoding="utf-8"))["tool"],
+                                     "inventory.py")
+                for descriptor in set(descriptors):
+                    with self.assertRaises(OSError):
+                        os.fstat(descriptor)
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_output_permissions_are_private_for_new_files_and_preserved_for_existing_files(self):
+        for mode in (None, 0o640):
+            with self.subTest(mode=mode), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                root = base / "repo"
+                root.mkdir()
+                output = base / "inventory.json"
+                if mode is not None:
+                    output.write_text("previous inventory", encoding="utf-8")
+                    output.chmod(mode)
+                with contextlib.redirect_stdout(io.StringIO()):
+                    status = inventory.main([str(root), "--out", str(output)])
+                self.assertEqual(status, 0)
+                self.assertEqual(stat.S_IMODE(output.stat().st_mode), 0o600 if mode is None else mode)
+
+    def test_unsupported_output_runtime_keeps_untagged_scans_and_refuses_units(self):
+        for tagged in (False, True):
+            with self.subTest(tagged=tagged), tempfile.TemporaryDirectory() as tmp:
+                base = Path(tmp)
+                root = base / "repo"
+                root.mkdir()
+                source, output = base / "units.json", base / "inventory.json"
+                contents = (ROOT / "examples" / "units.sample.json").read_bytes()
+                source.write_bytes(contents)
+                argv = [str(root), "--out", str(output)]
+                if tagged:
+                    argv += ["--units", str(source)]
+                errors = io.StringIO()
+                with mock.patch.object(inventory, "SAFE_OUTPUT", False), \
+                        mock.patch.object(inventory, "write_output", wraps=inventory.write_output) as fallback, \
+                        contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(errors):
+                    status = inventory.main(argv)
+                self.assertEqual(status, 2 if tagged else 0)
+                self.assertEqual(source.read_bytes(), contents)
+                if tagged:
+                    self.assertIn("--units requires descriptor-relative output support", errors.getvalue())
+                    self.assertFalse(output.exists())
+                    fallback.assert_not_called()
+                else:
+                    fallback.assert_called_once()
+                    self.assertEqual(json.loads(output.read_text(encoding="utf-8"))["tool"], "inventory.py")
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT, "Descriptor-relative output is not supported")
+    def test_invalid_units_close_both_selected_descriptors(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            source, output = base / "units.json", base / "inventory.json"
+            source.write_text('{"units": [], "units": []}', encoding="utf-8")
+            open_file, descriptors = os.open, []
+
+            def record_open(*args, **kwargs):
+                descriptor = open_file(*args, **kwargs)
+                descriptors.append(descriptor)
+                return descriptor
+
+            errors = io.StringIO()
+            with mock.patch.object(os, "open", side_effect=record_open), \
+                    contextlib.redirect_stderr(errors), contextlib.redirect_stdout(io.StringIO()):
+                status = inventory.main([str(root), "--out", str(output), "--units", str(source)])
+            self.assertEqual(status, 2)
+            self.assertIn("duplicate JSON key", errors.getvalue())
+            self.assertFalse(output.exists())
+            for descriptor in set(descriptors):
+                with self.assertRaises(OSError):
+                    os.fstat(descriptor)
+
+    @unittest.skipUnless(inventory.SAFE_OUTPUT and hasattr(os, "mkfifo"), "POSIX FIFO checks are not supported")
+    def test_units_fifo_is_rejected_without_blocking(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            root = base / "repo"
+            root.mkdir()
+            source, output = base / "units.json", base / "inventory.json"
+            os.mkfifo(source)
+            result = subprocess.run([sys.executable, str(SCRIPTS / "inventory.py"), str(root),
+                                     "--out", str(output), "--units", str(source)],
+                                    capture_output=True, text=True, timeout=5)
+            self.assertEqual(result.returncode, 2)
+            self.assertIn("expected a regular JSON file", result.stderr)
+            self.assertFalse(output.exists())
+
+
 class ConservativeCandidateTests(unittest.TestCase):
     def test_go_import_comments_do_not_hide_registration_dependencies(self):
         imports = ('import _ "github.com/lib/pq" // Register the database driver.\n',

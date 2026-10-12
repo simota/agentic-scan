@@ -7,6 +7,13 @@ directory, SKILL.md *Paths*) enforces this schema; `merge` checks every
 fragment before it changes anything. With `units.json` beside it, every
 `unit_ref`, `entry_ref` and `purpose_ref` must exist there.
 
+With descriptor-relative file operations, `merge`, `units`, and `renumber`
+retain the selected record directory from the first base/adjacent-record read
+through atomic replacement. Renaming or replacing its path cannot redirect
+the update to an unrelated record. On runtimes without that support, updates
+still use atomic pathname-based replacement, which cannot protect against
+concurrent replacement of the parent directory.
+
 ```json
 {
   "schema_version": 1,

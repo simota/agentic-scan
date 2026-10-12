@@ -26,6 +26,19 @@ excerpt starts partway through the value. Sources containing both a secret
 name and block-comment syntax are also omitted because comment boundaries
 and string continuation differ across languages.
 
+Rendering keeps the actual input files open and pins the selected output
+directory before building the pages. HTML and PDF engines write into a private
+temporary directory; publication, stale-PDF removal, and any rollback use the
+pinned output directory. Replacing its pathname cannot redirect those writes
+or delete an input. Existing output symlinks and non-regular files are refused,
+as are output entries sharing an input file's identity. Rendering requires
+descriptor-relative file operations; a runtime without that support exits with
+status 2 before writing report outputs. Temporary storage must be outside
+`--out` and `--repo`; set `TMPDIR` to a different directory when necessary.
+Each published file is replaced atomically, but the report set as a whole is
+not atomic. A failed publication restores the previous set; if restoration
+also fails, recovery files are retained and their location is reported.
+
 Every page is stamped with the SHA-256 of the `findings.json` it
 shows and, when present, the adjacent `units.json` used for its purpose and
 unit labels. `contract_check.py` compares both stamps with the current records

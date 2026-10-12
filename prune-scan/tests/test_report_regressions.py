@@ -443,10 +443,10 @@ class RenderPublicationTests(ReportFixture):
             (self.out / name).write_text(content, encoding="utf-8")
         replace = os.replace
 
-        def fail_install(source, target):
-            if Path(source).parent.name == "new" and Path(target) == self.out / "report.html":
+        def fail_install(source, target, **kwargs):
+            if source == "new-report.html" and target == "report.html" and "dst_dir_fd" in kwargs:
                 raise OSError("simulated installation failure")
-            return replace(source, target)
+            return replace(source, target, **kwargs)
 
         with mock.patch.object(render.output.os, "replace", side_effect=fail_install):
             code, _, error = self.render("--no-pdf")

@@ -52,6 +52,38 @@ class SnippetRegressionTests(unittest.TestCase):
                     excerpt = render.snippet(repo, "settings.txt:7")
                     self.assertIsNone(excerpt)
 
+    def test_block_comments_cannot_hide_secret_continuations(self):
+        comments = (
+            "/* value continues below */",
+            "/* value continues\n * on another line\n */",
+            "/* first comment */ /* second comment */",
+            "/* outer comment\n /* nested comment */\n */",
+            "/* unterminated comment",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for comment in comments:
+                with self.subTest(comment=comment):
+                    source = 'const apiKey = "first"\n' + comment + '\n+ "DO_NOT_PUBLISH";\n'
+                    (repo / "settings.ts").write_text(source, encoding="utf-8")
+                    self.assertIsNone(render.snippet(repo, f"settings.ts:{len(source.splitlines())}"))
+
+    def test_block_comments_between_secret_name_and_assignment_are_not_excerpted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            for source in ('const apiKey /* deployment key */ = "DO_NOT_PUBLISH";\n',
+                           'config["API_TOKEN"] /* deployment key */ = "DO_NOT_PUBLISH";\n'):
+                with self.subTest(source=source):
+                    (repo / "settings.ts").write_text(source, encoding="utf-8")
+                    self.assertIsNone(render.snippet(repo, "settings.ts:1"))
+
+    def test_block_comments_without_secret_identifiers_can_still_be_excerpted(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp)
+            lines = ["/* public feature description", " * visible details", " */", 'console.log("public");']
+            (repo / "source.ts").write_text("\n".join(lines) + "\n", encoding="utf-8")
+            self.assertEqual(render.snippet(repo, "source.ts:4")["lines"], lines)
+
     def test_embedded_private_keys_are_not_excerpted(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp)
@@ -167,6 +199,30 @@ class SnippetRegressionTests(unittest.TestCase):
 
             with mock.patch.object(Path, "resolve", replace_parent):
                 self.assertIsNone(render.snippet(repo, "src/source.py:1"))
+
+    @unittest.skipUnless(hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd,
+                         "descriptor-relative no-follow opens require POSIX")
+    def test_repository_ancestor_replaced_by_symlink_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            ancestor = Path(tmp) / "checkout"
+            repo = ancestor / "repo"
+            repo.mkdir(parents=True)
+            source = repo / "source.py"
+            source.write_text("print('public')\n", encoding="utf-8")
+            outside = Path(tmp) / "outside"
+            (outside / "repo").mkdir(parents=True)
+            (outside / "repo" / "source.py").write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
+            resolve = Path.resolve
+
+            def replace_ancestor(path, *args, **kwargs):
+                resolved = resolve(path, *args, **kwargs)
+                if path == source:
+                    ancestor.rename(Path(tmp) / "original")
+                    ancestor.symlink_to(outside, target_is_directory=True)
+                return resolved
+
+            with mock.patch.object(Path, "resolve", replace_ancestor):
+                self.assertIsNone(render.snippet(repo, "source.py:1"))
 
 
 class ReportFixture(unittest.TestCase):
@@ -462,11 +518,11 @@ class ContractRegressionTests(ReportFixture):
             outside.write_bytes(source.read_bytes())
             read_source = contract_check.read_json_source
 
-            def replace_before_read(path):
+            def replace_before_read(path, **kwargs):
                 if path == source:
                     source.unlink()
                     source.symlink_to(outside)
-                return read_source(path)
+                return read_source(path, **kwargs)
 
             with mock.patch.object(contract_check, "read_json_source", side_effect=replace_before_read):
                 errors = list(contract_check.problems(self.out, no_pdf=True))

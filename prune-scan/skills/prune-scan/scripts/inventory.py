@@ -35,6 +35,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, load_json, parse_json  # noqa: E402
+from safe_paths import open_directory  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -209,13 +210,8 @@ def open_source(path, root):
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     dir_fd = None
     if SAFE_DIR_OPEN:
-        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
         try:
-            dir_fd = os.open(root, directory_flags)
-            for part in parts[:-1]:
-                child_fd = os.open(part, directory_flags, dir_fd=dir_fd)
-                os.close(dir_fd)
-                dir_fd = child_fd
+            dir_fd = open_directory(path.parent, readable=False)
             fd = os.open(parts[-1], flags, dir_fd=dir_fd)
         finally:
             if dir_fd is not None:

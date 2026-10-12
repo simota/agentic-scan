@@ -14,7 +14,9 @@ Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 
 import argparse
 import hashlib
+import os
 import re
+import stat
 import sys
 from html.parser import HTMLParser
 from pathlib import Path
@@ -22,15 +24,16 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FAMILIES, FINDING_REF, RecordError, check_findings,  # noqa: E402
                       check_units, parse_json)
-from render import STAMP, UNITS_STAMP, open_artifact, pdf_complete  # noqa: E402
+from render import NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact, pdf_complete  # noqa: E402
+from safe_paths import open_directory  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
 
 
-def read_json_source(path):
+def read_json_source(path, *, directory=None):
     """Contract records must stay regular artifacts, even if replaced after inspection."""
-    with open_artifact(path) as handle:
+    with open_artifact(path, directory=directory) as handle:
         return handle.read()
 
 
@@ -75,6 +78,14 @@ class PageMetadata(HTMLParser):
             if tag not in self.VOID_TAGS:
                 self.head_children.append(tag)
 
+    def handle_startendtag(self, tag, attrs):
+        # Browsers ignore the closing slash on non-void HTML elements, while
+        # HTMLParser's default invents an end tag and can expose inert stamps.
+        if tag not in self.VOID_TAGS:
+            self.invalid = True
+            return
+        self.handle_starttag(tag, attrs)
+
     def handle_endtag(self, tag):
         if tag in ("html", "head", "body"):
             self.envelope.append("/" + tag)
@@ -88,12 +99,12 @@ class PageMetadata(HTMLParser):
         return not self.invalid and self.envelope == ["html", "head", "/head", "body", "/body", "/html"]
 
 
-def rendered_lang(out):
+def rendered_lang(out, *, directory=None):
     """The language the existing pages were rendered in, so a re-render keeps it."""
     for name in ("report.html", "dashboard.html"):
         try:
             path = out / name
-            with open_artifact(path) as handle:
+            with open_artifact(path, directory=directory) as handle:
                 lang = PageMetadata(handle.read().decode("utf-8", errors="replace")).lang
         except OSError:
             continue
@@ -103,14 +114,44 @@ def rendered_lang(out):
 
 
 def problems(out, no_pdf=False, allow=()):
-    out = Path(out)
+    selected = Path(out)
+    directory = None
     try:
-        found = {p.name for p in out.iterdir()} if out.is_dir() else set()
+        # Select intentional aliases once, before inspecting any directory entries.
+        selected = selected.resolve(strict=True)
+        if NOFOLLOW_DIR_FD:
+            directory = open_directory(selected)
+    except (OSError, RuntimeError) as e:
+        yield f"{out}: cannot inspect directory: {getattr(e, 'strerror', None) or e}"
+        return
+    try:
+        yield from directory_problems(selected, no_pdf, allow, directory=directory)
+        if directory is not None:
+            try:
+                current = open_directory(selected)
+                try:
+                    unchanged = os.path.samestat(os.fstat(directory), os.fstat(current))
+                finally:
+                    os.close(current)
+            except OSError:
+                unchanged = False
+            if not unchanged:
+                yield f"{out}: directory changed during validation; run the check again"
+    finally:
+        if directory is not None:
+            os.close(directory)
+
+
+def directory_problems(out, no_pdf=False, allow=(), *, directory=None):
+    """Inspect and read the artifact set through the same directory descriptor."""
+    try:
+        found = (set(os.listdir(directory)) if directory is not None
+                 else {p.name for p in out.iterdir()} if out.is_dir() else set())
     except OSError as e:
         yield f"{out}: cannot inspect directory: {e.strerror or e}"
         return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
-    rerender = (f"render.py {out}/findings.json --out {out} --lang {rendered_lang(out)} --repo <repo>"
+    rerender = (f"render.py {out}/findings.json --out {out} --lang {rendered_lang(out, directory=directory)} --repo <repo>"
                 + (" --no-pdf" if no_pdf else ""))
     for name in sorted(expected - found):
         hint = {"findings.json": "merge fragments with findings.py merge",
@@ -125,7 +166,8 @@ def problems(out, no_pdf=False, allow=()):
     for name in sorted(found & expected):
         path = out / name
         try:
-            if path.is_symlink() or not path.is_file():
+            info = path.lstat() if directory is None else os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
                 yield f"{name}: must be a regular file"
             else:
                 regular.add(name)
@@ -134,11 +176,11 @@ def problems(out, no_pdf=False, allow=()):
     if "findings.json" not in regular:
         return
     try:
-        source = read_json_source(out / "findings.json")
+        source = read_json_source(out / "findings.json", directory=directory)
         units = None
         units_source = None
         if "units.json" in regular:
-            units_source = read_json_source(out / "units.json")
+            units_source = read_json_source(out / "units.json", directory=directory)
             units = check_units(parse_json(units_source, "units.json"))
         data = check_findings(parse_json(source, "findings.json"), units)
     except (OSError, ValueError, RecordError) as e:
@@ -164,7 +206,7 @@ def problems(out, no_pdf=False, allow=()):
                "so a human makes the keep or remove call")
     if "inventory.json" in regular:
         try:
-            inventory = parse_json(read_json_source(out / "inventory.json"), "inventory.json")
+            inventory = parse_json(read_json_source(out / "inventory.json", directory=directory), "inventory.json")
             if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
                 yield "inventory.json: not written by inventory.py"
         except (ValueError, RecordError) as e:
@@ -178,7 +220,7 @@ def problems(out, no_pdf=False, allow=()):
         if name not in regular:
             continue
         try:
-            with open_artifact(out / name) as handle:
+            with open_artifact(out / name, directory=directory) as handle:
                 page = handle.read().decode("utf-8")
         except (OSError, UnicodeError) as e:
             yield f"{name}: cannot read file: {e}"
@@ -191,7 +233,7 @@ def problems(out, no_pdf=False, allow=()):
             if metadata.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale; re-render after the last findings or units change ({rerender})"
                 break
-    if "report.pdf" in regular and not pdf_complete(out / "report.pdf"):
+    if "report.pdf" in regular and not pdf_complete(out / "report.pdf", directory=directory):
         yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
     pdf_limitations = [line for line in data.get("limitations", []) if line.startswith(NO_PDF)]
     limited = any(re.match(re.escape(NO_PDF) + r":\s*\S", line) for line in pdf_limitations)

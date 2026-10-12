@@ -97,6 +97,34 @@ class TraversalBoundaryTests(unittest.TestCase):
             self.assertEqual(result["files_scanned"], 0)
             self.assertNotIn("outside-secret-value", json.dumps(result))
 
+    @unittest.skipUnless(inventory.SAFE_DIR_OPEN, "requires descriptor-relative directory opens")
+    def test_symlink_replacing_a_repository_root_ancestor_is_not_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            parent = Path(tmp)
+            workspace, outside = parent / "workspace", parent / "private"
+            root = workspace / "repo"
+            root.mkdir(parents=True)
+            (outside / "repo").mkdir(parents=True)
+            (root / "ordinary.py").write_text("pass\n", encoding="utf-8")
+            (outside / "repo" / "ordinary.py").write_text(
+                "# deprecated outside-secret-value\n", encoding="utf-8")
+            original = inventory.iter_files
+
+            def swap_after_discovery(repo):
+                for path in original(repo):
+                    workspace.rename(parent / "saved")
+                    try:
+                        workspace.symlink_to(outside, target_is_directory=True)
+                    except (OSError, NotImplementedError):
+                        self.skipTest("Directory symlinks are not supported")
+                    yield path
+
+            with mock.patch.object(inventory, "iter_files", side_effect=swap_after_discovery):
+                result = inventory.inventory(root)
+            self.assertNotIn("outside-secret-value", json.dumps(result))
+            self.assertEqual(result["files_scanned"], 0)
+            self.assertEqual(result["files_skipped"], 1)
+
     @unittest.skipUnless(hasattr(os, "mkfifo"), "named pipes require POSIX")
     def test_fifo_replacing_a_discovered_file_does_not_wait_for_a_writer(self):
         with tempfile.TemporaryDirectory() as tmp:

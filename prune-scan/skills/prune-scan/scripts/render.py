@@ -27,6 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
                       read_json_source, record_exists)
+from safe_paths import open_directory  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
@@ -35,8 +36,9 @@ UNITS_STAMP = "prune-scan-units"
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
                        r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
                        r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc)(?:/|$)")
-SECRET_LINE = re.compile(r"(?i)(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
-                         r"api[_-]?key|private[_-]?key|client[_-]?secret)[\s\"'\]]*[:=]")
+SECRET_NAME = re.compile(r"(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
+                         r"api[_-]?key|private[_-]?key|client[_-]?secret)", re.I)
+SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
 PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
 # Only an entire, single-line quoted value has an unambiguous local boundary
 # across the languages we excerpt. Omit the source for any other secret value.
@@ -90,20 +92,15 @@ LABELS = {
 def read_source(root, relative):
     """Read a bounded regular source without following links planted after resolve.
 
-    Pin every directory on POSIX, including the repository root. On platforms
-    without descriptor-relative opens, verify each component and the opened
-    file's identity before reading; excerpts remain optional on read errors.
+    Pin every directory on POSIX, including ancestors of the repository root.
+    On platforms without descriptor-relative opens, verify each component and
+    the opened file's identity; excerpts remain optional on read errors.
     """
     path = root / relative
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     if NOFOLLOW_DIR_FD:
-        directories = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-        parent = os.open(root, directories)
+        parent = open_directory(path.parent, readable=False)
         try:
-            for part in relative.parts[:-1]:
-                child = os.open(part, directories, dir_fd=parent)
-                os.close(parent)
-                parent = child
             fd = os.open(relative.name, flags, dir_fd=parent)
         finally:
             os.close(parent)
@@ -146,6 +143,11 @@ def snippet(repo, location):
         text = source.decode("utf-8")
         if PRIVATE_KEY.search(text):
             return None
+        # Block comments can split assignments or continued values, with
+        # language-specific nesting rules. Excerpts are optional, so omit a
+        # source combining them with secret names instead of guessing a lexer.
+        if "/*" in text and SECRET_NAME.search(text):
+            return None
         lines = text.splitlines()
     except (ValueError, OSError, RuntimeError):
         return None
@@ -169,21 +171,39 @@ def snippet(repo, location):
 
 
 @contextmanager
-def open_artifact(path):
-    """Open a regular generated artifact without following a replaced link or blocking on a FIFO."""
+def open_artifact(path, *, directory=None):
+    """Open a regular artifact in a pinned directory, without links or FIFO waits.
+
+    A contract check supplies one directory descriptor for all of its reads.
+    Standalone callers select the parent before inspection and pin that path.
+    """
     path = Path(path)
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0))
-    with os.fdopen(fd, "rb") as handle:
-        info, current = os.fstat(handle.fileno()), path.lstat()
-        if not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(current.st_mode) or not os.path.samestat(info, current):
-            raise OSError(f"{path}: expected a regular artifact file")
-        yield handle
+    owned_directory = None
+    if directory is None and NOFOLLOW_DIR_FD:
+        try:
+            parent = path.parent.resolve(strict=True)
+        except RuntimeError as error:
+            raise OSError(str(error)) from error
+        owned_directory = directory = open_directory(parent, readable=False)
+    try:
+        name = path if directory is None else path.name
+        options = {} if directory is None else {"dir_fd": directory}
+        fd = os.open(name, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0), **options)
+        with os.fdopen(fd, "rb") as handle:
+            info = os.fstat(handle.fileno())
+            current = path.lstat() if directory is None else os.stat(name, dir_fd=directory, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode) or not stat.S_ISREG(current.st_mode) or not os.path.samestat(info, current):
+                raise OSError(f"{path}: expected a regular artifact file")
+            yield handle
+    finally:
+        if owned_directory is not None:
+            os.close(owned_directory)
 
 
-def pdf_complete(path):
+def pdf_complete(path, *, directory=None):
     """Check stored artifacts for the run contract too; not a full PDF parser."""
     try:
-        with open_artifact(path) as handle:
+        with open_artifact(path, directory=directory) as handle:
             header = handle.read(8)
             handle.seek(0, os.SEEK_END)
             handle.seek(max(0, handle.tell() - 1024))

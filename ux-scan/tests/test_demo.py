@@ -1,5 +1,6 @@
 """Exercise the documented demo command, including its HTML-only output contract."""
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -16,6 +17,35 @@ from scan_report_kit import output  # noqa: E402
 
 
 class SamplePreparationTests(unittest.TestCase):
+    def test_sample_input_is_preserved_when_it_aliases_any_demo_output(self):
+        record = (ROOT / "examples" / "findings.sample.json").read_bytes()
+        for name in prepare_sample.OUTPUTS:
+            for alias_at in (None, "input", "output", "hardlink"):
+                with self.subTest(name=name, alias_at=alias_at), tempfile.TemporaryDirectory() as tmp:
+                    root = Path(tmp)
+                    out = root / "out"
+                    out.mkdir()
+                    for output_name in prepare_sample.OUTPUTS:
+                        (out / output_name).write_bytes(record if output_name == name else b"previous output")
+                    before = {p.name: p.read_bytes() for p in out.iterdir()}
+                    source = out / name
+                    if alias_at == "hardlink":
+                        source = root / "sample.json"
+                        os.link(out / name, source)
+                    elif alias_at is not None:
+                        alias = root / "alias"
+                        alias.symlink_to(out, target_is_directory=True)
+                        if alias_at == "input":
+                            source = alias / name
+                        else:
+                            out = alias
+                    with mock.patch("sys.stderr") as stderr:
+                        result = prepare_sample.main([str(source), "--out", str(out), "--no-pdf"])
+                    self.assertEqual(result, 2)
+                    self.assertIn("sample input", "".join(str(call) for call in stderr.write.call_args_list))
+                    self.assertEqual({p.name: p.read_bytes() for p in out.iterdir()}, before)
+                    self.assertEqual(source.read_bytes(), record)
+
     def test_failed_publication_preserves_both_existing_records(self):
         with tempfile.TemporaryDirectory() as tmp:
             out = Path(tmp)

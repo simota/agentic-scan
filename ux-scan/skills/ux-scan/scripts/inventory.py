@@ -111,9 +111,12 @@ PERSONAL = re.compile(r"(?i)e-?mail|passw|\btel\b|phone|mobile|(?:first|last|ful
                       r"address|street|postal|zip|city|country|cc-|card|\botp\b|one-time")
 NON_INTERACTIVE = {"div", "span", "li", "td", "tr", "p", "img", "section", "article", "header", "footer", "main",
                    "i", "svg", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
+LABELABLE = {"button", "input", "meter", "output", "progress", "select", "textarea"}
 CLICK_ATTRS = ("onclick", "@click", "v-on:click", "on:click", "(click)")
 DESTRUCTIVE_ATTRS = (*CLICK_ATTRS, "onpress", "ontap")
-KEY_ATTRS = ("onkeydown", "onkeyup", "onkeypress", "@keydown", "@keyup", "v-on:keydown", "on:keydown", "(keydown)")
+KEY_ATTRS = ("onkeydown", "onkeyup", "onkeypress", "@keydown", "@keyup", "@keypress",
+             "v-on:keydown", "v-on:keyup", "v-on:keypress", "on:keydown", "on:keyup", "on:keypress",
+             "(keydown)", "(keyup)", "(keypress)")
 NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
@@ -486,15 +489,35 @@ def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
 
 
 def label_regions(parsed):
-    """Disjoint ranges of complete wrapping labels, including nested templates."""
+    """Ranges of potentially associated controls in complete wrapping labels."""
+    controls = [tag for tag in parsed if not tag.closing and tag.name in LABELABLE
+                and not (tag.name == "input" and (literal(tag.attrs.get("type")) or "").lower() == "hidden")]
+    control_starts = [tag.start for tag in controls]
+    definite = [tag for tag in controls if tag.name != "input" or not (tag.spread or (
+        isinstance(tag.attrs.get("type"), str) and literal(tag.attrs["type"]) is None))]
+    definite_starts = [tag.start for tag in definite]
     stack, regions = [], []
     for tag in parsed:
         if tag.name != "label":
             continue
         if tag.closing and stack:
-            regions.append((stack.pop(), tag.end))
+            opening = stack.pop()
+            target = opening.attrs.get("for", opening.attrs.get("htmlfor"))
+            if opening.spread or (isinstance(target, str) and literal(target) is None):
+                # Unknown targets can associate any wrapped control at runtime.
+                regions.append((opening.end, tag.start))
+                continue
+            if target is not None:
+                continue  # A static explicit target overrides implicit association.
+            index = bisect_left(control_starts, opening.end)
+            if index < len(controls) and controls[index].start < tag.start:
+                first_definite = bisect_left(definite_starts, opening.end)
+                stop = definite[first_definite].end if first_definite < len(definite) else tag.start
+                # An unresolved input type could be hidden, so every candidate
+                # through the first definitely labelable control remains possible.
+                regions.append((controls[index].start, min(stop, tag.start)))
         elif not tag.closing and not tag.self_closing:
-            stack.append(tag.start)
+            stack.append(tag)
     merged = []
     for start, stop in sorted(regions):
         if merged and start <= merged[-1][1]:
@@ -640,6 +663,12 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     destructive_offsets = set()
     label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
+
+    def event_key(name):
+        # Keep each original attribute span: distinct Svelte modifiers may
+        # attach multiple listeners to the same event on one element.
+        return name.split("|", 1)[0] if suffix == ".svelte" and name.startswith("on:") else name
+
     for tag in parsed:
         if tag.name == "label" and not tag.closing:
             target = literal(tag.attrs.get("for") or tag.attrs.get("htmlfor"))
@@ -661,7 +690,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             acc["viewport_meta"].append({"content": content, "blocks_zoom": blocks, "location": loc})
         if not has_confirmation:
             for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
-                if attr in DESTRUCTIVE_ATTRS:
+                if event_key(attr) in DESTRUCTIVE_ATTRS:
                     for match in DESTRUCTIVE.finditer(clean, handler_start, handler_end):
                         if match.start(1) not in destructive_offsets:
                             destructive_offsets.add(match.start(1))
@@ -674,10 +703,11 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                                  lambda reason: parse_warning(acc, loc, reason))
         if value is not None and value > 0:
             acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
-        if any(a in attrs for a in CLICK_ATTRS) and (
+        event_attrs = {event_key(a) for a in attrs}
+        if any(a in event_attrs for a in CLICK_ATTRS) and (
                 (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs)):
             missing = [label for label, keys in (("role", ("role",)), ("tabindex", ("tabindex",)), ("key handler", KEY_ATTRS))
-                       if not any(k in attrs for k in keys)]
+                       if not any(k in event_attrs for k in keys)]
             if missing:
                 acc["click_handlers"].append({"element": name, "missing": missing, "location": loc})
         if name == "img":
@@ -976,8 +1006,11 @@ def main(argv=None):
     flows = None
     if a.flows:
         try:
+            source_path = Path(a.flows).resolve()
+            if source_path == out.resolve() or (out.exists() and source_path.samefile(out)):
+                raise ValueError("--flows input must be different from --out")
             flows = check_flows(load_json(a.flows))
-        except (OSError, ValueError, RecordError) as e:
+        except (OSError, RuntimeError, ValueError, RecordError) as e:
             print(f"inventory.py: flows: {e}", file=sys.stderr)
             return 2
     result = inventory(root, flows)

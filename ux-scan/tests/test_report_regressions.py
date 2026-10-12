@@ -11,6 +11,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import threading
 import unittest
 from html.parser import HTMLParser
 from pathlib import Path
@@ -400,6 +401,169 @@ class ReportRegressions(unittest.TestCase):
         self.assertIn("refusing to write", error)
         self.assertEqual(protected.read_bytes(), b"keep this file")
         self.assertEqual((self.out / "dashboard.html").read_bytes(), old_dashboard)
+
+    def test_concurrent_render_and_directory_alias_cannot_mix_html_and_pdf_languages(self):
+        self.ready_for_pdf()
+        alias = self.root / "output-alias"
+        alias.symlink_to(self.out, target_is_directory=True)
+
+        def competing_engine(html_path, pdf_path, *args, **kwargs):
+            before = {name: (self.out / name).read_bytes() for name in ("dashboard.html", "report.html")}
+            for destination in (self.out, alias):
+                result = subprocess.run([
+                    sys.executable, str(SCRIPTS / "render.py"), str(self.out / "findings.json"),
+                    "--out", str(destination), "--lang", "ja",
+                ], capture_output=True, text=True, timeout=5)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("output directory is locked", result.stderr)
+                self.assertEqual({name: (self.out / name).read_bytes() for name in before}, before)
+                self.assertTrue((self.out / render.OUTPUT_LOCK).is_dir())
+            # The PDF engine must still see the English HTML owned by this run.
+            self.assertIn('<html lang="en">', Path(html_path).read_text(encoding="utf-8"))
+            return self.successful_engine(html_path, pdf_path)
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=competing_engine):
+            code, _, error = self.invoke(no_pdf=False, lang="en")
+        self.assertEqual(code, 0, error)
+        self.assertFalse((self.out / render.OUTPUT_LOCK).exists())
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+        # Once the first publication has finished, another language can acquire
+        # the same destination and replace all three outputs normally.
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            code, _, error = self.invoke(no_pdf=False, lang="ja", out=alias)
+        self.assertEqual(code, 0, error)
+        self.assertEqual(contract_check.rendered_lang(self.out), "ja")
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_output_lock_is_held_through_pdf_metadata_publication(self):
+        self.ready_for_pdf()
+        writer = render.output.write_outputs
+        attempted = []
+
+        def compete_before_sealing(out, texts, *args, **kwargs):
+            if render.PDF_STAMP in texts["report.html"]:
+                result = subprocess.run([
+                    sys.executable, str(SCRIPTS / "render.py"), str(self.out / "findings.json"),
+                    "--out", str(self.out), "--lang", "ja", "--no-pdf",
+                ], capture_output=True, text=True, timeout=5)
+                attempted.append(result.returncode)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("output directory is locked", result.stderr)
+            return writer(out, texts, *args, **kwargs)
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine), \
+                mock.patch.object(render.output, "write_outputs", side_effect=compete_before_sealing):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 0, error)
+        self.assertEqual(attempted, [2])
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_interrupted_output_lock_requires_explicit_recovery_without_changing_reports(self):
+        self.assertEqual(self.invoke()[0], 0)
+        before = {path.name: path.read_bytes() for path in self.out.iterdir()}
+        lock = self.out / render.OUTPUT_LOCK
+        lock.mkdir()
+        code, _, error = self.invoke()
+        self.assertEqual(code, 2, error)
+        self.assertIn("another render may be running", error)
+        self.assertIn("verify that no renderer uses this directory", error)
+        self.assertIn("rmdir", error)
+        self.assertEqual({name: (self.out / name).read_bytes() for name in before}, before)
+        self.assertTrue(lock.is_dir())
+        errors = list(contract_check.problems(self.out, no_pdf=True, allow=[render.OUTPUT_LOCK]))
+        self.assertEqual(len(errors), 1)
+        self.assertIn("output directory is locked", errors[0])
+        self.assertIn("rerender", errors[0])
+        lock.rmdir()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_contract_refuses_a_render_started_after_the_previous_outputs_were_read(self):
+        self.ready_for_pdf()
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+        reader = contract_check.read_regular
+        started, finish = threading.Event(), threading.Event()
+        rendered = []
+        renderer = threading.Thread(target=lambda: rendered.append(self.invoke(no_pdf=False, lang="ja")))
+        partial_pdf = b"%PDF-1.7\npartial output"
+
+        def paused_engine(html_path, pdf_path, *args, **kwargs):
+            Path(pdf_path).write_bytes(partial_pdf)
+            started.set()
+            finish.wait(5)
+            return self.successful_engine(html_path, pdf_path)
+
+        def read_then_start_render(path, *args, **kwargs):
+            contents = reader(path, *args, **kwargs)
+            if Path(path).name == "report.pdf":
+                # This is the final required source read. Every cached byte
+                # still belongs to a valid, complete previous publication.
+                renderer.start()
+                self.assertTrue(started.wait(5), "second render did not reach its PDF engine")
+            return contents
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=paused_engine), \
+                mock.patch.object(contract_check, "read_regular", side_effect=read_then_start_render):
+            try:
+                errors = list(contract_check.problems(self.out))
+                self.assertTrue((self.out / render.OUTPUT_LOCK).is_dir())
+                self.assertEqual((self.out / "report.pdf").read_bytes(), partial_pdf)
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("render started during the contract check", errors[0])
+                self.assertIn("run contract_check.py again", errors[0])
+            finally:
+                finish.set()
+                if renderer.ident is not None:
+                    renderer.join(5)
+        self.assertFalse(renderer.is_alive())
+        self.assertEqual(len(rendered), 1)
+        self.assertEqual(rendered[0][0], 0, rendered[0][2])
+        self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_output_lock_is_released_after_pdf_errors_and_python_interruption(self):
+        self.ready_for_pdf()
+        for failure in (OSError(errno.EIO, "simulated PDF write failure"), KeyboardInterrupt()):
+            with self.subTest(failure=type(failure).__name__):
+                with mock.patch.object(render.pdf, "to_pdf", side_effect=failure):
+                    if isinstance(failure, KeyboardInterrupt):
+                        with self.assertRaises(KeyboardInterrupt):
+                            self.invoke(no_pdf=False)
+                    else:
+                        self.assertEqual(self.invoke(no_pdf=False)[0], 2)
+                self.assertFalse((self.out / render.OUTPUT_LOCK).exists())
+                with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+                    code, _, error = self.invoke(no_pdf=False)
+                self.assertEqual(code, 0, error)
+                self.assertEqual(list(contract_check.problems(self.out)), [])
+
+    def test_failed_render_keeps_the_output_lock_until_partial_pdf_cleanup_finishes(self):
+        self.ready_for_pdf()
+        unlink = Path.unlink
+        attempted = []
+
+        def incomplete_engine(html_path, pdf_path, *args, **kwargs):
+            Path(pdf_path).write_bytes(b"%PDF-1.7\npartial output")
+            return "test-engine"
+
+        def compete_during_cleanup(path, *args, **kwargs):
+            if path == self.out / "report.pdf":
+                result = subprocess.run([
+                    sys.executable, str(SCRIPTS / "render.py"), str(self.out / "findings.json"),
+                    "--out", str(self.out), "--lang", "ja", "--no-pdf",
+                ], capture_output=True, text=True, timeout=5)
+                attempted.append(result.returncode)
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertIn("output directory is locked", result.stderr)
+            return unlink(path, *args, **kwargs)
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=incomplete_engine), \
+                mock.patch.object(Path, "unlink", compete_during_cleanup):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 3, error)
+        self.assertEqual(attempted, [2])
+        self.assertFalse((self.out / "report.pdf").exists())
+        self.assertFalse((self.out / render.OUTPUT_LOCK).exists())
 
     def test_pdf_is_fingerprinted_and_replacing_it_is_detected(self):
         self.ready_for_pdf()

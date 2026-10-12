@@ -79,7 +79,9 @@ such as `PYTHON='python3 -B'` work; quote the interpreter path inside its value
 when that path contains spaces, for example `PYTHON="'/path with spaces/python3' -B"`.
 In Make variable values, write a literal dollar sign as `$$` because Make
 expands `$` before invoking the shell. The demo refuses output inside its
-reviewed fixture before creating or overwriting any records.
+reviewed fixture before creating or overwriting any records. Demo inputs and
+inventory flow definitions must also be distinct from their outputs, including
+filesystem aliases; collisions fail before publication.
 
 `make check` validates both English and Japanese sample output contracts,
 including the no-PDF limitation from `examples/no-pdf.fragment.json`. It does

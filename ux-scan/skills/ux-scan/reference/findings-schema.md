@@ -8,7 +8,9 @@ checks the record after each fragment and writes once after the entire batch
 passes. A rejected fragment or failed write leaves the target unchanged. JSON
 must be encodable as UTF-8, object keys must be unique, and numbers must be
 finite: duplicate keys, `NaN` and `Infinity` are rejected. Commands report invalid input or unwritable output
-on stderr with exit status 2. Output targets must be regular files, not symlinks.
+on stderr with exit status 2. Documented text fields reject NUL and surrogate
+code points before merging, so accepted text can be rendered. Output targets
+must be regular files, not symlinks.
 
 ```json
 {
@@ -53,6 +55,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | Field | Rules |
 |---|---|
 | `id` | `U-` and three digits; unique; new ids follow merge order. After VERIFY, `scripts/findings.py renumber` produces consecutive ids from `U-001` in severity, path and starting-line order, with excluded findings last in their old id order (maximum 999 findings). `check` and rendering require this numbering and array order |
+| `title` | Required, nonblank text on a single line; Unicode line separators are also rejected |
 | `severity` | `High`, `Medium`, `Low`, `Info` (SKILL.md table) |
 | `confidence` | `Confirmed`, `Runtime-dependent`, `Suspected` (`reference/validation.md`) |
 | `status` | `Open`, `Fixed`, `Accepted` |
@@ -66,7 +69,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `observed` / `expected` | The code or behaviour as found, and as the criterion wants it |
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
-| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, backslashes, raw angle brackets or double quotes; optional `type` and `title` are strings |
+| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control characters, backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
 as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
@@ -99,7 +102,10 @@ When ids move, explicit finding ranges using `to`, `through`, a hyphen or dash,
 comma-separated list of the same findings in their original range order.
 The endpoints may each be wrapped in backticks or Markdown emphasis; those
 delimiters still identify finding references, and the expanded list keeps that
-formatting.
+formatting. Spaces inside ID-only code spans are retained. Emphasis wrapping
+the entire range is retained around the expanded list. References in
+underscore-emphasized lists and prose are updated while underscore identifiers,
+including Unicode identifiers, keep their original text.
 For example, if `U-001` becomes `U-003` and `U-002` becomes `U-001`,
 `Fix U-001 to U-002` becomes `Fix U-003, U-001`. A range containing a missing id
 is refused when any id in that range moves; replace it with an explicit list

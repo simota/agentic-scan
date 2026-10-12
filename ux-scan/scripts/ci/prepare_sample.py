@@ -26,6 +26,11 @@ def main(argv=None):
             data = merge(data, load_json(ROOT / "examples" / "no-pdf.fragment.json"))
             check_findings(data, flow_ids(flows))
         out = Path(args.out)
+        source = Path(args.sample).resolve()
+        for name in OUTPUTS:
+            target = out / name
+            if source == target.resolve() or (target.exists() and source.samefile(target)):
+                raise RecordError("sample input must be different from every demo output")
         if out.is_symlink():
             raise RecordError(f"{out}: output directory must not be a symlink")
         if out.resolve().is_relative_to((ROOT / "examples" / "tasklane").resolve()):

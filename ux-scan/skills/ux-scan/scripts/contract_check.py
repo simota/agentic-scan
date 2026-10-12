@@ -20,7 +20,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
-from render import (FLOWS_STAMP, PAGE_KIND_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP,  # noqa: E402
+from render import (FLOWS_STAMP, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_STAMP, STAMP,  # noqa: E402
                     page_stamp, pdf_stamp, read_regular, source_stamp)
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
@@ -70,6 +70,11 @@ def problems(out, no_pdf=False, allow=()):
         found = {p.name for p in out.iterdir()}
     except OSError as e:
         yield f"{out}: cannot read output directory: {e.strerror or e}"
+        return
+    if OUTPUT_LOCK in found:
+        yield (f"{out}: output directory is locked; finish the active render before checking. "
+               "If a previous run was interrupted, verify that no renderer uses this directory, "
+               f"then remove the empty lock with 'rmdir {shlex.quote(str(out.absolute() / OUTPUT_LOCK))}' and rerender")
         return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(out))}"
@@ -194,6 +199,18 @@ def problems(out, no_pdf=False, allow=()):
         if (dashboard.stamps.get(RENDER_STAMP) != document.stamps.get(RENDER_STAMP)
                 or dashboard.languages != document.languages):
             yield f"pages: different render versions; run {rerender}"
+    # The renderer can acquire its lock after the initial directory listing,
+    # even after all the old, complete files have already been read. Do not
+    # approve that snapshot while a new publication is still in progress.
+    try:
+        (out / OUTPUT_LOCK).lstat()
+    except FileNotFoundError:
+        pass
+    except OSError as e:
+        yield f"{out}: cannot recheck output lock: {e.strerror or e}"
+    else:
+        yield (f"{out}: a render started during the contract check; wait for it to finish, "
+               "then run contract_check.py again")
 
 
 def main(argv=None):

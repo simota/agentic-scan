@@ -113,6 +113,12 @@ to Japanese text and ID-only lists such as `P-001/P-002` are renumbered. When
 a real file is named only `P-002`, write `./P-002` or `P-002:10` in prose to
 distinguish the file from a finding reference.
 
+Known source names must match completely at ASCII word boundaries; matching
+the beginning or end of a longer word does not protect a finding reference.
+For example, a source named `P-002 note` does not keep `P-002 noteworthy` from
+being renumbered. Whitespace, punctuation and Japanese text can surround a
+complete source name, so `P-002 noteを削除する。` keeps the actual filename.
+
 Filename extensions can contain Unicode letters, combining marks and symbols,
 including `P-002.資料` and `P-002.📄`. Whitespace and surrounding prose punctuation
 delimit extensions. A bare finding id following Unicode prose still starts a

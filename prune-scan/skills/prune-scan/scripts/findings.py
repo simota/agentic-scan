@@ -335,8 +335,20 @@ PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[
 PROSE_URL = re.compile(r"https?://", re.IGNORECASE)
 
 
+def source_literal_tokens(text):
+    """Mark source boundaries without splitting adjacent ASCII word characters."""
+    previous_word = False
+    for char in text:
+        word = char.isascii() and (char.isalnum() or char == "_")
+        if not (previous_word and word):
+            yield None  # A boundary marker cannot collide with a string character.
+        yield char
+        previous_word = word
+    yield None
+
+
 class SourceLiteralIndex:
-    """Match known source substrings in one pass, sharing a trie across fields."""
+    """Match complete known sources in one pass, sharing a trie across fields."""
 
     def __init__(self, sources):
         self.children, self.failure, self.longest = [{}], [0], [0]
@@ -344,11 +356,11 @@ class SourceLiteralIndex:
             if not source:
                 continue
             state = 0
-            for char in source:
-                child = self.children[state].get(char)
+            for token in source_literal_tokens(source):
+                child = self.children[state].get(token)
                 if child is None:
                     child = len(self.children)
-                    self.children[state][char] = child
+                    self.children[state][token] = child
                     self.children.append({})
                     self.failure.append(0)
                     self.longest.append(0)
@@ -358,12 +370,13 @@ class SourceLiteralIndex:
         pending = deque(self.children[0].values())
         while pending:
             state = pending.popleft()
-            for char, child in self.children[state].items():
+            for token, child in self.children[state].items():
                 fallback = self.failure[state]
-                while fallback and char not in self.children[fallback]:
+                while fallback and token not in self.children[fallback]:
                     fallback = self.failure[fallback]
-                self.failure[child] = self.children[fallback].get(char, 0)
-                # At a shared end, the longest literal covers all its suffixes.
+                self.failure[child] = self.children[fallback].get(token, 0)
+                # Boundaries are part of every pattern, so an invalid longer
+                # source cannot hide a valid shorter suffix at the same end.
                 self.longest[child] = max(self.longest[child], self.longest[self.failure[child]])
                 pending.append(child)
 
@@ -372,12 +385,15 @@ class SourceLiteralIndex:
         children, failure, longest = self.children, self.failure, self.longest
         if len(children) == 1:
             return
-        state = 0
-        for end, char in enumerate(text, 1):
-            while state and char not in children[state]:
+        state = end = 0
+        for token in source_literal_tokens(text):
+            while state and token not in children[state]:
                 state = failure[state]
-            state = children[state].get(char, 0)
-            if longest[state]:
+            state = children[state].get(token, 0)
+            if token is not None:
+                end += 1
+            elif longest[state]:
+                # Keep offsets in original Unicode characters, not token count.
                 yield end - longest[state], end
 
 

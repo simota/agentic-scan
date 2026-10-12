@@ -211,6 +211,72 @@ class RenumberProseTests(unittest.TestCase):
         self.assertEqual(updated["findings"][0]["basis"], "P-001")
         self.assertEqual(updated["extra"], {"note": "P-002 note P-002"})
 
+    def test_cli_does_not_treat_partial_source_names_as_evidence(self):
+        cases = (
+            ("P-002 note", "P-002 noteworthy", "P-001 noteworthy"),
+            ("P-002 note", "P-002 noted earlier", "P-001 noted earlier"),
+            ("P-002 note", "P-002 note2 and P-002 note_suffix", "P-001 note2 and P-001 note_suffix"),
+            ("view P-002", "Please review P-002 tomorrow", "Please review P-001 tomorrow"),
+            ("view P-002", "1view P-002 and quick_view P-002", "1view P-001 and quick_view P-001"),
+            ("view P-002 note", "Please review P-002 noteworthy", "Please review P-001 noteworthy"),
+            ("P-002 note", "P-002 noteworthy; (P-002 note); 元のP-002 noteを削除してP-002を直す。",
+             "P-001 noteworthy; (P-002 note); 元のP-002 noteを削除してP-001を直す。"),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            for source, before, expected in cases:
+                with self.subTest(source=source, before=before):
+                    data = self.findings_record(location=source + ":1")
+                    data["summary"] = before
+                    target.write_text(json.dumps(data), encoding="utf-8")
+                    completed = run_cli("renumber", target)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    updated = json.loads(target.read_text(encoding="utf-8"))
+                    self.assertEqual(updated["summary"], expected)
+                    self.assertEqual(updated["findings"][0]["location"], source + ":1")
+
+    def test_cli_preserves_valid_suffix_when_longer_source_has_no_boundary(self):
+        cases = (
+            (("view P-002 note P-001", "note P-001"),
+             "Please review P-002 note P-001; fix P-001.",
+             "Please review P-001 note P-001; fix P-002."),
+            (("view P-002 note", "P-002 note"),
+             "Please review P-002 note; fix P-001.",
+             "Please review P-002 note; fix P-002."),
+            (("P-002 note", "P-002 noteworthy"),
+             "Remove P-002 noteworthy; fix P-001.",
+             "Remove P-002 noteworthy; fix P-002."),
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            target = Path(temporary) / "findings.json"
+            for sources, before, expected in cases:
+                with self.subTest(sources=sources):
+                    data = self.findings_record(location=sources[0] + ":1")
+                    data["findings"][0]["occurrences"] = [source + ":1" for source in sources[1:]]
+                    second = copy.deepcopy(data["findings"][0])
+                    second.update(id="P-001", severity="Info")
+                    data["findings"].append(second)
+                    data["summary"] = before
+                    target.write_text(json.dumps(data), encoding="utf-8")
+                    completed = run_cli("renumber", target)
+                    self.assertEqual(completed.returncode, 0, completed.stderr)
+                    updated = json.loads(target.read_text(encoding="utf-8"))
+                    self.assertEqual(updated["summary"], expected)
+
+    def test_known_source_boundaries_follow_the_source_edge_characters(self):
+        cases = (("P-002 note", "P-002 note"),
+                 ("(P-002)", "before(P-002)after"),
+                 ("-P-002-", "before-P-002-after"),
+                 ("資料P-002資料", "before資料P-002資料after"))
+        for source, prose in cases:
+            with self.subTest(source=source):
+                data = self.findings_record(location=source + ":1")
+                data["summary"] = prose
+                data["next_steps"] = ["P-002を直す。"]
+                updated = self.renumbered(data)
+                self.assertEqual(updated["summary"], prose)
+                self.assertEqual(updated["next_steps"], ["P-001を直す。"])
+
     def test_cli_updates_id_labels_without_absorbing_the_following_path(self):
         data = self.findings_record(location="src/app.py:10")
         second = copy.deepcopy(data["findings"][0])

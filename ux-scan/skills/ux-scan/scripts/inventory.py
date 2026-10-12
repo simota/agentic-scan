@@ -42,6 +42,7 @@ MAX_LOCATIONS = 5
 MAX_ROWS = 200
 MAX_KEYS = 50
 MAX_INTEGER_DIGITS = 1000
+MAX_LOCALE_DEPTH = 256
 
 CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
 EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro"}
@@ -65,7 +66,9 @@ JS_FONT_SIZE = re.compile(r"\bfontSize\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"
 MEDIA = re.compile(r"\(\s*(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*(\d+(?:\.\d+)?)(px|em|rem)\s*\)")
 CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
 JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
+# A parenthesized condition tests a width; it does not set an element's width.
+CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b"
+                       r"(?!\s*(?:(?i:!important)\s*)?\))")
 JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
 # Start at a selector boundary, not every character of a brace-free segment.
 # Otherwise even a long CSS comment causes quadratic failed matches.
@@ -391,6 +394,28 @@ def display_width(s):
     return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
 
 
+def check_locale_depth(text, where):
+    """Bound all JSON containers before decoding, independently of Python's parser."""
+    depth, quoted, escaped = 0, False, False
+    for char in text:
+        if quoted:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == '"':
+                quoted = False
+        elif char == '"':
+            quoted = True
+        elif char in "{[":
+            depth += 1
+            if depth > MAX_LOCALE_DEPTH:
+                raise RecordError(f"{where}: locale JSON exceeds {MAX_LOCALE_DEPTH} nested object/array containers")
+        elif char in "}]":
+            depth -= 1
+    # Syntax, matching delimiters and valid escapes are checked by loads_json.
+
+
 def flatten(value, prefix=""):
     pending = [(prefix, value)]
     while pending:
@@ -536,6 +561,7 @@ def inventory(root, flows=None):
         bundle = locale_bundle(rel)
         if bundle:
             try:
+                check_locale_depth(text, rel)
                 locales[bundle[0]][bundle[1]] = (rel, dict(flatten(loads_json(text, rel))))
             except (ValueError, RecordError, RecursionError) as e:
                 scanned -= 1
@@ -718,7 +744,8 @@ def inventory(root, flows=None):
         result["off_scale"][key] = cap(rows, MAX_ROWS, f"off_scale.{key}")
     for entry in result["locale_expansion"]:
         entry["keys"] = cap(entry["keys"], MAX_KEYS, f"locale_expansion {entry['bundle']} {entry['lang']}")
-    result["limits"] = {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "expansion_keys": MAX_KEYS}
+    result["limits"] = {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "expansion_keys": MAX_KEYS,
+                        "locale_container_depth": MAX_LOCALE_DEPTH}
     result["truncated"] = truncated
     return result
 

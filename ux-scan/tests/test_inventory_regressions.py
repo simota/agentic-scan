@@ -56,6 +56,45 @@ class InventoryRegressionTests(unittest.TestCase):
         ])
         self.assertEqual(data["focus_outline"][0]["location"], "a.css:4")
 
+    def test_css_conditions_are_not_element_fixed_widths(self):
+        data = self.scan({"a.css":
+            "@media (min-width: 640px) {\n"
+            "  .card { width: 480px; min-width: 320px!important; }\n"
+            "}\n"
+            "@media (\n"
+            "  min-width: 960px\n"
+            ") { .wide { width: 1024px; } }\n"
+            "@supports (width: 720px) { .tile { min-width: 40rem; } }\n"
+            "@supports (width: 730px !important) {}\n"
+            "@supports (width: 740px\n"
+            "  !IMPORTANT\n"
+            ") {}\n"})
+        self.assertEqual(data["fixed_widths"], [
+            {"value": "1024px", "count": 1, "locations": ["a.css:6"]},
+            {"value": "320px", "count": 1, "locations": ["a.css:2"]},
+            {"value": "480px", "count": 1, "locations": ["a.css:2"]},
+            {"value": "640px", "count": 1, "locations": ["a.css:7"]},
+        ])
+        self.assertEqual(data["breakpoints"], [
+            {"value": "640px", "count": 1, "locations": ["a.css:1"]},
+            {"value": "960px", "count": 1, "locations": ["a.css:4"]},
+        ])
+
+    def test_fixed_width_declarations_keep_inline_and_indented_styles(self):
+        data = self.scan({
+            "a.html": '<div style="width: 600px; min-width: 400px !important">Card</div>\n',
+            "b.sass": ".card\n  width: 480px\n  min-width: 20rem\n"
+                      "@media (min-width: 40rem)\n  .wide\n    width: 800px\n",
+        })
+        self.assertEqual(data["fixed_widths"], [
+            {"value": "320px", "count": 1, "locations": ["b.sass:3"]},
+            {"value": "400px", "count": 1, "locations": ["a.html:1"]},
+            {"value": "480px", "count": 1, "locations": ["b.sass:2"]},
+            {"value": "600px", "count": 1, "locations": ["a.html:1"]},
+            {"value": "800px", "count": 1, "locations": ["b.sass:6"]},
+        ])
+        self.assertEqual(data["breakpoints"], [{"value": "640px", "count": 1, "locations": ["b.sass:4"]}])
+
     def test_css_comments_do_not_create_candidates_and_preserve_lines(self):
         data = self.scan({"a.css":
             "/*\n"
@@ -192,8 +231,46 @@ class InventoryRegressionTests(unittest.TestCase):
                 self.assertEqual(data["images"][0]["location"], "a.html:1")
                 self.assertEqual(data["parse_warnings"][0]["location"], "locales/en.json:1")
                 self.assertIn("file skipped", data["parse_warnings"][0]["reason"])
+                if name == "deep":
+                    self.assertIn("256 nested object/array containers", data["parse_warnings"][0]["reason"])
 
-    def test_nested_valid_locale_objects_are_flattened_without_python_recursion(self):
+    def test_locale_depth_boundary_covers_objects_arrays_and_mixed_containers(self):
+        for kind in ("objects", "arrays", "mixed"):
+            for depth in (255, 256, 257):
+                with self.subTest(kind=kind, depth=depth):
+                    openings, closings = [], []
+                    for index in range(depth):
+                        is_object = kind == "objects" or (kind == "mixed" and index % 2 == 0)
+                        openings.append('{"x":' if is_object else '[')
+                        closings.append('}' if is_object else ']')
+                    source = "".join(openings) + '"Save"' + "".join(reversed(closings))
+                    data = self.scan({"locales/en.json": source, "a.html": '<img src="photo.png">'})
+                    self.assertEqual(data["limits"]["locale_container_depth"], 256)
+                    self.assertEqual(data["images"][0]["location"], "a.html:1")
+                    if depth <= 256:
+                        self.assertEqual((data["files_scanned"], data["files_skipped"]), (2, 0))
+                        self.assertEqual(data["parse_warnings"], [])
+                    else:
+                        self.assertEqual((data["files_scanned"], data["files_skipped"]), (1, 1))
+                        self.assertEqual(data["parse_warnings"][0]["location"], "locales/en.json:1")
+                        self.assertIn("256 nested object/array containers", data["parse_warnings"][0]["reason"])
+
+    def test_locale_depth_includes_branches_that_expansion_does_not_read(self):
+        # The outer object is depth 1, so these 256 nested arrays reach depth 257.
+        for key in ("ignored_array", "@metadata"):
+            with self.subTest(key=key):
+                source = '{"save":"Save",' + json.dumps(key) + ':' + '[' * 256 + '0' + ']' * 256 + '}'
+                data = self.scan({"locales/en.json": source})
+                self.assertEqual((data["files_scanned"], data["files_skipped"]), (0, 1))
+                self.assertIn("256 nested object/array containers", data["parse_warnings"][0]["reason"])
+
+    def test_locale_depth_ignores_container_characters_and_escapes_inside_strings(self):
+        text = '"\\' + '{[' * 300 + '}]' * 300 + '\\"'
+        data = self.scan({"locales/en.json": json.dumps({text: text})})
+        self.assertEqual((data["files_scanned"], data["files_skipped"]), (1, 0))
+        self.assertEqual(data["parse_warnings"], [])
+
+    def test_flatten_helper_does_not_recurse_on_nested_objects(self):
         depth = 1_100
         value = "Save"
         for _ in range(depth):

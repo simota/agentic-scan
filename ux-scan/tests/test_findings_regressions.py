@@ -345,6 +345,87 @@ class TransactionRegressions(unittest.TestCase):
         ])
         findings.check_findings(changed)
 
+    def test_renumber_preserves_markdown_destinations_without_path_markers(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        cases = (
+            ("Check [U-002](U-002); fix U-002.", "Check [U-001](U-002); fix U-001."),
+            ('[U-002](?ticket=U-002#U-002 "For U-002")', '[U-001](?ticket=U-002#U-002 "For U-001")'),
+            ("[U-002](README#U-002)", "[U-001](README#U-002)"),
+            ("[U-002](U-002(group(U-002)))", "[U-001](U-002(group(U-002)))"),
+            (r"[U-002](U-002\(U-002\))", r"[U-001](U-002\(U-002\))"),
+            ("![U-002](U-002)", "![U-001](U-002)"),
+            ("[U-002](\n U-002 \n 'For U-002')", "[U-001](\n U-002 \n 'For U-001')"),
+            ('[U-002](<U-002 for U-002> "For U-002")', '[U-001](<U-002 for U-002> "For U-001")'),
+            # An ID range in a destination is not a reference, even when it contains unknown IDs.
+            ("[U-002](U-001-U-002)", "[U-001](U-001-U-002)"),
+        )
+        data["next_steps"] = [source for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_preserves_reference_destinations_and_overlapping_code(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        data["next_steps"] = [
+            '[evidence][U-002]\n\n[U-002]: U-002 "For U-002"\n\nFix U-002.',
+            "[U-002]:\n  ?ticket=U-002\n\nFix [U-002].",
+            '`[U-002](U-002)` then U-002.',
+            '```md\n[U-002]: U-002\n[U-002](U-002)\n```\nFix U-002.',
+            '<!-- [U-002](U-002) --> Fix U-002.',
+            '[U-002](U-002 "For U-002" is an unfinished link. Fix U-002.',
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            '[evidence][U-001]\n\n[U-001]: U-002 "For U-001"\n\nFix U-001.',
+            "[U-001]:\n  ?ticket=U-002\n\nFix [U-001].",
+            '`[U-002](U-002)` then U-001.',
+            '```md\n[U-002]: U-002\n[U-002](U-002)\n```\nFix U-001.',
+            '<!-- [U-002](U-002) --> Fix U-001.',
+            '[U-001](U-001 "For U-001" is an unfinished link. Fix U-001.',
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_does_not_extend_a_link_destination_past_literal_boundaries(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        data["next_steps"] = [
+            '`[x](`U-002) then U-002.',
+            '``[x](``U-002) then U-002.',
+            # A source path in a link label must not hide the real destination on the next line.
+            '[src/file](\nU-002) then U-002.',
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            '`[x](`U-001) then U-001.',
+            '``[x](``U-001) then U-001.',
+            '[src/file](\nU-002) then U-001.',
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_requires_a_complete_reference_definition(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        cases = (
+            ('[U-002]: U-002 title-invalid', '[U-001]: U-001 title-invalid'),
+            ('[U-002]: U-002 "For U-002" trailing', '[U-001]: U-001 "For U-001" trailing'),
+            ('[U-002]: U-002 "For U-002', '[U-001]: U-001 "For U-001'),
+            ('[U-002]: U-002 (For U-002)', '[U-001]: U-002 (For U-001)'),
+            ('[U-002]: U-002\n"For U-002"', '[U-001]: U-002\n"For U-001"'),
+        )
+        data["next_steps"] = [source + "\nFix U-002." for source, _ in cases]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [expected + "\nFix U-001." for _, expected in cases])
+        findings.check_findings(changed)
+
     def test_renumber_preserves_code_delimiters_and_html_comments(self):
         data = copy.deepcopy(SAMPLE)
         data["findings"] = data["findings"][:1]

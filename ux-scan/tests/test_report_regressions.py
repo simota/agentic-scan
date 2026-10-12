@@ -61,9 +61,9 @@ class ReportRegressions(unittest.TestCase):
             "tool": "inventory.py", "flows_sha256": findings.canonical_digest(self.flows),
         }), encoding="utf-8")
 
-    def invoke(self, *, no_pdf=True, lang="en", out=None):
+    def invoke(self, *, no_pdf=True, lang="en", out=None, source=None):
         stdout, stderr = io.StringIO(), io.StringIO()
-        args = [str(self.out / "findings.json"), "--out", str(out or self.out),
+        args = [str(source or self.out / "findings.json"), "--out", str(out or self.out),
                 "--repo", str(self.repo), "--lang", lang]
         if no_pdf:
             args.append("--no-pdf")
@@ -361,6 +361,33 @@ class ReportRegressions(unittest.TestCase):
         self.assertIn("outside --repo", error)
         self.assertFalse((self.repo / "report").exists())
 
+    def test_findings_input_cannot_be_replaced_or_deleted_as_an_output(self):
+        record = (self.out / "findings.json").read_bytes()
+        for name in render.OUTPUTS:
+            for alias_at in (None, "input", "output", "hardlink"):
+                with self.subTest(name=name, alias_at=alias_at):
+                    directory = self.root / (name + "-" + str(alias_at))
+                    directory.mkdir()
+                    for output_name in render.OUTPUTS:
+                        (directory / output_name).write_bytes(record if output_name == name else b"previous output")
+                    before = {path.name: path.read_bytes() for path in directory.iterdir()}
+                    source, out = directory / name, directory
+                    if alias_at == "hardlink":
+                        source = self.root / (directory.name + ".json")
+                        os.link(directory / name, source)
+                    elif alias_at is not None:
+                        alias = directory.with_name(directory.name + "-alias")
+                        alias.symlink_to(directory, target_is_directory=True)
+                        if alias_at == "input":
+                            source = alias / name
+                        else:
+                            out = alias
+                    code, _, error = self.invoke(out=out, source=source)
+                    self.assertEqual(code, 2, error)
+                    self.assertIn("input", error)
+                    self.assertIn("output", error)
+                    self.assertEqual({path.name: path.read_bytes() for path in directory.iterdir()}, before)
+
     def test_unsafe_output_is_refused_before_any_write(self):
         self.assertEqual(self.invoke()[0], 0)
         old_dashboard = (self.out / "dashboard.html").read_bytes()
@@ -477,10 +504,11 @@ class ReportRegressions(unittest.TestCase):
                 self.assertNotIn("Traceback", error)
                 self.assertFalse((self.out / "report.pdf").exists())
 
-    def test_html_write_failure_cannot_leave_an_old_pdf_next_to_new_html(self):
+    def test_html_staging_failure_preserves_previous_complete_reports(self):
         self.ready_for_pdf()
         with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
             self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+        before = {name: (self.out / name).read_bytes() for name in render.OUTPUTS}
         self.data["summary"] = "Changed report content"
         self.save_inputs()
         writer = render.output.write_output
@@ -493,8 +521,49 @@ class ReportRegressions(unittest.TestCase):
         with mock.patch.object(render.output, "write_output", side_effect=fail_second_page):
             code, _, error = self.invoke(no_pdf=False)
         self.assertEqual(code, 2, error)
-        self.assertFalse((self.out / "report.pdf").exists())
+        self.assertEqual({name: (self.out / name).read_bytes() for name in render.OUTPUTS}, before)
         self.assertIn("stale", "\n".join(contract_check.problems(self.out)))
+
+    def test_html_publication_failure_restores_both_pages_and_previous_pdf(self):
+        self.ready_for_pdf()
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
+            self.assertEqual(self.invoke(no_pdf=False)[0], 0)
+        before = {name: (self.out / name).read_bytes() for name in render.OUTPUTS}
+        self.data["summary"] = "Changed report content"
+        self.save_inputs()
+        replace = render.output.os.replace
+
+        def fail_second_page(source, destination):
+            if Path(source).parent.name == "new" and Path(destination) == self.out / "report.html":
+                raise OSError(errno.EIO, "simulated publication failure")
+            return replace(source, destination)
+
+        with mock.patch.object(render.output.os, "replace", side_effect=fail_second_page):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 2, error)
+        self.assertEqual({name: (self.out / name).read_bytes() for name in render.OUTPUTS}, before)
+        self.assertFalse(any(path.name.startswith(".scan-report-output-") for path in self.out.iterdir()))
+
+    def test_pdf_metadata_publication_failure_leaves_both_current_html_pages_without_pdf(self):
+        self.ready_for_pdf()
+        writer = render.output.write_output
+
+        def fail_second_page(path, text):
+            if Path(path).name == "report.html" and f'name="{render.PDF_STAMP}"' in text:
+                raise OSError(errno.ENOSPC, "simulated full disk")
+            return writer(path, text)
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine), \
+                mock.patch.object(render.output, "write_output", side_effect=fail_second_page):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 2, error)
+        self.assertFalse((self.out / "report.pdf").exists())
+        for name in ("dashboard.html", "report.html"):
+            source = (self.out / name).read_bytes()
+            metadata = contract_check.PageMetadata(source.decode("utf-8"))
+            self.assertNotIn(render.PDF_STAMP, metadata.stamps)
+            self.assertEqual(metadata.stamps[render.PAGE_STAMP], [render.page_stamp(source)])
+            self.assertEqual(metadata.stamps[render.STAMP], [render.source_stamp((self.out / "findings.json").read_bytes())])
 
 
 if __name__ == "__main__":

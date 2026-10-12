@@ -198,6 +198,11 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         out = Path(a.out)
+        source_path = Path(a.findings).resolve()
+        for name in OUTPUTS:
+            target = out / name
+            if source_path == target.resolve() or (target.exists() and source_path.samefile(target)):
+                raise ValueError("findings input must be different from every generated output")
         repo = None
         if a.repo:
             repo = Path(a.repo).resolve(strict=True)
@@ -230,10 +235,11 @@ def main(argv=None):
         if bad:
             print(f"render.py: refusing to write {bad}: it exists as a symlink or non-regular file", file=sys.stderr)
             return 2
-        # Once any new HTML is published, an earlier run's PDF must not survive.
-        (out / "report.pdf").unlink(missing_ok=True)
-        for name, page in pages.items():
-            output.write_output(out / name, seal_page(page))
+        # Stage both pages before replacing either. A failed publication must
+        # restore the old pair and PDF together, not leave mixed report versions.
+        output.write_outputs(out, {name: seal_page(page) for name, page in pages.items()},
+                             remove=("report.pdf",))
+        for name in pages:
             print(f"wrote {out / name}")
         if a.no_pdf:
             return 0
@@ -261,8 +267,8 @@ def main(argv=None):
         if not engine:
             (out / "report.pdf").unlink(missing_ok=True)
         else:
-            for name, page in pages.items():
-                output.write_output(out / name, seal_page(stamp_page(page, {PDF_STAMP: digest})))
+            output.write_outputs(out, {name: seal_page(stamp_page(page, {PDF_STAMP: digest}))
+                                       for name, page in pages.items()})
     except OSError as e:
         try:
             (out / "report.pdf").unlink(missing_ok=True)

@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "skills" / "ux-scan" / "scripts"))
 
 from findings import RecordError, check_findings, check_flows, dump, flow_ids, load_json, merge  # noqa: E402
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_outputs  # noqa: E402
 
 OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf")
 
@@ -34,8 +34,7 @@ def main(argv=None):
         bad = unsafe_target(out, OUTPUTS)
         if bad:
             raise RecordError(f"{bad}: output must be a regular file, not a symlink or directory")
-        write_output(out / "flows.json", dump(flows))
-        write_output(out / "findings.json", dump(data))
+        write_outputs(out, {"flows.json": dump(flows), "findings.json": dump(data)})
     except (OSError, RuntimeError, RecordError) as error:
         print(f"prepare_sample.py: {error}", file=sys.stderr)
         return 2

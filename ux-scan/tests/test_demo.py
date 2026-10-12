@@ -6,8 +6,40 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "scripts" / "ci"))
+
+import prepare_sample  # noqa: E402
+from scan_report_kit import output  # noqa: E402
+
+
+class SamplePreparationTests(unittest.TestCase):
+    def test_failed_publication_preserves_both_existing_records(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp)
+            before = {"flows.json": b"previous flows", "findings.json": b"previous findings"}
+            for name, content in before.items():
+                (out / name).write_bytes(content)
+            replace = output.os.replace
+            failed = False
+
+            def fail_second_record(source, destination):
+                nonlocal failed
+                if Path(destination) == out / "findings.json" and not failed:
+                    failed = True
+                    raise OSError("simulated findings publication failure")
+                return replace(source, destination)
+
+            with mock.patch.object(output.os, "replace", side_effect=fail_second_record), \
+                    mock.patch("sys.stderr"):
+                result = prepare_sample.main([
+                    str(ROOT / "examples" / "findings.sample.json"), "--out", str(out), "--no-pdf",
+                ])
+            self.assertEqual(result, 2)
+            self.assertTrue(failed)
+            self.assertEqual({p.name: p.read_bytes() for p in out.iterdir()}, before)
 
 
 @unittest.skipUnless(shutil.which("make"), "make is required for the demo command")

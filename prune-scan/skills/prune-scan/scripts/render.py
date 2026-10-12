@@ -10,28 +10,33 @@ rendered next steps open with the subtraction summary (remove now, reduce or
 consolidate, decide with a human), computed from the findings. With --repo,
 each finding's location is embedded as a short excerpt; secret-looking files
 are never read and secret-looking lines are masked. Every page carries the
-SHA-256 of the findings.json it shows. Standard library only.
+SHA-256 of the findings.json and, when supplied, units.json it shows.
+Standard library only.
 Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
 """
 
 import argparse
 import hashlib
-import json
+import os
 import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import EXCLUDED, RecordError, check_findings, check_units  # noqa: E402
+from findings import EXCLUDED, RecordError, check_findings, check_units, parse_json, read_json_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
+UNITS_STAMP = "prune-scan-units"
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|"
+                       r"id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|"
                        r".*credentials.*|.*secrets?\..*|\.npmrc|\.pypirc)$")
 SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
+MAX_SNIPPET_LINES = 80
+MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
 FAMILIES = {
     "en": {"DC": "Dead code", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
@@ -72,29 +77,54 @@ LABELS = {
 
 
 def snippet(repo, location):
-    """Lines around location from repo, or None when unreadable, binary, outside repo or secret-looking."""
-    m = LOC.match(location)
+    """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
+    m = LOC.fullmatch(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
         return None
-    root = Path(repo).resolve()
-    path = (root / m["path"]).resolve()
     try:
-        path.relative_to(root)
-        if not path.is_file() or path.stat().st_size > 2 * 1024 * 1024:
+        start, end = int(m["start"]), int(m["end"] or m["start"])
+        if start < 1 or end < start:
             return None
-        text = path.read_text(encoding="utf-8")
-    except (ValueError, OSError, UnicodeDecodeError):
+        root = Path(repo).resolve()
+        path = (root / m["path"]).resolve()
+        resolved = path.relative_to(root).as_posix()
+        if SENSITIVE.search(resolved) or not path.is_file() or path.stat().st_size > MAX_SOURCE_BYTES:
+            return None
+        with path.open("rb") as handle:
+            source = handle.read(MAX_SOURCE_BYTES + 1)
+        if len(source) > MAX_SOURCE_BYTES or b"\0" in source:
+            return None
+        lines = source.decode("utf-8").splitlines()
+    except (ValueError, OSError, RuntimeError):
         return None
-    if "\0" in text:  # A binary file (font, image) that happens to decode: no excerpt.
-        return None
-    lines = text.splitlines()
-    start, end = int(m["start"]), int(m["end"] or m["start"])
     if start > len(lines):
         return None
     first, last = max(1, start - CONTEXT), min(len(lines), end + CONTEXT)
+    last = min(last, first + MAX_SNIPPET_LINES - 1)
     shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
              for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
+
+
+def pdf_complete(path):
+    """Check stored artifacts for the run contract too; not a full PDF parser."""
+    path = Path(path)
+    try:
+        if path.is_symlink() or not path.is_file():
+            return False
+        with path.open("rb") as handle:
+            header = handle.read(8)
+            handle.seek(0, os.SEEK_END)
+            handle.seek(max(0, handle.tell() - 1024))
+            tail = handle.read()
+        return bool(re.fullmatch(rb"%PDF-[12]\.[0-9]", header) and re.search(rb"%%EOF\s*\Z", tail))
+    except OSError:
+        return False
+
+
+def redact_diagnostic(text):
+    """Engine stderr may echo a secret value: mask the complete diagnostic."""
+    return "[masked: looks like a secret]" if SECRET_LINE.search(text) else text
 
 
 def act_now(f):
@@ -186,12 +216,15 @@ def main(argv=None):
     p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
     a = p.parse_args(argv)
     try:
-        source = Path(a.findings).read_bytes()
+        source = read_json_source(a.findings)
         units_path = Path(a.findings).with_name("units.json")
-        units = check_units(json.loads(units_path.read_text(encoding="utf-8"))) if units_path.exists() else None
-        data = check_findings(json.loads(source.decode("utf-8")), units)
+        units_source = read_json_source(units_path) if units_path.exists() else None
+        units = check_units(parse_json(units_source, str(units_path))) if units_source is not None else None
+        data = check_findings(parse_json(source, a.findings), units)
         common = report.validate(to_common(data, a.lang, units, a.repo))
         stamp = f'<meta name="{STAMP}" content="sha256:{hashlib.sha256(source).hexdigest()}">'
+        if units_source is not None:
+            stamp += f'<meta name="{UNITS_STAMP}" content="sha256:{hashlib.sha256(units_source).hexdigest()}">'
         pages = {name: page.replace("<head>", "<head>" + stamp, 1) for name, page in (
             ("dashboard.html", report.render_dashboard(common, a.lang)),
             ("report.html", report.render_document(common, a.lang)))}
@@ -200,24 +233,45 @@ def main(argv=None):
         return 2
     out = Path(a.out)
     try:
+        sources = {Path(a.findings).resolve()}
+        if units_source is not None:
+            sources.add(units_path.resolve())
+        if sources & {(out / name).resolve() for name in OUTPUTS}:
+            print("render.py: output would overwrite a findings or units source; choose a different --out directory",
+                  file=sys.stderr)
+            return 2
         out.mkdir(parents=True, exist_ok=True)
         bad = output.unsafe_target(out, OUTPUTS)
         if bad:
             print(f"render.py: refusing to write {bad}: it exists as a symlink or non-regular file", file=sys.stderr)
             return 2
-        for name, page in pages.items():
-            output.write_output(out / name, page)
+        # Stage both pages and remove the previous PDF in one rollback-capable
+        # update. A failed write or installation restores the old report.
+        output.write_outputs(out, pages, remove=("report.pdf",))
+        for name in pages:
             print(f"wrote {out / name}")
         if a.no_pdf:
-            (out / "report.pdf").unlink(missing_ok=True)
             return 0
-    except OSError as e:
-        print(f"render.py: cannot write outputs to {out}: {e.strerror or e}", file=sys.stderr)
+    except (OSError, ValueError, RuntimeError) as e:
+        print(f"render.py: cannot write outputs to {out}: {getattr(e, 'strerror', None) or e}", file=sys.stderr)
         return 2
     failures = []
     timeout = pdf.pdf_timeout(len(data["findings"]), env="PRUNE_SCAN_PDF_TIMEOUT")
-    engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
-                        redact=lambda s: SECRET_LINE.sub("[masked]", s))
+    try:
+        engine = pdf.to_pdf(out / "report.html", out / "report.pdf", failures, timeout,
+                            redact=redact_diagnostic)
+        if engine and not pdf_complete(out / "report.pdf"):
+            failures.append((engine, "did not produce a complete PDF; its output was discarded", ""))
+            engine = None
+        if not engine:
+            (out / "report.pdf").unlink(missing_ok=True)
+    except (OSError, ValueError) as e:
+        try:
+            (out / "report.pdf").unlink(missing_ok=True)
+        except OSError:
+            pass
+        print(f"render.py: cannot write PDF to {out}: {redact_diagnostic(str(e))}", file=sys.stderr)
+        return 2
     if not engine:
         detail = "; ".join(f"{n} {why}" + (f" [{tail}]" if tail else "") for n, why, tail in failures)
         print("render.py: " + (f"PDF engine failed: {detail}" if failures else "no PDF engine found (Chrome/Chromium or weasyprint)")

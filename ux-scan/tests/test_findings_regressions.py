@@ -559,6 +559,10 @@ class TransactionRegressions(unittest.TestCase):
             ("Fix _U-001からU-003まで_.", "Fix _U-003, U-001, U-002_."),
             ("Fix ~~U-001–U-003~~.", "Fix ~~U-003, U-001, U-002~~."),
             ("Fix __` U-001 ` to ` U-003 `__.", "Fix __` U-003 `, ` U-001 `, ` U-002 `__."),
+            ("Fix ___U-001__ to __U-003___.", "Fix ___U-003__, __U-001__, __U-002___."),
+            ("Fix ___U-001_ to _U-003___.", "Fix ___U-003_, _U-001_, _U-002___."),
+            ("Fix __**U-001** to **U-003**__.", "Fix __**U-003**, **U-001**, **U-002**__."),
+            ("Fix **__U-001__ to __U-003__**.", "Fix **__U-003__, __U-001__, __U-002__**."),
             # A whole range inside one code span stays literal source text.
             ("Keep ` U-001 to U-003 `; fix U-001.", "Keep ` U-001 to U-003 `; fix U-003."),
         )
@@ -598,6 +602,36 @@ class TransactionRegressions(unittest.TestCase):
             ("Keep ____U-001 and U-003____.", "Keep ____U-001 and U-003____."),
             ("Keep `__U-001 and U-003__`; fix U-002.", "Keep `__U-001 and U-003__`; fix U-001."),
         )
+        data["next_steps"] = [source for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_preserves_unicode_identifiers_in_ranges_styled_ids_and_lists(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        contexts = (("変数", "値"), ("変数", ""), ("", "値"),
+                    ("é", "é"), ("é", ""), ("", "é"),
+                    ("e\u0301", "\u0301e"), ("e\u0301", ""), ("", "\u0301e"),
+                    ("head\u203f", "\u203ftail"))
+        patterns = ("_U-001 to U-003_", "__U-001 to U-003__", "__U-001__",
+                    "_U-001_ to U-003", "U-001 to _U-003_", "__U-001/U-003__")
+        cases = []
+        for before, after in contexts:
+            for pattern in patterns:
+                # For ranges with only one formatted endpoint, attach the
+                # identifier context only at that endpoint's underscore.
+                prefix = before if pattern.startswith("_") else ""
+                suffix = after if pattern.endswith("_") else ""
+                if not prefix and not suffix:
+                    continue
+                token = prefix + pattern + suffix
+                cases.append((token + "; 次にU-002を修正。", token + "; 次にU-001を修正。"))
         data["next_steps"] = [source for source, _ in cases]
         original = copy.deepcopy(data)
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))

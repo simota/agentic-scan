@@ -402,16 +402,16 @@ def _source_token(token):
             or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?$", token))
 
 
+def _word_character(char):
+    # Combining marks and connector punctuation can continue Unicode
+    # identifiers, so their adjacent underscore is not emphasis either.
+    return bool(char) and (char.isalnum() or unicode_category(char) in ("Mn", "Mc", "Me", "Pc"))
+
+
 def _underscore_delimiters(value, literal_spans):
     """Find paired emphasis boundaries without taking delimiters from quoted code."""
     if "_" not in value:
         return set()
-
-    def word_character(char):
-        # Combining marks and connector punctuation can continue Unicode
-        # identifiers, so their adjacent underscore is not emphasis either.
-        return bool(char) and (char.isalnum() or unicode_category(char) in ("Mn", "Mc", "Me", "Pc"))
-
     parts, start = [], 0
     for left, right in sorted(literal_spans):
         if right <= start:
@@ -432,7 +432,7 @@ def _underscore_delimiters(value, literal_spans):
             continue
         before = text[left - 1] if left else ""
         after = text[right] if right < len(text) else ""
-        before_word, after_word = word_character(before), word_character(after)
+        before_word, after_word = _word_character(before), _word_character(after)
         if before and not before.isspace() and not after_word and pending[width] is not None:
             opener = pending[width]
             delimiters.update(range(opener, opener + width))
@@ -465,14 +465,21 @@ def _rewrite_prose(value, mapping):
 
         # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
         def mention(match):
+            source = match[0]
+            left, right = offset + match.start() - 1, offset + match.end()
+            # The range and styled-ID alternatives also consume their formatting
+            # underscores. Apply the same Unicode word boundary as plain IDs
+            # before accepting those underscores as emphasis.
+            if ((source.startswith("_") and left >= 0 and _word_character(value[left]))
+                    or (source.endswith("_") and right < len(value) and _word_character(value[right]))):
+                return source
             if match["first"]:
                 return reference_range(match)
             if match["styled"]:
                 return match["style"] + mapping.get(match["styled"], match["styled"]) + match["style"]
-            left, right = offset + match.start() - 1, offset + match.end()
             if any(0 <= i < len(value) and value[i] == "_" and i not in emphasis for i in (left, right)):
-                return match[0]
-            return mapping.get(match[0], match[0])
+                return source
+            return mapping.get(source, source)
 
         return FINDING_MENTION.sub(mention, text)
 

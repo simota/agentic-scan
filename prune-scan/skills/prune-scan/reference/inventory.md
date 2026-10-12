@@ -56,6 +56,15 @@ imports. Known source extensions retain their source-substitution order; an impo
 naming an existing file with another suffix keeps its direct match. This inventory
 heuristic does not imply that the TypeScript compiler accepts those extensionless
 paths.
+
+JavaScript import signals include quoted binding names and static or dynamic
+[source-phase imports](https://nodejs.org/api/esm.html#wasm-source-phase-imports).
+The scan also retains literal `import.defer(...)` references from the
+[deferred-import draft](https://tc39.es/proposal-defer-import-eval/), alongside
+deferred namespace imports. Recognizing draft syntax does not imply runtime
+support. `source` and `defer` still work as ordinary binding names; these are
+conservative reference signals rather than full JavaScript syntax validation.
+
 Dependency overlap groups and platform replacements are specific to the
 manifest's ecosystem; an identically named package in another ecosystem does
 not inherit its replacement suggestion.

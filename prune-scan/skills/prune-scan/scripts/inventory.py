@@ -550,7 +550,7 @@ def js_import_specs(text):
         end = names.get(pos)
         if end is not None:
             # Only contextual keywords affect the grammar; never copy a long name.
-            value = text[pos:end] if end - pos <= 4 else ""
+            value = text[pos:end] if end - pos <= 6 else ""
             return "name", value, end
         return "punct", text[pos], pos + 1
 
@@ -610,6 +610,15 @@ def js_import_specs(text):
         seen.add((kind, pos))
         following = token_at(pos)
         if kind in ("import", "require"):
+            source_call = False
+            if kind == "import" and following[:2] == ("punct", "."):
+                phase = token(following[2])
+                if phase[:2] not in (("name", "source"), ("name", "defer")):
+                    continue
+                source_call = phase[1] == "source"
+                following = token(phase[2])
+                if following[:2] != ("punct", "("):
+                    continue
             if kind == "import" and following[0] == "string":
                 if unseen(following):
                     yield following[1]
@@ -617,11 +626,23 @@ def js_import_specs(text):
             if following[:2] == ("punct", "("):
                 module = token(following[2])
                 after = token(module[2])
-                if after[:2] in (("punct", ")"), ("punct", ",")) and unseen(module):
+                # Source-phase calls take one argument; defer permits import options.
+                literal_end = (after[:2] == ("punct", ")") or
+                               (not source_call and after[:2] == ("punct", ",")))
+                if literal_end and unseen(module):
                     yield module[1]
                 continue
             if kind == "require":
                 continue
+            if following[:2] == ("name", "source"):
+                binding = token(following[2])
+                after = token(binding[2])
+                # Keep `import source from ...` as an ordinary default binding.
+                if binding[0] == "name" and after[:2] == ("name", "from"):
+                    module = token(after[2])
+                    if unseen(module):
+                        yield module[1]
+                    continue
         if following[:2] == ("name", "type"):
             after = token(following[2])
             if kind == "export" or after[:2] not in (("name", "from"), ("punct", ",")):

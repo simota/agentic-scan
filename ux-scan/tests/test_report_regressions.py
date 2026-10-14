@@ -283,7 +283,9 @@ class ReportRegressions(unittest.TestCase):
                  "DB_PASSWORD=p@ss", "API_KEY=12345", 'const API_KEY = "Abcdefghijklmnop";',
                  'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }',
                  'password = "password123"', 'SECRET_KEY = "mysecretvalue123"', 'token = "token_abcdef123"',
-                 "password: 'password'"]
+                 "password: 'password'", 'password = "correct horse battery staple"', 'password = "abc"',
+                 "pwd: 'x'", 'DBPassword = "hunter2"', 'APISecret: "s3cr3t"', 'AWSAccessKey = "abcd1234"',
+                 "define('DBPassword', 'x');", 'password = "it\'s me"']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -297,7 +299,10 @@ class ReportRegressions(unittest.TestCase):
               "tokenColor: '#ff0000',", "--password-field-border: #d0d0d0;", 'credentials: "include",',
               'passwordStrength: "strong",', "passwordLabel: 'password_label',",
               'password_reset_url: "/reset-password",', 'secretQuestion: "mother_maiden_name",',
-              '"password": "Passwort",', '"password": "パスワード",']
+              '"password": "Passwort",', '"password": "パスワード",', 'password: "Enter your password",',
+              '"password": "Password is required.",', 'password: "",', "COMPASS = 'north'",
+              "<PasswordInput label='Password' />",
+              'elif token == "{":', "see /etc/passwd:1"]
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

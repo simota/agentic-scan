@@ -257,24 +257,48 @@ def style_line_comments(tag):
     return (literal(tag.attrs.get("lang")) or "").lower() in LINE_COMMENT_LANGS
 
 
-def jsx_text_line(text, start):
+# Characters jsx_text_line may read back over a whole file: a fixed allowance
+# plus this many per character of the file, keeping the scan linear.
+JSX_TEXT_BUDGET = (100_000, 8)
+LINE_COMMENT = re.compile(r"[ \t]*//")
+
+
+def jsx_text_line(text, start, budget):
     """Whether the line at start continues JSX child text: the code before it ends with a tag's ">".
 
-    Earlier // lines are skipped (at most 50, keeping the scan linear); "=>" is
-    an arrow function, so what follows is code.
+    Earlier // lines and {expression} children are skipped ("<div>{x}\\n// text"),
+    at most 50 steps back; "=>" is an arrow function, so what follows is code.
+    budget is a one-item list of characters left to read back in this file;
+    once it is spent, // lines are comments again.
     """
     i = start
     for _ in range(50):
+        floor = max(0, i - budget[0])
         k = i - 1
-        while k >= 0 and text[k].isspace():
+        while k >= floor and text[k].isspace():
             k -= 1
-        if k < 0:
+        if k < floor:
+            budget[0] -= i - floor
             return False
-        line_start = text.rfind("\n", 0, k) + 1
-        if text[line_start:k + 1].lstrip().startswith("//"):
+        line_start = text.rfind("\n", floor, k) + 1
+        budget[0] -= i - line_start
+        if line_start == 0 and floor > 0:
+            return False  # The line starts beyond the budget.
+        if LINE_COMMENT.match(text, line_start, k + 1):
             i = line_start  # Another comment line: look further back.
             continue
-        return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
+        if text[k] != "}":
+            return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
+        depth, j = 0, k
+        while j >= floor:  # Back to the matching "{" of an expression child.
+            depth += {"}": 1, "{": -1}.get(text[j], 0)
+            if depth == 0:
+                break
+            j -= 1
+        budget[0] -= max(0, line_start - max(j, floor))
+        if j < floor:
+            return False
+        i = j
     return False
 
 
@@ -282,10 +306,11 @@ def mask_markup_comments(text, *, jsx=False, template=False):
     """Mask template comments, protecting quoted attributes and raw-text blocks."""
     parts, end, cursor = [], 0, 0
     token = JSX_TOKEN if jsx else TEMPLATE_TOKEN if template else MARKUP_TOKEN
+    budget = [JSX_TEXT_BUDGET[0] + JSX_TEXT_BUDGET[1] * len(text)]
     while match := token.search(text, cursor):
         found = match.group(0)
         if jsx and found.lstrip().startswith("//"):
-            if jsx_text_line(text, match.start()):
+            if jsx_text_line(text, match.start(), budget):
                 cursor = match.end()  # "//" in JSX child text is visible text, not a comment.
                 continue
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))

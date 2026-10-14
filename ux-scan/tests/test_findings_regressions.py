@@ -569,6 +569,8 @@ class TransactionRegressions(unittest.TestCase):
             '<a b={typeof /}/} c="U-001"> U-001': '<a b={typeof /}/} c="U-001"> U-002',
             '<Foo render={() => <b>x</b>} title="U-001" /> U-001': '<Foo render={() => <b>x</b>} title="U-001" /> U-002',
             '<a b={i++ / 2} c="U-001"> U-001': '<a b={i++ / 2} c="U-001"> U-002',
+            '<X p={x < /}/.test(y)} data-id="U-001" /> U-001': '<X p={x < /}/.test(y)} data-id="U-001" /> U-002',
+            '<X p={a && <b>x</b>} data-id="U-001" /> U-001': '<X p={a && <b>x</b>} data-id="U-001" /> U-002',
             "Use <!-- in templates (U-001). Later U-002.": "Use <!-- in templates (U-002). Later U-001.",
             "<!-- open\nU-001": "<!-- open\nU-001",
             '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-001': '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-002',

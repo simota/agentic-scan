@@ -418,7 +418,8 @@ def _scan_js(text, i, stop):
                 return None, i
             i = close + 2
             continue
-        elif c == "/" and previous in REGEX_AFTER:
+        elif c == "/" and (previous in REGEX_AFTER or previous == "<" and text[i - 1] != "<"):
+            # After "<", a regex follows a space (x < /a/.test(y)); "</" closes a JSX element.
             i += 1
             in_class = False
             while i < stop and text[i] != "\n" and (in_class or text[i] != "/"):

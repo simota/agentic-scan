@@ -7,8 +7,8 @@ Two independent tests, both linear in the line length:
   basic authorization values.
 - A secret-like name (password, secret, token, api key, credentials…) is
   masked when the value assigned to it is a literal that is not a label.
-  Labels (a capitalised word repeating the name's keyword, such as "Password",
-  or non-ASCII text such as "パスワード"), types, expressions, references
+  Labels (a capitalised word or a phrase repeating the name's keyword, such
+  as "Password" or "Enter your password", or non-ASCII text such as "パスワード"), types, expressions, references
   (process.env.X), booleans, colours and lengths stay visible, because forms and locale files are exactly what a UX review
   cites.
 
@@ -47,20 +47,19 @@ _KEYWORD = (r"secret|passw(?:or)?d|pwd|passphrase|pass|api[_-]?keys?|private[_-]
 # so passwordLabel, tokenColor or password_reset_url are UI names, not secrets.
 _SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret))?"
            r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
-# The keyword starts a name part: after a non-letter, or a lower-to-upper camelCase step.
-SECRET_NAME = re.compile(r"(?:(?<![A-Za-z])(?i:" + _KEYWORD + r")|(?<=[a-z])(?:" + _KEYWORD.replace("secret", "Secret")
-                         .replace("passw", "Passw").replace("pwd", "Pwd").replace("passphrase", "Passphrase")
-                         .replace("|pass|", "|Pass|").replace("api[", "Api[").replace("private[", "Private[")
-                         .replace("access[", "Access[").replace("credentials", "Credentials")
-                         .replace("token", "Token").replace("client[", "Client[") + r"))(?i:" + _SUFFIX + r")(?![A-Za-z])")
+# The keyword starts a name part: after a non-letter, or as a capitalised word
+# after any letter (camelCase passwordHash, acronym prefixes DBPassword, APISecret).
+NAME_START = r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z]))"
+SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
 # Closing quotes or brackets, an optional type (Go "Password string = …"), then an
-# assignment: = : := ?= =>, XML >value< or value="…".
-ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=])\s*"
+# assignment: = : := ?= =>, XML >value< or value="…"; == compares.
+ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
                         r"|\"?\s+value=|\"?>(?=[^<\s])")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
-CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?(?<![A-Za-z])(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
-QUOTED_VALUE = re.compile(r"[\[({]?\s*[\"'`]([^\"'`\s]{4,})[\"'`]")
-BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]{4,})")
+CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
+# Any non-empty quoted literal, spaces included ("correct horse battery staple").
+QUOTED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)+)\1")
+BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
                         r"include|same-origin|omit|strong|weak|medium)\W*")
@@ -70,19 +69,24 @@ VARIABLE_PREFIX = re.compile(r"--[\w-]*\Z")
 
 
 LABEL_WORD = re.compile(r"[A-Z][a-z]+(?:[-'][A-Za-z]+)*[.:?!…]*")
+# Two or more words of letters, without digits or underscores ("Enter your password").
+LABEL_PHRASE = re.compile(r"[^\W\d_]+(?:[-'][^\W\d_]+)*(?:[,.:;?!…]*\s+[^\W\d_]+(?:[-'][^\W\d_]+)*)+[.:?!…]*")
 
 
 def _is_label(value, name):
     """A UI label for this name: a capitalised word that repeats the name's keyword
-    ("Password", "Passwort"), or text with no ASCII word at all ("パスワード").
+    ("Password", "Passwort"), words without digits that include it ("Enter your
+    password"), or text with no ASCII word at all ("パスワード").
 
     A value with digits, underscores or lower-case letters only ("password123",
-    "token_abc") is a credential even when it contains the keyword.
+    "token_abc"), or a phrase without the keyword ("correct horse battery
+    staple"), is a credential.
     """
     keyword = SECRET_NAME.match(name)
     stem = re.sub(r"[^a-z]", "", keyword.group(0).lower())[:5] if keyword else ""
-    return ((bool(stem) and LABEL_WORD.fullmatch(value) is not None and stem in value.lower())
-            or not re.search(r"[A-Za-z0-9]{2}", value))
+    return ((bool(stem) and stem in value.lower()
+             and (LABEL_WORD.fullmatch(value) is not None or LABEL_PHRASE.fullmatch(value) is not None))
+            or (not re.search(r"[A-Za-z0-9]{2}", value) and re.search(r"[^\x00-\x7f]", value) is not None))
 
 
 def _value_starts(text):
@@ -90,6 +94,8 @@ def _value_starts(text):
     for name in SECRET_NAME.finditer(text):
         if VARIABLE_PREFIX.search(text, max(0, name.start() - 64), name.start()):
             continue  # A CSS custom property such as --token-color.
+        if name.start() and text[name.start() - 1] in "/\\":
+            continue  # A path such as /etc/passwd.
         assignment = ASSIGNMENT.match(text, name.end())
         if assignment:
             yield assignment.end(), name.group(0)
@@ -101,7 +107,7 @@ def _assigned_secret(text):
     for rest, name in _value_starts(text):
         quoted = QUOTED_VALUE.match(text, rest)
         if quoted:
-            value = quoted.group(1)
+            value = quoted.group(2)
             if not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value)):
                 return True
             continue

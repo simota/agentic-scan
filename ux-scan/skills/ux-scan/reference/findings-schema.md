@@ -96,7 +96,7 @@ path or query and balanced parentheses nested up to four levels, runs to whitesp
 unbalanced bracket or Japanese punctuation such as `、` or `。`; write a space
 between a URL and a following finding id, or that id is kept as part of the
 URL. Ids inside `_emphasis_` are references; ids joined to a word or
-snake_case name (`a_U-001`, `foo__U-001`) are not; braces inside JSX strings and template literals do not end an expression. Code spans close at a backtick run of the same
+snake_case name by any run of underscores (`a_U-001`, `foo____U-001`) are not; braces inside JSX strings and template literals, including escaped quotes, do not end an expression. Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
 Markdown destinations are preserved even for extensionless paths, query-only
 URLs and reference-link definitions; link labels and titles remain prose and

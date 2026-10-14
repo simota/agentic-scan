@@ -49,6 +49,25 @@ SECRET_LINE = re.compile(r"(?i:(?:secret|passw(?:or)?d|pwd|api[_-]?keys?|private
                          r"|(?:(?<![A-Za-z-])(?i:token)|(?<=[a-z])Token)(?i:" + _SECRET_SUFFIX + r")\s*[\"']?\s*[:=]"
                          r"|(?i:\bbearer\s+[\w.~+/-]{8,})|\b(?:sk|rk)_(?:live|test)_\w|\bgh[pousr]_\w{20}|\bxox[abpr]-\w"
                          r"|\bAKIA[0-9A-Z]{16}\b|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
+# A credential cut off by the excerpt limit: its prefix alone would be published.
+SECRET_CUT = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]+:[^/\s@\"'`]*|\b(?:sk|rk)_(?:live|test)_?"
+                        r"|\bgh[pousr]_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*)\Z")
+SHOWN_CHARACTERS = 240
+SECRET_LOOKAHEAD = 512
+
+
+def secret_in_excerpt(line):
+    """Mask the shown part of a line when it holds, or begins, a secret-looking value.
+
+    The search reaches a bounded distance past the cut, so a secret whose
+    identifying end lies just beyond it is still found; a credential prefix at
+    the very end of the shown text is masked too.
+    """
+    shown = line[:SHOWN_CHARACTERS]
+    return bool(SECRET_LINE.search(line[:SHOWN_CHARACTERS + SECRET_LOOKAHEAD])
+                or (len(line) > SHOWN_CHARACTERS and SECRET_CUT.search(shown)))
+
+
 # Only these end a line for path:line, as in editors and grep -n.
 SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
@@ -159,8 +178,7 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
     first = max(1, start - CONTEXT)
     last = min(len(lines), end + CONTEXT, first + MAX_SNIPPET_LINES - 1)
     # Other Unicode line breaks stay inside their line, shown as a visible marker.
-    # Only the shown 240 characters are tested: a secret beyond them is not published.
-    shown = [masked if SECRET_LINE.search(line[:240]) else report.LINE_BREAKS.sub("\u2424", line[:240])
+    shown = [masked if secret_in_excerpt(line) else report.LINE_BREAKS.sub("\u2424", line[:SHOWN_CHARACTERS])
              for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 

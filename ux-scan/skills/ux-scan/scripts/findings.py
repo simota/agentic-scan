@@ -358,8 +358,9 @@ TAG_NAME = r"[a-z][\w.:-]*"
 # JSX attribute expressions such as style={{ color: "red" }} nest braces; a brace
 # inside a string or template literal is text. A quote with no closing quote on
 # its line is plain text, so each character has one reading and no backtracking.
-JSX_EXPRESSION = _balanced("{", "}", r"""(?:"[^"\n]*"|"(?![^"\n]*")|'[^'\n]*'|'(?![^'\n]*')"""
-                                     r"""|`[^`]*`|`(?![^`]*`)|[^{}"'`])""")
+JSX_EXPRESSION = _balanced("{", "}", r"""(?:"(?:\\.|[^"\\\n])*"|"(?!(?:\\.|[^"\\\n])*")"""
+                                     r"""|'(?:\\.|[^'\\\n])*'|'(?!(?:\\.|[^'\\\n])*')"""
+                                     r"""|`(?:\\.|[^`\\])*`|`(?!(?:\\.|[^`\\])*`)|\\.|[^{}"'`\\])""")
 _ATTRIBUTE_VALUE = r"\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+)"
 # Attribute names: plain, JSX {…}, Angular (event)/[prop]/[(model)]/*ngIf (always with a value) and #ref.
 TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*(?:" + _ATTRIBUTE_VALUE + r")?"
@@ -463,8 +464,21 @@ def _rewrite_prose(value, mapping):
             style = match["first_style"] or match["last_style"]
             return ", ".join(f"{style}{ticks}{mapping[fid]}{ticks}{style}" for fid in old_ids)
 
+        def joined(start, end):
+            """An underscore run of any length joins the id to a name (foo____U-001, U-001____bar)."""
+            before = start
+            while before > 0 and text[before - 1] == "_":
+                before -= 1
+            after = end
+            while after < len(text) and text[after] == "_":
+                after += 1
+            return ((before < start and before > 0 and text[before - 1].isascii() and text[before - 1].isalnum())
+                    or (after > end and after < len(text) and text[after].isascii() and text[after].isalnum()))
+
         # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
         def mention(match):
+            if joined(match.start(), match.end()):
+                return match.group(0)
             if match["first"]:
                 return reference_range(match)
             if match["styled"]:

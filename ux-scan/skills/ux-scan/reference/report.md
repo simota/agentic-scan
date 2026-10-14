@@ -21,7 +21,7 @@ viewport and criterion, and both pages state the viewports and locales from
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
 from a UTF-8 file no larger than 2 MiB. Files outside the repository, binaries,
 symlinks (including directory links), and secret-looking paths are omitted;
-secret-looking assignment lines are masked in full. These name and text rules
+secret-looking assignment lines are masked in full, judged on the shown text plus 512 characters after it so a credential cut off at the limit is masked too. These name and text rules
 are conservative heuristics, not a complete credential audit. Report text and
 source excerpts remain escaped text in the HTML. `--out` must resolve outside
 `--repo`, which must name an existing directory. The findings input must not

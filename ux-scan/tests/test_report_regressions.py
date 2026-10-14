@@ -256,6 +256,16 @@ class ReportRegressions(unittest.TestCase):
         render.snippet(self.repo, "min.js:1")
         self.assertLess(time.monotonic() - started, 2)
 
+    def test_secrets_crossing_the_excerpt_cutoff_are_masked(self):
+        lines = ["x" * 220 + " url = https://user:SECRETSECRETSECRET@db.example/app",
+                 "y" * 226 + " Bearer abcdefghijklmnop",
+                 "z" * 225 + " https://user:" + "S" * 1000 + "@host",
+                 "w" * 300]
+        (self.repo / "long.ts").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "long.ts:1-4")["lines"]
+        self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
+        self.assertEqual(shown[3], "w" * 240)
+
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(
             "line1\n\fline2\nline3\nline4 \u2028 has LS\nline5\x85\nline6 TARGET\r\nline7\rline8\n".encode("utf-8"))

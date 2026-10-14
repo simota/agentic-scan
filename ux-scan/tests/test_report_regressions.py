@@ -251,6 +251,8 @@ class ReportRegressions(unittest.TestCase):
 
     def test_allowed_second_language_render_is_verified(self):
         self.assertEqual(self.invoke()[0], 0)
+        self.assertIn("ja: expected a directory holding the ja render",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
         self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True, allow=["ja"])), [])
         self.data["findings"][0]["title"] = "Changed after the translation"

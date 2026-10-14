@@ -170,7 +170,8 @@ def problems(out, no_pdf=False, allow=()):
     yield from page_problems(sources, expected_stamps, no_pdf, rerender)
     if "findings.json" not in sources:
         return
-    for name in sorted(set(allow) & found & set(LANGUAGES)):
+    # A requested second language must exist; it is not merely tolerated.
+    for name in sorted(set(allow) & set(LANGUAGES)):
         yield from translation_problems(out, name, expected_stamps, no_pdf)
 
 

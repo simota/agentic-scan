@@ -131,6 +131,24 @@ class MatchingRegressionTests(unittest.TestCase):
         invocations = {row["name"]: row["invocations"] for row in result["scripts"]}
         self.assertEqual(invocations, {"build": 1, "deps": 1})
 
+    def test_unrelated_makefiles_do_not_share_command_lines(self):
+        result = scan({
+            "a/Makefile": "first:\n\techo\n",
+            "b/Makefile": "zero:\n\techo\nsecond:\n\techo\n",
+            "README.md": "Run `make -C a first second`.\n",
+            "c/Makefile": "include rules.mk\nall: deps\n",
+            "c/rules.mk": "lint:\n\techo\ndeps:\n\techo\n",
+        })
+        uninvoked = sorted(f"{row['source']}:{row['name']}" for row in result["uninvoked_scripts"])
+        self.assertEqual(uninvoked, ["b/Makefile:second"])
+
+    def test_secret_route_definitions_are_not_mentions(self):
+        result = scan({
+            "server/app.js": 'app.get("/users", h);\n',
+            "src/credentials.ts": 'app.get("/users", h);\n',
+        })
+        self.assertEqual([(row["location"], row["mentions"]) for row in result["routes"]], [("server/app.js:1", 0)])
+
     def test_tsconfig_extends_carries_paths(self):
         result = scan({
             "tsconfig.base.json": '{"compilerOptions": {"paths": {"@shared/*": ["packages/shared/src/*"]}}}',

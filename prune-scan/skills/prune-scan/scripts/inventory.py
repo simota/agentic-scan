@@ -154,6 +154,7 @@ ROUTE_DEFS = (
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
 # Targets end on a non-space character, so trailing blanks are matched once.
+MAKE_INCLUDE = re.compile(r"^[^\S\n]*-?s?include[^\S\n]+([^#\n]+)", re.M)
 MAKE_RULE = re.compile(r"^([^\s#:=](?:[^:=\n]*[^\s:=])?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
 NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare",
                   "prepublishOnly", "prepack", "postpack", "publish", "postpublish", "dependencies",
@@ -1423,8 +1424,6 @@ def inventory(root, units=None, today=None):
     # Routes.
     route_rows, seen_routes, definition_spans = [], set(), defaultdict(list)
     for rel in code_files:
-        if rel in secret_sources:
-            continue
         text = texts[rel]
         # api.get("/users/me") on an axios, ky or ofetch instance is a client
         # call, not a route; an express router named api in the same file is not.
@@ -1439,6 +1438,8 @@ def inventory(root, units=None, today=None):
                     continue
                 seen_routes.add((where, route))
                 definition_spans[rel].append(m.span(2))
+                if rel in secret_sources:
+                    continue  # Its definitions are not mentions, but its literals are never output.
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
     for row in route_rows:
@@ -1477,23 +1478,45 @@ def inventory(root, units=None, today=None):
     # Make targets and package scripts.
     all_text = list(texts.items())
     script_rows = []
-    # Targets of every Makefile may share a command line: make deps build.
-    make_files = [rel for rel in texts
-                  if Path(rel).name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk")]
-    known = "|".join(sorted({re.escape(m.group(1)) for rel in make_files for m in MAKE_TARGET.finditer(texts[rel])
-                             if not m.group(1).startswith(".")}, key=len, reverse=True)) or "(?!)"
+    # A Makefile and the files it includes (or that include it) form one
+    # project: their targets share command lines (make deps build) and
+    # prerequisite lists. Unrelated Makefiles do not.
+    make_files = sorted(rel for rel in texts
+                        if Path(rel).name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"))
+    project = {rel: rel for rel in make_files}
+
+    def project_of(rel):
+        while project[rel] != rel:
+            project[rel] = project[project[rel]]
+            rel = project[rel]
+        return rel
+    for rel in make_files:
+        for line in MAKE_INCLUDE.findall(texts[rel]):
+            for included in line.split():
+                if "$" in included:
+                    continue
+                target = os.path.normpath((Path(rel).parent / included).as_posix()).replace(os.sep, "/")
+                if target in project:
+                    project[project_of(target)] = project_of(rel)
+    project_targets, project_prerequisites = defaultdict(set), defaultdict(Counter)
+    for rel in make_files:
+        text = texts[rel]
+        project_targets[project_of(rel)].update(
+            m.group(1) for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith("."))
+        # Another rule's prerequisite list runs the target too (all: build).
+        for rule in MAKE_RULE.finditer(text):
+            owners = set(rule.group(1).split())
+            if any(owner.startswith(".") for owner in owners):
+                continue  # .PHONY: build declares, it does not run.
+            for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
+                project_prerequisites[project_of(rel)][prerequisite] += 1
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):
             targets = [m for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith(".")]
-            # Another rule's prerequisite list runs the target too (all: build).
-            prerequisites = Counter()
-            for rule in MAKE_RULE.finditer(text):
-                owners = set(rule.group(1).split())
-                if any(owner.startswith(".") for owner in owners):
-                    continue  # .PHONY: build declares, it does not run.
-                for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
-                    prerequisites[prerequisite] += 1
+            prerequisites = project_prerequisites[project_of(rel)]
+            known = "|".join(sorted((re.escape(t) for t in project_targets[project_of(rel)]),
+                                    key=len, reverse=True)) or "(?!)"
             for n, m in enumerate(targets):
                 # One command line: options (-C dir), variables and other known
                 # targets may precede the target; prose words between make and

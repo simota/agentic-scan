@@ -6,11 +6,10 @@ Two independent tests, both linear in the line length:
   private-key blocks, credentials in URLs and command lines, and bearer or
   basic authorization values.
 - A secret-like name (password, secret, token, api key, credentials…) is
-  masked only when the value assigned to it looks like a credential: a literal
-  of six or more characters without whitespace that is not a label. Labels
-  (a capitalised word such as "Password", or non-ASCII text such as
-  "パスワード"), types, expressions, references (process.env.X) and booleans
-  stay visible, because forms and locale files are exactly what a UX review
+  masked when the value assigned to it is a literal that is not a label.
+  Labels (a capitalised word repeating the name's keyword, such as "Password",
+  or non-ASCII text such as "パスワード"), types, expressions, references
+  (process.env.X), booleans, colours and lengths stay visible, because forms and locale files are exactly what a UX review
   cites.
 
 These are conservative heuristics, not a credential audit.
@@ -70,11 +69,20 @@ COLOR_OR_LENGTH = re.compile(r"#[0-9a-fA-F]{3,8}|-?\d+(?:\.\d+)?(?:px|rem|em|%|v
 VARIABLE_PREFIX = re.compile(r"--[\w-]*\Z")
 
 
+LABEL_WORD = re.compile(r"[A-Z][a-z]+(?:[-'][A-Za-z]+)*[.:?!…]*")
+
+
 def _is_label(value, name):
-    """A UI label for this name: it repeats the name's keyword ("Password") or has no ASCII word at all."""
+    """A UI label for this name: a capitalised word that repeats the name's keyword
+    ("Password", "Passwort"), or text with no ASCII word at all ("パスワード").
+
+    A value with digits, underscores or lower-case letters only ("password123",
+    "token_abc") is a credential even when it contains the keyword.
+    """
     keyword = SECRET_NAME.match(name)
     stem = re.sub(r"[^a-z]", "", keyword.group(0).lower())[:5] if keyword else ""
-    return (bool(stem) and stem in value.lower()) or not re.search(r"[A-Za-z0-9]{2}", value)
+    return ((bool(stem) and LABEL_WORD.fullmatch(value) is not None and stem in value.lower())
+            or not re.search(r"[A-Za-z0-9]{2}", value))
 
 
 def _value_starts(text):

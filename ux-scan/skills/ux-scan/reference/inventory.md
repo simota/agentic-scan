@@ -32,7 +32,7 @@ number of files inside an unreadable directory is unknown.
 CSS block comments, `//` line comments in Sass, Less and Stylus (files and
 `<style lang="scss|sass|less|stylus">` blocks; a `//` after `:` or `(` is kept
 as a URL), closed HTML / JSX comments, JSX `/* */` comments and `//` comment
-lines, and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
+lines (not JSX child text that follows a tag's `>`), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
 `{{! }}`, `<%# %>`) are masked without changing source locations. A CSS string ends at a raw newline, so a stray quote cannot hide
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,

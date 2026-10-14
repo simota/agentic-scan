@@ -1202,6 +1202,15 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertIn("type=tel", data["inputs"][0]["missing"])
         self.assertIn("type=email", data["inputs"][3]["missing"])
 
+    def test_line_leading_slashes_in_jsx_text_are_text(self):
+        import time
+        data = self.scan({"a.jsx": 'export const A = () => (\n<div>\n// visible text <img src="x" />\n</div>\n);\n'
+                                   'const f = () =>\n// <img src="commented" />\nnull;\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:3"])
+        started = time.monotonic()
+        self.scan({"b.jsx": "<div>\n" + "// note\n" * 50000})
+        self.assertLess(time.monotonic() - started, 3)
+
 
 if __name__ == "__main__":
     unittest.main()

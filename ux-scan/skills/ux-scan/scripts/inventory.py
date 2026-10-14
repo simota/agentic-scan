@@ -257,6 +257,27 @@ def style_line_comments(tag):
     return (literal(tag.attrs.get("lang")) or "").lower() in LINE_COMMENT_LANGS
 
 
+def jsx_text_line(text, start):
+    """Whether the line at start continues JSX child text: the code before it ends with a tag's ">".
+
+    Earlier // lines are skipped (at most 50, keeping the scan linear); "=>" is
+    an arrow function, so what follows is code.
+    """
+    i = start
+    for _ in range(50):
+        k = i - 1
+        while k >= 0 and text[k].isspace():
+            k -= 1
+        if k < 0:
+            return False
+        line_start = text.rfind("\n", 0, k) + 1
+        if text[line_start:k + 1].lstrip().startswith("//"):
+            i = line_start  # Another comment line: look further back.
+            continue
+        return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
+    return False
+
+
 def mask_markup_comments(text, *, jsx=False, template=False):
     """Mask template comments, protecting quoted attributes and raw-text blocks."""
     parts, end, cursor = [], 0, 0
@@ -264,6 +285,9 @@ def mask_markup_comments(text, *, jsx=False, template=False):
     while match := token.search(text, cursor):
         found = match.group(0)
         if jsx and found.lstrip().startswith("//"):
+            if jsx_text_line(text, match.start()):
+                cursor = match.end()  # "//" in JSX child text is visible text, not a comment.
+                continue
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
             cursor = end = match.end()
             continue

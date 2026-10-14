@@ -281,7 +281,9 @@ class ReportRegressions(unittest.TestCase):
                  'password: "Welcome"', '$password = "Admin";', "'password' => 'Secret',",
                  'secret = "Correct-Horse-Battery"', 'password = "contraseña123"', "password={'hunter22'}",
                  "DB_PASSWORD=p@ss", "API_KEY=12345", 'const API_KEY = "Abcdefghijklmnop";',
-                 'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }']
+                 'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }',
+                 'password = "password123"', 'SECRET_KEY = "mysecretvalue123"', 'token = "token_abcdef123"',
+                 "password: 'password'"]
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

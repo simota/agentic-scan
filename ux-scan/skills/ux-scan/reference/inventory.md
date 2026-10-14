@@ -32,8 +32,8 @@ number of files inside an unreadable directory is unknown.
 CSS block comments, `//` line comments in Sass, Less and Stylus (files and
 `<style lang="scss|sass|less|stylus">` blocks; a `//` after `:` or `(` is kept
 as a URL), closed HTML / JSX comments, JSX `/* */` comments and `//` comment
-lines (not JSX child text that follows a tag's `>`, also after `{expression}`
-children), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
+lines (not JSX child text: a line after a tag's `>`, an `{expression}` child
+or another text line), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
 `{{! }}`, `<%# %>`) are masked without changing source locations. A CSS string ends at a raw newline, so a stray quote cannot hide
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
@@ -78,7 +78,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `fixed_widths` | `width` / `min-width` declarations of 320 px or more (rem and em at 16px); widths in parenthesized conditions are excluded | RS2 |
 | `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` flags dimensions under 24 px for review, with the actual hit area and WCAG 2.5.8 exceptions still to verify | RS3 |
 | `focus_outline` | `outline: none` / `0` / `0px` (and `outline: 0` or `"none"` in style objects, or in an HTML `style` attribute), with whether the same `:focus` rule sets a visible replacement (a box shadow, border, background, underline or outline whose value is not only `none`, `0`, `transparent` or a CSS-wide keyword such as `inherit`) and whether the file has a `:focus-visible` rule | ST2 |
-| `viewport_meta` | Viewport meta tags and the Next.js `export const viewport = {…}` object (`maximumScale`, `userScalable`); `blocks_zoom` for `user-scalable=no` / `0` or a nonnegative numeric `maximum-scale` under 2; names are case-insensitive and numeric prefixes are parsed without aborting on trailing text | RS4 |
+| `viewport_meta` | Viewport meta tags and the Next.js `export const viewport = {…}` object (`maximumScale`, `userScalable`); `blocks_zoom` for `user-scalable=no` / `0` or a nonnegative numeric `maximum-scale` under 2; names are case-insensitive and numeric prefixes are parsed without aborting on trailing text; a Next.js `maximumScale` counts only as a whole numeric literal (`.5`, `1e5`, `1_000`, `0x10`), not an expression | RS4 |
 | `click_handlers` | Click handlers (including Alpine `x-on:click`) on non-interactive elements (`div`, `span`, `li`, `img`…) or `<a>` without `href`, with what is missing (role, tabindex, a keydown / keyup / keypress handler in JSX, HTML, Vue, Svelte or Angular syntax; event modifiers such as `(keyup.enter)` or `on:click|once` are ignored) | AX2 |
 | `images` | `<img>` without `alt`, or without `width` and `height` | AX4, PP2 |
 | `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` — a literal, or an expression such as `htmlFor={id}` used by exactly one label and, as `id`, by exactly one field in the file; a repeated expression may carry different values per component and stays a candidate — or wrapping `<label>`; shadcn and MUI `Label`, `FormLabel` and `InputLabel` count as labels), personal-data fields without `autocomplete`, email or phone fields with the wrong `type` (judged on `name` and `id` separately: distinctive stems such as `email`, `phone` or `address` anywhere in a word, short ones such as `tel`, `city` or `card` only as whole words, so `capacity` or `microphone` are not personal fields; checkboxes, radios, ranges, colour and file inputs are not data-entry fields); `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |

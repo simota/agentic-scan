@@ -286,7 +286,8 @@ class ReportRegressions(unittest.TestCase):
                  "password: 'password'", 'password = "correct horse battery staple"', 'password = "abc"',
                  "pwd: 'x'", 'DBPassword = "hunter2"', 'APISecret: "s3cr3t"', 'AWSAccessKey = "abcd1234"',
                  "define('DBPassword', 'x');", 'password = "it\'s me"',
-                 'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";']
+                 'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";',
+                 'password = String("hunter2")']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

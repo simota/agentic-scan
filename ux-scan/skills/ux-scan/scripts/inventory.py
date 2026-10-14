@@ -178,6 +178,22 @@ VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 # Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false }.
 NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{([^{}]{0,1000})\}")
+# The whole value of maximumScale, when it is a lone numeric literal (not an expression).
+NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
+JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+JS_INTEGER = {"0x": (16, re.compile(r"[0-9a-fA-F]+")), "0o": (8, re.compile(r"[0-7]+")), "0b": (2, re.compile(r"[01]+"))}
+
+
+def js_number(literal):
+    """The value of a JavaScript numeric literal (1, .5, 1e5, 1_000, 0x10), or None if it is not one."""
+    if re.search(r"(?<![0-9a-fA-F])_|_(?![0-9a-fA-F])", literal):
+        return None  # A separator must sit between digits.
+    literal = literal.replace("_", "")
+    base = JS_INTEGER.get(literal[:2].lower())
+    if base:
+        return int(literal[2:], base[0]) if base[1].fullmatch(literal[2:]) else None
+    return float(literal) if JS_DECIMAL.fullmatch(literal) else None
+
 VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.I)
 TAG_TOKEN = re.compile(r"<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])")
 ATTR_NAME = re.compile(r"[^\s=<>/{}\"']+")
@@ -261,12 +277,18 @@ def style_line_comments(tag):
 # plus this many per character of the file, keeping the scan linear.
 JSX_TEXT_BUDGET = (100_000, 8)
 LINE_COMMENT = re.compile(r"[ \t]*//")
+# A line that reads as JSX child text rather than code: no JS keyword first and
+# no operator, bracket or statement punctuation outside {expressions}. Such a
+# line inside code leads back to more code, never to a tag's ">".
+JSX_TEXT = re.compile(r"[ \t]*(?!(?:return|const|let|var|import|export|if|else|case|default|throw|yield|await|"
+                      r"type|interface|function|class)\b)(?:[^=;(){}\[\]<>`\n]|\{[^{}\n]*\})*")
 
 
 def jsx_text_line(text, start, budget):
     """Whether the line at start continues JSX child text: the code before it ends with a tag's ">".
 
-    Earlier // lines and {expression} children are skipped ("<div>{x}\\n// text"),
+    Earlier // lines, child text lines and {expression} children are skipped
+    ("<div>{x}\\n// text", "<div>\\nhello\\n// text"),
     at most 50 steps back; "=>" is an arrow function, so what follows is code.
     budget is a one-item list of characters left to read back in this file;
     once it is spent, // lines are comments again.
@@ -286,6 +308,9 @@ def jsx_text_line(text, start, budget):
             return False  # The line starts beyond the budget.
         if LINE_COMMENT.match(text, line_start, k + 1):
             i = line_start  # Another comment line: look further back.
+            continue
+        if text[k] not in "}>" and JSX_TEXT.fullmatch(text, line_start, k + 1):
+            i = line_start  # Child text such as "Hello": look further back for its element.
             continue
         if text[k] != "}":
             return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
@@ -1156,9 +1181,9 @@ def inventory(root, flows=None):
                                              "replacement_in_rule": None, "focus_visible_rule_in_file": None})
             for m in NEXT_VIEWPORT.finditer(js_text):
                 body = m.group(1)
-                scale = re.search(r"\bmaximumScale\s*:\s*([0-9.]+)", body)
-                blocks = bool(re.search(r"\buserScalable\s*:\s*false\b", body)) or bool(
-                    scale and re.fullmatch(r"[0-9]+(?:\.[0-9]*)?", scale.group(1)) and float(scale.group(1)) < 2)
+                scale = NEXT_MAXIMUM_SCALE.search(body)
+                value = js_number(scale.group(1)) if scale else None
+                blocks = bool(re.search(r"\buserScalable\s*:\s*false\b", body)) or (value is not None and value < 2)
                 acc["viewport_meta"].append({"content": re.sub(r"\s+", " ", body).strip()[:200],
                                              "blocks_zoom": blocks, "location": at(m.start())})
         for m in MEDIA.finditer(text):

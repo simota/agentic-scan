@@ -106,19 +106,29 @@ def _value_starts(text):
         yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 
 
+def _secret_literal(quoted, name):
+    """Whether a matched QUOTED_VALUE is a credential rather than a label, keyword, colour or length."""
+    value = quoted.group(2)
+    return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
+
+
 def _assigned_secret(text):
     for rest, name in _value_starts(text):
         quoted = QUOTED_VALUE.match(text, rest)
         if quoted:
-            value = quoted.group(2)
-            if not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value)):
+            if _secret_literal(quoted, name):
                 return True
             continue
         if rest < len(text) and text[rest] in "{([":
             continue  # An expression, such as password={password}.
         bare = BARE_VALUE.match(text, rest)
-        if (bare and not text.startswith("(", bare.end())  # A call such as useState(…).
-                and not REFERENCE.fullmatch(bare.group(1)) and not NOT_SECRET.fullmatch(bare.group(1))
+        if bare and text.startswith("(", bare.end()):
+            # A call such as useState(…) or String("…"): a literal first argument is the value.
+            quoted = QUOTED_VALUE.match(text, bare.end())
+            if quoted and _secret_literal(quoted, name):
+                return True
+            continue
+        if (bare and not REFERENCE.fullmatch(bare.group(1)) and not NOT_SECRET.fullmatch(bare.group(1))
                 and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
             return True  # A bare env or properties value is never a UI label.
     return False

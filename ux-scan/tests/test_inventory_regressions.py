@@ -1151,6 +1151,12 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual([r["pattern"] for r in data["truncation"]], ['className={cn("truncate'])
         self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]], [("a.tsx:2", True)])
         self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]], [("(inline style)", "b.html:1")])
+        files = {f"s{n}.tsx": f"export const viewport = {{ maximumScale: {value} }};\n"
+                 for n, value in enumerate((".5", "1e5", "1_000", "0x10", "1 / 2", "1.5 // tight"))}
+        data = self.scan(files)
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]],
+                         [("s0.tsx:1", True), ("s1.tsx:1", False), ("s2.tsx:1", False), ("s3.tsx:1", False),
+                          ("s4.tsx:1", False), ("s5.tsx:1", True)])
 
     def test_alpine_jinja2_and_whole_word_personal_fields(self):
         data = self.scan({"a.jinja2": '<div x-on:click="go" x-on:keydown.enter="go" role="button" tabindex="0">x</div>\n'
@@ -1218,7 +1224,11 @@ class InventoryRegressionTests(unittest.TestCase):
                                    '{x.replace(/}/g, "")}\n// a regex <img src="b" />\n{`}${y}`}\n// a template <img src="c" />\n'
                                    '</div>\n);\nfunction f() {\n  return "}";\n}\n// <img src="commented" />\n'})
         self.assertEqual([r["location"] for r in data["images"]], ["e.jsx:4", "e.jsx:6", "e.jsx:8"])
-        for text in ("{}\n" + "// note\n" * 50000, '}"\n// note\n' * 30000, "}/ /\n// note\n" * 30000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
+        data = self.scan({"g.jsx": 'export const G = () => (\n<div>\nhello\n// after text <img src="a" />\n'
+                                   'Hello {name}, welcome\n// after mixed text <img src="b" />\n</div>\n);\n'
+                                   'const a = b\n// <img src="commented" />\nconst o = {\n  label: "x"\n}\n// <img src="c2" />\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["g.jsx:4", "g.jsx:6"])
+        for text in ("<div>\n" + "text\n// note\n" * 30000, "{}\n" + "// note\n" * 50000, '}"\n// note\n' * 30000, "}/ /\n// note\n" * 30000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
             started = time.monotonic()
             self.scan({"d.jsx": text})
             self.assertLess(time.monotonic() - started, 3)

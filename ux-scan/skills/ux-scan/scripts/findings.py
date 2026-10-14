@@ -655,6 +655,8 @@ def main(argv=None):
             check_findings(load_json(target), flow_ids_beside(target))
             print(f"ok {target}")
             return 0
+        if not target.parent.is_dir():
+            raise RecordError(f"{target.parent}: output directory does not exist")
         bad = unsafe_target(target.parent, (target.name,))
         if bad is not None:
             raise RecordError(f"refusing to write {bad}: it exists as a symlink or non-regular file")

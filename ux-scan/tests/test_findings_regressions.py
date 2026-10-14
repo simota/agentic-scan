@@ -543,6 +543,15 @@ class TransactionRegressions(unittest.TestCase):
         with self.assertRaisesRegex(findings.RecordError, "unknown key 'path'"):
             findings.check_flows(flows)
 
+    def test_missing_output_directory_is_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fragment = Path(tmp) / "fragment.json"
+            fragment.write_text(json.dumps({"flows": []}), encoding="utf-8")
+            for cmd, name in (("merge", "findings.json"), ("flows", "flows.json")):
+                result = run(cmd, Path(tmp) / "missing" / name, fragment)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("output directory does not exist", result.stderr)
+
     def test_unknown_sections_are_refused(self):
         data = copy.deepcopy(SAMPLE)
         data["limitation"] = ["typo"]

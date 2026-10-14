@@ -40,6 +40,8 @@ PRIORITIES = ("primary", "secondary", "shared")
 SOURCES = ("documented", "stated", "inferred")
 TOKEN_SCALES = ("spacing", "font_sizes", "breakpoints", "z_index")
 LIST_KEYS = ("checked_ok", "limitations", "decisions", "next_steps")
+RECORD_KEYS = ("schema_version", "meta", "summary", "perspectives", "findings", *LIST_KEYS)
+FLOWS_KEYS = ("app", "viewports", "locales", "tokens", "flows")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
               "FB": 5, "CP": 4, "AX": 6, "MO": 3, "IN": 4, "PP": 4}
 FAMILIES = tuple(HUNT_STEPS)
@@ -53,6 +55,13 @@ TEXT_FIELDS = ("title", "category", "screen", "viewport", "criterion", "observed
 
 class RecordError(Exception):
     pass
+
+
+def _known_keys(obj, allowed, where):
+    """Refuse a misspelled section instead of keeping it where nothing reads it."""
+    unknown = sorted(str(k) for k in set(obj) - set(allowed))
+    if unknown:
+        raise RecordError(f"{where}: unknown key {unknown[0]!r}; expected {', '.join(allowed)}")
 
 
 def _str(obj, key, where, required=False):
@@ -149,6 +158,7 @@ def check_flows(flows):
     """Raise RecordError unless flows matches reference/flows.md; return it."""
     if not isinstance(flows, dict):
         raise RecordError("flows: expected an object")
+    _known_keys(flows, FLOWS_KEYS, "flows")
     _str(flows, "app", "flows", required=True)
     _viewports(flows.get("viewports", []), "flows.viewports")
     _strings(flows.get("locales", []), "flows.locales")
@@ -157,6 +167,9 @@ def check_flows(flows):
         raise RecordError("flows.tokens: expected an object")
     if "tokens" in flows:
         _location(_str(tokens, "source", "flows.tokens", required=True), "flows.tokens.source")
+        if not any(key in tokens for key in TOKEN_SCALES):
+            raise RecordError(f"flows.tokens: expected at least one scale ({', '.join(TOKEN_SCALES)}); "
+                              "omit tokens when there is no token source")
     for key in TOKEN_SCALES:
         if key in tokens:
             scale = tokens[key]
@@ -210,6 +223,7 @@ def check_findings(data, flow_ids=None, ordered=True):
     """
     if not isinstance(data, dict):
         raise RecordError("findings: expected an object")
+    _known_keys(data, RECORD_KEYS, "findings")
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise RecordError("schema_version: expected 1")
     meta = data.get("meta")
@@ -297,7 +311,8 @@ FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
 FINDING_RANGE = re.compile(
     r"(?<![A-Za-z0-9_])(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
     r"(?P<first>U-[0-9]{3})(?P=first_ticks)(?P=first_style)"
-    r"\s*(?:(?i:to|through)|[-–—−〜～~]|から)\s*"
+    # Separators stay on one line, so a Markdown bullet list of ids is not a range.
+    r"[ \t]*(?:(?i:to|through)|[-–—−〜～~]|から)[ \t]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`*)(?P<last>U-[0-9]{3})"
     r"(?P=last_ticks)(?P=last_style)(?![A-Za-z0-9_])(?:まで)?")
 FINDING_MENTION = re.compile(
@@ -318,8 +333,11 @@ PROSE_PART = re.compile(
     # A code span closes only at a backtick run of exactly the opening length.
     r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
     r"|(?P<comment><!--.*?(?:-->|\Z))"
-    r"|(?P<markup><(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
-    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
+    # Like CommonMark, "<" opens a tag only before a name, "/", "!" or "?", so
+    # "<640px … >1024px" stays prose.
+    r"|(?P<markup><(?=[a-z/!?])(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
+    # A URL ends before Japanese text written directly after it.
+    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(
@@ -539,8 +557,20 @@ def merge_flows(base, fragment):
         raise RecordError("flows: expected an object")
     if not isinstance(fragment, dict):
         raise RecordError("flows fragment: expected an object with a flows list")
-    out = {**base, **{k: v for k, v in fragment.items() if k != "flows"}}
+    _known_keys(fragment, (*FLOWS_KEYS, "remove"), "flows fragment")
+    out = {**base, **{k: v for k, v in fragment.items() if k not in ("flows", "remove")}}
+    if "tokens" in fragment and fragment["tokens"] is None:  # Drops a token source recorded in error.
+        out.pop("tokens", None)
     by_id = _indexed(base.get("flows", []), "flows.flows", "id", FLOW_ID)
+    remove = fragment.get("remove", {})
+    if (not isinstance(remove, dict) or set(remove) - {"flows"}
+            or not isinstance(remove.get("flows", []), list)
+            or not all(isinstance(x, str) for x in remove.get("flows", []))):
+        raise RecordError('flows fragment.remove: expected {"flows": [flow ids]}')
+    for fid in remove.get("flows", []):
+        if fid not in by_id:
+            raise RecordError(f"flows fragment.remove.flows: no such flow {fid!r}")
+        del by_id[fid]
     by_id.update(_indexed(fragment.get("flows", []), "flows fragment.flows", "id", FLOW_ID))
     out["flows"] = list(by_id.values())
     return out
@@ -551,6 +581,7 @@ def merge(base, fragment):
         raise RecordError("findings: expected an object")
     if not isinstance(fragment, dict):
         raise RecordError("fragment: expected an object")
+    _known_keys(fragment, (*RECORD_KEYS, "remove"), "fragment")
     for key in LIST_KEYS:
         if key in base:
             _strings(base[key], key, nonempty=False)

@@ -73,6 +73,8 @@ as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
 `summary` when a fragment carries them, appends new lines to `checked_ok`,
 `limitations`, `decisions` and `next_steps`, and replaces `perspectives` entries
 by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`.
+A fragment may carry only the record's documented sections and `remove`; a
+misspelled section is refused rather than kept where nothing reads it.
 Every fragment section must have its documented type; findings and perspectives
 must be lists of objects, with unique `id` or `name` values within that fragment.
 List sections and removal lines contain strings. Use separate fragments to
@@ -83,7 +85,9 @@ file name or external URL does not identify a finding. Paths (including
 parenthesized route-group components), routes, relative Markdown link targets,
 http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
-protected individually). Code spans close at a backtick run of the same
+protected individually; as in CommonMark, `<` starts a tag only before a name,
+`/`, `!` or `?`, so comparisons such as `<640px … >1024px` remain prose). A URL
+ends at whitespace, quotes, brackets or Japanese text. Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
 Markdown destinations are preserved even for extensionless paths, query-only
 URLs and reference-link definitions; link labels and titles remain prose and
@@ -94,9 +98,11 @@ their ids are not mistaken for references. Separate prose references from
 source paths with whitespace, punctuation or code spans; unseparated text that
 looks like one path is preserved as a source token.
 
-When ids move, explicit finding ranges using `to`, `through`, a hyphen or dash,
-`~`, `〜`, `～`, or Japanese `から` (optionally followed by `まで`) expand to a
-comma-separated list of the same findings in their original range order.
+When ids move, explicit finding ranges on one line using `to`, `through`, a
+hyphen or dash, `~`, `〜`, `～`, or Japanese `から` (optionally followed by
+`まで`) expand to a
+comma-separated list of the same findings in their original range order. Ids on
+separate lines, such as a Markdown bullet list, are never a range.
 The endpoints may each be wrapped in backticks or Markdown emphasis; those
 delimiters still identify finding references, and the expanded list keeps that
 formatting.

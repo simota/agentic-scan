@@ -40,9 +40,12 @@ Written as fragments in scratch and merged with
 `scripts/findings.py flows <out>/flows.json <fragment>…` (run from the skill's
 directory by absolute path, SKILL.md *Paths*): a flow is added, or
 replaces the flow with the same id; `app`, `viewports`, `locales` and `tokens`
-are replaced when a fragment carries them. The command refuses a change that
-would leave a finding in `findings.json` beside it citing a flow that no longer
-exists. Each fragment must leave a valid flow map: for a new file, the first
+are replaced when a fragment carries them, and `"tokens": null` drops a token
+source recorded in error. `{"remove": {"flows": ["FL-07"]}}` deletes a flow
+recorded in error; a flow that was reviewed or not reached stays and is named in
+`limitations` instead. Unknown top-level keys are refused. The command refuses
+a change that would leave a finding in `findings.json` beside it citing a flow
+that no longer exists. Each fragment must leave a valid flow map: for a new file, the first
 fragment includes `app` and at least one primary flow. The entire batch is
 written once, after all fragments pass; a rejected fragment leaves the target
 unchanged. Flow entries must be objects with unique ids within each fragment;
@@ -62,14 +65,14 @@ and all numbers must be finite.
      "screens": [{"name": "Sign-up form", "route": "/signup", "location": "src/components/SignupForm.tsx:4"}]},
     {"id": "FL-05", "name": "App shell and shared styles", "priority": "shared", "actor": "Every user",
      "goal": "Navigation, page frame and the styles every screen inherits.", "source": "inferred",
-     "evidence": "index.html and app.css load on every route",
+     "evidence": "index.html:8 loads app.css on every route",
      "screens": [{"name": "Global styles", "route": "*", "location": "src/styles/app.css:1"}]}
   ]
 }
 ```
 
 `viewports` are `WIDTHxHEIGHT` in CSS px. `tokens` is optional; when present it
-needs `source` (`path:line`) and any of `spacing`, `font_sizes` and
+needs `source` (`path:line`) and at least one of `spacing`, `font_sizes` and
 `breakpoints` (px numbers) and `z_index` (plain numbers). Each supplied scale is
 a non-empty list of finite numbers. Omit `tokens` when there is no token source;
 an empty object does not supply one. Locations use repository-relative paths

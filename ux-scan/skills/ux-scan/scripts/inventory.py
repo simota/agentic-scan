@@ -461,9 +461,23 @@ def tabindex_integer(value, expression, warn):
     return integer(match.group(1), warn) if match else None
 
 
-def label_expression(value):
-    """A dynamic for/id expression with whitespace normalized, distinct from any literal id."""
-    return "\0" + re.sub(r"\s+", "", value)
+def label_expression(value, scope):
+    """A dynamic for/id expression with whitespace normalized, distinct from any literal id.
+
+    The same expression names the same element only within one component
+    (scope), since two components may receive different values for one prop.
+    """
+    return (scope, re.sub(r"\s+", "", value))
+
+
+# A top-level component or function declaration starts a new scope for dynamic ids.
+COMPONENT_START = re.compile(r"^(?:export\s+)?(?:default\s+)?"
+                             r"(?:(?:async\s+)?function\b|class\s|(?:const|let|var)\s+\w+\s*=)", re.M)
+
+
+def event_name(attr):
+    """An event attribute without modifiers: (keyup.enter) -> (keyup), on:click|once -> on:click."""
+    return re.sub(r"[.|][^)]*", "", attr)
 
 
 def has_name(attrs, names=NAME_ATTRS):
@@ -698,6 +712,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
     labels_for = set()
+    scopes = [m.start() for m in COMPONENT_START.finditer(clean)] if suffix in JSX_EXT else []
+    scope_of = lambda offset: bisect_right(scopes, offset)  # noqa: E731
     has_confirmation = bool(CONFIRM.search(clean))
     destructive_offsets = set()
     label_spans = label_regions(parsed)
@@ -708,7 +724,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             if literal(target):
                 labels_for.add(literal(target))
             elif isinstance(target, str):
-                labels_for.add(label_expression(target))  # htmlFor={id} names the input with id={id}.
+                labels_for.add(label_expression(target, scope_of(tag.start)))  # htmlFor={id} names id={id}.
     for tag in parsed:
         if tag.closing:
             continue
@@ -725,7 +741,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             acc["viewport_meta"].append({"content": content, "blocks_zoom": blocks, "location": loc})
         if not has_confirmation:
             for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
-                if attr in DESTRUCTIVE_ATTRS:
+                if event_name(attr) in DESTRUCTIVE_ATTRS:
                     for match in DESTRUCTIVE.finditer(clean, handler_start, handler_end):
                         if match.start(1) not in destructive_offsets:
                             destructive_offsets.add(match.start(1))
@@ -738,10 +754,11 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                                  lambda reason: parse_warning(acc, loc, reason))
         if value is not None and value > 0:
             acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
-        if any(a in attrs for a in CLICK_ATTRS) and (
+        events = {event_name(a) for a in attrs}
+        if any(a in events for a in CLICK_ATTRS) and (
                 (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs)):
             missing = [label for label, keys in (("role", ("role",)), ("tabindex", ("tabindex",)), ("key handler", KEY_ATTRS))
-                       if not any(k in attrs for k in keys)]
+                       if not any(k in attrs or k in events for k in keys)]
             if missing:
                 acc["click_handlers"].append({"element": name, "missing": missing, "location": loc})
         if name == "img":
@@ -761,7 +778,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             ident_attr = attrs.get("id")
             labelled = (has_name(attrs) or in_label or literal(ident_attr) in labels_for
                         or (isinstance(ident_attr, str) and literal(ident_attr) is None
-                            and label_expression(ident_attr) in labels_for))
+                            and label_expression(ident_attr, scope_of(start)) in labels_for))
             missing = [] if labelled else ["label"]
             if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
                 missing.append("autocomplete")

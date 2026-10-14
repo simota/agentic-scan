@@ -922,6 +922,14 @@ class InventoryRegressionTests(unittest.TestCase):
             "<input id={other} type=\"text\" />\n"
             "</>;\n"})
         self.assertEqual([r["location"] for r in data["inputs"]], ["F.jsx:3"])
+        data = self.scan({"G.jsx":
+            "export function Billing({ id }) {\n"
+            "  return <><label htmlFor={id}>Card</label><input id={id} /></>;\n"
+            "}\n"
+            "export function Search({ id }) {\n"
+            "  return <input id={id} />;\n"
+            "}\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["G.jsx:5"])
 
     def test_relative_child_routes_are_not_orphans(self):
         data = self.scan({"routes.jsx":
@@ -935,7 +943,13 @@ class InventoryRegressionTests(unittest.TestCase):
             "a.svelte": '<div on:click={go} on:keyup={key} role="button" tabindex="0">x</div>\n',
             "b.vue": '<template><div @click="go" v-on:keyup.enter="go" role="button" tabindex="0">x</div>'
                      '<span (click)="go()" (keypress)="go()" role="button" tabindex="0">y</span></template>\n',
+            "c.html": '<div (click)="go()" (keyup.enter)="go()" role="button" tabindex="0">x</div>\n',
+            "d.svelte": '<div on:click|preventDefault={go} on:keydown|self={key} role="button" tabindex="0">x</div>\n'
+                        '<span on:click|once={go}>y</span>\n',
         })
+        self.assertEqual([(r["location"], r["missing"]) for r in data["click_handlers"]],
+                         [("d.svelte:2", ["role", "tabindex", "key handler"])])
+        data = self.scan({"e.html": '<div (click)="go()" (keyup.enter)="go()" role="button" tabindex="0">x</div>\n'})
         self.assertEqual(data["click_handlers"], [])
 
     def test_range_media_queries_and_em_widths(self):

@@ -77,7 +77,7 @@ as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
 by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`.
 A fragment may carry only the record's documented sections and `remove`; a
 misspelled section is refused rather than kept where nothing reads it. The
-same holds inside `meta`, each finding, its `validation` and each reference:
+same holds inside `meta`, each finding, its `validation`, each reference and each perspective:
 only the fields documented here are accepted.
 Every fragment section must have its documented type; findings and perspectives
 must be lists of objects, with unique `id` or `name` values within that fragment.
@@ -87,7 +87,7 @@ the record's prose, including ids immediately beside Japanese text. Structured
 `location`, `occurrences` and reference `url` values stay unchanged: an id in a
 file name or external URL does not identify a finding. Paths (including
 parenthesized route-group components), routes, relative Markdown link targets,
-http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
+http(s) URLs, inline code (within its paragraph), fenced code, closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually when they follow the CommonMark tag grammar, with JSX
 `{…}` attributes read as JavaScript (nested braces, strings, template literals, comments and regular expressions; a tag longer than 8,000 characters stays prose) and Angular `(event)=`, `[prop]=`, `*ngIf=` and `#ref` attributes allowed, so comparisons such as `<640px … >1024px` or

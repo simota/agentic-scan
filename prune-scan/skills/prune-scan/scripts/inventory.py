@@ -520,8 +520,8 @@ def jsonc_object(text):
 
 
 def js_alias_rules(texts):
-    """(prefix, wildcard, [target paths]) from tsconfig/jsconfig compilerOptions.paths and baseUrl."""
-    rules = []
+    """{config directory: [(prefix, wildcard, [target paths])]} from compilerOptions.paths and baseUrl."""
+    by_directory = defaultdict(list)
     for rel in sorted(texts):
         if not TS_CONFIG.search(rel):
             continue
@@ -529,6 +529,7 @@ def js_alias_rules(texts):
         if not isinstance(options, dict):
             continue
         root = Path(rel).parent
+        rules = by_directory["" if root.as_posix() == "." else root.as_posix()]
         base_url = options.get("baseUrl")
         base = root / base_url if isinstance(base_url, str) else root
         paths = options.get("paths")
@@ -542,7 +543,7 @@ def js_alias_rules(texts):
         if isinstance(base_url, str):
             target = os.path.normpath(base.as_posix()).replace(os.sep, "/")
             rules.append(("", True, ["" if target == "." else target]))
-    return rules
+    return dict(by_directory)
 
 
 def js_package(spec):
@@ -1117,7 +1118,12 @@ def inventory(root, units=None, today=None):
     def resolve_alias(rel, spec):
         """tsconfig/jsconfig paths and baseUrl; without them, @/ ~/ #/ from an enclosing root or src/."""
         targets = []
-        for prefix, wildcard, destinations in alias_rules:
+        # Only the nearest enclosing config governs a file: in a monorepo each
+        # package's @/* maps to its own src/.
+        parent = Path(rel).parent
+        governing = next((alias_rules[d] for d in ("" if a.as_posix() == "." else a.as_posix()
+                                                  for a in (parent, *parent.parents)) if d in alias_rules), [])
+        for prefix, wildcard, destinations in governing:
             if spec.startswith(prefix) if wildcard else spec == prefix:
                 rest = spec[len(prefix):] if wildcard else ""
                 for destination in destinations:
@@ -1368,12 +1374,12 @@ def inventory(root, units=None, today=None):
     rows["css_dynamic_prefixes"] = sorted(class_prefixes)
 
     # Routes.
-    route_rows, seen_routes = [], set()
+    route_rows, seen_routes, definition_spans = [], set(), defaultdict(list)
     for rel in code_files:
         text = texts[rel]
-        # api.get("/users/me") on an axios or ky instance is a client call, not a route.
-        http_client = bool(re.search(r"\b(?:axios|ky|ofetch)\.create\(|from\s+[\"'](?:axios|ky|ofetch)[\"']|"
-                                     r"require\(\s*[\"'](?:axios|ky)[\"']", text))
+        # api.get("/users/me") on an axios, ky or ofetch instance is a client
+        # call, not a route; an express router named api in the same file is not.
+        http_client = bool(re.search(r"\b(?:const|let|var)\s+api\s*=\s*(?:axios|ky|ofetch)\b", text))
         for kind, regex in ROUTE_DEFS:
             for m in regex.finditer(text):
                 route = m.group(2)
@@ -1383,12 +1389,9 @@ def inventory(root, units=None, today=None):
                 if http_client and m.group(0).startswith("api."):
                     continue
                 seen_routes.add((where, route))
+                definition_spans[rel].append(m.span(2))
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
-    definition_lines = defaultdict(set)
-    for row in route_rows:
-        path, _, line = row["location"].rpartition(":")
-        definition_lines[path].add(int(line))
     for row in route_rows:
         route = row["route"] if row["route"].startswith("/") or row["kind"] == "client" else "/" + row["route"]
         parts = [re.escape(p) for p in PARAM.split(route)]
@@ -1407,8 +1410,10 @@ def inventory(root, units=None, today=None):
         where = []
         for rel, text in texts.items():
             hits = [m for m in rx.finditer(text)]
-            if rel in definition_lines:
-                hits = [m for m in hits if line_of(text, m.start()) not in definition_lines[rel]]
+            # A route's own path literal, or another route's (/api/items holds
+            # /items), is not a mention; a redirect on a definition line is.
+            spans = definition_spans.get(rel, ())
+            hits = [m for m in hits if not any(m.start() < end and start < m.end() for start, end in spans)]
             if hits:
                 where.append(rel)
         row["mentions"], row["mentioned_in"] = len(where), sorted(where)[:MAX_LOCATIONS]

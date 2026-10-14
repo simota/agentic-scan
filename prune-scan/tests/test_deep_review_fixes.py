@@ -142,6 +142,33 @@ class InventoryMatchingTests(unittest.TestCase):
         })
         self.assertEqual([row["route"] for row in result["routes"]], ["/health"])
 
+    def test_only_a_client_named_api_hides_api_calls(self):
+        result = scan({
+            "server/routes.js": ('import axios from "axios";\nconst api = express.Router();\n'
+                                 'api.get("/health", h);\naxios.get("https://status.example.com");\n'),
+            "web/src/client.js": 'const api = ky.create({});\napi.get("/users/me");\n',
+        })
+        self.assertEqual([row["route"] for row in result["routes"]], ["/health"])
+
+    def test_a_redirect_on_another_definition_line_is_a_mention(self):
+        result = scan({
+            "server/routes.js": ('router.get("/new", h);\n'
+                                 'router.get("/old", (_, res) => res.redirect("/new"));\n'),
+        })
+        mentions = {row["route"]: row["mentions"] for row in result["routes"]}
+        self.assertEqual(mentions, {"/new": 1, "/old": 0})
+
+    def test_alias_rules_apply_to_their_own_package_only(self):
+        config = '{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}'
+        result = scan({
+            "packages/a/tsconfig.json": config,
+            "packages/b/tsconfig.json": config,
+            "packages/a/src/main.ts": 'import { foo } from "@/foo";\nfoo();\n',
+            "packages/a/src/foo.ts": "export function foo() {}\n",
+            "packages/b/src/foo.ts": "export function foo() {}\n",
+        })
+        self.assertEqual([row["path"] for row in result["orphan_files"]], ["packages/b/src/foo.ts"])
+
     def test_make_prerequisites_count_and_prose_does_not(self):
         result = scan({
             "Makefile": ("all: build\nbuild:\n\techo build\nrelease: build | lint\nlint:\n\techo\n"

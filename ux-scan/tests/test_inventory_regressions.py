@@ -1096,6 +1096,93 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual([r["value"] for r in data["fixed_widths"]], ["400px"])
         self.assertEqual([r["value"] for r in data["spacing"]], ["13px"])
 
+    def test_server_template_tags_and_attribute_groups_are_spreads(self):
+        data = self.scan({
+            "a.erb": '<input type="text" name="q" <%= "required" if strict %>>\n<img src="a" <%= attrs %>>\n',
+            "b.php": '<input type="checkbox" <?php checked($a, 1); ?>>\n',
+            "c.html": '<input type="{{ widget.type }}" name="{{ widget.name }}"{% include "attrs.html" %}>\n'
+                      '<img src="{{ src }}" {{ img_attrs }}>\n',
+        })
+        self.assertEqual(data["inputs"], [])
+        self.assertEqual(data["images"], [])
+
+    def test_svelte_shorthand_attributes(self):
+        data = self.scan({"P.svelte": '<a {href} on:click={track}>x</a>\n<img {src} {alt} width="1" height="1">\n'
+                                      '<label for={id}>Email</label><input {id} type="email" autocomplete="email">\n'})
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual(data["images"], [])
+        self.assertEqual(data["inputs"], [])
+
+    def test_more_destructive_call_shapes_and_housekeeping(self):
+        data = self.scan({"D.jsx":
+            "<button onClick={() => onDelete?.(task.id)}>x</button>\n"
+            "<button onClick={() => props.onRemove?.()}>x</button>\n"
+            "<button onClick={() => deleteMutation.mutate(id)}>x</button>\n"
+            "<button onClick={deleteMutation.mutate}>x</button>\n"
+            "<button onClick={() => document.body.classList.remove('open')}>x</button>\n"
+            "<button onClick={() => params.delete('q')}>x</button>\n"})
+        self.assertEqual([r["location"] for r in data["destructive_actions"]], ["D.jsx:1", "D.jsx:2", "D.jsx:3", "D.jsx:4"])
+
+    def test_nav_arrays_reach_routes(self):
+        data = self.scan({"app/settings/page.tsx": "export default () => null;\n",
+                          "Nav.tsx": 'const navigation = [{ name: "Settings", href: "/settings" }];\n'})
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_commented_out_markup_is_not_scanned(self):
+        data = self.scan({
+            "a.tsx": '// <img src="old.png" />\n/* <input name="email" /> */\nexport const A = () => <p>Type // to search</p>;\n',
+            "b.html": '{# <img src="x"> #}\n{% comment %}<input name="email">{% endcomment %}\n'
+                      '{{!-- <img src="y"> --}}\n{{! <img src="z"> }}\n',
+            "c.erb": '<%# <img src="w"> %>\n<img src="real.png">\n',
+        })
+        self.assertEqual([r["location"] for r in data["images"]], ["c.erb:2"])
+        self.assertEqual(data["inputs"], [])
+
+    def test_icon_font_ligatures_and_empty_buttons(self):
+        data = self.scan({"a.html": '<button mat-icon-button (click)="remove(t)"><mat-icon>delete</mat-icon></button>\n'
+                                    '<button class="btn-close"></button>\n<button>Save</button>\n'
+                                    '<button v-text="label"></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:2"])
+
+    def test_truncate_in_class_helpers_inline_outline_next_viewport(self):
+        data = self.scan({"a.tsx": 'export const A = () => <p className={cn("truncate text-sm", c)}>x</p>;\n'
+                                   "export const viewport = { width: 'device-width', maximumScale: 1, userScalable: false };\n",
+                          "b.html": '<a href="/x" style="outline: none">x</a>\n'})
+        self.assertEqual([r["pattern"] for r in data["truncation"]], ['className={cn("truncate'])
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]], [("a.tsx:2", True)])
+        self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]], [("(inline style)", "b.html:1")])
+
+    def test_alpine_jinja2_and_whole_word_personal_fields(self):
+        data = self.scan({"a.jinja2": '<div x-on:click="go" x-on:keydown.enter="go" role="button" tabindex="0">x</div>\n'
+                                      '<label>Capacity <input name="capacity"></label>\n'
+                                      '<label>Pattern <input name="wildcard"></label>\n'
+                                      '<label>Mic <input name="microphone"></label>\n'
+                                      '<label>Mail <input name="user_email"></label>\n'})
+        self.assertEqual(data["files_scanned"], 1)
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual([(r["name"], r["missing"]) for r in data["inputs"]], [("user_email", ["autocomplete", "type=email"])])
+
+    def test_numeric_regions_three_letter_languages_and_label_components(self):
+        data = self.scan({
+            "locales/en.json": json.dumps({"save": "Save"}), "locales/es-419.json": json.dumps({"save": "Guardar cambios"}),
+            "i18n/en/app.json": json.dumps({"save": "Save"}), "i18n/fil/app.json": json.dumps({"save": "I-save ang mga pagbabago"}),
+            "F.tsx": '<Label htmlFor="phone">Phone</Label><input id="phone" type="tel" autoComplete="tel" />\n',
+        })
+        self.assertEqual(sorted((e["bundle"], e["lang"]) for e in data["locale_expansion"]),
+                         [("i18n/{lang}/app.json", "fil"), ("locales/{lang}.json", "es-419")])
+        self.assertEqual(data["inputs"], [])
+
+    def test_round_three_slow_paths(self):
+        import time
+        cases = {"a.svelte": "<div on:click={() => { // it's }\n" * 20000,
+                 "b.tsx": "<a b={ ' <c d={ \n" * 20000,
+                 "c.html": "<button><span>x</span>\n" * 20000}
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 4)
+
 
 if __name__ == "__main__":
     unittest.main()

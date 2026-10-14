@@ -18,11 +18,16 @@ than assets; files over 2 MB; and secret-looking files such as `.env` — only
 only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
-Secret-looking directory names are excluded too. Source code whose file or
-directory name only contains `credentials` or `secret` (`useCredentials.ts`,
+Secret-looking directory names are excluded too, as are credential files such
+as `.htpasswd`, `.pgpass`, `.docker/config.json`, `.kube/config`, `*.tfstate`
+and `*.kdbx`. Source code whose file or directory name only contains
+`credentials`, `secret` or `kubeconfig` (`useCredentials.ts`,
 `client_secret.py`) is read for its imports and identifiers, so what it uses
-is not reported unused, but its `text` excerpts are always omitted; data files
-with such names (`credentials.json`, `secrets.yaml`) are skipped. On POSIX, files are opened
+is not reported unused, but none of its literal text reaches the output: no
+`text` excerpts, flag names, routes or dynamic key and class prefixes. Data
+files with such names (`credentials.json`, `secrets.yaml`) are skipped.
+
+On POSIX, files are opened
 relative to pinned directory descriptors without following symlinks; a file or
 directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
@@ -73,13 +78,14 @@ heuristic does not imply that the TypeScript compiler accepts those extensionles
 paths.
 
 Non-relative imports also resolve through `compilerOptions.paths` and
-`baseUrl` in every `tsconfig*.json` and `jsconfig.json` (comments and trailing
-commas allowed). Without a matching rule, `@/`, `~/` and `#/` imports resolve
+`baseUrl` of the nearest enclosing `tsconfig*.json` or `jsconfig.json`
+(comments and trailing commas allowed, relative `extends` followed). Without a matching rule, `@/`, `~/` and `#/` imports resolve
 against each enclosing directory and its `src/`. CSS `@import`, `@use` and
 `@forward` of a package count as imports of that package. Absolute Python
 imports resolve against the repository root, `src/` and every directory that
 encloses the importing file, so `backend/app/main.py` importing `app.models`
-reaches `backend/app/models.py`. Dotted imports also match namespace
+reaches `backend/app/models.py`; `python -m server.jobs.nightly` names
+`server/jobs/nightly.py` (or a package's `__main__.py`). Dotted imports also match namespace
 distributions such as `azure-storage-blob` and `ruamel.yaml`; `// indirect`
 requirements in `go.mod` are not listed.
 

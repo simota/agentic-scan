@@ -468,6 +468,18 @@ def allowed_page_problems(out, names, digests, *, directory=None):
     """
     for name in names:
         try:
+            info = (os.stat(name, dir_fd=directory, follow_symlinks=False) if directory is not None
+                    else (out / name).lstat())
+            if stat.S_ISLNK(info.st_mode):
+                target_is_dir = (stat.S_ISDIR(os.stat(name, dir_fd=directory).st_mode) if directory is not None
+                                 else (out / name).is_dir())
+                if target_is_dir:
+                    yield (f"{name}: a symbolic link to a directory; its pages cannot be checked in place, "
+                           f"so render the second language into {out / name} itself")
+                continue
+        except OSError:
+            continue
+        try:
             if directory is not None:
                 fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
             elif (out / name).is_dir() and not (out / name).is_symlink():

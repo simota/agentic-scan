@@ -466,16 +466,21 @@ def ascii_name_char(char):
 
 def prose_annotation_follows(text, end, limit):
     """After a bracketed note: nothing, prose punctuation, or particle-led prose with no source syntax."""
+    def source_syntax(index):
+        # A sentence-final period is prose; .md or .backup continues a name.
+        char = text[index]
+        return char in "/\\([{" or (char == "." and index + 1 < limit and prose_name_char(text[index + 1]))
+
     if end == limit:
         return True
-    if not (prose_name_char(text[end]) or text[end] in "./\\([{"):
+    if not (prose_name_char(text[end]) or source_syntax(end)):
         return True
     if not PROSE_PARTICLE.match(text, end):
         return False
     rest = end
     while rest < limit and prose_name_char(text[rest]):
         rest += 1
-    return rest == limit or text[rest] not in "./\\([{"
+    return rest == limit or not source_syntax(rest)
 
 
 def prose_source_candidate(text, start, reference, limit, bracket_ends):

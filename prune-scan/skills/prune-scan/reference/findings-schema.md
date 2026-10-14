@@ -64,7 +64,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `status` | `Open`, `Fixed` (removed since), `Accepted` (kept by decision) |
 | `perspective` | A hunt step id from `reference/perspectives.md` (`DC1`, `OB2`…) |
 | `unit_ref` | A unit id in `units.json` |
-| `entry_ref` | Optional: the entry point id the element is, or hangs off |
+| `entry_ref` | Optional: the entry point id the element is, or hangs off; merge `""` to detach it |
 | `purpose_ref` | The purpose item id the finding is measured against; required for PX, OB and `Purpose-dependent` |
 | `element` | What is unneeded, named as a reader would find it ("Route GET /debug/dump", "Dependency moment") |
 | `location` | `path:line` or `path:line-line`, relative to the repository; where the subtraction starts (a definition, an entry point, a manifest line) |
@@ -131,8 +131,13 @@ locations such as `P-002資料/P-001` and `P-002資料:5-7`. Whitespace and surr
 prose punctuation delimit names. A bare finding id following Unicode prose
 after an extension starts a new reference: in
 `P-002資料.mdを削除してP-001を直す。`, the filename remains unchanged and the final
-finding reference is renumbered. An ID-only directory prefix is part of a
-filename when an extension follows, as in `P-002/P-001.資料`. Unicode text alone
+finding reference is renumbered. The same holds after a path: in
+`server/app.pyを削除してP-001を直す。` and `/debug/dumpとP-002`, a listed particle
+right after ASCII path text ends the path, and an ID-only note after a path with
+no source syntax following it, as in `/debug/dump(P-002)からも漏れる。` or
+`/api/items(P-002、P-003)`, is an annotation whose ids are renumbered. An
+ID-only directory prefix is part of a filename when an extension follows, as in
+`P-002/P-001.資料`. Unicode text alone
 after an ID-only list does not turn it into a path: `P-002/P-001について確認。`
 still renumbers both references. Write `./P-002/P-001資料` to name a path with
 that ambiguous extensionless basename.

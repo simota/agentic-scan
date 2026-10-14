@@ -18,7 +18,11 @@ than assets; files over 2 MB; and secret-looking files such as `.env` — only
 only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
-Secret-looking directory names are excluded too. On POSIX, files are opened
+Secret-looking directory names are excluded too. Source code whose file or
+directory name only contains `credentials` or `secret` (`useCredentials.ts`,
+`client_secret.py`) is read for its imports and identifiers, so what it uses
+is not reported unused, but its `text` excerpts are always omitted; data files
+with such names (`credentials.json`, `secrets.yaml`) are skipped. On POSIX, files are opened
 relative to pinned directory descriptors without following symlinks; a file or
 directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
@@ -68,6 +72,17 @@ naming an existing file with another suffix keeps its direct match. This invento
 heuristic does not imply that the TypeScript compiler accepts those extensionless
 paths.
 
+Non-relative imports also resolve through `compilerOptions.paths` and
+`baseUrl` in every `tsconfig*.json` and `jsconfig.json` (comments and trailing
+commas allowed). Without a matching rule, `@/`, `~/` and `#/` imports resolve
+against each enclosing directory and its `src/`. CSS `@import`, `@use` and
+`@forward` of a package count as imports of that package. Absolute Python
+imports resolve against the repository root, `src/` and every directory that
+encloses the importing file, so `backend/app/main.py` importing `app.models`
+reaches `backend/app/models.py`. Dotted imports also match namespace
+distributions such as `azure-storage-blob` and `ruamel.yaml`; `// indirect`
+requirements in `go.mod` are not listed.
+
 JavaScript import signals include quoted binding names, Flow
 [`import typeof`](https://flow.org/en/docs/types/modules/) declarations and inline
 `typeof` specifiers, and static or dynamic
@@ -89,7 +104,7 @@ not inherit its replacement suggestion.
 
 | Key | What it collects | Perspective |
 |---|---|---|
-| `unreferenced_symbols` | Top-level functions, classes and module constants (Python), named exports and top-level functions (JS/TS; default exports are judged by file, in `orphan_files`), functions and types (Go), items (Rust) whose name appears nowhere but their definition; decorated definitions (route handlers, registered hooks) are skipped and counted in `decorated_symbols_skipped`; test files are skipped | DC1 |
+| `unreferenced_symbols` | Top-level functions, classes and module constants (Python), named exports, top-level functions and top-level `const`/`let` (JS/TS, with `exported`; default exports are judged by file, in `orphan_files`), functions and types (Go), items (Rust) whose name appears nowhere but their definition; decorated definitions (route handlers, registered hooks) are skipped and counted in `decorated_symbols_skipped`; test files are skipped | DC1 |
 | `orphan_files` | Python and JS/TS source files that no other non-test file imports and whose file name no other file mentions; `test_importers` lists tests that still import them; entry-like names (`main`, `index`, `app`, `__init__`, `setup`, `manage`, `cli`…) `*.config.*` and `*.d.ts` are skipped | DC2, TT1 |
 | `dependencies_declared` | Declared dependency count per manifest (`package.json`, `requirements*.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`) | DP1 |
 | `unimported_dependencies` | Declared packages no source file imports; `status` is `script_only` when a package script or tool file names it, else `unreferenced`; `implicit_tool` marks toolchain packages used without an import (typescript, eslint, `@types/*`, ruff…) | DP1 |
@@ -97,20 +112,20 @@ not inherit its replacement suggestion.
 | `platform_replaceable` | Packages the platform or standard library now covers (`node-fetch`, `uuid`, `six`, `mock`, `simplejson`, `pytz`…), with the replacement | DP3 |
 | `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, os.environ/getenv, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
 | `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`) with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
-| `i18n_unreferenced`, `i18n_dynamic_prefixes` | Keys of JSON locale bundles that no quoted string names, except keys under a prefix built in a template literal (`` t(`status.${x}`) ``) | AS3 |
-| `assets_unreferenced` | Images, fonts, media and PDFs whose file name no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
-| `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |
-| `routes`, `unreferenced_routes` | Server routes (Flask/FastAPI decorators, Express-style `app.get`, Django `path`) and client routes (`<Route path>`, `path: "/…"`) with how many other files name the path (parameters match any segment or `${…}`); `unreferenced_routes` are those no other file names | UF1, UF2, UF3, AP1 |
-| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets); the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
+| `i18n_unreferenced`, `i18n_dynamic_prefixes` | Keys of JSON locale bundles that no string literal names (an i18next namespace prefix such as `common:` is ignored), except keys under a prefix built in a template literal (`` t(`status.${x}`) ``) | AS3 |
+| `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
+| `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less (outside attribute selectors and strings) that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |
+| `routes`, `unreferenced_routes` | Server routes (Flask/FastAPI decorators, Express-style `app.get`, Django `path`) and client routes (`<Route path>`, `path: "/…"`) with how many other files name the path (parameters match any segment or `${…}`; a host before the path, and for server routes a mount prefix such as `/api` before `/items`, still count; route path literals in definitions do not); `unreferenced_routes` are those no other file names. `api.get("/…")` where `api` is assigned from axios, ky or ofetch is a client call, not a route | UF1, UF2, UF3, AP1 |
+| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile may come between; a target in another rule's prerequisite list (`all: build`) counts as invoked; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
 | `unreferenced_files` | Shell scripts, SQL files and docs under `scripts/`, `bin/`, `tools/`, `docs/`, `db/`, `seeds/`, `fixtures/` whose file name no other file mentions (migrations and root docs such as README are skipped) | TT4, DA3, AS4 |
 | `skipped_tests` | `@pytest.mark.skip`, `@unittest.skip`, `it.skip`, `xit`, `describe.skip`, `test.todo`, `#[ignore]`, `t.Skip`, `@Disabled` in test files | TT2 |
 | `commented_code` | Runs of four or more comment lines of which at least 60 % look like code | DC3 |
 | `markers` | Lines with `deprecated`, `sunset` or `remove after/by/once/when/in`, and TODO/FIXME/HACK/`temporary`/`until`/`ended` lines that carry a date; `date` and `overdue` (the date is before `--today`, default today) | FF2, DU3, AP2 |
-| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names | DA1 |
+| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names (SQL comments are ignored) | DA1 |
 
 With `--units`, every row with a path also gets `unit` (the unit whose paths
-cover it; the most specific prefix wins), and `by_unit` counts the candidates
-per unit. Prefixes normalize `.` components and repeated separators before
+cover it; the most specific prefix wins; env var and flag rows use their first
+definition or location), and `by_unit` counts the candidates per unit. Prefixes normalize `.` components and repeated separators before
 matching, so `./server/` and `server/` cover the same files.
 
 ## Caps

@@ -201,8 +201,7 @@
         "server/app.py:40",
         "server/leaderboard.py:5",
         "web/src/components/Leaderboard.tsx:6",
-        "web/src/pages/Home.tsx:27",
-        "server/db/schema.sql:6"
+        "web/src/pages/Home.tsx:27"
       ],
       "observed": "Home renders <Leaderboard />, which ranks households by items saved via GET /api/leaderboard",
       "basis": "README.md:11 lists comparison between households as a non-goal; Larder is for one household (PB-02). The feature is used (Home renders it), and that is why it is a subtraction, not dead code.",
@@ -302,7 +301,7 @@
         "remains": "The new checkout path, unconditional.",
         "loses": "The ability to switch back to the old checkout, unused since rollout."
       },
-      "risk": "None in code; tests that pin the old price format must change with it.",
+      "risk": "None in code; tests/test_items.py:7 already asserts the new format.",
       "validation": {
         "verdict": "Valid",
         "evidence": "No environment variable, remote flag service or config file overrides FLAGS.",
@@ -405,7 +404,7 @@
     },
     {
       "id": "P-014",
-      "title": "Two price formatters disagree: Home shows $2.50, the item page $3",
+      "title": "Two price formatters disagree: 250 cents is $2.50 with formatPrice, $3 with toCurrency",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -419,14 +418,14 @@
       ],
       "observed": "toCurrency rounds to whole dollars; formatPrice keeps cents",
       "basis": "Two implementations of one capability, both live (Home uses formatPrice, Item uses toCurrency); the comment says toCurrency was added for the reports screen (P-013).",
-      "impact": "The same item shows two prices; every currency change must be made twice.",
+      "impact": "One price formats two ways depending on the screen; every currency change must be made twice.",
       "subtraction": {
         "action": "consolidate",
         "what": "web/src/lib/currency.ts into formatPrice.",
         "remains": "One formatter, with cents.",
         "loses": "Nothing: no caller, user or job depends on it."
       },
-      "risk": "The item page changes from \"$3\" to \"$2.50\"; that is the intended display.",
+      "risk": "The item page shows cents instead of whole dollars (250 cents: \"$3\" becomes \"$2.50\"); that is the intended display.",
       "validation": {
         "verdict": "Valid",
         "evidence": "grep toCurrency: Item.tsx and Reports.tsx; grep formatPrice: Home.tsx.",
@@ -687,7 +686,7 @@
     },
     {
       "id": "P-024",
-      "title": "Two columns and an index that no code reads or writes",
+      "title": "Two columns and an index that no application code reads or writes",
       "severity": "Low",
       "confidence": "Externally-dependent",
       "status": "Open",
@@ -700,7 +699,7 @@
         "server/db/schema.sql:9",
         "server/db/schema.sql:14"
       ],
-      "basis": "inventory sql_columns_unreferenced: legacy_sku and fax_number.",
+      "basis": "inventory sql_columns_unreferenced: legacy_sku and fax_number. Only the unloaded demo seed writes legacy_sku (P-026).",
       "impact": "An index maintained on every insert; a personal-data column (fax numbers) kept for nothing.",
       "subtraction": {
         "action": "remove",
@@ -737,7 +736,8 @@
         "verdict": "Likely",
         "evidence": "grep old_audit_log outside SQL: none.",
         "dynamic_checked": "Compliance tooling outside the repository may read it."
-      }
+      },
+      "impact": "Nothing writes it, so it costs only storage and a place in every schema change; the cost is confined to one table."
     },
     {
       "id": "P-026",
@@ -973,7 +973,7 @@
         "remains": "Strings the UI shows.",
         "loses": "Nothing: no caller, user or job depends on it."
       },
-      "risk": "Translators stop maintaining text nobody sees.",
+      "risk": "None; no t() call or template prefix reaches these keys.",
       "validation": {
         "verdict": "Valid",
         "evidence": "grep promo.holiday and legacy_notice: locale files only.",
@@ -1006,7 +1006,7 @@
     },
     {
       "id": "P-036",
-      "title": "Migration note for a finished migration, linked from nowhere",
+      "title": "Migration note linked from nowhere, superseded by docs/clients.md",
       "severity": "Info",
       "confidence": "Confirmed",
       "status": "Open",
@@ -1014,7 +1014,7 @@
       "unit_ref": "UN-04",
       "element": "Document docs/v1-migration.md",
       "location": "docs/v1-migration.md:1",
-      "basis": "inventory unreferenced_files; the migration it describes completed in 2024-01.",
+      "basis": "inventory unreferenced_files; it records the web app's move (2024-01) and defers the iOS side to release notes, which docs/clients.md:6 and P-022 already cover.",
       "subtraction": {
         "action": "remove",
         "what": "The file, or fold one line into docs/clients.md.",
@@ -1056,7 +1056,7 @@
   "perspectives": [
     {
       "name": "DC Dead code",
-      "result": "3 findings, 1 excluded",
+      "result": "4 findings, 1 excluded",
       "note": "Symbols, orphan files and comment blocks from the inventory, each searched for dynamic use."
     },
     {

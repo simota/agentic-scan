@@ -1,8 +1,9 @@
-# prune-scan — install helpers
+# prune-scan — install, test and demo helpers
 #
 #   make link      symlink skills/prune-scan into every installed host's skills dir
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
+#   make test      run the offline regression tests
 #   make check     verify the skill is self-contained and internally consistent
 #   make inventory removal-candidate inventory of TARGET (UNITS=units.json OUT=inventory.json)
 #   make demo      render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
@@ -69,7 +70,7 @@ NO_PDF   ?=
 .PHONY: help link unlink status check demo inventory test
 
 help: ## list targets
-	@echo "$(NAME) - skill install"
+	@echo "$(NAME) - skill install, tests and demo"
 	@echo
 	@grep -E '^[a-z-]+:.*## ' $(call shell_quote,$(THIS_MAKEFILE)) \
 	  | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'

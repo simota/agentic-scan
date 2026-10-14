@@ -91,7 +91,7 @@ Schema, migrations and code only; never query a database.
 
 ## Tests and tooling (`TT`)
 
-- TT1 Tests that exercise only deleted or dead code [`orphan_files`
+- TT1 Tests that exercise only deleted or dead code [`orphan_files`,
   `test_importers`]
 - TT2 Skipped, disabled or assertion-free tests [`skipped_tests`]
 - TT3 CI jobs and workflows that cannot run or deploy to retired targets

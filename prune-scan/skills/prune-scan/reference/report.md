@@ -4,7 +4,7 @@
 
 ```sh
 python3 <skill-dir>/scripts/render.py <out>/findings.json --out <out> --lang ja|en --repo <repo> [--no-pdf]
-python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf]
+python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf] [--allow <name>]...
 ```
 
 `<skill-dir>` is the directory holding SKILL.md; never run a same-named script
@@ -81,8 +81,10 @@ validates. Before reporting success, it rechecks each file's identity, version
 and content, then checks every artifact pathname again after all content
 reads. The directory's artifact names are also rechecked. Replacements,
 removals, writes during inspection, and newly appearing unapproved artifacts
-require another check. Explicitly allowed extras remain outside these checks;
-`--allow` never exempts a required artifact. These checks detect observed
+require another check. Explicitly allowed extras remain outside these checks,
+except that an allowed directory's `dashboard.html` and `report.html` (a second
+language) must be complete and stamped with the current `findings.json` and
+`units.json`; `--allow` never exempts a required artifact. These checks detect observed
 changes without locking writers or providing an atomic snapshot of the entire
 report set.
 
@@ -100,7 +102,8 @@ the record.
 
 Exit 3 means no PDF: no engine found, an engine that failed, or a timeout —
 the message says which. `PRUNE_SCAN_PDF_TIMEOUT` overrides the engine's timeout
-in seconds for the one retry SKILL.md allows. For a requester language other
+in seconds for the one retry SKILL.md allows; a value that is not a positive
+number of seconds exits 2 before anything is written. For a requester language other
 than `ja` or `en`, the prose is in their language and the labels are `--lang en`
 (SKILL.md *Outputs* row).
 

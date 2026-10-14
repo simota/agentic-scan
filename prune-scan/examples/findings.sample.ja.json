@@ -25,7 +25,7 @@
         "server/ab_test.py:7",
         "server/app.py:14"
       ],
-      "observed": "@app.before_request bucket_visitor -> assign_bucket() INSERTs (remote_addr, bucket) when no cookie",
+      "observed": "@app.before_request の bucket_visitor -> assign_bucket() が、Cookie がなければ (remote_addr, bucket) を INSERT する",
       "basis": "モジュール自身が 2025-03-31 に実験終了・A 案採用と記している(server/ab_test.py:1、inventory markers で期限超過)。experiment_assignments もバケットもどこからも読まれていない(SELECT なし、ガード以外で cookie を読む箇所なし)。",
       "impact": "bucket cookie のない全リクエストで DB 書き込みが発生し、目的を失った個人データ(IP アドレス)を集め続けている。",
       "subtraction": {
@@ -50,7 +50,7 @@
       "perspective": "UF3",
       "unit_ref": "UN-01",
       "entry_ref": "EP-06",
-      "element": "Route GET /debug/dump",
+      "element": "ルート GET /debug/dump",
       "location": "server/app.py:56",
       "observed": "return jsonify({key: str(value) for key, value in app.config.items()})",
       "basis": "クライアント・テスト・ドキュメント・スクリプトのどれも /debug/dump を参照しない(inventory unreferenced_routes)。デバッグ用の残骸で、どのコアジョブ(PB-03、PB-04)にも属さない。",
@@ -83,7 +83,7 @@
         "server/app.py:61",
         "server/items.py:39"
       ],
-      "observed": "stripe_webhook() passes request.json to record_payment(), which INSERTs into payments; no signature check",
+      "observed": "stripe_webhook() は request.json をそのまま record_payment() に渡し、payments に INSERT する。署名検証はない",
       "basis": "stripe を import するコードはなく(inventory unimported_dependencies)、支払い画面もなく、payments を読む箇所もない。",
       "impact": "誰でも payments に行を書き込める。攻撃面として残っているだけのエンドポイント。",
       "subtraction": {
@@ -107,7 +107,7 @@
       "status": "Open",
       "perspective": "CF2",
       "unit_ref": "UN-05",
-      "element": "Setting MAILCHIMP_API_KEY",
+      "element": "設定 MAILCHIMP_API_KEY",
       "location": "server/config.py:6",
       "occurrences": [
         "server/config.py:6",
@@ -137,7 +137,7 @@
       "status": "Open",
       "perspective": "PI1",
       "unit_ref": "UN-01",
-      "element": "OAuth scope https://www.googleapis.com/auth/calendar",
+      "element": "OAuth スコープ https://www.googleapis.com/auth/calendar",
       "location": "server/oauth.py:9",
       "observed": "SCOPES = [\"openid\", \"email\", \"https://www.googleapis.com/auth/calendar\"]",
       "basis": "Calendar API を呼ぶコードはなく、on_login はメールアドレスしか保存しない。カレンダーを使うコアジョブもない(PB-03、PB-04)。",
@@ -163,13 +163,13 @@
       "status": "Open",
       "perspective": "DP2",
       "unit_ref": "UN-05",
-      "element": "Dependency moment",
+      "element": "依存パッケージ moment",
       "location": "package.json:15",
       "occurrences": [
         "package.json:15",
         "web/src/pages/Item.tsx:1"
       ],
-      "observed": "import moment from \"moment\" — used once, in the else branch of isEnabled(\"new_checkout\")",
+      "observed": "import moment from \"moment\" — isEnabled(\"new_checkout\") の else 分岐で 1 回だけ使われる",
       "basis": "inventory duplicate_purpose の dates(dayjs, moment)。dayjs は web/src/lib/date.ts で使用中。moment の唯一の呼び出しは P-010 のデッド分岐内。",
       "impact": "2 つ目の日付ライブラリ(dayjs の約 10 倍のサイズ)を Web バンドルに抱えている。",
       "subtraction": {
@@ -195,16 +195,15 @@
       "unit_ref": "UN-01",
       "entry_ref": "EP-03",
       "purpose_ref": "PB-05",
-      "element": "Household leaderboard (GET /api/leaderboard and its widget)",
+      "element": "世帯ランキング(GET /api/leaderboard とそのウィジェット)",
       "location": "server/app.py:40",
       "occurrences": [
         "server/app.py:40",
         "server/leaderboard.py:5",
         "web/src/components/Leaderboard.tsx:6",
-        "web/src/pages/Home.tsx:27",
-        "server/db/schema.sql:6"
+        "web/src/pages/Home.tsx:27"
       ],
-      "observed": "Home renders <Leaderboard />, which ranks households by items saved via GET /api/leaderboard",
+      "observed": "Home が <Leaderboard /> を描画し、GET /api/leaderboard で保存品目数による世帯ランキングを表示する",
       "basis": "README.md:11 は世帯間の比較を非目標と明記し、Larder は 1 世帯向け(PB-02)。機能は使われている(Home が表示)からこそ、デッドコードではなく引き算の対象になる。",
       "impact": "ルート・モジュール・コンポーネント・列(items.household)・世帯横断クエリを保守し続け、製品が自ら否定する方向へ引っ張られる。",
       "subtraction": {
@@ -229,13 +228,13 @@
       "perspective": "UF1",
       "unit_ref": "UN-01",
       "entry_ref": "EP-05",
-      "element": "Route GET /api/export/csv",
+      "element": "ルート GET /api/export/csv",
       "location": "server/app.py:51",
       "occurrences": [
         "server/app.py:51",
         "server/items.py:31"
       ],
-      "observed": "export_csv() writes every item as CSV; no screen links to it",
+      "observed": "export_csv() は全品目を CSV で書き出す。リンクしている画面はない",
       "basis": "inventory unreferenced_routes で言及 0。画面・スクリプト・ドキュメントのどれも名指ししない。エクスポートを求めるコアジョブもない。",
       "impact": "公開エンドポイントと整形コードを品目モデルの変更に合わせ続ける必要がある。",
       "subtraction": {
@@ -259,7 +258,7 @@
       "status": "Open",
       "perspective": "DA2",
       "unit_ref": "UN-03",
-      "element": "Table experiment_assignments",
+      "element": "テーブル experiment_assignments",
       "location": "server/db/schema.sql:22",
       "observed": "CREATE TABLE experiment_assignments (visitor TEXT, bucket TEXT)",
       "basis": "P-001 からの書き込みのみで、読むコードはない。",
@@ -285,7 +284,7 @@
       "status": "Open",
       "perspective": "FF1",
       "unit_ref": "UN-01",
-      "element": "Feature flag new_checkout (server and web)",
+      "element": "機能フラグ new_checkout(サーバーと Web)",
       "location": "server/flags.py:4",
       "occurrences": [
         "server/flags.py:4",
@@ -293,7 +292,7 @@
         "server/items.py:16",
         "web/src/pages/Item.tsx:17"
       ],
-      "observed": "FLAGS = {\"new_checkout\": True} and flags.ts new_checkout: true; both if/else branches kept",
+      "observed": "FLAGS = {\"new_checkout\": True} と flags.ts の new_checkout: true。if/else の両分岐が残っている",
       "basis": "inventory feature_flags で new_checkout は両定義とも true、上書きなし、判定 2 箇所。旧分岐は決して実行されない。utils.py:9 も「new_checkout is on everywhere」と記す。",
       "impact": "価格やチェックアウトの変更を毎回 2 回行う必要があり、旧分岐が moment を延命させている(P-006)。",
       "subtraction": {
@@ -302,7 +301,7 @@
         "remains": "新チェックアウトの経路だけが無条件に残る。",
         "loses": "旧チェックアウトへ戻す切り替え。全面展開以降使われていない。"
       },
-      "risk": "コード上はなし。旧価格形式を前提にしたテストは併せて修正する。",
+      "risk": "コード上はなし。tests/test_items.py:7 はすでに新しい形式を検証している。",
       "validation": {
         "verdict": "Valid",
         "evidence": "FLAGS を上書きする環境変数・リモートフラグサービス・設定ファイルはない。",
@@ -317,13 +316,13 @@
       "status": "Open",
       "perspective": "DC2",
       "unit_ref": "UN-01",
-      "element": "Module server/legacy_export.py",
+      "element": "モジュール server/legacy_export.py",
       "location": "server/legacy_export.py:1",
       "occurrences": [
         "server/legacy_export.py:1",
         "tests/test_legacy_export.py:1"
       ],
-      "observed": "export_xml() builds an <items> feed; tests/test_legacy_export.py is its only importer",
+      "observed": "export_xml() は <items> フィードを組み立てる。import しているのは tests/test_legacy_export.py だけ",
       "basis": "inventory orphan_files で import 元はテストのみ。docstring がパートナー契約の終了を記す。",
       "impact": "モジュール 1 つとテスト 1 つが CI で動き続け、list_items の変更に追従させる必要がある。",
       "subtraction": {
@@ -348,7 +347,7 @@
       "perspective": "OB1",
       "unit_ref": "UN-01",
       "purpose_ref": "PB-04",
-      "element": "Notification channel registry (email, Slack, SMS, webhook)",
+      "element": "通知チャネルのレジストリ(メール・Slack・SMS・Webhook)",
       "location": "server/notify.py:23",
       "occurrences": [
         "server/notify.py:23",
@@ -356,7 +355,7 @@
         "server/notify.py:33",
         "server/notify.py:38"
       ],
-      "observed": "NOTIFIERS = {email, slack, sms, webhook}; NOTIFY_CHANNELS defaults to \"email\"",
+      "observed": "NOTIFIERS = {email, slack, sms, webhook}。NOTIFY_CHANNELS の既定値は \"email\"",
       "basis": "コアジョブはメール通知(PB-04)。.env.example は NOTIFY_CHANNELS=email と SMTP_HOST だけを宣言し、SLACK_WEBHOOK_URL・SMS_GATEWAY_URL・NOTIFY_WEBHOOK_URL は読まれるがどこにも宣言されていない(inventory env_read_not_declared)。",
       "impact": "設定した利用者のいない 3 チャネルについて、シークレット・失敗時の挙動・HTTP 呼び出しを保守し続ける。",
       "subtraction": {
@@ -381,13 +380,13 @@
       "perspective": "UF2",
       "unit_ref": "UN-02",
       "entry_ref": "EP-12",
-      "element": "Screen /reports (Reports.tsx)",
+      "element": "画面 /reports(Reports.tsx)",
       "location": "web/src/App.tsx:14",
       "occurrences": [
         "web/src/App.tsx:14",
         "web/src/pages/Reports.tsx:1"
       ],
-      "observed": "<Route path=\"/reports\" element={<Reports />} />; Reports fetches /api/reports/summary",
+      "observed": "<Route path=\"/reports\" element={<Reports />} />。Reports は /api/reports/summary を fetch する",
       "basis": "inventory unreferenced_routes で /reports の言及は 0。Nav は / とログインのみ。/api/reports/summary を提供するサーバールートはなく、画面は動作し得ない。",
       "impact": "URL で到達できる壊れた画面と、保守対象のルートとページ。",
       "subtraction": {
@@ -405,28 +404,28 @@
     },
     {
       "id": "P-014",
-      "title": "価格整形が 2 つあり食い違う:Home は $2.50、品目画面は $3",
+      "title": "価格整形が 2 つあり食い違う:250 セントは formatPrice で $2.50、toCurrency で $3",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "DU1",
       "unit_ref": "UN-02",
-      "element": "Price formatter toCurrency (beside formatPrice)",
+      "element": "価格整形関数 toCurrency(formatPrice と並存)",
       "location": "web/src/lib/currency.ts:2",
       "occurrences": [
         "web/src/lib/currency.ts:2",
         "web/src/lib/money.ts:1"
       ],
-      "observed": "toCurrency rounds to whole dollars; formatPrice keeps cents",
+      "observed": "toCurrency はドル単位に丸め、formatPrice はセントを保つ",
       "basis": "1 つの機能に 2 つの実装があり、両方とも使用中(Home は formatPrice、Item は toCurrency)。コメントは toCurrency がレポート画面(P-013)用に追加されたと記す。",
-      "impact": "同じ品目が 2 つの価格で表示され、通貨関連の変更を毎回 2 回行う必要がある。",
+      "impact": "同じ価格が画面によって 2 通りに表示され、通貨まわりの変更はすべて 2 回行う必要がある。",
       "subtraction": {
         "action": "consolidate",
         "what": "web/src/lib/currency.ts を formatPrice に統合。",
         "remains": "セント単位で整形する 1 つの関数。",
         "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
       },
-      "risk": "品目画面の表示が「$3」から「$2.50」に変わるが、これが本来の表示。",
+      "risk": "品目画面がドル単位の丸めをやめてセントまで表示する(250 セント:\"$3\" が \"$2.50\" になる)。これが意図した表示である。",
       "validation": {
         "verdict": "Valid",
         "evidence": "toCurrency の利用は Item.tsx と Reports.tsx、formatPrice は Home.tsx。",
@@ -441,7 +440,7 @@
       "status": "Open",
       "perspective": "CF1",
       "unit_ref": "UN-05",
-      "element": "Setting LEGACY_CDN_URL",
+      "element": "設定 LEGACY_CDN_URL",
       "location": ".env.example:4",
       "basis": "inventory env_declared_not_read。アセットは web/public から配信。",
       "subtraction": {
@@ -465,13 +464,13 @@
       "status": "Open",
       "perspective": "TT3",
       "unit_ref": "UN-04",
-      "element": "CI job deploy-heroku and Make target",
+      "element": "CI ジョブ deploy-heroku と Make ターゲット",
       "location": ".github/workflows/ci.yml:10",
       "occurrences": [
         ".github/workflows/ci.yml:10",
         "Makefile:15"
       ],
-      "observed": "if: false; runs make deploy-heroku (git push heroku main)",
+      "observed": "if: false。make deploy-heroku(git push heroku main)を実行する",
       "basis": "ジョブは決して実行されず、Make ターゲットはこのジョブからしか呼ばれない。",
       "subtraction": {
         "action": "remove",
@@ -494,7 +493,7 @@
       "status": "Open",
       "perspective": "TT4",
       "unit_ref": "UN-04",
-      "element": "Make target protos and scripts/gen_protos.sh",
+      "element": "Make ターゲット protos と scripts/gen_protos.sh",
       "location": "Makefile:12",
       "occurrences": [
         "Makefile:12",
@@ -522,7 +521,7 @@
       "status": "Open",
       "perspective": "DP1",
       "unit_ref": "UN-05",
-      "element": "Dependencies lodash and jest (and script test:jest)",
+      "element": "依存パッケージ lodash と jest(およびスクリプト test:jest)",
       "location": "package.json:14",
       "occurrences": [
         "package.json:14",
@@ -551,7 +550,7 @@
       "status": "Open",
       "perspective": "DP3",
       "unit_ref": "UN-05",
-      "element": "Dependency node-fetch",
+      "element": "依存パッケージ node-fetch",
       "location": "package.json:16",
       "occurrences": [
         "package.json:16",
@@ -579,7 +578,7 @@
       "status": "Open",
       "perspective": "DP1",
       "unit_ref": "UN-05",
-      "element": "Dependencies simplejson, six and stripe",
+      "element": "依存パッケージ simplejson・six・stripe",
       "location": "requirements.txt:3",
       "occurrences": [
         "requirements.txt:3",
@@ -610,14 +609,14 @@
       "unit_ref": "UN-01",
       "entry_ref": "EP-02",
       "purpose_ref": "PB-06",
-      "element": "Shelf-label printing (GET /api/items/<id>/label)",
+      "element": "棚ラベル印刷(GET /api/items/<id>/label)",
       "location": "server/app.py:35",
       "occurrences": [
         "server/app.py:35",
         "server/labels.py:5",
         "web/src/pages/Item.tsx:16"
       ],
-      "observed": "zpl_label() returns ZPL for barcode printers; the item page links \"Print shelf label\"",
+      "observed": "zpl_label() はバーコードプリンター用の ZPL を返し、品目画面が「Print shelf label」をリンクしている",
       "basis": "Larder の利用者はブラウザーを使う 1 世帯(PB-02)。プリンターに触れる文書はなく PB-06 は推定。ZPL 出力はサーマルバーコードプリンターでしか役に立たない。",
       "impact": "大半の利用者が使えないルート・モジュール・ボタン。",
       "subtraction": {
@@ -642,7 +641,7 @@
       "perspective": "AP2",
       "unit_ref": "UN-01",
       "entry_ref": "EP-04",
-      "element": "Route GET /api/v1/items",
+      "element": "ルート GET /api/v1/items",
       "location": "server/app.py:45",
       "observed": "# Deprecated 2024-01; kept for the iOS app 2.x",
       "basis": "2024-01 から非推奨(inventory markers で期限超過)。iOS 3.0 は 2025-02 に /api/items へ移行済み(docs/clients.md:6)。パスを名指しするのはドキュメントのみ。",
@@ -668,9 +667,9 @@
       "status": "Open",
       "perspective": "DU3",
       "unit_ref": "UN-01",
-      "element": "Compatibility shim get_items_v0",
+      "element": "互換シム get_items_v0",
       "location": "server/compat.py:1",
-      "observed": "get_items_v0(*args, **kwargs) only forwards to list_items; \"Remove after 2025-06-30\"",
+      "observed": "get_items_v0(*args, **kwargs) は list_items に転送するだけ。\"Remove after 2025-06-30\"",
       "basis": "inventory orphan_files と unreferenced_symbols で import 元なし。inventory markers で削除期限超過。",
       "subtraction": {
         "action": "remove",
@@ -687,20 +686,20 @@
     },
     {
       "id": "P-024",
-      "title": "どのコードも読み書きしない 2 つの列と 1 つのインデックス",
+      "title": "アプリケーションコードのどこも読み書きしない 2 つの列と 1 つのインデックス",
       "severity": "Low",
       "confidence": "Externally-dependent",
       "status": "Open",
       "perspective": "DA1",
       "unit_ref": "UN-03",
-      "element": "Columns items.legacy_sku and users.fax_number, index idx_items_legacy_sku",
+      "element": "列 items.legacy_sku と users.fax_number、インデックス idx_items_legacy_sku",
       "location": "server/db/schema.sql:7",
       "occurrences": [
         "server/db/schema.sql:7",
         "server/db/schema.sql:9",
         "server/db/schema.sql:14"
       ],
-      "basis": "inventory sql_columns_unreferenced に legacy_sku と fax_number。",
+      "basis": "inventory sql_columns_unreferenced に legacy_sku と fax_number。legacy_sku を書くのは読み込まれないデモ用シードだけ(P-026)。",
       "impact": "挿入のたびに更新されるインデックスと、意味なく保持される個人データの列(FAX 番号)。",
       "subtraction": {
         "action": "remove",
@@ -723,7 +722,7 @@
       "status": "Open",
       "perspective": "DA1",
       "unit_ref": "UN-03",
-      "element": "Table old_audit_log",
+      "element": "テーブル old_audit_log",
       "location": "server/db/schema.sql:27",
       "basis": "inventory sql_tables_unreferenced。",
       "subtraction": {
@@ -737,7 +736,8 @@
         "verdict": "Likely",
         "evidence": "SQL 以外で old_audit_log の検索結果なし。",
         "dynamic_checked": "リポジトリ外のコンプライアンス用ツールが読む可能性がある。"
-      }
+      },
+      "impact": "書き込みもないため、かかるのは保存領域と毎回のスキーマ変更での手間だけで、コストは 1 つのテーブルに閉じている。"
     },
     {
       "id": "P-026",
@@ -747,7 +747,7 @@
       "status": "Open",
       "perspective": "DA3",
       "unit_ref": "UN-03",
-      "element": "Seed file server/db/seed_demo.sql",
+      "element": "シードファイル server/db/seed_demo.sql",
       "location": "server/db/seed_demo.sql:1",
       "basis": "inventory unreferenced_files。legacy_sku(P-024)に値を入れており、シード投入は npm run seed が担う。",
       "subtraction": {
@@ -772,7 +772,7 @@
       "perspective": "OB2",
       "unit_ref": "UN-01",
       "purpose_ref": "PB-03",
-      "element": "StorageBackend abstraction and BACKENDS registry",
+      "element": "StorageBackend の抽象化と BACKENDS レジストリ",
       "location": "server/store.py:8",
       "occurrences": [
         "server/store.py:8",
@@ -803,7 +803,7 @@
       "status": "Open",
       "perspective": "DC1",
       "unit_ref": "UN-01",
-      "element": "Functions format_price_legacy and slugify",
+      "element": "関数 format_price_legacy と slugify",
       "location": "server/utils.py:8",
       "occurrences": [
         "server/utils.py:8",
@@ -831,7 +831,7 @@
       "status": "Open",
       "perspective": "DC3",
       "unit_ref": "UN-01",
-      "element": "Commented-out parse_price",
+      "element": "コメントアウトされた parse_price",
       "location": "server/utils.py:17-22",
       "basis": "inventory commented_code でコメント内のコード 6 行。履歴はバージョン管理に残る。",
       "subtraction": {
@@ -855,7 +855,7 @@
       "status": "Open",
       "perspective": "TT2",
       "unit_ref": "UN-04",
-      "element": "Skipped test test_delete_item",
+      "element": "スキップされたテスト test_delete_item",
       "location": "tests/test_items.py:10",
       "observed": "@pytest.mark.skip(reason=\"flaky since 2024-02\") def test_delete_item(): items.delete_item(1)",
       "basis": "inventory skipped_tests。本体にアサーションがなく、スキップを外しても何も確認しない。",
@@ -880,7 +880,7 @@
       "status": "Open",
       "perspective": "AS1",
       "unit_ref": "UN-02",
-      "element": "Font web/public/fonts/OldSans.woff2",
+      "element": "フォント web/public/fonts/OldSans.woff2",
       "location": "web/public/fonts/OldSans.woff2:1",
       "basis": "inventory assets_unreferenced。@font-face でも preload でも名指しされない。",
       "subtraction": {
@@ -904,7 +904,7 @@
       "status": "Open",
       "perspective": "DC2",
       "unit_ref": "UN-02",
-      "element": "Component OldButton",
+      "element": "コンポーネント OldButton",
       "location": "web/src/components/OldButton.tsx:2",
       "basis": "inventory orphan_files。コメントは存在しない設定画面の移行を待っている。",
       "subtraction": {
@@ -928,7 +928,7 @@
       "status": "Open",
       "perspective": "FF1",
       "unit_ref": "UN-02",
-      "element": "Feature flag holiday_banner",
+      "element": "機能フラグ holiday_banner",
       "location": "web/src/flags.ts:4",
       "occurrences": [
         "web/src/flags.ts:4",
@@ -958,7 +958,7 @@
       "status": "Open",
       "perspective": "AS3",
       "unit_ref": "UN-02",
-      "element": "Locale keys promo.holiday and checkout.legacy_notice",
+      "element": "ロケールキー promo.holiday と checkout.legacy_notice",
       "location": "web/src/i18n/en.json:6",
       "occurrences": [
         "web/src/i18n/en.json:6",
@@ -973,7 +973,7 @@
         "remains": "UI が表示する文字列のみ。",
         "loses": "なし。呼び出し元・利用者・ジョブのいずれも依存していない。"
       },
-      "risk": "誰も見ない文言を翻訳者が保守しなくて済む。",
+      "risk": "なし。これらのキーに届く t() 呼び出しやテンプレートの接頭辞はない。",
       "validation": {
         "verdict": "Valid",
         "evidence": "promo.holiday と legacy_notice の検索結果はロケールファイルのみ。",
@@ -988,7 +988,7 @@
       "status": "Open",
       "perspective": "AS2",
       "unit_ref": "UN-02",
-      "element": "CSS class .legacy-grid",
+      "element": "CSS クラス .legacy-grid",
       "location": "web/src/styles/app.css:7",
       "basis": "inventory css_unreferenced。動的なクラス接頭辞も見つからない。",
       "subtraction": {
@@ -1006,15 +1006,15 @@
     },
     {
       "id": "P-036",
-      "title": "完了済み移行のメモで、どこからもリンクされていない",
+      "title": "どこからもリンクされず、docs/clients.md に役目を引き継がれた移行メモ",
       "severity": "Info",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "AS4",
       "unit_ref": "UN-04",
-      "element": "Document docs/v1-migration.md",
+      "element": "ドキュメント docs/v1-migration.md",
       "location": "docs/v1-migration.md:1",
-      "basis": "inventory unreferenced_files。記載の移行は 2024-01 に完了。",
+      "basis": "inventory unreferenced_files。Web アプリの移行(2024-01)を記録し、iOS 側はリリースノートに委ねているが、それは docs/clients.md:6 と P-022 がすでに扱っている。",
       "subtraction": {
         "action": "remove",
         "what": "ファイル。必要なら 1 行を docs/clients.md に統合。",
@@ -1036,7 +1036,7 @@
       "status": "Open",
       "perspective": "DC1",
       "unit_ref": "UN-01",
-      "element": "Function hooks.on_startup",
+      "element": "関数 hooks.on_startup",
       "location": "server/hooks.py:4",
       "basis": "inventory unreferenced_symbols に on_startup。名前は定義にしか現れない。",
       "subtraction": {
@@ -1056,7 +1056,7 @@
   "perspectives": [
     {
       "name": "DC デッドコード",
-      "result": "3件、除外1件",
+      "result": "4件、除外1件",
       "note": "inventory のシンボル・孤立ファイル・コメントブロックを、それぞれ動的利用の有無まで検索。"
     },
     {

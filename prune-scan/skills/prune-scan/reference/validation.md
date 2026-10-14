@@ -59,5 +59,5 @@ files, and for a "do not remove" note or an open issue that keeps it.
 them). A finding citing an `inferred` purpose item must be `Purpose-dependent`
 (`findings.py` refuses any other confidence), so it always lands in `decisions`.
 `render.py` uses the same rule: an open `Valid` finding is "remove now" or
-"reduce or consolidate"; every other open, counted finding is "decide with a
-human".
+"reduce or consolidate"; every other open, counted finding except `Unlikely`
+is "decide with a human".

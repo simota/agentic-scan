@@ -65,7 +65,7 @@ the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 | `scripts/inventory.py REPO --out inventory.json [--units units.json]` | Unreferenced symbols, orphan files, unimported / duplicated / platform-replaceable dependencies, env vars read versus declared, feature flags and their values, unreferenced locale keys, assets and CSS classes, routes nothing names, uninvoked scripts and targets, loose files, skipped tests, commented-out code, dated deprecation markers, unreferenced tables and columns; capped after measuring, with `limits` and `truncated` |
 | `scripts/findings.py units\|merge\|check\|renumber` | Validate the units and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
-| `scripts/contract_check.py OUT [--no-pdf]` | Exactly the contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, every `Purpose-dependent` finding in decisions, pages stamped with the current record |
+| `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]...` | Exactly the contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, every open `Purpose-dependent` finding in decisions, pages stamped with the current record |
 
 ## Develop
 

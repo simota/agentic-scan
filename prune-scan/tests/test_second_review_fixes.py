@@ -107,6 +107,26 @@ class ThirdReviewTests(unittest.TestCase):
         self.assertEqual(result["files_scanned"], 0)
         self.assertNotIn("SEKRITVALUE2", json.dumps(result))
 
+    def test_make_directory_option_selects_one_project(self):
+        result = scan({
+            "a/Makefile": "first:\n\techo\nsecond:\n\techo\n",
+            "b/Makefile": "zero:\n\techo\nfirst:\n\techo\nsecond:\n\techo\n",
+            "README.md": "Run `make -C a first second`.\n",
+        })
+        invoked = {(row["source"], row["name"]): row["invocations"] for row in result["scripts"]}
+        self.assertEqual(invoked[("a/Makefile", "second")], 1)
+        self.assertEqual((invoked[("b/Makefile", "first")], invoked[("b/Makefile", "second")]), (0, 0))
+
+    def test_package_manager_counts_only_the_script_it_runs(self):
+        result = scan({
+            "package.json": json.dumps({"scripts": {"run": "x", "web": "x", "build": "x", "test": "x",
+                                                    "lint": "x", "dev": "x"}}),
+            "README.md": ("npm --prefix web run build\nnpm test\nyarn workspace web lint\n"
+                          "pnpm --filter web dev -- --port 1\n"),
+        })
+        invoked = {row["name"]: row["invocations"] for row in result["scripts"]}
+        self.assertEqual(invoked, {"run": 0, "web": 0, "build": 1, "test": 1, "lint": 1, "dev": 1})
+
     def test_kube_directory_is_never_read(self):
         result = scan({".kube/config.prod": "server: https://k8s.example  # TODO 2024-01-01 SEKRITVALUE1\n"})
         self.assertEqual(result["files_scanned"], 0)

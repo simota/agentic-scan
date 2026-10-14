@@ -1003,6 +1003,9 @@ NPM_CALL = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?=[^\S\n])")
 MAKE_VALUE_OPTIONS = {"-C", "-f", "-I", "-o", "-W"}
 MAKE_VARIABLE = re.compile(r"[\w.][\w.-]*=\S*")
 NPM_OPTION = re.compile(r"--?\w[\w-]*(?:=\S*)?")
+# Package manager options whose value is the next word.
+NPM_VALUE_OPTIONS = {"--prefix", "-C", "--dir", "--cwd", "-w", "--workspace", "--filter", "-F", "--registry",
+                     "--loglevel", "--userconfig", "--cache", "--tag", "--scope"}
 PACKAGE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
 MAX_COMMAND_TOKENS = 64
 
@@ -1018,24 +1021,58 @@ def name_prefixes(token, name_chars):
     return [token[:k] for k in range(1, len(token) + 1) if k == len(token) or token[k] not in name_chars]
 
 
-def invocation_counts(texts, project_targets):
+def npm_script(tokens):
+    """The script one package manager command runs, or None.
+
+    Options that take a separate value (npm --prefix web, pnpm --filter web,
+    yarn --cwd web) skip it; run/run-script and yarn workspace NAME name the
+    script after them; otherwise the first word is the script (npm test,
+    yarn build).
+    """
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        if token in NPM_VALUE_OPTIONS:
+            i += 2
+            continue
+        if NPM_OPTION.fullmatch(token):
+            i += 1
+            continue
+        if token.startswith("-"):
+            return None
+        if token in ("run", "run-script"):
+            rest = [t for t in tokens[i + 1:] if not NPM_OPTION.fullmatch(t)]
+            return rest[0] if rest else None
+        if token == "workspace" and i + 2 < len(tokens):
+            return tokens[i + 2]
+        return token
+    return None
+
+
+def invocation_counts(texts, project_targets, select_project=lambda rel, directories, files: None):
     """Count make <target> per Makefile project and npm|pnpm|yarn|bun [run] <script> in one pass.
 
     A make command line may hold options (-C dir), variables and other targets
     of the same project before the target; prose words between make and a
-    target name end it. Package manager options may take one value
-    (npm --prefix web run build). Tokens are read once per command start.
+    target name end it. When -C or -f selects a known Makefile project
+    (select_project), only that project's targets count. Tokens are read once
+    per command start.
     """
     make_calls, npm_calls = defaultdict(Counter), Counter()
     make_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:=-")
     npm_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:.-")
-    for text in texts.values():
+    for rel, text in texts.items():
         for start in MAKE_CALL.finditer(text):
             tokens, sequence, i = command_tokens(text, start.end()), [], 0
+            directories, files = [], []
             while i < len(tokens):
                 token = tokens[i]
                 if token in MAKE_VALUE_OPTIONS:
                     if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
+                        if token == "-C":
+                            directories.append(tokens[i + 1])
+                        elif token == "-f":
+                            files.append(tokens[i + 1])
                         i += 2
                         continue
                     break
@@ -1049,7 +1086,12 @@ def invocation_counts(texts, project_targets):
                 if name != token:
                     break  # Trailing punctuation ends the command: make build.
                 i += 1
+            if not sequence:
+                continue
+            selected = select_project(rel, directories, files) if directories or files else None
             for project, targets in project_targets.items():
+                if selected is not None and project != selected:
+                    continue
                 called = set()  # A command runs each named target once.
                 for name, exact in sequence:
                     if name not in targets:
@@ -1059,23 +1101,9 @@ def invocation_counts(texts, project_targets):
                         break
                 make_calls[project].update(called)
         for start in NPM_CALL.finditer(text):
-            tokens, candidates, after_option = command_tokens(text, start.end()), [], False
-            for i, token in enumerate(tokens):
-                if NPM_OPTION.fullmatch(token):
-                    after_option = True
-                    continue
-                if token.startswith("-"):
-                    break
-                candidates.append(token)
-                if token in ("run", "run-script"):
-                    candidates.extend(tokens[i + 1:i + 2])
-                    break
-                if after_option and token not in PACKAGE_MANAGERS:
-                    after_option = False  # It may have been the option's value.
-                    continue
-                break
-            # One command runs one script, whichever candidate names it.
-            npm_calls.update({name for candidate in candidates for name in name_prefixes(candidate, npm_chars)})
+            script = npm_script(command_tokens(text, start.end()))
+            if script:
+                npm_calls.update(set(name_prefixes(script, npm_chars)))
     return make_calls, npm_calls
 
 
@@ -1609,7 +1637,27 @@ def inventory(root, units=None, today=None):
                 continue  # .PHONY: build declares, it does not run.
             for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
                 project_prerequisites[project_of(rel)][prerequisite] += 1
-    make_calls, npm_calls = invocation_counts(texts, {p: frozenset(t) for p, t in project_targets.items()})
+    make_dirs = defaultdict(list)
+    for make_file in make_files:
+        make_dirs[Path(make_file).parent.as_posix()].append(make_file)
+
+    def select_project(rel, directories, makefiles):
+        """The project a command's -C and -f options name, from the repository root or the file's directory."""
+        for base in (Path(rel).parent, Path(".")):
+            directory = base
+            for name in directories:
+                directory = directory / name
+            if makefiles:
+                target = os.path.normpath((directory / makefiles[-1]).as_posix()).replace(os.sep, "/")
+                if target in project:
+                    return project_of(target)
+                continue
+            found = make_dirs.get(os.path.normpath(directory.as_posix()).replace(os.sep, "/"))
+            if found:
+                return project_of(sorted(found)[0])
+        return None
+    make_calls, npm_calls = invocation_counts(texts, {p: frozenset(t) for p, t in project_targets.items()},
+                                              select_project)
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):

@@ -16,7 +16,8 @@ from the reviewed repository (SKILL.md *Paths*).
 `render.py` maps `findings.json` into scan-report-kit's common format
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
 in the shared design. Each finding shows its flow (from `flows.json`), screen,
-viewport and criterion. With `--repo`, each finding's first `path:line` is
+viewport and criterion, and both pages state the viewports and locales from
+`flows.json` that the review was judged against. With `--repo`, each finding's first `path:line` is
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
 from a UTF-8 file no larger than 2 MiB. Files outside the repository, binaries,
 symlinks (including directory links), and secret-looking paths are omitted;

@@ -1036,8 +1036,9 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"c.component.html":
             '<button [attr.aria-label]="label" (click)="close()"><mat-icon svgIcon="x"></mat-icon></button>\n'
             '<input [attr.aria-label]="label" name="q">\n'
-            '<a routerLink="/account" (click)="track()">Account</a>\n',
-            "routes.ts": "export const routes = [{ path: '/account' }];\n"})
+            '<a routerLink="/account" (click)="track()">Account</a>\n'
+            '<a [routerLink]="\'/billing\'">Billing</a><a [routerLink]="[\'/team\', id]">Team</a>\n',
+            "routes.ts": "export const routes = [{ path: '/account' }, { path: '/billing' }, { path: '/team' }];\n"})
         self.assertEqual(data["icon_buttons"], [])
         self.assertEqual(data["inputs"], [])
         self.assertEqual(data["click_handlers"], [])

@@ -224,13 +224,19 @@ class ReportRegressions(unittest.TestCase):
                 self.assertIsNone(render.snippet(self.repo, f"{name}:1"))
 
     def test_pages_state_the_viewports_and_locales_judged_against(self):
-        self.data["meta"].update(viewports=["360x640", "768x1024"], locales=["en", "de"])
+        # flows.json is authoritative; a stale copy in meta is not shown.
+        self.data["meta"].update(viewports=["999x999"], locales=["xx"])
+        self.flows.update(viewports=["360x640", "1280x800"], locales=["en", "de"])
         self.save_inputs()
-        for lang, label in (("en", "Viewports: 360x640, 768x1024"), ("ja", "ビューポート: 360x640, 768x1024")):
+        for lang, labels in (("en", ("Viewports: 360x640, 1280x800", "Locales: en, de")),
+                             ("ja", ("ビューポート: 360x640, 1280x800", "ロケール: en, de"))):
             with self.subTest(lang=lang):
                 self.assertEqual(self.invoke(lang=lang)[0], 0)
                 for page in ("report.html", "dashboard.html"):
-                    self.assertIn(label, (self.out / page).read_text(encoding="utf-8"))
+                    text = (self.out / page).read_text(encoding="utf-8")
+                    for label in labels:
+                        self.assertIn(label, text)
+                    self.assertNotIn("999x999", text)
 
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(

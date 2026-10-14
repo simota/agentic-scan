@@ -509,6 +509,7 @@ class TransactionRegressions(unittest.TestCase):
             "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
             "_U-001 to U-003_, _see U-001_ and __U-002, U-001__; keep a_U-001 and U-001_b.",
             "Fix U-001 to\n\nU-002.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
         ]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["next_steps"], [
@@ -518,8 +519,21 @@ class TransactionRegressions(unittest.TestCase):
             "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
             "_U-002, U-001, U-003_, _see U-002_ and __U-001, U-002__; keep a_U-001 and U-001_b.",
             "Fix U-002 to\n\nU-001.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
         ])
         findings.check_findings(changed)
+
+    def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
+        import time
+        for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001"):
+            with self.subTest(text=text[:8]):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"] = data["findings"][:2]
+                data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+                data["summary"], data["next_steps"] = text, []
+                started = time.monotonic()
+                findings.renumber(data, findings.renumber_map(data["findings"]))
+                self.assertLess(time.monotonic() - started, 3)
 
     def test_nested_unknown_keys_and_invisible_location_characters_are_refused(self):
         cases = (

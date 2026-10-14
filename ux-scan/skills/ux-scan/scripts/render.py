@@ -161,12 +161,17 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
-def judged_scope(meta, T):
-    """The scope with the supported viewports and locales it was judged against."""
+def judged_scope(meta, flows, T):
+    """The scope with the supported viewports and locales it was judged against.
+
+    flows.json is the record severity is judged against, so its values win
+    over the optional copies in meta.
+    """
     parts = [meta.get("scope", "")]
     for key in ("viewports", "locales"):
-        if meta.get(key):
-            parts.append(f"{T[key]}: {', '.join(meta[key])}")
+        values = (flows or {}).get(key) or meta.get(key)
+        if values:
+            parts.append(f"{T[key]}: {', '.join(values)}")
     return " · ".join(p for p in parts if p)
 
 
@@ -206,7 +211,7 @@ def to_common(data, lang, flows=None, repo=None):
     return {
         "format": report.FORMAT,
         "meta": {**{k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
-                 **({"scope": scope} if (scope := judged_scope(meta, T)) else {})},
+                 **({"scope": scope} if (scope := judged_scope(meta, flows, T)) else {})},
         "report": {k: T[k] for k in ("kind", "title", "dashboard_title", "running_footer")},
         "summary": data.get("summary", ""),
         "findings": findings,

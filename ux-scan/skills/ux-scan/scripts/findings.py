@@ -345,9 +345,20 @@ FINDING_LIST = re.compile(
 # Parentheses may be part of a path, especially Next.js route groups. Keep
 # balanced path components together without swallowing Markdown link labels.
 SOURCE_COMPONENT = r"(?:[^\s`<>\"'(),;/\\，、。；（）「」『』]|\([^()\s`<>\"',;/\\，、。；（）「」『』]*\))+"
+def _balanced(open_, close, inner, depth=4):
+    """A regex for open_…close nested up to depth levels, each level holding inner or a deeper group."""
+    pattern = re.escape(open_) + inner + "*" + re.escape(close)
+    for _ in range(depth - 1):
+        pattern = re.escape(open_) + "(?:" + inner + "|" + pattern + ")*" + re.escape(close)
+    return pattern
+
+
 TAG_NAME = r"[a-z][\w.:-]*"
-TAG_ATTRIBUTE = (r"\s+(?:\{[^{}<>]*\}|[a-z_:@][\w.:@-]*"
-                 r"(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|\{[^{}]*\}|[^\s\"'=<>`{}]+))?)")
+# JSX attribute expressions such as style={{ color: "red" }} nest braces.
+JSX_EXPRESSION = _balanced("{", "}", r"[^{}]")
+TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*"
+                 r"(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+))?)")
+URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
@@ -363,7 +374,7 @@ PROSE_PART = re.compile(
     r"|(?P<markup><(?:" + TAG_NAME + r"(?:" + TAG_ATTRIBUTE + r")*\s*/?|/" + TAG_NAME + r"\s*|[!?][^<>]*)>)"
     # A URL, including raw Japanese path or query text and balanced (…), runs
     # to whitespace, quotes, an unbalanced bracket or Japanese punctuation.
-    r"|(?P<url>https?://(?:[^\s<>\"'`()\[\]{}，、。；（）「」『』]|\([^\s()<>]*\))+)"
+    r"|(?P<url>https?://(?:" + URL_CHAR + "|" + _balanced("(", ")", r"[^\s()<>]") + r")+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(

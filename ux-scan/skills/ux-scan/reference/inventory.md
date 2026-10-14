@@ -124,7 +124,7 @@ with dynamic attribute names are also treated as spreads. Vue named bindings
 (`:aria-label="label"`, `v-bind:aria-label="label"`) preserve the expression;
 event modifiers such as `@click.stop` do not hide the event. Angular property
 bindings (`[attr.aria-label]="label"`, `[title]="t"`) likewise supply that
-attribute, and `routerLink` counts as a link target. Dynamic name
+attribute, and `routerLink` (also `[routerLink]="'/x'"` or `"['/x', id]"`) counts as a link target. Dynamic name
 expressions are also treated as unknown;
 only statically blank name attributes are rejected, and referenced label text
 is not resolved. A dynamic input type is recorded as `unknown` and does not

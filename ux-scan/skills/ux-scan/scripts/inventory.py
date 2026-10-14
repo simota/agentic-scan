@@ -133,7 +133,8 @@ DESTRUCTIVE_REFERENCE = re.compile(r"\s*\{?\s*(" + _DESTRUCTIVE_NAME + r")\s*\}?
 MAX_HANDLER_SCAN = 4000
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 ROUTE = re.compile(r"<Route\b[^<>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
-LINK = re.compile(r"(?<![\w-])(?i:to|href|routerlink)\s*=\s*\{?\s*[\"'`][\"'`]?(/[^\"'`?#]*)|"
+# to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
+LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*=\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)")
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")

@@ -90,9 +90,9 @@ parenthesized route-group components), routes, relative Markdown link targets,
 http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually when they follow the CommonMark tag grammar, with JSX
-`{…}` attributes allowed, so comparisons such as `<640px … >1024px` or
+`{…}` attributes (nested up to four levels, as in `style={{ … }}`) allowed, so comparisons such as `<640px … >1024px` or
 `<sm (U-001) and >lg` remain prose). A URL, including raw Japanese text in its
-path or query and balanced parentheses, runs to whitespace, quotes, an
+path or query and balanced parentheses nested up to four levels, runs to whitespace, quotes, an
 unbalanced bracket or Japanese punctuation such as `、` or `。`; write a space
 between a URL and a following finding id, or that id is kept as part of the
 URL. Ids inside `_emphasis_` are references; ids joined to a word or

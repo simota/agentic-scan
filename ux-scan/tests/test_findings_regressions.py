@@ -545,6 +545,18 @@ class TransactionRegressions(unittest.TestCase):
         self.assertEqual(changed["next_steps"],
                          ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-002 U-002'])
 
+    def test_jsx_expressions_are_scanned_as_javascript(self):
+        mapping = {"U-001": "U-002", "U-002": "U-001"}
+        kept = ['<Button pattern={/[}]/} data-id="U-001">', '<B a={x / 2} b="U-001">',
+                '<B a={`${ {a: "}"}.a }`} b="U-001">', '<B a={/* } */ x} b="U-001">',
+                '<B a={c // }\n} b="U-001">', '<B a={{ deep: { deeper: { deepest: {} } } }} b="U-001">']
+        for tag in kept:
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        for prose in ("<sm (U-001) and >lg", "<B a={unclosed U-001"):
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), prose.replace("U-001", "U-002"))
+
     def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
         import time
         for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001",

@@ -354,17 +354,171 @@ def _balanced(open_, close, inner, depth=4):
     return pattern
 
 
-TAG_NAME = r"[a-z][\w.:-]*"
-# JSX attribute expressions such as style={{ color: "red" }} nest braces; a brace
-# inside a string or template literal is text. A quote with no closing quote on
-# its line is plain text, so each character has one reading and no backtracking.
-JSX_EXPRESSION = _balanced("{", "}", r"""(?:"(?:\\.|[^"\\\n])*"|"(?!(?:\\.|[^"\\\n])*")"""
-                                     r"""|'(?:\\.|[^'\\\n])*'|'(?!(?:\\.|[^'\\\n])*')"""
-                                     r"""|`(?:\\.|[^`\\])*`|`(?!(?:\\.|[^`\\])*`)|\\.|[^{}"'`\\])""")
-_ATTRIBUTE_VALUE = r"\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+)"
-# Attribute names: plain, JSX {…}, Angular (event)/[prop]/[(model)]/*ngIf (always with a value) and #ref.
-TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*(?:" + _ATTRIBUTE_VALUE + r")?"
-                 r"|(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?" + _ATTRIBUTE_VALUE + r"|#[a-z][\w-]*)")
+TAG_NAME = re.compile(r"[a-z][\w.:-]*", re.IGNORECASE)
+# Attribute names: plain, Angular (event)/[prop]/[(model)]/*ngIf (these always
+# take a value) and #ref. JSX {…} attributes and values are scanned as JavaScript.
+PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@][\w.:@-]*", re.IGNORECASE)
+BOUND_ATTRIBUTE = re.compile(r"(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?", re.IGNORECASE)
+REF_ATTRIBUTE = re.compile(r"#[a-z][\w-]*", re.IGNORECASE)
+UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
+MAX_TAG = 8000  # A tag longer than this stays prose; it also bounds every scan.
+# Characters tag scans may read per character of prose, plus a fixed allowance;
+# past it, remaining "<" are prose. Only text built to defeat the scanner gets there.
+TAG_SCAN_BUDGET = (4, 200_000)
+# After these, "/" starts a regular expression rather than a division.
+REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^") | {""}
+
+
+def _scan_js(text, i, stop):
+    """(end of the {…} JavaScript expression opening at text[i] or None, index reached).
+
+    Strings, template literals (with ${…}), comments and regular-expression
+    literals are skipped, so braces inside them do not count. Linear in the
+    scanned length.
+    """
+    depth, stack, previous = 0, [], ""
+    while i < stop:
+        c = text[i]
+        if c in "\"'":
+            i += 1
+            while i < stop and text[i] != c and text[i] != "\n":
+                i += 2 if text[i] == "\\" else 1
+            if i >= stop or text[i] != c:
+                return None, i
+            previous = c
+        elif c == "`":
+            stack.append(depth)  # Inside a template literal until the next unescaped backtick or ${.
+            i += 1
+            while i < stop and text[i] != "`" and not text.startswith("${", i):
+                i += 2 if text[i] == "\\" else 1
+            if i >= stop:
+                return None, i
+            if text[i] == "`":
+                stack.pop()
+                previous = "`"
+            else:
+                depth += 1
+                i += 1
+                previous = "{"
+        elif c == "/" and text.startswith("//", i):
+            newline = text.find("\n", i, stop)
+            if newline < 0:
+                return None, i
+            i = newline
+            continue
+        elif c == "/" and text.startswith("/*", i):
+            close = text.find("*/", i + 2, stop)
+            if close < 0:
+                return None, i
+            i = close + 2
+            continue
+        elif c == "/" and previous in REGEX_AFTER:
+            i += 1
+            in_class = False
+            while i < stop and text[i] != "\n" and (in_class or text[i] != "/"):
+                if text[i] == "\\":
+                    i += 1
+                elif text[i] == "[":
+                    in_class = True
+                elif text[i] == "]":
+                    in_class = False
+                i += 1
+            if i >= stop or text[i] != "/":
+                return None, i
+            previous = "/x"  # A regex literal ends an operand.
+        elif c == "{":
+            depth += 1
+            previous = c
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1, i + 1
+            if stack and depth == stack[-1]:
+                # Back inside a template literal after ${…}: continue to its end.
+                i += 1
+                while i < stop and text[i] != "`" and not text.startswith("${", i):
+                    i += 2 if text[i] == "\\" else 1
+                if i >= stop:
+                    return None, i
+                if text[i] == "`":
+                    stack.pop()
+                    previous = "`"
+                else:
+                    depth += 1
+                    i += 1
+                    previous = "{"
+            else:
+                previous = c
+        elif not c.isspace():
+            previous = c
+        i += 1
+    return None, i
+
+
+def _scan_tag(text, i):
+    """(end of the HTML, JSX or Angular open tag at text[i] or None, index reached).
+
+    Follows the CommonMark tag grammar for names and attributes, with JSX
+    {expressions} scanned as JavaScript, so "<640px … >1024px" and
+    "<sm (U-001) and >lg" are not tags.
+    """
+    stop = min(len(text), i + MAX_TAG)
+    name = TAG_NAME.match(text, i + 1, stop)
+    if not name:
+        return None, i + 1
+    j = name.end()
+    while j < stop:
+        k = j
+        while k < stop and text[k].isspace():
+            k += 1
+        if k >= stop:
+            return None, k
+        if text.startswith("/>", k):
+            return k + 2, k + 2
+        if text[k] == ">":
+            return k + 1, k + 1
+        if k == j:
+            return None, k  # Attributes are separated by whitespace.
+        j = k
+        if text[j] == "{":
+            end, reached = _scan_js(text, j, stop)
+            if end is None:
+                return None, reached
+            j = end
+            continue
+        if (m := PLAIN_ATTRIBUTE.match(text, j, stop)) or (m := REF_ATTRIBUTE.match(text, j, stop)):
+            needs_value = False
+        elif m := BOUND_ATTRIBUTE.match(text, j, stop):
+            needs_value = True
+        else:
+            return None, j
+        j = m.end()
+        k = j
+        while k < stop and text[k].isspace():
+            k += 1
+        if k < stop and text[k] == "=":
+            k += 1
+            while k < stop and text[k].isspace():
+                k += 1
+            if k < stop and text[k] in "\"'":
+                close = text.find(text[k], k + 1, stop)
+                if close < 0:
+                    return None, stop
+                j = close + 1
+            elif k < stop and text[k] == "{":
+                end, reached = _scan_js(text, k, stop)
+                if end is None:
+                    return None, reached
+                j = end
+            elif value := UNQUOTED_VALUE.match(text, k, stop):
+                j = value.end()
+            else:
+                return None, k
+        elif needs_value:
+            return None, k
+    return None, j
+
+
 URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"
@@ -375,10 +529,10 @@ PROSE_PART = re.compile(
     # A code span closes only at a backtick run of exactly the opening length.
     r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
     r"|(?P<comment><!--.*?(?:-->|\Z))"
-    # HTML and JSX tags follow the CommonMark open/closing tag grammar (JSX
-    # attributes may also be {expressions}), so "<640px … >1024px" and
-    # "<sm (U-001) and >lg" stay prose.
-    r"|(?P<markup><(?:" + TAG_NAME + r"(?:" + TAG_ATTRIBUTE + r")*\s*/?|/" + TAG_NAME + r"\s*|[!?][^<>]*)>)"
+    # Closing tags, declarations and processing instructions; an open tag is
+    # only marked here ("<" before a name) and measured by _scan_tag.
+    r"|(?P<markup></[a-z][\w.:-]*\s*>|<[!?][^<>]*>)"
+    r"|(?P<open_tag><)(?=[a-z])"
     # A URL, including raw Japanese path or query text and balanced (…), runs
     # to whitespace, quotes, an unbalanced bracket or Japanese punctuation.
     r"|(?P<url>https?://(?:" + URL_CHAR + "|" + _balanced("(", ")", r"[^\s()<>]") + r")+)"
@@ -488,7 +642,19 @@ def _rewrite_prose(value, mapping):
         return FINDING_MENTION.sub(mention, text)
 
     protected_spans, literal_spans = [], []
-    for match in PROSE_PART.finditer(value):
+    position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    while (match := PROSE_PART.search(value, position)) is not None:
+        position = match.end()
+        if match["open_tag"] is not None:
+            if budget <= 0:
+                continue
+            end, reached = _scan_tag(value, match.start())
+            budget -= reached - match.start()
+            if end is not None:
+                protected_spans.append((match.start(), end))
+                literal_spans.append((match.start(), end))
+                position = end
+            continue
         literal = (match["fence"] is not None or match["comment"] is not None
                    or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))

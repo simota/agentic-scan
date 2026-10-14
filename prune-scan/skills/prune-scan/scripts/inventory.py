@@ -31,6 +31,7 @@ from bisect import bisect_left
 from collections import Counter, defaultdict
 from contextlib import ExitStack, contextmanager
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -527,14 +528,28 @@ def jsonc_object(text):
     return data if isinstance(data, dict) else None
 
 
-def ts_config_options(rel, texts, cache):
+def ts_config_options(rel, texts, cache, in_progress=None):
     """(paths, directory paths resolve from, baseUrl directory) for one config, following relative extends.
 
-    Results are cached per config, so a diamond of extends is walked once.
+    Results are cached per config, so a diamond of extends is walked once. A
+    config already being resolved (a cycle, which tsc rejects) contributes
+    nothing; only finished results are cached, so an interrupted walk leaves
+    no partial entry behind.
     """
     if rel in cache:
         return cache[rel]
-    cache[rel] = (None, None, None)  # In progress: a cycle contributes nothing.
+    in_progress = set() if in_progress is None else in_progress
+    if rel in in_progress:
+        return None, None, None
+    in_progress.add(rel)
+    try:
+        cache[rel] = ts_config_resolve(rel, texts, cache, in_progress)
+    finally:
+        in_progress.discard(rel)
+    return cache[rel]
+
+
+def ts_config_resolve(rel, texts, cache, in_progress):
     data = jsonc_object(texts[rel]) or {}
     paths, paths_root, base = None, None, None
     extends = data.get("extends")
@@ -545,7 +560,7 @@ def ts_config_options(rel, texts, cache):
         target = os.path.normpath((Path(rel).parent / parent).as_posix()).replace(os.sep, "/")
         target = next((t for t in (target, target + ".json", target + "/tsconfig.json") if t in texts), None)
         if target:
-            inherited_paths, inherited_root, inherited_base = ts_config_options(target, texts, cache)
+            inherited_paths, inherited_root, inherited_base = ts_config_options(target, texts, cache, in_progress)
             if inherited_paths is not None:
                 paths, paths_root = inherited_paths, inherited_root
             if inherited_base is not None:
@@ -557,8 +572,7 @@ def ts_config_options(rel, texts, cache):
             base = root / options["baseUrl"]
         if isinstance(options.get("paths"), dict):
             paths, paths_root = options["paths"], root
-    cache[rel] = paths, paths_root, base
-    return cache[rel]
+    return paths, paths_root, base
 
 
 def js_alias_rules(texts):
@@ -1008,17 +1022,32 @@ NPM_VALUE_OPTIONS = {"--prefix", "-C", "--dir", "--cwd", "-w", "--workspace", "-
                      "--loglevel", "--userconfig", "--cache", "--tag", "--scope"}
 PACKAGE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
 MAX_COMMAND_TOKENS = 64
+COMMAND_TOKEN = re.compile(r"\S+")
+MAKE_NAME = re.compile(r"[A-Za-z0-9_.:=-]*")
+NPM_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:.-")
 
 
 def command_tokens(text, end):
-    """Whitespace tokens of the rest of one line, bounded so repeated starts stay linear."""
-    line_end = text.find("\n", end)
-    return text[end:line_end if line_end >= 0 else len(text)].split(None, MAX_COMMAND_TOKENS)[:MAX_COMMAND_TOKENS]
+    """Lazily, at most MAX_COMMAND_TOKENS whitespace tokens of the rest of one line.
+
+    The line end comes from the cached newline index and callers stop reading
+    at the first token that ends the command, so many command starts on one
+    long line stay linear.
+    """
+    breaks = line_breaks(text)
+    index = bisect_left(breaks, end)
+    line_end = breaks[index] if index < len(breaks) else len(text)
+    return (m.group() for m in islice(COMMAND_TOKEN.finditer(text, end, line_end), MAX_COMMAND_TOKENS))
 
 
-def name_prefixes(token, name_chars):
-    """Every prefix of token that ends where a name could end (before a non-name character)."""
-    return [token[:k] for k in range(1, len(token) + 1) if k == len(token) or token[k] not in name_chars]
+def script_names_in(token, scripts, lengths):
+    """Known script names that token starts with, ending where a name could end."""
+    found = set()
+    for length in lengths:
+        if length <= len(token) and (length == len(token) or token[length] not in NPM_NAME_CHARS):
+            if token[:length] in scripts:
+                found.add(token[:length])
+    return found
 
 
 def npm_script(tokens):
@@ -1029,63 +1058,65 @@ def npm_script(tokens):
     script after them; otherwise the first word is the script (npm test,
     yarn build).
     """
-    i = 0
-    while i < len(tokens):
-        token = tokens[i]
+    tokens = iter(tokens)
+    for token in tokens:
         if token in NPM_VALUE_OPTIONS:
-            i += 2
+            next(tokens, None)
             continue
         if NPM_OPTION.fullmatch(token):
-            i += 1
             continue
         if token.startswith("-"):
             return None
         if token in ("run", "run-script"):
-            rest = [t for t in tokens[i + 1:] if not NPM_OPTION.fullmatch(t)]
-            return rest[0] if rest else None
-        if token == "workspace" and i + 2 < len(tokens):
-            return tokens[i + 2]
+            return next((t for t in tokens if not NPM_OPTION.fullmatch(t)), None)
+        if token == "workspace":
+            next(tokens, None)
+            return next(tokens, None)
         return token
     return None
 
 
-def invocation_counts(texts, project_targets, select_project=lambda rel, directories, files: None):
+def make_command(tokens, known):
+    """(targets in order, whether each is exact, -C directories, -f files) of one make command.
+
+    Options (-C dir), variables and known targets may come before a target; any
+    other word ends the command, and so does trailing punctuation (make build.).
+    """
+    tokens = iter(tokens)
+    sequence, directories, files = [], [], []
+    for token in tokens:
+        if token in MAKE_VALUE_OPTIONS:
+            value = next(tokens, None)
+            if value is None or value.startswith("-"):
+                break
+            (directories if token == "-C" else files if token == "-f" else []).append(value)
+            continue
+        if (token.startswith("-") and len(token) > 1) or MAKE_VARIABLE.fullmatch(token):
+            continue
+        name = MAKE_NAME.match(token).group()
+        if not name or name not in known:
+            break
+        sequence.append((name, name == token))
+        if name != token:
+            break
+    return sequence, directories, files
+
+
+def invocation_counts(texts, project_targets, scripts=frozenset(),
+                      select_project=lambda rel, directories, files: None):
     """Count make <target> per Makefile project and npm|pnpm|yarn|bun [run] <script> in one pass.
 
     A make command line may hold options (-C dir), variables and other targets
     of the same project before the target; prose words between make and a
     target name end it. When -C or -f selects a known Makefile project
-    (select_project), only that project's targets count. Tokens are read once
-    per command start.
+    (select_project), only that project's targets count.
     """
     make_calls, npm_calls = defaultdict(Counter), Counter()
-    make_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.:=-")
-    npm_chars = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:.-")
+    lengths = sorted({len(name) for name in scripts})
+    known = frozenset().union(*project_targets.values())
     for rel, text in texts.items():
         for start in MAKE_CALL.finditer(text):
-            tokens, sequence, i = command_tokens(text, start.end()), [], 0
-            directories, files = [], []
-            while i < len(tokens):
-                token = tokens[i]
-                if token in MAKE_VALUE_OPTIONS:
-                    if i + 1 < len(tokens) and not tokens[i + 1].startswith("-"):
-                        if token == "-C":
-                            directories.append(tokens[i + 1])
-                        elif token == "-f":
-                            files.append(tokens[i + 1])
-                        i += 2
-                        continue
-                    break
-                if (token.startswith("-") and len(token) > 1) or MAKE_VARIABLE.fullmatch(token):
-                    i += 1
-                    continue
-                name = (name_prefixes(token, make_chars) or [""])[0]
-                if not name or name[0] in "=:":
-                    break
-                sequence.append((name, name == token))
-                if name != token:
-                    break  # Trailing punctuation ends the command: make build.
-                i += 1
+            sequence, directories, files = make_command(command_tokens(text, start.end()), known)
             if not sequence:
                 continue
             selected = select_project(rel, directories, files) if directories or files else None
@@ -1103,7 +1134,7 @@ def invocation_counts(texts, project_targets, select_project=lambda rel, directo
         for start in NPM_CALL.finditer(text):
             script = npm_script(command_tokens(text, start.end()))
             if script:
-                npm_calls.update(set(name_prefixes(script, npm_chars)))
+                npm_calls.update(script_names_in(script, scripts, lengths))
     return make_calls, npm_calls
 
 
@@ -1656,8 +1687,10 @@ def inventory(root, units=None, today=None):
             if found:
                 return project_of(sorted(found)[0])
         return None
+    all_scripts = frozenset(name for rel, text in texts.items() if Path(rel).name == "package.json"
+                            for name in package_sections(text).get("scripts", {}))
     make_calls, npm_calls = invocation_counts(texts, {p: frozenset(t) for p, t in project_targets.items()},
-                                              select_project)
+                                              all_scripts, select_project)
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):

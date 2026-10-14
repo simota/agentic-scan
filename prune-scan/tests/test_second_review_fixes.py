@@ -158,6 +158,16 @@ class ThirdReviewTests(unittest.TestCase):
         invoked = {row["name"]: row["invocations"] for row in result["scripts"]}
         self.assertEqual((invoked["t1_0"], invoked["t1_1"], invoked["t1_2"]), (1, 1, 0))
 
+    def test_long_tokens_and_many_command_starts_stay_linear(self):
+        files = {"package.json": '{"scripts": {"build": "x", "a/a": "x"}}', "Makefile": "build:\n\techo\n",
+                 "a.txt": "npm run " + "a/" * 100000 + "\n", "b.txt": "make " + "a/" * 100000 + "\n",
+                 "c.txt": "make " * 200000 + "\n", "d.txt": "npm " * 200000 + "\n"}
+        started = time.monotonic()
+        result = scan(files)
+        self.assertLess(time.monotonic() - started, 15)
+        invoked = {row["name"]: row["invocations"] for row in result["scripts"]}
+        self.assertEqual(invoked["a/a"], 1)
+
     def test_python_module_run_before_a_period(self):
         result = scan({"README.md": "Run the job with python -m app.nightly.\n",
                        "app/nightly.py": "def run():\n    pass\n"})

@@ -18,7 +18,7 @@
       "ja"
     ]
   },
-  "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, saving a new task throws the typed title away, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every button, and task titles are cut off with no way to read them.",
+  "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, saving a new task throws the typed title away, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every .btn button, and task titles are cut off with no way to read them.",
   "findings": [
     {
       "id": "U-001",
@@ -176,7 +176,7 @@
       "validation": {
         "verdict": "Valid",
         "evidence": "inventory viewport_meta blocks_zoom: true; index.html is the single entry page.",
-        "intent_checked": "No comment explains it; it is not needed to stop input zoom when inputs are 16px."
+        "intent_checked": "No comment explains it; to stop iOS zooming into inputs, set inputs to at least 16px instead."
       }
     },
     {
@@ -234,7 +234,7 @@
       "perspective": "FM3",
       "flow_ref": "FL-01",
       "screen": "Sign-up form (/signup)",
-      "criterion": "Validate on blur or submit, not while typing (form usability); WCAG 2.2 SC 3.3.1 Error Identification",
+      "criterion": "Validate on blur or submit, not while typing (form usability heuristic)",
       "location": "src/components/SignupForm.tsx:11",
       "observed": "onChange runs the email check and sets \"Invalid input\" until the address is complete",
       "expected": "Check on blur and on submit; once shown, clear the message as soon as the value becomes valid.",
@@ -263,7 +263,7 @@
       ],
       "observed": "<input name=\"email\" placeholder=\"Email\"> and <input type=\"password\" placeholder=…> with no <label>, aria-label or aria-labelledby",
       "expected": "A visible <label> tied to each field.",
-      "impact": "The field name disappears as soon as the visitor types, and screen readers may announce the fields without a name.",
+      "impact": "The field name disappears as soon as the visitor types, and the accessible name depends on a placeholder that vanishes on input.",
       "fix": "Add a visible <label htmlFor> for each field.",
       "validation": {
         "verdict": "Valid",
@@ -349,7 +349,7 @@
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
-      "perspective": "PP3",
+      "perspective": "FB2",
       "flow_ref": "FL-02",
       "screen": "Dashboard (/)",
       "criterion": "Every control responds to input; nothing fails silently",
@@ -387,7 +387,7 @@
     },
     {
       "id": "U-017",
-      "title": "Focus outline removed from every button with no replacement",
+      "title": "Focus outline removed from every .btn button with no replacement",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -397,7 +397,7 @@
       "criterion": "WCAG 2.2 SC 2.4.7 Focus Visible",
       "location": "src/styles/app.css:4",
       "observed": ".btn:focus { outline: none; }",
-      "expected": ".btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }",
+      "expected": ".btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; } (or a --focus token added to tokens.css)",
       "impact": "Keyboard users lose track of where they are on every screen that uses the shared button.",
       "fix": "Delete the rule and add a :focus-visible style from the tokens.",
       "validation": {
@@ -510,7 +510,7 @@
       "impact": "Rows jump as avatars load, moving the delete icon under the pointer.",
       "fix": "Add width and height, or size .avatar in CSS.",
       "validation": {
-        "verdict": "Valid",
+        "verdict": "Likely",
         "evidence": "inventory images: missing dimensions; .avatar sets no size (app.css:14).",
         "intent_checked": "The size of the shift depends on the image."
       }
@@ -621,7 +621,7 @@
     {
       "name": "RS Responsive",
       "result": "2 findings",
-      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is below WCAG 2.5.8's 24px; listed in next_steps with the delete-control fixes. The 700px media query (app.css:18) is off the 640/1024 breakpoint scale; it only adjusts card padding and moves to 640px with U-006's fix."
+      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is a WCAG 2.5.8 candidate; its spacing exception was not checked, so it is listed in next_steps with the delete-control fixes rather than as a finding. The 700px media query (app.css:18) is off the 640/1024 breakpoint scale; it only adjusts card padding and moves to 640px with U-006's fix."
     },
     {
       "name": "VH Visual hierarchy",
@@ -645,7 +645,7 @@
     },
     {
       "name": "FB Feedback and status",
-      "result": "2 findings",
+      "result": "3 findings",
       "note": "Settings save() is a stub in the fixture, so its success feedback was not judged."
     },
     {
@@ -670,7 +670,7 @@
     },
     {
       "name": "PP Perceived performance",
-      "result": "2 findings",
+      "result": "1 finding",
       "note": "Skeleton absence is part of U-012."
     }
   ],

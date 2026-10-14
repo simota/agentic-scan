@@ -29,6 +29,8 @@ from render import (FLOWS_STAMP, PAGE_KIND_STAMP, PAGE_STAMP, PDF_STAMP, RENDER_
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
 LANGUAGES = ("en", "ja")
+# "N/A" in its common spellings, in English and Japanese.
+NOT_APPLICABLE = re.compile(r"(?i)^(?:N\s*[/／]?\s*A|not\s+applicable|該当なし|対象外|適用外)(?![\w/／])")
 
 
 class PageMetadata(HTMLParser):
@@ -130,7 +132,7 @@ def problems(out, no_pdf=False, allow=()):
                 yield f"perspectives: {name!r} needs a non-empty result (applied, N/A with a reason, or not checked)"
                 continue
             recorded.add(family[1])
-            na = re.match(r"(?i)^N/A(?![\w/])", result)
+            na = NOT_APPLICABLE.match(result)
             # Punctuation alone, in either script, is not a reason.
             if (na and not re.sub(r"[\W_]", "", result[na.end():])
                     and not perspective.get("note", "").strip()):

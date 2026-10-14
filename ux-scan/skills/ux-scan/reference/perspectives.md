@@ -24,7 +24,9 @@ guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
   heading per screen, breadcrumbs in deep hierarchies, the document title per
   route
 - IA4 Labels and grouping: navigation labels match the screen titles they open;
-  one destination is named one way; menus no deeper than the content needs
+  one destination is named one way; menus no deeper than the content needs;
+  help (contact, chat, FAQ) in the same relative place on every screen that
+  offers it (SC 3.2.6 Consistent Help)
 
 ## Layout and grid (`LG`)
 
@@ -38,8 +40,8 @@ guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
   content; long names, numbers and user content in fixed boxes; accidental
   horizontal scroll
 - LG5 Safe areas and fixed elements: `env(safe-area-inset-*)` on notched
-  devices; fixed headers, footers and banners covering content, anchors or the
-  on-screen keyboard
+  devices; fixed headers, footers and banners covering content, anchors, the
+  on-screen keyboard or the focused control (SC 2.4.11 Focus Not Obscured)
 
 ## Responsive (`RS`)
 
@@ -56,7 +58,8 @@ guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
 - RS4 Zoom and orientation: `user-scalable=no`, `maximum-scale`, orientation
   locks, text that does not reflow at 320 CSS px (SC 1.4.10) [`viewport_meta`]
 - RS5 Hover-only affordances (menus, tooltips, row actions revealed on hover)
-  with no touch or keyboard equivalent
+  with no touch or keyboard equivalent; drag-only interactions (sortable lists,
+  sliders) with no single-pointer alternative (SC 2.5.7 Dragging Movements)
 
 ## Visual hierarchy and typography (`VH`)
 
@@ -102,8 +105,11 @@ guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
 - FM3 Validation timing: errors on blur or submit, not on the first keystroke;
   errors cleared as soon as the value is fixed
 - FM4 Input `type`, `inputmode` and `autocomplete` tokens for email, phone,
-  passwords, names, addresses and one-time codes [`inputs`]
-- FM5 Input preserved across errors, navigation and reloads; errors next to the
+  passwords, names, addresses and one-time codes; sign-in that blocks paste or
+  password managers, or relies on a cognitive test (SC 3.3.8 Accessible
+  Authentication) [`inputs`]
+- FM5 Input preserved across errors, navigation and reloads, and not asked for
+  again in the same process (SC 3.3.7 Redundant Entry); errors next to the
   field and linked to it (`aria-describedby`); focus moved to the first error
 
 ## Feedback and system status (`FB`)

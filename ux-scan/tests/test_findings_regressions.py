@@ -443,7 +443,8 @@ class TransactionRegressions(unittest.TestCase):
         data["next_steps"].extend(["Fix U-002. <!-- U-002 with <b>markup", "Fix `` U-002 ``."])
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["next_steps"], [f"{code}\nFix U-001." for code in evidence] + [
-            "Fix U-001. <!-- U-002 with <b>markup", "Fix `` U-001 ``.",
+            # As in CommonMark, an unclosed inline comment is literal text.
+            "Fix U-001. <!-- U-001 with <b>markup", "Fix `` U-001 ``.",
         ])
         findings.check_findings(changed)
 
@@ -557,6 +558,44 @@ class TransactionRegressions(unittest.TestCase):
             with self.subTest(prose=prose):
                 self.assertEqual(findings._rewrite_prose(prose, mapping), prose.replace("U-001", "U-002"))
 
+    def test_round_three_prose_cases(self):
+        mapping = {"U-001": "U-002", "U-002": "U-001"}
+        cases = {
+            "Press the ` key (U-001).\n\nSee `U-002`.": "Press the ` key (U-002).\n\nSee `U-001`.",
+            "Press ` then U-001.\n```\nx ` y\n```\nThen U-002 and U-001.":
+                "Press ` then U-002.\n```\nx ` y\n```\nThen U-001 and U-002.",
+            '<a onClick={() => { return /}/.test(x) }} title="U-001"> U-001':
+                '<a onClick={() => { return /}/.test(x) }} title="U-001"> U-002',
+            '<a b={typeof /}/} c="U-001"> U-001': '<a b={typeof /}/} c="U-001"> U-002',
+            '<Foo render={() => <b>x</b>} title="U-001" /> U-001': '<Foo render={() => <b>x</b>} title="U-001" /> U-002',
+            '<a b={i++ / 2} c="U-001"> U-001': '<a b={i++ / 2} c="U-001"> U-002',
+            '<X p={x < /}/.test(y)} data-id="U-001" /> U-001': '<X p={x < /}/.test(y)} data-id="U-001" /> U-002',
+            '<X p={a && <b>x</b>} data-id="U-001" /> U-001': '<X p={a && <b>x</b>} data-id="U-001" /> U-002',
+            "Use <!-- in templates (U-001). Later U-002.": "Use <!-- in templates (U-002). Later U-001.",
+            "<!-- open\nU-001": "<!-- open\nU-001",
+            '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-001': '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-002',
+        }
+        for prose, expected in cases.items():
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
+        ranged = {"U-001": "U-005", "U-002": "U-002", "U-003": "U-004"}
+        self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
+        self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")
+
+    def test_unclosed_inline_comments_stay_fast(self):
+        import time
+        started = time.monotonic()
+        result = findings._rewrite_prose("x <!-- " * 40000 + "U-001", {"U-001": "U-002"})
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertTrue(result.endswith("U-002"))
+
+    def test_code_spans_stay_fast_with_many_unclosed_backtick_runs(self):
+        import time
+        text = "".join("`" * (n % 7 + 1) + " word " for n in range(40000))
+        started = time.monotonic()
+        findings._rewrite_prose(text + " U-001", {"U-001": "U-002"})
+        self.assertLess(time.monotonic() - started, 3)
+
     def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
         import time
         for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001",
@@ -576,6 +615,7 @@ class TransactionRegressions(unittest.TestCase):
             (lambda d: d["findings"][0].update(references=[{"href": "https://x.org"}]), "unknown key 'href'"),
             (lambda d: d["findings"][0]["validation"].update(evidnce="x"), "unknown key 'evidnce'"),
             (lambda d: d["meta"].update(comit="abc"), "unknown key 'comit'"),
+            (lambda d: d["perspectives"][0].update(resutl="x"), "unknown key 'resutl'"),
             (lambda d: d["findings"][0].update(occurrences=[]), "occurrences"),
             (lambda d: d["findings"][0].update(location="src/a\u2028b.tsx:1"), "location"),
             (lambda d: d["findings"][0].update(location="src/a\x85.tsx:1"), "location"),

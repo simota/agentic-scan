@@ -159,6 +159,7 @@ def _indexed(items, where, key, pattern=None):
 def _perspectives(items, where="perspectives"):
     result = _indexed(items, where, "name")
     for name, item in result.items():
+        _known_keys(item, ("name", "result", "note"), f"{where} {name}")
         _str(item, "result", f"{where} {name}")
         _str(item, "note", f"{where} {name}")
     return result
@@ -357,7 +358,8 @@ def _balanced(open_, close, inner, depth=4):
 TAG_NAME = re.compile(r"[a-z][\w.:-]*", re.IGNORECASE)
 # Attribute names: plain, Angular (event)/[prop]/[(model)]/*ngIf (these always
 # take a value) and #ref. JSX {…} attributes and values are scanned as JavaScript.
-PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@][\w.:@-]*", re.IGNORECASE)
+# Vue dynamic arguments (:[key], v-slot:[name], @[event]) follow the name.
+PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@][\w.:@-]*(?:\[[^\]\s]*\])?", re.IGNORECASE)
 BOUND_ATTRIBUTE = re.compile(r"(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?", re.IGNORECASE)
 REF_ATTRIBUTE = re.compile(r"#[a-z][\w-]*", re.IGNORECASE)
 UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
@@ -366,7 +368,11 @@ MAX_TAG = 8000  # A tag longer than this stays prose; it also bounds every scan.
 # past it, remaining "<" are prose. Only text built to defeat the scanner gets there.
 TAG_SCAN_BUDGET = (4, 200_000)
 # After these, "/" starts a regular expression rather than a division.
-REGEX_AFTER = set("(,=:[!&|?{};+-*%<>~^") | {""}
+REGEX_AFTER = set("(,=:[!&|?{};+-*%>~^") | {""}
+# After these keywords, "/" also starts a regular expression.
+REGEX_KEYWORDS = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do",
+                  "else", "yield", "await"}
+IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 
 
 def _scan_js(text, i, stop):
@@ -412,7 +418,8 @@ def _scan_js(text, i, stop):
                 return None, i
             i = close + 2
             continue
-        elif c == "/" and previous in REGEX_AFTER:
+        elif c == "/" and (previous in REGEX_AFTER or previous == "<" and text[i - 1] != "<"):
+            # After "<", a regex follows a space (x < /a/.test(y)); "</" closes a JSX element.
             i += 1
             in_class = False
             while i < stop and text[i] != "\n" and (in_class or text[i] != "/"):
@@ -449,6 +456,14 @@ def _scan_js(text, i, stop):
                     previous = "{"
             else:
                 previous = c
+        elif (c == "+" or c == "-") and text.startswith(c, i + 1):
+            previous = ")"  # i++ and i-- end an operand, so a following "/" divides.
+            i += 2
+            continue
+        elif identifier := IDENTIFIER.match(text, i, stop):
+            previous = "" if identifier.group(0) in REGEX_KEYWORDS else "a"
+            i = identifier.end()
+            continue
         elif not c.isspace():
             previous = c
         i += 1
@@ -527,8 +542,11 @@ PROSE_PART = re.compile(
     r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
     r"(?:^[ \t]{0,3}(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
     # A code span closes only at a backtick run of exactly the opening length.
-    r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
-    r"|(?P<comment><!--.*?(?:-->|\Z))"
+    # Like CommonMark, a code span stays within its paragraph: it never crosses
+    # a blank line or a fence opener, so a stray backtick is literal text.
+    r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>(?:(?!\n[ \t]*\r?\n|\n[ \t]{0,3}(?:```|~~~)).)*?)(?<!`)(?P=ticks)(?!`)"
+    # A comment opener; its end is found in _rewrite_prose (see there).
+    r"|(?P<comment><!--)"
     # Closing tags, declarations and processing instructions; an open tag is
     # only marked here ("<" before a name) and measured by _scan_tag.
     r"|(?P<markup></[a-z][\w.:-]*\s*>|<[!?][^<>]*>)"
@@ -632,7 +650,12 @@ def _rewrite_prose(value, mapping):
         # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
         def mention(match):
             if joined(match.start(), match.end()):
-                return match.group(0)
+                if not match["first"]:
+                    return match.group(0)
+                # A range with one end joined to a name is not a range: map each free id alone.
+                return FINDING_REF.sub(
+                    lambda ref: ref[0] if joined(match.start() + ref.start(), match.start() + ref.end())
+                    else mapping.get(ref[0], ref[0]), match.group(0))
             if match["first"]:
                 return reference_range(match)
             if match["styled"]:
@@ -643,8 +666,25 @@ def _rewrite_prose(value, mapping):
 
     protected_spans, literal_spans = [], []
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
+        if match["comment"] is not None:
+            # The first "-->" after one opener is also the first after any later
+            # opener before it, so each close is searched for once: linear time.
+            if next_close is None or (next_close != -1 and next_close < match.end()):
+                next_close = value.find("-->", match.end())
+            line_start = value.rfind("\n", 0, match.start()) + 1
+            if next_close != -1:
+                end = next_close + 3
+            elif re.fullmatch(r"[ \t]{0,3}", value[line_start:match.start()]):
+                end = len(value)  # An unclosed comment opening a line starts an HTML block.
+            else:
+                continue  # As in CommonMark, an unclosed inline <!-- is literal text.
+            protected_spans.append((match.start(), end))
+            literal_spans.append((match.start(), end))
+            position = end
+            continue
         if match["open_tag"] is not None:
             if budget <= 0:
                 continue
@@ -655,8 +695,7 @@ def _rewrite_prose(value, mapping):
                 literal_spans.append((match.start(), end))
                 position = end
             continue
-        literal = (match["fence"] is not None or match["comment"] is not None
-                   or match["markup"] is not None or match["url"] is not None
+        literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
         protected = (literal
                      or (match["path"] is not None and _source_token(match["path"]))

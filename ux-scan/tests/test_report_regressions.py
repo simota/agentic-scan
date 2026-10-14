@@ -207,7 +207,7 @@ class ReportRegressions(unittest.TestCase):
         (self.repo / "en.json").write_text("{\n" + "\n".join(ui) + "\n}\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "en.json:3")["lines"][1:5], ui)
         more = ["STRIPE_SECRET_KEY_LIVE=HIDDEN_FIVE", "DB_PASSWORD_PROD=HIDDEN_SIX", "AUTH_TOKEN_V2=HIDDEN_SEVEN",
-                "apiKeys: ['HIDDEN_EIGHT']", 'headers = {"Authorization": "Bearer HIDDEN_NINE_abcdef"}',
+                "apiKeys: ['HIDDEN_EIGHT']", 'headers = {"Authorization": "Bearer HIDDEN9f8e7d6c5b4a"}',
                 "key = 'sk_live_HIDDEN_TEN'", "aws = 'AKIAHIDDENELEVEN1234'"]
         keep = ["tokens: { spacing: [4, 8, 12] },", "const designTokens = loadTokens();",
                 "passwordConfirmLabel: 'Repeat password',"]
@@ -247,10 +247,10 @@ class ReportRegressions(unittest.TestCase):
                    "password2 = 'HIDDEN'", "apiKeys: ['HIDDEN']", "DB_PASSWORD_PROD=HIDDEN", "AUTH_TOKEN_V2=HIDDEN"]
         for line in ui:
             with self.subTest(line=line):
-                self.assertIsNone(render.SECRET_LINE.search(line))
+                self.assertFalse(render.secret_line(line))
         for line in secrets:
             with self.subTest(line=line):
-                self.assertIsNotNone(render.SECRET_LINE.search(line))
+                self.assertTrue(render.secret_line(line))
         (self.repo / "min.js").write_text("secret" * 300000 + "\n", encoding="utf-8")
         started = time.monotonic()
         render.snippet(self.repo, "min.js:1")
@@ -265,6 +265,72 @@ class ReportRegressions(unittest.TestCase):
         shown = render.snippet(self.repo, "long.ts:1-4")["lines"]
         self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
         self.assertEqual(shown[3], "w" * 240)
+
+    def test_secret_values_are_masked_by_format_or_assigned_value(self):
+        leaks = ["const t = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig';",
+                 "key: 'AIzaSyA1234567890abcdefghijklmnopqrstu'", "pk = 'pk_live_51Habc'",
+                 "WEBHOOK=whsec_abc123", "OPENAI=sk-proj-abcdefghijklmnop1234",
+                 "token = 'github_pat_11ABC'", "SG.abcdefghijklmnopq.rstuvwxyz",
+                 "url: 'https://hooks.slack.com/services/T0/B0/XX'", "Authorization: 'Basic dXNlcjpwYXNz'",
+                 "define('DB_PASSWORD', 'hunter2');", 'os.environ.setdefault("SECRET_KEY", "django-insecure-x")',
+                 "<password>s3cr3t!</password>", '<add key="ApiKey" value="abc123def"/>',
+                 '<string name="api_key">abc123def</string>', "passphrase: correcthorse9",
+                 "credentials: 'user:pa55w0rd'", "pass: 'letmein'", 'Password string = "hunter22"',
+                 "curl -u admin:hunter2 https://x", "mysql -uroot -phunter2", "PASSWORD=HIDDENVALUE",
+                 "const KEY = `-----BEGIN PRIVATE KEY-----", "ADMIN_PASSWORD=Secret", "spring.datasource.password=Sommer",
+                 'password: "Welcome"', '$password = "Admin";', "'password' => 'Secret',",
+                 'secret = "Correct-Horse-Battery"', 'password = "contraseña123"', "password={'hunter22'}",
+                 "DB_PASSWORD=p@ss", "API_KEY=12345", 'const API_KEY = "Abcdefghijklmnop";',
+                 'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }',
+                 'password = "password123"', 'SECRET_KEY = "mysecretvalue123"', 'token = "token_abcdef123"',
+                 "password: 'password'", 'password = "correct horse battery staple"', 'password = "abc"',
+                 "pwd: 'x'", 'DBPassword = "hunter2"', 'APISecret: "s3cr3t"', 'AWSAccessKey = "abcd1234"',
+                 "define('DBPassword', 'x');", 'password = "it\'s me"',
+                 'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";',
+                 'password = String("hunter2")', '<Login password={String("hunter2")} />',
+                 'password = "' + "k" * 1000 + '"', 'password = "abc', 'DBPASS = "hunter2"', 'APITOKEN: "abc1"',
+                 'MYSECRET = "z"', 'userPASSWORD = "x"']
+        for line in leaks:
+            with self.subTest(leak=line):
+                self.assertTrue(render.secret_line(line))
+        ux = ['"signup": {"password": "Password", "invalid": "Invalid input", "failed": "Error 500"}',
+              "password: string;", "password: z.string().min(8),", "password: { minLength: 8 },",
+              'forgotPassword: "Forgot password?",', "showPassword: false,", '"password": "パスワード",',
+              "token: colors.primary,", "<PasswordField password={password} />",
+              "// Send the token as Bearer authentication", "const [password, setPassword] = useState('');",
+              "apiKey: process.env.API_KEY,", '<input type="password" autoComplete="new-password" />',
+              "--token-color: #ff0000;", "--color-token-primary: #0f62fe;", "$token-spacing: 1.5rem;",
+              "tokenColor: '#ff0000',", "--password-field-border: #d0d0d0;", 'credentials: "include",',
+              'passwordStrength: "strong",', "passwordLabel: 'password_label',",
+              'password_reset_url: "/reset-password",', 'secretQuestion: "mother_maiden_name",',
+              '"password": "Passwort",', '"password": "パスワード",', 'password: "Enter your password",',
+              '"password": "Password is required.",', 'password: "",',
+              "<PasswordInput label='Password' />",
+              'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
+              "const password: string = '';", 'password={useState("")}', 'password: "Enter your password']
+        for line in ux:
+            with self.subTest(ux=line):
+                self.assertFalse(render.secret_line(line))
+        (self.repo / "keys.ts").write_text(
+            "const a = 1;\nconst KEY = `-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj\n"
+            "AoIBAQC7VJTUt9Us8cKjMzEfYyjiWA4R4/M2bS1G\n-----END PRIVATE KEY-----`;\nconst b = 2;\n",
+            encoding="utf-8")
+        shown = render.snippet(self.repo, "keys.ts:4")["lines"]
+        self.assertNotIn("MII", "\n".join(shown))
+        self.assertNotIn("AoIB", "\n".join(shown))
+        self.assertNotIn("END PRIVATE", "\n".join(shown))
+        self.assertIn("const b = 2;", shown)
+        (self.repo / "KeyForm.tsx").write_text(
+            'const a = 1;\nconst b = 2;\nconst c = 3;\n<textarea placeholder="-----BEGIN PRIVATE KEY-----" />\n'
+            "const d = 4;\nconst e = { outline: 'none' };\nconst f = 6;\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "KeyForm.tsx:6")["lines"]
+        # A BEGIN with no END masks only its own line, not the rest of the file.
+        self.assertEqual(shown, ["const c = 3;", render.LABELS["en"]["masked"], "const d = 4;",
+                                 "const e = { outline: 'none' };", "const f = 6;"])
+        for path in ("terraform.tfstate", "client_secret_123.json", "firebase-adminsdk-abc.json",
+                     "google-services.json", ".pgpass", "_netrc", ".vault-token", ".s3cfg", ".boto"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(render.SENSITIVE.search(path))
 
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(
@@ -295,7 +361,7 @@ class ReportRegressions(unittest.TestCase):
 
     def test_not_applicable_punctuation_is_not_a_reason(self):
         perspective = self.data["perspectives"][0]
-        for result in ("N/A.", "N/A：", "n/a —", "N/A。"):
+        for result in ("N/A.", "N/A：", "n/a —", "N/A。", "該当なし", "Not applicable", "NA", "N／A", "対象外。"):
             with self.subTest(result=result):
                 perspective.update(result=result, note="")
                 self.save_inputs()

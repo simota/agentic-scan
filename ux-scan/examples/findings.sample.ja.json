@@ -18,7 +18,7 @@
       "ja"
     ]
   },
-  "summary": "主要タスクの両方に、完了を妨げる問題があります。新規登録はサーバーが拒否すると入力内容をすべて消し、新しいタスクを保存すると入力したタイトルが捨てられ、タスク一覧はマウスでしか操作できません。行はクリック可能な div で、削除ボタンは名前のないアイコンで、押すと取り消しなしで即座に削除されます。360px のスマートフォン幅では 480px のサイドバーが一覧を画面外へ押し出し、ズームも無効です。加えて、一覧に読み込み中・空・エラーの状態がなく、すべてのボタンでフォーカスが見えず、タスク名が途中で切れて続きを読めません。",
+  "summary": "主要タスクの両方に、完了を妨げる問題があります。新規登録はサーバーが拒否すると入力内容をすべて消し、新しいタスクを保存すると入力したタイトルが捨てられ、タスク一覧はマウスでしか操作できません。行はクリック可能な div で、削除ボタンは名前のないアイコンで、押すと取り消しなしで即座に削除されます。360px のスマートフォン幅では 480px のサイドバーが一覧を画面外へ押し出し、ズームも無効です。加えて、一覧に読み込み中・空・エラーの状態がなく、すべての .btn ボタンでフォーカスが見えず、タスク名が途中で切れて続きを読めません。",
   "findings": [
     {
       "id": "U-001",
@@ -176,7 +176,7 @@
       "validation": {
         "verdict": "Valid",
         "evidence": "inventory viewport_meta blocks_zoom: true。index.html は唯一のエントリページ。",
-        "intent_checked": "理由を説明するコメントはない。入力欄が 16px なら入力時のズーム防止にも不要。"
+        "intent_checked": "理由を説明するコメントはない。iOS の入力時ズームを防ぐなら、代わりに入力欄を 16px 以上にする。"
       }
     },
     {
@@ -234,7 +234,7 @@
       "perspective": "FM3",
       "flow_ref": "FL-01",
       "screen": "新規登録フォーム（/signup）",
-      "criterion": "入力中ではなくフォーカスが外れたときか送信時に検証する（フォームのユーザビリティ）、WCAG 2.2 達成基準 3.3.1 エラーの特定",
+      "criterion": "入力中ではなくフォーカスが外れたときか送信時に検証する（フォームのユーザビリティのヒューリスティック）",
       "location": "src/components/SignupForm.tsx:11",
       "observed": "onChange がメールの検証を実行し、アドレスを打ち終えるまで「入力が無効です」を表示する",
       "expected": "blur と送信時に検証し、一度表示したら値が正しくなった時点ですぐ消す。",
@@ -263,7 +263,7 @@
       ],
       "observed": "<input name=\"email\" placeholder=\"Email\"> と <input type=\"password\" placeholder=…> に <label>・aria-label・aria-labelledby がない",
       "expected": "各入力欄に結び付いた、見えるラベル。",
-      "impact": "入力を始めると項目名が消え、スクリーンリーダーは名前のない入力欄として読み上げることがある。",
+      "impact": "入力を始めると項目名が消え、アクセシブルな名前も入力で消えるプレースホルダーに頼っている。",
       "fix": "各入力欄に見える <label htmlFor> を付ける。",
       "validation": {
         "verdict": "Valid",
@@ -349,7 +349,7 @@
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
-      "perspective": "PP3",
+      "perspective": "FB2",
       "flow_ref": "FL-02",
       "screen": "ダッシュボード（/）",
       "criterion": "どの操作にも反応があり、黙って失敗しない",
@@ -387,7 +387,7 @@
     },
     {
       "id": "U-017",
-      "title": "すべてのボタンからフォーカスの輪郭線が代替なしに消されている",
+      "title": "すべての .btn ボタンからフォーカスの輪郭線が代替なしに消されている",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -397,7 +397,7 @@
       "criterion": "WCAG 2.2 達成基準 2.4.7 フォーカスの可視化",
       "location": "src/styles/app.css:4",
       "observed": ".btn:focus { outline: none; }",
-      "expected": ".btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }",
+      "expected": ".btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; }（または tokens.css に --focus トークンを追加）",
       "impact": "共通ボタンを使うすべての画面で、キーボード利用者が現在位置を見失う。",
       "fix": "このルールを削除し、トークンを使った :focus-visible のスタイルを加える。",
       "validation": {
@@ -510,7 +510,7 @@
       "impact": "アバターの読み込みで行が動き、削除アイコンがポインターの下へずれる。",
       "fix": "width と height を付けるか、CSS で .avatar の大きさを決める。",
       "validation": {
-        "verdict": "Valid",
+        "verdict": "Likely",
         "evidence": "inventory images: 寸法が欠けている。.avatar は大きさを指定していない（app.css:14）。",
         "intent_checked": "ずれの大きさは画像次第。"
       }
@@ -621,7 +621,7 @@
     {
       "name": "RS レスポンシブ",
       "result": "2 件",
-      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の 24px 未満で、削除操作の修正とあわせて次の手順に記載。700px のメディアクエリ（app.css:18）は 640/1024 のブレークポイントから外れているが、カードの余白を変えるだけなので U-006 の修正で 640px に移す。"
+      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の候補だが、間隔による例外は確認していないため、指摘ではなく削除操作の修正とあわせて次の手順に記載。700px のメディアクエリ（app.css:18）は 640/1024 のブレークポイントから外れているが、カードの余白を変えるだけなので U-006 の修正で 640px に移す。"
     },
     {
       "name": "VH 視覚階層・タイポグラフィ",
@@ -645,7 +645,7 @@
     },
     {
       "name": "FB フィードバック・状態表示",
-      "result": "2 件",
+      "result": "3 件",
       "note": "設定の save() はフィクスチャ上スタブのため、成功時の表示は判断していない。"
     },
     {
@@ -670,7 +670,7 @@
     },
     {
       "name": "PP 体感性能",
-      "result": "2 件",
+      "result": "1 件",
       "note": "スケルトンがないことは U-012 に含めた。"
     }
   ],

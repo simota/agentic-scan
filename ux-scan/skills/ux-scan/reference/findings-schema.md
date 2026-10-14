@@ -45,7 +45,8 @@ Required on every finding: `id`, `title`, `severity`, `confidence`, `status`,
 `Unverified`). The first fragment carries `meta` with `project`, `date` and
 `assessor`; `schema_version` is the integer `1`, and `date` is a real calendar
 date in `YYYY-MM-DD` form. Optional `meta.viewports` uses the same `WIDTHxHEIGHT`
-format as `flows.json`. `commit` is the reviewed repository's `git -C <repo> rev-parse HEAD`
+format as `flows.json`; `meta.viewports` and `meta.locales` are shown in the
+pages only when `flows.json` lacks them. `commit` is the reviewed repository's `git -C <repo> rev-parse HEAD`
 when `<repo>` is the top level of its own Git repository (`git -C <repo> rev-parse --show-toplevel`);
 for a directory inside a larger repository, record that repository's commit and name the subdirectory in `scope`. Leave
 `commit` out when the repository is not under Git or has no commit yet, and say
@@ -59,7 +60,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `confidence` | `Confirmed`, `Runtime-dependent`, `Suspected` (`reference/validation.md`) |
 | `status` | `Open`, `Fixed`, `Accepted` |
 | `perspective` | A hunt step id from `reference/perspectives.md` (`AX2`, `FM3`…) |
-| `flow_ref` | A flow id present in `flows.json` (checked when `flows.json` sits next to `findings.json`); for a shared component, the most important flow it breaks |
+| `flow_ref` | A flow id present in `flows.json` (checked when `flows.json` sits next to `findings.json`). A defect in the app shell or a shared component cites the `shared` flow; cite one primary or secondary flow instead only when that flow alone carries the impact |
 | `screen` | Where the user meets it, with the route when there is one |
 | `viewport` | Optional: the viewport the defect shows at (`360x640`), when it depends on one |
 | `criterion` | What it fails: a WCAG 2.2 success criterion, the app's own token scale or documented pattern (with `path:line`), or a named usability heuristic. Never "looks bad" |

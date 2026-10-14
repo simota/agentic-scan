@@ -106,13 +106,14 @@ N/A with a reason; last, where to start and the one decision a human must make
 
 ## Chat summary
 
-Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 6 High, 10 Medium,
-7 Low, 2 Info (25 open) across 5 flows; both primary flows blocked`. The
+Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 6 High, 12 Medium,
+5 Low, 2 Info (25 open) across 5 flows; both primary flows blocked`. The
 status is `complete` when every flow and perspective family was reviewed, else
 `partial` (the gaps are in `limitations`). Counts are by severity over included
 findings (`FalsePositive` and `NotApplicable` left out), with Info counted;
 `open` counts those with status `Open`. A primary flow is blocked when an
-included High finding cites it in `flow_ref`. A missing PDF is reported in the
+included High finding cites it in `flow_ref`, or cites the `shared` flow
+(the shell or a shared component it uses). A missing PDF is reported in the
 outputs line, not in the status. Then:
 
 - the High findings, one line each with `path:line` and the flow they block

@@ -474,6 +474,66 @@ class TransactionRegressions(unittest.TestCase):
         findings.check_findings(changed)
         self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
 
+    def test_renumber_treats_comparisons_as_prose_and_bullets_as_separate_ids(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:4]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium", "Info")):
+            item["severity"] = severity
+        data["summary"] = "Fix first:\n- U-001\n- U-004\n\n- **U-002**\n-U-003\nThen U-001 through\nU-003."
+        data["next_steps"] = [
+            "Below <640px fix U-002 first; above >1024px U-003 can wait.",
+            "Widths < 360 break U-002 and widths > 1280 break U-003. Keep <b>U-001</b>.",
+            "参照: https://www.w3.org/WAI/WCAG22/ とU-001も同様。https://www.w3.org/WAI/とU-001",
+            "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-001.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["summary"],
+                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003, U-001, U-002.")
+        self.assertEqual(changed["next_steps"], [
+            "Below <640px fix U-001 first; above >1024px U-002 can wait.",
+            "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",
+            "参照: https://www.w3.org/WAI/WCAG22/ とU-003も同様。https://www.w3.org/WAI/とU-001",
+            "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-003.",
+        ])
+        findings.check_findings(changed)
+
+    def test_unknown_sections_are_refused(self):
+        data = copy.deepcopy(SAMPLE)
+        data["limitation"] = ["typo"]
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'limitation'"):
+            findings.check_findings(data)
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'finding'"):
+            findings.merge(copy.deepcopy(SAMPLE), {"finding": []})
+        flows = copy.deepcopy(FLOWS)
+        flows["viewport"] = ["360x640"]
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'viewport'"):
+            findings.check_flows(flows)
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'findings'"):
+            findings.merge_flows(copy.deepcopy(FLOWS), {"findings": []})
+
+    def test_flows_can_drop_tokens_and_flows_recorded_in_error(self):
+        flows = copy.deepcopy(FLOWS)
+        flows["tokens"] = {"source": "src/styles/tokens.css:2"}
+        with self.assertRaisesRegex(findings.RecordError, "at least one scale"):
+            findings.check_flows(flows)
+        dropped = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"tokens": None}))
+        self.assertNotIn("tokens", dropped)
+        last = FLOWS["flows"][-1]["id"]
+        removed = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"remove": {"flows": [last]}}))
+        self.assertNotIn(last, findings.flow_ids(removed))
+        for remove in ({"flows": ["FL-99"]}, {"flows": "FL-01"}, {"screens": []}, []):
+            with self.subTest(remove=remove), self.assertRaises(findings.RecordError):
+                findings.merge_flows(copy.deepcopy(FLOWS), {"remove": remove})
+        with tempfile.TemporaryDirectory() as tmp:
+            target, fragment = Path(tmp) / "flows.json", Path(tmp) / "fragment.json"
+            target.write_text(json.dumps(FLOWS), encoding="utf-8")
+            cited = SAMPLE["findings"][0]["flow_ref"]
+            (Path(tmp) / "findings.json").write_text(json.dumps(SAMPLE), encoding="utf-8")
+            fragment.write_text(json.dumps({"remove": {"flows": [cited]}}), encoding="utf-8")
+            before = target.read_bytes()
+            self.assert_refused(run("flows", target, fragment))
+            self.assertEqual(target.read_bytes(), before)
+
     def test_renumber_leaves_unchanged_ranges_and_protects_source_ranges(self):
         data = copy.deepcopy(SAMPLE)
         data["findings"] = data["findings"][:2]

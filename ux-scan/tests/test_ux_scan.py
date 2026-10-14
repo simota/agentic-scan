@@ -1,6 +1,7 @@
 """ux-scan regression tests: inventory, record checks, merge, renumber, render and the run contract."""
 import copy
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -164,9 +165,18 @@ class RecordTests(unittest.TestCase):
         for sample in (SAMPLE, SAMPLE_JA):
             self.assertEqual({p["name"][:2] for p in sample["perspectives"]}, set(findings.FAMILIES))
             self.assertEqual({f["perspective"][:2] for f in sample["findings"]}, set(findings.FAMILIES))
-        strip = lambda d: [(f["id"], f["severity"], f["location"], f["perspective"], f["flow_ref"],  # noqa: E731
-                            f["validation"]["verdict"]) for f in d["findings"]]
-        self.assertEqual(strip(SAMPLE), strip(SAMPLE_JA))
+        def facts(d):
+            return [(f["id"], f["severity"], f["confidence"], f["status"], f["location"], f["perspective"],
+                     f["flow_ref"], f.get("viewport"), f.get("occurrences"),
+                     [r["url"] for r in f.get("references", [])], f["validation"]["verdict"]) for f in d["findings"]]
+
+        def cited(d):
+            # Prose differs by language, but cited ids and source locations must not.
+            prose = json.dumps([d["findings"], d["perspectives"], d["next_steps"]], ensure_ascii=False)
+            return sorted(re.findall(r"U-[0-9]{3}|[\w./-]+\.(?:tsx?|css|json|html|md):[0-9]+(?:-[0-9]+)?", prose))
+
+        self.assertEqual(facts(SAMPLE), facts(SAMPLE_JA))
+        self.assertEqual(cited(SAMPLE), cited(SAMPLE_JA))
 
     def test_rejects_bad_ids_refs_locations_and_order(self):
         self.bad(lambda d: d["findings"][0].update(id="F-001"), "U- and three digits")

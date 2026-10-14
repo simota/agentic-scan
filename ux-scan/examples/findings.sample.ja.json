@@ -352,11 +352,11 @@
       "location": "src/styles/app.css:13",
       "observed": ".btn-label { max-width: 120px; white-space: nowrap; text-overflow: ellipsis }",
       "expected": "ラベルは折り返すかボタンが広がる。省略は全文を確認できる場所に限る。",
-      "impact": "ドイツ語の利用者には主要操作が「Neue Aufgab…」と表示され、「Einstellungen」も見出しで切れる。",
+      "impact": "ドイツ語の利用者には主要操作が「Neue Aufgab…」と表示される。",
       "fix": ".btn-label から max-width を外し、省略は title 属性付きの .task-title だけに残す。",
       "validation": {
         "verdict": "Likely",
-        "evidence": "inventory locale_expansion de: task.new が 2.75 倍（8 文字に対し 22 文字）。14px で 22 文字は 120px を超える。",
+        "evidence": "src/i18n/index.ts:6 が navigator.language から de を選ぶ。inventory locale_expansion de: task.new が 2.75 倍（8 文字に対し 22 文字）。14px で 22 文字は 120px を超える。",
         "intent_checked": "正確な幅はフォント次第で、描画はしていない。"
       }
     },
@@ -435,67 +435,66 @@
       "status": "Open",
       "perspective": "LG2",
       "flow_ref": "FL-05",
-      "screen": "カード、サイドバーの見出し、設定",
+      "screen": "カード、サイドバーの見出し",
       "criterion": "余白スケール 4/8/12/16/24/32 と文字スケール 12〜32（src/styles/tokens.css:2-3）",
       "location": "src/styles/app.css:7",
       "occurrences": [
         "src/styles/app.css:7",
-        "src/styles/app.css:8",
-        "src/pages/Settings.tsx:9"
+        "src/styles/app.css:8"
       ],
-      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px; padding: 10",
+      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px",
       "expected": "var(--space-3), var(--space-4), var(--text-md)",
       "impact": "カードや見出しが、ほかの UI のリズムからずれる。",
       "fix": "値を最も近いトークンに置き換える。",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory off_scale: spacing 13px・18px・10px、font_sizes 15px。",
+        "evidence": "inventory off_scale: spacing 13px・18px・10px、font_sizes 15px。10px は Settings.tsx:9 で、U-013 の修正で置き換わる。",
         "intent_checked": "値の理由を示すコメントはない。"
       }
     },
     {
       "id": "U-020",
-      "title": "ドロップダウンの z-index 99999 がモーダルとトーストより上にある",
-      "severity": "Low",
-      "confidence": "Runtime-dependent",
+      "title": "未使用の .dropdown クラスが z-index 99999 で、モーダルとトーストのレイヤーより上にある",
+      "severity": "Info",
+      "confidence": "Confirmed",
       "status": "Open",
       "perspective": "LG3",
       "flow_ref": "FL-05",
-      "screen": "ドロップダウンのある全ページ",
+      "screen": "現時点ではなし（.dropdown を使うコンポーネントがない）",
       "criterion": "レイヤースケール dropdown 10 < modal 100 < toast 1000（docs/design.md:7）",
       "location": "src/styles/app.css:9",
       "observed": ".dropdown { z-index: 99999 }",
       "expected": "z-index: var(--z-dropdown)",
-      "impact": "開いたドロップダウンが、そこから開いたダイアログを覆い、トーストを隠す。",
-      "fix": "トークンを使う。",
+      "impact": "現時点で利用者には見えない。このクラスで最初に作るドロップダウンは、そこから開いたダイアログを覆い、トーストを隠す。",
+      "fix": "トークンを使うか、ドロップダウンができるまでクラスを削除する。",
       "validation": {
-        "verdict": "Likely",
-        "evidence": "inventory off_scale z_index 99999。",
-        "intent_checked": "フィクスチャにはまだドロップダウンのコンポーネントがなく、クラスは共通 CSS にある。"
+        "verdict": "Valid",
+        "evidence": "inventory off_scale z_index 99999。.dropdown を参照するコンポーネントはない。",
+        "intent_checked": "ドロップダウンのコンポーネントはまだなく、クラスは共通 CSS にある。"
       }
     },
     {
       "id": "U-021",
-      "title": "モーションが prefers-reduced-motion を無視している",
-      "severity": "Low",
+      "title": "宣言されたモーションに reduced-motion の経路がない",
+      "severity": "Info",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "MO2",
       "flow_ref": "FL-02",
-      "screen": "タスク追加ダイアログ、スピナー",
+      "screen": "現時点ではなし（タスク追加ダイアログとスピナー）",
       "criterion": "WCAG 2.2 達成基準 2.3.3 インタラクションによるアニメーション（AAA）、OS の視差効果を減らす設定",
       "location": "src/styles/app.css:15",
       "occurrences": [
         "src/styles/app.css:15",
         "src/styles/app.css:16"
       ],
-      "observed": ".panel { transition: transform 600ms } と無限回転があり、reduced-motion のメディアクエリがない",
+      "observed": ".panel { transition: transform 600ms } と .spinner の無限アニメーションがあり、reduced-motion のメディアクエリがない",
       "expected": "@media (prefers-reduced-motion: reduce) { .panel { transition: none } }。パネルは 200〜300ms。",
-      "impact": "OS に動きを減らすよう設定した人にも、ダイアログが毎回 0.6 秒かけてスライドする。",
+      "impact": "現時点で利用者に届く動きはない。ダイアログの表示にアニメーションを付けたりスピナーを使ったりすると、OS に動きを減らすよう設定した人にも 0.6 秒動き、回り続ける。",
       "fix": "トランジションを短くし、reduced-motion の上書きを加える。",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory motion: 宣言 2 件、reduced_motion は空。",
+        "evidence": "inventory motion: 宣言 2 件、reduced_motion は空。ダイアログは条件付きでマウントされ（Dashboard.tsx:19）、transform を変える処理もないためトランジションは動かない。.spinner を使うコンポーネントはない。",
         "intent_checked": "JS のモーションライブラリはない。"
       }
     },
@@ -534,7 +533,7 @@
     {
       "name": "RS レスポンシブ",
       "result": "2 件",
-      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の 24px 未満で、削除操作の修正とあわせて次の手順に記載。"
+      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の 24px 未満で、削除操作の修正とあわせて次の手順に記載。700px のメディアクエリ（app.css:18）は 640/1024 のブレークポイントから外れているが、カードの余白を変えるだけなので U-005 の修正で 640px に移す。"
     },
     {
       "name": "VH 視覚階層・タイポグラフィ",

@@ -160,7 +160,7 @@
     },
     {
       "id": "U-007",
-      "title": "Add-task dialog does not trap, return or release focus",
+      "title": "Add-task dialog does not trap or return focus, or close on Escape",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -352,11 +352,11 @@
       "location": "src/styles/app.css:13",
       "observed": ".btn-label { max-width: 120px; white-space: nowrap; text-overflow: ellipsis }",
       "expected": "Labels wrap or the button grows; truncation only where the full text is available.",
-      "impact": "German users see \"Neue Aufgab…\" on the main action; \"Einstellungen\" is clipped as a title.",
+      "impact": "German users see \"Neue Aufgab…\" on the main action.",
       "fix": "Remove max-width from .btn-label; keep ellipsis only on .task-title with a title attribute.",
       "validation": {
         "verdict": "Likely",
-        "evidence": "inventory locale_expansion de: task.new 2.75x (22 vs 8 characters); at 14px, 22 characters exceed 120px.",
+        "evidence": "src/i18n/index.ts:6 picks de from navigator.language; inventory locale_expansion de: task.new 2.75x (22 vs 8 characters); at 14px, 22 characters exceed 120px.",
         "intent_checked": "Exact width depends on the font; not rendered."
       }
     },
@@ -435,67 +435,66 @@
       "status": "Open",
       "perspective": "LG2",
       "flow_ref": "FL-05",
-      "screen": "Cards, sidebar title, settings",
+      "screen": "Cards, sidebar title",
       "criterion": "Spacing scale 4/8/12/16/24/32 and type scale 12–32 (src/styles/tokens.css:2-3)",
       "location": "src/styles/app.css:7",
       "occurrences": [
         "src/styles/app.css:7",
-        "src/styles/app.css:8",
-        "src/pages/Settings.tsx:9"
+        "src/styles/app.css:8"
       ],
-      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px; padding: 10",
+      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px",
       "expected": "var(--space-3), var(--space-4), var(--text-md)",
       "impact": "Cards and headings sit off the rhythm of the rest of the UI.",
       "fix": "Replace the literals with the nearest tokens.",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px.",
+        "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px. The 10px is Settings.tsx:9, which U-013's fix replaces.",
         "intent_checked": "No comment justifies the values."
       }
     },
     {
       "id": "U-020",
-      "title": "Dropdown z-index 99999 sits above modals and toasts",
-      "severity": "Low",
-      "confidence": "Runtime-dependent",
+      "title": "Unused .dropdown class sets z-index 99999, above the modal and toast layers",
+      "severity": "Info",
+      "confidence": "Confirmed",
       "status": "Open",
       "perspective": "LG3",
       "flow_ref": "FL-05",
-      "screen": "Any page with a dropdown",
+      "screen": "None today (no component uses .dropdown)",
       "criterion": "Layer scale dropdown 10 < modal 100 < toast 1000 (docs/design.md:7)",
       "location": "src/styles/app.css:9",
       "observed": ".dropdown { z-index: 99999 }",
       "expected": "z-index: var(--z-dropdown)",
-      "impact": "An open dropdown would cover a dialog opened from it and hide toasts.",
-      "fix": "Use the token.",
+      "impact": "No user sees it today; the first dropdown built on this class would cover a dialog opened from it and hide toasts.",
+      "fix": "Use the token, or delete the class until a dropdown exists.",
       "validation": {
-        "verdict": "Likely",
-        "evidence": "inventory off_scale z_index 99999.",
-        "intent_checked": "No dropdown component exists yet in the fixture; the class is shared CSS."
+        "verdict": "Valid",
+        "evidence": "inventory off_scale z_index 99999; no component references .dropdown.",
+        "intent_checked": "No dropdown component exists yet; the class is shared CSS."
       }
     },
     {
       "id": "U-021",
-      "title": "Motion ignores prefers-reduced-motion",
-      "severity": "Low",
+      "title": "Declared motion has no reduced-motion path",
+      "severity": "Info",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "MO2",
       "flow_ref": "FL-02",
-      "screen": "Add task dialog, spinners",
+      "screen": "None today (add-task dialog and spinner)",
       "criterion": "WCAG 2.2 SC 2.3.3 Animation from Interactions (AAA); platform reduced-motion setting",
       "location": "src/styles/app.css:15",
       "occurrences": [
         "src/styles/app.css:15",
         "src/styles/app.css:16"
       ],
-      "observed": ".panel { transition: transform 600ms } and an infinite spin, no reduced-motion query",
+      "observed": ".panel { transition: transform 600ms } and an infinite .spinner animation, with no reduced-motion query",
       "expected": "@media (prefers-reduced-motion: reduce) { .panel { transition: none } }; 200–300ms for the panel.",
-      "impact": "The dialog slides for 0.6s every time, including for people who asked their OS for less motion.",
+      "impact": "No motion reaches users today; once the dialog animates its entrance or a spinner is used, it would move for 0.6s or spin even for people who asked their OS for less motion.",
       "fix": "Shorten the transition and add a reduced-motion override.",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory motion: 2 declarations, reduced_motion empty.",
+        "evidence": "inventory motion: 2 declarations, reduced_motion empty. The dialog mounts conditionally (Dashboard.tsx:19) and nothing changes its transform, so the transition never runs; no component uses .spinner.",
         "intent_checked": "No JS motion library."
       }
     },
@@ -534,7 +533,7 @@
     {
       "name": "RS Responsive",
       "result": "2 findings",
-      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is below WCAG 2.5.8's 24px; listed in next_steps with the delete-control fixes."
+      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is below WCAG 2.5.8's 24px; listed in next_steps with the delete-control fixes. The 700px media query (app.css:18) is off the 640/1024 breakpoint scale; it only adjusts card padding and moves to 640px with U-005's fix."
     },
     {
       "name": "VH Visual hierarchy",

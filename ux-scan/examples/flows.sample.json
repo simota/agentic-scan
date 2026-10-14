@@ -21,7 +21,7 @@
      "screens": [{"name": "Settings", "route": "/settings", "location": "src/pages/Settings.tsx:3"}]},
     {"id": "FL-05", "name": "App shell and shared styles", "priority": "shared", "actor": "Every user",
      "goal": "Navigation, page frame and the styles every screen inherits.", "source": "inferred",
-     "evidence": "index.html:5 and src/styles/app.css:1 load on every route",
+     "evidence": "index.html:7-8 load tokens.css and src/styles/app.css on every route",
      "screens": [{"name": "Page frame", "route": "*", "location": "index.html:1"},
                  {"name": "Main navigation", "route": "*", "location": "src/components/Nav.tsx:3"},
                  {"name": "Global styles", "route": "*", "location": "src/styles/app.css:1"}]}

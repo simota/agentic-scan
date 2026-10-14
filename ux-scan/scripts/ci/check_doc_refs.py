@@ -3,10 +3,11 @@
 
     python3 scripts/ci/check_doc_refs.py
 
-Checks backticked `reference/...` and `scripts/...` paths
-(resolved against the skill), backticked repository paths such as
-`skills/ux-scan/...`, `docs/...`, `examples/...` and `tests/...`, and
-relative Markdown links, in every tracked Markdown document.
+Checks backticked `reference/...` and `scripts/...` paths (resolved against
+the skill), backticked repository paths such as `skills/ux-scan/...`,
+`docs/...`, `examples/...` and `tests/...`, and relative Markdown links, in
+every tracked Markdown document. A path that starts a command span, such as
+`scripts/findings.py renumber <out>/findings.json`, is checked too.
 """
 from pathlib import Path
 import re
@@ -16,8 +17,9 @@ REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills" / "ux-scan"
 DOCS = sorted({*REPO.glob("*.md"), *REPO.glob("docs/*.md"), *SKILL.glob("*.md"),
                *SKILL.glob("reference/*.md")})
-SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)`")
-REPO_REF = re.compile(r"`((?:skills/ux-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])`")
+# A path opens a code span and ends it, or is the command a span runs (`scripts/x.py --flag`).
+SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)(?=`|\s)")
+REPO_REF = re.compile(r"`((?:skills/ux-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])(?=`|\s)")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 
 

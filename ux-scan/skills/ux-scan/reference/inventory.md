@@ -7,8 +7,9 @@ deciding inventory candidates in REVIEW.
 python3 <skill-dir>/scripts/inventory.py <repo> --out <out>/inventory.json [--flows <flows.json>]
 ```
 
-Paths in this file are relative to the skill's directory, not the reviewed
-repository (SKILL.md *Paths*).
+`scripts/…` paths in this file are relative to the skill's directory (SKILL.md
+*Paths*); route and folder patterns such as `app/**/page.*` describe the
+reviewed repository.
 The `--out` file must be outside the reviewed repository. The CLI rejects
 in-repository destinations, including parent-directory symlink aliases,
 before writing anything.
@@ -28,8 +29,11 @@ are also counted as skipped with a warning.
 Directory traversal errors also produce a warning, including a failure to
 scan the repository root. They do not increase `files_skipped`, because the
 number of files inside an unreadable directory is unknown.
-CSS block comments and closed HTML / JSX comments are masked without changing
-source locations. JSX comment masking preserves JS strings; HTML comment
+CSS block comments, `//` line comments in Sass, Less and Stylus (files and
+`<style lang="scss|sass|less|stylus">` blocks; a `//` after `:` or `(` is kept
+as a URL) and closed HTML / JSX comments are masked without changing source
+locations. A CSS string ends at a raw newline, so a stray quote cannot hide
+later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
 review. In HTML, Vue, Svelte and Astro files, CSS measurements use style
@@ -58,25 +62,25 @@ These Next.js exclusions do not apply to Svelte route segments.
 
 | Key | What it collects | Perspective |
 |---|---|---|
-| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`); routes that no `href`, `to=` or `navigate()` / `push()` reaches (dynamic segments excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
+| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
 | `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` and `font-size` literals (CSS and JS style objects), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment | LG2, VH2 |
-| `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`), in CSS and in script strings | RS1 |
+| `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings | RS1 |
 | `z_index` | `z-index` / `zIndex` values | LG3 |
-| `fixed_widths` | `width` / `min-width` declarations of 320 px or more; widths in parenthesized conditions are excluded | RS2 |
+| `fixed_widths` | `width` / `min-width` declarations of 320 px or more (rem and em at 16px); widths in parenthesized conditions are excluded | RS2 |
 | `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` flags dimensions under 24 px for review, with the actual hit area and WCAG 2.5.8 exceptions still to verify | RS3 |
-| `focus_outline` | `outline: none` / `0`, with whether the same rule restyles focus and whether the file has a `:focus-visible` rule | ST2 |
+| `focus_outline` | `outline: none` / `0` / `0px` (and `outline: 0` or `"none"` in style objects), with whether the same `:focus` rule sets a visible replacement (a box shadow, border, background, underline or outline that is not `none`, `0` or `transparent`) and whether the file has a `:focus-visible` rule | ST2 |
 | `viewport_meta` | Viewport meta tags; `blocks_zoom` for `user-scalable=no` / `0` or a nonnegative numeric `maximum-scale` under 2; names are case-insensitive and numeric prefixes are parsed without aborting on trailing text | RS4 |
-| `click_handlers` | Click handlers on non-interactive elements (`div`, `span`, `li`, `img`…) or `<a>` without `href`, with what is missing (role, tabindex, key handler) | AX2 |
+| `click_handlers` | Click handlers on non-interactive elements (`div`, `span`, `li`, `img`…) or `<a>` without `href`, with what is missing (role, tabindex, a keydown / keyup / keypress handler in JSX, HTML, Vue, Svelte or Angular syntax; event modifiers such as `(keyup.enter)` or `on:click|once` are ignored) | AX2 |
 | `images` | `<img>` without `alt`, or without `width` and `height` | AX4, PP2 |
-| `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
-| `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
+| `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` — a literal, or an expression such as `htmlFor={id}` used by exactly one label and, as `id`, by exactly one field in the file; a repeated expression may carry different values per component and stays a candidate — or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
+| `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`, nor a child `<img>` with nonblank `alt` or a child `aria-label`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1 |
-| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
+| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`) in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes | IN1, IN2 |
-| `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present) and 5 columns wider; East Asian wide characters count as two | IN1 |
+| `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present, else the first English region such as `en-US`, else the first tag) and 5 columns wider; East Asian wide characters count as two. Bundles are one file per language (`locales/de.json`) or one directory per language (`locales/de/app.json`); when both the file and its folder look like tags, an ISO 639-1 code wins, so `app.json` or `nav.json` namespaces are not read as languages | IN1 |
 
 With `--flows`, also:
 

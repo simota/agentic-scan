@@ -37,14 +37,17 @@ SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:[-_.].*)?|.*\.env|\.envrc|\.dev\.
                        r".*\.(?:pem|key|p8|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|\.htpasswd|kubeconfig|\.docker|"
                        r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*service[-_]?account.*\.json|.*secrets?(?:\..*)?|"
                        r"\.npmrc|\.pypirc)$")
-# Name parts that make a secret-like word UI text (passwordLabel, secretQuestion).
-_UI_WORDS = r"label|placeholder|hint|help|text|title|message|error|question|prompt|description|visible|strength|toggle"
-# A secret-like name with any suffix (SECRET_KEY, DB_PASSWORD_PROD, AWS_SECRET_ACCESS_KEY,
-# AUTH_TOKEN_V2) assigned a value, unless the suffix names UI text; design "tokens"
-# are not secrets. Also bearer tokens, well-known key prefixes and URL credentials.
-SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?keys?|private[_-]?key|access[_-]?key)"
-                         r"(?![\w.-]*?(?:" + _UI_WORDS + r"))[\w.-]*|token(?:[_-][\w.-]*)?)\s*[\"']?\s*[:=]"
-                         r"|\bbearer\s+[\w.~+/-]{8,}|\b(?:sk|rk)_(?:live|test)_\w|\bgh[pousr]_\w{20}|\bxox[abpr]-\w"
+# A secret-like name assigned a value: the name may carry a key-like part
+# (SECRET_KEY, secretKey, AWS_SECRET_ACCESS_KEY) and an environment or version
+# suffix (DB_PASSWORD_PROD, AUTH_TOKEN_V2), but UI names such as passwordLabel,
+# isPasswordValid or --token-color are not secrets. Also bearer tokens,
+# well-known key prefixes and URL credentials. Every part is linear in the line.
+_SECRET_SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem))?"
+                  r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
+SECRET_LINE = re.compile(r"(?i:(?:secret|passw(?:or)?d|pwd|api[_-]?keys?|private[_-]?key|access[_-]?key)" + _SECRET_SUFFIX
+                         + r")\s*[\"']?\s*[:=]"
+                         r"|(?:(?<![A-Za-z-])(?i:token)|(?<=[a-z])Token)(?i:" + _SECRET_SUFFIX + r")\s*[\"']?\s*[:=]"
+                         r"|(?i:\bbearer\s+[\w.~+/-]{8,})|\b(?:sk|rk)_(?:live|test)_\w|\bgh[pousr]_\w{20}|\bxox[abpr]-\w"
                          r"|\bAKIA[0-9A-Z]{16}\b|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
 # Only these end a line for path:line, as in editors and grep -n.
 SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
@@ -156,7 +159,8 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
     first = max(1, start - CONTEXT)
     last = min(len(lines), end + CONTEXT, first + MAX_SNIPPET_LINES - 1)
     # Other Unicode line breaks stay inside their line, shown as a visible marker.
-    shown = [masked if SECRET_LINE.search(line) else report.LINE_BREAKS.sub("\u2424", line[:240])
+    # Only the shown 240 characters are tested: a secret beyond them is not published.
+    shown = [masked if SECRET_LINE.search(line[:240]) else report.LINE_BREAKS.sub("\u2424", line[:240])
              for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 

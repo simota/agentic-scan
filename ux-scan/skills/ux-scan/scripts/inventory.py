@@ -100,7 +100,7 @@ JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']
 FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
                                r"(?:-(?:start|end))?)?(?:-(?:color|style|width))?|background(?:-color|-image)?|"
                                r"text-decoration(?:-line|-color|-style|-thickness)?|outline(?:-color|-style|-width)?)"
-                               r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
+                               r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?![\d.])(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
                                r"\s*)+(?:!important\s*)?(?:;|$))",
                                re.M)
 CSS_MOTION = re.compile(r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
@@ -128,9 +128,11 @@ EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\
 _DESTRUCTIVE_NAME = (r"(?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purge|drop(?!down))|"
                      r"[a-z_]\w*?(?:(?:Delete|Remove|Discard|Erase|Purge)(?!d)|Destroy(?!ed)))\w*")
 # A call inside a handler, or the handler passed by name (onClick={handleDelete}, @click="deleteTask").
-DESTRUCTIVE = re.compile(r"(?<![\w.])(" + _DESTRUCTIVE_NAME + r")\s*\(")
+# A callee starts a name or follows a call, index or optional chain: getState().removeTask(…), api?.delete(…).
+DESTRUCTIVE = re.compile(r"(?:(?<![\w.])|(?<=[)\]?]\.))(" + _DESTRUCTIVE_NAME + r")\s*\(")
 DESTRUCTIVE_REFERENCE = re.compile(r"\s*\{?\s*(" + _DESTRUCTIVE_NAME + r")\s*\}?\s*")
 MAX_HANDLER_SCAN = 4000
+MAX_HANDLER_REFERENCE = 200
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 ROUTE = re.compile(r"<Route\b[^<>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
@@ -366,7 +368,9 @@ def skip_braces(text, i, limit):
                 quote = None
         elif c in "\"'`":
             quote = c
-        elif text.startswith("//", i) and comment_start(text, i):  # A comment's apostrophe opens no string.
+        elif (text.startswith("//", i) and comment_start(text, i)
+              and "}" not in text[i:text.find("\n", i, n) if "\n" in text[i:n] else n]):
+            # A line comment's apostrophe opens no string; "//" in JSX text ("Type // to search}") is not one.
             newline = text.find("\n", i, n)
             i = n if newline < 0 else newline
             continue
@@ -559,8 +563,9 @@ def expression_tags(text, start, stop, *, html_names=False, vue=False):
             continue  # Inside a brace group that already failed to close; do not rescan it.
         parsed, cursor, spans = read_tag(text, match.end(), limit=min(4000, stop - match.end()), vue=vue)
         if parsed is None:
-            if spans is None:  # Later tags inside an unclosed expression would rescan it.
-                skip = max(skip, cursor)
+            if spans is None:  # Later tags on an unclosed expression's line would rescan it.
+                line_end = text.find("\n", match.end(), cursor)
+                skip = max(skip, cursor if line_end < 0 else line_end)
         else:
             attrs, spread, end, self_closing = parsed
             name = match.group(2).lower() if html_names else match.group(2)
@@ -788,7 +793,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 if event_name(attr) in DESTRUCTIVE_ATTRS:
                     scan_end = min(handler_end, handler_start + MAX_HANDLER_SCAN)
                     matches = list(DESTRUCTIVE.finditer(clean, handler_start, scan_end))
-                    reference = DESTRUCTIVE_REFERENCE.fullmatch(clean, handler_start, handler_end)
+                    reference = (DESTRUCTIVE_REFERENCE.fullmatch(clean, handler_start, handler_end)
+                                 if handler_end - handler_start <= MAX_HANDLER_REFERENCE else None)
                     for start_, call in ([(m.start(1), m.group(1)) for m in matches] if matches
                                          else [(reference.start(1), reference.group(1))] if reference else []):
                         if start_ not in destructive_offsets:
@@ -972,7 +978,8 @@ def inventory(root, flows=None):
                 acc["focus_outline"].append({"selector": "(style object)", "location": at(m.start()),
                                              "replacement_in_rule": None, "focus_visible_rule_in_file": None})
         for m in MEDIA.finditer(text):
-            rule_start = max(text.rfind(c, 0, m.start()) for c in "{};") + 1
+            window = max(0, m.start() - 300)  # A bounded look back keeps the scan linear.
+            rule_start = max(window, *(text.rfind(c, window, m.start()) + 1 for c in "{};"))
             if "@container" in text[rule_start:m.start()]:
                 continue  # A container query tests a component's width, not the viewport.
             for number, unit in zip(m.groups()[::2], m.groups()[1::2]):

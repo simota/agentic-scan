@@ -238,6 +238,24 @@ class ReportRegressions(unittest.TestCase):
                         self.assertIn(label, text)
                     self.assertNotIn("999x999", text)
 
+    def test_secret_masking_keeps_ui_lines_and_stays_linear(self):
+        import time
+        ui = ["--token-color-primary: #333;", "passwordConfirm: z.string().min(8, 'Too short'),",
+              "const isPasswordValid = password.length >= 8;", "secretariat: 'Secretariat office',",
+              "const pwdInput = useRef(null);", "tokens: { spacing: [4, 8] },", "passwordLabel: 'Password',"]
+        secrets = ["accessToken: 'HIDDEN'", "STRIPE_SECRET_KEY_LIVE=HIDDEN", "PRIVATE_KEY_PEM=HIDDEN",
+                   "password2 = 'HIDDEN'", "apiKeys: ['HIDDEN']", "DB_PASSWORD_PROD=HIDDEN", "AUTH_TOKEN_V2=HIDDEN"]
+        for line in ui:
+            with self.subTest(line=line):
+                self.assertIsNone(render.SECRET_LINE.search(line))
+        for line in secrets:
+            with self.subTest(line=line):
+                self.assertIsNotNone(render.SECRET_LINE.search(line))
+        (self.repo / "min.js").write_text("secret" * 300000 + "\n", encoding="utf-8")
+        started = time.monotonic()
+        render.snippet(self.repo, "min.js:1")
+        self.assertLess(time.monotonic() - started, 2)
+
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(
             "line1\n\fline2\nline3\nline4 \u2028 has LS\nline5\x85\nline6 TARGET\r\nline7\rline8\n".encode("utf-8"))

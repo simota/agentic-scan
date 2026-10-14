@@ -1026,6 +1026,34 @@ class InventoryRegressionTests(unittest.TestCase):
             '<label for="n2">Name</label><input name="name" id="n2">\n'})
         self.assertEqual([(r["location"], r["missing"]) for r in data["inputs"]], [("f.html:3", ["autocomplete"])])
 
+    def test_round_two_scans_stay_linear(self):
+        import time
+        cases = {"a.css": "(min-width:1px)" * 60000,
+                 "b.html": '<div onclick="' + "aDelete" * 8000 + '-">x</div>\n',
+                 "c.css": ".a:focus{outline:none;border:0." + "0" * 20000 + "x}\n"}
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_destructive_calls_after_calls_indexes_and_optional_chains(self):
+        data = self.scan({"D.jsx": "<button onClick={() => useStore.getState().removeTask(id)}>x</button>\n"
+                                   "<button onClick={() => api?.deleteTask(id)}>x</button>\n"
+                                   "<button onClick={() => list[0].remove()}>x</button>\n"})
+        self.assertEqual([r["call"] for r in data["destructive_actions"]], ["removeTask", "deleteTask", "remove"])
+
+    def test_jsx_text_with_slashes_and_regex_braces_does_not_hide_later_tags(self):
+        for opener in ("<List renderEmpty={() => <p>Type // to search</p>} />",
+                       "<Tip content={<span>Docs at example.com //v2</span>} />",
+                       "<input aria-label=\"q\" onChange={e => /[{]/.test(v)} />"):
+            with self.subTest(opener=opener):
+                data = self.scan({"a.jsx": opener + '\n<img src="a.png">\n<div onClick={x}>y</div>\n'
+                                           "<button onClick={() => deleteTask(id)}>z</button>\n"})
+                self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:2"])
+                self.assertEqual([r["location"] for r in data["click_handlers"]], ["a.jsx:3"])
+                self.assertEqual([r["location"] for r in data["destructive_actions"]], ["a.jsx:4"])
+
     def test_preprocessor_interpolation_stays_in_the_selector(self):
         data = self.scan({"a.scss": ".btn-#{$s} { height: 20px; }\n.icon-#{$s}:focus { outline: none; }\n"
                                     ".chip-@{x} { width: 18px; }\n"})

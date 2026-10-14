@@ -90,7 +90,7 @@ def _strings(value, where, nonempty=True):
 
 def _location(value, where):
     if (not isinstance(value, str) or not LOCATION.match(value) or "\\" in value
-            or any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in value)
+            or any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in value)
             or value.rpartition(":")[0] != value.rpartition(":")[0].strip()):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
     path, _, lines = value.rpartition(":")
@@ -356,8 +356,10 @@ def _balanced(open_, close, inner, depth=4):
 TAG_NAME = r"[a-z][\w.:-]*"
 # JSX attribute expressions such as style={{ color: "red" }} nest braces.
 JSX_EXPRESSION = _balanced("{", "}", r"[^{}]")
-TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*"
-                 r"(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+))?)")
+_ATTRIBUTE_VALUE = r"\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+)"
+# Attribute names: plain, JSX {…}, Angular (event)/[prop]/[(model)]/*ngIf (always with a value) and #ref.
+TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*(?:" + _ATTRIBUTE_VALUE + r")?"
+                 r"|(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?" + _ATTRIBUTE_VALUE + r"|#[a-z][\w-]*)")
 URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"

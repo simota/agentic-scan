@@ -523,6 +523,15 @@ class TransactionRegressions(unittest.TestCase):
         ])
         findings.check_findings(changed)
 
+    def test_angular_markup_in_prose_stays_literal(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+        data["next_steps"] = ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-001 <input #q aria-label=\"U-001\">"]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"],
+                         ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-002 <input #q aria-label=\"U-001\">"])
+
     def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
         import time
         for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001"):
@@ -545,6 +554,7 @@ class TransactionRegressions(unittest.TestCase):
             (lambda d: d["findings"][0].update(location="src/a\u2028b.tsx:1"), "location"),
             (lambda d: d["findings"][0].update(location="src/a\x85.tsx:1"), "location"),
             (lambda d: d["findings"][0].update(location="src/a.tsx :1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\u200b.tsx:1"), "location"),
         )
         for mutate, message in cases:
             with self.subTest(message=message):

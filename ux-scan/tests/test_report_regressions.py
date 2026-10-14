@@ -285,7 +285,8 @@ class ReportRegressions(unittest.TestCase):
                  'password = "password123"', 'SECRET_KEY = "mysecretvalue123"', 'token = "token_abcdef123"',
                  "password: 'password'", 'password = "correct horse battery staple"', 'password = "abc"',
                  "pwd: 'x'", 'DBPassword = "hunter2"', 'APISecret: "s3cr3t"', 'AWSAccessKey = "abcd1234"',
-                 "define('DBPassword', 'x');", 'password = "it\'s me"']
+                 "define('DBPassword', 'x');", 'password = "it\'s me"',
+                 'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -302,7 +303,8 @@ class ReportRegressions(unittest.TestCase):
               '"password": "Passwort",', '"password": "パスワード",', 'password: "Enter your password",',
               '"password": "Password is required.",', 'password: "",', "COMPASS = 'north'",
               "<PasswordInput label='Password' />",
-              'elif token == "{":', "see /etc/passwd:1"]
+              'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
+              "const password: string = '';"]
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

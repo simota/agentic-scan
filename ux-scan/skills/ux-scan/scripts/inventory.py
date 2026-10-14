@@ -289,17 +289,58 @@ def jsx_text_line(text, start, budget):
             continue
         if text[k] != "}":
             return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
-        depth, j = 0, k
-        while j >= floor:  # Back to the matching "{" of an expression child.
-            depth += {"}": 1, "{": -1}.get(text[j], 0)
-            if depth == 0:
-                break
-            j -= 1
+        j = _open_brace(text, k, floor)
         budget[0] -= max(0, line_start - max(j, floor))
         if j < floor:
             return False
         i = j
     return False
+
+
+def _escaped(text, i):
+    """Whether text[i] follows an odd number of backslashes."""
+    n = 0
+    while i - n - 1 >= 0 and text[i - n - 1] == "\\":
+        n += 1
+    return n % 2 == 1
+
+
+def _open_brace(text, k, floor):
+    """Index of the "{" matching the "}" at text[k], reading back no further than floor; -1 if not found.
+
+    Quoted strings, template literals, /* */ comments and regular-expression
+    literals are skipped, so braces inside them do not count.
+    """
+    depth, j = 0, k
+    while j >= floor:
+        c = text[j]
+        if c in "\"'`" and not _escaped(text, j):
+            # Back to the opening quote; " and ' strings stay on one line.
+            lo = floor if c == "`" else max(floor, text.rfind("\n", floor, j) + 1)
+            j = text.rfind(c, lo, j)
+            while j >= lo and _escaped(text, j):
+                j = text.rfind(c, lo, j)
+            if j < lo:
+                return -1
+        elif c == "/" and j > floor and text[j - 1] == "*":
+            j = text.rfind("/*", floor, j - 1)  # A block comment.
+            if j < 0:
+                return -1
+        elif c == "/" and not _escaped(text, j):
+            # A regular-expression literal when its opening "/" follows an operator or "(".
+            line = max(floor, text.rfind("\n", floor, j) + 1)
+            opening = text.rfind("/", line, j)
+            before = text[line:opening].rstrip()[-1:] if opening >= 0 else ""
+            if opening >= 0 and (before == "" or before in "(,=:[!&|?{};"):
+                j = opening
+        elif c == "}":
+            depth += 1
+        elif c == "{":
+            depth -= 1
+            if depth == 0:
+                return j
+        j -= 1
+    return -1
 
 
 def mask_markup_comments(text, *, jsx=False, template=False):

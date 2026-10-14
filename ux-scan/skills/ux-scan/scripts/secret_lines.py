@@ -55,6 +55,9 @@ SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r
 # assignment: = : := ?= =>, XML >value< or value="…"; == compares.
 ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
                         r"|\"?\s+value=|\"?>(?=[^<\s])")
+# A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
+ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
+                       r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
 # Any non-empty quoted literal, spaces included ("correct horse battery staple").
@@ -96,7 +99,7 @@ def _value_starts(text):
             continue  # A CSS custom property such as --token-color.
         if name.start() and text[name.start() - 1] in "/\\":
             continue  # A path such as /etc/passwd.
-        assignment = ASSIGNMENT.match(text, name.end())
+        assignment = ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
         if assignment:
             yield assignment.end(), name.group(0)
     for call in CALL_ARGUMENT.finditer(text):

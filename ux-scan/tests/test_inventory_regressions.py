@@ -1214,7 +1214,11 @@ class InventoryRegressionTests(unittest.TestCase):
                                    '{a.map((v) => {\n  return v;\n})}\n// after a callback <img src="y" />\n</div>\n);\n'
                                    'function f() {\n  return 1;\n}\n// <img src="commented" />\n'})
         self.assertEqual([r["location"] for r in data["images"]], ["c.jsx:4", "c.jsx:8"])
-        for text in ("{}\n" + "// note\n" * 50000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
+        data = self.scan({"e.jsx": 'export const E = () => (\n<div>\n{foo("}")}\n// a string <img src="a" />\n'
+                                   '{x.replace(/}/g, "")}\n// a regex <img src="b" />\n{`}${y}`}\n// a template <img src="c" />\n'
+                                   '</div>\n);\nfunction f() {\n  return "}";\n}\n// <img src="commented" />\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["e.jsx:4", "e.jsx:6", "e.jsx:8"])
+        for text in ("{}\n" + "// note\n" * 50000, '}"\n// note\n' * 30000, "}/ /\n// note\n" * 30000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
             started = time.monotonic()
             self.scan({"d.jsx": text})
             self.assertLess(time.monotonic() - started, 3)

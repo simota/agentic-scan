@@ -26,8 +26,8 @@ credential formats (provider token prefixes, JWTs, private-key blocks found
 anywhere in the file, credentials in URLs or command lines, bearer and basic
 authorization values), and secret-like names (password, secret, token, API
 key, credentials…, also after acronyms such as `DBPassword`) assigned a
-literal that is not a label, including short values and passphrases with
-spaces. Labels such as "Password", "Enter your password" or "パスワード", types, expressions, references and booleans stay
+literal that is not a label, including short values, passphrases with
+spaces and typed declarations (`password: string = "…"`). Labels such as "Password", "Enter your password" or "パスワード", types, expressions, references and booleans stay
 visible, since forms and locale files are what UX findings cite. Each line is
 judged on the shown text plus 512 characters after it, so a credential cut
 off at the limit is masked too. These rules are conservative heuristics, not

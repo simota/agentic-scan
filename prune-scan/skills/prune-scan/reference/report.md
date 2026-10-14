@@ -84,7 +84,7 @@ removals, writes during inspection, and newly appearing unapproved artifacts
 require another check. Explicitly allowed extras remain outside these checks,
 except that an allowed directory's `dashboard.html` and `report.html` (a second
 language) must be complete and stamped with the current `findings.json` and
-`units.json`; `--allow` never exempts a required artifact. These checks detect observed
+`units.json`, and an allowed symbolic link to a directory is refused; `--allow` never exempts a required artifact. These checks detect observed
 changes without locking writers or providing an atomic snapshot of the entire
 report set.
 

@@ -18,11 +18,19 @@ than assets; files over 2 MB; and secret-looking files such as `.env` — only
 only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
-Secret-looking directory names are excluded too. Source code whose file or
-directory name only contains `credentials` or `secret` (`useCredentials.ts`,
+Secret-looking directory names are excluded too, as are credential files such
+as `.htpasswd`, `.pgpass`, `.docker/config.json` (and its backups), everything under `.kube/`, `*.tfstate`
+and `*.kdbx`. Source code whose file or directory name only contains
+`credentials`, `secret` or `kubeconfig` (`useCredentials.ts`,
 `client_secret.py`) is read for its imports and identifiers, so what it uses
-is not reported unused, but its `text` excerpts are always omitted; data files
-with such names (`credentials.json`, `secrets.yaml`) are skipped. On POSIX, files are opened
+is not reported unused, but none of its literal text reaches the output: no
+`text` excerpts, flag names, routes or dynamic key and class prefixes (its flag
+checks and prefixes still keep what they name from being listed; an env var it
+alone reads is not promoted to a flag). Like any source, the names of env vars
+it reads appear in `env_read`, never their values. Data files
+with such names (`credentials.json`, `secrets.yaml`) are skipped.
+
+On POSIX, files are opened
 relative to pinned directory descriptors without following symlinks; a file or
 directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
@@ -73,13 +81,16 @@ heuristic does not imply that the TypeScript compiler accepts those extensionles
 paths.
 
 Non-relative imports also resolve through `compilerOptions.paths` and
-`baseUrl` in every `tsconfig*.json` and `jsconfig.json` (comments and trailing
-commas allowed). Without a matching rule, `@/`, `~/` and `#/` imports resolve
-against each enclosing directory and its `src/`. CSS `@import`, `@use` and
+`baseUrl` of the nearest enclosing `tsconfig*.json` or `jsconfig.json`
+(comments and trailing commas allowed, relative `extends` followed); a config
+without aliases still keeps an ancestor's from applying. Without a matching
+rule, `@/`, `~/` and `#/` imports (bundler aliases) resolve against each
+enclosing directory and its `src/`, up to the governing config's directory. CSS `@import`, `@use` and
 `@forward` of a package count as imports of that package. Absolute Python
 imports resolve against the repository root, `src/` and every directory that
 encloses the importing file, so `backend/app/main.py` importing `app.models`
-reaches `backend/app/models.py`. Dotted imports also match namespace
+reaches `backend/app/models.py`; `python -m server.jobs.nightly` names
+`server/jobs/nightly.py` (or a package's `__main__.py`). Dotted imports also match namespace
 distributions such as `azure-storage-blob` and `ruamel.yaml`; `// indirect`
 requirements in `go.mod` are not listed.
 
@@ -116,7 +127,7 @@ not inherit its replacement suggestion.
 | `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
 | `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less (outside attribute selectors and strings) that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |
 | `routes`, `unreferenced_routes` | Server routes (Flask/FastAPI decorators, Express-style `app.get`, Django `path`) and client routes (`<Route path>`, `path: "/…"`) with how many other files name the path (parameters match any segment or `${…}`; a host before the path, and for server routes a mount prefix such as `/api` before `/items`, still count; route path literals in definitions do not); `unreferenced_routes` are those no other file names. `api.get("/…")` where `api` is assigned from axios, ky or ofetch is a client call, not a route | UF1, UF2, UF3, AP1 |
-| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile may come between; a target in another rule's prerequisite list (`all: build`) counts as invoked; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
+| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile or the files it includes (or that include it) may come between; a target in another rule's prerequisite list in that set of files (`all: build`) counts as invoked; `-C dir` or `-f file` naming a known Makefile (from the repository root or the mentioning file's directory) limits a command to that project; a package manager command counts only the script it runs (after `run`/`run-script` or `workspace NAME`, past options such as `--prefix web`), not option values; each `make` or package manager invocation counts a name once and is read up to 64 tokens; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
 | `unreferenced_files` | Shell scripts, SQL files and docs under `scripts/`, `bin/`, `tools/`, `docs/`, `db/`, `seeds/`, `fixtures/` whose file name no other file mentions (migrations and root docs such as README are skipped) | TT4, DA3, AS4 |
 | `skipped_tests` | `@pytest.mark.skip`, `@unittest.skip`, `it.skip`, `xit`, `describe.skip`, `test.todo`, `#[ignore]`, `t.Skip`, `@Disabled` in test files | TT2 |
 | `commented_code` | Runs of four or more comment lines of which at least 60 % look like code | DC3 |

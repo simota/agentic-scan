@@ -31,6 +31,7 @@ from bisect import bisect_left
 from collections import Counter, defaultdict
 from contextlib import ExitStack, contextmanager
 from functools import lru_cache
+from itertools import islice
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -49,11 +50,14 @@ SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", 
               "npm-shrinkwrap.json", "Pipfile.lock"}
 SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
                          r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|\.npmrc|\.pypirc|"
-                         r"\.htpasswd|\.pgpass|\.dockercfg|\.docker|\.kube|kubeconfig.*|.*\.tfstate(?:\..*)?|.*\.kdbx)$")
+                         r"\.htpasswd|\.pgpass|\.dockercfg|.*\.tfstate(?:\..*)?|.*\.kdbx)$")
+# Credential files known by their directory: the rest of .docker/ (a Dockerfile) is ordinary.
+SECRET_PATH = re.compile(r"(?i)(?:^|/)(?:\.docker/config\.json[^/]*|\.kube/.*)$")
 # Data files named like this hold secrets. Source code named like this
 # (useCredentials.ts, client_secret.py) is read for imports and identifiers
-# so its dependencies are not reported unused, but none of its text is exported.
-SECRET_NAMED = re.compile(r"(?i)^(?:.*credentials.*|.*secrets?(?:\..*)?)$")
+# so its dependencies are not reported unused, but none of its literal text is
+# exported: no excerpts, flag names, routes or dynamic key and class prefixes.
+SECRET_NAMED = re.compile(r"(?i)^(?:.*credentials.*|.*secrets?(?:\..*)?|kubeconfig.*)$")
 ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
@@ -96,7 +100,7 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 # Any short single-line literal: natural-language keys ("Delete item") and
 # namespaced lookups ("common:save") are locale keys too.
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
-PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_][\w.]*)")
+PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
@@ -150,7 +154,9 @@ ROUTE_DEFS = (
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
-MAKE_RULE = re.compile(r"^([^\s#:=][^:=\n]*?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
+# Targets end on a non-space character, so trailing blanks are matched once.
+MAKE_INCLUDE = re.compile(r"^[^\S\n]*-?s?include[^\S\n]+([^#\n]+)", re.M)
+MAKE_RULE = re.compile(r"^([^\s#:=](?:[^:=\n]*[^\s:=])?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
 NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare",
                   "prepublishOnly", "prepack", "postpack", "publish", "postpublish", "dependencies",
                   "preversion", "version", "postversion"}
@@ -205,7 +211,7 @@ PY_MODULE_NAMES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "
                    "mysqlclient": "MySQLdb", "pymongo": "pymongo", "google-cloud-storage": "google",
                    "djangorestframework": "rest_framework", "typing-extensions": "typing_extensions",
                    "importlib-metadata": "importlib_metadata", "backports.zoneinfo": "backports",
-                   "opentelemetry-api": "opentelemetry", "opentelemetry-sdk": "opentelemetry"}
+                   "opentelemetry-api": "opentelemetry"}
 IMPLICIT_TOOLS = re.compile(r"^(?:typescript|tslib|ts-node|prettier|postcss|autoprefixer|tailwindcss|eslint(?:-.*)?|"
                             r"@types/.*|@babel/.*|babel-.*|@eslint/.*|@typescript-eslint/.*|eslint-plugin-.*|"
                             r"eslint-config-.*|stylelint.*|husky|lint-staged|mypy|ruff|black|flake8|isort|pylint|"
@@ -309,7 +315,7 @@ def secret_named(parts):
 def read_file(path, root, *, root_fd=None, root_stat=None):
     """Return (text or None, size or None), checking the opened file and bounding the read."""
     parts = path.relative_to(root).parts
-    if any(SECRET_FILE.match(part) for part in parts) or (
+    if any(SECRET_FILE.match(part) for part in parts) or SECRET_PATH.search("/".join(parts)) or (
             secret_named(parts) and path.suffix.lower() not in SOURCE_EXT | CSS_EXT):
         return None, None
     with open_source(path, root, root_fd=root_fd, root_stat=root_stat) as handle:
@@ -505,7 +511,10 @@ def key_line(text, key, *, lines=None):
 
 
 # Strings first, so comment markers and commas inside them are kept.
-JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|,(?=\s*(?:(?://[^\n]*|/\*[\s\S]*?\*/)\s*)*[}\]]))')
+# The lookahead's comment cannot run past its own */, so each comma scans only
+# the comments directly after it.
+JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|'
+                        r',(?=\s*(?:(?://[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)\s*)*[}\]]))')
 TS_CONFIG = re.compile(r"(?:^|/)(?:tsconfig(?:\.[\w-]+)?|jsconfig)\.json$")
 
 
@@ -519,31 +528,82 @@ def jsonc_object(text):
     return data if isinstance(data, dict) else None
 
 
+def ts_config_options(rel, texts, cache, in_progress=None):
+    """(paths, directory paths resolve from, baseUrl directory) for one config, following relative extends.
+
+    Results are cached per config, so a diamond of extends is walked once. A
+    config already being resolved (a cycle, which tsc rejects) contributes
+    nothing; only finished results are cached, so an interrupted walk leaves
+    no partial entry behind.
+    """
+    if rel in cache:
+        return cache[rel]
+    in_progress = set() if in_progress is None else in_progress
+    if rel in in_progress:
+        return None, None, None
+    in_progress.add(rel)
+    try:
+        cache[rel] = ts_config_resolve(rel, texts, cache, in_progress)
+    finally:
+        in_progress.discard(rel)
+    return cache[rel]
+
+
+def ts_config_resolve(rel, texts, cache, in_progress):
+    data = jsonc_object(texts[rel]) or {}
+    paths, paths_root, base = None, None, None
+    extends = data.get("extends")
+    for parent in (extends if isinstance(extends, list) else [extends]):
+        # Package configs (@tsconfig/node20) live outside the repository.
+        if not isinstance(parent, str) or not parent.startswith("."):
+            continue
+        target = os.path.normpath((Path(rel).parent / parent).as_posix()).replace(os.sep, "/")
+        target = next((t for t in (target, target + ".json", target + "/tsconfig.json") if t in texts), None)
+        if target:
+            inherited_paths, inherited_root, inherited_base = ts_config_options(target, texts, cache, in_progress)
+            if inherited_paths is not None:
+                paths, paths_root = inherited_paths, inherited_root
+            if inherited_base is not None:
+                base = inherited_base
+    options = data.get("compilerOptions")
+    if isinstance(options, dict):
+        root = Path(rel).parent
+        if isinstance(options.get("baseUrl"), str):
+            base = root / options["baseUrl"]
+        if isinstance(options.get("paths"), dict):
+            paths, paths_root = options["paths"], root
+    return paths, paths_root, base
+
+
 def js_alias_rules(texts):
-    """{config directory: [(prefix, wildcard, [target paths])]} from compilerOptions.paths and baseUrl."""
-    by_directory = defaultdict(list)
+    """{config directory: [(prefix, wildcard, [target paths])]} from compilerOptions.paths and baseUrl.
+
+    A config inherits paths and baseUrl through relative extends; paths resolve
+    from baseUrl when one is set, else from the config that declares them.
+    """
+    by_directory, cache = {}, {}
     for rel in sorted(texts):
         if not TS_CONFIG.search(rel):
             continue
-        options = (jsonc_object(texts[rel]) or {}).get("compilerOptions")
-        if not isinstance(options, dict):
-            continue
+        try:
+            paths, paths_root, base = ts_config_options(rel, texts, cache)
+        except RecursionError:
+            paths, paths_root, base = None, None, None  # An absurdly deep extends chain.
         root = Path(rel).parent
-        rules = by_directory["" if root.as_posix() == "." else root.as_posix()]
-        base_url = options.get("baseUrl")
-        base = root / base_url if isinstance(base_url, str) else root
-        paths = options.get("paths")
-        for key, targets in (paths.items() if isinstance(paths, dict) else ()):
+        # Every config governs its directory, even with no aliases: a package
+        # config with only strict must not fall through to the root's paths.
+        rules = by_directory.setdefault("" if root.as_posix() == "." else root.as_posix(), [])
+        for key, targets in (paths or {}).items():
             if not isinstance(targets, list):
                 continue
             wildcard = key.endswith("*")
-            resolved = [os.path.normpath((base / t.rstrip("*")).as_posix()).replace(os.sep, "/")
+            resolved = [os.path.normpath(((base or paths_root) / t.rstrip("*")).as_posix()).replace(os.sep, "/")
                         for t in targets if isinstance(t, str)]
             rules.append((key.rstrip("*"), wildcard, [("" if r == "." else r) for r in resolved]))
-        if isinstance(base_url, str):
+        if base is not None:
             target = os.path.normpath(base.as_posix()).replace(os.sep, "/")
             rules.append(("", True, ["" if target == "." else target]))
-    return dict(by_directory)
+    return by_directory
 
 
 def js_package(spec):
@@ -952,6 +1012,132 @@ def sql_table_specs(text):
         position = closing.end()
 
 
+MAKE_CALL = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?=[^\S\n])")
+NPM_CALL = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?=[^\S\n])")
+MAKE_VALUE_OPTIONS = {"-C", "-f", "-I", "-o", "-W"}
+MAKE_VARIABLE = re.compile(r"[\w.][\w.-]*=\S*")
+NPM_OPTION = re.compile(r"--?\w[\w-]*(?:=\S*)?")
+# Package manager options whose value is the next word.
+NPM_VALUE_OPTIONS = {"--prefix", "-C", "--dir", "--cwd", "-w", "--workspace", "--filter", "-F", "--registry",
+                     "--loglevel", "--userconfig", "--cache", "--tag", "--scope"}
+PACKAGE_MANAGERS = {"npm", "pnpm", "yarn", "bun"}
+MAX_COMMAND_TOKENS = 64
+COMMAND_TOKEN = re.compile(r"\S+")
+MAKE_NAME = re.compile(r"[A-Za-z0-9_.:=-]*")
+NPM_NAME_CHARS = frozenset("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_:.-")
+
+
+def command_tokens(text, end):
+    """Lazily, at most MAX_COMMAND_TOKENS whitespace tokens of the rest of one line.
+
+    The line end comes from the cached newline index and callers stop reading
+    at the first token that ends the command, so many command starts on one
+    long line stay linear.
+    """
+    breaks = line_breaks(text)
+    index = bisect_left(breaks, end)
+    line_end = breaks[index] if index < len(breaks) else len(text)
+    return (m.group() for m in islice(COMMAND_TOKEN.finditer(text, end, line_end), MAX_COMMAND_TOKENS))
+
+
+def script_names_in(token, scripts, lengths):
+    """Known script names that token starts with, ending where a name could end."""
+    found = set()
+    for length in lengths:
+        if length <= len(token) and (length == len(token) or token[length] not in NPM_NAME_CHARS):
+            if token[:length] in scripts:
+                found.add(token[:length])
+    return found
+
+
+def npm_script(tokens):
+    """The script one package manager command runs, or None.
+
+    Options that take a separate value (npm --prefix web, pnpm --filter web,
+    yarn --cwd web) skip it; run/run-script and yarn workspace NAME name the
+    script after them; otherwise the first word is the script (npm test,
+    yarn build).
+    """
+    tokens = iter(tokens)
+    for token in tokens:
+        if token in NPM_VALUE_OPTIONS:
+            next(tokens, None)
+            continue
+        if NPM_OPTION.fullmatch(token):
+            continue
+        if token.startswith("-"):
+            return None
+        if token in ("run", "run-script"):
+            return next((t for t in tokens if not NPM_OPTION.fullmatch(t)), None)
+        if token == "workspace":
+            next(tokens, None)
+            return next(tokens, None)
+        return token
+    return None
+
+
+def make_command(tokens, known):
+    """(targets in order, whether each is exact, -C directories, -f files) of one make command.
+
+    Options (-C dir), variables and known targets may come before a target; any
+    other word ends the command, and so does trailing punctuation (make build.).
+    """
+    tokens = iter(tokens)
+    sequence, directories, files = [], [], []
+    for token in tokens:
+        if token in MAKE_VALUE_OPTIONS:
+            value = next(tokens, None)
+            if value is None or value.startswith("-"):
+                break
+            (directories if token == "-C" else files if token == "-f" else []).append(value)
+            continue
+        if (token.startswith("-") and len(token) > 1) or MAKE_VARIABLE.fullmatch(token):
+            continue
+        name = MAKE_NAME.match(token).group()
+        if not name or name not in known:
+            break
+        sequence.append((name, name == token))
+        if name != token:
+            break
+    return sequence, directories, files
+
+
+def invocation_counts(texts, project_targets, scripts=frozenset(),
+                      select_project=lambda rel, directories, files: None):
+    """Count make <target> per Makefile project and npm|pnpm|yarn|bun [run] <script> in one pass.
+
+    A make command line may hold options (-C dir), variables and other targets
+    of the same project before the target; prose words between make and a
+    target name end it. When -C or -f selects a known Makefile project
+    (select_project), only that project's targets count.
+    """
+    make_calls, npm_calls = defaultdict(Counter), Counter()
+    lengths = sorted({len(name) for name in scripts})
+    known = frozenset().union(*project_targets.values())
+    for rel, text in texts.items():
+        for start in MAKE_CALL.finditer(text):
+            sequence, directories, files = make_command(command_tokens(text, start.end()), known)
+            if not sequence:
+                continue
+            selected = select_project(rel, directories, files) if directories or files else None
+            for project, targets in project_targets.items():
+                if selected is not None and project != selected:
+                    continue
+                called = set()  # A command runs each named target once.
+                for name, exact in sequence:
+                    if name not in targets:
+                        break
+                    called.add(name)
+                    if not exact:
+                        break
+                make_calls[project].update(called)
+        for start in NPM_CALL.finditer(text):
+            script = npm_script(command_tokens(text, start.end()))
+            if script:
+                npm_calls.update(script_names_in(script, scripts, lengths))
+    return make_calls, npm_calls
+
+
 class Collector:
     """Per-file signals gathered in one pass, resolved across files at the end."""
 
@@ -1023,6 +1209,8 @@ def inventory(root, units=None, today=None):
     texts = col.texts
     locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
     code_files = [r for r in texts if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
+    # Read only for imports and identifiers: no literal from these reaches the output.
+    secret_sources = {r for r in texts if secret_named(Path(r).parts)}
 
     # Identifier counts over code and config (string contents included: names built from strings count as uses).
     idents = Counter()
@@ -1030,15 +1218,20 @@ def inventory(root, units=None, today=None):
         idents.update(IDENT.findall(texts[rel]))
 
     # File names mentioned anywhere: a file named elsewhere (HTML script src, Makefile, config) is referenced.
-    named_in = defaultdict(set)
+    named_in, module_runs = defaultdict(set), defaultdict(set)
     for rel, text in texts.items():
         for tok in set(FILE_TOKEN.findall(text)):
             named_in[tok].add(rel)
-        # python -m server.nightly runs server/nightly.py.
+        # python -m server.nightly runs server/nightly.py (or a package's __main__).
         for module in set(PYTHON_MODULE_RUN.findall(text)):
-            named_in[module.rsplit(".", 1)[-1] + ".py"].add(rel)
+            stem = module.replace(".", "/")
+            for path in (stem + ".py", stem + "/__main__.py"):
+                module_runs[path].add(rel)
 
     def named_elsewhere(rel):
+        parts = rel.split("/")
+        if any(module_runs.get("/".join(parts[i:]), set()) - {rel} for i in range(len(parts))):
+            return True
         return bool(named_in.get(Path(rel).name, set()) - {rel})
 
     rows = {}
@@ -1116,24 +1309,26 @@ def inventory(root, units=None, today=None):
     alias_rules = js_alias_rules(texts)
 
     def resolve_alias(rel, spec):
-        """tsconfig/jsconfig paths and baseUrl; without them, @/ ~/ #/ from an enclosing root or src/."""
+        """tsconfig/jsconfig paths and baseUrl; else @/ ~/ #/ from an enclosing root or src/."""
         targets = []
         # Only the nearest enclosing config governs a file: in a monorepo each
-        # package's @/* maps to its own src/.
+        # package's @/* maps to its own src/, and a config without aliases
+        # keeps an ancestor's from applying.
         parent = Path(rel).parent
-        governing = next((alias_rules[d] for d in ("" if a.as_posix() == "." else a.as_posix()
-                                                  for a in (parent, *parent.parents)) if d in alias_rules), [])
-        for prefix, wildcard, destinations in governing:
+        ancestors = ["" if a.as_posix() == "." else a.as_posix() for a in (parent, *parent.parents)]
+        config_dir = next((d for d in ancestors if d in alias_rules), None)
+        for prefix, wildcard, destinations in alias_rules.get(config_dir, ()):
             if spec.startswith(prefix) if wildcard else spec == prefix:
                 rest = spec[len(prefix):] if wildcard else ""
                 for destination in destinations:
                     joined = "/".join(x for x in (destination, rest) if x)
                     if joined:
                         targets.extend(resolve_js(rel, "/" + joined))
+        # Bundler aliases (Vite, webpack) are often not in the config; try the
+        # conventional ones, but never beyond the governing config's directory.
         if not targets and spec[:2] in ("@/", "~/", "#/") and len(spec) > 2:
-            parent = Path(rel).parent
-            for ancestor in (parent, *parent.parents):
-                base = "" if ancestor.as_posix() == "." else ancestor.as_posix()
+            scope = ancestors if config_dir is None else ancestors[:ancestors.index(config_dir) + 1]
+            for base in scope:
                 for root in (base, f"{base}/src" if base else "src"):
                     targets.extend(resolve_js(rel, "/" + "/".join(x for x in (root, spec[2:]) if x)))
         return targets
@@ -1288,8 +1483,13 @@ def inventory(root, units=None, today=None):
 
     # Feature flags.
     flags = defaultdict(lambda: {"definitions": [], "values": set(), "checks": []})
+    secret_checks = []
     for rel in code_files:
         text = texts[rel]
+        if rel in secret_sources:
+            # Their checks count for flags named elsewhere; their names never become rows.
+            secret_checks.extend((m.group(1), f"{rel}:{line_of(text, m.start())}") for m in FLAG_CHECK.finditer(text))
+            continue
         if FLAG_FILE.search(rel):
             for m in FLAG_DEF.finditer(text):
                 f = flags[m.group(1)]
@@ -1297,8 +1497,13 @@ def inventory(root, units=None, today=None):
                 f["values"].add(m.group(2).lower() in ("true", "on"))
         for m in FLAG_CHECK.finditer(text):
             flags[m.group(1)]["checks"].append(f"{rel}:{line_of(text, m.start())}")
+    for name, location in secret_checks:
+        if name in flags:
+            flags[name]["checks"].append(location)
     for name, locs in reads.items():
-        if ENV_FLAG.match(name):
+        # Only reads outside secret-named sources make an env var a flag row.
+        public = [loc for loc in locs if loc.rpartition(":")[0] not in secret_sources]
+        if ENV_FLAG.match(name) and (public or name in flags):
             flags[name]["checks"].extend(locs)
             flags[name]["source"] = "env"
     rows["feature_flags"] = [
@@ -1308,7 +1513,8 @@ def inventory(root, units=None, today=None):
         for n, f in sorted(flags.items())]
 
     # Locale keys.
-    quoted, prefixes = set(), set()
+    # Prefixes from secret-named sources suppress candidates but are never listed.
+    quoted, prefixes, secret_prefixes = set(), set(), set()
     for rel in code_files:
         if suffix(rel) == ".json":
             continue
@@ -1318,7 +1524,7 @@ def inventory(root, units=None, today=None):
             quoted.add(value)
             if ":" in value:
                 quoted.add(value.split(":", 1)[1])  # i18next namespace: common:save
-        prefixes.update(DYNAMIC_KEY.findall(texts[rel]))
+        (secret_prefixes if rel in secret_sources else prefixes).update(DYNAMIC_KEY.findall(texts[rel]))
     i18n = []
     locale_lines = {}
     for bundle, langs in sorted(col.locales.items()):
@@ -1327,7 +1533,7 @@ def inventory(root, units=None, today=None):
             for key in flat:
                 keys[key].append((lang, rel))
         for key, where in sorted(keys.items()):
-            if key in quoted or any(key.startswith(p) for p in prefixes):
+            if key in quoted or any(key.startswith(p) for p in prefixes | secret_prefixes):
                 continue
             first = where[0][1]
             if first not in locale_lines:
@@ -1343,12 +1549,13 @@ def inventory(root, units=None, today=None):
         for rel, size in sorted(col.assets) if not named_elsewhere(rel)]
 
     # CSS classes.
-    css_tokens, class_prefixes = set(), set()
+    css_tokens, class_prefixes, secret_class_prefixes = set(), set(), set()
     for rel in code_files:
         if suffix(rel) in CSS_EXT:
             continue
         css_tokens.update(CSS_TOKEN.findall(texts[rel]))
-        class_prefixes.update(dynamic_class_prefixes(texts[rel]))
+        (secret_class_prefixes if rel in secret_sources else class_prefixes).update(
+            dynamic_class_prefixes(texts[rel]))
     css_rows, seen_classes = [], set()
     for rel in sorted(r for r in texts if suffix(r) in CSS_EXT):
         if Path(rel).stem.endswith(".module"):
@@ -1366,7 +1573,7 @@ def inventory(root, units=None, today=None):
             for c in re.finditer(r"(?<![\w-])\.(-?[A-Za-z_][\w-]*)", selector):
                 name = c.group(1)
                 if (name in seen_classes or name in css_tokens
-                        or any(name.startswith(p) for p in class_prefixes)):
+                        or any(name.startswith(p) for p in class_prefixes | secret_class_prefixes)):
                     continue
                 seen_classes.add(name)
                 css_rows.append({"class": name, "location": f"{rel}:{line_of(text, m.start(1) + c.start())}"})
@@ -1390,6 +1597,8 @@ def inventory(root, units=None, today=None):
                     continue
                 seen_routes.add((where, route))
                 definition_spans[rel].append(m.span(2))
+                if rel in secret_sources:
+                    continue  # Its definitions are not mentions, but its literals are never output.
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
     for row in route_rows:
@@ -1404,9 +1613,13 @@ def inventory(root, units=None, today=None):
         # A host still names the route (https://host/api/items). For a server
         # route, so does a preceding path segment: a router mounted under /api
         # serves /items as /api/items. A client route is the page's own path.
-        # Route definition lines are not mentions.
+        # Route path literals in definitions are not mentions (below).
+        # Every character a mount segment can hold ($VERSION included) is
+        # excluded before the match, so a match starts once per path;
+        # @/pages/users is an import, not a URL.
         mount = r"(?:/[\w.$-]+)*?" if row["kind"] == "server" else ""
-        rx = re.compile(r"(?<![\w/.:-])(?:(?:https?:)?//[\w.:@-]+)?%s%s(?![\w/-])" % (mount, pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", "")))
+        route_pattern = pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", "")
+        rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s(?![\w/-])" % (mount, route_pattern))
         where = []
         for rel, text in texts.items():
             hits = [m for m in rx.finditer(text)]
@@ -1422,39 +1635,77 @@ def inventory(root, units=None, today=None):
     rows["unreferenced_routes"] = [r for r in route_rows if r["mentions"] == 0]
 
     # Make targets and package scripts.
-    all_text = list(texts.items())
     script_rows = []
+    # A Makefile and the files it includes (or that include it) form one
+    # project: their targets share command lines (make deps build) and
+    # prerequisite lists. Unrelated Makefiles do not.
+    make_files = sorted(rel for rel in texts
+                        if Path(rel).name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"))
+    project = {rel: rel for rel in make_files}
+
+    def project_of(rel):
+        while project[rel] != rel:
+            project[rel] = project[project[rel]]
+            rel = project[rel]
+        return rel
+    for rel in make_files:
+        for line in MAKE_INCLUDE.findall(texts[rel]):
+            for included in line.split():
+                if "$" in included:
+                    continue
+                target = os.path.normpath((Path(rel).parent / included).as_posix()).replace(os.sep, "/")
+                if target in project:
+                    project[project_of(target)] = project_of(rel)
+    project_targets, project_prerequisites = defaultdict(set), defaultdict(Counter)
+    for rel in make_files:
+        text = texts[rel]
+        project_targets[project_of(rel)].update(
+            m.group(1) for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith("."))
+        # Another rule's prerequisite list runs the target too (all: build).
+        for rule in MAKE_RULE.finditer(text):
+            owners = set(rule.group(1).split())
+            if any(owner.startswith(".") for owner in owners):
+                continue  # .PHONY: build declares, it does not run.
+            for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
+                project_prerequisites[project_of(rel)][prerequisite] += 1
+    make_dirs = defaultdict(list)
+    for make_file in make_files:
+        make_dirs[Path(make_file).parent.as_posix()].append(make_file)
+
+    def select_project(rel, directories, makefiles):
+        """The project a command's -C and -f options name, from the repository root or the file's directory."""
+        for base in (Path(rel).parent, Path(".")):
+            directory = base
+            for name in directories:
+                directory = directory / name
+            if makefiles:
+                target = os.path.normpath((directory / makefiles[-1]).as_posix()).replace(os.sep, "/")
+                if target in project:
+                    return project_of(target)
+                continue
+            found = make_dirs.get(os.path.normpath(directory.as_posix()).replace(os.sep, "/"))
+            if found:
+                return project_of(sorted(found)[0])
+        return None
+    all_scripts = frozenset(name for rel, text in texts.items() if Path(rel).name == "package.json"
+                            for name in package_sections(text).get("scripts", {}))
+    make_calls, npm_calls = invocation_counts(texts, {p: frozenset(t) for p, t in project_targets.items()},
+                                              all_scripts, select_project)
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):
             targets = [m for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith(".")]
-            known = "|".join(sorted({re.escape(m.group(1)) for m in targets}, key=len, reverse=True))
-            # Another rule's prerequisite list runs the target too (all: build).
-            prerequisites = Counter()
-            for rule in MAKE_RULE.finditer(text):
-                owners = set(rule.group(1).split())
-                if any(owner.startswith(".") for owner in owners):
-                    continue  # .PHONY: build declares, it does not run.
-                for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
-                    prerequisites[prerequisite] += 1
+            prerequisites = project_prerequisites[project_of(rel)]
+            calls = make_calls[project_of(rel)]
             for n, m in enumerate(targets):
-                # One command line: options (-C dir), variables and other known
-                # targets may precede the target; prose words between make and
-                # a target name do not. Tokens are unambiguous, so a failed
-                # match cannot backtrack across many option tokens.
-                rx = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?:[^\S\n]+(?:-[CfIoW][^\S\n]+[^\s-]\S*|-\S+|"
-                                r"[\w.-]+=\S*|(?:%s)(?![\w.:=-])))*[^\S\n]+%s(?![\w.:=-])" % (known, re.escape(m.group(1))))
-                hits = sum(1 for _, t in all_text for _ in rx.finditer(t)) + prerequisites[m.group(1)]
+                hits = calls[m.group(1)] + prerequisites[m.group(1)]
                 script_rows.append({"source": rel, "name": m.group(1), "location": f"{rel}:{line_of(text, m.start())}",
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
             implicit_start = (Path(rel).parent / "server.js").as_posix() in files
             for script in scripts:
-                # Options may take values: npm --prefix web run build, pnpm -w build.
-                rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:[^\S\n]+(?:--?\w[\w-]*(?:=\S*)?(?:[^\S\n]+(?!run\b)[^\s-]\S*)?))*"
-                                r"[^\S\n]+(?:run(?:-script)?[^\S\n]+)?%s(?![\w:.-])" % re.escape(script))
-                hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
+                hits = npm_calls[script]
                 hook = re.match(r"^(?:pre|post)(.+)$", script)
                 lifecycle = bool(script in NPM_LIFECYCLES or hook and (
                     hook.group(1) in scripts or hook.group(1) == "start" and implicit_start))

@@ -13,11 +13,12 @@ are never read, and sources containing secret-looking names or private key
 blocks are omitted. Every page carries the SHA-256 of the findings.json and,
 when supplied, units.json it shows.
 Standard library only.
-Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
+Exit status: 0 written, 2 invalid record, PRUNE_SCAN_PDF_TIMEOUT or unwritable output, 3 no PDF produced.
 """
 
 import argparse
 import hashlib
+import math
 import os
 import re
 import stat
@@ -31,15 +32,18 @@ from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_
                       record_exists)
 from safe_paths import open_directory  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at  # noqa: E402
-from safe_source import PRIVATE_KEY, SECRET_NAME, sensitive_source  # noqa: E402
+from safe_source import PRIVATE_KEY, SECRET_NAME, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
+from scan_report_kit.report import LINE_BREAKS  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
 UNITS_STAMP = "prune-scan-units"
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
                        r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
-                       r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc)(?:/|$)")
+                       r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc|"
+                       r"\.htpasswd|\.pgpass|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
+                       r"[^/]*\.tfstate(?:\.[^/]*)?|[^/]*\.kdbx)(?:/|$)")
 SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
@@ -164,14 +168,15 @@ def snippet(repo, location, *, selected=None):
         # different languages, even beyond the selected excerpt's lines.
         if sensitive_source(text):
             return None
-        lines = text.splitlines()
+        lines = physical_lines(text)
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
     first, last = max(1, start - CONTEXT), min(len(lines), end + CONTEXT)
     last = min(last, first + MAX_SNIPPET_LINES - 1)
-    shown = [line[:240] for line in lines[first - 1:last]]
+    # Other line separators stay inside their physical line, as one space.
+    shown = [LINE_BREAKS.sub(" ", line)[:240] for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
@@ -376,10 +381,27 @@ def private_staging(out, repo):
     return tempfile.TemporaryDirectory(prefix="prune-scan-render-", dir=temporary)
 
 
+def valid_pdf_timeout(value):
+    """Unset or blank keeps the default; anything else must be finite seconds above zero."""
+    if value is None or not value.strip():
+        return True
+    try:
+        seconds = float(value)
+    except ValueError:
+        return False
+    return math.isfinite(seconds) and seconds > 0
+
+
 def render_outputs(a, resources):
     """Read inputs once and retain the selected output directory through every commit."""
     if not SAFE_OUTPUT:
         print("render.py: descriptor-relative output support is required to preserve input sources",
+              file=sys.stderr)
+        return 2
+    if not a.no_pdf and not valid_pdf_timeout(os.environ.get("PRUNE_SCAN_PDF_TIMEOUT")):
+        # The vendored kit falls back to its default on a bad value, which
+        # would waste the one retry SKILL.md allows at the same timeout.
+        print("render.py: PRUNE_SCAN_PDF_TIMEOUT must be a positive number of seconds, e.g. 300",
               file=sys.stderr)
         return 2
     try:

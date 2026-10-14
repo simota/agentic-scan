@@ -37,7 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
-from safe_source import sensitive_source  # noqa: E402
+from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
@@ -48,7 +48,12 @@ SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", 
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
               "npm-shrinkwrap.json", "Pipfile.lock"}
 SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
-                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
+                         r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|\.npmrc|\.pypirc|"
+                         r"\.htpasswd|\.pgpass|\.dockercfg|\.docker|\.kube|kubeconfig.*|.*\.tfstate(?:\..*)?|.*\.kdbx)$")
+# Data files named like this hold secrets. Source code named like this
+# (useCredentials.ts, client_secret.py) is read for imports and identifiers
+# so its dependencies are not reported unused, but none of its text is exported.
+SECRET_NAMED = re.compile(r"(?i)^(?:.*credentials.*|.*secrets?(?:\..*)?)$")
 ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|example\.env|env\.example)$")
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
@@ -86,8 +91,13 @@ LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
 IDENT = re.compile(r"[A-Za-z_$][\w$]*")
 CSS_TOKEN = re.compile(r"[A-Za-z_][\w-]*")
 # A failed extension match must not retry at every suffix of a long token.
-FILE_TOKEN = re.compile(r"(?<![\w.-])[\w.-]+\.\w+")
+FILE_TOKEN = re.compile(r"(?<![\w.@+~-])[\w.@+~-]+\.\w+")  # logo@2x.png, icon~dark.svg
 QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
+# Any short single-line literal: natural-language keys ("Delete item") and
+# namespaced lookups ("common:save") are locale keys too.
+STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
+PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_][\w.]*)")
+CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
 CONCAT_CLASS = re.compile(r"[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
@@ -140,6 +150,7 @@ ROUTE_DEFS = (
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
+MAKE_RULE = re.compile(r"^([^\s#:=][^:=\n]*?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
 NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprepare", "prepare", "postprepare",
                   "prepublishOnly", "prepack", "postpack", "publish", "postpublish", "dependencies",
                   "preversion", "version", "postversion"}
@@ -193,7 +204,8 @@ PY_MODULE_NAMES = {"pyyaml": "yaml", "beautifulsoup4": "bs4", "pillow": "PIL", "
                    "python-jose": "jose", "pyjwt": "jwt", "python-multipart": "multipart", "msgpack-python": "msgpack",
                    "mysqlclient": "MySQLdb", "pymongo": "pymongo", "google-cloud-storage": "google",
                    "djangorestframework": "rest_framework", "typing-extensions": "typing_extensions",
-                   "importlib-metadata": "importlib_metadata", "backports.zoneinfo": "backports"}
+                   "importlib-metadata": "importlib_metadata", "backports.zoneinfo": "backports",
+                   "opentelemetry-api": "opentelemetry", "opentelemetry-sdk": "opentelemetry"}
 IMPLICIT_TOOLS = re.compile(r"^(?:typescript|tslib|ts-node|prettier|postcss|autoprefixer|tailwindcss|eslint(?:-.*)?|"
                             r"@types/.*|@babel/.*|babel-.*|@eslint/.*|@typescript-eslint/.*|eslint-plugin-.*|"
                             r"eslint-config-.*|stylelint.*|husky|lint-staged|mypy|ruff|black|flake8|isort|pylint|"
@@ -290,9 +302,15 @@ def open_source(path, root, *, root_fd=None, root_stat=None):
         yield handle
 
 
+def secret_named(parts):
+    return any(SECRET_NAMED.match(part) for part in parts)
+
+
 def read_file(path, root, *, root_fd=None, root_stat=None):
     """Return (text or None, size or None), checking the opened file and bounding the read."""
-    if any(SECRET_FILE.match(part) for part in path.relative_to(root).parts):
+    parts = path.relative_to(root).parts
+    if any(SECRET_FILE.match(part) for part in parts) or (
+            secret_named(parts) and path.suffix.lower() not in SOURCE_EXT | CSS_EXT):
         return None, None
     with open_source(path, root, root_fd=root_fd, root_stat=root_stat) as handle:
         size = os.fstat(handle.fileno()).st_size
@@ -484,6 +502,47 @@ def key_line(text, key, *, lines=None):
     if lines is None:
         lines = json_key_lines(text)
     return lines.get(key.rsplit(".", 1)[-1], 1)
+
+
+# Strings first, so comment markers and commas inside them are kept.
+JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|,(?=\s*(?:(?://[^\n]*|/\*[\s\S]*?\*/)\s*)*[}\]]))')
+TS_CONFIG = re.compile(r"(?:^|/)(?:tsconfig(?:\.[\w-]+)?|jsconfig)\.json$")
+
+
+def jsonc_object(text):
+    """tsconfig.json allows comments and trailing commas; drop them outside strings."""
+    cleaned = JSONC_DROP.sub(lambda m: "" if m.group(1) else m.group(0), text)
+    try:
+        data = parse_json(cleaned, "tsconfig")
+    except (RecordError, RecursionError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def js_alias_rules(texts):
+    """(prefix, wildcard, [target paths]) from tsconfig/jsconfig compilerOptions.paths and baseUrl."""
+    rules = []
+    for rel in sorted(texts):
+        if not TS_CONFIG.search(rel):
+            continue
+        options = (jsonc_object(texts[rel]) or {}).get("compilerOptions")
+        if not isinstance(options, dict):
+            continue
+        root = Path(rel).parent
+        base_url = options.get("baseUrl")
+        base = root / base_url if isinstance(base_url, str) else root
+        paths = options.get("paths")
+        for key, targets in (paths.items() if isinstance(paths, dict) else ()):
+            if not isinstance(targets, list):
+                continue
+            wildcard = key.endswith("*")
+            resolved = [os.path.normpath((base / t.rstrip("*")).as_posix()).replace(os.sep, "/")
+                        for t in targets if isinstance(t, str)]
+            rules.append((key.rstrip("*"), wildcard, [("" if r == "." else r) for r in resolved]))
+        if isinstance(base_url, str):
+            target = os.path.normpath(base.as_posix()).replace(os.sep, "/")
+            rules.append(("", True, ["" if target == "." else target]))
+    return rules
 
 
 def js_package(spec):
@@ -793,7 +852,7 @@ def py_import_specs(text, *, tree=None):
 
 
 def parse_requirements(rel, text):
-    for i, line in enumerate(text.splitlines(), 1):
+    for i, line in enumerate(physical_lines(text), 1):
         line = line.split("#", 1)[0].strip()
         if not line or line.lower().startswith(("-", "git+", "http://", "https://")):
             continue
@@ -809,7 +868,7 @@ def parse_toml_lists(rel, text):
     list_depth = inline_depth = 0
     # Keep punctuation inside strings out of the structural scan (extras, markers, URLs).
     tokens = re.compile(r'"(?:\\.|[^"\\])*"|\'[^\']*\'|\#.*$|[\[\]{}]')
-    for i, line in enumerate(text.splitlines(), 1):
+    for i, line in enumerate(physical_lines(text), 1):
         comment = next((m.start() for m in tokens.finditer(line) if m.group(0).startswith("#")), len(line))
         stripped = line[:comment].strip()
         if not in_list:
@@ -863,7 +922,9 @@ def package_sections(text):
 
 def parse_go_mod(rel, text):
     block = False
-    for i, line in enumerate(text.splitlines(), 1):
+    for i, line in enumerate(physical_lines(text), 1):
+        if re.search(r"//\s*indirect\b", line):
+            continue  # Transitive by definition; go mod tidy adds it back.
         s = line.split("//", 1)[0].strip()
         if s.startswith("require ("):
             block = True
@@ -972,6 +1033,9 @@ def inventory(root, units=None, today=None):
     for rel, text in texts.items():
         for tok in set(FILE_TOKEN.findall(text)):
             named_in[tok].add(rel)
+        # python -m server.nightly runs server/nightly.py.
+        for module in set(PYTHON_MODULE_RUN.findall(text)):
+            named_in[module.rsplit(".", 1)[-1] + ".py"].add(rel)
 
     def named_elsewhere(rel):
         return bool(named_in.get(Path(rel).name, set()) - {rel})
@@ -1048,6 +1112,26 @@ def inventory(root, units=None, today=None):
         # Extensionless resolution depends on the bundler; each possible target is a reference.
         return targets
 
+    alias_rules = js_alias_rules(texts)
+
+    def resolve_alias(rel, spec):
+        """tsconfig/jsconfig paths and baseUrl; without them, @/ ~/ #/ from an enclosing root or src/."""
+        targets = []
+        for prefix, wildcard, destinations in alias_rules:
+            if spec.startswith(prefix) if wildcard else spec == prefix:
+                rest = spec[len(prefix):] if wildcard else ""
+                for destination in destinations:
+                    joined = "/".join(x for x in (destination, rest) if x)
+                    if joined:
+                        targets.extend(resolve_js(rel, "/" + joined))
+        if not targets and spec[:2] in ("@/", "~/", "#/") and len(spec) > 2:
+            parent = Path(rel).parent
+            for ancestor in (parent, *parent.parents):
+                base = "" if ancestor.as_posix() == "." else ancestor.as_posix()
+                for root in (base, f"{base}/src" if base else "src"):
+                    targets.extend(resolve_js(rel, "/" + "/".join(x for x in (root, spec[2:]) if x)))
+        return targets
+
     def resolve_py(rel, dots, module, names):
         if dots:
             pkg = Path(rel).parent
@@ -1055,8 +1139,12 @@ def inventory(root, units=None, today=None):
                 pkg = pkg.parent
             bases = [pkg.as_posix() if pkg.as_posix() != "." else ""]
         else:
-            # A file run as a script adds its own directory to Python's import path.
-            bases = ["", "src", Path(rel).parent.as_posix()]
+            # A file run as a script adds its own directory to Python's import path,
+            # and an application package can sit below the repository root
+            # (backend/app/main.py importing app.models): try every ancestor.
+            parent = Path(rel).parent
+            bases = list(dict.fromkeys(["", "src", *("" if a.as_posix() == "." else a.as_posix()
+                                                     for a in (parent, *parent.parents))]))
         targets = []
         for base in bases:
             stem = "/".join(x for x in [base, module.replace(".", "/")] if x)
@@ -1077,6 +1165,8 @@ def inventory(root, units=None, today=None):
                     for target in resolve_js(rel, spec):
                         inbound[target].add(rel)
                 else:
+                    for target in resolve_alias(rel, spec):
+                        inbound[target].add(rel)
                     pkg = js_package(spec)
                     if pkg:
                         js_packages[pkg] += 1
@@ -1085,8 +1175,20 @@ def inventory(root, units=None, today=None):
             for dots, module, names in imports:
                 if not dots and module:
                     py_modules[module.split(".")[0]] += 1
+                    # Namespace distributions (azure-storage-blob, ruamel.yaml)
+                    # are imported by their dotted path, not one top-level name.
+                    parts = module.lower().split(".")
+                    for n in range(2, len(parts) + 1):
+                        py_modules[".".join(parts[:n])] += 1
                 for target in resolve_py(rel, dots, module, names):
                     inbound[target].add(rel)
+        elif ext in CSS_EXT:
+            # @import "normalize.css" and @use "bootstrap/scss/..." load packages.
+            for spec in CSS_IMPORT.findall(text):
+                if not spec.startswith((".", "/")) and "://" not in spec:
+                    pkg = js_package(spec)
+                    if pkg:
+                        js_packages[pkg] += 1
         elif ext in GO_EXT:
             for module in go_import_paths(text):
                 go_imports[module] += 1
@@ -1128,6 +1230,8 @@ def inventory(root, units=None, today=None):
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
             for dep, section, loc in parsed:
                 modules = {py_dist_module(dep), re.sub(r"[-.]", "_", dep.lower())}
+                if re.search(r"[-.]", dep):
+                    modules.add(re.sub(r"[-.]", ".", dep.lower()))
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
                              len(re.findall(r"(?<![\w-])%s(?![\w-])" % re.escape(dep), tool_text.replace(text, "")))))
         elif name == "go.mod":
@@ -1203,6 +1307,11 @@ def inventory(root, units=None, today=None):
         if suffix(rel) == ".json":
             continue
         quoted.update(QUOTED.findall(texts[rel]))
+        for literal in STRING_LITERAL.finditer(texts[rel]):
+            value = next(g for g in literal.groups() if g is not None)
+            quoted.add(value)
+            if ":" in value:
+                quoted.add(value.split(":", 1)[1])  # i18next namespace: common:save
         prefixes.update(DYNAMIC_KEY.findall(texts[rel]))
     i18n = []
     locale_lines = {}
@@ -1246,6 +1355,8 @@ def inventory(root, units=None, today=None):
             selector = m.group(1)
             if selector.strip().startswith("@"):
                 continue
+            # a[href$=".pdf"] has no class; blank attribute selectors and strings in place.
+            selector = re.sub(r"\[[^\]]*\]|\"[^\"]*\"|'[^']*'", lambda s: " " * len(s.group(0)), selector)
             for c in re.finditer(r"(?<![\w-])\.(-?[A-Za-z_][\w-]*)", selector):
                 name = c.group(1)
                 if (name in seen_classes or name in css_tokens
@@ -1260,15 +1371,24 @@ def inventory(root, units=None, today=None):
     route_rows, seen_routes = [], set()
     for rel in code_files:
         text = texts[rel]
+        # api.get("/users/me") on an axios or ky instance is a client call, not a route.
+        http_client = bool(re.search(r"\b(?:axios|ky|ofetch)\.create\(|from\s+[\"'](?:axios|ky|ofetch)[\"']|"
+                                     r"require\(\s*[\"'](?:axios|ky)[\"']", text))
         for kind, regex in ROUTE_DEFS:
             for m in regex.finditer(text):
                 route = m.group(2)
                 where = f"{rel}:{line_of(text, m.start())}"
                 if (kind == "client" and suffix(rel) not in JS_EXT) or (where, route) in seen_routes:
                     continue
+                if http_client and m.group(0).startswith("api."):
+                    continue
                 seen_routes.add((where, route))
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
+    definition_lines = defaultdict(set)
+    for row in route_rows:
+        path, _, line = row["location"].rpartition(":")
+        definition_lines[path].add(int(line))
     for row in route_rows:
         route = row["route"] if row["route"].startswith("/") or row["kind"] == "client" else "/" + row["route"]
         parts = [re.escape(p) for p in PARAM.split(route)]
@@ -1278,13 +1398,17 @@ def inventory(root, units=None, today=None):
         if not static:
             row["mentions"], row["mentioned_in"] = None, []
             continue
-        rx = re.compile(r"(?<![\w/])%s(?![\w/-])" % pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", ""))
-        defined_at = row["location"].rsplit(":", 1)
+        # A host still names the route (https://host/api/items). For a server
+        # route, so does a preceding path segment: a router mounted under /api
+        # serves /items as /api/items. A client route is the page's own path.
+        # Route definition lines are not mentions.
+        mount = r"(?:/[\w.$-]+)*?" if row["kind"] == "server" else ""
+        rx = re.compile(r"(?<![\w/.:-])(?:(?:https?:)?//[\w.:@-]+)?%s%s(?![\w/-])" % (mount, pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", "")))
         where = []
         for rel, text in texts.items():
             hits = [m for m in rx.finditer(text)]
-            if rel == defined_at[0]:
-                hits = [m for m in hits if line_of(text, m.start()) != int(defined_at[1])]
+            if rel in definition_lines:
+                hits = [m for m in hits if line_of(text, m.start()) not in definition_lines[rel]]
             if hits:
                 where.append(rel)
         row["mentions"], row["mentioned_in"] = len(where), sorted(where)[:MAX_LOCATIONS]
@@ -1299,18 +1423,32 @@ def inventory(root, units=None, today=None):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):
             targets = [m for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith(".")]
+            known = "|".join(sorted({re.escape(m.group(1)) for m in targets}, key=len, reverse=True))
+            # Another rule's prerequisite list runs the target too (all: build).
+            prerequisites = Counter()
+            for rule in MAKE_RULE.finditer(text):
+                owners = set(rule.group(1).split())
+                if any(owner.startswith(".") for owner in owners):
+                    continue  # .PHONY: build declares, it does not run.
+                for prerequisite in set(rule.group(2).replace("|", " ").split()) - owners:
+                    prerequisites[prerequisite] += 1
             for n, m in enumerate(targets):
-                rx = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?:\s+-\S+)*(?:\s+[\w.-]+=\S+)*\s+(?:[\w.-]+\s+)*?"
-                                r"%s(?![\w.:-])" % re.escape(m.group(1)))
-                hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
+                # One command line: options (-C dir), variables and other known
+                # targets may precede the target; prose words between make and
+                # a target name do not. Tokens are unambiguous, so a failed
+                # match cannot backtrack across many option tokens.
+                rx = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?:[^\S\n]+(?:-[CfIoW][^\S\n]+[^\s-]\S*|-\S+|"
+                                r"[\w.-]+=\S*|(?:%s)(?![\w.:=-])))*[^\S\n]+%s(?![\w.:=-])" % (known, re.escape(m.group(1))))
+                hits = sum(1 for _, t in all_text for _ in rx.finditer(t)) + prerequisites[m.group(1)]
                 script_rows.append({"source": rel, "name": m.group(1), "location": f"{rel}:{line_of(text, m.start())}",
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
             implicit_start = (Path(rel).parent / "server.js").as_posix() in files
             for script in scripts:
-                rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:\s+--?[\w-]+)*\s+(?:run(?:-script)?\s+)?%s(?![\w:.-])"
-                                % re.escape(script))
+                # Options may take values: npm --prefix web run build, pnpm -w build.
+                rx = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?:[^\S\n]+(?:--?\w[\w-]*(?:=\S*)?(?:[^\S\n]+(?!run\b)[^\s-]\S*)?))*"
+                                r"[^\S\n]+(?:run(?:-script)?[^\S\n]+)?%s(?![\w:.-])" % re.escape(script))
                 hits = sum(1 for _, t in all_text for _ in rx.finditer(t))
                 hook = re.match(r"^(?:pre|post)(.+)$", script)
                 lifecycle = bool(script in NPM_LIFECYCLES or hook and (
@@ -1339,14 +1477,15 @@ def inventory(root, units=None, today=None):
         ext = suffix(rel)
         # Preserve candidates and their metadata, but do not export arbitrary
         # source text when a value elsewhere in the file may continue here.
-        omitted_text = "[omitted: source may contain secrets]" if sensitive_source(text) else None
+        omitted_text = ("[omitted: source may contain secrets]"
+                        if sensitive_source(text) or secret_named(Path(rel).parts) else None)
         if rel in code_files and is_test(rel):
             for m in SKIPPED_TEST.finditer(text):
                 line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
                 skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": omitted_text or line[:120]})
         if ext in SOURCE_EXT | {".sql", ".sh", ".yml", ".yaml", ".toml"} | CSS_EXT:
             run = []
-            for n, line in enumerate(text.splitlines() + [""], 1):
+            for n, line in enumerate(physical_lines(text) + [""], 1):
                 m = COMMENT_LINE.match(line)
                 if m and not line.lstrip().startswith(("#!", "# -*-")):
                     run.append((n, m.group(1)))
@@ -1358,7 +1497,7 @@ def inventory(root, units=None, today=None):
                 run = []
         if ext in PROSE_EXT or rel in locale_files or ext == ".json":
             continue
-        for n, line in enumerate(text.splitlines(), 1):
+        for n, line in enumerate(physical_lines(text), 1):
             m = MARKER.search(line)
             if not m:
                 continue
@@ -1383,6 +1522,8 @@ def inventory(root, units=None, today=None):
             if idents[table] == 0:
                 tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
+            # Blank comments in place, so a comma inside one cannot start a column.
+            body = re.sub(r"--[^\n]*|/\*[\s\S]*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
             for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
                 if col_name.lower() in SQL_CONSTRAINT or idents[col_name]:
@@ -1434,9 +1575,12 @@ def tag_units(rows, units):
         for row in value:
             if not isinstance(row, dict):
                 continue
-            where = row.get("path") or (row.get("location") or "").rsplit(":", 1)[0] or row.get("manifest")
+            # Env and flag rows keep their paths in locations or definitions.
+            listed = row.get("definitions") or row.get("locations") or [""]
+            location = row.get("location") or (listed[0] if isinstance(listed[0], str) else "")
+            where = row.get("path") or location.rsplit(":", 1)[0] or row.get("manifest")
             if where:
-                row["unit"] = unit_of(where.split(":")[0])
+                row["unit"] = unit_of(where)
                 counts[row["unit"] or "none"] += 1
     rows["by_unit"] = dict(sorted(counts.items()))
 

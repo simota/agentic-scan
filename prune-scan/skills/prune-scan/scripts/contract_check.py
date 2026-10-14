@@ -9,6 +9,8 @@ requires the "report.pdf not produced" limitation); the record and units are
 valid; every perspective family is recorded in perspectives; no finding is
 left Unverified; every open Purpose-dependent finding is named in decisions;
 and both pages carry the SHA-256 of the current findings.json and units.json.
+An --allow NAME directory holding rendered pages (a second language) must show
+the current record too.
 Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 """
 
@@ -442,6 +444,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
             if metadata.stamps.get(stamp) != [digest]:
                 yield f"{name}: stale; re-render after the last findings or units change ({rerender})"
                 break
+    yield from allowed_page_problems(out, sorted(set(allow) & found), digests, directory=directory)
     if "report.pdf" in regular:
         try:
             complete = pdf_complete(out / "report.pdf", directory=directory, snapshots=snapshots)
@@ -457,11 +460,58 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
         yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
 
 
+def allowed_page_problems(out, names, digests, *, directory=None):
+    """An allowed directory holding rendered pages (a second language) must show the current record.
+
+    Its pages are not part of the contract, so a missing page is not a
+    problem; a page that is there must be complete and carry the same stamps.
+    """
+    for name in names:
+        try:
+            if directory is not None:
+                fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=directory)
+            elif (out / name).is_dir() and not (out / name).is_symlink():
+                fd = None
+            else:
+                continue
+        except OSError:
+            continue  # Not a directory: an allowed extra file is outside these checks.
+        try:
+            for page in ("dashboard.html", "report.html"):
+                path = out / name / page
+                try:
+                    with open_artifact(path, directory=fd) as handle:
+                        text = handle.read().decode("utf-8")
+                except FileNotFoundError:
+                    continue
+                except (OSError, UnicodeError) as e:
+                    yield f"{name}/{page}: cannot read file: {e}"
+                    continue
+                metadata = PageMetadata(text)
+                lang = metadata.lang if metadata.lang in ("ja", "en") else "<ja|en>"
+                rerender = f"render.py {out}/findings.json --out {out / name} --lang {lang} --repo <repo>"
+                if not metadata.complete:
+                    yield f"{name}/{page}: invalid or incomplete HTML; re-render the page ({rerender})"
+                elif any(metadata.stamps.get(stamp) != [digest] for stamp, digest in digests.items()):
+                    yield f"{name}/{page}: stale; re-render after the last findings or units change ({rerender})"
+        finally:
+            if fd is not None:
+                os.close(fd)
+
+
+def allowed_name(value):
+    """--allow names one entry of OUT; a trailing slash from tab completion is accepted."""
+    name = value.rstrip("/")
+    if not name or "/" in name or name in (".", ".."):
+        raise argparse.ArgumentTypeError(f"expected a name inside OUT, got {value!r}")
+    return name
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("out")
     p.add_argument("--no-pdf", action="store_true")
-    p.add_argument("--allow", action="append", default=[])
+    p.add_argument("--allow", action="append", default=[], type=allowed_name)
     a = p.parse_args(argv)
     if not Path(a.out).is_dir():
         print(f"contract_check.py: {a.out} is not a directory", file=sys.stderr)

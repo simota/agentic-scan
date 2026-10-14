@@ -43,7 +43,7 @@
     {"id": "UN-01", "name": "Server API", "kind": "area", "paths": ["server/"],
      "entry_points": ["EP-01", "EP-02", "EP-03", "EP-04", "EP-05", "EP-06", "EP-07", "EP-08", "EP-09"]},
     {"id": "UN-02", "name": "Web app", "kind": "area", "paths": ["web/"], "entry_points": ["EP-10", "EP-11", "EP-12"]},
-    {"id": "UN-03", "name": "Data and schema", "kind": "area", "paths": ["server/db/"]},
+    {"id": "UN-03", "name": "Data and schema", "kind": "shared", "paths": ["server/db/"]},
     {"id": "UN-04", "name": "Tests, tooling and docs", "kind": "shared",
      "paths": ["tests/", "scripts/", ".github/", "Makefile", "docs/"], "entry_points": ["EP-13", "EP-14"]},
     {"id": "UN-05", "name": "Dependencies and configuration", "kind": "shared",

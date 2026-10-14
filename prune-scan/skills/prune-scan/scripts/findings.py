@@ -270,7 +270,7 @@ def check_findings(data, units=None, ordered=True):
             raise RecordError(f"{where}.unit_ref: expected a unit id such as UN-01")
         if unit_ids is not None and ref not in unit_ids:
             raise RecordError(f"{where}.unit_ref: {ref} is not a unit in units.json")
-        if "entry_ref" in f:
+        if f.get("entry_ref", "") != "":  # Merging "" detaches a wrongly attached entry point.
             eref = _str(f, "entry_ref", where, required=True)
             if not ENTRY_ID.match(eref):
                 raise RecordError(f"{where}.entry_ref: expected an entry point id such as EP-01")
@@ -334,6 +334,7 @@ PROSE_LINE_RANGE = re.compile(r"[1-9][0-9]*(?:-[1-9][0-9]*)?")
 PROSE_FILENAME_CANDIDATE = re.compile(r"(?<![A-Za-z0-9_])(?:P-[0-9]{3}[/\\])*P-[0-9]{3}")
 PROSE_BRACKETS = {"(": ")", "[": "]", "{": "}"}
 PROSE_BRACKET_TOKEN = re.compile(r"[\s()\[\]{}]")
+PROSE_ID_NOTE = re.compile(r"P-[0-9]{3}(?:[、,・/]P-[0-9]{3})*")
 # Longer particles precede their prefixes. Include decomposed spellings
 # without normalizing source text or changing its character offsets.
 PROSE_PARTICLE = re.compile("|".join(
@@ -459,6 +460,24 @@ def prose_source_start(text, lower, reference, bracket_ends):
     return start
 
 
+def ascii_name_char(char):
+    return char.isascii() and (char.isalnum() or char in "_-")
+
+
+def prose_annotation_follows(text, end, limit):
+    """After a bracketed note: nothing, prose punctuation, or particle-led prose with no source syntax."""
+    if end == limit:
+        return True
+    if not (prose_name_char(text[end]) or text[end] in "./\\([{"):
+        return True
+    if not PROSE_PARTICLE.match(text, end):
+        return False
+    rest = end
+    while rest < limit and prose_name_char(text[rest]):
+        rest += 1
+    return rest == limit or text[rest] not in "./\\([{"
+
+
 def prose_source_candidate(text, start, reference, limit, bracket_ends):
     """Scan one source candidate; return its end, literal status and child notes."""
     end, path, literal, stem, notes = start, False, False, False, []
@@ -478,6 +497,10 @@ def prose_source_candidate(text, start, reference, limit, bracket_ends):
             while end < limit:
                 char = text[end]
                 if not (prose_name_char(char) or (char == "." and end > extension + 1)):
+                    break
+                # app.pyを削除して: a listed particle right after ASCII extension
+                # text is prose, with or without a directory prefix.
+                if ascii_name_char(text[end - 1]) and starts_prose_particle(text, end):
                     break
                 # In .資料を削除してP-001, the final ID is a prose reference.
                 # A hyphen explicitly continues a name: .資料-P-001.
@@ -512,6 +535,11 @@ def prose_source_candidate(text, start, reference, limit, bracket_ends):
             note_start, note_end = end, bracket_ends.get(end)
             if note_end is None or note_end > limit:
                 break
+            # /debug/dump(P-002)から: an ID-only note after a path, followed by
+            # no source syntax, annotates the path like foo.md(P-002) does.
+            if (path and note_start > start and PROSE_ID_NOTE.fullmatch(text, note_start + 1, note_end - 1)
+                    and prose_annotation_follows(text, note_end, limit)):
+                break
             notes.append((note_start + 1, note_end - 1))
             end = note_end
             stem = True
@@ -524,6 +552,9 @@ def prose_source_candidate(text, start, reference, limit, bracket_ends):
                 break
             continue
         if not (prose_name_char(char) or char == "."):
+            break
+        # /debug/dumpとP-002: a listed particle right after ASCII path text is prose.
+        if path and end > start and ascii_name_char(text[end - 1]) and starts_prose_particle(text, end):
             break
         stem = stem or char != "."
         end += 1
@@ -825,6 +856,9 @@ def main(argv=None):
         print("usage:\n" + "\n".join(__doc__.splitlines()[2:6]), file=sys.stderr)
         return 2
     cmd, target, fragments = argv[0], Path(argv[1]), argv[2:]
+    if target.name in ("", ".", ".."):
+        print(f"findings.py: {argv[1]}: expected a record file path, not a directory", file=sys.stderr)
+        return 2
     directory = None
     try:
         if SAFE_OUTPUT:

@@ -87,6 +87,24 @@ class MatchingRegressionTests(unittest.TestCase):
         })
         self.assertEqual([row["mentions"] for row in result["routes"]], [0])
 
+    def test_shell_variable_mounts_still_mention_a_route(self):
+        result = scan({
+            "server/routes.js": 'router.get("/users", h);\n',
+            "scripts/smoke.sh": "curl https://example.com/api/$VERSION/users\n",
+        })
+        self.assertEqual([row["mentions"] for row in result["routes"]], [1])
+
+    def test_a_nested_config_without_aliases_blocks_the_root_paths(self):
+        result = scan({
+            "tsconfig.json": '{"compilerOptions": {"paths": {"@/*": ["./src/*"]}}}',
+            "src/foo.ts": "export function foo() {}\n",
+            "src/main.ts": 'import { foo } from "./foo";\nfoo();\n',
+            "packages/app/tsconfig.json": '{"compilerOptions": {"strict": true}}',
+            "packages/app/main.ts": 'import { bar } from "@/bar";\nbar();\n',
+            "src/bar.ts": "export function bar() {}\n",
+        })
+        self.assertEqual([row["path"] for row in result["orphan_files"]], ["src/bar.ts"])
+
     def test_python_module_runs_resolve_dotted_paths(self):
         result = scan({
             "README.md": "Run `python -m json.tool data.json` or `python -m http.server`.\n",

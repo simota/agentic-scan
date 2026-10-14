@@ -79,8 +79,10 @@ paths.
 
 Non-relative imports also resolve through `compilerOptions.paths` and
 `baseUrl` of the nearest enclosing `tsconfig*.json` or `jsconfig.json`
-(comments and trailing commas allowed, relative `extends` followed). Without a matching rule, `@/`, `~/` and `#/` imports resolve
-against each enclosing directory and its `src/`. CSS `@import`, `@use` and
+(comments and trailing commas allowed, relative `extends` followed); a config
+without aliases still keeps an ancestor's from applying. Without a matching
+rule, `@/`, `~/` and `#/` imports (bundler aliases) resolve against each
+enclosing directory and its `src/`, up to the governing config's directory. CSS `@import`, `@use` and
 `@forward` of a package count as imports of that package. Absolute Python
 imports resolve against the repository root, `src/` and every directory that
 encloses the importing file, so `backend/app/main.py` importing `app.models`

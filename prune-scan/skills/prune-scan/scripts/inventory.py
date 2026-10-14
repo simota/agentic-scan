@@ -564,9 +564,9 @@ def js_alias_rules(texts):
         if not TS_CONFIG.search(rel):
             continue
         paths, paths_root, base = ts_config_options(rel, texts)
-        if paths is None and base is None:
-            continue
         root = Path(rel).parent
+        # Every config governs its directory, even with no aliases: a package
+        # config with only strict must not fall through to the root's paths.
         rules = by_directory.setdefault("" if root.as_posix() == "." else root.as_posix(), [])
         for key, targets in (paths or {}).items():
             if not isinstance(targets, list):
@@ -1157,24 +1157,26 @@ def inventory(root, units=None, today=None):
     alias_rules = js_alias_rules(texts)
 
     def resolve_alias(rel, spec):
-        """tsconfig/jsconfig paths and baseUrl; without them, @/ ~/ #/ from an enclosing root or src/."""
+        """tsconfig/jsconfig paths and baseUrl; else @/ ~/ #/ from an enclosing root or src/."""
         targets = []
         # Only the nearest enclosing config governs a file: in a monorepo each
-        # package's @/* maps to its own src/.
+        # package's @/* maps to its own src/, and a config without aliases
+        # keeps an ancestor's from applying.
         parent = Path(rel).parent
-        governing = next((alias_rules[d] for d in ("" if a.as_posix() == "." else a.as_posix()
-                                                  for a in (parent, *parent.parents)) if d in alias_rules), [])
-        for prefix, wildcard, destinations in governing:
+        ancestors = ["" if a.as_posix() == "." else a.as_posix() for a in (parent, *parent.parents)]
+        config_dir = next((d for d in ancestors if d in alias_rules), None)
+        for prefix, wildcard, destinations in alias_rules.get(config_dir, ()):
             if spec.startswith(prefix) if wildcard else spec == prefix:
                 rest = spec[len(prefix):] if wildcard else ""
                 for destination in destinations:
                     joined = "/".join(x for x in (destination, rest) if x)
                     if joined:
                         targets.extend(resolve_js(rel, "/" + joined))
+        # Bundler aliases (Vite, webpack) are often not in the config; try the
+        # conventional ones, but never beyond the governing config's directory.
         if not targets and spec[:2] in ("@/", "~/", "#/") and len(spec) > 2:
-            parent = Path(rel).parent
-            for ancestor in (parent, *parent.parents):
-                base = "" if ancestor.as_posix() == "." else ancestor.as_posix()
+            scope = ancestors if config_dir is None else ancestors[:ancestors.index(config_dir) + 1]
+            for base in scope:
                 for root in (base, f"{base}/src" if base else "src"):
                     targets.extend(resolve_js(rel, "/" + "/".join(x for x in (root, spec[2:]) if x)))
         return targets
@@ -1452,9 +1454,10 @@ def inventory(root, units=None, today=None):
         # route, so does a preceding path segment: a router mounted under /api
         # serves /items as /api/items. A client route is the page's own path.
         # Route path literals in definitions are not mentions (below).
-        # Every character a mount segment can hold is excluded before the match,
-        # so a match starts once per path; @/pages/users is an import, not a URL.
-        mount = r"(?:/[\w.-]+)*?" if row["kind"] == "server" else ""
+        # Every character a mount segment can hold ($VERSION included) is
+        # excluded before the match, so a match starts once per path;
+        # @/pages/users is an import, not a URL.
+        mount = r"(?:/[\w.$-]+)*?" if row["kind"] == "server" else ""
         route_pattern = pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", "")
         rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s(?![\w/-])" % (mount, route_pattern))
         where = []

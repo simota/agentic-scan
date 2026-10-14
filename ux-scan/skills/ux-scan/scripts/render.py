@@ -33,9 +33,15 @@ PDF_STAMP = "ux-scan-pdf"
 PAGE_STAMP = "ux-scan-page"
 PAGE_KIND_STAMP = "ux-scan-page-kind"
 PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">')
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|\.envrc|\.dev\.vars|.*\.tfvars(?:\.json)?|\.git|"
+                       r".*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
                        r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
-SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
+# A secret-like name, possibly with a suffix (SECRET_KEY, secretKey, AWS_SECRET_ACCESS_KEY),
+# assigned a value; or credentials embedded in a URL (scheme://user:password@host).
+SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?key|private[_-]?key|access[_-]?key)[\w.-]*"
+                         r"|token)\s*[\"']?\s*[:=]|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
+# Only these end a line for path:line, as in editors and grep -n.
+SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 40
@@ -59,13 +65,13 @@ LABELS = {
            "verify_text": "Confirm the user reaches this state and it is not compensated elsewhere before changing it.",
            "observed": "Observed", "expected": "Expected", "criterion": "Criterion", "flow": "Flow",
            "screen": "Screen", "viewport": "Viewport", "occurrences": "Occurrences", "impact": "Impact",
-           "evidence": "Verification", "intent": "Intent checked"},
+           "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]"},
     "ja": {"kind": "UX診断", "title": "UX診断書", "dashboard_title": "UX診断結果",
            "running_footer": "UX診断", "fix": "修正", "verify": "先に検証",
            "verify_text": "変更する前に、利用者が実際にこの状態に到達し、他の箇所で補われていないことを確認してください。",
            "observed": "現状", "expected": "あるべき状態", "criterion": "判断基準", "flow": "フロー",
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
-           "evidence": "検証根拠", "intent": "意図の確認"},
+           "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]"},
 }
 
 
@@ -116,7 +122,7 @@ def redact_diagnostic(text):
     return "[masked: PDF engine diagnostic]" if text else ""
 
 
-def snippet(repo, location):
+def snippet(repo, location, masked="[masked: looks like a secret]"):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
@@ -132,14 +138,17 @@ def snippet(repo, location):
         text = read_regular(root / relative, MAX_SNIPPET_BYTES, root=root).decode("utf-8")
         if "\0" in text:
             return None
-        lines = text.splitlines()
+        lines = SOURCE_LINE_END.split(text)
+        if lines[-1] == "":
+            lines.pop()
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
     first = max(1, start - CONTEXT)
     last = min(len(lines), end + CONTEXT, first + MAX_SNIPPET_LINES - 1)
-    shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
+    # Other Unicode line breaks stay inside their line, shown as a visible marker.
+    shown = [masked if SECRET_LINE.search(line) else report.LINE_BREAKS.sub("\u2424", line[:240])
              for line in lines[first - 1:last]]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
@@ -160,7 +169,7 @@ def to_common(data, lang, flows=None, repo=None):
                   (T["occurrences"], "\n".join(f.get("occurrences", []))),
                   (T["evidence"], f["validation"].get("evidence", "")),
                   (T["intent"], f["validation"].get("intent_checked", ""))]
-        fix_is_action = f["status"] == "Open" and verdict == "Valid"
+        fix_is_action = f["status"] == "Open" and verdict == "Valid" and bool(f.get("fix", "").strip())
         if fix_is_action:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["fix"]]
         item = {"id": f["id"], "title": f["title"], "severity": f["severity"], "status": f["status"],
@@ -172,7 +181,7 @@ def to_common(data, lang, flows=None, repo=None):
         if f["status"] == "Open" and verdict not in EXCLUDED:
             item["action"] = ({"label": T["fix"], "text": f.get("fix", "")} if fix_is_action
                               else {"label": T["verify"], "text": T["verify_text"]})
-        excerpt = snippet(repo, f["location"])
+        excerpt = snippet(repo, f["location"], T["masked"])
         if excerpt:
             item["snippet"] = excerpt
         findings.append(item)

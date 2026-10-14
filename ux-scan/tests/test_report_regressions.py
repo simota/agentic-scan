@@ -191,6 +191,86 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
 
+    def test_excerpts_mask_suffixed_secret_names_and_url_credentials(self):
+        (self.repo / "settings.py").write_text(
+            "DEBUG = False\n"
+            "SECRET_KEY = 'django-insecure-HIDDEN_ONE'\n"
+            "AWS_SECRET_ACCESS_KEY = 'HIDDEN_TWO'\n"
+            "const config = { secretKey: 'HIDDEN_THREE' };\n"
+            "DATABASE_URL = postgres://user:HIDDEN_FOUR@db/app\n"
+            "label = 'Password'\n", encoding="utf-8")
+        lines = render.snippet(self.repo, "settings.py:3")["lines"]
+        self.assertNotIn("HIDDEN", "\n".join(lines))
+        self.assertIn("label = 'Password'", lines)
+        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config"):
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("value = 1\n", encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIsNone(render.snippet(self.repo, f"{name}:1"))
+
+    def test_excerpt_lines_follow_editor_line_numbers(self):
+        (self.repo / "a.js").write_bytes(
+            "line1\n\fline2\nline3\nline4 \u2028 has LS\nline5\x85\nline6 TARGET\r\nline7\rline8\n".encode("utf-8"))
+        excerpt = render.snippet(self.repo, "a.js:6")
+        self.assertEqual(excerpt["start"], 3)
+        self.assertEqual(excerpt["lines"][excerpt["hit"][0] - excerpt["start"]], "line6 TARGET")
+        self.assertEqual(excerpt["lines"][-1], "line8")
+        self.data["findings"][0]["location"] = "a.js:6"
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+
+    def test_japanese_reports_localize_the_mask(self):
+        (self.repo / "a.ts").write_text("const token = 'HIDDEN';\n", encoding="utf-8")
+        self.data["findings"][0]["location"] = "a.ts:1"
+        self.save_inputs()
+        self.assertEqual(self.invoke(lang="ja")[0], 0)
+        page = (self.out / "report.html").read_text(encoding="utf-8")
+        self.assertIn(render.LABELS["ja"]["masked"], page)
+        self.assertNotIn("HIDDEN", page)
+
+    def test_open_valid_finding_without_a_fix_is_not_offered_as_an_empty_fix(self):
+        finding = self.data["findings"][0]
+        self.assertEqual((finding["status"], finding["validation"]["verdict"]), ("Open", "Valid"))
+        del finding["fix"]
+        item = render.to_common(self.data, "en", self.flows)["findings"][0]
+        self.assertEqual(item["action"]["label"], render.LABELS["en"]["verify"])
+
+    def test_not_applicable_punctuation_is_not_a_reason(self):
+        perspective = self.data["perspectives"][0]
+        for result in ("N/A.", "N/A：", "n/a —", "N/A。"):
+            with self.subTest(result=result):
+                perspective.update(result=result, note="")
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertIn("N/A without a reason", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        perspective.update(result="N/A: no motion in the product")
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_allowed_second_language_render_is_verified(self):
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True, allow=["ja"])), [])
+        self.data["findings"][0]["title"] = "Changed after the translation"
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("ja/report.html: stale ux-scan-source", errors)
+        self.assertIn("ja/dashboard.html: stale ux-scan-source", errors)
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True, allow=["ja"])), [])
+        (self.out / "ja" / "notes.txt").write_text("extra", encoding="utf-8")
+        (self.out / "ja" / "report.html").unlink()
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("ja/report.html: missing", errors)
+        self.assertIn("ja/notes.txt: not part of", errors)
+        (self.out / "ja" / "notes.txt").unlink()
+        self.assertEqual(self.invoke(lang="en", out=self.out / "ja")[0], 0)
+        self.assertIn("ja/report.html: missing or invalid report language",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+
     def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
         self.assertEqual(self.invoke()[0], 0)
         for source in (b"[]", b"null", b"42", b'"text"', b"\xff"):

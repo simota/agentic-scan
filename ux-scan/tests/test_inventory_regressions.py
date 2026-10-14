@@ -1228,6 +1228,10 @@ class InventoryRegressionTests(unittest.TestCase):
                                    'Hello {name}, welcome\n// after mixed text <img src="b" />\n</div>\n);\n'
                                    'const a = b\n// <img src="commented" />\nconst o = {\n  label: "x"\n}\n// <img src="c2" />\n'})
         self.assertEqual([r["location"] for r in data["images"]], ["g.jsx:4", "g.jsx:6"])
+        data = self.scan({"h.jsx": 'const compared = foo >\n  bar\n// <img src="commented" />\n'
+                                   'export const H = () => (\n<div className="a"\n  onClick={() => go()}>\n'
+                                   '// visible <img src="a" />\n</div>\n);\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["h.jsx:7"])
         for text in ("<div>\n" + "text\n// note\n" * 30000, "{}\n" + "// note\n" * 50000, '}"\n// note\n' * 30000, "}/ /\n// note\n" * 30000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
             started = time.monotonic()
             self.scan({"d.jsx": text})

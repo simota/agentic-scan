@@ -62,6 +62,9 @@ ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
 # Any non-empty quoted literal, spaces included ("correct horse battery staple").
 QUOTED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)+)\1")
+# A quoted literal with no closing quote before the end of the searched text.
+UNCLOSED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)*)\Z")
+EXPRESSION_START = re.compile(r"[{(\[]\s*")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
@@ -119,15 +122,19 @@ def _assigned_secret(text):
             if _secret_literal(quoted, name):
                 return True
             continue
-        if rest < len(text) and text[rest] in "{([":
-            continue  # An expression, such as password={password}.
-        bare = BARE_VALUE.match(text, rest)
+        unclosed = UNCLOSED_VALUE.match(text, rest)
+        if unclosed and unclosed.group(2) and _secret_literal(unclosed, name):
+            return True  # A literal cut off by the line limit, or left open.
+        expression = EXPRESSION_START.match(text, rest)
+        bare = BARE_VALUE.match(text, expression.end() if expression else rest)
         if bare and text.startswith("(", bare.end()):
-            # A call such as useState(…) or String("…"): a literal first argument is the value.
+            # A call such as useState(…) or String("…"), also inside {…}: a literal first argument is the value.
             quoted = QUOTED_VALUE.match(text, bare.end())
             if quoted and _secret_literal(quoted, name):
                 return True
             continue
+        if expression:
+            continue  # An expression, such as password={password}.
         if (bare and not REFERENCE.fullmatch(bare.group(1)) and not NOT_SECRET.fullmatch(bare.group(1))
                 and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
             return True  # A bare env or properties value is never a UI label.

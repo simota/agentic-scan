@@ -313,13 +313,24 @@ def jsx_text_line(text, start, budget):
             i = line_start  # Child text such as "Hello": look further back for its element.
             continue
         if text[k] != "}":
-            return text[k] == ">" and not (k > 0 and text[k - 1] == "=")
+            return text[k] == ">" and _ends_tag(text, k, floor)
         j = _open_brace(text, k, floor)
         budget[0] -= max(0, line_start - max(j, floor))
         if j < floor:
             return False
         i = j
     return False
+
+
+# An open, closing or fragment tag ending at the ">" found: a name and attributes
+# (arrow functions in {…} included), with no other "<" or ">" in between.
+TAG_BEFORE = re.compile(r"<(?:/?[A-Za-z][\w.:-]*(?:\s(?:[^<>]|=>)*?)?/?)?>\Z")
+
+
+def _ends_tag(text, k, floor):
+    """Whether the ">" at text[k] closes a JSX tag, not a comparison (foo >\\n bar) or an arrow."""
+    start = text.rfind("<", max(floor, k - 2000), k)
+    return start >= 0 and TAG_BEFORE.match(text[start:k + 1]) is not None
 
 
 def _escaped(text, i):

@@ -33,7 +33,7 @@ CSS block comments, `//` line comments in Sass, Less and Stylus (files and
 `<style lang="scss|sass|less|stylus">` blocks; a `//` after `:` or `(` is kept
 as a URL), closed HTML / JSX comments, JSX `/* */` comments and `//` comment
 lines (not JSX child text: a line after a tag's `>`, an `{expression}` child
-or another text line), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
+or another text line; a comparison's `>` is not a tag), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
 `{{! }}`, `<%# %>`) are masked without changing source locations. A CSS string ends at a raw newline, so a stray quote cannot hide
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,

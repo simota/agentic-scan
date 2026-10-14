@@ -27,8 +27,9 @@ anywhere in the file, credentials in URLs or command lines, bearer and basic
 authorization values), and secret-like names (password, secret, token, API
 key, credentials…, also after acronyms such as `DBPassword`) assigned a
 literal that is not a label, including short values, passphrases with
-spaces, typed declarations (`password: string = "…"`) and literals passed
-to a call (`String("…")`). Labels such as "Password", "Enter your password" or "パスワード", types, expressions, references and booleans stay
+spaces, typed declarations (`password: string = "…"`), literals passed
+to a call (`String("…")`, also inside `{…}`) and literals left open or cut
+off by the 752-character limit. Labels such as "Password", "Enter your password" or "パスワード", types, expressions, references and booleans stay
 visible, since forms and locale files are what UX findings cite. Each line is
 judged on the shown text plus 512 characters after it, so a credential cut
 off at the limit is masked too. These rules are conservative heuristics, not

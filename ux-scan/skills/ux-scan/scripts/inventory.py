@@ -471,9 +471,9 @@ def label_expression(value, scope):
     return (scope, re.sub(r"\s+", "", value))
 
 
-# A top-level component or function declaration starts a new scope for dynamic ids.
-COMPONENT_START = re.compile(r"^(?:export\s+)?(?:default\s+)?"
-                             r"(?:(?:async\s+)?function\b|class\s|(?:const|let|var)\s+\w+\s*=)", re.M)
+# Any top-level declaration (a component, typed or not) starts a new scope for dynamic ids.
+COMPONENT_START = re.compile(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\b",
+                             re.M)
 
 
 def event_name(attr):

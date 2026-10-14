@@ -851,6 +851,109 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_preprocessor_line_comments_do_not_hide_or_invent_candidates(self):
+        data = self.scan({
+            "a.scss": "// Don't change these without design review\n"
+                      ".icon-btn { width: 20px; height: 20px; }\n"
+                      ".close:focus { outline: none; }\n"
+                      "// Won't fix (later\n"
+                      ".tab { height: 30px; // padding: 13px; z-index: 9999\n"
+                      "  background: url(//cdn.example/x.png); }\n",
+            "b.vue": '<template><p>x</p></template>\n<style lang="scss">\n'
+                     "// Isn't used\n.chip { height: 18px; }\n</style>\n",
+        })
+        self.assertEqual([(r["selector"], r["location"]) for r in data["tap_targets"]], [
+            (".icon-btn", "a.scss:2"), (".tab", "a.scss:5"), (".chip", "b.vue:4")])
+        self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]],
+                         [(".close:focus", "a.scss:3")])
+        self.assertEqual(data["spacing"], [])
+        self.assertEqual(data["z_index"], [])
+
+    def test_plain_css_strings_end_at_a_newline(self):
+        data = self.scan({"a.css": ".x::after { content: 'it\n}\n.btn { width: 20px; }\n"})
+        self.assertEqual([r["selector"] for r in data["tap_targets"]], [".btn"])
+
+    def test_focus_replacement_requires_a_visible_focus_style(self):
+        data = self.scan({"a.css":
+            ".btn:focus { outline: 0; box-shadow: none; }\n"
+            ".link { outline: none; border-radius: 4px; border: 1px solid; }\n"
+            ".tab:focus { outline: 0px; box-shadow: 0 0 0 3px blue; }\n"
+            ".chip:focus { outline: none; --border-color: red; background: transparent !important; }\n"})
+        self.assertEqual([(r["selector"], r["replacement_in_rule"]) for r in data["focus_outline"]], [
+            (".btn:focus", False), (".link", False), (".tab:focus", True), (".chip:focus", False)])
+
+    def test_style_object_outline_zero_is_a_candidate(self):
+        data = self.scan({"a.jsx": "export const s = { outline: 0, color: 'red' };\n"
+                                   "export const t = { outline: '0px' };\n"})
+        self.assertEqual([r["location"] for r in data["focus_outline"]], ["a.jsx:1", "a.jsx:2"])
+
+    def test_locale_namespaces_and_region_tags(self):
+        data = self.scan({
+            "locales/en/app.json": json.dumps({"save": "Save changes"}),
+            "locales/de/app.json": json.dumps({"save": "Änderungen speichern"}),
+            "i18n/en-US.json": json.dumps({"save": "Save changes"}),
+            "i18n/de-DE.json": json.dumps({"save": "Änderungen speichern"}),
+        })
+        self.assertEqual([(e["bundle"], e["base"], e["lang"]) for e in data["locale_expansion"]], [
+            ("i18n/{lang}.json", "en-US", "de-DE"), ("locales/{lang}/app.json", "en", "de")])
+
+    def test_camel_case_destructive_handlers(self):
+        data = self.scan({"D.tsx":
+            "export const D = (props) => <>\n"
+            "<button onClick={() => handleDelete(1)}>x</button>\n"
+            "<button onClick={() => onDelete(2)}>x</button>\n"
+            "<button onClick={() => props.onRemove(3)}>x</button>\n"
+            "<button onClick={() => toggleDropdown()}>x</button>\n"
+            "<button onClick={() => dropdown()}>x</button>\n"
+            "</>;\n"})
+        self.assertEqual([r["call"] for r in data["destructive_actions"]],
+                         ["handleDelete", "onDelete", "props.onRemove"])
+
+    def test_dynamic_label_targets_match_identical_ids(self):
+        data = self.scan({"F.jsx":
+            "export const F = ({ id, other }) => <>\n"
+            "<label htmlFor={id}>Email</label><input id={ id } type=\"email\" autoComplete=\"email\" />\n"
+            "<input id={other} type=\"text\" />\n"
+            "</>;\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["F.jsx:3"])
+
+    def test_relative_child_routes_are_not_orphans(self):
+        data = self.scan({"routes.jsx":
+            '<Route path="/account"><Route path="settings" /></Route>\n'
+            '<Link to="/account">Account</Link>\n'})
+        self.assertEqual([r["route"] for r in data["routes"]], ["/account", "settings"])
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_framework_key_handler_aliases(self):
+        data = self.scan({
+            "a.svelte": '<div on:click={go} on:keyup={key} role="button" tabindex="0">x</div>\n',
+            "b.vue": '<template><div @click="go" v-on:keyup.enter="go" role="button" tabindex="0">x</div>'
+                     '<span (click)="go()" (keypress)="go()" role="button" tabindex="0">y</span></template>\n',
+        })
+        self.assertEqual(data["click_handlers"], [])
+
+    def test_range_media_queries_and_em_widths(self):
+        data = self.scan({"a.css":
+            "@media (768px <= width) { .a { width: 30em; } }\n"
+            "@media (400px <= width <= 700px) { .b { color: red; } }\n"
+            "@media (width >= 1024px) { .c { color: red; } }\n"
+            ".icon { width: 1.25em; height: 1.25em; }\n"})
+        self.assertEqual(sorted(r["value"] for r in data["breakpoints"]), ["1024px", "400px", "700px", "768px"])
+        self.assertEqual([r["value"] for r in data["fixed_widths"]], ["480px"])
+        self.assertEqual(data["tap_targets"][0]["sizes"], {"width": "20px", "height": "20px"})
+
+    def test_icon_buttons_named_by_a_child(self):
+        data = self.scan({"B.jsx":
+            '<button onClick={go}><img src="/x.svg" alt="Close" width="16" height="16"/></button>\n'
+            '<button onClick={go}><svg aria-label="Menu"><path d="M0"/></svg></button>\n'
+            '<button onClick={go}><img src="/x.svg" alt="" width="16" height="16"/></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3"])
+
+    def test_sveltekit_layout_reset_pages_are_routes(self):
+        data = self.scan({"src/routes/about/+page@.svelte": "<h1>About</h1>\n",
+                          "src/routes/team/+page@(app).svelte": "<h1>Team</h1>\n"})
+        self.assertEqual(sorted(r["route"] for r in data["routes"]), ["/about", "/team"])
+
 
 if __name__ == "__main__":
     unittest.main()

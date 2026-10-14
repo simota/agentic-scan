@@ -56,6 +56,14 @@ HTML_EXT = {".html", ".htm", ".erb", ".hbs", ".handlebars", ".ejs", ".php", ".nj
 JSX_EXT = {".js", ".jsx", ".tsx", ".mjs", ".mdx"}
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
 LANG = re.compile(r"^[a-z]{2,3}(?:[-_][A-Za-z]{2,4})?$")
+# ISO 639-1 codes: a two-letter name in this set is preferred as the language
+# when both a locale file's name and its directory look like language tags.
+ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br bs ca ce ch co cr cs cu cv cy "
+                "da de dv dz ee el en eo es et eu fa ff fi fj fo fr fy ga gd gl gn gu gv ha he hi ho hr ht hu hy "
+                "hz ia id ie ig ii ik io is it iu ja jv ka kg ki kj kk kl km kn ko kr ks ku kv kw ky la lb lg li "
+                "ln lo lt lu lv mg mh mi mk ml mn mr ms mt my na nb nd ne ng nl nn no nr nv ny oc oj om or os pa "
+                "pi pl ps pt qu rm rn ro ru rw sa sc sd se sg si sk sl sm sn so sq sr ss st su sv sw ta te tg th "
+                "ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu".split())
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
@@ -65,22 +73,32 @@ JS_SPACING = re.compile(r"\b(?:margin|padding|gap|rowGap|columnGap)(?:Top|Right|
                         r"(?:Start|End)?\s*:\s*(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
 CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*([^;{}\n]+)")
 JS_FONT_SIZE = re.compile(r"\bfontSize\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
-MEDIA = re.compile(r"\(\s*(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*(\d+(?:\.\d+)?)(px|em|rem)\s*\)")
+# Width conditions, including Media Queries 4 ranges written from either side.
+_MQ = r"(\d+(?:\.\d+)?)(px|em|rem)"
+MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
+                   + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
 CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
 JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b"
+CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
 JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
 # Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
 # and bracketed regions are tracked by css_rules, including unquoted data URLs.
-CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[{};()[\]]''', re.S)
-SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem)\b")
+# A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
+CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[{};()[\]]''', re.S)
+SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b")
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
-OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*(?:none|0)\b")
-JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*[\"'](?:none|0)[\"']")
-FOCUS_REPLACEMENT = re.compile(r"box-shadow\s*:|border[\w-]*\s*:|background[\w-]*\s*:|text-decoration\s*:|"
-                               r"outline(?:-color|-style|-width)?\s*:\s*(?!none|0\b)")
+_NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
+OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*" + _NO_OUTLINE)
+JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
+# A visible replacement sets a box shadow, border, background, underline or
+# outline to something other than nothing.
+FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
+                               r"(?:-(?:start|end))?)?(?:-(?:color|style|width))?|background(?:-color|-image)?|"
+                               r"text-decoration(?:-line|-color|-style|-thickness)?|outline(?:-color|-style|-width)?)"
+                               r"\s*:(?!\s*(?:none|0(?:\.0+)?(?:px|em|rem)?|transparent)\s*(?:!important\s*)?(?:;|$))",
+                               re.M)
 CSS_MOTION = re.compile(r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
 JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
 REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|reducedMotion|ReducedMotion")
@@ -100,12 +118,16 @@ ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary
 LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
 EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
-DESTRUCTIVE = re.compile(r"(?i)\b((?:\w+\.)?(?:delete|remove|destroy|discard|erase|purge|drop)\w*)\s*\(")
+# A destructive verb leads the callee (deleteTask, Remove) or follows a camelCase
+# prefix (handleDelete, onRemove, props.onDiscard); "dropdown" is not destructive.
+DESTRUCTIVE = re.compile(r"\b((?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purge|drop(?!down))|"
+                         r"[a-z_]\w*?(?:Delete|Remove|Destroy|Discard|Erase|Purge|Drop(?![dD]own)))\w*)\s*\(")
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 ROUTE = re.compile(r"<Route\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 LINK = re.compile(r"(?<![\w-])(?:to|href)\s*=\s*\{?\s*[\"'`](/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)")
-FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|(?:^|/)routes/((?:[^/]+/)*)\+page\.svelte$")
+FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
+                        r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
 PERSONAL = re.compile(r"(?i)e-?mail|passw|\btel\b|phone|mobile|(?:first|last|full|given|family|user)[-_ ]?name|^name$|"
                       r"address|street|postal|zip|city|country|cc-|card|\botp\b|one-time")
@@ -113,16 +135,26 @@ NON_INTERACTIVE = {"div", "span", "li", "td", "tr", "p", "img", "section", "arti
                    "i", "svg", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
 CLICK_ATTRS = ("onclick", "@click", "v-on:click", "on:click", "(click)")
 DESTRUCTIVE_ATTRS = (*CLICK_ATTRS, "onpress", "ontap")
-KEY_ATTRS = ("onkeydown", "onkeyup", "onkeypress", "@keydown", "@keyup", "v-on:keydown", "on:keydown", "(keydown)")
+KEY_ATTRS = tuple(prefix + event for prefix, event in (
+    (p, e) for p in ("on", "@", "v-on:", "on:") for e in ("keydown", "keyup", "keypress"))) + (
+    "(keydown)", "(keyup)", "(keypress)")
 NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.I)
 TAG_TOKEN = re.compile(r"<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])")
 ATTR_NAME = re.compile(r"[^\s=<>/{}\"']+")
-CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'""", re.S)
+CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
+# Sass, Less and Stylus also have line comments; "//" after ":" or "(" is a URL.
+LINE_CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|(?<![:(/\\])//[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""",
+                               re.S)
+LINE_COMMENT_EXT = {".scss", ".sass", ".less", ".styl"}
+LINE_COMMENT_LANGS = {"scss", "sass", "less", "stylus", "styl"}
 MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 JSX_TOKEN = re.compile(r"""\{/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S)
+# A child that names an icon-only button: an image's alt text or a child's aria-label.
+INNER_NAME = re.compile(r"""(?i)<img\b[^<>]*?\salt\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{)|"""
+                        r"""\saria-label(?:ledby)?\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{)""")
 RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"}
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 
@@ -169,9 +201,15 @@ def blank_comment(match):
     return re.sub(r"[^\n]", " ", match.group(0))
 
 
-def mask_css_comments(text):
+def mask_css_comments(text, line_comments=False):
     # Quoted strings may legitimately contain /* and */ as visible content.
-    return CSS_COMMENTS.sub(lambda m: blank_comment(m) if m.group(0).startswith("/*") else m.group(0), text)
+    pattern = LINE_CSS_COMMENTS if line_comments else CSS_COMMENTS
+    return pattern.sub(lambda m: blank_comment(m) if m.group(0).startswith("/") else m.group(0), text)
+
+
+def style_line_comments(tag):
+    """Whether an embedded style block's lang attribute names a preprocessor with // comments."""
+    return (literal(tag.attrs.get("lang")) or "").lower() in LINE_COMMENT_LANGS
 
 
 def mask_markup_comments(text, *, jsx=False):
@@ -229,7 +267,7 @@ def embedded_regions(text, parsed):
         if tag.body is not None and tag.name in ("style", "script"):
             start, stop = tag.body
             target = css if tag.name == "style" else js
-            body = mask_css_comments(text[start:stop]) if target is css else text[start:stop]
+            body = mask_css_comments(text[start:stop], style_line_comments(tag)) if target is css else text[start:stop]
             target.append((start, stop, body))
         for name, (start, stop, expression) in tag.attribute_spans.items():
             if expression:
@@ -421,6 +459,11 @@ def tabindex_integer(value, expression, warn):
     return integer(match.group(1), warn) if match else None
 
 
+def label_expression(value):
+    """A dynamic for/id expression with whitespace normalized, distinct from any literal id."""
+    return "\0" + re.sub(r"\s+", "", value)
+
+
 def has_name(attrs, names=NAME_ATTRS):
     """A nonblank name attribute, or an expression whose value is unknown."""
     for name in names:
@@ -542,15 +585,31 @@ def flatten(value, prefix=""):
             yield key, item
 
 
+def iso_language(name):
+    return bool(LANG.match(name)) and re.split(r"[-_]", name)[0] in ISO_639_1
+
+
 def locale_bundle(rel):
-    """(bundle, lang) for a JSON locale file, else None."""
+    """(bundle, lang) for a JSON locale file, else None.
+
+    A file named for its language (locales/de.json) and a directory per
+    language (locales/de/app.json) are both recognised; when both names look
+    like tags, an ISO 639-1 name wins, so namespaces such as app.json or
+    nav.json are not mistaken for languages.
+    """
     p = Path(rel)
     if p.suffix != ".json":
         return None
-    if LANG.match(p.stem) and (LOCALE_DIR.search(rel) or p.parent.name.lower() in ("i18n", "locales", "lang")):
-        return (p.parent / "{lang}.json").as_posix(), p.stem.replace("_", "-")
-    if LANG.match(p.parent.name) and LOCALE_DIR.search(rel):
-        return (p.parent.parent / "{lang}" / p.name).as_posix(), p.parent.name.replace("_", "-")
+    by_stem = (p.parent / "{lang}.json").as_posix(), p.stem.replace("_", "-")
+    by_dir = (p.parent.parent / "{lang}" / p.name).as_posix(), p.parent.name.replace("_", "-")
+    stem_ok = LANG.match(p.stem) and (LOCALE_DIR.search(rel) or p.parent.name.lower() in ("i18n", "locales", "lang"))
+    dir_ok = LANG.match(p.parent.name) and LOCALE_DIR.search(rel)
+    if stem_ok and dir_ok and not iso_language(p.stem) and iso_language(p.parent.name):
+        return by_dir
+    if stem_ok:
+        return by_stem
+    if dir_ok:
+        return by_dir
     return None
 
 
@@ -615,7 +674,8 @@ def scan_css(rel, text, acc, source_lines=None):
         warn = lambda reason: parse_warning(acc, loc, reason)  # noqa: E731
         if OUTLINE_NONE.search(body):
             acc["focus_outline"].append({"selector": selector[:120], "location": loc,
-                                         "replacement_in_rule": bool(FOCUS_REPLACEMENT.search(OUTLINE_NONE.sub("", body))),
+                                         "replacement_in_rule": ":focus" in selector
+                                         and bool(FOCUS_REPLACEMENT.search(OUTLINE_NONE.sub("", body))),
                                          "focus_visible_rule_in_file": focus_visible})
         if TAP_SELECTOR.search(selector):
             sizes = {d.group(1): v for d in SIZE_DECL.finditer(body)
@@ -642,9 +702,11 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     label_starts = [s for s, _ in label_spans]
     for tag in parsed:
         if tag.name == "label" and not tag.closing:
-            target = literal(tag.attrs.get("for") or tag.attrs.get("htmlfor"))
-            if target:
-                labels_for.add(target)
+            target = tag.attrs.get("for") or tag.attrs.get("htmlfor")
+            if literal(target):
+                labels_for.add(literal(target))
+            elif isinstance(target, str):
+                labels_for.add(label_expression(target))  # htmlFor={id} names the input with id={id}.
     for tag in parsed:
         if tag.closing:
             continue
@@ -694,7 +756,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             ident = " ".join(x for x in (literal(attrs.get("name")), literal(attrs.get("id"))) if x)
             label_index = bisect_right(label_starts, start) - 1
             in_label = label_index >= 0 and start < label_spans[label_index][1]
-            labelled = has_name(attrs) or literal(attrs.get("id")) in labels_for or in_label
+            ident_attr = attrs.get("id")
+            labelled = (has_name(attrs) or in_label or literal(ident_attr) in labels_for
+                        or (isinstance(ident_attr, str) and literal(ident_attr) is None
+                            and label_expression(ident_attr) in labels_for))
             missing = [] if labelled else ["label"]
             if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
                 missing.append("autocomplete")
@@ -709,7 +774,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         if name == "button" and not closing and not named:
             close = re.compile(r"</button\s*>", re.I if html_names else 0).search(clean, end, end + 1200)
             inner = clean[end:close.start()] if close else ""
-            if "<" in inner and not re.sub(r"<[^<>]*>", "", inner).strip():
+            if "<" in inner and not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
                 acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
             acc["icon_buttons"].append({"element": name, "location": loc})
@@ -769,7 +834,7 @@ def inventory(root, flows=None):
         if suffix in MARKUP_EXT:
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT)
         if suffix in CSS_EXT:
-            text = mask_css_comments(text)
+            text = mask_css_comments(text, suffix in LINE_COMMENT_EXT)
         parsed = (list(tags(text, vue=suffix == ".vue", html_names=suffix in HTML_EXT,
                             raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
                   if suffix in MARKUP_EXT else None)
@@ -785,7 +850,7 @@ def inventory(root, flows=None):
             js_text = keep_regions(text, js_regions)
             # Whole-file heuristics also need CSS comments masked, while script
             # strings and literal attributes retain their original contents.
-            style_regions = [(*tag.body, mask_css_comments(text[slice(*tag.body)]))
+            style_regions = [(*tag.body, mask_css_comments(text[slice(*tag.body)], style_line_comments(tag)))
                              for tag in parsed if tag.name == "style" and tag.body is not None]
             text = replace_regions(text, style_regions)
         source_lines = SourceLines(text)
@@ -835,9 +900,10 @@ def inventory(root, flows=None):
                 acc["focus_outline"].append({"selector": "(style object)", "location": at(m.start()),
                                              "replacement_in_rule": None, "focus_visible_rule_in_file": None})
         for m in MEDIA.finditer(text):
-            value = px(m.group(1), m.group(2), warn_at(m.start()))
-            if value is not None:
-                breakpoints.add(fmt(value), at(m.start()))
+            for number, unit in zip(m.groups()[::2], m.groups()[1::2]):
+                value = px(number, unit, warn_at(m.start())) if number else None
+                if value is not None:
+                    breakpoints.add(fmt(value), at(m.start()))
         for m in REDUCED_MOTION.finditer(text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
@@ -876,7 +942,8 @@ def inventory(root, flows=None):
     for bundle, langs in sorted(locales.items()):
         if len(langs) < 2:
             continue
-        base = "en" if "en" in langs else sorted(langs)[0]
+        english = sorted(lang for lang in langs if re.split(r"[-_]", lang)[0].lower() == "en")
+        base = "en" if "en" in langs else (english or sorted(langs))[0]
         base_strings = langs[base][1]
         for lang, (rel, strings) in sorted(langs.items()):
             if lang == base:
@@ -898,8 +965,9 @@ def inventory(root, flows=None):
         "files_scanned": scanned, "files_skipped": skipped,
         "parse_warnings": acc["parse_warnings"],
         "routes": routes,
-        "orphan_routes": [r for r in routes if r["route"] not in linked and r["route"] not in ("/", "*")
-                          and not re.search(r"[:\[*]", r["route"])],
+        # A relative child route's full path depends on its parents; links are absolute.
+        "orphan_routes": [r for r in routes if r["route"] not in linked and r["route"].startswith("/")
+                          and r["route"] != "/" and not re.search(r"[:\[*]", r["route"])],
         "screens": screens, "token_sources": tokens,
         "spacing": spacing.rows(), "font_sizes": font_sizes.rows(),
         "breakpoints": breakpoints.rows(), "z_index": z_index.rows(), "fixed_widths": widths.rows(),

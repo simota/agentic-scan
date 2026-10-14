@@ -36,10 +36,12 @@ PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}"
 SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|\.envrc|\.dev\.vars|.*\.tfvars(?:\.json)?|\.git|"
                        r".*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
                        r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
-# A secret-like name, possibly with a suffix (SECRET_KEY, secretKey, AWS_SECRET_ACCESS_KEY),
-# assigned a value; or credentials embedded in a URL (scheme://user:password@host).
-SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?key|private[_-]?key|access[_-]?key)[\w.-]*"
-                         r"|token)\s*[\"']?\s*[:=]|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
+# A secret-like name, possibly with a key-like suffix (SECRET_KEY, secretKey,
+# AWS_SECRET_ACCESS_KEY) but not UI text such as passwordLabel, assigned a value;
+# or credentials embedded in a URL (scheme://user:password@host).
+SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?key|private[_-]?key|access[_-]?key)"
+                         r"(?:[_.-]?(?:access[_-]?)?(?:key|token|hash|salt))?|token)\s*[\"']?\s*[:=]"
+                         r"|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
 # Only these end a line for path:line, as in editors and grep -n.
 SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")

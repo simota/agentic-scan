@@ -479,14 +479,15 @@ class TransactionRegressions(unittest.TestCase):
         data["findings"] = data["findings"][:4]
         for item, severity in zip(data["findings"], ("Low", "High", "Medium", "Info")):
             item["severity"] = severity
-        data["summary"] = "Fix first:\n- U-001\n- U-004\n\n- **U-002**\n-U-003"
+        data["summary"] = "Fix first:\n- U-001\n- U-004\n\n- **U-002**\n-U-003\nThen U-001 through\nU-003."
         data["next_steps"] = [
             "Below <640px fix U-002 first; above >1024px U-003 can wait.",
             "Widths < 360 break U-002 and widths > 1280 break U-003. Keep <b>U-001</b>.",
             "参照: https://www.w3.org/WAI/WCAG22/とU-001も同様",
         ]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
-        self.assertEqual(changed["summary"], "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002")
+        self.assertEqual(changed["summary"],
+                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003, U-001, U-002.")
         self.assertEqual(changed["next_steps"], [
             "Below <640px fix U-001 first; above >1024px U-002 can wait.",
             "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",

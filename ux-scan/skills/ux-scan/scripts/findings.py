@@ -311,8 +311,8 @@ FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
 FINDING_RANGE = re.compile(
     r"(?<![A-Za-z0-9_])(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
     r"(?P<first>U-[0-9]{3})(?P=first_ticks)(?P=first_style)"
-    # Separators stay on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|[-–—−〜～~]|から)[ \t]*"
+    # Dashes and tildes stay on one line, so a Markdown bullet list of ids is not a range.
+    r"(?:\s*(?:(?i:to|through)|から)\s*|[ \t]*[-–—−〜～~][ \t]*)"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`*)(?P<last>U-[0-9]{3})"
     r"(?P=last_ticks)(?P=last_style)(?![A-Za-z0-9_])(?:まで)?")
 FINDING_MENTION = re.compile(

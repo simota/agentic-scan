@@ -188,6 +188,9 @@ def translation_problems(out, lang, parent_stamps, no_pdf):
     except OSError as e:
         yield f"{lang}: cannot read directory: {e.strerror or e}"
         return
+    if rendered_lang(out) == lang:
+        yield f"{lang}: the main pages are already in {lang}; a second-language render needs the other language"
+        return
     expected = {"dashboard.html", "report.html"} | (set() if no_pdf else {"report.pdf"})
     for name in sorted(expected - found):
         yield f"{lang}/{name}: missing; run {rerender}"

@@ -98,11 +98,11 @@ their ids are not mistaken for references. Separate prose references from
 source paths with whitespace, punctuation or code spans; unseparated text that
 looks like one path is preserved as a source token.
 
-When ids move, explicit finding ranges on one line using `to`, `through`, a
-hyphen or dash, `~`, `〜`, `～`, or Japanese `から` (optionally followed by
-`まで`) expand to a
-comma-separated list of the same findings in their original range order. Ids on
-separate lines, such as a Markdown bullet list, are never a range.
+When ids move, explicit finding ranges using `to`, `through`, Japanese `から`
+(optionally followed by `まで`), or a hyphen, dash, `~`, `〜` or `～` on the
+same line expand to a
+comma-separated list of the same findings in their original range order. Ids in
+a Markdown bullet list are never a range.
 The endpoints may each be wrapped in backticks or Markdown emphasis; those
 delimiters still identify finding references, and the expanded list keeps that
 formatting.

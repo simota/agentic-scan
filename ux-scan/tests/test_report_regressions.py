@@ -202,6 +202,10 @@ class ReportRegressions(unittest.TestCase):
         lines = render.snippet(self.repo, "settings.py:3")["lines"]
         self.assertNotIn("HIDDEN", "\n".join(lines))
         self.assertIn("label = 'Password'", lines)
+        ui = ['  "passwordLabel": "Password",', '  "passwordPlaceholder": "At least 8 characters",',
+              '  "secretQuestion": "Your first pet?",', '  passwordHint: "Use a phrase",']
+        (self.repo / "en.json").write_text("{\n" + "\n".join(ui) + "\n}\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "en.json:3")["lines"][1:5], ui)
         for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config"):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -272,6 +276,9 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="en", out=self.out / "ja")[0], 0)
         self.assertIn("ja/report.html: missing or invalid report language",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
+        self.assertIn("en: the main pages are already in en",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))
 
     def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
         self.assertEqual(self.invoke()[0], 0)

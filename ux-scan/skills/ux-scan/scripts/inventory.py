@@ -119,9 +119,10 @@ LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
 EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
 # A destructive verb leads the callee (deleteTask, Remove) or follows a camelCase
-# prefix (handleDelete, onRemove, props.onDiscard); "dropdown" is not destructive.
+# prefix (handleDelete, onRemove, props.onDiscard). "dropdown", drag-and-drop
+# handlers (onDrop) and past-tense predicates (isDeleted) are not destructive.
 DESTRUCTIVE = re.compile(r"\b((?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purge|drop(?!down))|"
-                         r"[a-z_]\w*?(?:Delete|Remove|Destroy|Discard|Erase|Purge|Drop(?![dD]own)))\w*)\s*\(")
+                         r"[a-z_]\w*?(?:(?:Delete|Remove|Discard|Erase|Purge)(?!d)|Destroy(?!ed)))\w*)\s*\(")
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 ROUTE = re.compile(r"<Route\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 LINK = re.compile(r"(?<![\w-])(?:to|href)\s*=\s*\{?\s*[\"'`](/[^\"'`?#]*)|"
@@ -145,15 +146,16 @@ VIEWPORT_ZOOM_LOCK = re.compile(r"(?<![\w-])user-scalable\s*=\s*(?:no|0)\b", re.
 TAG_TOKEN = re.compile(r"<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])")
 ATTR_NAME = re.compile(r"[^\s=<>/{}\"']+")
 CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
-# Sass, Less and Stylus also have line comments; "//" after ":" or "(" is a URL.
-LINE_CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|(?<![:(/\\])//[^\n]*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""",
-                               re.S)
+# Sass, Less and Stylus also have line comments; "//" inside an unquoted url(…)
+# or after ":" or "(" is part of a URL.
+LINE_CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|(?i:url)\([^)'"\n]*\)|(?<![:(/\\])//[^\n]*|"""
+                               r""""(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
 LINE_COMMENT_EXT = {".scss", ".sass", ".less", ".styl"}
 LINE_COMMENT_LANGS = {"scss", "sass", "less", "stylus", "styl"}
 MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 JSX_TOKEN = re.compile(r"""\{/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S)
 # A child that names an icon-only button: an image's alt text or a child's aria-label.
-INNER_NAME = re.compile(r"""(?i)<img\b[^<>]*?\salt\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{)|"""
+INNER_NAME = re.compile(r"""(?i)<img\b[^<>]*?\salt\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{(?!\s*(["'`])\s*\1\s*\}))|"""
                         r"""\saria-label(?:ledby)?\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{)""")
 RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"}
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}

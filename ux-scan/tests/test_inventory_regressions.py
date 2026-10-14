@@ -861,11 +861,14 @@ class InventoryRegressionTests(unittest.TestCase):
                       "  background: url(//cdn.example/x.png); }\n",
             "b.vue": '<template><p>x</p></template>\n<style lang="scss">\n'
                      "// Isn't used\n.chip { height: 18px; }\n</style>\n",
+            "c.scss": ".hero { background: url( //cdn.example.com/hero.png) no-repeat; }\n"
+                      ".bg { background: url(#{$cdn}//img/x.png); }\n"
+                      ".link:focus { outline: none; }\n",
         })
         self.assertEqual([(r["selector"], r["location"]) for r in data["tap_targets"]], [
             (".icon-btn", "a.scss:2"), (".tab", "a.scss:5"), (".chip", "b.vue:4")])
         self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]],
-                         [(".close:focus", "a.scss:3")])
+                         [(".close:focus", "a.scss:3"), (".link:focus", "c.scss:3")])
         self.assertEqual(data["spacing"], [])
         self.assertEqual(data["z_index"], [])
 
@@ -905,6 +908,9 @@ class InventoryRegressionTests(unittest.TestCase):
             "<button onClick={() => props.onRemove(3)}>x</button>\n"
             "<button onClick={() => toggleDropdown()}>x</button>\n"
             "<button onClick={() => dropdown()}>x</button>\n"
+            "<button onClick={() => onDrop(file)}>x</button>\n"
+            "<button onClick={() => setOpen(isDeleted(x))}>x</button>\n"
+            "<button onClick={() => wasDestroyed()}>x</button>\n"
             "</>;\n"})
         self.assertEqual([r["call"] for r in data["destructive_actions"]],
                          ["handleDelete", "onDelete", "props.onRemove"])
@@ -946,8 +952,9 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"B.jsx":
             '<button onClick={go}><img src="/x.svg" alt="Close" width="16" height="16"/></button>\n'
             '<button onClick={go}><svg aria-label="Menu"><path d="M0"/></svg></button>\n'
-            '<button onClick={go}><img src="/x.svg" alt="" width="16" height="16"/></button>\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3"])
+            '<button onClick={go}><img src="/x.svg" alt="" width="16" height="16"/></button>\n'
+            '<button onClick={go}><img src="/x.svg" alt={""} width="16" height="16"/></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3", "B.jsx:4"])
 
     def test_sveltekit_layout_reset_pages_are_routes(self):
         data = self.scan({"src/routes/about/+page@.svelte": "<h1>About</h1>\n",

@@ -488,7 +488,7 @@ class TransactionRegressions(unittest.TestCase):
         ]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["summary"],
-                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003, U-001, U-002.")
+                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003 through\nU-002.")
         self.assertEqual(changed["next_steps"], [
             "Below <640px fix U-001 first; above >1024px U-002 can wait.",
             "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",
@@ -496,6 +496,111 @@ class TransactionRegressions(unittest.TestCase):
             "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-003.",
         ])
         findings.check_findings(changed)
+
+    def test_renumber_follows_tag_grammar_url_brackets_and_underscore_emphasis(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Medium", "High", "Low")):
+            item["severity"] = severity
+        data["next_steps"] = [
+            "Viewports <sm (U-001) and >=lg (U-002); if a<b, U-001.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-001</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-001の通り。参考(https://example.com)U-002、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-001 to U-003_, _see U-001_ and __U-002, U-001__; keep a_U-001 and U-001_b.",
+            "Fix U-001 to\n\nU-002.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
+            "<Button style={{ content: \"}\" }} data-f=\"U-001\"> <B a={`}${x}`} b=\"U-001\"> {don't} U-001",
+            "foo__U-001, U-001__bar, ___U-001___ and __U-001__.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Viewports <sm (U-002) and >=lg (U-001); if a<b, U-002.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-002</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-002の通り。参考(https://example.com)U-001、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-002, U-001, U-003_, _see U-002_ and __U-001, U-002__; keep a_U-001 and U-001_b.",
+            "Fix U-002 to\n\nU-001.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
+            "<Button style={{ content: \"}\" }} data-f=\"U-001\"> <B a={`}${x}`} b=\"U-001\"> {don't} U-002",
+            "foo__U-001, U-001__bar, ___U-002___ and __U-002__.",
+        ])
+        findings.check_findings(changed)
+
+    def test_angular_markup_in_prose_stays_literal(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+        data["next_steps"] = ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-001 <input #q aria-label=\"U-001\">"]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"],
+                         ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-002 <input #q aria-label=\"U-001\">"])
+
+    def test_escaped_quotes_and_long_underscore_runs(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+        data["next_steps"] = ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-001']
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"],
+                         ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-002 U-002'])
+
+    def test_jsx_expressions_are_scanned_as_javascript(self):
+        mapping = {"U-001": "U-002", "U-002": "U-001"}
+        kept = ['<Button pattern={/[}]/} data-id="U-001">', '<B a={x / 2} b="U-001">',
+                '<B a={`${ {a: "}"}.a }`} b="U-001">', '<B a={/* } */ x} b="U-001">',
+                '<B a={c // }\n} b="U-001">', '<B a={{ deep: { deeper: { deepest: {} } } }} b="U-001">']
+        for tag in kept:
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        for prose in ("<sm (U-001) and >lg", "<B a={unclosed U-001"):
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), prose.replace("U-001", "U-002"))
+
+    def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
+        import time
+        for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001",
+                     "<a b={" + "'\"`" * 20000, "<a b={{{{" + "\"'" * 20000):
+            with self.subTest(text=text[:8]):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"] = data["findings"][:2]
+                data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+                data["summary"], data["next_steps"] = text, []
+                started = time.monotonic()
+                findings.renumber(data, findings.renumber_map(data["findings"]))
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_nested_unknown_keys_and_invisible_location_characters_are_refused(self):
+        cases = (
+            (lambda d: d["findings"][0].update(occurences=["a.tsx:1"]), "unknown key 'occurences'"),
+            (lambda d: d["findings"][0].update(references=[{"href": "https://x.org"}]), "unknown key 'href'"),
+            (lambda d: d["findings"][0]["validation"].update(evidnce="x"), "unknown key 'evidnce'"),
+            (lambda d: d["meta"].update(comit="abc"), "unknown key 'comit'"),
+            (lambda d: d["findings"][0].update(occurrences=[]), "occurrences"),
+            (lambda d: d["findings"][0].update(location="src/a\u2028b.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\x85.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a.tsx :1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\u200b.tsx:1"), "location"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                data = copy.deepcopy(SAMPLE)
+                mutate(data)
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, ordered=False)
+        flows = copy.deepcopy(FLOWS)
+        flows["flows"][0]["screens"][0]["path"] = "x"
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'path'"):
+            findings.check_flows(flows)
+
+    def test_missing_output_directory_is_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fragment = Path(tmp) / "fragment.json"
+            fragment.write_text(json.dumps({"flows": []}), encoding="utf-8")
+            for cmd, name in (("merge", "findings.json"), ("flows", "flows.json")):
+                result = run(cmd, Path(tmp) / "missing" / name, fragment)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("output directory does not exist", result.stderr)
 
     def test_unknown_sections_are_refused(self):
         data = copy.deepcopy(SAMPLE)
@@ -518,7 +623,7 @@ class TransactionRegressions(unittest.TestCase):
             findings.check_flows(flows)
         dropped = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"tokens": None}))
         self.assertNotIn("tokens", dropped)
-        last = FLOWS["flows"][-1]["id"]
+        last = next(fl["id"] for fl in FLOWS["flows"] if fl["priority"] == "secondary")
         removed = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"remove": {"flows": [last]}}))
         self.assertNotIn(last, findings.flow_ids(removed))
         for remove in ({"flows": ["FL-99"]}, {"flows": "FL-01"}, {"screens": []}, []):

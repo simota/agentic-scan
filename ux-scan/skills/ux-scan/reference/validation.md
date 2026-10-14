@@ -1,6 +1,6 @@
 # Validation
 
-**Read when:** VERIFY — before any finding is merged with a verdict.
+**Read when:** VERIFY — before settling any finding's verdict (merging may record `Unverified` until then).
 
 Every finding answers four questions, each with evidence (`path:line`, flow id,
 inventory key, screenshot the requester supplied):

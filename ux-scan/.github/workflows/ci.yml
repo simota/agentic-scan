@@ -56,11 +56,12 @@ jobs:
           make demo LANG_OUT=en DEMO_OUT="${{ runner.temp }}/ux-scan-demo-en"
           make demo LANG_OUT=ja DEMO_OUT="${{ runner.temp }}/ux-scan-demo-ja"
       - name: Upload sample reports for inspection
+        if: always()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ux-scan-sample-reports
           path: |
             ${{ runner.temp }}/ux-scan-demo-en/
             ${{ runner.temp }}/ux-scan-demo-ja/
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 7

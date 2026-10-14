@@ -206,12 +206,65 @@ class ReportRegressions(unittest.TestCase):
               '  "secretQuestion": "Your first pet?",', '  passwordHint: "Use a phrase",']
         (self.repo / "en.json").write_text("{\n" + "\n".join(ui) + "\n}\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "en.json:3")["lines"][1:5], ui)
-        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config"):
+        more = ["STRIPE_SECRET_KEY_LIVE=HIDDEN_FIVE", "DB_PASSWORD_PROD=HIDDEN_SIX", "AUTH_TOKEN_V2=HIDDEN_SEVEN",
+                "apiKeys: ['HIDDEN_EIGHT']", 'headers = {"Authorization": "Bearer HIDDEN_NINE_abcdef"}',
+                "key = 'sk_live_HIDDEN_TEN'", "aws = 'AKIAHIDDENELEVEN1234'"]
+        keep = ["tokens: { spacing: [4, 8, 12] },", "const designTokens = loadTokens();",
+                "passwordConfirmLabel: 'Repeat password',"]
+        (self.repo / "more.ts").write_text("\n".join(more + keep) + "\n", encoding="utf-8")
+        lines = render.snippet(self.repo, "more.ts:4-7")["lines"]
+        self.assertNotIn("HIDDEN", "\n".join(lines))
+        self.assertEqual(lines[-3:], keep)
+        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config", "deploy/prod.env", ".env-local",
+                     "service-account.json", "AuthKey.p8", ".htpasswd", "kubeconfig", ".docker/config.json"):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("value = 1\n", encoding="utf-8")
             with self.subTest(name=name):
                 self.assertIsNone(render.snippet(self.repo, f"{name}:1"))
+
+    def test_pages_state_the_viewports_and_locales_judged_against(self):
+        # flows.json is authoritative; a stale copy in meta is not shown.
+        self.data["meta"].update(viewports=["999x999"], locales=["xx"])
+        self.flows.update(viewports=["360x640", "1280x800"], locales=["en", "de"])
+        self.save_inputs()
+        for lang, labels in (("en", ("Viewports: 360x640, 1280x800", "Locales: en, de")),
+                             ("ja", ("ビューポート: 360x640, 1280x800", "ロケール: en, de"))):
+            with self.subTest(lang=lang):
+                self.assertEqual(self.invoke(lang=lang)[0], 0)
+                for page in ("report.html", "dashboard.html"):
+                    text = (self.out / page).read_text(encoding="utf-8")
+                    for label in labels:
+                        self.assertIn(label, text)
+                    self.assertNotIn("999x999", text)
+
+    def test_secret_masking_keeps_ui_lines_and_stays_linear(self):
+        import time
+        ui = ["--token-color-primary: #333;", "passwordConfirm: z.string().min(8, 'Too short'),",
+              "const isPasswordValid = password.length >= 8;", "secretariat: 'Secretariat office',",
+              "const pwdInput = useRef(null);", "tokens: { spacing: [4, 8] },", "passwordLabel: 'Password',"]
+        secrets = ["accessToken: 'HIDDEN'", "STRIPE_SECRET_KEY_LIVE=HIDDEN", "PRIVATE_KEY_PEM=HIDDEN",
+                   "password2 = 'HIDDEN'", "apiKeys: ['HIDDEN']", "DB_PASSWORD_PROD=HIDDEN", "AUTH_TOKEN_V2=HIDDEN"]
+        for line in ui:
+            with self.subTest(line=line):
+                self.assertIsNone(render.SECRET_LINE.search(line))
+        for line in secrets:
+            with self.subTest(line=line):
+                self.assertIsNotNone(render.SECRET_LINE.search(line))
+        (self.repo / "min.js").write_text("secret" * 300000 + "\n", encoding="utf-8")
+        started = time.monotonic()
+        render.snippet(self.repo, "min.js:1")
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_secrets_crossing_the_excerpt_cutoff_are_masked(self):
+        lines = ["x" * 220 + " url = https://user:SECRETSECRETSECRET@db.example/app",
+                 "y" * 226 + " Bearer abcdefghijklmnop",
+                 "z" * 225 + " https://user:" + "S" * 1000 + "@host",
+                 "w" * 300]
+        (self.repo / "long.ts").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "long.ts:1-4")["lines"]
+        self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
+        self.assertEqual(shown[3], "w" * 240)
 
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(
@@ -279,6 +332,19 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
         self.assertIn("en: the main pages are already in en",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))
+
+    def test_contract_requires_exactly_one_shared_flow(self):
+        for priorities in (("secondary",), ("shared", "shared")):
+            with self.subTest(priorities=priorities):
+                self.flows = copy.deepcopy(FLOWS)
+                shared = [fl for fl in self.flows["flows"] if fl["priority"] == "shared"]
+                shared[0]["priority"] = priorities[0]
+                if len(priorities) == 2:
+                    self.flows["flows"][-2]["priority"] = "shared"
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertIn("shared flows; record exactly one shared unit",
+                              "\n".join(contract_check.problems(self.out, no_pdf=True)))
 
     def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
         self.assertEqual(self.invoke()[0], 0)

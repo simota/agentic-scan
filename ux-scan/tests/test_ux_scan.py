@@ -312,13 +312,13 @@ class RenderTests(unittest.TestCase):
         by_id = {f["id"]: f for f in common["findings"]}
         self.assertEqual(by_id["U-001"]["action"]["label"], "Fix")
         self.assertNotIn("Fix", [x["label"] for x in by_id["U-001"]["fields"]])
-        self.assertEqual(by_id["U-015"]["action"]["label"], "Verify first")
-        self.assertTrue(by_id["U-022"]["excluded"])
-        self.assertEqual(next(x["text"] for x in by_id["U-001"]["fields"] if x["label"] == "Flow"),
+        self.assertEqual(by_id["U-018"]["action"]["label"], "Verify first")
+        self.assertTrue(by_id["U-026"]["excluded"])
+        self.assertEqual(next(x["text"] for x in by_id["U-002"]["fields"] if x["label"] == "Flow"),
                          "FL-01: Sign up (primary)")
-        self.assertEqual(next(x["text"] for x in by_id["U-005"]["fields"] if x["label"] == "Viewport"), "360x640")
-        self.assertEqual(by_id["U-002"]["category"], "Accessibility")
-        self.assertIn("onClick={() => api.open(task.id)}", "\n".join(by_id["U-002"]["snippet"]["lines"]))
+        self.assertEqual(next(x["text"] for x in by_id["U-006"]["fields"] if x["label"] == "Viewport"), "360x640")
+        self.assertEqual(by_id["U-003"]["category"], "Accessibility")
+        self.assertIn("onClick={() => api.open(task.id)}", "\n".join(by_id["U-003"]["snippet"]["lines"]))
         self.assertEqual(common["report"]["running_footer"], "UX REVIEW")
 
     def test_snippet_refuses_secrets_and_escapes(self):

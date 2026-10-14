@@ -46,7 +46,8 @@ recorded in error; a flow that was reviewed or not reached stays and is named in
 `limitations` instead. Unknown top-level keys are refused. The command refuses
 a change that would leave a finding in `findings.json` beside it citing a flow
 that no longer exists. Each fragment must leave a valid flow map: for a new file, the first
-fragment includes `app` and at least one primary flow. The entire batch is
+fragment includes `app` and at least one primary flow. The final map holds
+exactly one `shared` flow; `contract_check.py` enforces it. The entire batch is
 written once, after all fragments pass; a rejected fragment leaves the target
 unchanged. Flow entries must be objects with unique ids within each fragment;
 use a later fragment to update an id again. JSON object keys must be unique,

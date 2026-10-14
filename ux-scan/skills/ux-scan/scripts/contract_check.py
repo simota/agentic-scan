@@ -104,6 +104,10 @@ def problems(out, no_pdf=False, allow=()):
         try:
             flows = check_flows(loads_json(sources["flows.json"].decode("utf-8"), "flows.json"))
             flows_digest = canonical_digest(flows)
+            shared = sum(fl["priority"] == "shared" for fl in flows["flows"])
+            if shared != 1:
+                yield (f"flows.json: {shared} shared flows; record exactly one shared unit (app shell, navigation, "
+                       "global styles and shared components), added with findings.py flows")
         except (ValueError, RecordError) as e:
             flows = None
             yield f"flows.json: {e}"
@@ -144,7 +148,8 @@ def problems(out, no_pdf=False, allow=()):
         if no_pdf and not explained:
             yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
         if not no_pdf and limited:
-            yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
+            yield (f"limitations: says '{NO_PDF}' but report.pdf is expected; on the no-PDF path run "
+                   "contract_check.py with --no-pdf, otherwise render the PDF and remove that line")
     if "inventory.json" in sources:
         try:
             inventory = loads_json(sources["inventory.json"].decode("utf-8"), "inventory.json")

@@ -36,13 +36,19 @@ locations. A CSS string ends at a raw newline, so a stray quote cannot hide
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
-review. In HTML, Vue, Svelte and Astro files, CSS measurements use style
-blocks and literal style attributes; script style objects are measured once.
+review. In HTML, server templates (PHP, ERB, Twig, Jinja, Liquid, Handlebars,
+EJS, Nunjucks, Mustache), Vue, Svelte and Astro files, CSS measurements use
+style blocks and literal style attributes; script style objects are measured
+once. CSS written in JavaScript template literals (styled-components, emotion)
+is not measured.
 CSS rule checks keep each selector's direct declarations, including those
 before and after nested rules; child declarations are not attributed to the
 parent. Quoted or escaped punctuation and function values do not split rules.
 Nested selectors are inspected as written: `&` inheritance, preprocessor
-interpolation and the computed cascade are not expanded.
+interpolation (`#{$x}`, `@{x}`, kept as part of the selector) and the computed
+cascade are not expanded. In attribute expressions, JavaScript comments and
+single-line strings are skipped, so an apostrophe in a comment does not hide
+later markup.
 Template tag scans do not re-enter quoted attributes or raw-text elements
 such as script, style and textarea. Embedded CSS uses those same boundaries,
 so style examples in attribute or script strings are not measured as CSS.
@@ -65,30 +71,30 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
 | `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` and `font-size` literals (CSS and JS style objects), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment | LG2, VH2 |
-| `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings | RS1 |
+| `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings; `@container` conditions are not viewport breakpoints and are left out | RS1 |
 | `z_index` | `z-index` / `zIndex` values | LG3 |
 | `fixed_widths` | `width` / `min-width` declarations of 320 px or more (rem and em at 16px); widths in parenthesized conditions are excluded | RS2 |
 | `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` flags dimensions under 24 px for review, with the actual hit area and WCAG 2.5.8 exceptions still to verify | RS3 |
-| `focus_outline` | `outline: none` / `0` / `0px` (and `outline: 0` or `"none"` in style objects), with whether the same `:focus` rule sets a visible replacement (a box shadow, border, background, underline or outline that is not `none`, `0` or `transparent`) and whether the file has a `:focus-visible` rule | ST2 |
+| `focus_outline` | `outline: none` / `0` / `0px` (and `outline: 0` or `"none"` in style objects), with whether the same `:focus` rule sets a visible replacement (a box shadow, border, background, underline or outline whose value is not only `none`, `0`, `transparent` or a CSS-wide keyword such as `inherit`) and whether the file has a `:focus-visible` rule | ST2 |
 | `viewport_meta` | Viewport meta tags; `blocks_zoom` for `user-scalable=no` / `0` or a nonnegative numeric `maximum-scale` under 2; names are case-insensitive and numeric prefixes are parsed without aborting on trailing text | RS4 |
 | `click_handlers` | Click handlers on non-interactive elements (`div`, `span`, `li`, `img`…) or `<a>` without `href`, with what is missing (role, tabindex, a keydown / keyup / keypress handler in JSX, HTML, Vue, Svelte or Angular syntax; event modifiers such as `(keyup.enter)` or `on:click|once` are ignored) | AX2 |
 | `images` | `<img>` without `alt`, or without `width` and `height` | AX4, PP2 |
-| `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` — a literal, or an expression such as `htmlFor={id}` used by exactly one label and, as `id`, by exactly one field in the file; a repeated expression may carry different values per component and stays a candidate — or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
+| `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` — a literal, or an expression such as `htmlFor={id}` used by exactly one label and, as `id`, by exactly one field in the file; a repeated expression may carry different values per component and stays a candidate — or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type` (judged on `name` and `id` separately; checkboxes, radios, ranges, colour and file inputs are not data-entry fields); `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
 | `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`, nor a child `<img>` with nonblank `alt` or a child `aria-label`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
-| `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1 |
-| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`) in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
+| `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1, ST3 |
+| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes | IN1, IN2 |
 | `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present, else the first English region such as `en-US`, else the first tag) and 5 columns wider; East Asian wide characters count as two. Bundles are one file per language (`locales/de.json`) or one directory per language (`locales/de/app.json`); when both the file and its folder look like tags, an ISO 639-1 code wins, so `app.json` or `nav.json` namespaces are not read as languages | IN1 |
 
 With `--flows`, also:
 
-| Key | What it adds |
-|---|---|
-| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed) |
-| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it |
-| `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left |
+| Key | What it adds | Perspective |
+|---|---|---|
+| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed) | LG2, LG3, VH2, RS1, CC2 |
+| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it | RS2 |
+| `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left | IN3 |
 
 `flows_sha256` records a SHA-256 digest of the complete flows record using
 canonical JSON (sorted object keys, compact separators, UTF-8, no non-finite
@@ -116,7 +122,9 @@ viewport declarations and destructive handler bodies remain candidates.
 Vue object bindings (`v-bind="props"`) and bindings
 with dynamic attribute names are also treated as spreads. Vue named bindings
 (`:aria-label="label"`, `v-bind:aria-label="label"`) preserve the expression;
-event modifiers such as `@click.stop` do not hide the event. Dynamic name
+event modifiers such as `@click.stop` do not hide the event. Angular property
+bindings (`[attr.aria-label]="label"`, `[title]="t"`) likewise supply that
+attribute, and `routerLink` (also `[routerLink]="'/x'"` or `"['/x', id]"`) counts as a link target. Dynamic name
 expressions are also treated as unknown;
 only statically blank name attributes are rejected, and referenced label text
 is not resolved. A dynamic input type is recorded as `unknown` and does not

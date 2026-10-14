@@ -79,6 +79,59 @@ class SecretSourceTests(unittest.TestCase):
         self.assertNotIn("c2VjcmV0", json.dumps(result))
 
 
+class ThirdReviewTests(unittest.TestCase):
+    def test_secret_named_sources_still_suppress_candidates(self):
+        result = scan({
+            "src/flags.ts": "export const FLAGS = {\n  newLogin: true,\n};\n",
+            "src/useCredentials.ts": ('isEnabled("newLogin");\nt(`login.errors.${kind}`);\n'
+                                      "const cls = `cred-${kind}`;\n"),
+            "src/index.ts": 'import "./useCredentials";\nimport "./flags";\n',
+            "src/locales/en.json": '{"login": {"errors": {"expired": "x", "invalid": "y"}}}',
+            "src/app.css": ".cred-expired { color: red; }\n.cred-invalid { color: blue; }\n",
+        })
+        self.assertEqual([(row["name"], row["checks"]) for row in result["feature_flags"]], [("newLogin", 1)])
+        self.assertEqual(result["i18n_unreferenced"], [])
+        self.assertEqual(result["css_unreferenced"], [])
+        self.assertEqual(result["i18n_dynamic_prefixes"], [])
+        self.assertEqual(result["css_dynamic_prefixes"], [])
+
+    def test_kube_directory_is_never_read(self):
+        result = scan({".kube/config.prod": "server: https://k8s.example  # TODO 2024-01-01 SEKRITVALUE1\n"})
+        self.assertEqual(result["files_scanned"], 0)
+        self.assertNotIn("SEKRITVALUE1", json.dumps(result))
+
+    def test_extends_diamonds_and_long_chains_are_walked_once(self):
+        files = {"tsconfig.c0.json": '{"compilerOptions": {"paths": {"@x/*": ["./x/*"]}}}',
+                 "tsconfig.c1.json": '{"extends": "./tsconfig.c0.json"}'}
+        for i in range(2, 40):
+            files[f"tsconfig.c{i}.json"] = json.dumps({"extends": [f"./tsconfig.c{i - 2}.json",
+                                                                 f"./tsconfig.c{i - 1}.json"]})
+        files["tsconfig.json"] = '{"extends": "./tsconfig.c39.json"}'
+        files["main.ts"] = 'import { a } from "@x/a";\na();\n'
+        files["x/a.ts"] = "export function a() {}\n"
+        started = time.monotonic()
+        result = scan(files)
+        self.assertLess(time.monotonic() - started, 10)
+        self.assertEqual(result["orphan_files"], [])
+
+    def test_many_targets_and_module_runs_stay_fast(self):
+        files = {f"mk/part{i}.mk": "".join(f"t{i}_{j}:\n\techo\n" for j in range(30)) for i in range(40)}
+        files["Makefile"] = "".join(f"include mk/part{i}.mk\n" for i in range(40))
+        files["notes.txt"] = "".join(f"make t{i}_0 t{i}_1\n" for i in range(40)) + "make" + " -make" * 8000 + "\n"
+        files["README.md"] = "".join(f"python -m pkg.job{i}\n" for i in range(3000))
+        files.update({f"pkg/mod{i}.py": "def f():\n    pass\n" for i in range(1500)})
+        started = time.monotonic()
+        result = scan(files)
+        self.assertLess(time.monotonic() - started, 30)
+        invoked = {row["name"]: row["invocations"] for row in result["scripts"]}
+        self.assertEqual((invoked["t1_0"], invoked["t1_1"], invoked["t1_2"]), (1, 1, 0))
+
+    def test_python_module_run_before_a_period(self):
+        result = scan({"README.md": "Run the job with python -m app.nightly.\n",
+                       "app/nightly.py": "def run():\n    pass\n"})
+        self.assertEqual(result["orphan_files"], [])
+
+
 class MatchingRegressionTests(unittest.TestCase):
     def test_import_specifiers_are_not_route_mentions(self):
         result = scan({

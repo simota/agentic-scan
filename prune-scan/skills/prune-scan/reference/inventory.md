@@ -19,13 +19,14 @@ only their variable names are recorded) and lists **candidates** — never
 findings. Every row carries a `path:line` location or a path.
 
 Secret-looking directory names are excluded too, as are credential files such
-as `.htpasswd`, `.pgpass`, `.docker/config.json`, `.kube/config`, `*.tfstate`
+as `.htpasswd`, `.pgpass`, `.docker/config.json`, everything under `.kube/`, `*.tfstate`
 and `*.kdbx`. Source code whose file or directory name only contains
 `credentials`, `secret` or `kubeconfig` (`useCredentials.ts`,
 `client_secret.py`) is read for its imports and identifiers, so what it uses
 is not reported unused, but none of its literal text reaches the output: no
-`text` excerpts, flag names, routes or dynamic key and class prefixes. Data
-files with such names (`credentials.json`, `secrets.yaml`) are skipped.
+`text` excerpts, flag names, routes or dynamic key and class prefixes (its flag
+checks and prefixes still keep what they name from being listed). Data files
+with such names (`credentials.json`, `secrets.yaml`) are skipped.
 
 On POSIX, files are opened
 relative to pinned directory descriptors without following symlinks; a file or
@@ -124,7 +125,7 @@ not inherit its replacement suggestion.
 | `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
 | `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less (outside attribute selectors and strings) that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |
 | `routes`, `unreferenced_routes` | Server routes (Flask/FastAPI decorators, Express-style `app.get`, Django `path`) and client routes (`<Route path>`, `path: "/…"`) with how many other files name the path (parameters match any segment or `${…}`; a host before the path, and for server routes a mount prefix such as `/api` before `/items`, still count; route path literals in definitions do not); `unreferenced_routes` are those no other file names. `api.get("/…")` where `api` is assigned from axios, ky or ofetch is a client call, not a route | UF1, UF2, UF3, AP1 |
-| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile or the files it includes (or that include it) may come between; a target in another rule's prerequisite list in that set of files (`all: build`) counts as invoked; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
+| `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile or the files it includes (or that include it) may come between; a target in another rule's prerequisite list in that set of files (`all: build`) counts as invoked; each command line counts a name once and is read up to 64 tokens; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
 | `unreferenced_files` | Shell scripts, SQL files and docs under `scripts/`, `bin/`, `tools/`, `docs/`, `db/`, `seeds/`, `fixtures/` whose file name no other file mentions (migrations and root docs such as README are skipped) | TT4, DA3, AS4 |
 | `skipped_tests` | `@pytest.mark.skip`, `@unittest.skip`, `it.skip`, `xit`, `describe.skip`, `test.todo`, `#[ignore]`, `t.Skip`, `@Disabled` in test files | TT2 |
 | `commented_code` | Runs of four or more comment lines of which at least 60 % look like code | DC3 |

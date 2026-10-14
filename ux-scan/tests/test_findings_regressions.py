@@ -580,6 +580,13 @@ class TransactionRegressions(unittest.TestCase):
         self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
         self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")
 
+    def test_unclosed_inline_comments_stay_fast(self):
+        import time
+        started = time.monotonic()
+        result = findings._rewrite_prose("x <!-- " * 40000 + "U-001", {"U-001": "U-002"})
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertTrue(result.endswith("U-002"))
+
     def test_code_spans_stay_fast_with_many_unclosed_backtick_runs(self):
         import time
         text = "".join("`" * (n % 7 + 1) + " word " for n in range(40000))

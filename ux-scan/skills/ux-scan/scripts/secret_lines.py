@@ -34,51 +34,67 @@ KNOWN_SECRET = re.compile(
     r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
     r"|://[^/\s:@\"'`]+:[^/\s@\"'`]+@"                     # scheme://user:password@host
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
-    r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})"
+    r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
     r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
 # The start of a known format at the very end of the shown text.
 CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]+:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
                         r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
                         r"|\bAIza[\w-]*|-----BEGIN[A-Z ]*)\Z")
 
-_NAMES = (r"secret|passw(?:or)?d|\bpwd|passphrase|\bpass\b|api[_-]?keys?|private[_-]?key"
-          r"|access[_-]?key|credentials?|token|client[_-]?id")
-SECRET_NAME = re.compile(r"(?i)" + _NAMES)
-# The rest of the name (bounded), closing quotes or brackets, an optional type
-# (Go "Password string = …"), then an assignment: = : := ?= =>, XML >value< or value="…".
-ASSIGNMENT = re.compile(r"[\w.-]{0,64}(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=])\s*"
-                        r"|[\w.-]{0,64}\"?\s+value=|[\w.-]{0,64}\"?>(?=[^<\s])")
+_KEYWORD = (r"secret|passw(?:or)?d|pwd|passphrase|pass|api[_-]?keys?|private[_-]?key"
+            r"|access[_-]?key|credentials?|token|client[_-]?id")
+# A name part may follow the keyword only when it is key-like or an environment
+# or version tag (SECRET_KEY, AWS_SECRET_ACCESS_KEY, DB_PASSWORD_PROD, AUTH_TOKEN_V2),
+# so passwordLabel, tokenColor or password_reset_url are UI names, not secrets.
+_SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret))?"
+           r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
+# The keyword starts a name part: after a non-letter, or a lower-to-upper camelCase step.
+SECRET_NAME = re.compile(r"(?:(?<![A-Za-z])(?i:" + _KEYWORD + r")|(?<=[a-z])(?:" + _KEYWORD.replace("secret", "Secret")
+                         .replace("passw", "Passw").replace("pwd", "Pwd").replace("passphrase", "Passphrase")
+                         .replace("|pass|", "|Pass|").replace("api[", "Api[").replace("private[", "Private[")
+                         .replace("access[", "Access[").replace("credentials", "Credentials")
+                         .replace("token", "Token").replace("client[", "Client[") + r"))(?i:" + _SUFFIX + r")(?![A-Za-z])")
+# Closing quotes or brackets, an optional type (Go "Password string = …"), then an
+# assignment: = : := ?= =>, XML >value< or value="…".
+ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=])\s*"
+                        r"|\"?\s+value=|\"?>(?=[^<\s])")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
-CALL_ARGUMENT = re.compile(r"(?i)\(\s*[\"'`][\w.-]{0,64}?(?:" + _NAMES + r")[\w.-]{0,64}[\"'`]\s*,\s*")
-QUOTED_VALUE = re.compile(r"[\[(]?\s*[\"'`]([^\"'`\s]{6,})[\"'`]")
-BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]{6,})")
-REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\]|\(.*)+|[A-Za-z_$][\w$]*\(.*")
-NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any)\W*")
+CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?(?<![A-Za-z])(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
+QUOTED_VALUE = re.compile(r"[\[({]?\s*[\"'`]([^\"'`\s]{4,})[\"'`]")
+BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]{4,})")
+REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
+NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
+                        r"include|same-origin|omit|strong|weak|medium)\W*")
+COLOR_OR_LENGTH = re.compile(r"#[0-9a-fA-F]{3,8}|-?\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|ms|s)")
+# CSS custom properties; Sass and Less variables hold colours and lengths, exempt as values.
+VARIABLE_PREFIX = re.compile(r"--[\w-]*\Z")
 
 
-LABEL = re.compile(r"[A-Z][a-z]+(?:[-'][A-Za-z]+)*[.:?!…]*")
-
-
-def _credential_like(value):
-    """A literal that reads as a credential rather than a UI label."""
-    return value.isascii() and not LABEL.fullmatch(value)
+def _is_label(value, name):
+    """A UI label for this name: it repeats the name's keyword ("Password") or has no ASCII word at all."""
+    keyword = SECRET_NAME.match(name)
+    stem = re.sub(r"[^a-z]", "", keyword.group(0).lower())[:5] if keyword else ""
+    return (bool(stem) and stem in value.lower()) or not re.search(r"[A-Za-z0-9]{2}", value)
 
 
 def _value_starts(text):
-    """Offsets where a value assigned to a secret-like name begins."""
+    """(offset where an assigned value begins, the secret-like name) pairs."""
     for name in SECRET_NAME.finditer(text):
+        if VARIABLE_PREFIX.search(text, max(0, name.start() - 64), name.start()):
+            continue  # A CSS custom property such as --token-color.
         assignment = ASSIGNMENT.match(text, name.end())
         if assignment:
-            yield assignment.end()
+            yield assignment.end(), name.group(0)
     for call in CALL_ARGUMENT.finditer(text):
-        yield call.end()
+        yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 
 
 def _assigned_secret(text):
-    for rest in _value_starts(text):
+    for rest, name in _value_starts(text):
         quoted = QUOTED_VALUE.match(text, rest)
         if quoted:
-            if _credential_like(quoted.group(1)):
+            value = quoted.group(1)
+            if not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value)):
                 return True
             continue
         if rest < len(text) and text[rest] in "{([":
@@ -86,8 +102,8 @@ def _assigned_secret(text):
         bare = BARE_VALUE.match(text, rest)
         if (bare and not text.startswith("(", bare.end())  # A call such as useState(…).
                 and not REFERENCE.fullmatch(bare.group(1)) and not NOT_SECRET.fullmatch(bare.group(1))
-                and _credential_like(bare.group(1))):
-            return True
+                and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
+            return True  # A bare env or properties value is never a UI label.
     return False
 
 
@@ -109,13 +125,18 @@ def _base64_only(line):
 
 
 def private_key_lines(lines):
-    """Indexes of lines inside -----BEGIN … PRIVATE KEY----- blocks, or base64-only lines."""
-    hidden, inside = set(), False
+    """Indexes of lines inside complete -----BEGIN … PRIVATE KEY----- … -----END blocks, or base64-only lines.
+
+    A BEGIN with no END after it hides nothing more than its own line, which
+    secret_line already masks.
+    """
+    hidden, begin = set(), None
     for index, line in enumerate(lines):
         if "PRIVATE KEY-----" in line and "-----BEGIN" in line:
-            inside = True
-        if inside or _base64_only(line):
+            begin = index
+        if begin is not None and "-----END" in line:
+            hidden.update(range(begin, index + 1))
+            begin = None
+        if _base64_only(line):
             hidden.add(index)
-        if inside and "-----END" in line:
-            inside = False
     return hidden

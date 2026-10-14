@@ -131,8 +131,11 @@ _DESTRUCTIVE_NAME = (r"(?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purg
 # A call inside a handler, or the handler passed by name (onClick={handleDelete}, @click="deleteTask").
 # A callee starts a name or follows a call, index or optional chain: getState().removeTask(…), api?.delete(…).
 # A method after the name (deleteMutation.mutate) and optional calls (onDelete?.()) count too.
-DESTRUCTIVE = re.compile(r"(?:(?<![\w.])|(?<=[)\]?]\.))(" + _DESTRUCTIVE_NAME + r"(?:\.\w+)*)\s*(?:\?\.)?\(")
-DESTRUCTIVE_REFERENCE = re.compile(r"\s*\{?\s*(" + _DESTRUCTIVE_NAME + r"(?:\.\w+)*)\s*\}?\s*")
+# Only the methods that run the action count after the name: deleteModal.onOpen
+# opens a confirmation, and removeToast.dismiss removes nothing the user made.
+_RUN = r"(?:\.(?:mutate|mutateAsync|call|apply|execute|run|trigger))?"
+DESTRUCTIVE = re.compile(r"(?:(?<![\w.])|(?<=[)\]?]\.))(" + _DESTRUCTIVE_NAME + _RUN + r")\s*(?:\?\.)?\(")
+DESTRUCTIVE_REFERENCE = re.compile(r"\s*\{?\s*(" + _DESTRUCTIVE_NAME + _RUN + r")\s*\}?\s*")
 # DOM and URL housekeeping that removes nothing the user made.
 NOT_DESTRUCTIVE = re.compile(r"(?:^|\.)(?:classList|searchParams|params|headers|style|dataset|attributes)\."
                              r"|(?:^|\.)(?:removeEventListener|removeAttribute|removeProperty|removeChild|"
@@ -148,12 +151,14 @@ LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
-# Matched against a field name split into words (user_email, firstName, cc-number),
-# so capacity, wildcard and microphone are not personal data.
-PERSONAL = re.compile(r"_(?:e_?mail|passw\w*|tel|phone|mobile|(?:first|last|full|given|family|user)_?name|name|"
-                      r"address\w*|street|postal\w*|zip\w*|city|country|cc_\w+|card\w*|otp|one_time)_")
-EMAIL_WORD = re.compile(r"_e_?mail_")
-PHONE_WORD = re.compile(r"_(?:tel|phone|mobile)_")
+# Matched against a field name split into words (user_email, firstName, cc-number).
+# Distinctive stems match inside a word (useremail, telephone, billingaddress);
+# short ones must be whole words, so capacity, wildcard and microphone are not personal.
+PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)phone|tele?phone|(?<!auto)mobile|address|street|postal|post_?code|zip|"
+                      r"country|(?:first|last|full|given|family|user)_?name|one_?time|"
+                      r"_(?:tel|name|city|card|otp|cc_\w+)_")
+EMAIL_WORD = re.compile(r"e_?mail")
+PHONE_WORD = re.compile(r"(?<!micro)phone|_tel_|(?<!auto)mobile")
 
 
 def field_words(name):
@@ -185,7 +190,7 @@ LINE_COMMENT_EXT = {".scss", ".sass", ".less", ".styl"}
 LINE_COMMENT_LANGS = {"scss", "sass", "less", "stylus", "styl"}
 MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 # Server templates also comment markup out with {# #}, {% comment %}, {{!-- --}}, {{! }} and <%# %>.
-TEMPLATE_TOKEN = re.compile(r"<!--|\{/\*|\{#|\{\{!--|\{\{!|<%#|\{%-?\s*comment\s*-?%\}|<([A-Za-z][\w.:-]*)(?=[\s/>])")
+TEMPLATE_TOKEN = re.compile(r"<!--|\{/\*|(?<!\{)\{#(?![#/])|\{\{!--|\{\{!|<%#|\{%-?\s*comment\s*-?%\}|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 TEMPLATE_CLOSE = {"{#": "#}", "{{!--": "--}}", "{{!": "}}", "<%#": "%>", "<!--": "-->", "{/*": "*/}"}
 ENDCOMMENT = re.compile(r"\{%-?\s*endcomment\s*-?%\}")
 # JSX files: {/* */}, a // comment line (commented-out markup) and a /* */ comment, beside JS strings.

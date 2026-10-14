@@ -277,7 +277,11 @@ class ReportRegressions(unittest.TestCase):
                  '<string name="api_key">abc123def</string>', "passphrase: correcthorse9",
                  "credentials: 'user:pa55w0rd'", "pass: 'letmein'", 'Password string = "hunter22"',
                  "curl -u admin:hunter2 https://x", "mysql -uroot -phunter2", "PASSWORD=HIDDENVALUE",
-                 "const KEY = `-----BEGIN PRIVATE KEY-----"]
+                 "const KEY = `-----BEGIN PRIVATE KEY-----", "ADMIN_PASSWORD=Secret", "spring.datasource.password=Sommer",
+                 'password: "Welcome"', '$password = "Admin";', "'password' => 'Secret',",
+                 'secret = "Correct-Horse-Battery"', 'password = "contraseña123"', "password={'hunter22'}",
+                 "DB_PASSWORD=p@ss", "API_KEY=12345", 'const API_KEY = "Abcdefghijklmnop";',
+                 'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -286,7 +290,12 @@ class ReportRegressions(unittest.TestCase):
               'forgotPassword: "Forgot password?",', "showPassword: false,", '"password": "パスワード",',
               "token: colors.primary,", "<PasswordField password={password} />",
               "// Send the token as Bearer authentication", "const [password, setPassword] = useState('');",
-              "apiKey: process.env.API_KEY,", '<input type="password" autoComplete="new-password" />']
+              "apiKey: process.env.API_KEY,", '<input type="password" autoComplete="new-password" />',
+              "--token-color: #ff0000;", "--color-token-primary: #0f62fe;", "$token-spacing: 1.5rem;",
+              "tokenColor: '#ff0000',", "--password-field-border: #d0d0d0;", 'credentials: "include",',
+              'passwordStrength: "strong",', "passwordLabel: 'password_label',",
+              'password_reset_url: "/reset-password",', 'secretQuestion: "mother_maiden_name",',
+              '"password": "Passwort",', '"password": "パスワード",']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))
@@ -299,6 +308,13 @@ class ReportRegressions(unittest.TestCase):
         self.assertNotIn("AoIB", "\n".join(shown))
         self.assertNotIn("END PRIVATE", "\n".join(shown))
         self.assertIn("const b = 2;", shown)
+        (self.repo / "KeyForm.tsx").write_text(
+            'const a = 1;\nconst b = 2;\nconst c = 3;\n<textarea placeholder="-----BEGIN PRIVATE KEY-----" />\n'
+            "const d = 4;\nconst e = { outline: 'none' };\nconst f = 6;\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "KeyForm.tsx:6")["lines"]
+        # A BEGIN with no END masks only its own line, not the rest of the file.
+        self.assertEqual(shown, ["const c = 3;", render.LABELS["en"]["masked"], "const d = 4;",
+                                 "const e = { outline: 'none' };", "const f = 6;"])
         for path in ("terraform.tfstate", "client_secret_123.json", "firebase-adminsdk-abc.json",
                      "google-services.json", ".pgpass", "_netrc", ".vault-token", ".s3cfg", ".boto"):
             with self.subTest(path=path):

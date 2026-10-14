@@ -544,8 +544,8 @@ PROSE_PART = re.compile(
     # Like CommonMark, a code span stays within its paragraph: it never crosses
     # a blank line or a fence opener, so a stray backtick is literal text.
     r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>(?:(?!\n[ \t]*\r?\n|\n[ \t]{0,3}(?:```|~~~)).)*?)(?<!`)(?P=ticks)(?!`)"
-    # An unclosed comment protects the rest only when it opens an HTML block (line start).
-    r"|(?P<comment><!--.*?-->|^[ \t]{0,3}<!--.*\Z)"
+    # A comment opener; its end is found in _rewrite_prose (see there).
+    r"|(?P<comment><!--)"
     # Closing tags, declarations and processing instructions; an open tag is
     # only marked here ("<" before a name) and measured by _scan_tag.
     r"|(?P<markup></[a-z][\w.:-]*\s*>|<[!?][^<>]*>)"
@@ -665,8 +665,25 @@ def _rewrite_prose(value, mapping):
 
     protected_spans, literal_spans = [], []
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
+        if match["comment"] is not None:
+            # The first "-->" after one opener is also the first after any later
+            # opener before it, so each close is searched for once: linear time.
+            if next_close is None or (next_close != -1 and next_close < match.end()):
+                next_close = value.find("-->", match.end())
+            line_start = value.rfind("\n", 0, match.start()) + 1
+            if next_close != -1:
+                end = next_close + 3
+            elif re.fullmatch(r"[ \t]{0,3}", value[line_start:match.start()]):
+                end = len(value)  # An unclosed comment opening a line starts an HTML block.
+            else:
+                continue  # As in CommonMark, an unclosed inline <!-- is literal text.
+            protected_spans.append((match.start(), end))
+            literal_spans.append((match.start(), end))
+            position = end
+            continue
         if match["open_tag"] is not None:
             if budget <= 0:
                 continue
@@ -677,8 +694,7 @@ def _rewrite_prose(value, mapping):
                 literal_spans.append((match.start(), end))
                 position = end
             continue
-        literal = (match["fence"] is not None or match["comment"] is not None
-                   or match["markup"] is not None or match["url"] is not None
+        literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
         protected = (literal
                      or (match["path"] is not None and _source_token(match["path"]))

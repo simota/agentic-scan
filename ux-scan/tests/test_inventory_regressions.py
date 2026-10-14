@@ -1183,6 +1183,25 @@ class InventoryRegressionTests(unittest.TestCase):
                 self.scan({name: text})
                 self.assertLess(time.monotonic() - started, 4)
 
+    def test_round_three_self_review_regressions(self):
+        data = self.scan({
+            "list.hbs": '{{#each items}}<li>{{this}}</li>{{/each}}\n<!-- <img src="old-banner.png"> -->\n'
+                        '<!-- <input name="legacy"> -->\n',
+            "D.jsx": "<button onClick={deleteModal.onOpen}>Delete</button>\n"
+                     "<button onClick={() => removeDrawer.open()}>x</button>\n"
+                     "<button onClick={() => deleteTask(id).then(done)}>x</button>\n",
+            "f.html": "".join(f'<label>{n} <input name="{n}" type="text"></label>\n' for n in (
+                "telephone", "phonenumber", "cellphone", "emailaddress", "useremail", "newpassword", "postcode",
+                "billingaddress", "microphone", "capacity")),
+        })
+        self.assertEqual(data["images"], [])
+        self.assertEqual([r["call"] for r in data["destructive_actions"]], ["deleteTask"])
+        self.assertEqual([r["name"] for r in data["inputs"]], [
+            "telephone", "phonenumber", "cellphone", "emailaddress", "useremail", "newpassword", "postcode",
+            "billingaddress"])
+        self.assertIn("type=tel", data["inputs"][0]["missing"])
+        self.assertIn("type=email", data["inputs"][3]["missing"])
+
 
 if __name__ == "__main__":
     unittest.main()

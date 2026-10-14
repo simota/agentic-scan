@@ -326,8 +326,9 @@ def check_findings(data, flow_ids=None, ordered=True):
 
 
 # An id is not part of a word or snake_case name, but may sit inside _emphasis_.
-BEFORE_ID = r"(?<![A-Za-z0-9])(?<![A-Za-z0-9]_)"
-AFTER_ID = r"(?![A-Za-z0-9])(?!_[A-Za-z0-9])"
+# Emphasis uses one to three underscores, so foo__U-001 and U-001__bar stay names.
+BEFORE_ID = r"(?<![A-Za-z0-9])(?<![A-Za-z0-9]_)(?<![A-Za-z0-9]__)(?<![A-Za-z0-9]___)"
+AFTER_ID = r"(?![A-Za-z0-9])(?!_{1,3}[A-Za-z0-9])"
 FINDING_REF = re.compile(BEFORE_ID + r"U-[0-9]{3}" + AFTER_ID)
 FINDING_RANGE = re.compile(
     BEFORE_ID + r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
@@ -354,8 +355,11 @@ def _balanced(open_, close, inner, depth=4):
 
 
 TAG_NAME = r"[a-z][\w.:-]*"
-# JSX attribute expressions such as style={{ color: "red" }} nest braces.
-JSX_EXPRESSION = _balanced("{", "}", r"[^{}]")
+# JSX attribute expressions such as style={{ color: "red" }} nest braces; a brace
+# inside a string or template literal is text. A quote with no closing quote on
+# its line is plain text, so each character has one reading and no backtracking.
+JSX_EXPRESSION = _balanced("{", "}", r"""(?:"[^"\n]*"|"(?![^"\n]*")|'[^'\n]*'|'(?![^'\n]*')"""
+                                     r"""|`[^`]*`|`(?![^`]*`)|[^{}"'`])""")
 _ATTRIBUTE_VALUE = r"\s*=\s*(?:\"[^\"]*\"|'[^']*'|" + JSX_EXPRESSION + r"|[^\s\"'=<>`{}]+)"
 # Attribute names: plain, JSX {…}, Angular (event)/[prop]/[(model)]/*ngIf (always with a value) and #ref.
 TAG_ATTRIBUTE = (r"\s+(?:" + JSX_EXPRESSION + r"|[a-z_:@][\w.:@-]*(?:" + _ATTRIBUTE_VALUE + r")?"

@@ -18,8 +18,9 @@ SKILL = REPO / "skills" / "ux-scan"
 DOCS = sorted({*REPO.glob("*.md"), *REPO.glob("docs/*.md"), *SKILL.glob("*.md"),
                *SKILL.glob("reference/*.md")})
 # A path opens a code span and ends it, or is the command a span runs (`scripts/x.py --flag`).
-SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)(?=`|\s)")
-REPO_REF = re.compile(r"`((?:skills/ux-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])(?=`|\s)")
+# A directory may end in "/", and a ":line" or "#anchor" suffix is not part of the path.
+SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)(?=[`\s:#])")
+REPO_REF = re.compile(r"`((?:skills/ux-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_/-])(?=[`\s:#])")
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 
 
@@ -33,7 +34,7 @@ def problems():
             if not (base / ref.rstrip("/")).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for ref in sorted(set(REPO_REF.findall(text))):
-            if "*" not in ref and not (REPO / ref).exists():
+            if "*" not in ref and not (REPO / ref.rstrip("/")).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for target in sorted(set(LINK.findall(text))):
             if re.match(r"[a-z][a-z0-9+.-]*:", target) or "{{" in target:

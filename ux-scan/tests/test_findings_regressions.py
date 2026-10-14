@@ -488,7 +488,7 @@ class TransactionRegressions(unittest.TestCase):
         ]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["summary"],
-                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003, U-001, U-002.")
+                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003 through\nU-002.")
         self.assertEqual(changed["next_steps"], [
             "Below <640px fix U-001 first; above >1024px U-002 can wait.",
             "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",
@@ -496,6 +496,52 @@ class TransactionRegressions(unittest.TestCase):
             "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-003.",
         ])
         findings.check_findings(changed)
+
+    def test_renumber_follows_tag_grammar_url_brackets_and_underscore_emphasis(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Medium", "High", "Low")):
+            item["severity"] = severity
+        data["next_steps"] = [
+            "Viewports <sm (U-001) and >=lg (U-002); if a<b, U-001.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-001</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-001の通り。参考(https://example.com)U-002、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-001 to U-003_, _see U-001_ and __U-002, U-001__; keep a_U-001 and U-001_b.",
+            "Fix U-001 to\n\nU-002.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Viewports <sm (U-002) and >=lg (U-001); if a<b, U-002.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-002</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-002の通り。参考(https://example.com)U-001、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-002, U-001, U-003_, _see U-002_ and __U-001, U-002__; keep a_U-001 and U-001_b.",
+            "Fix U-002 to\n\nU-001.",
+        ])
+        findings.check_findings(changed)
+
+    def test_nested_unknown_keys_and_invisible_location_characters_are_refused(self):
+        cases = (
+            (lambda d: d["findings"][0].update(occurences=["a.tsx:1"]), "unknown key 'occurences'"),
+            (lambda d: d["findings"][0].update(references=[{"href": "https://x.org"}]), "unknown key 'href'"),
+            (lambda d: d["findings"][0]["validation"].update(evidnce="x"), "unknown key 'evidnce'"),
+            (lambda d: d["meta"].update(comit="abc"), "unknown key 'comit'"),
+            (lambda d: d["findings"][0].update(occurrences=[]), "occurrences"),
+            (lambda d: d["findings"][0].update(location="src/a\u2028b.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\x85.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a.tsx :1"), "location"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                data = copy.deepcopy(SAMPLE)
+                mutate(data)
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, ordered=False)
+        flows = copy.deepcopy(FLOWS)
+        flows["flows"][0]["screens"][0]["path"] = "x"
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'path'"):
+            findings.check_flows(flows)
 
     def test_unknown_sections_are_refused(self):
         data = copy.deepcopy(SAMPLE)
@@ -518,7 +564,7 @@ class TransactionRegressions(unittest.TestCase):
             findings.check_flows(flows)
         dropped = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"tokens": None}))
         self.assertNotIn("tokens", dropped)
-        last = FLOWS["flows"][-1]["id"]
+        last = next(fl["id"] for fl in FLOWS["flows"] if fl["priority"] == "secondary")
         removed = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"remove": {"flows": [last]}}))
         self.assertNotIn(last, findings.flow_ids(removed))
         for remove in ({"flows": ["FL-99"]}, {"flows": "FL-01"}, {"screens": []}, []):

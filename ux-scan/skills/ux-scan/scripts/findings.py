@@ -24,6 +24,7 @@ import json
 import math
 import re
 import sys
+import unicodedata
 from datetime import date
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -42,6 +43,14 @@ TOKEN_SCALES = ("spacing", "font_sizes", "breakpoints", "z_index")
 LIST_KEYS = ("checked_ok", "limitations", "decisions", "next_steps")
 RECORD_KEYS = ("schema_version", "meta", "summary", "perspectives", "findings", *LIST_KEYS)
 FLOWS_KEYS = ("app", "viewports", "locales", "tokens", "flows")
+FLOW_KEYS = ("id", "name", "priority", "actor", "goal", "source", "evidence", "screens")
+SCREEN_KEYS = ("name", "route", "location")
+META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales")
+FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
+                "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
+                "validation", "references")
+VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
+REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
               "FB": 5, "CP": 4, "AX": 6, "MO": 3, "IN": 4, "PP": 4}
 FAMILIES = tuple(HUNT_STEPS)
@@ -81,7 +90,8 @@ def _strings(value, where, nonempty=True):
 
 def _location(value, where):
     if (not isinstance(value, str) or not LOCATION.match(value) or "\\" in value
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            or any(unicodedata.category(c) in ("Cc", "Zl", "Zp") for c in value)
+            or value.rpartition(":")[0] != value.rpartition(":")[0].strip()):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
     path, _, lines = value.rpartition(":")
     if path.rsplit("/", 1)[-1] in ("", "."):
@@ -194,6 +204,7 @@ def check_flows(flows):
             raise RecordError(f"{where}.id: duplicate {fid}")
         seen.add(fid)
         where = f"flow {fid}"
+        _known_keys(fl, FLOW_KEYS, where)
         if fl.get("priority") not in PRIORITIES:
             raise RecordError(f"{where}.priority: expected one of {', '.join(PRIORITIES)}")
         if fl.get("source") not in SOURCES:
@@ -207,6 +218,7 @@ def check_flows(flows):
         for j, s in enumerate(screens):
             if not isinstance(s, dict):
                 raise RecordError(f"{where}.screens[{j}]: expected an object")
+            _known_keys(s, SCREEN_KEYS, f"{where}.screens[{j}]")
             _str(s, "name", f"{where}.screens[{j}]", required=True)
             _str(s, "route", f"{where}.screens[{j}]")
             _location(s.get("location"), f"{where}.screens[{j}].location")
@@ -229,6 +241,7 @@ def check_findings(data, flow_ids=None, ordered=True):
     meta = data.get("meta")
     if not isinstance(meta, dict):
         raise RecordError("meta: expected an object")
+    _known_keys(meta, META_KEYS, "meta")
     for key in ("project", "date", "assessor"):
         _str(meta, key, "meta", required=True)
     if not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z", meta["date"]):
@@ -265,6 +278,7 @@ def check_findings(data, flow_ids=None, ordered=True):
             raise RecordError(f"{where}.id: duplicate {fid}")
         seen.add(fid)
         where = f"finding {fid}"
+        _known_keys(f, FINDING_KEYS, where)
         for key, allowed in (("severity", SEVERITIES), ("confidence", CONFIDENCES), ("status", STATUSES)):
             if f.get(key) not in allowed:
                 raise RecordError(f"{where}.{key}: expected one of {', '.join(allowed)}")
@@ -281,11 +295,14 @@ def check_findings(data, flow_ids=None, ordered=True):
         if flow_ids is not None and ref not in flow_ids:
             raise RecordError(f"{where}.flow_ref: {ref} is not a flow in flows.json")
         location = _location(_str(f, "location", where, required=True), f"{where}.location")
+        if "occurrences" in f and not f["occurrences"]:
+            raise RecordError(f"{where}.occurrences: omit it or list every path:line the fix covers")
         for loc in _strings(f.get("occurrences", [location]), f"{where}.occurrences"):
             _location(loc, f"{where}.occurrences")
         validation = f.get("validation")
         if not isinstance(validation, dict):
             raise RecordError(f"{where}.validation: required")
+        _known_keys(validation, VALIDATION_KEYS, f"{where}.validation")
         if validation.get("verdict") not in VERDICTS:
             raise RecordError(f"{where}.validation.verdict: expected one of {', '.join(VERDICTS)}")
         _str(validation, "evidence", f"{where}.validation", required=validation["verdict"] != "Unverified")
@@ -296,6 +313,7 @@ def check_findings(data, flow_ids=None, ordered=True):
         for j, ref_ in enumerate(refs):
             if not isinstance(ref_, dict):
                 raise RecordError(f"{where}.references[{j}]: expected an object")
+            _known_keys(ref_, REFERENCE_KEYS, f"{where}.references[{j}]")
             _http(ref_.get("url"), f"{where}.references[{j}].url")
             for key in ("type", "title"):
                 _str(ref_, key, f"{where}.references[{j}]")
@@ -307,23 +325,29 @@ def check_findings(data, flow_ids=None, ordered=True):
     return data
 
 
-FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
+# An id is not part of a word or snake_case name, but may sit inside _emphasis_.
+BEFORE_ID = r"(?<![A-Za-z0-9])(?<![A-Za-z0-9]_)"
+AFTER_ID = r"(?![A-Za-z0-9])(?!_[A-Za-z0-9])"
+FINDING_REF = re.compile(BEFORE_ID + r"U-[0-9]{3}" + AFTER_ID)
 FINDING_RANGE = re.compile(
-    r"(?<![A-Za-z0-9_])(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
+    BEFORE_ID + r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
     r"(?P<first>U-[0-9]{3})(?P=first_ticks)(?P=first_style)"
-    # Dashes and tildes stay on one line, so a Markdown bullet list of ids is not a range.
-    r"(?:\s*(?:(?i:to|through)|から)\s*|[ \t]*[-–—−〜～~][ \t]*)"
+    # A range stays on one line, so a Markdown bullet list of ids is not a range.
+    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`*)(?P<last>U-[0-9]{3})"
-    r"(?P=last_ticks)(?P=last_style)(?![A-Za-z0-9_])(?:まで)?")
+    r"(?P=last_ticks)(?P=last_style)" + AFTER_ID + r"(?:まで)?")
 FINDING_MENTION = re.compile(
     FINDING_RANGE.pattern
-    + r"|(?<![A-Za-z0-9_])(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)(?![A-Za-z0-9_])"
+    + "|" + BEFORE_ID + r"(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)" + AFTER_ID
     + "|" + FINDING_REF.pattern)
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
 # balanced path components together without swallowing Markdown link labels.
 SOURCE_COMPONENT = r"(?:[^\s`<>\"'(),;/\\，、。；（）「」『』]|\([^()\s`<>\"',;/\\，、。；（）「」『』]*\))+"
+TAG_NAME = r"[a-z][\w.:-]*"
+TAG_ATTRIBUTE = (r"\s+(?:\{[^{}<>]*\}|[a-z_:@][\w.:@-]*"
+                 r"(?:\s*=\s*(?:\"[^\"]*\"|'[^']*'|\{[^{}]*\}|[^\s\"'=<>`{}]+))?)")
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
@@ -333,12 +357,13 @@ PROSE_PART = re.compile(
     # A code span closes only at a backtick run of exactly the opening length.
     r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
     r"|(?P<comment><!--.*?(?:-->|\Z))"
-    # Like CommonMark, "<" opens a tag only before a name, "/", "!" or "?", so
-    # "<640px … >1024px" stays prose.
-    r"|(?P<markup><(?=[a-z/!?])(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
-    # A URL, including raw Japanese path or query text, runs to whitespace,
-    # quotes, brackets or Japanese punctuation and is never rewritten.
-    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
+    # HTML and JSX tags follow the CommonMark open/closing tag grammar (JSX
+    # attributes may also be {expressions}), so "<640px … >1024px" and
+    # "<sm (U-001) and >lg" stay prose.
+    r"|(?P<markup><(?:" + TAG_NAME + r"(?:" + TAG_ATTRIBUTE + r")*\s*/?|/" + TAG_NAME + r"\s*|[!?][^<>]*)>)"
+    # A URL, including raw Japanese path or query text and balanced (…), runs
+    # to whitespace, quotes, an unbalanced bracket or Japanese punctuation.
+    r"|(?P<url>https?://(?:[^\s<>\"'`()\[\]{}，、。；（）「」『』]|\([^\s()<>]*\))+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(

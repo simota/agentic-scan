@@ -4,8 +4,11 @@
 
 ```sh
 python3 <skill-dir>/scripts/render.py <out>/findings.json --out <out> --lang ja|en --repo <repo> [--no-pdf]
-python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf]
+python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf] [--allow <lang>]
 ```
+
+`--allow ja` or `--allow en` names a second-language render in `<out>/<lang>`
+(SKILL.md *Independence*); the checker requires it to be current.
 
 `<skill-dir>` is the directory holding SKILL.md; never run a same-named script
 from the reviewed repository (SKILL.md *Paths*).
@@ -94,8 +97,14 @@ N/A with a reason; last, where to start and the one decision a human must make
 
 ## Chat summary
 
-Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 5 High, 10 Medium,
-6 Low (21 open) across 5 flows; both primary flows blocked`. Then:
+Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 6 High, 10 Medium,
+7 Low, 2 Info (25 open) across 5 flows; both primary flows blocked`. The
+status is `complete` when every flow and perspective family was reviewed, else
+`partial` (the gaps are in `limitations`). Counts are by severity over included
+findings (`FalsePositive` and `NotApplicable` left out), with Info counted;
+`open` counts those with status `Open`. A primary flow is blocked when an
+included High finding cites it in `flow_ref`. A missing PDF is reported in the
+outputs line, not in the status. Then:
 
 - the High findings, one line each with `path:line` and the flow they block
 - decisions that need a human (`decisions`)

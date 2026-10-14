@@ -206,12 +206,31 @@ class ReportRegressions(unittest.TestCase):
               '  "secretQuestion": "Your first pet?",', '  passwordHint: "Use a phrase",']
         (self.repo / "en.json").write_text("{\n" + "\n".join(ui) + "\n}\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "en.json:3")["lines"][1:5], ui)
-        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config"):
+        more = ["STRIPE_SECRET_KEY_LIVE=HIDDEN_FIVE", "DB_PASSWORD_PROD=HIDDEN_SIX", "AUTH_TOKEN_V2=HIDDEN_SEVEN",
+                "apiKeys: ['HIDDEN_EIGHT']", 'headers = {"Authorization": "Bearer HIDDEN_NINE_abcdef"}',
+                "key = 'sk_live_HIDDEN_TEN'", "aws = 'AKIAHIDDENELEVEN1234'"]
+        keep = ["tokens: { spacing: [4, 8, 12] },", "const designTokens = loadTokens();",
+                "passwordConfirmLabel: 'Repeat password',"]
+        (self.repo / "more.ts").write_text("\n".join(more + keep) + "\n", encoding="utf-8")
+        lines = render.snippet(self.repo, "more.ts:4-7")["lines"]
+        self.assertNotIn("HIDDEN", "\n".join(lines))
+        self.assertEqual(lines[-3:], keep)
+        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config", "deploy/prod.env", ".env-local",
+                     "service-account.json", "AuthKey.p8", ".htpasswd", "kubeconfig", ".docker/config.json"):
             path = self.repo / name
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("value = 1\n", encoding="utf-8")
             with self.subTest(name=name):
                 self.assertIsNone(render.snippet(self.repo, f"{name}:1"))
+
+    def test_pages_state_the_viewports_and_locales_judged_against(self):
+        self.data["meta"].update(viewports=["360x640", "768x1024"], locales=["en", "de"])
+        self.save_inputs()
+        for lang, label in (("en", "Viewports: 360x640, 768x1024"), ("ja", "ビューポート: 360x640, 768x1024")):
+            with self.subTest(lang=lang):
+                self.assertEqual(self.invoke(lang=lang)[0], 0)
+                for page in ("report.html", "dashboard.html"):
+                    self.assertIn(label, (self.out / page).read_text(encoding="utf-8"))
 
     def test_excerpt_lines_follow_editor_line_numbers(self):
         (self.repo / "a.js").write_bytes(
@@ -279,6 +298,19 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
         self.assertIn("en: the main pages are already in en",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))
+
+    def test_contract_requires_exactly_one_shared_flow(self):
+        for priorities in (("secondary",), ("shared", "shared")):
+            with self.subTest(priorities=priorities):
+                self.flows = copy.deepcopy(FLOWS)
+                shared = [fl for fl in self.flows["flows"] if fl["priority"] == "shared"]
+                shared[0]["priority"] = priorities[0]
+                if len(priorities) == 2:
+                    self.flows["flows"][-2]["priority"] = "shared"
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertIn("shared flows; record exactly one shared unit",
+                              "\n".join(contract_check.problems(self.out, no_pdf=True)))
 
     def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
         self.assertEqual(self.invoke()[0], 0)

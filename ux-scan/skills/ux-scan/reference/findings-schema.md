@@ -45,14 +45,16 @@ Required on every finding: `id`, `title`, `severity`, `confidence`, `status`,
 `Unverified`). The first fragment carries `meta` with `project`, `date` and
 `assessor`; `schema_version` is the integer `1`, and `date` is a real calendar
 date in `YYYY-MM-DD` form. Optional `meta.viewports` uses the same `WIDTHxHEIGHT`
-format as `flows.json`. `commit` is the reviewed repository's `git rev-parse HEAD`. Leave
+format as `flows.json`. `commit` is the reviewed repository's `git -C <repo> rev-parse HEAD`
+when `<repo>` is the top level of its own Git repository (`git -C <repo> rev-parse --show-toplevel`);
+for a directory inside a larger repository, record that repository's commit and name the subdirectory in `scope`. Leave
 `commit` out when the repository is not under Git or has no commit yet, and say
 so in `limitations`. When `git status --porcelain` is not empty, the review
 covers uncommitted changes: say so in `limitations` (which files, or how many).
 
 | Field | Rules |
 |---|---|
-| `id` | `U-` and three digits; unique; new ids follow merge order. After VERIFY, `scripts/findings.py renumber` produces consecutive ids from `U-001` in severity, path and starting-line order, with excluded findings last in their old id order (maximum 999 findings). `check` and rendering require this numbering and array order |
+| `id` | `U-` and three digits; unique; new ids follow merge order. After VERIFY, `scripts/findings.py renumber` produces consecutive ids from `U-001` in severity, path and starting-line order (findings at the same location keep their previous relative order), with excluded findings last in their old id order (maximum 999 findings). `check` and rendering require this numbering and array order |
 | `severity` | `High`, `Medium`, `Low`, `Info` (SKILL.md table) |
 | `confidence` | `Confirmed`, `Runtime-dependent`, `Suspected` (`reference/validation.md`) |
 | `status` | `Open`, `Fixed`, `Accepted` |
@@ -62,7 +64,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `viewport` | Optional: the viewport the defect shows at (`360x640`), when it depends on one |
 | `criterion` | What it fails: a WCAG 2.2 success criterion, the app's own token scale or documented pattern (with `path:line`), or a named usability heuristic. Never "looks bad" |
 | `location` | `path:line` or `path:line-line`, relative to the repository, using `/` separators; the fix location must name a file, not a directory or a trailing `/.` component. Line numbers are positive and a range's end cannot precede its start |
-| `occurrences` | Optional: every `path:line` the same fix covers |
+| `occurrences` | Optional: every `path:line` the same fix covers; when present, not empty |
 | `observed` / `expected` | The code or behaviour as found, and as the criterion wants it |
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
@@ -74,7 +76,9 @@ as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
 `limitations`, `decisions` and `next_steps`, and replaces `perspectives` entries
 by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`.
 A fragment may carry only the record's documented sections and `remove`; a
-misspelled section is refused rather than kept where nothing reads it.
+misspelled section is refused rather than kept where nothing reads it. The
+same holds inside `meta`, each finding, its `validation` and each reference:
+only the fields documented here are accepted.
 Every fragment section must have its documented type; findings and perspectives
 must be lists of objects, with unique `id` or `name` values within that fragment.
 List sections and removal lines contain strings. Use separate fragments to
@@ -85,12 +89,14 @@ file name or external URL does not identify a finding. Paths (including
 parenthesized route-group components), routes, relative Markdown link targets,
 http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
-protected individually; as in CommonMark, `<` starts a tag only before a name,
-`/`, `!` or `?`, so comparisons such as `<640px … >1024px` remain prose). A URL,
-including raw Japanese text in its path or query, runs to whitespace, quotes,
-brackets or Japanese punctuation such as `、` or `。`; write a space or
-punctuation between a URL and a following finding id, or that id is kept as
-part of the URL. Code spans close at a backtick run of the same
+protected individually when they follow the CommonMark tag grammar, with JSX
+`{…}` attributes allowed, so comparisons such as `<640px … >1024px` or
+`<sm (U-001) and >lg` remain prose). A URL, including raw Japanese text in its
+path or query and balanced parentheses, runs to whitespace, quotes, an
+unbalanced bracket or Japanese punctuation such as `、` or `。`; write a space
+between a URL and a following finding id, or that id is kept as part of the
+URL. Ids inside `_emphasis_` are references; ids joined to a word or
+snake_case name (`a_U-001`) are not. Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
 Markdown destinations are preserved even for extensionless paths, query-only
 URLs and reference-link definitions; link labels and titles remain prose and
@@ -101,11 +107,12 @@ their ids are not mistaken for references. Separate prose references from
 source paths with whitespace, punctuation or code spans; unseparated text that
 looks like one path is preserved as a source token.
 
-When ids move, explicit finding ranges using `to`, `through`, Japanese `から`
-(optionally followed by `まで`), or a hyphen, dash, `~`, `〜` or `～` on the
-same line expand to a
-comma-separated list of the same findings in their original range order. Ids in
-a Markdown bullet list are never a range.
+When ids move, explicit finding ranges written on one line using `to`,
+`through`, Japanese `から` (optionally followed by `まで`), or a hyphen, dash,
+`~`, `〜` or `～` expand to a
+comma-separated list of the same findings in their original range order. Ids on
+different lines, such as a Markdown bullet list, are never a range: each is
+renumbered on its own.
 The endpoints may each be wrapped in backticks or Markdown emphasis; those
 delimiters still identify finding references, and the expanded list keeps that
 formatting.

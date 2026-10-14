@@ -33,15 +33,19 @@ PDF_STAMP = "ux-scan-pdf"
 PAGE_STAMP = "ux-scan-page"
 PAGE_KIND_STAMP = "ux-scan-page-kind"
 PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">')
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|\.envrc|\.dev\.vars|.*\.tfvars(?:\.json)?|\.git|"
-                       r".*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
-                       r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
-# A secret-like name, possibly with a key-like suffix (SECRET_KEY, secretKey,
-# AWS_SECRET_ACCESS_KEY) but not UI text such as passwordLabel, assigned a value;
-# or credentials embedded in a URL (scheme://user:password@host).
-SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?key|private[_-]?key|access[_-]?key)"
-                         r"(?:[_.-]?(?:access[_-]?)?(?:key|token|hash|salt))?|token)\s*[\"']?\s*[:=]"
-                         r"|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:[-_.].*)?|.*\.env|\.envrc|\.dev\.vars|.*\.tfvars(?:\.json)?|\.git|"
+                       r".*\.(?:pem|key|p8|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|\.htpasswd|kubeconfig|\.docker|"
+                       r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*service[-_]?account.*\.json|.*secrets?(?:\..*)?|"
+                       r"\.npmrc|\.pypirc)$")
+# Name parts that make a secret-like word UI text (passwordLabel, secretQuestion).
+_UI_WORDS = r"label|placeholder|hint|help|text|title|message|error|question|prompt|description|visible|strength|toggle"
+# A secret-like name with any suffix (SECRET_KEY, DB_PASSWORD_PROD, AWS_SECRET_ACCESS_KEY,
+# AUTH_TOKEN_V2) assigned a value, unless the suffix names UI text; design "tokens"
+# are not secrets. Also bearer tokens, well-known key prefixes and URL credentials.
+SECRET_LINE = re.compile(r"(?i)(?:(?:secret|passw(?:or)?d|pwd|api[_-]?keys?|private[_-]?key|access[_-]?key)"
+                         r"(?![\w.-]*?(?:" + _UI_WORDS + r"))[\w.-]*|token(?:[_-][\w.-]*)?)\s*[\"']?\s*[:=]"
+                         r"|\bbearer\s+[\w.~+/-]{8,}|\b(?:sk|rk)_(?:live|test)_\w|\bgh[pousr]_\w{20}|\bxox[abpr]-\w"
+                         r"|\bAKIA[0-9A-Z]{16}\b|://[^/\s:@\"'`]+:[^/\s@\"'`]+@")
 # Only these end a line for path:line, as in editors and grep -n.
 SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
@@ -67,13 +71,15 @@ LABELS = {
            "verify_text": "Confirm the user reaches this state and it is not compensated elsewhere before changing it.",
            "observed": "Observed", "expected": "Expected", "criterion": "Criterion", "flow": "Flow",
            "screen": "Screen", "viewport": "Viewport", "occurrences": "Occurrences", "impact": "Impact",
-           "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]"},
+           "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]",
+           "viewports": "Viewports", "locales": "Locales"},
     "ja": {"kind": "UX診断", "title": "UX診断書", "dashboard_title": "UX診断結果",
            "running_footer": "UX診断", "fix": "修正", "verify": "先に検証",
            "verify_text": "変更する前に、利用者が実際にこの状態に到達し、他の箇所で補われていないことを確認してください。",
            "observed": "現状", "expected": "あるべき状態", "criterion": "判断基準", "flow": "フロー",
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
-           "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]"},
+           "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]",
+           "viewports": "ビューポート", "locales": "ロケール"},
 }
 
 
@@ -155,6 +161,15 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
 
 
+def judged_scope(meta, T):
+    """The scope with the supported viewports and locales it was judged against."""
+    parts = [meta.get("scope", "")]
+    for key in ("viewports", "locales"):
+        if meta.get(key):
+            parts.append(f"{T[key]}: {', '.join(meta[key])}")
+    return " · ".join(p for p in parts if p)
+
+
 def to_common(data, lang, flows=None, repo=None):
     """data (findings.json) as a scan-report/1 record."""
     T, fam, prio = LABELS[lang], FAMILIES[lang], PRIORITY[lang]
@@ -190,7 +205,8 @@ def to_common(data, lang, flows=None, repo=None):
     meta = data["meta"]
     return {
         "format": report.FORMAT,
-        "meta": {k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
+        "meta": {**{k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
+                 **({"scope": scope} if (scope := judged_scope(meta, T)) else {})},
         "report": {k: T[k] for k in ("kind", "title", "dashboard_title", "running_footer")},
         "summary": data.get("summary", ""),
         "findings": findings,

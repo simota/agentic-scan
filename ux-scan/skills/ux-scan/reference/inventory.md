@@ -76,7 +76,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `inputs` | `input` / `select` / `textarea` without a programmatic label (no nonblank `aria-label`, `aria-labelledby`, `title`, matching `for` / `htmlFor` — a literal, or an expression such as `htmlFor={id}` used by exactly one label and, as `id`, by exactly one field in the file; a repeated expression may carry different values per component and stays a candidate — or wrapping `<label>`), personal-data fields without `autocomplete`, email or phone fields with the wrong `type`; `placeholder_only` when a placeholder stands in for the label | FM1, FM4 |
 | `icon_buttons` | `<button>` whose content is only elements (an icon) and that has no nonblank `aria-label`, `aria-labelledby` or `title`, nor a child `<img>` with nonblank `alt` or a child `aria-label`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
-| `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1 |
+| `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1, ST3 |
 | `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`) in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes | IN1, IN2 |
@@ -84,11 +84,11 @@ These Next.js exclusions do not apply to Svelte route segments.
 
 With `--flows`, also:
 
-| Key | What it adds |
-|---|---|
-| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed) |
-| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it |
-| `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left |
+| Key | What it adds | Perspective |
+|---|---|---|
+| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed) | LG2, LG3, VH2, RS1, CC2 |
+| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it | RS2 |
+| `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left | IN3 |
 
 `flows_sha256` records a SHA-256 digest of the complete flows record using
 canonical JSON (sorted object keys, compact separators, UTF-8, no non-finite

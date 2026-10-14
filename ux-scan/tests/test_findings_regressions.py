@@ -484,6 +484,7 @@ class TransactionRegressions(unittest.TestCase):
             "Below <640px fix U-002 first; above >1024px U-003 can wait.",
             "Widths < 360 break U-002 and widths > 1280 break U-003. Keep <b>U-001</b>.",
             "参照: https://www.w3.org/WAI/WCAG22/とU-001も同様",
+            "See https://example.com/日本?finding=U-001 and U-001.",
         ]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["summary"],
@@ -492,6 +493,7 @@ class TransactionRegressions(unittest.TestCase):
             "Below <640px fix U-001 first; above >1024px U-002 can wait.",
             "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",
             "参照: https://www.w3.org/WAI/WCAG22/とU-003も同様",
+            "See https://example.com/日本?finding=U-001 and U-003.",
         ])
         findings.check_findings(changed)
 

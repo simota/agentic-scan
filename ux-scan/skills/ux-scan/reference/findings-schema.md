@@ -87,7 +87,8 @@ http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually; as in CommonMark, `<` starts a tag only before a name,
 `/`, `!` or `?`, so comparisons such as `<640px … >1024px` remain prose). A URL
-ends at whitespace, quotes, brackets or Japanese text. Code spans close at a backtick run of the same
+ends at whitespace, quotes, brackets or Japanese text written after it;
+Japanese text followed by `/`, `?`, `#`, `&` or `=` stays part of the URL. Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
 Markdown destinations are preserved even for extensionless paths, query-only
 URLs and reference-link definitions; link labels and titles remain prose and

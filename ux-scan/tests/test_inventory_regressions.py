@@ -967,8 +967,11 @@ class InventoryRegressionTests(unittest.TestCase):
             '<button onClick={go}><img src="/x.svg" alt="Close" width="16" height="16"/></button>\n'
             '<button onClick={go}><svg aria-label="Menu"><path d="M0"/></svg></button>\n'
             '<button onClick={go}><img src="/x.svg" alt="" width="16" height="16"/></button>\n'
-            '<button onClick={go}><img src="/x.svg" alt={""} width="16" height="16"/></button>\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3", "B.jsx:4"])
+            '<button onClick={go}><img src="/x.svg" alt={""} width="16" height="16"/></button>\n'
+            '<button onClick={go}><svg aria-label={""}/></button>\n'
+            '<button onClick={go}><svg aria-labelledby={ \'\' }/></button>\n'
+            '<button onClick={go}><svg aria-label={label}/></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3", "B.jsx:4", "B.jsx:5", "B.jsx:6"])
 
     def test_sveltekit_layout_reset_pages_are_routes(self):
         data = self.scan({"src/routes/about/+page@.svelte": "<h1>About</h1>\n",

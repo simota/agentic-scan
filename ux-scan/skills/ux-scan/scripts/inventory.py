@@ -155,8 +155,9 @@ LINE_COMMENT_LANGS = {"scss", "sass", "less", "stylus", "styl"}
 MARKUP_TOKEN = re.compile(r"<!--|\{/\*|<([A-Za-z][\w.:-]*)(?=[\s/>])")
 JSX_TOKEN = re.compile(r"""\{/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""", re.S)
 # A child that names an icon-only button: an image's alt text or a child's aria-label.
-INNER_NAME = re.compile(r"""(?i)<img\b[^<>]*?\salt\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{(?!\s*(["'`])\s*\1\s*\}))|"""
-                        r"""\saria-label(?:ledby)?\s*=\s*(?:"\s*[^"\s]|'\s*[^'\s]|\{)""")
+# A blank value, quoted or as a {""} expression, names nothing.
+INNER_NAME = re.compile(r"""(?i)(?:<img\b[^<>]*?\salt|\saria-label(?:ledby)?)\s*=\s*"""
+                        r"""(?:"\s*[^"\s]|'\s*[^'\s]|\{(?!\s*(["'`])\s*\1\s*\}))""")
 RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"}
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 

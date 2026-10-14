@@ -324,6 +324,7 @@ FINDING_LIST = re.compile(
 # Parentheses may be part of a path, especially Next.js route groups. Keep
 # balanced path components together without swallowing Markdown link labels.
 SOURCE_COMPONENT = r"(?:[^\s`<>\"'(),;/\\，、。；（）「」『』]|\([^()\s`<>\"',;/\\，、。；（）「」『』]*\))+"
+JAPANESE = "\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef"
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
@@ -336,8 +337,10 @@ PROSE_PART = re.compile(
     # Like CommonMark, "<" opens a tag only before a name, "/", "!" or "?", so
     # "<640px … >1024px" stays prose.
     r"|(?P<markup><(?=[a-z/!?])(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
-    # A URL ends before Japanese text written directly after it.
-    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』\u3000-\u30ff\u3400-\u9fff\uf900-\ufaff\uff00-\uffef]+)"
+    # A URL ends before Japanese text written directly after it; Japanese text
+    # followed by a path or query delimiter is part of the URL (/日本?q=…).
+    r"|(?P<url>https?://(?:[^\s<>\"'`，、。；（）「」『』" + JAPANESE + r"]+"
+    r"|[" + JAPANESE + r"]+(?=[/?#&=]))+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(

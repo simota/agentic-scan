@@ -984,6 +984,89 @@ class InventoryRegressionTests(unittest.TestCase):
                           "src/routes/team/+page@(app).svelte": "<h1>Team</h1>\n"})
         self.assertEqual(sorted(r["route"] for r in data["routes"]), ["/about", "/team"])
 
+    def test_destructive_handlers_passed_by_reference(self):
+        data = self.scan({
+            "D.jsx": "<button onClick={handleDelete}>x</button>\n<button onClick={ props.onRemove }>x</button>\n"
+                     "<button onClick={openMenu}>x</button>\n",
+            "E.vue": '<template><button @click="deleteTask">x</button></template>\n',
+        })
+        self.assertEqual([(r["call"], r["location"]) for r in data["destructive_actions"]],
+                         [("handleDelete", "D.jsx:1"), ("props.onRemove", "D.jsx:2"), ("deleteTask", "E.vue:1")])
+
+    def test_pathological_inputs_stay_linear(self):
+        import time
+        cases = {
+            "a.html": '<div onclick="' + "a." * 20000 + 'x">y</div>\n',
+            "b.html": '<div onclick="' + "aDelete" * 10000 + '">y</div>\n',
+            "c.jsx": "<Route " * 20000,
+            "d.scss": ".a { b: " + "url(" * 20000 + " }\n",
+            "e.jsx": "<a {" * 20000,
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_javascript_comments_in_braces_do_not_hide_later_markup(self):
+        data = self.scan({"P.svelte": "<button on:click={() => { // don't\n go() }}>ok</button>\n"
+                                      '<img src="a.png">\n<div on:click={x}>y</div>\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["P.svelte:3"])
+        self.assertEqual([r["location"] for r in data["click_handlers"]], ["P.svelte:4"])
+
+    def test_icon_button_with_long_svg_path(self):
+        data = self.scan({"I.jsx": '<button onClick={go}>\n<svg viewBox="0 0 24 24"><path d="M' + "1 2 " * 600
+                                   + '"/></svg>\n</button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["I.jsx:1"])
+
+    def test_choice_inputs_and_separate_name_and_id(self):
+        data = self.scan({"f.html":
+            '<label><input type="checkbox" name="email_notifications"> Email me</label>\n'
+            '<label><input type="radio" name="phone_verified"> Verified</label>\n'
+            '<label for="n2">Name</label><input name="name" id="n2">\n'})
+        self.assertEqual([(r["location"], r["missing"]) for r in data["inputs"]], [("f.html:3", ["autocomplete"])])
+
+    def test_preprocessor_interpolation_stays_in_the_selector(self):
+        data = self.scan({"a.scss": ".btn-#{$s} { height: 20px; }\n.icon-#{$s}:focus { outline: none; }\n"
+                                    ".chip-@{x} { width: 18px; }\n"})
+        self.assertEqual([r["selector"] for r in data["tap_targets"]], [".btn-#{$s}", ".chip-@{x}"])
+        self.assertEqual([r["selector"] for r in data["focus_outline"]], [".icon-#{$s}:focus"])
+
+    def test_angular_bindings_and_router_links(self):
+        data = self.scan({"c.component.html":
+            '<button [attr.aria-label]="label" (click)="close()"><mat-icon svgIcon="x"></mat-icon></button>\n'
+            '<input [attr.aria-label]="label" name="q">\n'
+            '<a routerLink="/account" (click)="track()">Account</a>\n',
+            "routes.ts": "export const routes = [{ path: '/account' }];\n"})
+        self.assertEqual(data["icon_buttons"], [])
+        self.assertEqual(data["inputs"], [])
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_container_queries_are_not_breakpoints(self):
+        data = self.scan({"a.css": "@container card (min-width: 400px) { .a { color: red; } }\n"
+                                   "@media (min-width: 640px) { .b { color: red; } }\n"})
+        self.assertEqual([r["value"] for r in data["breakpoints"]], ["640px"])
+
+    def test_invisible_focus_values_are_not_replacements(self):
+        data = self.scan({"a.css": ".a:focus { outline: none; border: 0 none; }\n"
+                                   ".b:focus { outline: none; background: inherit; }\n"
+                                   ".c:focus { outline: none; border: 2px solid; }\n"})
+        self.assertEqual([r["replacement_in_rule"] for r in data["focus_outline"]], [False, False, True])
+
+    def test_vue_string_literal_links_reach_routes(self):
+        data = self.scan({"Nav.vue": "<template><router-link :to=\"'/about'\">About</router-link></template>\n",
+                          "router.js": "export default [{ path: '/about' }];\n"})
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_server_template_styles_are_measured(self):
+        data = self.scan({"page.php": "<style>\n.btn { width: 20px; outline: none; padding: 13px; }\n</style>\n"
+                                      '<div style="width: 400px">x</div>\n'})
+        self.assertEqual([r["location"] for r in data["tap_targets"]], ["page.php:2"])
+        self.assertEqual([r["location"] for r in data["focus_outline"]], ["page.php:2"])
+        self.assertEqual([r["value"] for r in data["fixed_widths"]], ["400px"])
+        self.assertEqual([r["value"] for r in data["spacing"]], ["13px"])
+
 
 if __name__ == "__main__":
     unittest.main()

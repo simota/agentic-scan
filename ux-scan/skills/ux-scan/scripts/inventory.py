@@ -47,7 +47,9 @@ MAX_INTEGER_DIGITS = 1000
 MAX_LOCALE_DEPTH = 256
 
 CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
-EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro"}
+# Files whose <style> blocks and style attributes are measured as CSS, including server templates.
+EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro", ".erb", ".hbs", ".handlebars", ".ejs", ".php",
+                 ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".j2"}
 JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"}
 MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html", ".htm", ".erb", ".hbs",
               ".handlebars", ".ejs", ".php", ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".j2", ".mdx"}
@@ -86,7 +88,8 @@ JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])
 # Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
 # and bracketed regions are tracked by css_rules, including unquoted data URLs.
 # A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
-CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|[{};()[\]]''', re.S)
+# Sass #{…} and Less @{…} interpolation are part of a selector, not a rule's braces.
+CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|#\{[^{}]*\}|@\{[\w-]*\}|[{};()[\]]''', re.S)
 SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b")
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 _NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
@@ -97,7 +100,8 @@ JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']
 FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
                                r"(?:-(?:start|end))?)?(?:-(?:color|style|width))?|background(?:-color|-image)?|"
                                r"text-decoration(?:-line|-color|-style|-thickness)?|outline(?:-color|-style|-width)?)"
-                               r"\s*:(?!\s*(?:none|0(?:\.0+)?(?:px|em|rem)?|transparent)\s*(?:!important\s*)?(?:;|$))",
+                               r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
+                               r"\s*)+(?:!important\s*)?(?:;|$))",
                                re.M)
 CSS_MOTION = re.compile(r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
 JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
@@ -121,11 +125,15 @@ EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\
 # A destructive verb leads the callee (deleteTask, Remove) or follows a camelCase
 # prefix (handleDelete, onRemove, props.onDiscard). "dropdown", drag-and-drop
 # handlers (onDrop) and past-tense predicates (isDeleted) are not destructive.
-DESTRUCTIVE = re.compile(r"\b((?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purge|drop(?!down))|"
-                         r"[a-z_]\w*?(?:(?:Delete|Remove|Discard|Erase|Purge)(?!d)|Destroy(?!ed)))\w*)\s*\(")
+_DESTRUCTIVE_NAME = (r"(?:\w+\.)*(?:(?i:delete|remove|destroy|discard|erase|purge|drop(?!down))|"
+                     r"[a-z_]\w*?(?:(?:Delete|Remove|Discard|Erase|Purge)(?!d)|Destroy(?!ed)))\w*")
+# A call inside a handler, or the handler passed by name (onClick={handleDelete}, @click="deleteTask").
+DESTRUCTIVE = re.compile(r"(?<![\w.])(" + _DESTRUCTIVE_NAME + r")\s*\(")
+DESTRUCTIVE_REFERENCE = re.compile(r"\s*\{?\s*(" + _DESTRUCTIVE_NAME + r")\s*\}?\s*")
+MAX_HANDLER_SCAN = 4000
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
-ROUTE = re.compile(r"<Route\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
-LINK = re.compile(r"(?<![\w-])(?:to|href)\s*=\s*\{?\s*[\"'`](/[^\"'`?#]*)|"
+ROUTE = re.compile(r"<Route\b[^<>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+LINK = re.compile(r"(?<![\w-])(?i:to|href|routerlink)\s*=\s*\{?\s*[\"'`][\"'`]?(/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)")
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
@@ -148,7 +156,7 @@ ATTR_NAME = re.compile(r"[^\s=<>/{}\"']+")
 CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
 # Sass, Less and Stylus also have line comments; "//" inside an unquoted url(…)
 # or after ":" or "(" is part of a URL.
-LINE_CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|(?i:url)\([^)'"\n]*\)|(?<![:(/\\])//[^\n]*|"""
+LINE_CSS_COMMENTS = re.compile(r"""/\*.*?(?:\*/|$)|(?i:url)\([^()'"\n]*\)|(?<![:(/\\])//[^\n]*|"""
                                r""""(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'""", re.S)
 LINE_COMMENT_EXT = {".scss", ".sass", ".less", ".styl"}
 LINE_COMMENT_LANGS = {"scss", "sass", "less", "stylus", "styl"}
@@ -339,6 +347,11 @@ def js_lengths(bare, quoted, warn=None):
     return lengths(quoted or "", warn)
 
 
+def comment_start(text, i):
+    """A JavaScript comment follows whitespace or a delimiter; "/" after anything else is a regex or division."""
+    return i == 0 or text[i - 1] in " \t\r\n{}(),;"
+
+
 def skip_braces(text, i, limit):
     """Index just past the brace group opening at text[i], or None when it does not close within limit."""
     depth, quote, n = 0, None, min(len(text), i + limit)
@@ -348,10 +361,18 @@ def skip_braces(text, i, limit):
             if c == "\\":
                 i += 2
                 continue
-            if c == quote:
+            if c == quote or (c == "\n" and quote != "`"):  # Only template literals span lines.
                 quote = None
         elif c in "\"'`":
             quote = c
+        elif text.startswith("//", i) and comment_start(text, i):  # A comment's apostrophe opens no string.
+            newline = text.find("\n", i, n)
+            i = n if newline < 0 else newline
+            continue
+        elif text.startswith("/*", i) and comment_start(text, i):
+            close = text.find("*/", i + 2, n)
+            i = n if close < 0 else close + 2
+            continue
         elif c == "{":
             depth += 1
         elif c == "}":
@@ -365,7 +386,8 @@ def skip_braces(text, i, limit):
 def read_tag(text, i, limit=None, vue=False):
     """Read attributes once, returning the consumed offset even on malformed tags.
 
-    Attribute spans let embedded-language scans preserve source offsets. A raw
+    Returns (parsed or None, offset, spans); spans is None when an attribute
+    expression never closes. Attribute spans let embedded-language scans preserve source offsets. A raw
     '<' outside a quoted value or expression begins the next token; malformed
     prefixes therefore cannot repeatedly rescan the rest of the file.
     """
@@ -382,7 +404,7 @@ def read_tag(text, i, limit=None, vue=False):
         elif c == "{":
             j = skip_braces(text, i, stop - i)
             if j is None:
-                return None, stop, {}
+                return None, stop, None  # None spans: an expression that never closes.
             spread = spread or text[i + 1:j].lstrip().startswith("...")
             i = j
         else:
@@ -407,7 +429,7 @@ def read_tag(text, i, limit=None, vue=False):
                 elif k < stop and text[k] == "{":
                     end = skip_braces(text, k, stop - k)
                     if end is None:
-                        return None, stop, {}
+                        return None, stop, None
                     value, i = text[k:end], end
                     span = (k, end, True)
                 else:
@@ -416,6 +438,12 @@ def read_tag(text, i, limit=None, vue=False):
                         return None, k, {}
                     value, i = html.unescape(m.group(0)), m.end()
                     span = (k, i, False)
+            if name.startswith("[") and name.endswith("]") and len(name) > 2:
+                # Angular property bindings: [attr.aria-label]="label" supplies aria-label.
+                name = name[1:-1].removeprefix("attr.")
+                value = "{" + (value if isinstance(value, str) else name) + "}"
+                if span:
+                    span = (*span[:2], True)
             if vue:
                 if name == "v-bind" or name.startswith("v-bind.") or name.startswith((":[", "v-bind:[")):
                     spread = True  # An object or dynamic key can supply any missing attribute.
@@ -524,9 +552,15 @@ def expression_tags(text, start, stop, *, html_names=False, vue=False):
     inspect their tag candidates; a full JavaScript grammar is outside this
     lightweight inventory's scope.
     """
+    skip = start
     for match in TAG_TOKEN.finditer(text, start, stop):
-        parsed, _, spans = read_tag(text, match.end(), limit=min(4000, stop - match.end()), vue=vue)
-        if parsed is not None:
+        if match.start() < skip:
+            continue  # Inside a brace group that already failed to close; do not rescan it.
+        parsed, cursor, spans = read_tag(text, match.end(), limit=min(4000, stop - match.end()), vue=vue)
+        if parsed is None:
+            if spans is None:  # Later tags inside an unclosed expression would rescan it.
+                skip = max(skip, cursor)
+        else:
             attrs, spread, end, self_closing = parsed
             name = match.group(2).lower() if html_names else match.group(2)
             yield MarkupTag(name, attrs, spread, match.start(), end, self_closing,
@@ -751,11 +785,15 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         if not has_confirmation:
             for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
                 if event_name(attr) in DESTRUCTIVE_ATTRS:
-                    for match in DESTRUCTIVE.finditer(clean, handler_start, handler_end):
-                        if match.start(1) not in destructive_offsets:
-                            destructive_offsets.add(match.start(1))
-                            acc["destructive_actions"].append({"call": match.group(1),
-                                                               "location": f"{rel}:{source_lines(match.start(1))}"})
+                    scan_end = min(handler_end, handler_start + MAX_HANDLER_SCAN)
+                    matches = list(DESTRUCTIVE.finditer(clean, handler_start, scan_end))
+                    reference = DESTRUCTIVE_REFERENCE.fullmatch(clean, handler_start, handler_end)
+                    for start_, call in ([(m.start(1), m.group(1)) for m in matches] if matches
+                                         else [(reference.start(1), reference.group(1))] if reference else []):
+                        if start_ not in destructive_offsets:
+                            destructive_offsets.add(start_)
+                            acc["destructive_actions"].append({"call": call,
+                                                               "location": f"{rel}:{source_lines(start_)}"})
         if spread:
             continue  # Props passed through a spread are unknown here.
         tabindex_span = tag.attribute_spans.get("tabindex")
@@ -765,7 +803,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             acc["positive_tabindex"].append({"element": name, "value": value, "location": loc})
         events = {event_name(a) for a in attrs}
         if any(a in events for a in CLICK_ATTRS) and (
-                (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs)):
+                (lname in NON_INTERACTIVE and name == lname) or (name == "a" and "href" not in attrs and "routerlink" not in attrs)):
             missing = [label for label, keys in (("role", ("role",)), ("tabindex", ("tabindex",)), ("key handler", KEY_ATTRS))
                        if not any(k in attrs or k in events for k in keys)]
             if missing:
@@ -781,7 +819,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             kind = ("unknown" if dynamic_type else (literal(type_attr) or "text").lower()) if name == "input" else name
             if kind in ("hidden", "submit", "button", "reset", "image"):
                 continue
-            ident = " ".join(x for x in (literal(attrs.get("name")), literal(attrs.get("id"))) if x)
+            names = [x for x in (literal(attrs.get("name")), literal(attrs.get("id"))) if x]
+            ident = " ".join(names)
+            # A checkbox or radio about email (email_notifications) is not an email address field.
+            entry = kind not in ("checkbox", "radio", "range", "color", "file")
             label_index = bisect_right(label_starts, start) - 1
             in_label = label_index >= 0 and start < label_spans[label_index][1]
             ident_attr = attrs.get("id")
@@ -789,18 +830,20 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                         or (isinstance(ident_attr, str) and literal(ident_attr) is None
                             and label_expression(ident_attr) in labels_for))
             missing = [] if labelled else ["label"]
-            if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
+            if (entry and (any(PERSONAL.search(x) for x in names) or kind in ("email", "password", "tel"))
+                    and "autocomplete" not in attrs):
                 missing.append("autocomplete")
-            if name == "input" and not dynamic_type and re.search(r"(?i)e-?mail", ident) and kind != "email":
+            if entry and name == "input" and not dynamic_type and re.search(r"(?i)e-?mail", ident) and kind != "email":
                 missing.append("type=email")
-            if name == "input" and not dynamic_type and re.search(r"(?i)\btel\b|phone|mobile", ident) and kind != "tel":
+            if (entry and name == "input" and not dynamic_type and re.search(r"(?i)\btel\b|phone|mobile", ident)
+                    and kind != "tel"):
                 missing.append("type=tel")
             if missing:
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
         named = has_name(attrs)
         if name == "button" and not closing and not named:
-            close = re.compile(r"</button\s*>", re.I if html_names else 0).search(clean, end, end + 1200)
+            close = re.compile(r"</button\s*>", re.I if html_names else 0).search(clean, end, end + 20000)
             inner = clean[end:close.start()] if close else ""
             if "<" in inner and not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
                 acc["icon_buttons"].append({"element": name, "location": loc})
@@ -928,6 +971,9 @@ def inventory(root, flows=None):
                 acc["focus_outline"].append({"selector": "(style object)", "location": at(m.start()),
                                              "replacement_in_rule": None, "focus_visible_rule_in_file": None})
         for m in MEDIA.finditer(text):
+            rule_start = max(text.rfind(c, 0, m.start()) for c in "{};") + 1
+            if "@container" in text[rule_start:m.start()]:
+                continue  # A container query tests a component's width, not the viewport.
             for number, unit in zip(m.groups()[::2], m.groups()[1::2]):
                 value = px(number, unit, warn_at(m.start())) if number else None
                 if value is not None:

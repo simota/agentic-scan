@@ -21,8 +21,16 @@ viewport and criterion, and both pages state the viewports and locales from
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
 from a UTF-8 file no larger than 2 MiB. Files outside the repository, binaries,
 symlinks (including directory links), and secret-looking paths are omitted;
-secret-looking assignment lines are masked in full, judged on the shown text plus 512 characters after it so a credential cut off at the limit is masked too. These name and text rules
-are conservative heuristics, not a complete credential audit. Report text and
+lines that hold a secret are masked in full (`scripts/secret_lines.py`): known
+credential formats (provider token prefixes, JWTs, private-key blocks found
+anywhere in the file, credentials in URLs or command lines, bearer and basic
+authorization values), and secret-like names (password, secret, token, API
+key, credentials…) assigned a literal that is not a label. Labels such as
+"Password" or "パスワード", types, expressions, references and booleans stay
+visible, since forms and locale files are what UX findings cite. Each line is
+judged on the shown text plus 512 characters after it, so a credential cut
+off at the limit is masked too. These rules are conservative heuristics, not
+a complete credential audit. Report text and
 source excerpts remain escaped text in the HTML. `--out` must resolve outside
 `--repo`, which must name an existing directory. The findings input must not
 occupy any generated output path, including through a directory symlink or hardlink;

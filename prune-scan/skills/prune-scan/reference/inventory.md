@@ -25,7 +25,9 @@ and `*.kdbx`. Source code whose file or directory name only contains
 `client_secret.py`) is read for its imports and identifiers, so what it uses
 is not reported unused, but none of its literal text reaches the output: no
 `text` excerpts, flag names, routes or dynamic key and class prefixes (its flag
-checks and prefixes still keep what they name from being listed). Data files
+checks and prefixes still keep what they name from being listed; an env var it
+alone reads is not promoted to a flag). Like any source, the names of env vars
+it reads appear in `env_read`, never their values. Data files
 with such names (`credentials.json`, `secrets.yaml`) are skipped.
 
 On POSIX, files are opened

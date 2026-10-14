@@ -95,6 +95,18 @@ class ThirdReviewTests(unittest.TestCase):
         self.assertEqual(result["i18n_dynamic_prefixes"], [])
         self.assertEqual(result["css_dynamic_prefixes"], [])
 
+    def test_env_flags_read_only_in_secret_sources_are_not_rows(self):
+        result = scan({
+            "src/credentials.ts": "const a = process.env.ENABLE_PRIVATE_CUSTOMER;\nconst b = process.env.ENABLE_SHARED;\n",
+            "src/app.ts": "const b = process.env.ENABLE_SHARED;\n",
+        })
+        self.assertEqual([(row["name"], row["checks"]) for row in result["feature_flags"]], [("ENABLE_SHARED", 2)])
+
+    def test_kube_files_of_any_name_are_never_read(self):
+        result = scan({".kube/prod.yaml": "# deprecated 2024-01-01 token SEKRITVALUE2\n"})
+        self.assertEqual(result["files_scanned"], 0)
+        self.assertNotIn("SEKRITVALUE2", json.dumps(result))
+
     def test_kube_directory_is_never_read(self):
         result = scan({".kube/config.prod": "server: https://k8s.example  # TODO 2024-01-01 SEKRITVALUE1\n"})
         self.assertEqual(result["files_scanned"], 0)

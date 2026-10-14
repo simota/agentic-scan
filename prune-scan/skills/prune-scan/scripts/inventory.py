@@ -1442,7 +1442,9 @@ def inventory(root, units=None, today=None):
         if name in flags:
             flags[name]["checks"].append(location)
     for name, locs in reads.items():
-        if ENV_FLAG.match(name):
+        # Only reads outside secret-named sources make an env var a flag row.
+        public = [loc for loc in locs if loc.rpartition(":")[0] not in secret_sources]
+        if ENV_FLAG.match(name) and (public or name in flags):
             flags[name]["checks"].extend(locs)
             flags[name]["source"] = "env"
     rows["feature_flags"] = [

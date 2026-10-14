@@ -18,10 +18,31 @@
       "ja"
     ]
   },
-  "summary": "主要タスクの両方に、完了を妨げる問題があります。新規登録はサーバーが拒否すると入力内容をすべて消し、タスク一覧はマウスでしか操作できません。行はクリック可能な div で、削除ボタンは名前のないアイコンで、押すと取り消しなしで即座に削除されます。360px のスマートフォン幅では 480px のサイドバーが一覧を画面外へ押し出し、ズームも無効です。加えて、一覧に読み込み中・空・エラーの状態がなく、すべてのボタンでフォーカスが見えず、ドイツ語のラベルが途中で切れています。",
+  "summary": "主要タスクの両方に、完了を妨げる問題があります。新規登録はサーバーが拒否すると入力内容をすべて消し、新しいタスクを保存すると入力したタイトルが捨てられ、タスク一覧はマウスでしか操作できません。行はクリック可能な div で、削除ボタンは名前のないアイコンで、押すと取り消しなしで即座に削除されます。360px のスマートフォン幅では 480px のサイドバーが一覧を画面外へ押し出し、ズームも無効です。加えて、一覧に読み込み中・空・エラーの状態がなく、すべてのボタンでフォーカスが見えず、タスク名が途中で切れて続きを読めません。",
   "findings": [
     {
       "id": "U-001",
+      "title": "新しいタスクを保存すると入力したタイトルが捨てられる",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM5",
+      "flow_ref": "FL-02",
+      "screen": "タスク追加ダイアログ（/）",
+      "criterion": "主要タスクが完了し、利用者の入力が保たれる（重大度表: データや入力の消失）",
+      "location": "src/components/AddTaskModal.tsx:11",
+      "observed": "<button onClick={onClose}>保存</button>。title の状態はどこにも送られず、api.ts に作成の呼び出しがない",
+      "expected": "保存でタスクを作成して一覧に表示し、成功したときだけダイアログを閉じる。",
+      "impact": "主要タスクであるタスク追加を完了できない。ダイアログが閉じ、入力したタイトルは失われる。",
+      "fix": "タイトルを作成 API に送り、成功したら閉じ、失敗したらエラーを示して入力を残す。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "AddTaskModal.tsx:5 と :10 はタイトルをローカルの状態に持つだけで、:11 は閉じるだけ。src/api.ts は open と remove しか公開していない。",
+        "intent_checked": "ほかにタスクを作成するコードはない。"
+      }
+    },
+    {
+      "id": "U-002",
       "title": "サーバーが登録を拒否すると全項目が消去される",
       "severity": "High",
       "confidence": "Confirmed",
@@ -46,7 +67,7 @@
       }
     },
     {
-      "id": "U-002",
+      "id": "U-003",
       "title": "タスク行はマウスのクリックでしか開けない",
       "severity": "High",
       "confidence": "Confirmed",
@@ -74,7 +95,7 @@
       ]
     },
     {
-      "id": "U-003",
+      "id": "U-004",
       "title": "削除がアクセシブルな名前のないアイコンだけのボタン",
       "severity": "High",
       "confidence": "Confirmed",
@@ -95,7 +116,7 @@
       }
     },
     {
-      "id": "U-004",
+      "id": "U-005",
       "title": "タスクの削除が確認も取り消しもなく即時に実行される",
       "severity": "High",
       "confidence": "Confirmed",
@@ -116,7 +137,7 @@
       }
     },
     {
-      "id": "U-005",
+      "id": "U-006",
       "title": "480px のサイドバーが 360px のスマートフォン幅からはみ出す",
       "severity": "High",
       "confidence": "Confirmed",
@@ -138,7 +159,7 @@
       }
     },
     {
-      "id": "U-006",
+      "id": "U-007",
       "title": "viewport メタタグがピンチズームを無効にしている",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -159,7 +180,7 @@
       }
     },
     {
-      "id": "U-007",
+      "id": "U-008",
       "title": "タスク追加ダイアログがフォーカスを閉じ込めず、戻さず、Escape で閉じない",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -180,7 +201,7 @@
       }
     },
     {
-      "id": "U-008",
+      "id": "U-009",
       "title": "アーカイブにルートはあるがナビゲーションの入口がない",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -205,7 +226,7 @@
       }
     },
     {
-      "id": "U-009",
+      "id": "U-010",
       "title": "メールアドレスのエラーが最初の 1 文字で表示される",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -226,7 +247,32 @@
       }
     },
     {
-      "id": "U-010",
+      "id": "U-011",
+      "title": "新規登録の入力欄にプレースホルダーしかラベルがない",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM1",
+      "flow_ref": "FL-01",
+      "screen": "新規登録フォーム（/signup）",
+      "criterion": "WCAG 2.2 達成基準 3.3.2 ラベル又は説明、達成基準 1.3.1 情報及び関係性",
+      "location": "src/components/SignupForm.tsx:26",
+      "occurrences": [
+        "src/components/SignupForm.tsx:26",
+        "src/components/SignupForm.tsx:27"
+      ],
+      "observed": "<input name=\"email\" placeholder=\"Email\"> と <input type=\"password\" placeholder=…> に <label>・aria-label・aria-labelledby がない",
+      "expected": "各入力欄に結び付いた、見えるラベル。",
+      "impact": "入力を始めると項目名が消え、スクリーンリーダーは名前のない入力欄として読み上げることがある。",
+      "fix": "各入力欄に見える <label htmlFor> を付ける。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory inputs: 両方の欄で label が欠け、placeholder_only。",
+        "intent_checked": "囲む <label> や aria-label はない。"
+      }
+    },
+    {
+      "id": "U-012",
       "title": "タスク一覧に読み込み中・空・エラーの状態がない",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -247,7 +293,7 @@
       }
     },
     {
-      "id": "U-011",
+      "id": "U-013",
       "title": "登録エラーが「Invalid input」「Error 500」とだけ表示される",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -273,7 +319,7 @@
       }
     },
     {
-      "id": "U-012",
+      "id": "U-014",
       "title": "ダッシュボードで 2 つの主ボタンが競合している",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -298,7 +344,28 @@
       }
     },
     {
-      "id": "U-013",
+      "id": "U-015",
+      "title": "「インポート」ボタンを押しても何も起きない",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "PP3",
+      "flow_ref": "FL-02",
+      "screen": "ダッシュボード（/）",
+      "criterion": "どの操作にも反応があり、黙って失敗しない",
+      "location": "src/pages/Dashboard.tsx:16",
+      "observed": "<Button variant=\"primary\">{t(\"task.import\")}</Button> に onClick がない",
+      "expected": "インポートの流れを開くか、用意できるまでボタンを外す。",
+      "impact": "目立つ主要スタイルのボタンが反応せず、利用者は押し直すか、アプリが壊れていると考える。",
+      "fix": "インポートの流れにつなぐか、ボタンを外す。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Button.tsx は渡された props を展開するだけで、Dashboard.tsx:16 はハンドラーを渡していない。",
+        "intent_checked": "近日公開を示すフラグや無効状態はない。"
+      }
+    },
+    {
+      "id": "U-016",
       "title": "設定の「保存」が独自スタイルのリンクで、キーボードで操作できずデザインシステムからも外れている",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -319,7 +386,7 @@
       }
     },
     {
-      "id": "U-014",
+      "id": "U-017",
       "title": "すべてのボタンからフォーカスの輪郭線が代替なしに消されている",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -340,53 +407,53 @@
       }
     },
     {
-      "id": "U-015",
-      "title": "ドイツ語のボタンラベルが「Neue Aufgab…」で切れる",
+      "id": "U-018",
+      "title": "タスク名が 120px で切れ、続きを読む手段がない",
       "severity": "Medium",
       "confidence": "Runtime-dependent",
       "status": "Open",
-      "perspective": "IN1",
+      "perspective": "IN2",
       "flow_ref": "FL-02",
-      "screen": "ダッシュボード（/）",
-      "criterion": "ラベルは出荷中で最も長いロケール（de）に収まる",
+      "screen": "タスク一覧（/）",
+      "criterion": "省略しても全文を確認できる（title、ツールチップ、詳細画面）。ラベルは出荷中で最も長いロケール（de）に収まる",
       "location": "src/styles/app.css:13",
-      "observed": ".btn-label { max-width: 120px; white-space: nowrap; text-overflow: ellipsis }",
-      "expected": "ラベルは折り返すかボタンが広がる。省略は全文を確認できる場所に限る。",
-      "impact": "ドイツ語の利用者には主要操作が「Neue Aufgab…」と表示される。",
-      "fix": ".btn-label から max-width を外し、省略は title 属性付きの .task-title だけに残す。",
+      "observed": "行の <div>（TaskList.tsx:15）に .task-title { max-width: 120px; white-space: nowrap; text-overflow: ellipsis } があり、title 属性がない",
+      "expected": "タスク名は 2 行まで折り返し（line-clamp）、全文を確認できる。省略は全文を確認できる場所に限る。",
+      "impact": "似たタスク（「四半期の準備…」）を見分けられず、長いドイツ語のタスク名はほとんどが隠れる。",
+      "fix": ".task-title を折り返すか 2 行に制限して全文を確認できるようにし、インラインの .btn-label には効かない max-width を外す。",
       "validation": {
         "verdict": "Likely",
-        "evidence": "src/i18n/index.ts:6 が navigator.language から de を選ぶ。inventory locale_expansion de: task.new が 2.75 倍（8 文字に対し 22 文字）。14px で 22 文字は 120px を超える。",
-        "intent_checked": "正確な幅はフォント次第で、描画はしていない。"
+        "evidence": "inventory truncation app.css:13。.task-title はブロック要素の <div>（TaskList.tsx:15）なので max-width と省略記号が効く。.btn-label はインラインの <span>（Button.tsx:4）なので、ボタンのラベルは切れない。",
+        "intent_checked": "正確な幅はフォントとタスク名次第で、描画はしていない。"
       }
     },
     {
-      "id": "U-016",
-      "title": "メール欄が type=text で、ラベルも autocomplete もない",
+      "id": "U-019",
+      "title": "メール欄の type が text で、新規登録の入力欄に autocomplete がない",
       "severity": "Low",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "FM4",
       "flow_ref": "FL-01",
       "screen": "新規登録フォーム（/signup）",
-      "criterion": "WCAG 2.2 達成基準 1.3.5 入力目的の特定、3.3.2 ラベルまたは説明",
+      "criterion": "WCAG 2.2 達成基準 1.3.5 入力目的の特定",
       "location": "src/components/SignupForm.tsx:26",
       "occurrences": [
         "src/components/SignupForm.tsx:26",
         "src/components/SignupForm.tsx:27"
       ],
-      "observed": "type=\"text\" name=\"email\" placeholder=\"Email\"。パスワードもプレースホルダのみ。autocomplete なし",
-      "expected": "見える <label>、type=\"email\" autocomplete=\"email\"、autocomplete=\"new-password\"。",
-      "impact": "スマートフォンに不適切なキーボードが出て、パスワードマネージャーも入力できず、プレースホルダのラベルは入力すると消える。",
-      "fix": "ラベル、入力タイプ、autocomplete トークンを加える。",
+      "observed": "type=\"text\" name=\"email\"。どちらの欄も autocomplete を指定していない",
+      "expected": "type=\"email\" autocomplete=\"email\"、autocomplete=\"new-password\"。",
+      "impact": "スマートフォンで合わないキーボードが出て、パスワードマネージャーが入力も新しいパスワードの保存もしない。",
+      "fix": "メール欄の type と、両方の autocomplete トークンを指定する。",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory inputs: label・autocomplete・type=email が欠落、placeholder_only。",
-        "intent_checked": "囲む <label> も aria-label もない。"
+        "evidence": "inventory inputs: autocomplete と type=email が欠けている。",
+        "intent_checked": "独自の自動入力処理はない。"
       }
     },
     {
-      "id": "U-017",
+      "id": "U-020",
       "title": "「Create account」が送信中も押せるまま",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -407,28 +474,49 @@
       }
     },
     {
-      "id": "U-018",
-      "title": "アバター画像に代替テキストも寸法もない",
+      "id": "U-021",
+      "title": "アバター画像に代替テキストがない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AX4",
+      "flow_ref": "FL-02",
+      "screen": "タスク一覧（/）",
+      "criterion": "WCAG 2.2 達成基準 1.1.1 非テキストコンテンツ",
+      "location": "src/components/TaskList.tsx:14",
+      "observed": "<img src={task.assignee.avatar} className=\"avatar\" />",
+      "expected": "隣に担当者名があれば alt=\"\"、なければ名前を alt にする。",
+      "impact": "スクリーンリーダーが各行で画像のファイル名を読み上げる。",
+      "fix": "alt を付ける。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory images: alt が欠けている。",
+        "intent_checked": "aria-hidden や role=presentation はない。"
+      }
+    },
+    {
+      "id": "U-022",
+      "title": "アバター画像に寸法がなく、読み込み時に行がずれる",
       "severity": "Low",
       "confidence": "Runtime-dependent",
       "status": "Open",
       "perspective": "PP2",
       "flow_ref": "FL-02",
       "screen": "タスク一覧（/）",
-      "criterion": "メディアの領域を確保する（Cumulative Layout Shift）、WCAG 2.2 達成基準 1.1.1 非テキストコンテンツ",
+      "criterion": "メディアの領域を確保する（Cumulative Layout Shift）",
       "location": "src/components/TaskList.tsx:14",
-      "observed": "<img src={task.assignee.avatar} className=\"avatar\" />",
-      "expected": "<img alt=\"\" width={24} height={24}>（担当者名の横の装飾なら）か、名前を alt にする。",
-      "impact": "アバターの読み込みで行がずれ、削除アイコンがポインタの下に来る。スクリーンリーダーはファイルの URL を読み上げる。",
-      "fix": "width・height・alt を付ける。",
+      "observed": "<img src={task.assignee.avatar} className=\"avatar\" /> に width・height・aspect-ratio がない",
+      "expected": "width={24} height={24}、または .avatar に固定サイズ。",
+      "impact": "アバターの読み込みで行が動き、削除アイコンがポインターの下へずれる。",
+      "fix": "width と height を付けるか、CSS で .avatar の大きさを決める。",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory images: alt と寸法が欠落。.avatar はサイズを指定していない（app.css:14）。",
+        "evidence": "inventory images: 寸法が欠けている。.avatar は大きさを指定していない（app.css:14）。",
         "intent_checked": "ずれの大きさは画像次第。"
       }
     },
     {
-      "id": "U-019",
+      "id": "U-023",
       "title": "余白と文字サイズの値がトークンのスケールから外れている",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -448,12 +536,12 @@
       "fix": "値を最も近いトークンに置き換える。",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory off_scale: spacing 13px・18px・10px、font_sizes 15px。10px は Settings.tsx:9 で、U-013 の修正で置き換わる。",
+        "evidence": "inventory off_scale: spacing 13px・18px・10px、font_sizes 15px。10px は Settings.tsx:9 で、U-016 の修正で置き換わる。",
         "intent_checked": "値の理由を示すコメントはない。"
       }
     },
     {
-      "id": "U-020",
+      "id": "U-024",
       "title": "未使用の .dropdown クラスが z-index 99999 で、モーダルとトーストのレイヤーより上にある",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -474,7 +562,7 @@
       }
     },
     {
-      "id": "U-021",
+      "id": "U-025",
       "title": "宣言されたモーションに reduced-motion の経路がない",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -499,7 +587,7 @@
       }
     },
     {
-      "id": "U-022",
+      "id": "U-026",
       "title": "スキップリンクの z-index 9999 がレイヤースケール外",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -533,7 +621,7 @@
     {
       "name": "RS レスポンシブ",
       "result": "2 件",
-      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の 24px 未満で、削除操作の修正とあわせて次の手順に記載。700px のメディアクエリ（app.css:18）は 640/1024 のブレークポイントから外れているが、カードの余白を変えるだけなので U-005 の修正で 640px に移す。"
+      "note": "幅とメディアクエリを読んで 360x640 を確認。20x20px の削除ターゲット（app.css:12）は WCAG 2.5.8 の 24px 未満で、削除操作の修正とあわせて次の手順に記載。700px のメディアクエリ（app.css:18）は 640/1024 のブレークポイントから外れているが、カードの余白を変えるだけなので U-006 の修正で 640px に移す。"
     },
     {
       "name": "VH 視覚階層・タイポグラフィ",
@@ -552,7 +640,7 @@
     },
     {
       "name": "FM フォーム・入力",
-      "result": "3 件",
+      "result": "5 件",
       "note": "新規登録フォーム、タスク追加、設定の入力欄。"
     },
     {
@@ -567,7 +655,7 @@
     },
     {
       "name": "AX アクセシビリティ",
-      "result": "3 件",
+      "result": "4 件",
       "note": "html の lang とスキップリンクはある。コントラストは描画した色がないと測れない（制約）。"
     },
     {
@@ -582,8 +670,8 @@
     },
     {
       "name": "PP 体感性能",
-      "result": "1 件",
-      "note": "スケルトンがないことは U-010 に含めた。"
+      "result": "2 件",
+      "note": "スケルトンがないことは U-012 に含めた。"
     }
   ],
   "checked_ok": [
@@ -600,8 +688,8 @@
     "ホバーと選択の状態がトークンに定義されていない。デザインシステムが持つべきかを決める。"
   ],
   "next_steps": [
-    "まず U-001〜U-005 を修正する。2 つの主要フローを止めている。",
-    ".icon-btn（app.css:12）を U-003・U-004 の修正とあわせて 24x24px 以上（推奨 44px）にする。",
-    "修正後に inventory.py --flows を再実行し、360px でダッシュボードを描画して U-005 と U-015 を確認する。"
+    "まず U-001〜U-006 を修正する。2 つの主要フローを止めている。",
+    ".icon-btn（app.css:12）を U-004・U-005 の修正とあわせて 24x24px 以上（推奨 44px）にする。",
+    "修正後に inventory.py --flows を再実行し、360px でダッシュボードを描画して U-006 と U-018 を確認する。"
   ]
 }

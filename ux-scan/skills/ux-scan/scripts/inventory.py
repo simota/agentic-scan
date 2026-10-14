@@ -462,18 +462,30 @@ def tabindex_integer(value, expression, warn):
     return integer(match.group(1), warn) if match else None
 
 
-def label_expression(value, scope):
-    """A dynamic for/id expression with whitespace normalized, distinct from any literal id.
+def label_expression(value):
+    """A dynamic for/id expression with whitespace normalized, distinct from any literal id."""
+    return ("expression", re.sub(r"\s+", "", value))
 
-    The same expression names the same element only within one component
-    (scope), since two components may receive different values for one prop.
+
+def dynamic_label_pairs(parsed):
+    """Dynamic for/id expressions that pair exactly one label with exactly one field.
+
+    Component boundaries are not parsed, and two components may pass different
+    values through one prop name, so any repeated expression stays unresolved.
     """
-    return (scope, re.sub(r"\s+", "", value))
-
-
-# Any top-level declaration (a component, typed or not) starts a new scope for dynamic ids.
-COMPONENT_START = re.compile(r"^(?:export\s+)?(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var)\b",
-                             re.M)
+    labels, fields = defaultdict(int), defaultdict(int)
+    for tag in parsed:
+        if tag.closing:
+            continue
+        if tag.name == "label":
+            target, counts = tag.attrs.get("for") or tag.attrs.get("htmlfor"), labels
+        elif tag.name in ("input", "select", "textarea"):
+            target, counts = tag.attrs.get("id"), fields
+        else:
+            continue
+        if isinstance(target, str) and literal(target) is None:
+            counts[label_expression(target)] += 1
+    return {key for key, count in labels.items() if count == 1 and fields.get(key) == 1}
 
 
 def event_name(attr):
@@ -712,9 +724,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     if parsed is None:
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
-    labels_for = set()
-    scopes = [m.start() for m in COMPONENT_START.finditer(clean)] if suffix in JSX_EXT else []
-    scope_of = lambda offset: bisect_right(scopes, offset)  # noqa: E731
+    labels_for = dynamic_label_pairs(parsed)  # htmlFor={id} names its one id={id}.
     has_confirmation = bool(CONFIRM.search(clean))
     destructive_offsets = set()
     label_spans = label_regions(parsed)
@@ -724,8 +734,6 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             target = tag.attrs.get("for") or tag.attrs.get("htmlfor")
             if literal(target):
                 labels_for.add(literal(target))
-            elif isinstance(target, str):
-                labels_for.add(label_expression(target, scope_of(tag.start)))  # htmlFor={id} names id={id}.
     for tag in parsed:
         if tag.closing:
             continue
@@ -779,7 +787,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             ident_attr = attrs.get("id")
             labelled = (has_name(attrs) or in_label or literal(ident_attr) in labels_for
                         or (isinstance(ident_attr, str) and literal(ident_attr) is None
-                            and label_expression(ident_attr, scope_of(start)) in labels_for))
+                            and label_expression(ident_attr) in labels_for))
             missing = [] if labelled else ["label"]
             if (PERSONAL.search(ident) or kind in ("email", "password", "tel")) and "autocomplete" not in attrs:
                 missing.append("autocomplete")

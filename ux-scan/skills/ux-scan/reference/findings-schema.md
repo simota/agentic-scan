@@ -86,9 +86,11 @@ parenthesized route-group components), routes, relative Markdown link targets,
 http(s) URLs, inline code, fenced code, HTML comments and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually; as in CommonMark, `<` starts a tag only before a name,
-`/`, `!` or `?`, so comparisons such as `<640px … >1024px` remain prose). A URL
-ends at whitespace, quotes, brackets or Japanese text written after it;
-Japanese text followed by `/`, `?`, `#`, `&` or `=` stays part of the URL. Code spans close at a backtick run of the same
+`/`, `!` or `?`, so comparisons such as `<640px … >1024px` remain prose). A URL,
+including raw Japanese text in its path or query, runs to whitespace, quotes,
+brackets or Japanese punctuation such as `、` or `。`; write a space or
+punctuation between a URL and a following finding id, or that id is kept as
+part of the URL. Code spans close at a backtick run of the same
 length; a shorter or longer run inside the span remains literal code.
 Markdown destinations are preserved even for extensionless paths, query-only
 URLs and reference-link definitions; link labels and titles remain prose and

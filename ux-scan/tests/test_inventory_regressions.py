@@ -929,13 +929,13 @@ class InventoryRegressionTests(unittest.TestCase):
             "export function Search({ id }) {\n"
             "  return <input id={id} />;\n"
             "}\n"})
-        self.assertEqual([r["location"] for r in data["inputs"]], ["G.jsx:5"])
+        self.assertEqual([r["location"] for r in data["inputs"]], ["G.jsx:2", "G.jsx:5"])
         data = self.scan({"H.tsx":
             "export const Billing: React.FC<Props> = ({ id }) => (\n"
             "  <><label htmlFor={id}>Card</label><input id={id} /></>\n"
             ");\n"
-            "export const Search: React.FC<Props> = ({ id }) => <input id={id} />;\n"})
-        self.assertEqual([r["location"] for r in data["inputs"]], ["H.tsx:4"])
+            "export default ({ id }) => <input id={id} />;\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["H.tsx:2", "H.tsx:4"])
 
     def test_relative_child_routes_are_not_orphans(self):
         data = self.scan({"routes.jsx":

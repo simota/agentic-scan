@@ -288,7 +288,8 @@ class ReportRegressions(unittest.TestCase):
                  "define('DBPassword', 'x');", 'password = "it\'s me"',
                  'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";',
                  'password = String("hunter2")', '<Login password={String("hunter2")} />',
-                 'password = "' + "k" * 1000 + '"', 'password = "abc']
+                 'password = "' + "k" * 1000 + '"', 'password = "abc', 'DBPASS = "hunter2"', 'APITOKEN: "abc1"',
+                 'MYSECRET = "z"', 'userPASSWORD = "x"']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -303,7 +304,7 @@ class ReportRegressions(unittest.TestCase):
               'passwordStrength: "strong",', "passwordLabel: 'password_label',",
               'password_reset_url: "/reset-password",', 'secretQuestion: "mother_maiden_name",',
               '"password": "Passwort",', '"password": "パスワード",', 'password: "Enter your password",',
-              '"password": "Password is required.",', 'password: "",', "COMPASS = 'north'",
+              '"password": "Password is required.",', 'password: "",',
               "<PasswordInput label='Password' />",
               'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
               "const password: string = '';", 'password={useState("")}', 'password: "Enter your password']

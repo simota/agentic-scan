@@ -47,9 +47,10 @@ _KEYWORD = (r"secret|passw(?:or)?d|pwd|passphrase|pass|api[_-]?keys?|private[_-]
 # so passwordLabel, tokenColor or password_reset_url are UI names, not secrets.
 _SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret))?"
            r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
-# The keyword starts a name part: after a non-letter, or as a capitalised word
-# after any letter (camelCase passwordHash, acronym prefixes DBPassword, APISecret).
-NAME_START = r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z]))"
+# The keyword starts a name part: after a non-letter, as a capitalised word after
+# any letter (camelCase passwordHash, acronym prefixes DBPassword, APISecret), or
+# inside an upper-case name (DBPASSWORD, APITOKEN, MYSECRET).
+NAME_START = r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z])))"
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
 # Closing quotes or brackets, an optional type (Go "Password string = …"), then an
 # assignment: = : := ?= =>, XML >value< or value="…"; == compares.

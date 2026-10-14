@@ -25,7 +25,8 @@ lines that hold a secret are masked in full (`scripts/secret_lines.py`): known
 credential formats (provider token prefixes, JWTs, private-key blocks found
 anywhere in the file, credentials in URLs or command lines, bearer and basic
 authorization values), and secret-like names (password, secret, token, API
-key, credentials…, also after acronyms such as `DBPassword`) assigned a
+key, credentials…, also after acronyms or inside upper-case names such as
+`DBPassword` or `DBPASSWORD`) assigned a
 literal that is not a label, including short values, passphrases with
 spaces, typed declarations (`password: string = "…"`), literals passed
 to a call (`String("…")`, also inside `{…}`) and literals left open or cut

@@ -1143,6 +1143,12 @@ class InventoryRegressionTests(unittest.TestCase):
                                     '<button class="btn-close"></button>\n<button>Save</button>\n'
                                     '<button v-text="label"></button>\n'})
         self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:2"])
+        data = self.scan({"b.vue": '<template>\n<button v-text=""></button>\n<button v-text="label"></button>\n</template>\n',
+                          "c.jsx": 'export const C = () => <div><button children="" /><button children={label}></button>\n'
+                                   '<button children=""></button></div>;\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:2"])
+        data = self.scan({"d.jsx": 'const x=/* <img src="a" /> */1;\nconst r = /a/*2;\nconst y = a /* <img src="b" /> */ + 1;\n'})
+        self.assertEqual(data["images"], [])
 
     def test_truncate_in_class_helpers_inline_outline_next_viewport(self):
         data = self.scan({"a.tsx": 'export const A = () => <p className={cn("truncate text-sm", c)}>x</p>;\n'

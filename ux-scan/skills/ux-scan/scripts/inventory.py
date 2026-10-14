@@ -393,8 +393,8 @@ def mask_markup_comments(text, *, jsx=False, template=False):
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
             cursor = end = match.end()
             continue
-        if jsx and found == "/*" and not comment_start(text, match.start()):
-            cursor = match.end()  # Division or a regular expression, not a comment.
+        if jsx and found == "/*" and closes_regex(text, match.start()):
+            cursor = match.end()  # The end of a regular expression (/a/*2), not a comment.
             continue
         if jsx and found not in ("{/*", "/*"):
             cursor = match.end()  # A JS string, not a comment or an HTML fragment.
@@ -524,6 +524,19 @@ def comment_start(text, i):
     return i == 0 or text[i - 1] in " \t\r\n{}(),;"
 
 
+def closes_regex(text, i):
+    """Whether the "/" at text[i] closes a regular-expression literal opened earlier on its line.
+
+    Otherwise "/*" starts a block comment, whatever precedes it (x=/* … */1).
+    """
+    if i == 0 or not (text[i - 1].isalnum() or text[i - 1] in "_$)]\\"):
+        return False
+    line = text.rfind("\n", max(0, i - 2000), i) + 1
+    opening = text.rfind("/", line, i)
+    before = text[line:opening].rstrip()[-1:] if opening >= 0 else ""
+    return opening >= 0 and (before == "" or before in "(,=:[!&|?{};")
+
+
 def skip_braces(text, i, limit):
     """Index just past the brace group opening at text[i], or None when it does not close within limit."""
     depth, quote, n = 0, None, min(len(text), i + limit)
@@ -545,7 +558,7 @@ def skip_braces(text, i, limit):
                 i = line_end
                 continue
             i += 1
-        elif text.startswith("/*", i) and comment_start(text, i):
+        elif text.startswith("/*", i) and not closes_regex(text, i):
             close = text.find("*/", i + 2, n)
             i = n if close < 0 else close + 2
             continue
@@ -564,7 +577,7 @@ BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
 ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>.*?</\1\s*>")
-# Bindings that set a button's text, so an empty element still has a name.
+# Bindings that set a button's text, so an empty element still has a name unless the value is blank.
 TEXT_BINDINGS = ("v-text", "v-html", "innertext", "textcontent", "innerhtml", "dangerouslysetinnerhtml",
                  "x-text", "x-html", "children")
 SHORTHAND = re.compile(r"[A-Za-z_$][\w$]*")
@@ -1057,7 +1070,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
         named = has_name(attrs)
-        if name == "button" and not closing and not named and not any(a in attrs for a in TEXT_BINDINGS):
+        if name == "button" and not closing and not named and not has_name(attrs, TEXT_BINDINGS):
             # A following <button> ends the search: buttons do not nest, and it keeps unclosed ones cheap.
             following = (BUTTON_OPEN_I if html_names else BUTTON_OPEN).search(clean, end, end + 20000)
             close = (BUTTON_CLOSE_I if html_names else BUTTON_CLOSE).search(

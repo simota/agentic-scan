@@ -62,7 +62,6 @@ class RunOnExampleDomainTests(unittest.TestCase):
 
     def test_reserved_examples_followed_by_japanese_text_are_allowed(self):
         for value in ("通知はuser@example.comに送られる", "宛先はuser@shop.testです",
-                      "user@example.comに送る。次はtaro@example.orgへ",
                       "user@ｅｘａｍｐｌｅ．ｃｏｍに送る"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
@@ -70,7 +69,11 @@ class RunOnExampleDomainTests(unittest.TestCase):
     def test_other_domains_followed_by_japanese_text_are_refused(self):
         for value in ("通知はuser@gmail.comに送られる", "user@example.com.evil.jpに",
                       "user@example.co.jpに", "user@example.comん.jp", "user@example.comx",
-                      "user@example.comに送る。次はtaro@gmail.comへ", "user@例え.テスト"):
+                      "user@example.comに送る。次はtaro@gmail.comへ", "user@例え.テスト",
+                      # Only the last label is cut, so IDN suffixes keep the domain whole.
+                      "user@example.comé.рф", "user@example.comん.みんな",
+                      # A sentence break in the run-on text also keeps it whole.
+                      "user@example.comに送る。次はtaro@example.orgへ"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
 

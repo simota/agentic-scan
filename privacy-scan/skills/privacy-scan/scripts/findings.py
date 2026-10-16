@@ -161,7 +161,6 @@ EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|te
 # An ASCII label that runs straight on into other letters, as Japanese prose
 # does after an address ("user@example.comに送る").
 ASCII_RUN_ON_LABEL = re.compile(r"([A-Za-z0-9-]*[A-Za-z])[^\x00-\x7f]")
-ASCII_LABEL = re.compile(r"[A-Za-z0-9-]+")
 # Horizontal Unicode whitespace and hyphens, including Unicode dashes, the minus
 # sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
@@ -496,21 +495,16 @@ def _email_domains(value):
 def _example_domain(domain):
     """A reserved example domain, also when prose runs straight on after it.
 
-    Top-level labels never mix ASCII with other scripts, so an ASCII label that
-    continues into other letters ends where its ASCII part ends, unless the
-    domain still ends in an ASCII top-level label (`example.comん.jp` stays
-    whole). Any other domain is judged whole.
+    Top-level labels never mix ASCII with other scripts, so a last label that
+    starts in ASCII and continues into other letters ends where its ASCII part
+    ends. Only the last label is cut: `example.comé.рф` and `example.comん.jp`
+    are judged whole, so prose after a later sentence break stays refused.
     """
     if EXAMPLE_DOMAINS.search(domain):
         return True
-    labels = domain.split(".")
-    if ASCII_LABEL.fullmatch(labels[-1]):
-        return False
-    for i in range(1, len(labels)):
-        run_on = ASCII_RUN_ON_LABEL.match(labels[i])
-        if run_on:
-            return bool(EXAMPLE_DOMAINS.search(".".join(labels[:i] + [run_on.group(1)])))
-    return False
+    head, dot, last = domain.rpartition(".")
+    run_on = ASCII_RUN_ON_LABEL.match(last)
+    return bool(dot and run_on and EXAMPLE_DOMAINS.search(f"{head}.{run_on.group(1)}"))
 
 
 def _no_personal_values(value, where):

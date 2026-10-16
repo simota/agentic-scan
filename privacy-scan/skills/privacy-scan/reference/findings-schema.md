@@ -131,9 +131,10 @@ severity, confidence and verdict names stay as recorded. Perspectives are listed
 in the order of `reference/perspectives.md`, blank optional fields add no row,
 a blank reference `title` shows the URL, and a blank `meta.commit` shows
 `UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown
-links, so renderers that link bare URLs do not keep escape characters in the
-target. Excluded findings (`FalsePositive`, `NotApplicable`) are labelled in
-both reports and have their own dashboard filter instead of appearing under
+links (also directly after Japanese text, and with an upper-case scheme), so
+renderers that link bare URLs do not keep escape characters in the target;
+`ftp://` URLs stay literal text. Excluded findings (`FalsePositive`,
+`NotApplicable`) are labelled in both reports and have their own dashboard filter instead of appearing under
 their severity; a filter that matches nothing says so. Dashboard cells wrap
 long paths and keep line breaks.
 

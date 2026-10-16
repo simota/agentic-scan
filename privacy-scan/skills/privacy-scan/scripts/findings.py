@@ -36,15 +36,16 @@ Personal-value guard, in full:
 Report prose, including analysis results, commitments, perspective notes and the
 top-level text lists, is checked for e-mail addresses (other than
 `example.com`, `example.org`, `example.net` or the `.example`, `.test`,
-`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
+`.invalid` domains; prose may run straight on after one, as in
+`user@example.comに`) and runs of 12 or more digits. The guard recognises quoted
 and Unicode e-mail forms, including complete internationalised domain labels
 and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
 spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
 the katakana prolonged sound mark (`ー`) between digits, and card-style groups
-(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and
-UUIDs are not counted as digit runs, so date ranges and identifiers stay
-allowed. In a `location` path only, a path segment that starts with a compact
+(4-4-4, as a My Number is written, 4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or
+`+`. ISO dates (`2026-10-09`) and UUIDs are not counted as digit runs, so date
+ranges and identifiers stay allowed. In a `location` path only, a path segment that starts with a compact
 date-time (`20261009123045_create_users.py`, as timestamped migrations are
 named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
 most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
@@ -138,7 +139,9 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 # Bounded so a long digit run cannot pass as an exempt technical identifier.
 COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
-COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,6}(?![\w-])")
+# ASCII boundaries: Japanese prose writes IDs flush against kana and kanji
+# ("C-01の"), which `\w` would count as part of a longer word.
+COMMITMENT_REF = re.compile(r"(?<![A-Za-z0-9_-])C-\d{2,6}(?![A-Za-z0-9_-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d{1,9}(?:-\d{1,9})?$")
@@ -155,14 +158,19 @@ IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 IDNA_LABEL_EXTRAS = frozenset("\u00b7\u0375\u05f3\u05f4\u06fd\u06fe\u0f0b\u200c\u200d\u30fb")
 EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|test|invalid)$",
                              re.IGNORECASE)
+# An ASCII label that runs straight on into other letters, as Japanese prose
+# does after an address ("user@example.comに送る").
+ASCII_RUN_ON_LABEL = re.compile(r"([A-Za-z0-9-]*[A-Za-z])[^\x00-\x7f]")
+ASCII_LABEL = re.compile(r"[A-Za-z0-9-]+")
 # Horizontal Unicode whitespace and hyphens, including Unicode dashes, the minus
 # sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
 LONG_NUMBER = re.compile(
     r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11}")
-# Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
-# 4-6-5). Groups of at most three digits, as in IP addresses, never match.
-GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
+# Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4, as a
+# 12-digit My Number is written, 4-4-4-2..4 or 4-6-5). Groups of at most three
+# digits, as in IP addresses, never match.
+GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}(?:\1\d{2,4})?(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
 # ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
@@ -485,6 +493,26 @@ def _email_domains(value):
             yield domain
 
 
+def _example_domain(domain):
+    """A reserved example domain, also when prose runs straight on after it.
+
+    Top-level labels never mix ASCII with other scripts, so an ASCII label that
+    continues into other letters ends where its ASCII part ends, unless the
+    domain still ends in an ASCII top-level label (`example.comん.jp` stays
+    whole). Any other domain is judged whole.
+    """
+    if EXAMPLE_DOMAINS.search(domain):
+        return True
+    labels = domain.split(".")
+    if ASCII_LABEL.fullmatch(labels[-1]):
+        return False
+    for i in range(1, len(labels)):
+        run_on = ASCII_RUN_ON_LABEL.match(labels[i])
+        if run_on:
+            return bool(EXAMPLE_DOMAINS.search(".".join(labels[:i] + [run_on.group(1)])))
+    return False
+
+
 def _no_personal_values(value, where):
     if value is None:
         return
@@ -517,7 +545,7 @@ def _scan_personal_values(value, where):
                 not domain.startswith("[") and domain.count(".") != 3
                 and not any(c.isalpha() for c in domain.rsplit(".", 1)[-1])):
             continue
-        if not EXAMPLE_DOMAINS.search(domain):
+        if not _example_domain(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
     if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(_mask_technical_numbers(value)):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
@@ -721,7 +749,7 @@ def merge(doc, fragment, where):
 
 
 NOT_REFERENCES = {"location", "url", "command", "commit"}
-PV_REFERENCE = re.compile(r"(?<![\w-])PV-\d{3}(?![\w-])")
+PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_-])PV-\d{3}(?![A-Za-z0-9_-])")  # ASCII, as COMMITMENT_REF
 
 
 def renumber(doc):

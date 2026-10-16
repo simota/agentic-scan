@@ -22,9 +22,17 @@ class NumberGuardTests(unittest.TestCase):
 
     def test_card_groups_with_other_separators_are_refused(self):
         for value in ("4111.1111.1111.1111", "4111/1111/1111/1111", "4111_1111_1111_1111",
-                      "4111+1111+1111+1111", "3782.822463.10005", "card 4111.1111.1111.11"):
+                      "4111+1111+1111+1111", "3782.822463.10005", "card 4111.1111.1111.11",
+                      # A 12-digit My Number in 4-4-4 groups.
+                      "1234.5678.9012", "1234/5678/9012", "1234_5678_9012", "1234+5678+9012"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
+
+    def test_shorter_dotted_groups_remain_allowed(self):
+        for value in ("2026.10.16", "123.4567.8901", "1234.5678", "version 2024.1.1234",
+                      "10.0.0.1:5432"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
 
     def test_technical_numbers_remain_allowed(self):
         for value in ("2026-10-01-2026-10-09", "2026-10-01 - 2026-10-09",
@@ -47,6 +55,24 @@ class NumberGuardTests(unittest.TestCase):
             {"url": "https://a℀b.example.com/?q=4111+1111+1111+1111"}]
         with self.assertRaises(findings.SchemaError):
             findings.validate(doc)
+
+
+class RunOnExampleDomainTests(unittest.TestCase):
+    """Japanese prose writes no space after an address."""
+
+    def test_reserved_examples_followed_by_japanese_text_are_allowed(self):
+        for value in ("通知はuser@example.comに送られる", "宛先はuser@shop.testです",
+                      "user@example.comに送る。次はtaro@example.orgへ",
+                      "user@ｅｘａｍｐｌｅ．ｃｏｍに送る"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_other_domains_followed_by_japanese_text_are_refused(self):
+        for value in ("通知はuser@gmail.comに送られる", "user@example.com.evil.jpに",
+                      "user@example.co.jpに", "user@example.comん.jp", "user@example.comx",
+                      "user@example.comに送る。次はtaro@gmail.comへ", "user@例え.テスト"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
 
 
 class ExemptIdentifierTests(unittest.TestCase):

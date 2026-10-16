@@ -43,6 +43,19 @@ class RenumberTests(unittest.TestCase):
         self.assertEqual(doc["next_steps"], ["Fix PV-001, then PV-002; keep PV-003 excluded"])
         findings.validate(doc, complete=True)
 
+    def test_references_flush_against_japanese_text_are_rewritten(self):
+        # `\w` counted kana and kanji as part of the ID, so these were skipped.
+        doc = self.doc()
+        doc["next_steps"] = ["PV-003の修正を最初に行う", "PV-003とPV-001は同じ担当者"]
+        findings.renumber(doc)
+        self.assertEqual(doc["next_steps"], ["PV-001の修正を最初に行う", "PV-001とPV-002は同じ担当者"])
+
+    def test_ledger_ids_flush_against_japanese_text_are_checked(self):
+        doc = complete_doc()
+        doc["findings"][0]["commitment"] = "C-09の約束"
+        self.assertTrue(any("C-09 is not in the commitments ledger" in p
+                            for p in findings.record_problems(doc)))
+
     def test_check_names_the_order_and_the_command_then_renumber_fixes_it(self):
         with tempfile.TemporaryDirectory() as directory:
             out = Path(directory) / "out"

@@ -73,8 +73,9 @@ class ReferencePrivacyTests(unittest.TestCase):
             "https://example.invalid/?account=0000+0000+000",
             "https://example.invalid/?first=000000&second=000000",
             "https://example.invalid/?000000=000000",
-            # Encoded plus signs are literal plus signs, not form separators.
-            "https://example.invalid/?token=0000%2B0000%2B0000",
+            # Encoded plus signs are literal plus signs, not form separators
+            # (decoded as spaces, these would be a 12-digit run).
+            "https://example.invalid/?token=000000%2B000000",
             # Repeated decoding still exempts reserved example domains.
             "https://example.invalid/?literal=synthetic%2540example.com",
             "https://[broken/%20source",

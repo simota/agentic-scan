@@ -33,7 +33,7 @@
 |---|---|
 | システム | {{meta.project}} |
 | 範囲 | {{meta.scope}} |
-| リビジョン | {{meta.commit}} |
+| リビジョン | {{meta.commit}}（空なら report.md と同じく UNKNOWN） |
 | 方法 | {{meta.method}}（未記録なら report.md の診断方法の行） |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 

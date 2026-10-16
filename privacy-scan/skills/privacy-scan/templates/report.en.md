@@ -33,7 +33,7 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Not yet verified — L
 |---|---|
 | System | {{meta.project}} |
 | Scope | {{meta.scope}} |
-| Revision | {{meta.commit}} |
+| Revision | {{meta.commit}} (blank: UNKNOWN, as in report.md) |
 | Method | {{meta.method}} (when absent, the review-method line of report.md) |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 

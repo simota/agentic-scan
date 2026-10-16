@@ -19,13 +19,16 @@ filter by severity, styled by the vendored scan-report-kit in
 output could not be saved, `2` the record does not match the shape (the field
 is named). `render.py` still renders a draft that `check` would refuse, and
 prints each such problem on stderr as a warning. `findings.py check` exits `1`
-and lists every contract violation. This is the complete list; other documents
+and lists every contract violation, except that when `findings.json` fails the
+schema it reports only the first schema error and skips the record checks, so
+fix it and run `check` again. This is the complete list; other documents
 point here. `check` refuses an output directory unless:
 
 - it holds exactly `findings.json`, `dashboard.html` and `report.md` (plus
   `--allow` names), each a readable, nonempty file (directories and broken
   links do not qualify), and no staging file left by an interrupted write
-- `findings.json` passes the schema below with every `meta` field required
+- `findings.json` passes the schema below with every required `meta` field
+  (`project`, `scope`, `date`, `assessor`, `lang`)
 - IDs are `PV-001`… without gaps; reported findings (not `FalsePositive` or
   `NotApplicable`) are in severity order, then by their first location's path,
   and excluded findings follow them, by path (the order `renumber` produces)
@@ -100,7 +103,19 @@ contains an e-mail address outside the reserved example domains (`example.com`,
 including spaced, dashed, encoded and invisibly split forms. Dates, UUIDs and
 hex digests are not counted. The checks run on a temporary copy; accepted text
 keeps its spelling. Name fields and use placeholders; the full rules are in the
-docstring of `scripts/findings.py`.
+docstring of `scripts/findings.py`. A source path whose name holds a long
+number, such as a timestamped migration, is accepted only in `location` and
+only as a compact date-time at the start of a segment
+(`db/migrate/20261009123045_add_phone.rb:3`, Flyway's `V20261009123045__…`).
+In prose, and for other shapes (an epoch-millisecond prefix), write the path
+with a placeholder, `db/migrate/<timestamp>_add_phone.rb:3`, and use the same
+spelling in `location` when it is refused there.
+
+To correct a finding, merge a fragment with its `id` and the changed keys.
+`null` is refused, so clear an optional text field (`conditions`, `contrast`,
+`step`, `commitment`) by setting it to `""`: blank fields are not shown. An
+`analysis` object cannot be removed by a fragment; when it no longer applies,
+rewrite its `result` to say so.
 
 Only the fields documented below are accepted, at every object level: `meta`,
 findings, validation, analysis, references, commitments and perspectives.
@@ -139,6 +154,9 @@ filter instead of appearing under their severity; a filter that matches nothing 
 long paths and keep line breaks.
 
 ## Shape
+
+Abbreviated: `check` also needs all twelve perspectives, and a real record
+usually holds several findings and commitments.
 
 ```json
 {

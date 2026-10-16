@@ -14,7 +14,7 @@ finding judged false stays in the record with its exclusion and evidence.
 |---|---|---|
 | `Valid` | The flow carries the named elements to the sink, no control stops it, and the commitment is broken | Agent or person, with evidence |
 | `Likely` | Strong signals, at least one link not yet confirmed (an SDK option set by environment, a region outside the repository) | Agent or person |
-| `Unverified` | Not yet examined | Default |
+| `Unverified` | Not yet examined | Agent or person (record it; there is no default verdict) |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
 | `FalsePositive` | Evidence contradicts the claim (a scrubber removes the field; the payload is built from an allow-list) | Agent or person, with evidence |
 | `NotApplicable` | The flow is dead code, the element is not personal in this context, or a commitment explicitly allows it | Agent or person, with evidence |

@@ -24,7 +24,7 @@
 | 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
 | 観点 | {{category}} — {{step}} |
 | 場所 | `{{location}}` |
-| 対象リビジョン | {{meta.commit}} |
+| 対象リビジョン | {{meta.commit}}（空なら report.md と同じく UNKNOWN） |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
 ## 何が起きるか

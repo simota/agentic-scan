@@ -86,7 +86,6 @@ ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]|[A-Za-z_])")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
 ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
-CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 # A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
 # Ternary branches are not read: they mostly choose between UI values (isMobile ? "sm" : "md").
@@ -141,9 +140,9 @@ def _secret_literal(quoted, name):
 
 
 def _code_reference(text, bare, config=False):
-    """Whether a bare value is code: a digit-free reference (auth.currentPassword), or a digit-free
-    identifier followed by code punctuation or an operator (isNew ? …). On a NAME=value line
-    (.env, .properties) the value is always a literal, so Pa55.word or Sommer.x are masked."""
+    """Whether a bare value is code: a digit-free identifier or reference (currentPassword,
+    auth.currentPassword). In configuration files and on NAME=value lines (.env, .properties)
+    a bare value is always a literal, and a digit in the root (Pa55.word) marks a value too."""
     value = bare.group(1)
     if ENV_REFERENCE.match(text, bare.start()):
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
@@ -152,7 +151,7 @@ def _code_reference(text, bare, config=False):
         return False  # Configuration files hold values, never code.
     if re.search(r"\d", IDENTIFIER.match(value).group(0)):
         return False  # hunter2.secret reads as a value, not an object.
-    return dotted or CODE_AFTER.match(text, bare.end()) is not None
+    return True  # In code a string literal is quoted, so a bare identifier is a reference.
 
 
 def _fallback_secret(text, start, name):
@@ -197,11 +196,21 @@ def _assigned_secret(text, config=False):
     return False
 
 
+CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
+
+
+def _opens_comment(text):
+    """Whether text ends inside a /* block comment it opened."""
+    return text.rfind("/*") > text.rfind("*/")
+
+
 def _open_names(text):
     """Start offsets of secret-like names whose assigned value continues on the next line: nothing
     follows the assignment (password =), or the line ends in an operator or opening delimiter
     (password = process.env.PW ||)."""
     starts = []
+    if _opens_comment(text):
+        text = text[:text.rfind("/*")].rstrip()  # password = x || /* dev … continues after the comment.
     for name in SECRET_NAME.finditer(text):
         tail = text[name.start():]
         if any(rest >= len(tail) or OPEN_END.search(tail, rest) for rest, _ in _value_starts(tail)):
@@ -227,9 +236,18 @@ def continued_secret_lines(lines, start, stop, config=False):
             continue
         # From the name on, so a long line before it cannot push the value past the limit.
         joined, used = flag.group(1) if flag else text[names[-1]:], [index]
-        for following in range(index + 1, min(len(lines), index + 6)):
+        in_comment = _opens_comment(joined)
+        if in_comment:
+            joined = joined[:joined.rfind("/*")].rstrip()
+        for following in range(index + 1, min(len(lines), index + 1 + CONTINUATION_LINES)):
             value = lines[following].strip()
+            if in_comment:  # Inside a block comment that opened after the operator: skip to its end.
+                close = value.find("*/")
+                if close < 0:
+                    continue
+                value, in_comment = value[close + 2:].strip(), False
             if not value or COMMENT_LINE.match(value):
+                in_comment = _opens_comment(value)
                 continue  # A blank line or a comment between the name and its value.
             joined = joined + " " + value[:SHOWN_CHARACTERS + LOOKAHEAD]
             used.append(following)

@@ -646,6 +646,7 @@ BUTTON_OPEN = re.compile(r"<button\b")
 BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
+VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 ARIA_HIDDEN_OPEN = re.compile(r"(?is)<([A-Za-z][\w.:-]*)\b[^<>]*?\saria-hidden\s*=\s*"
                               r"(?:\"true\"|'true'|\{\s*true\s*\}|true\b)[^<>]*?(/?)>")
 
@@ -660,7 +661,7 @@ def strip_aria_hidden(markup):
     while opening := ARIA_HIDDEN_OPEN.search(markup, cursor):
         parts.append(markup[cursor:opening.start()])
         cursor = opening.end()
-        if not opening.group(2):  # Not self-closing: find the matching close tag.
+        if not opening.group(2) and opening.group(1).lower() not in VOID_ELEMENTS:  # Find the matching close tag.
             same = re.compile(r"(?i)<(/?)" + re.escape(opening.group(1)) + r"(?=[\s/>])[^<>]*?(/?)>")
             depth = 1
             while depth and (tag := same.search(markup, cursor)):

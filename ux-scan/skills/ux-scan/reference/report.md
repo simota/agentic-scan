@@ -40,7 +40,8 @@ and references (`process.env.X`, `auth.currentPassword`) and booleans stay visib
 since forms and locale files are what UX findings cite. In configuration files
 (`.properties`, `.env`, `.ini`, `.cfg`, `.conf`, `.toml`, YAML) and on `NAME=value`
 lines every bare value is a literal (`password = Sommer.x`), as is a value with a
-digit in its root (`Pa55.word`); `$VAR` and `${VAR}` stay visible as variables. Each line is judged on
+digit in its root (`Pa55.word`); in code a digit-free bare identifier is a
+reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables. Each line is judged on
 the shown text plus 512 characters after it, so a credential cut off at the
 limit is masked too. These rules are conservative heuristics, not
 a complete credential audit. Report text and

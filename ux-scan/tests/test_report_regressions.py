@@ -324,6 +324,7 @@ class ReportRegressions(unittest.TestCase):
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
+              "password = currentPassword",
               'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):
@@ -350,6 +351,15 @@ class ReportRegressions(unittest.TestCase):
             ["const password = process.env.PASSWORD ||", '  "hunter2";'], 0, 2), {0, 1})
         self.assertEqual(render.continued_secret_lines(["password =", "  // production override", '  "hunter2"'], 0, 3),
                          {0, 2})
+        # A block comment spanning lines after the operator is skipped.
+        self.assertEqual(render.continued_secret_lines(
+            ["password = process.env.PW || /* dev", "   still comment", '*/ "hunter2"'], 0, 3), {0, 2})
+        # The look-back covers the whole continuation window before the excerpt.
+        (self.repo / "early.ts").write_text(
+            "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",
+            encoding="utf-8")
+        early = render.snippet(self.repo, f"early.ts:{14 + render.CONTEXT}")
+        self.assertEqual((early["start"], early["lines"][0]), (14, render.LABELS["en"]["masked"]))
         # An expression wrapped over several lines is followed while it stays open.
         self.assertEqual(render.continued_secret_lines(
             ["const password =", "  process.env.PASSWORD ||", '  "hunter2"'], 0, 3), {0, 1, 2})

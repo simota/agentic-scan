@@ -1265,7 +1265,8 @@ class InventoryRegressionTests(unittest.TestCase):
     def test_aria_hidden_glyph_buttons_and_cr_line_ends(self):
         data = self.scan({"a.html": '<button onclick="closeIt()"><span aria-hidden="true">&times;</span></button>\n'
                                     '<button><span aria-hidden="true">×</span> Close</button>\n'
-                                    '<button><span aria-hidden="true"><span>×</span>close</span></button>\n',
+                                    '<button><span aria-hidden="true"><span>×</span>close</span></button>\n'
+                                    '<button><img src="x.svg" aria-hidden="true">Close</button>\n',
                           "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
                                    '</button>;\n'})
         self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "b.tsx:1"])

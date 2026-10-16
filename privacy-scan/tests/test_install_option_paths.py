@@ -29,12 +29,17 @@ class OptionPathInstallTests(unittest.TestCase):
         # Confine every host-discovery path to this fixture, even on failure.
         environment["HOME"] = str(root / "uninstalled-hosts")
         environment["X"] = ""
-        command = ["make", "--no-print-directory", "-f", str(REPO / "Makefile"),
-                   target, f"AGENT={agent}"]
+        command = ["make", "--no-print-directory", "-f", str(REPO / "Makefile"), target]
         if mode == "environment":
             environment[variable] = RELATIVE_ROOT
         else:
             command.append(f"{variable}={RELATIVE_ROOT.replace('$', '$$')}")
+        # A command-line AGENT would win over an environment SKILLS_DIR or
+        # PROJECT, so AGENT follows the narrowing variable into the environment.
+        if mode == "environment" and variable in ("SKILLS_DIR", "PROJECT"):
+            environment["AGENT"] = agent
+        else:
+            command.append(f"AGENT={agent}")
         return subprocess.run(
             command, cwd=root, env=environment, capture_output=True, text=True, timeout=10,
         )

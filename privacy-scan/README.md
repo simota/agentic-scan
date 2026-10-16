@@ -58,6 +58,12 @@ make status
 make unlink
 ```
 
+`SKILLS_DIR` (one literal path) wins over `PROJECT` (that project's
+`.claude/skills`), and `PROJECT` over `AGENT`. A choice given on the command
+line wins over `SKILLS_DIR` or `PROJECT` exported in the environment, so an
+unrelated `PROJECT` variable never redirects `make link AGENT=claude`. `AGENT`
+is checked only by `link`, `unlink` and `status` when it is used.
+
 Then invoke `privacy-scan` (or `/privacy-scan`).
 
 GNU Make 3.81 (the macOS default) drops `$` references from a makefile path

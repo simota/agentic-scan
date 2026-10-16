@@ -29,7 +29,7 @@ key, credentials…, also after acronyms or inside upper-case names such as
 `DBPassword` or `DBPASSWORD`) assigned a
 literal that is not a label, including short values, passphrases with
 spaces, typed declarations (`password: string = "…"`), literals passed
-to a call (`String("…")`, also inside `{…}`) and literals left open or cut
+to a call or nested delimiters (`String("…")`, `(("…"))`, also inside `{…}`) and literals left open or cut
 off by the 752-character limit. Labels such as "Password", "Enter your password" or "パスワード", types, expressions, references and booleans stay
 visible, since forms and locale files are what UX findings cite. Each line is
 judged on the shown text plus 512 characters after it, so a credential cut

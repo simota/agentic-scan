@@ -65,7 +65,8 @@ CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:"
 QUOTED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)+)\1")
 # A quoted literal with no closing quote before the end of the searched text.
 UNCLOSED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)*)\Z")
-EXPRESSION_START = re.compile(r"[{(\[]\s*")
+# Up to eight opening delimiters of an expression: {, ((, [{ ….
+EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
@@ -127,6 +128,10 @@ def _assigned_secret(text):
         if unclosed and unclosed.group(2) and _secret_literal(unclosed, name):
             return True  # A literal cut off by the line limit, or left open.
         expression = EXPRESSION_START.match(text, rest)
+        if expression:
+            quoted = QUOTED_VALUE.match(text, expression.end())
+            if quoted and _secret_literal(quoted, name):
+                return True  # A literal inside nested delimiters: (("…")), {("…")}.
         bare = BARE_VALUE.match(text, expression.end() if expression else rest)
         if bare and text.startswith("(", bare.end()):
             # A call such as useState(…) or String("…"), also inside {…}: a literal first argument is the value.

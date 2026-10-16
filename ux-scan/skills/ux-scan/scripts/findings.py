@@ -461,7 +461,8 @@ def _scan_js(text, i, stop):
             i += 2
             continue
         elif identifier := IDENTIFIER.match(text, i, stop):
-            previous = "" if identifier.group(0) in REGEX_KEYWORDS else "a"
+            # A keyword after "." is a property (obj.return / 2), so "/" then divides.
+            previous = "" if identifier.group(0) in REGEX_KEYWORDS and previous != "." else "a"
             i = identifier.end()
             continue
         elif not c.isspace():

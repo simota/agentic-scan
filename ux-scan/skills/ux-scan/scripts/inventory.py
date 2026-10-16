@@ -154,11 +154,12 @@ SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
 # Matched against a field name split into words (user_email, firstName, cc-number).
 # Distinctive stems match inside a word (useremail, telephone, billingaddress);
 # short ones must be whole words, so capacity, wildcard and microphone are not personal.
-PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)phone|tele?phone|(?<!auto)mobile|address|street|postal|post_?code|zip|"
+PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)(?<!micro_)phone|tele?phone|(?<!auto)(?<!auto_)mobile|address|street|postal|post_?code|zip|"
                       r"country|(?:first|last|full|given|family|user)_?name|one_?time|"
                       r"_(?:tel|name|city|card|otp|cc_\w+)_")
 EMAIL_WORD = re.compile(r"e_?mail")
-PHONE_WORD = re.compile(r"(?<!micro)phone|_tel_|(?<!auto)mobile")
+# microPhone and autoMobile split into micro_phone and auto_mobile, so the exceptions cover both forms.
+PHONE_WORD = re.compile(r"(?<!micro)(?<!micro_)phone|_tel_|(?<!auto)(?<!auto_)mobile")
 
 
 def field_words(name):
@@ -393,8 +394,8 @@ def mask_markup_comments(text, *, jsx=False, template=False):
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
             cursor = end = match.end()
             continue
-        if jsx and found == "/*" and closes_regex(text, match.start()):
-            cursor = match.end()  # The end of a regular expression (/a/*2), not a comment.
+        if jsx and found == "/*" and inside_regex(text, match.start(), budget):
+            cursor = match.end()  # Inside or at the end of a regular expression (/a/*2, /[/*]/), not a comment.
             continue
         if jsx and found not in ("{/*", "/*"):
             cursor = match.end()  # A JS string, not a comment or an HTML fragment.
@@ -524,17 +525,71 @@ def comment_start(text, i):
     return i == 0 or text[i - 1] in " \t\r\n{}(),;"
 
 
-def closes_regex(text, i):
-    """Whether the "/" at text[i] closes a regular-expression literal opened earlier on its line.
+REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
+REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
 
-    Otherwise "/*" starts a block comment, whatever precedes it (x=/* … */1).
+
+def inside_regex(text, i, budget=None):
+    """Whether the "/" at text[i] lies inside a regular-expression literal opened earlier on its line.
+
+    The line is read forward from its start (at most 2000 characters back),
+    skipping quoted strings and regex literals with their [character classes],
+    so /a/*2 and /[/*]/ hold no comment, while x=/* … */1 starts one.
+    budget, a one-item list shared across a file, caps the characters read;
+    once it is spent, every "/*" starts a comment.
     """
-    if i == 0 or not (text[i - 1].isalnum() or text[i - 1] in "_$)]\\"):
-        return False
-    line = text.rfind("\n", max(0, i - 2000), i) + 1
-    opening = text.rfind("/", line, i)
-    before = text[line:opening].rstrip()[-1:] if opening >= 0 else ""
-    return opening >= 0 and (before == "" or before in "(,=:[!&|?{};")
+    floor = max(0, i - 2000)
+    if budget is not None:
+        floor = max(floor, i - max(budget[0], 0))
+        budget[0] -= i - floor
+    newline = text.rfind("\n", floor, i)
+    j = newline + 1 if newline >= 0 else floor
+    previous = ""  # The last significant token: a character, or "a" for an operand.
+    while j < i:
+        c = text[j]
+        if c in "\"'`":
+            close = j + 1
+            while close < i and text[close] != c:
+                close += 2 if text[close] == "\\" else 1
+            if close >= i:
+                return False  # Inside a string, which the caller's scanner already handles.
+            j, previous = close + 1, "a"
+            continue
+        if c == "/" and text.startswith("/*", j):
+            close = text.find("*/", j + 2, i)
+            if close < 0:
+                return False
+            j = close + 2
+            continue
+        if c == "/" and text.startswith("//", j):
+            return False
+        if c == "/" and previous in REGEX_BEFORE | {""} and text[j - 1:j] != "<":  # "</" closes a JSX tag.
+            j += 1
+            in_class = False
+            while j < len(text) and text[j] != "\n" and (in_class or text[j] != "/"):
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                if j >= i:
+                    return True  # i is inside this literal.
+                j += 1
+            if j >= i:
+                return True  # i is the literal's closing "/".
+            j, previous = j + 1, "a"
+            continue
+        word = re.match(r"[A-Za-z_$][\w$]*", text[j:j + 64])
+        if word:
+            dotted = previous == "."  # obj.return is a property, not the keyword.
+            previous = "" if word.group(0) in REGEX_WORDS and not dotted else "a"
+            j += len(word.group(0))
+            continue
+        if not c.isspace():
+            previous = c
+        j += 1
+    return False
 
 
 def skip_braces(text, i, limit):
@@ -558,7 +613,7 @@ def skip_braces(text, i, limit):
                 i = line_end
                 continue
             i += 1
-        elif text.startswith("/*", i) and not closes_regex(text, i):
+        elif text.startswith("/*", i) and not inside_regex(text, i):
             close = text.find("*/", i + 2, n)
             i = n if close < 0 else close + 2
             continue

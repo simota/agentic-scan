@@ -1244,5 +1244,23 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 3)
 
 
+    def test_regex_classes_and_camel_case_exceptions(self):
+        import time
+        # "/*" inside a regex character class starts no block comment, so later comments are still masked.
+        data = self.scan({"a.jsx": 'const r = /[/*]/;\n// <img src="old" />\nconst x=/* <img src="c" /> */1;\n'
+                                   'export const A = () => <img src="a.png" />;\n'
+                                   'export const B = () => <p><b>x</b>/* <img src="d" /> */</p>;\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:4"])
+        started = time.monotonic()
+        self.scan({"b.jsx": "/*" * 300000})
+        self.assertLess(time.monotonic() - started, 5)
+        # microPhone and autoMobile split into micro_phone and auto_mobile; neither is personal.
+        data = self.scan({"c.html": '<label>Mic <input name="microPhone"></label>\n'
+                                    '<label>Car <input name="autoMobile"></label>\n'
+                                    '<label>Tel <input name="mobilePhone"></label>\n'})
+        self.assertEqual([(r["name"], r["missing"]) for r in data["inputs"]],
+                         [("mobilePhone", ["autocomplete", "type=tel"])])
+
+
 if __name__ == "__main__":
     unittest.main()

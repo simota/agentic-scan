@@ -578,6 +578,10 @@ class TransactionRegressions(unittest.TestCase):
         for prose, expected in cases.items():
             with self.subTest(prose=prose):
                 self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
+        # A keyword used as a property divides: obj.return / 2 is no regex.
+        for tag in ('<X p={obj.return / 2} data-id="U-001" />', '<X p={a.typeof / b.in / 2} data-id="U-001" />'):
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
         ranged = {"U-001": "U-005", "U-002": "U-002", "U-003": "U-004"}
         self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
         self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")

@@ -1248,9 +1248,10 @@ class InventoryRegressionTests(unittest.TestCase):
         import time
         # "/*" inside a regex character class starts no block comment, so later comments are still masked.
         data = self.scan({"a.jsx": 'const r = /[/*]/;\n// <img src="old" />\nconst x=/* <img src="c" /> */1;\n'
+                                   'if (ready) /[/*]/.test(value);\n// <img src="old2" />\n'
                                    'export const A = () => <img src="a.png" />;\n'
                                    'export const B = () => <p><b>x</b>/* <img src="d" /> */</p>;\n'})
-        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:4"])
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:6"])
         started = time.monotonic()
         self.scan({"b.jsx": "/*" * 300000})
         self.assertLess(time.monotonic() - started, 5)

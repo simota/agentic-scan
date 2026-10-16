@@ -529,6 +529,7 @@ def comment_start(text, i):
 
 
 REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
+CONTROL_WORDS = {"if", "while", "for", "with"}
 REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
 
 
@@ -548,6 +549,8 @@ def inside_regex(text, i, budget=None):
     newline = text.rfind("\n", floor, i)
     j = newline + 1 if newline >= 0 else floor
     previous = ""  # The last significant token: a character, or "a" for an operand.
+    word_before = ""  # The identifier just before the last token, to spot if ( … ) and while ( … ).
+    parens = []  # For each open "(": whether it opened a control condition.
     while j < i:
         c = text[j]
         if c in "\"'`":
@@ -587,10 +590,19 @@ def inside_regex(text, i, budget=None):
         if word:
             dotted = previous == "."  # obj.return is a property, not the keyword.
             previous = "" if word.group(0) in REGEX_WORDS and not dotted else "a"
+            word_before = "" if dotted else word.group(0)
             j += len(word.group(0))
             continue
+        if c == "(":
+            parens.append(word_before in CONTROL_WORDS)
+        elif c == ")":
+            # After if ( … ), while ( … ) or for ( … ) a statement starts, so "/" opens a regex.
+            previous = "" if parens and parens.pop() else ")"
+            word_before = ""
+            j += 1
+            continue
         if not c.isspace():
-            previous = c
+            previous, word_before = c, ""
         j += 1
     return False
 

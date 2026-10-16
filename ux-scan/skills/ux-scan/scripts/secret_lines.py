@@ -196,11 +196,15 @@ def continued_secret_lines(lines, start, stop):
     hidden = set()
     for index in range(max(0, start), min(len(lines), stop)):
         text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
-        if not any(rest >= len(text) for rest, _ in _value_starts(text)):
+        names = [name for name in SECRET_NAME.finditer(text)
+                 if any(rest >= len(text) - name.start() for rest, _ in _value_starts(text[name.start():]))]
+        if not names:
             continue
+        # Judge from the name on, so a long line before it cannot push the value past the limit.
+        tail = text[names[-1].start():]
         for following in range(index + 1, min(len(lines), index + 4)):
             if lines[following].strip():
-                if secret_line(text + " " + lines[following].strip()):
+                if secret_line(tail + " " + lines[following].strip()):
                     hidden.update((index, following))
                 break
     return hidden

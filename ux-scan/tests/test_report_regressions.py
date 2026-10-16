@@ -340,6 +340,8 @@ class ReportRegressions(unittest.TestCase):
         (self.repo / "wrapped.ts").write_text(
             'const a = 1;\nexport const clientToken =\n  "a8f9e7d6c5b4a3f2e1d0";\nconst label =\n  "Password";\n',
             encoding="utf-8")
+        # A long line before the name cannot push the wrapped value past the search limit.
+        self.assertEqual(render.continued_secret_lines(["x" * 740 + " password =", '  "hunter2";'], 0, 2), {0, 1})
         (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
         shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]

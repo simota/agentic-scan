@@ -43,8 +43,7 @@ and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
 spaces, tabs, non-breaking spaces, hyphens, Unicode dashes, the minus sign or
 the katakana prolonged sound mark (`ー`) between digits, and card-style groups
-(4-4-4, as a My Number is written, 4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or
-`+`. ISO dates (`2026-10-09`) and UUIDs are not counted as digit runs, so date
+(4-4-4-4 or 4-6-5) joined by `.`, `/`, `_` or `+`. ISO dates (`2026-10-09`) and UUIDs are not counted as digit runs, so date
 ranges and identifiers stay allowed. In a `location` path only, a path segment that starts with a compact
 date-time (`20261009123045_create_users.py`, as timestamped migrations are
 named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
@@ -166,10 +165,11 @@ ASCII_RUN_ON_LABEL = re.compile(r"([A-Za-z0-9-]*[A-Za-z])[^\x00-\x7f]")
 # boundaries still separate unrelated numbers in prose.
 LONG_NUMBER = re.compile(
     r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11}")
-# Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4, as a
-# 12-digit My Number is written, 4-4-4-2..4 or 4-6-5). Groups of at most three
-# digits, as in IP addresses, never match.
-GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}(?:\1\d{2,4})?(?!\d)"
+# Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
+# 4-6-5). Groups of at most three digits, as in IP addresses, never match.
+# Three groups (4-4-4) are not refused: date-partitioned paths and port lists
+# (`logs/2026/1016/0930.log`, `8080/8443/9443`) share that shape.
+GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
 # ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;

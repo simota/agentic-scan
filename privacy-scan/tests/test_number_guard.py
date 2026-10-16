@@ -22,15 +22,15 @@ class NumberGuardTests(unittest.TestCase):
 
     def test_card_groups_with_other_separators_are_refused(self):
         for value in ("4111.1111.1111.1111", "4111/1111/1111/1111", "4111_1111_1111_1111",
-                      "4111+1111+1111+1111", "3782.822463.10005", "card 4111.1111.1111.11",
-                      # A 12-digit My Number in 4-4-4 groups.
-                      "1234.5678.9012", "1234/5678/9012", "1234_5678_9012", "1234+5678+9012"):
+                      "4111+1111+1111+1111", "3782.822463.10005", "card 4111.1111.1111.11"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
 
-    def test_shorter_dotted_groups_remain_allowed(self):
-        for value in ("2026.10.16", "123.4567.8901", "1234.5678", "version 2024.1.1234",
-                      "10.0.0.1:5432"):
+    def test_three_groups_of_four_digits_remain_allowed(self):
+        # Date-partitioned paths, port and year lists share the 4-4-4 shape.
+        for value in ("logs/2026/1016/0930.log", "dump_2026_1016_1230.sql",
+                      "listens on 8080/8443/9443", "FY2023/2024/2025", "sizes 1024+2048+4096",
+                      "2026.10.16", "123.4567.8901", "10.0.0.1:5432"):
             with self.subTest(value=value):
                 self.assertFalse(refused(value))
 

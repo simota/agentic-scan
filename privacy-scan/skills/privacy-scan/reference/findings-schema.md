@@ -134,8 +134,8 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
 links (also directly after Japanese text, and with an upper-case scheme), so
 renderers that link bare URLs do not keep escape characters in the target;
 `ftp://` URLs stay literal text. Excluded findings (`FalsePositive`,
-`NotApplicable`) are labelled in both reports and have their own dashboard filter instead of appearing under
-their severity; a filter that matches nothing says so. Dashboard cells wrap
+`NotApplicable`) are labelled in both reports and have their own dashboard
+filter instead of appearing under their severity; a filter that matches nothing says so. Dashboard cells wrap
 long paths and keep line breaks.
 
 ## Shape

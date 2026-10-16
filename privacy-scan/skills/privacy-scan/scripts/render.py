@@ -157,7 +157,7 @@ MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
 # URLs written in prose. GFM links them automatically but keeps our escape
 # backslashes in the target, so they are written as explicit links instead.
 # GFM links a scheme in any case after anything but an ASCII letter (also
-# directly after Japanese text, digits or '.'), and `www.` only after spaces.
+# directly after Japanese text, digits or '.'), and `www.` only at a word start.
 URL_TOKEN = re.compile(r"(?:(?<![A-Za-z])(?i:https?)://|(?<![\w.@/])www\.)"
                        r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
 URL_TRAILING = ".,;:!?'\"*_~"

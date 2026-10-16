@@ -33,8 +33,8 @@ and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
 short values, passphrases with spaces, typed declarations
 (`password: string = "…"`), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
-reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto the next line after
-`=`, and literals left open or cut off by the 752-character limit. Labels such
+reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto a later line after
+`=` or an operator (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
 and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
 since forms and locale files are what UX findings cite; a value on a `NAME=value`

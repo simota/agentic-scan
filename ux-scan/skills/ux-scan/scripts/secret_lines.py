@@ -32,7 +32,7 @@ KNOWN_SECRET = re.compile(
     r"|\bSG\.[\w-]{16,}\.|\bAKIA[0-9A-Z]{16}\b"            # SendGrid, AWS
     r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"     # PEM and PGP armour
     r"|://[^/\s:@\"'`]*:[^/\s@\"'`]+@"                     # scheme://user:password@host, also redis://:password@host
-    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%])[^\s\"']{2})"  # --password value
+    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%])[^\s\"'])"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
     r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
@@ -65,6 +65,9 @@ ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
+# The end of a line whose assigned value continues on the next one.
+OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
+COMMENT_LINE = re.compile(r"(?://|#|/\*|\*|<!--)")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
 # Any non-empty quoted literal, spaces included ("correct horse battery staple").
@@ -186,27 +189,41 @@ def _assigned_secret(text):
     return False
 
 
+def _open_names(text):
+    """Start offsets of secret-like names whose assigned value continues on the next line: nothing
+    follows the assignment (password =), or the line ends in an operator or opening delimiter
+    (password = process.env.PW ||)."""
+    starts = []
+    for name in SECRET_NAME.finditer(text):
+        tail = text[name.start():]
+        if any(rest >= len(tail) or OPEN_END.search(tail, rest) for rest, _ in _value_starts(tail)):
+            starts.append(name.start())
+    return starts
+
+
 def continued_secret_lines(lines, start, stop):
-    """Indexes in lines[start:stop] of a value wrapped onto the line after its secret-like name
+    """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
     (export const clientToken =\n  "…";), with the name's line.
 
-    A line ending in an assignment is judged together with the next nonblank
-    line (at most three lines on); start may lie one line before the excerpt.
+    A line whose assignment continues is judged from the name on, together with the
+    next line that is neither blank nor a comment (at most five lines on); start may
+    lie one line before the excerpt.
     """
     hidden = set()
     for index in range(max(0, start), min(len(lines), stop)):
         text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
-        names = [name for name in SECRET_NAME.finditer(text)
-                 if any(rest >= len(text) - name.start() for rest, _ in _value_starts(text[name.start():]))]
+        names = _open_names(text)
         if not names:
             continue
-        # Judge from the name on, so a long line before it cannot push the value past the limit.
-        tail = text[names[-1].start():]
-        for following in range(index + 1, min(len(lines), index + 4)):
-            if lines[following].strip():
-                if secret_line(tail + " " + lines[following].strip()):
-                    hidden.update((index, following))
-                break
+        # From the name on, so a long line before it cannot push the value past the limit.
+        tail = text[names[-1]:]
+        for following in range(index + 1, min(len(lines), index + 6)):
+            value = lines[following].strip()
+            if not value or COMMENT_LINE.match(value):
+                continue  # A blank line or a comment between the name and its value.
+            if secret_line(tail + " " + value):
+                hidden.update((index, following))
+            break
     return hidden
 
 

@@ -24,7 +24,8 @@ symlinks (including directory links), and secret-looking paths are omitted;
 lines that hold a secret are masked in full (`scripts/secret_lines.py`): known
 credential formats (provider token prefixes, JWTs, PEM and PGP private-key
 blocks found anywhere in the file, credentials in URLs including
-`redis://:password@host`, command lines including `--password value`, bearer
+`redis://:password@host`, command lines including `--password value` (quoted
+too, but not `"$PASSWORD"`), bearer
 and basic authorization values), and secret-like names (password, secret,
 token, API key, credentials…, also after acronyms, inside upper-case names
 and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
@@ -35,9 +36,9 @@ delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after 
 reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto the next line after
 `=`, and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
-and references (`process.env.X`, `form.password,`) and booleans stay visible,
-since forms and locale files are what UX findings cite; a dotted value at the
-end of an env or YAML line (`Pa55.word`) is a value. Each line is judged on
+and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
+since forms and locale files are what UX findings cite; a value on a `NAME=value`
+line (`.env`, properties) or with a digit in its root (`Pa55.word`) is a literal. Each line is judged on
 the shown text plus 512 characters after it, so a credential cut off at the
 limit is masked too. These rules are conservative heuristics, not
 a complete credential audit. Report text and

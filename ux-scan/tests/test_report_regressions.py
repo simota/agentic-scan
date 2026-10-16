@@ -295,7 +295,9 @@ class ReportRegressions(unittest.TestCase):
                  "password: hunter2.secret", 'const SECRET = process.env.SECRET || "dev-secret-9f8e7d";',
                  'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
                  'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
-                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"']
+                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"',
+                 'docker login --password "hunter2"', "cli --token='abc123'", "DB_PASSWORD=Pa.word",
+                 "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -318,7 +320,8 @@ class ReportRegressions(unittest.TestCase):
               "password: form.password,", "password: values.pw", 'password_confirmation: "Confirm password"',
               "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
-              'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",']
+              'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
+              "password = auth.currentPassword", 'cli --password "$PASSWORD"']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))
@@ -337,6 +340,8 @@ class ReportRegressions(unittest.TestCase):
         (self.repo / "wrapped.ts").write_text(
             'const a = 1;\nexport const clientToken =\n  "a8f9e7d6c5b4a3f2e1d0";\nconst label =\n  "Password";\n',
             encoding="utf-8")
+        (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
         shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]
         self.assertEqual(shown, ["const a = 1;", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"],
                                  "const label =", '  "Password";'])

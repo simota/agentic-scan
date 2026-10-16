@@ -32,7 +32,7 @@ KNOWN_SECRET = re.compile(
     r"|\bSG\.[\w-]{16,}\.|\bAKIA[0-9A-Z]{16}\b"            # SendGrid, AWS
     r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"     # PEM and PGP armour
     r"|://[^/\s:@\"'`]*:[^/\s@\"'`]+@"                     # scheme://user:password@host, also redis://:password@host
-    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?![-$<{%])[^\s\"']{2})"  # --password value
+    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%])[^\s\"']{2})"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
     r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
@@ -75,12 +75,8 @@ UNCLOSED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)*)\Z")
 EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
-# A bare dotted value reads as code from a known object (process.env.X), and a digit-free
-# identifier or reference does when code punctuation or an operator follows (form.pw, isNew ? …);
-# Pa55.word or hunter2.secret at the end of an env or YAML line is a value.
-CODE_ROOTS = {"process", "import", "os", "env", "config", "cfg", "conf", "settings", "props", "this", "self",
-              "window", "globalThis", "state", "form", "values", "data", "user", "req", "request", "ctx",
-              "context", "options", "opts", "params", "app", "vars", "secrets", "credentials", "field", "input"}
+# A NAME=value line with no space before "=": .env files, Java properties, export lines.
+ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
 CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 # A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
@@ -136,15 +132,16 @@ def _secret_literal(quoted, name):
 
 
 def _code_reference(text, bare):
-    """Whether a bare dotted value is a code reference rather than a literal such as Pa55.word."""
+    """Whether a bare value is code: a digit-free reference (auth.currentPassword), or a digit-free
+    identifier followed by code punctuation or an operator (isNew ? …). On a NAME=value line
+    (.env, .properties) the value is always a literal, so Pa55.word or Sommer.x are masked."""
     value = bare.group(1)
-    if not (REFERENCE.fullmatch(value) or IDENTIFIER.fullmatch(value)):
+    dotted = REFERENCE.fullmatch(value) is not None
+    if not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
         return False
-    root = IDENTIFIER.match(value).group(0)
-    if REFERENCE.fullmatch(value) and root in CODE_ROOTS:
-        return True
-    # An identifier or reference followed by code punctuation or an operator (isNew ? …, form.pw,).
-    return not re.search(r"\d", root) and CODE_AFTER.match(text, bare.end()) is not None
+    if re.search(r"\d", IDENTIFIER.match(value).group(0)):
+        return False  # hunter2.secret reads as a value, not an object.
+    return dotted or CODE_AFTER.match(text, bare.end()) is not None
 
 
 def _fallback_secret(text, start, name):

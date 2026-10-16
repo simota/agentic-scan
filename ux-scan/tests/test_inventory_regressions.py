@@ -1264,10 +1264,11 @@ class InventoryRegressionTests(unittest.TestCase):
 
     def test_aria_hidden_glyph_buttons_and_cr_line_ends(self):
         data = self.scan({"a.html": '<button onclick="closeIt()"><span aria-hidden="true">&times;</span></button>\n'
-                                    '<button><span aria-hidden="true">×</span> Close</button>\n',
+                                    '<button><span aria-hidden="true">×</span> Close</button>\n'
+                                    '<button><span aria-hidden="true"><span>×</span>close</span></button>\n',
                           "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
                                    '</button>;\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "b.tsx:1"])
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "b.tsx:1"])
         # A lone CR ends a line, as in the report excerpts.
         data = self.scan({"c.html": '<!doctype html>\r<p>one</p>\r<img src="x.png">\r',
                           "d.jsx": 'const a = 1;\r// <img src="c" />\rexport const D = () => <img src="d" />;\r'})

@@ -69,6 +69,7 @@ ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^
 OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
 # A secret flag whose value follows a shell line continuation: --password \\
 FLAG_CONTINUES = re.compile(r"(?i)(?<!\S)(--(?:password|passwd|pass|token|secret|api-?key))(?:=|\s+)\\\Z")
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
 COMMENT_LINE = re.compile(r"(?://|#|/\*|\*|<!--)")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
@@ -248,7 +249,13 @@ def secret_line(line, config=False):
     bare value such as Sommer.x is a literal, never a code reference.
     """
     searched = line[:SHOWN_CHARACTERS + LOOKAHEAD]
-    if KNOWN_SECRET.search(searched) or _assigned_secret(searched, config):
+    # Assignments are judged with block comments blanked, so a comment can neither hide a value
+    # (password = x || /* dev */ "…") nor pose as one (password = /* note */ auth.pw); each
+    # comment's own text is judged too, for a secret written inside it.
+    comments = BLOCK_COMMENT.findall(searched) if "/*" in searched else []
+    uncommented = BLOCK_COMMENT.sub(lambda m: " " * len(m.group(0)), searched) if comments else searched
+    if (KNOWN_SECRET.search(searched) or _assigned_secret(uncommented, config)
+            or any(_assigned_secret(comment[2:-2], config) for comment in comments)):
         return True
     return len(line) > SHOWN_CHARACTERS and bool(CUT_SECRET.search(line[:SHOWN_CHARACTERS]))
 

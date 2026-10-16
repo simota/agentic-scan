@@ -297,7 +297,8 @@ class ReportRegressions(unittest.TestCase):
                  'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
                  "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"',
                  'docker login --password "hunter2"', "cli --token='abc123'",
-                 'const password = process.env.PASSWORD || ("hunter2")', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 'const password = process.env.PASSWORD || ("hunter2")',
+                 'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
                  "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
@@ -322,7 +323,8 @@ class ReportRegressions(unittest.TestCase):
               "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
-              "password = auth.currentPassword", 'cli --password "$PASSWORD"']
+              "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
+              'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

@@ -646,8 +646,33 @@ BUTTON_OPEN = re.compile(r"<button\b")
 BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
-ARIA_HIDDEN_ELEMENT = re.compile(r"(?is)<([A-Za-z][\w.:-]*)\b[^<>]*?\saria-hidden\s*=\s*(?:\"true\"|'true'|\{\s*true\s*\}|true\b)"
-                                 r"[^<>]*>.*?</\1\s*>")
+ARIA_HIDDEN_OPEN = re.compile(r"(?is)<([A-Za-z][\w.:-]*)\b[^<>]*?\saria-hidden\s*=\s*"
+                              r"(?:\"true\"|'true'|\{\s*true\s*\}|true\b)[^<>]*?(/?)>")
+
+
+def strip_aria_hidden(markup):
+    """markup with each aria-hidden="true" element, content included, replaced by <i></i>.
+
+    Same-name descendants are counted, so <span aria-hidden><span>×</span>close</span>
+    hides "close" too; an unclosed element hides the rest. Linear in len(markup).
+    """
+    parts, cursor = [], 0
+    while opening := ARIA_HIDDEN_OPEN.search(markup, cursor):
+        parts.append(markup[cursor:opening.start()])
+        cursor = opening.end()
+        if not opening.group(2):  # Not self-closing: find the matching close tag.
+            same = re.compile(r"(?i)<(/?)" + re.escape(opening.group(1)) + r"(?=[\s/>])[^<>]*?(/?)>")
+            depth = 1
+            while depth and (tag := same.search(markup, cursor)):
+                cursor = tag.end()
+                depth += -1 if tag.group(1) else 0 if tag.group(2) else 1
+            if depth:
+                cursor = len(markup)
+        parts.append("<i></i>")
+    parts.append(markup[cursor:])
+    return "".join(parts)
+
+
 ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>.*?</\1\s*>")
 # Bindings that set a button's text, so an empty element still has a name unless the value is blank.
 TEXT_BINDINGS = ("v-text", "v-html", "innertext", "textcontent", "innerhtml", "dangerouslysetinnerhtml",
@@ -1151,7 +1176,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 # Icon-font ligatures (<mat-icon>delete</mat-icon>) are hidden from assistive technology.
                 inner = ICON_ELEMENT.sub("<i></i>", clean[end:close.start()])
                 # Content hidden from assistive technology (<span aria-hidden="true">×</span>) names nothing.
-                inner = ARIA_HIDDEN_ELEMENT.sub("<i></i>", inner)
+                inner = strip_aria_hidden(inner)
                 if not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
                     acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):

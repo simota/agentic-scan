@@ -299,7 +299,7 @@ class ReportRegressions(unittest.TestCase):
                  'docker login --password "hunter2"', "cli --token='abc123'",
                  'const password = process.env.PASSWORD || ("hunter2")',
                  'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
-                 "password=${VALUE:-hunter2}", "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
                  "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
@@ -325,7 +325,7 @@ class ReportRegressions(unittest.TestCase):
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
-              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}",
+              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", 'password: "${DB_PASSWORD}"', "password: '$PW'",
               'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):
@@ -357,6 +357,7 @@ class ReportRegressions(unittest.TestCase):
             ["password = process.env.PW || /* dev", "   still comment", '*/ "hunter2"'], 0, 3), {0, 2})
         self.assertEqual(render.continued_secret_lines(
             ["password =", "  process.env.PW || /* dev", '*/ "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["password =", '  /* dev */ "hunter2"'], 0, 2), {0, 1})
         # The look-back covers the whole continuation window before the excerpt.
         (self.repo / "early.ts").write_text(
             "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",

@@ -70,6 +70,7 @@ OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
 # A secret flag whose value follows a shell line continuation: --password \\
 FLAG_CONTINUES = re.compile(r"(?i)(?<!\S)(--(?:password|passwd|pass|token|secret|api-?key))(?:=|\s+)\\\Z")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
+LEADING_COMMENTS = re.compile(r"\A(?:/\*.*?\*/\s*)+")
 COMMENT_LINE = re.compile(r"(?://|#|/\*|\*|<!--)")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
@@ -84,7 +85,8 @@ REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # A NAME=value line with no space before "=": .env files, Java properties, export lines.
 # A plain $VAR or ${VAR}; ${VAR:-default} and its kin carry a default that is judged as a value.
 # (${VAR:?message} carries an error message, not a value.)
-ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*(?![\w{]))")
+# It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)(?=[\s,;\"'`)}\]]|\Z)")
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
@@ -139,6 +141,11 @@ def _value_starts(text):
 def _secret_literal(quoted, name):
     """Whether a matched QUOTED_VALUE is a credential rather than a label, keyword, colour or length."""
     value = quoted.group(2)
+    if ENV_REFERENCE.fullmatch(value):
+        return False  # "${DB_PASSWORD}" or "$PW": a variable, quoted.
+    default = ENV_DEFAULT.fullmatch(value)
+    if default and (not default.group(1) or default.group(1).startswith("$")):
+        return False
     return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
 
 
@@ -253,6 +260,7 @@ def continued_secret_lines(lines, start, stop, config=False):
                 if close < 0:
                     continue
                 value, in_comment = value[close + 2:].strip(), False
+            value = LEADING_COMMENTS.sub("", value)  # /* dev */ "…": the value follows the comment.
             if not value or COMMENT_LINE.match(value):
                 in_comment = _opens_comment(value)
                 continue  # A blank line or a comment between the name and its value.

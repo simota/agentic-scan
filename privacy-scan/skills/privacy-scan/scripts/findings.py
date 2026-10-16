@@ -115,7 +115,9 @@ PERSPECTIVES = (
 # Hunt-step prefixes per perspective (reference/perspectives.md headings).
 STEP_PREFIXES = dict(zip(PERSPECTIVES, ("MN", "PC", "RD", "DR", "TP", "LT", "EX", "SP", "CT",
                                          "ID", "NP", "LO")))
-STEP_ID = re.compile(r"([A-Z]{2})\d+")
+# Hunt steps per perspective, numbered from 1 (the rows of each hunt table).
+STEP_COUNTS = dict(zip(PERSPECTIVES, (4, 4, 3, 4, 6, 4, 6, 2, 3, 2, 3, 2)))
+STEP_ID = re.compile(r"([A-Z]{2})([1-9]\d{0,2})")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -956,6 +958,10 @@ def record_problems(doc):
         elif step and step.group(1) != STEP_PREFIXES[f["category"]]:
             problems.append(f"{f['id']}.step: {step.group(0)} is not a step of {f['category']} "
                             f"({STEP_PREFIXES[f['category']]}…); fix the step or the category")
+        elif step and int(step.group(2)) > STEP_COUNTS[f["category"]]:
+            prefix, last = STEP_PREFIXES[f["category"]], STEP_COUNTS[f["category"]]
+            problems.append(f"{f['id']}.step: {step.group(0)} is not a hunt step of {f['category']} "
+                            f"({prefix}1–{prefix}{last} in reference/perspectives.md)")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
         # Ledger IDs are technical identifiers; other prose was checked by validate.

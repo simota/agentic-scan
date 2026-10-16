@@ -2,6 +2,7 @@
 import copy
 import io
 import json
+import re
 from pathlib import Path
 import tempfile
 import unittest
@@ -41,6 +42,19 @@ class RenumberTests(unittest.TestCase):
         self.assertEqual(doc["findings"][0]["impact"], "Same root as PV-002")
         self.assertEqual(doc["next_steps"], ["Fix PV-001, then PV-002; keep PV-003 excluded"])
         findings.validate(doc, complete=True)
+
+    def test_references_flush_against_japanese_text_are_rewritten(self):
+        # `\w` counted kana and kanji as part of the ID, so these were skipped.
+        doc = self.doc()
+        doc["next_steps"] = ["PV-003の修正を最初に行う", "PV-003とPV-001は同じ担当者"]
+        findings.renumber(doc)
+        self.assertEqual(doc["next_steps"], ["PV-001の修正を最初に行う", "PV-001とPV-002は同じ担当者"])
+
+    def test_ledger_ids_flush_against_japanese_text_are_checked(self):
+        doc = complete_doc()
+        doc["findings"][0]["commitment"] = "C-09の約束"
+        self.assertTrue(any("C-09 is not in the commitments ledger" in p
+                            for p in findings.record_problems(doc)))
 
     def test_check_names_the_order_and_the_command_then_renumber_fixes_it(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -221,6 +235,28 @@ class BlindRunTests(unittest.TestCase):
                         problems)
         doc["findings"][0]["step"] = "ID2"
         self.assertEqual(findings.record_problems(doc), [])
+
+    def test_steps_must_exist_in_the_hunt_table(self):
+        # Before the step count was checked, LT9 and LT01 passed as LT steps.
+        for step in ("LT9", "LT5", "LT0", "LT01"):
+            with self.subTest(step=step):
+                doc = complete_doc()
+                doc["findings"][0]["step"] = step
+                self.assertTrue(any(p.startswith("PV-001.step:") for p in findings.record_problems(doc)),
+                                step)
+        doc = complete_doc()
+        doc["findings"][0]["step"] = "LT4"
+        self.assertEqual(findings.record_problems(doc), [])
+
+    def test_step_counts_match_the_reference_hunt_tables(self):
+        text = (Path(findings.__file__).parents[1] / "reference" / "perspectives.md").read_text(
+            encoding="utf-8")
+        hunts = text.split("## Hunt steps per perspective", 1)[1].split("## Sound constructs", 1)[0]
+        steps = re.findall(r"^\| ([A-Z]{2})(\d+) \|", hunts, re.MULTILINE)
+        for name, prefix in findings.STEP_PREFIXES.items():
+            with self.subTest(perspective=name):
+                numbers = [int(n) for p, n in steps if p == prefix]
+                self.assertEqual(numbers, list(range(1, findings.STEP_COUNTS[name] + 1)))
 
     def test_step_prefixes_match_the_reference_headings(self):
         text = (Path(findings.__file__).parents[1] / "reference" / "perspectives.md").read_text(

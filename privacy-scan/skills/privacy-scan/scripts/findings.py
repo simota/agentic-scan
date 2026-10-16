@@ -36,7 +36,8 @@ Personal-value guard, in full:
 Report prose, including analysis results, commitments, perspective notes and the
 top-level text lists, is checked for e-mail addresses (other than
 `example.com`, `example.org`, `example.net` or the `.example`, `.test`,
-`.invalid` domains) and runs of 12 or more digits. The guard recognises quoted
+`.invalid` domains; prose may run straight on after one, as in
+`user@example.comに`) and runs of 12 or more digits. The guard recognises quoted
 and Unicode e-mail forms, including complete internationalised domain labels
 and bracketed address literals (IPv4 and IPv6). Bracketed literal domains are
 not exempted as reserved example domains. The guard also recognises repeated
@@ -115,7 +116,9 @@ PERSPECTIVES = (
 # Hunt-step prefixes per perspective (reference/perspectives.md headings).
 STEP_PREFIXES = dict(zip(PERSPECTIVES, ("MN", "PC", "RD", "DR", "TP", "LT", "EX", "SP", "CT",
                                          "ID", "NP", "LO")))
-STEP_ID = re.compile(r"([A-Z]{2})\d+")
+# Hunt steps per perspective, numbered from 1 (the rows of each hunt table).
+STEP_COUNTS = dict(zip(PERSPECTIVES, (4, 4, 3, 4, 6, 4, 6, 2, 3, 2, 3, 2)))
+STEP_ID = re.compile(r"([A-Z]{2})([1-9]\d{0,2})")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -136,7 +139,9 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 FINDING_ID = re.compile(r"^PV-\d{3}$")
 # Bounded so a long digit run cannot pass as an exempt technical identifier.
 COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
-COMMITMENT_REF = re.compile(r"(?<![\w-])C-\d{2,6}(?![\w-])")
+# ASCII boundaries: Japanese prose writes IDs flush against kana and kanji
+# ("C-01の"), which `\w` would count as part of a longer word.
+COMMITMENT_REF = re.compile(r"(?<![A-Za-z0-9_-])C-\d{2,6}(?![A-Za-z0-9_-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d{1,9}(?:-\d{1,9})?$")
@@ -153,6 +158,9 @@ IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
 IDNA_LABEL_EXTRAS = frozenset("\u00b7\u0375\u05f3\u05f4\u06fd\u06fe\u0f0b\u200c\u200d\u30fb")
 EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|test|invalid)$",
                              re.IGNORECASE)
+# An ASCII label that runs straight on into other letters, as Japanese prose
+# does after an address ("user@example.comに送る").
+ASCII_RUN_ON_LABEL = re.compile(r"([A-Za-z0-9-]*[A-Za-z])[^\x00-\x7f]")
 # Horizontal Unicode whitespace and hyphens, including Unicode dashes, the minus
 # sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
@@ -160,6 +168,8 @@ LONG_NUMBER = re.compile(
     r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11}")
 # Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
 # 4-6-5). Groups of at most three digits, as in IP addresses, never match.
+# Three groups (4-4-4) are not refused: date-partitioned paths and port lists
+# (`logs/2026/1016/0930.log`, `8080/8443/9443`) share that shape.
 GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
                             r"|(?<!\d)\d{4}([./_+])\d{6}\2\d{5}(?!\d)")
 # ISO dates, UUIDs and hex digests (a whole token of 32 or more hex digits with
@@ -483,6 +493,21 @@ def _email_domains(value):
             yield domain
 
 
+def _example_domain(domain):
+    """A reserved example domain, also when prose runs straight on after it.
+
+    Top-level labels never mix ASCII with other scripts, so a last label that
+    starts in ASCII and continues into other letters ends where its ASCII part
+    ends. Only the last label is cut: `example.comé.рф` and `example.comん.jp`
+    are judged whole, so prose after a later sentence break stays refused.
+    """
+    if EXAMPLE_DOMAINS.search(domain):
+        return True
+    head, dot, last = domain.rpartition(".")
+    run_on = ASCII_RUN_ON_LABEL.match(last)
+    return bool(dot and run_on and EXAMPLE_DOMAINS.search(f"{head}.{run_on.group(1)}"))
+
+
 def _no_personal_values(value, where):
     if value is None:
         return
@@ -515,7 +540,7 @@ def _scan_personal_values(value, where):
                 not domain.startswith("[") and domain.count(".") != 3
                 and not any(c.isalpha() for c in domain.rsplit(".", 1)[-1])):
             continue
-        if not EXAMPLE_DOMAINS.search(domain):
+        if not _example_domain(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
     if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(_mask_technical_numbers(value)):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
@@ -719,7 +744,7 @@ def merge(doc, fragment, where):
 
 
 NOT_REFERENCES = {"location", "url", "command", "commit"}
-PV_REFERENCE = re.compile(r"(?<![\w-])PV-\d{3}(?![\w-])")
+PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_-])PV-\d{3}(?![A-Za-z0-9_-])")  # ASCII, as COMMITMENT_REF
 
 
 def renumber(doc):
@@ -956,6 +981,10 @@ def record_problems(doc):
         elif step and step.group(1) != STEP_PREFIXES[f["category"]]:
             problems.append(f"{f['id']}.step: {step.group(0)} is not a step of {f['category']} "
                             f"({STEP_PREFIXES[f['category']]}…); fix the step or the category")
+        elif step and int(step.group(2)) > STEP_COUNTS[f["category"]]:
+            prefix, last = STEP_PREFIXES[f["category"]], STEP_COUNTS[f["category"]]
+            problems.append(f"{f['id']}.step: {step.group(0)} is not a hunt step of {f['category']} "
+                            f"({prefix}1–{prefix}{last} in reference/perspectives.md)")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
         # Ledger IDs are technical identifiers; other prose was checked by validate.

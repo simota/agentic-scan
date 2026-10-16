@@ -127,6 +127,23 @@ class MarkdownRenderingTests(unittest.TestCase):
                 self.assertIn("- **references:** " + expected, markdown)
                 self.assertNotIn("[Reference](", markdown)
 
+    def test_urls_that_gfm_would_autolink_never_keep_escape_backslashes(self):
+        # GFM links a scheme after any non-letter and in any case; the escape
+        # backslashes of an unlinked URL would end up in its link target.
+        for text, link in (("同意文言はhttps://example.com/privacy#cookies に記載",
+                            "[https://example.com/privacy\\#cookies](<https://example.com/privacy#cookies>)"),
+                           ("1https://example.com/a_b", "[https://example.com/a\\_b](<https://example.com/a_b>)"),
+                           ("see HTTPS://EXAMPLE.COM/A_B", "[HTTPS://EXAMPLE.COM/A\\_B](<HTTPS://EXAMPLE.COM/A_B>)")):
+            with self.subTest(text=text):
+                self.assertIn(link, render.markdown_text(text))
+        self.assertEqual(render.markdown_text("xhttps://example.com/a_b"), "xhttps://example.com/a\\_b")
+
+    def test_ftp_urls_stay_literal_text(self):
+        self.assertEqual(render.markdown_text("毎晩 FTP://files.example.com/daily_users.csv へ"),
+                         "毎晩 FTP\\://files.example.com/daily\\_users.csv へ")
+        self.assertEqual(render.markdown_reference({"url": "ftp://files.example.com/a_b.csv"}),
+                         "ftp\\://files.example.com/a\\_b.csv")
+
     def test_commands_preserve_backticks_spaces_and_line_breaks(self):
         cases = (
             ("git log --format=`%h`", "`` git log --format=`%h` ``"),

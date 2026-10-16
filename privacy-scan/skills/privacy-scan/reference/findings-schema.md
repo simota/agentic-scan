@@ -30,7 +30,8 @@ point here. `check` refuses an output directory unless:
   `NotApplicable`) are in severity order, then by their first location's path,
   and excluded findings follow them, by path (the order `renumber` produces)
 - no two reported findings share their first `location` (one per fix location)
-- a nonblank `step` is one hunt step ID whose prefix belongs to `category`
+- a nonblank `step` is one of the hunt step IDs that `reference/perspectives.md`
+  lists under `category` (`LT1`…`LT4` under Logs, telemetry and errors)
 - an `Environment-dependent` reported finding names its `conditions`
 - every reported High and Medium finding has nonblank `validation.evidence`,
   whatever its verdict (for `Likely` or `Unverified`, the hop not yet read)
@@ -130,10 +131,11 @@ severity, confidence and verdict names stay as recorded. Perspectives are listed
 in the order of `reference/perspectives.md`, blank optional fields add no row,
 a blank reference `title` shows the URL, and a blank `meta.commit` shows
 `UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown
-links, so renderers that link bare URLs do not keep escape characters in the
-target. Excluded findings (`FalsePositive`, `NotApplicable`) are labelled in
-both reports and have their own dashboard filter instead of appearing under
-their severity; a filter that matches nothing says so. Dashboard cells wrap
+links (also directly after Japanese text, and with an upper-case scheme), so
+renderers that link bare URLs do not keep escape characters in the target;
+`ftp://` URLs stay literal text. Excluded findings (`FalsePositive`,
+`NotApplicable`) are labelled in both reports and have their own dashboard
+filter instead of appearing under their severity; a filter that matches nothing says so. Dashboard cells wrap
 long paths and keep line breaks.
 
 ## Shape
@@ -196,7 +198,7 @@ long paths and keep line breaks.
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected`. Confidence says how the claim follows from the code; the verdict says how far its verification got, so `Confirmed` with `Likely` means the code shows the gap but a hop was not traced. An excluded finding keeps the severity it would have had |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
-| `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports. `check` requires its prefix to belong to `category` (`LT` steps under Logs, telemetry and errors) |
+| `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports. `check` requires a step listed under `category` (`LT1`…`LT4` under Logs, telemetry and errors) |
 | `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; control characters are not allowed. When the fix is a file that does not exist yet, use `path:0` for the file to create and say so in `fix` |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values. `fix` and `guard` may be omitted for `FalsePositive` and `NotApplicable` |
 | `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |

@@ -156,12 +156,19 @@ MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
 
 # URLs written in prose. GFM links them automatically but keeps our escape
 # backslashes in the target, so they are written as explicit links instead.
-URL_TOKEN = re.compile(r"(?<![\w.@/])(?:https?://|www\.)[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
+# GFM links a scheme in any case after anything but an ASCII letter (also
+# directly after Japanese text, digits or '.'), and `www.` only at a word start.
+URL_TOKEN = re.compile(r"(?:(?<![A-Za-z])(?i:https?)://|(?<![\w.@/])www\.)"
+                       r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
 URL_TRAILING = ".,;:!?'\"*_~"
+# GFM also links `ftp://`; an escaped colon keeps such URLs literal text, as
+# other unsupported schemes are.
+FTP_SCHEME = re.compile(r"(?<![A-Za-z])(ftp):(?=//)", re.IGNORECASE)
 
 
 def _literal(text):
-    return escape(text, quote=False).translate(MARKDOWN_ESCAPES)
+    text = escape(text, quote=False).translate(MARKDOWN_ESCAPES)
+    return FTP_SCHEME.sub(r"\1\\:", text)
 
 
 def _prose_url(url):

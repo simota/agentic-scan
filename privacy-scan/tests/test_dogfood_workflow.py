@@ -154,7 +154,9 @@ class MergeAndSchemaTests(unittest.TestCase):
 
     def test_timestamped_migration_paths_are_accepted(self):
         for location in ("db/migrations/20261009123045_create_users.py:12",
-                         "prisma/migrations/20240101000000_init/migration.sql:3"):
+                         "prisma/migrations/20240101000000_init/migration.sql:3",
+                         "db/migration/V20261009123045__add_phone.sql:3",
+                         "db/migrate/<timestamp>_add_phone.rb:3"):
             with self.subTest(location=location):
                 findings.validate({"findings": [finding(location=location)]})
         # An impossible date-time is not masked.
@@ -166,6 +168,10 @@ class MergeAndSchemaTests(unittest.TestCase):
             findings.validate({"findings": [finding(title="Account 20261009123045 is exposed")]})
         with self.assertRaises(findings.SchemaError):
             findings.validate({"findings": [finding(location="db/x_20261009123045.py:1")]})
+        # Flyway's prefix is exempt only before a valid compact date-time.
+        for location in ("db/V090123456789__x.sql:1", "src/migrations/1696845045123-AddPhone.ts:10"):
+            with self.subTest(location=location), self.assertRaises(findings.SchemaError):
+                findings.validate({"findings": [finding(location=location)]})
 
 
 class DisclaimerTests(unittest.TestCase):

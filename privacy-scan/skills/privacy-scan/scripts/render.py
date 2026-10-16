@@ -510,6 +510,10 @@ def main(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--lang", choices=("ja", "en"))
     args = parser.parse_args(argv)
+    if not args.out.strip():
+        # A blank --out (an unset shell variable) would write into the working
+        # directory, which may be the audited repository.
+        parser.error("--out must name the output directory")
     try:
         doc = read_json(args.findings)
         validate(doc, complete=True)

@@ -24,7 +24,7 @@ Before filing:
 | Verdict | {{validation.verdict}} (method: {{validation.method}}) |
 | Perspective | {{category}} — {{step}} |
 | Location | `{{location}}` |
-| Assessed revision | {{meta.commit}} |
+| Assessed revision | {{meta.commit}} (blank: UNKNOWN, as in report.md) |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 ## What happens

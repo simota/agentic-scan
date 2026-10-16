@@ -48,6 +48,23 @@ class InputTests(unittest.TestCase):
                                 for p in findings.contract_problems(out)))
 
 
+class BlankOutputDirectoryTests(unittest.TestCase):
+    def test_a_blank_out_is_refused_instead_of_writing_into_the_working_directory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            record = Path(directory) / "findings.json"
+            record.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            cwd = Path(directory) / "repo"
+            cwd.mkdir()
+            for out in ("", "  "):
+                with self.subTest(out=out):
+                    result = subprocess.run(
+                        [sys.executable, "-I", str(SKILL / "scripts" / "render.py"), str(record),
+                         "--out", out], cwd=cwd, capture_output=True, text=True, timeout=60)
+                    self.assertEqual(result.returncode, 2, result.stderr)
+                    self.assertIn("--out must name the output directory", result.stderr)
+                    self.assertEqual(list(cwd.iterdir()), [])
+
+
 class InterruptedWriteTests(unittest.TestCase):
     def test_leftover_staging_files_are_named_as_such(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -60,6 +77,22 @@ class InterruptedWriteTests(unittest.TestCase):
             self.assertIn("stale staging file from an interrupted write: .report.md.k2j3_x.tmp "
                           "(delete it)", problems)
             self.assertFalse(any("--allow" in p for p in problems))
+
+    @unittest.skipUnless(hasattr(os, "symlink"), "needs symlinks")
+    def test_a_link_named_like_a_staging_file_never_names_its_target_for_deletion(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out, keep = Path(directory) / "out", Path(directory) / "keep"
+            out.mkdir()
+            keep.mkdir()
+            (out / "findings.json").write_text(json.dumps(complete_doc()), encoding="utf-8")
+            with redirect_stdout(io.StringIO()):
+                render.main([str(out / "findings.json"), "--out", str(out)])
+            (keep / "precious.txt").write_text("unrelated", encoding="utf-8")
+            (out / ".report.md.k2j3_x.tmp").symlink_to(keep / "precious.txt")
+            problems = findings.contract_problems(out)
+            self.assertFalse(any("precious.txt" in p for p in problems), problems)
+            self.assertIn("unexpected output: .report.md.k2j3_x.tmp "
+                          "(pass --allow .report.md.k2j3_x.tmp if requested)", problems)
 
     @unittest.skipUnless(hasattr(signal, "SIGTERM") and os.name == "posix", "needs POSIX signals")
     def test_sigterm_during_a_write_removes_staging_files(self):

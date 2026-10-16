@@ -1267,10 +1267,12 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"a.html": '<button onclick="closeIt()"><span aria-hidden="true">&times;</span></button>\n'
                                     '<button><span aria-hidden="true">×</span> Close</button>\n'
                                     '<button><span aria-hidden="true"><span>×</span>close</span></button>\n'
-                                    '<button><img src="x.svg" aria-hidden="true">Close</button>\n',
+                                    '<button><img src="x.svg" aria-hidden="true">Close</button>\n'
+                                    '<button><span title="1 > 0" aria-hidden="true">×</span></button>\n'
+                                    '<button><span title="x aria-hidden=\'true\'">Close</span></button>\n',
                           "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
                                    '</button>;\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "b.tsx:1"])
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "a.html:5", "b.tsx:1"])
         # A lone CR ends a line, as in the report excerpts.
         data = self.scan({"c.html": '<!doctype html>\r<p>one</p>\r<img src="x.png">\r',
                           "d.jsx": 'const a = 1;\r// <img src="c" />\rexport const D = () => <img src="d" />;\r'})

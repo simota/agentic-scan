@@ -651,29 +651,44 @@ BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
 VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
-ARIA_HIDDEN_OPEN = re.compile(r"(?is)<([A-Za-z][\w.:-]*)\b[^<>]*?\saria-hidden\s*=\s*"
-                              r"(?:\"true\"|'true'|\{\s*true\s*\}|true\b)[^<>]*?(/?)>")
+# An open tag whose attributes are read quote-aware, so "1 > 0" or title="aria-hidden='true'"
+# inside a value neither ends the tag nor counts as an attribute.
+_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^<>"'{}])*?)"""
+OPEN_TAG = re.compile(r"(?s)<([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
+TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|\{[^{}]*\}|[^\s>"']+))?""")
+
+
+def aria_hidden(attributes):
+    """Whether an attribute string sets aria-hidden to true ("true", 'true', true or {true})."""
+    return any(name.lower() == "aria-hidden" and re.fullmatch(r"""["']?true["']?|\{\s*true\s*\}""", value or "")
+               for name, value in TAG_ATTRIBUTE.findall(attributes))
 
 
 def strip_aria_hidden(markup):
     """markup with each aria-hidden="true" element, content included, replaced by <i></i>.
 
     Same-name descendants are counted, so <span aria-hidden><span>×</span>close</span>
-    hides "close" too; an unclosed element hides the rest. Linear in len(markup).
+    hides "close" too; an unclosed element hides the rest, and a void element only
+    itself. Linear in len(markup).
     """
-    parts, cursor = [], 0
-    while opening := ARIA_HIDDEN_OPEN.search(markup, cursor):
+    parts, cursor, scan = [], 0, 0
+    while opening := OPEN_TAG.search(markup, scan):
+        scan = opening.end()
+        if not aria_hidden(opening.group(2)):
+            continue
         parts.append(markup[cursor:opening.start()])
         cursor = opening.end()
-        if not opening.group(2) and opening.group(1).lower() not in VOID_ELEMENTS:  # Find the matching close tag.
-            same = re.compile(r"(?i)<(/?)" + re.escape(opening.group(1)) + r"(?=[\s/>])[^<>]*?(/?)>")
+        name = opening.group(1)
+        if not opening.group(3) and name.lower() not in VOID_ELEMENTS:  # Find the matching close tag.
+            same = re.compile(r"(?si)<(/?)" + re.escape(name) + r"(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
             depth = 1
             while depth and (tag := same.search(markup, cursor)):
                 cursor = tag.end()
-                depth += -1 if tag.group(1) else 0 if tag.group(2) else 1
+                depth += -1 if tag.group(1) else 0 if tag.group(3) else 1
             if depth:
                 cursor = len(markup)
         parts.append("<i></i>")
+        scan = cursor
     parts.append(markup[cursor:])
     return "".join(parts)
 

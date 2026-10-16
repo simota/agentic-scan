@@ -47,7 +47,7 @@ the katakana prolonged sound mark (`ー`) between digits, and card-style groups
 UUIDs are not counted as digit runs, so date ranges and identifiers stay
 allowed. In a `location` path only, a path segment that starts with a compact
 date-time (`20261009123045_create_users.py`, as timestamped migrations are
-named) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
+named; also after Flyway's `V`) is not counted either. Line numbers in `location` have at most nine digits and ledger IDs at
 most six (`C-01`…`C-999999`); longer values are refused rather than exempted.
 Mail-header comments and folding whitespace around the local part, `@` and
 domain are also inspected without changing the saved text.
@@ -275,7 +275,7 @@ def _mask_technical_numbers(value):
 # Compact date-times (YYYYMMDDhhmmss) that begin a path segment, as in
 # timestamped migration files. Only `location` paths are exempted this way;
 # in prose such a number could be an account identifier.
-PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
+PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))[Vv]?(?:19|20)\d{2}(?:0[1-9]|1[0-2])(?:0[1-9]|[12]\d|3[01])"
                             r"(?:[01]\d|2[0-3])[0-5]\d[0-5]\d(?=[_.-])")
 # A semantic version with a prerelease or build suffix (`1.2.3-beta.1`, `2.0.0+build`).
 PACKAGE_VERSION = re.compile(
@@ -912,7 +912,10 @@ def _staging_files(out, present):
                               and len(path.name) > len(prefix) + len(".tmp")]
             except OSError:
                 continue
-            found.update(path.resolve() for path in candidates if path.is_file())
+            # output_io stages regular files, never links: a link named like one
+            # is reported as an unexpected output, never its target for deletion.
+            found.update(path.resolve() for path in candidates
+                         if not path.is_symlink() and path.is_file())
     return found
 
 

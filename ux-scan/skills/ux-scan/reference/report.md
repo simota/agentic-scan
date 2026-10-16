@@ -32,7 +32,7 @@ and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
 short values, passphrases with spaces, typed declarations
 (`password: string = "…"`), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
-reference (`process.env.X || "…"`), values wrapped onto the next line after
+reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto the next line after
 `=`, and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
 and references (`process.env.X`, `form.password,`) and booleans stay visible,

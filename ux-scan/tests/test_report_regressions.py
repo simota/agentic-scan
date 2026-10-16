@@ -295,7 +295,7 @@ class ReportRegressions(unittest.TestCase):
                  "password: hunter2.secret", 'const SECRET = process.env.SECRET || "dev-secret-9f8e7d";',
                  'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
                  'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
-                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password: isNew ? "hunter2" : "x",']
+                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -317,7 +317,8 @@ class ReportRegressions(unittest.TestCase):
               "password={(password)}", "password: ((props.value))", 'password={("Password")}',
               "password: form.password,", "password: values.pw", 'password_confirmation: "Confirm password"',
               "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
-              'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",']
+              'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
+              'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

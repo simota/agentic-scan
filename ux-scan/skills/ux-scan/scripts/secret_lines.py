@@ -83,8 +83,9 @@ CODE_ROOTS = {"process", "import", "os", "env", "config", "cfg", "conf", "settin
               "context", "options", "opts", "params", "app", "vars", "secrets", "credentials", "field", "input"}
 CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
-# A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", a ? b : "…".
-FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b|[?:])\s*(?=[\"'`])")
+# A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
+# Ternary branches are not read: they mostly choose between UI values (isMobile ? "sm" : "md").
+FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b)\s*(?=[\"'`])")
 STATEMENT_END = re.compile(r"[,;}\n]")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
                         r"include|same-origin|omit|strong|weak|medium)\W*")

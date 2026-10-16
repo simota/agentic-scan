@@ -32,7 +32,7 @@ KNOWN_SECRET = re.compile(
     r"|\bSG\.[\w-]{16,}\.|\bAKIA[0-9A-Z]{16}\b"            # SendGrid, AWS
     r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"     # PEM and PGP armour
     r"|://[^/\s:@\"'`]*:[^/\s@\"'`]+@"                     # scheme://user:password@host, also redis://:password@host
-    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%])[^\s\"'])"  # --password value
+    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%\\])[^\s\"'])"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
     r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
@@ -67,6 +67,8 @@ ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
 # The end of a line whose assigned value continues on the next one.
 OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
+# A secret flag whose value follows a shell line continuation: --password \\
+FLAG_CONTINUES = re.compile(r"(?i)(?<!\S)(--(?:password|passwd|pass|token|secret|api-?key))(?:=|\s+)\\\Z")
 COMMENT_LINE = re.compile(r"(?://|#|/\*|\*|<!--)")
 # A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
 CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
@@ -79,6 +81,9 @@ EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # A NAME=value line with no space before "=": .env files, Java properties, export lines.
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]|[A-Za-z_])")
+# Files whose values are configuration, judged with config=True.
+CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
 ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
 CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
@@ -134,14 +139,16 @@ def _secret_literal(quoted, name):
     return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
 
 
-def _code_reference(text, bare):
+def _code_reference(text, bare, config=False):
     """Whether a bare value is code: a digit-free reference (auth.currentPassword), or a digit-free
     identifier followed by code punctuation or an operator (isNew ? …). On a NAME=value line
     (.env, .properties) the value is always a literal, so Pa55.word or Sommer.x are masked."""
     value = bare.group(1)
+    if ENV_REFERENCE.match(text, bare.start()):
+        return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
     dotted = REFERENCE.fullmatch(value) is not None
-    if not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
-        return False
+    if config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
+        return False  # Configuration files hold values, never code.
     if re.search(r"\d", IDENTIFIER.match(value).group(0)):
         return False  # hunter2.secret reads as a value, not an object.
     return dotted or CODE_AFTER.match(text, bare.end()) is not None
@@ -157,7 +164,7 @@ def _fallback_secret(text, start, name):
     return False
 
 
-def _assigned_secret(text):
+def _assigned_secret(text, config=False):
     for rest, name in _value_starts(text):
         quoted = QUOTED_VALUE.match(text, rest)
         if quoted:
@@ -183,7 +190,7 @@ def _assigned_secret(text):
             continue
         if expression:
             continue  # An expression, such as password={password}.
-        if (bare and not _code_reference(text, bare) and not NOT_SECRET.fullmatch(bare.group(1))
+        if (bare and not _code_reference(text, bare, config) and not NOT_SECRET.fullmatch(bare.group(1))
                 and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
             return True  # A bare env or properties value is never a UI label.
     return False
@@ -201,9 +208,9 @@ def _open_names(text):
     return starts
 
 
-def continued_secret_lines(lines, start, stop):
+def continued_secret_lines(lines, start, stop, config=False):
     """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
-    (export const clientToken =\n  "…";), with the name's line.
+    (export const clientToken =\n  "…";) or flag (--password \\\n  "…"), with the name's line.
 
     A line whose assignment continues is judged from the name on, together with the
     next line that is neither blank nor a comment (at most five lines on); start may
@@ -212,25 +219,30 @@ def continued_secret_lines(lines, start, stop):
     hidden = set()
     for index in range(max(0, start), min(len(lines), stop)):
         text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
+        flag = FLAG_CONTINUES.search(text)
         names = _open_names(text)
-        if not names:
+        if not (names or flag):
             continue
         # From the name on, so a long line before it cannot push the value past the limit.
-        tail = text[names[-1]:]
+        tail = flag.group(1) if flag else text[names[-1]:]
         for following in range(index + 1, min(len(lines), index + 6)):
             value = lines[following].strip()
             if not value or COMMENT_LINE.match(value):
                 continue  # A blank line or a comment between the name and its value.
-            if secret_line(tail + " " + value):
+            if secret_line(tail + " " + value, config):
                 hidden.update((index, following))
             break
     return hidden
 
 
-def secret_line(line):
-    """Whether the shown part of line must be masked."""
+def secret_line(line, config=False):
+    """Whether the shown part of line must be masked.
+
+    config is true for configuration files (.env, .properties, YAML…), where a
+    bare value such as Sommer.x is a literal, never a code reference.
+    """
     searched = line[:SHOWN_CHARACTERS + LOOKAHEAD]
-    if KNOWN_SECRET.search(searched) or _assigned_secret(searched):
+    if KNOWN_SECRET.search(searched) or _assigned_secret(searched, config):
         return True
     return len(line) > SHOWN_CHARACTERS and bool(CUT_SECRET.search(line[:SHOWN_CHARACTERS]))
 

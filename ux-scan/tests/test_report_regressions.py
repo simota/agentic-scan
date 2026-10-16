@@ -351,6 +351,17 @@ class ReportRegressions(unittest.TestCase):
                       ["password: z.string(),", '  "hunter2"']):
             with self.subTest(lines=lines):
                 self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+        # Configuration files hold values, never code; a shell continuation carries a flag's value.
+        (self.repo / "application.properties").write_text("a=1\nspring.datasource.password = Sommer.x\nb=2\n",
+                                                          encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "application.properties:2")["lines"],
+                         ["a=1", render.LABELS["en"]["masked"], "b=2"])
+        (self.repo / "login.sh").write_text('echo hi\ndocker login --password \\\n  "hunter2"\necho done\n',
+                                            encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "login.sh:2")["lines"],
+                         ["echo hi", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"], "echo done"])
+        (self.repo / "config.yml").write_text("db:\n  password: ${DB_PASSWORD}\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "config.yml:2")["lines"], ["db:", "  password: ${DB_PASSWORD}"])
         (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
         shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]

@@ -593,6 +593,10 @@ def inside_regex(text, i, budget=None):
             word_before = "" if dotted else word.group(0)
             j += len(word.group(0))
             continue
+        if c in "+-" and text.startswith(c, j + 1):
+            previous, word_before = "a", ""  # i++ and i-- end an operand, so a following "/" divides.
+            j += 2
+            continue
         if c == "(":
             parens.append(word_before in CONTROL_WORDS)
         elif c == ")":

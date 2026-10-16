@@ -80,6 +80,26 @@ class PrecedenceTests(unittest.TestCase):
         self.assertIn("unknown AGENT 'ci-runner-3' (environment)", result.stderr)
         self.assertFalse(os.path.lexists(self.claude))
 
+    def test_agent_is_checked_when_another_makefile_reaches_link(self):
+        # Goal-based checking missed `install: link`, which then used `/skills`.
+        wrapper = self.root / "wrapper.mk"
+        wrapper.write_text("install: link\n", encoding="utf-8")
+        env = dict(os.environ)
+        for name in ("SKILLS_DIR", "PROJECT", "MAKEFILES", "MAKEFLAGS", "GNUMAKEFLAGS", "MFLAGS"):
+            env.pop(name, None)
+        env.update(HOME=str(self.root / "home"), AGENT="ci-runner-3")
+        result = subprocess.run(["make", "--no-print-directory", "-f", str(wrapper), "-f",
+                                 str(REPO / "Makefile"), "install"], cwd=self.root, env=env,
+                                capture_output=True, text=True, timeout=30)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown AGENT 'ci-runner-3' (environment)", result.stderr)
+        self.assertNotIn("/skills/privacy-scan", result.stdout)
+
+    def test_plain_make_still_shows_help(self):
+        result = make(self.root)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("privacy-scan - skill install", result.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

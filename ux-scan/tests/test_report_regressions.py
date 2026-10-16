@@ -296,7 +296,8 @@ class ReportRegressions(unittest.TestCase):
                  'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
                  'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
                  "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"',
-                 'docker login --password "hunter2"', "cli --token='abc123'", "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 'docker login --password "hunter2"', "cli --token='abc123'",
+                 'const password = process.env.PASSWORD || ("hunter2")', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
                  "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
@@ -347,7 +348,11 @@ class ReportRegressions(unittest.TestCase):
             ["const password = process.env.PASSWORD ||", '  "hunter2";'], 0, 2), {0, 1})
         self.assertEqual(render.continued_secret_lines(["password =", "  // production override", '  "hunter2"'], 0, 3),
                          {0, 2})
+        # An expression wrapped over several lines is followed while it stays open.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password =", "  process.env.PASSWORD ||", '  "hunter2"'], 0, 3), {0, 1, 2})
         for lines in (["const password = process.env.PW ||", '  ""'], ["const label = isNew ?", '  "Password"'],
+                      ["const password =", "  process.env.PASSWORD ||", '  ""'],
                       ["password: z.string(),", '  "hunter2"']):
             with self.subTest(lines=lines):
                 self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())

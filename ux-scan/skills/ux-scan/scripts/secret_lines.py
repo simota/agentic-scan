@@ -89,7 +89,7 @@ CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 # A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
 # Ternary branches are not read: they mostly choose between UI values (isMobile ? "sm" : "md").
-FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b)\s*(?=[\"'`])")
+FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b)\s*(?:[({\[]\s*){0,8}(?=[\"'`])")  # also || ("…")
 STATEMENT_END = re.compile(r"[,;}\n]")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
                         r"include|same-origin|omit|strong|weak|medium)\W*")
@@ -158,7 +158,7 @@ def _fallback_secret(text, start, name):
     """Whether the statement from start on falls back to a credential literal (x || "…", x ?? "…")."""
     stop = STATEMENT_END.search(text, start)
     for operator in FALLBACK.finditer(text, start, stop.start() if stop else min(len(text), start + 200)):
-        quoted = QUOTED_VALUE.match(text, operator.end())
+        quoted = QUOTED_VALUE.match(text, operator.end())  # The delimiters before it are consumed already.
         if quoted and _secret_literal(quoted, name):
             return True
     return False
@@ -212,9 +212,10 @@ def continued_secret_lines(lines, start, stop, config=False):
     """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
     (export const clientToken =\n  "…";) or flag (--password \\\n  "…"), with the name's line.
 
-    A line whose assignment continues is judged from the name on, together with the
-    next line that is neither blank nor a comment (at most five lines on); start may
-    lie one line before the excerpt.
+    A line whose assignment continues is judged from the name on, joined with the
+    following lines that are neither blank nor comments for as long as the joined
+    expression still ends in an operator (at most five lines on); start may lie one
+    line before the excerpt.
     """
     hidden = set()
     for index in range(max(0, start), min(len(lines), stop)):
@@ -224,14 +225,19 @@ def continued_secret_lines(lines, start, stop, config=False):
         if not (names or flag):
             continue
         # From the name on, so a long line before it cannot push the value past the limit.
-        tail = flag.group(1) if flag else text[names[-1]:]
+        joined, used = flag.group(1) if flag else text[names[-1]:], [index]
         for following in range(index + 1, min(len(lines), index + 6)):
             value = lines[following].strip()
             if not value or COMMENT_LINE.match(value):
                 continue  # A blank line or a comment between the name and its value.
-            if secret_line(tail + " " + value, config):
-                hidden.update((index, following))
-            break
+            joined = joined + " " + value[:SHOWN_CHARACTERS + LOOKAHEAD]
+            used.append(following)
+            if secret_line(joined, config):
+                hidden.update(used)
+                break
+            if not OPEN_END.search(joined):
+                break  # The expression ended without a credential.
+            # Still open (process.env.PW ||): the value continues on the next line.
     return hidden
 
 

@@ -82,7 +82,10 @@ EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # A NAME=value line with no space before "=": .env files, Java properties, export lines.
-ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]|[A-Za-z_])")
+# A plain $VAR or ${VAR}; ${VAR:-default} and its kin carry a default that is judged as a value.
+# (${VAR:?message} carries an error message, not a value.)
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*(?![\w{]))")
+ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
 ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
@@ -144,6 +147,10 @@ def _code_reference(text, bare, config=False):
     auth.currentPassword). In configuration files and on NAME=value lines (.env, .properties)
     a bare value is always a literal, and a digit in the root (Pa55.word) marks a value too."""
     value = bare.group(1)
+    default = ENV_DEFAULT.match(text, bare.start())
+    if default:  # ${VAR:-default}: the default is the value.
+        return not default.group(1) or default.group(1).startswith("$") or bool(
+            NOT_SECRET.fullmatch(default.group(1).strip("\"'")))
     if ENV_REFERENCE.match(text, bare.start()):
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
     dotted = REFERENCE.fullmatch(value) is not None
@@ -254,6 +261,9 @@ def continued_secret_lines(lines, start, stop, config=False):
             if secret_line(joined, config):
                 hidden.update(used)
                 break
+            if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
+                joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
+                continue
             if not OPEN_END.search(joined):
                 break  # The expression ended without a credential.
             # Still open (process.env.PW ||): the value continues on the next line.

@@ -290,7 +290,12 @@ class ReportRegressions(unittest.TestCase):
                  'password = String("hunter2")', '<Login password={String("hunter2")} />',
                  'password = "' + "k" * 1000 + '"', 'password = "abc', 'DBPASS = "hunter2"', 'APITOKEN: "abc1"',
                  'MYSECRET = "z"', 'userPASSWORD = "x"', 'password = (("hunter2"))', 'password={("hunter2")}',
-                 'password = (( String("x9") ))']
+                 'password = (( String("x9") ))', "SECRET_KEY_BASE=8f3a9c2b7e1d4f60", "secret_key_base: 8f3a",
+                 "PASSWORD_ADMIN=hunter2", 'password_confirmation: "hunter2"', "DB_PASSWORD=Pa55.word",
+                 "password: hunter2.secret", 'const SECRET = process.env.SECRET || "dev-secret-9f8e7d";',
+                 'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
+                 'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
+                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password: isNew ? "hunter2" : "x",']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -309,7 +314,10 @@ class ReportRegressions(unittest.TestCase):
               "<PasswordInput label='Password' />",
               'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
               "const password: string = '';", 'password={useState("")}', 'password: "Enter your password',
-              "password={(password)}", "password: ((props.value))", 'password={("Password")}']
+              "password={(password)}", "password: ((props.value))", 'password={("Password")}',
+              "password: form.password,", "password: values.pw", 'password_confirmation: "Confirm password"',
+              "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
+              'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))
@@ -322,6 +330,15 @@ class ReportRegressions(unittest.TestCase):
         self.assertNotIn("AoIB", "\n".join(shown))
         self.assertNotIn("END PRIVATE", "\n".join(shown))
         self.assertIn("const b = 2;", shown)
+        self.assertEqual(render.private_key_lines(
+            ["-----BEGIN PGP PRIVATE KEY BLOCK-----", "", "lQOYBF3xQ1wB", "=a1Bc", "-----END PGP PRIVATE KEY BLOCK-----"]),
+            {0, 1, 2, 3, 4})
+        (self.repo / "wrapped.ts").write_text(
+            'const a = 1;\nexport const clientToken =\n  "a8f9e7d6c5b4a3f2e1d0";\nconst label =\n  "Password";\n',
+            encoding="utf-8")
+        shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]
+        self.assertEqual(shown, ["const a = 1;", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"],
+                                 "const label =", '  "Password";'])
         (self.repo / "KeyForm.tsx").write_text(
             'const a = 1;\nconst b = 2;\nconst c = 3;\n<textarea placeholder="-----BEGIN PRIVATE KEY-----" />\n'
             "const d = 4;\nconst e = { outline: 'none' };\nconst f = 6;\n", encoding="utf-8")

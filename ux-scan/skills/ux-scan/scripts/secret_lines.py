@@ -30,27 +30,33 @@ KNOWN_SECRET = re.compile(
     r"|\bgh[pousr]_\w{20}|\bgithub_pat_\w|\bglpat-[\w-]{10}"  # GitHub, GitLab
     r"|\bxox[abpr]-\w|hooks\.slack\.com/services/"         # Slack
     r"|\bSG\.[\w-]{16,}\.|\bAKIA[0-9A-Z]{16}\b"            # SendGrid, AWS
-    r"|-----BEGIN [A-Z ]*PRIVATE KEY-----"
-    r"|://[^/\s:@\"'`]+:[^/\s@\"'`]+@"                     # scheme://user:password@host
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"     # PEM and PGP armour
+    r"|://[^/\s:@\"'`]*:[^/\s@\"'`]+@"                     # scheme://user:password@host, also redis://:password@host
+    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)(?![-$<{%])[^\s\"']{2})"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
     r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
 # The start of a known format at the very end of the shown text.
-CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]+:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
+CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]*:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
                         r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
                         r"|\bAIza[\w-]*|-----BEGIN[A-Z ]*)\Z")
 
 _KEYWORD = (r"secret|passw(?:or)?d|pwd|passphrase|pass|api[_-]?keys?|private[_-]?key"
             r"|access[_-]?key|credentials?|token|client[_-]?id")
 # A name part may follow the keyword only when it is key-like or an environment
-# or version tag (SECRET_KEY, AWS_SECRET_ACCESS_KEY, DB_PASSWORD_PROD, AUTH_TOKEN_V2),
+# or version tag (SECRET_KEY, SECRET_KEY_BASE, AWS_SECRET_ACCESS_KEY, PASSWORD_ADMIN,
+# DB_PASSWORD_PROD, AUTH_TOKEN_V2),
 # so passwordLabel, tokenColor or password_reset_url are UI names, not secrets.
 _SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret))?"
+           r"(?:[_-](?:base|confirm(?:ation)?|admin|root|master))?"
            r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
 # The keyword starts a name part: after a non-letter, as a capitalised word after
 # any letter (camelCase passwordHash, acronym prefixes DBPassword, APISecret), or
-# inside an upper-case name (DBPASSWORD, APITOKEN, MYSECRET).
-NAME_START = r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z])))"
+# inside an upper-case name (DBPASSWORD, APITOKEN, MYSECRET); a long lower-case
+# keyword may also end a lower-case name (mypassword, csrftoken), but a bare
+# "pass" may not (bypass, compass).
+NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z]))"
+              r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
 # Closing quotes or brackets, an optional type (Go "Password string = …"), then an
 # assignment: = : := ?= =>, XML >value< or value="…"; == compares.
@@ -69,6 +75,17 @@ UNCLOSED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)*)\Z")
 EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
 BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
 REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
+# A bare dotted value reads as code from a known object (process.env.X), and a digit-free
+# identifier or reference does when code punctuation or an operator follows (form.pw, isNew ? …);
+# Pa55.word or hunter2.secret at the end of an env or YAML line is a value.
+CODE_ROOTS = {"process", "import", "os", "env", "config", "cfg", "conf", "settings", "props", "this", "self",
+              "window", "globalThis", "state", "form", "values", "data", "user", "req", "request", "ctx",
+              "context", "options", "opts", "params", "app", "vars", "secrets", "credentials", "field", "input"}
+CODE_AFTER = re.compile(r"\s*(?:[,;)}\]]|\|\||\?\?|&&|\bor\b|\band\b|\?(?!\?))")
+IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+# A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", a ? b : "…".
+FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b|[?:])\s*(?=[\"'`])")
+STATEMENT_END = re.compile(r"[,;}\n]")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
                         r"include|same-origin|omit|strong|weak|medium)\W*")
 COLOR_OR_LENGTH = re.compile(r"#[0-9a-fA-F]{3,8}|-?\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|ms|s)")
@@ -117,6 +134,28 @@ def _secret_literal(quoted, name):
     return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
 
 
+def _code_reference(text, bare):
+    """Whether a bare dotted value is a code reference rather than a literal such as Pa55.word."""
+    value = bare.group(1)
+    if not (REFERENCE.fullmatch(value) or IDENTIFIER.fullmatch(value)):
+        return False
+    root = IDENTIFIER.match(value).group(0)
+    if REFERENCE.fullmatch(value) and root in CODE_ROOTS:
+        return True
+    # An identifier or reference followed by code punctuation or an operator (isNew ? …, form.pw,).
+    return not re.search(r"\d", root) and CODE_AFTER.match(text, bare.end()) is not None
+
+
+def _fallback_secret(text, start, name):
+    """Whether the statement from start on falls back to a credential literal (x || "…", x ?? "…")."""
+    stop = STATEMENT_END.search(text, start)
+    for operator in FALLBACK.finditer(text, start, stop.start() if stop else min(len(text), start + 200)):
+        quoted = QUOTED_VALUE.match(text, operator.end())
+        if quoted and _secret_literal(quoted, name):
+            return True
+    return False
+
+
 def _assigned_secret(text):
     for rest, name in _value_starts(text):
         quoted = QUOTED_VALUE.match(text, rest)
@@ -132,6 +171,8 @@ def _assigned_secret(text):
             quoted = QUOTED_VALUE.match(text, expression.end())
             if quoted and _secret_literal(quoted, name):
                 return True  # A literal inside nested delimiters: (("…")), {("…")}.
+        if _fallback_secret(text, rest, name):
+            return True
         bare = BARE_VALUE.match(text, expression.end() if expression else rest)
         if bare and text.startswith("(", bare.end()):
             # A call such as useState(…) or String("…"), also inside {…}: a literal first argument is the value.
@@ -141,10 +182,30 @@ def _assigned_secret(text):
             continue
         if expression:
             continue  # An expression, such as password={password}.
-        if (bare and not REFERENCE.fullmatch(bare.group(1)) and not NOT_SECRET.fullmatch(bare.group(1))
+        if (bare and not _code_reference(text, bare) and not NOT_SECRET.fullmatch(bare.group(1))
                 and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
             return True  # A bare env or properties value is never a UI label.
     return False
+
+
+def continued_secret_lines(lines, start, stop):
+    """Indexes in lines[start:stop] of a value wrapped onto the line after its secret-like name
+    (export const clientToken =\n  "…";), with the name's line.
+
+    A line ending in an assignment is judged together with the next nonblank
+    line (at most three lines on); start may lie one line before the excerpt.
+    """
+    hidden = set()
+    for index in range(max(0, start), min(len(lines), stop)):
+        text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
+        if not any(rest >= len(text) for rest, _ in _value_starts(text)):
+            continue
+        for following in range(index + 1, min(len(lines), index + 4)):
+            if lines[following].strip():
+                if secret_line(text + " " + lines[following].strip()):
+                    hidden.update((index, following))
+                break
+    return hidden
 
 
 def secret_line(line):
@@ -164,15 +225,19 @@ def _base64_only(line):
             and any(c.isupper() for c in line) and any(c.islower() for c in line))
 
 
+PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+
+
 def private_key_lines(lines):
-    """Indexes of lines inside complete -----BEGIN … PRIVATE KEY----- … -----END blocks, or base64-only lines.
+    """Indexes of lines inside complete -----BEGIN … PRIVATE KEY [BLOCK]----- … -----END blocks
+    (PEM and PGP armour), or base64-only lines.
 
     A BEGIN with no END after it hides nothing more than its own line, which
     secret_line already masks.
     """
     hidden, begin = set(), None
     for index, line in enumerate(lines):
-        if "PRIVATE KEY-----" in line and "-----BEGIN" in line:
+        if PRIVATE_KEY_BEGIN.search(line):
             begin = index
         if begin is not None and "-----END" in line:
             hidden.update(range(begin, index + 1))

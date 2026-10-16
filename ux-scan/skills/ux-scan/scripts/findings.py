@@ -359,7 +359,8 @@ TAG_NAME = re.compile(r"[a-z][\w.:-]*", re.IGNORECASE)
 # Attribute names: plain, Angular (event)/[prop]/[(model)]/*ngIf (these always
 # take a value) and #ref. JSX {…} attributes and values are scanned as JavaScript.
 # Vue dynamic arguments (:[key], v-slot:[name], @[event]) follow the name.
-PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@][\w.:@-]*(?:\[[^\]\s]*\])?", re.IGNORECASE)
+# Svelte modifiers follow with "|" (on:click|once); Lit prefixes ? and . (?disabled, .value).
+PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@?.][\w.:@-]*(?:\[[^\]\s]*\])?(?:\|[\w-]+)*", re.IGNORECASE)
 BOUND_ATTRIBUTE = re.compile(r"(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?", re.IGNORECASE)
 REF_ATTRIBUTE = re.compile(r"#[a-z][\w-]*", re.IGNORECASE)
 UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
@@ -521,7 +522,8 @@ def _scan_tag(text, i):
                 if close < 0:
                     return None, stop
                 j = close + 1
-            elif k < stop and text[k] == "{":
+            elif k < stop and (text[k] == "{" or text.startswith("${", k)):
+                k += text[k] == "$"  # A Lit binding: @click=${this.go}.
                 end, reached = _scan_js(text, k, stop)
                 if end is None:
                     return None, reached

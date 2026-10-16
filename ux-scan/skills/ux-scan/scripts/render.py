@@ -22,7 +22,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from file_io import read_regular  # noqa: E402
-from secret_lines import SHOWN_CHARACTERS, private_key_lines, secret_line  # noqa: E402,F401
+from secret_lines import SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
@@ -151,7 +151,7 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
     # Private-key blocks are found across the whole file, since an excerpt may
     # start inside one. Other Unicode line breaks stay inside their line, shown
     # as a visible marker.
-    hidden = private_key_lines(lines)
+    hidden = private_key_lines(lines) | continued_secret_lines(lines, first - 2, last)
     shown = [masked if index in hidden or secret_line(line)
              else report.LINE_BREAKS.sub("\u2424", line[:SHOWN_CHARACTERS])
              for index, line in enumerate(lines[first - 1:last], first - 1)]

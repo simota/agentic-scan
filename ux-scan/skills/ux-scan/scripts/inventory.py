@@ -248,6 +248,9 @@ def read_text(path, root=None):
         return None
 
 
+LONE_CR = re.compile(r"\r(?!\n)")
+
+
 class SourceLines:
     """Map offsets to lines without rescanning a file for every candidate."""
 
@@ -631,6 +634,8 @@ BUTTON_OPEN = re.compile(r"<button\b")
 BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
+ARIA_HIDDEN_ELEMENT = re.compile(r"(?is)<([A-Za-z][\w.:-]*)\b[^<>]*?\saria-hidden\s*=\s*(?:\"true\"|'true'|\{\s*true\s*\}|true\b)"
+                                 r"[^<>]*>.*?</\1\s*>")
 ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>.*?</\1\s*>")
 # Bindings that set a button's text, so an empty element still has a name unless the value is blank.
 TEXT_BINDINGS = ("v-text", "v-html", "innertext", "textcontent", "innerhtml", "dangerouslysetinnerhtml",
@@ -1133,6 +1138,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             if close:
                 # Icon-font ligatures (<mat-icon>delete</mat-icon>) are hidden from assistive technology.
                 inner = ICON_ELEMENT.sub("<i></i>", clean[end:close.start()])
+                # Content hidden from assistive technology (<span aria-hidden="true">×</span>) names nothing.
+                inner = ARIA_HIDDEN_ELEMENT.sub("<i></i>", inner)
                 if not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
                     acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
@@ -1174,6 +1181,9 @@ def inventory(root, flows=None):
             skipped += 1
             continue
         scanned += 1
+        # A lone CR ends a line, as in the report excerpts; turning it into LF keeps
+        # every offset while line counting and line-based patterns see the break.
+        text = LONE_CR.sub("\n", text)
         bundle = locale_bundle(rel)
         if bundle:
             try:

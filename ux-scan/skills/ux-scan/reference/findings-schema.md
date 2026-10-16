@@ -91,7 +91,8 @@ parenthesized route-group components), routes, relative Markdown link targets,
 http(s) URLs, inline code (within its paragraph), fenced code, closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually when they follow the CommonMark tag grammar, with JSX
-`{…}` attributes read as JavaScript (nested braces, strings, template literals, comments and regular expressions; a tag longer than 8,000 characters stays prose) and Angular `(event)=`, `[prop]=`, `*ngIf=` and `#ref` attributes allowed, so comparisons such as `<640px … >1024px` or
+`{…}` attributes read as JavaScript (nested braces, strings, template literals, comments and regular expressions; a tag longer than 8,000 characters stays prose) and Angular `(event)=`, `[prop]=`, `*ngIf=` and `#ref`, Vue `:[key]=`, Svelte `on:click|once=` and Lit
+`?disabled=${…}` / `.value=${…}` attributes allowed, so comparisons such as `<640px … >1024px` or
 `<sm (U-001) and >lg` remain prose). A URL, including raw Japanese text in its
 path or query and balanced parentheses nested up to four levels, runs to whitespace, quotes, an
 unbalanced bracket or Japanese punctuation such as `、` or `。`; write a space

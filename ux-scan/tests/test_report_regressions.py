@@ -289,7 +289,18 @@ class ReportRegressions(unittest.TestCase):
                  'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";',
                  'password = String("hunter2")', '<Login password={String("hunter2")} />',
                  'password = "' + "k" * 1000 + '"', 'password = "abc', 'DBPASS = "hunter2"', 'APITOKEN: "abc1"',
-                 'MYSECRET = "z"', 'userPASSWORD = "x"']
+                 'MYSECRET = "z"', 'userPASSWORD = "x"', 'password = (("hunter2"))', 'password={("hunter2")}',
+                 'password = (( String("x9") ))', "SECRET_KEY_BASE=8f3a9c2b7e1d4f60", "secret_key_base: 8f3a",
+                 "PASSWORD_ADMIN=hunter2", 'password_confirmation: "hunter2"', "DB_PASSWORD=Pa55.word",
+                 "password: hunter2.secret", 'const SECRET = process.env.SECRET || "dev-secret-9f8e7d";',
+                 'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
+                 'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
+                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"',
+                 'docker login --password "hunter2"', "cli --token='abc123'",
+                 'const password = process.env.PASSWORD || ("hunter2")',
+                 'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
+                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -307,7 +318,15 @@ class ReportRegressions(unittest.TestCase):
               '"password": "Password is required.",', 'password: "",',
               "<PasswordInput label='Password' />",
               'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
-              "const password: string = '';", 'password={useState("")}', 'password: "Enter your password']
+              "const password: string = '';", 'password={useState("")}', 'password: "Enter your password',
+              "password={(password)}", "password: ((props.value))", 'password={("Password")}',
+              "password: form.password,", "password: values.pw", 'password_confirmation: "Confirm password"',
+              "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
+              'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
+              'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
+              "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
+              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", 'password: "${DB_PASSWORD}"', "password: '$PW'",
+              'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))
@@ -320,6 +339,55 @@ class ReportRegressions(unittest.TestCase):
         self.assertNotIn("AoIB", "\n".join(shown))
         self.assertNotIn("END PRIVATE", "\n".join(shown))
         self.assertIn("const b = 2;", shown)
+        self.assertEqual(render.private_key_lines(
+            ["-----BEGIN PGP PRIVATE KEY BLOCK-----", "", "lQOYBF3xQ1wB", "=a1Bc", "-----END PGP PRIVATE KEY BLOCK-----"]),
+            {0, 1, 2, 3, 4})
+        (self.repo / "wrapped.ts").write_text(
+            'const a = 1;\nexport const clientToken =\n  "a8f9e7d6c5b4a3f2e1d0";\nconst label =\n  "Password";\n',
+            encoding="utf-8")
+        # A long line before the name cannot push the wrapped value past the search limit.
+        self.assertEqual(render.continued_secret_lines(["x" * 740 + " password =", '  "hunter2";'], 0, 2), {0, 1})
+        # A value wrapped after a fallback operator, or after a comment line, is masked with its name.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = process.env.PASSWORD ||", '  "hunter2";'], 0, 2), {0, 1})
+        self.assertEqual(render.continued_secret_lines(["password =", "  // production override", '  "hunter2"'], 0, 3),
+                         {0, 2})
+        # A block comment spanning lines after the operator is skipped.
+        self.assertEqual(render.continued_secret_lines(
+            ["password = process.env.PW || /* dev", "   still comment", '*/ "hunter2"'], 0, 3), {0, 2})
+        self.assertEqual(render.continued_secret_lines(
+            ["password =", "  process.env.PW || /* dev", '*/ "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["password =", '  /* dev */ "hunter2"'], 0, 2), {0, 1})
+        # The look-back covers the whole continuation window before the excerpt.
+        (self.repo / "early.ts").write_text(
+            "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",
+            encoding="utf-8")
+        early = render.snippet(self.repo, f"early.ts:{14 + render.CONTEXT}")
+        self.assertEqual((early["start"], early["lines"][0]), (14, render.LABELS["en"]["masked"]))
+        # An expression wrapped over several lines is followed while it stays open.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password =", "  process.env.PASSWORD ||", '  "hunter2"'], 0, 3), {0, 1, 2})
+        for lines in (["const password = process.env.PW ||", '  ""'], ["const label = isNew ?", '  "Password"'],
+                      ["const password =", "  process.env.PASSWORD ||", '  ""'],
+                      ["password: z.string(),", '  "hunter2"']):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+        # Configuration files hold values, never code; a shell continuation carries a flag's value.
+        (self.repo / "application.properties").write_text("a=1\nspring.datasource.password = Sommer.x\nb=2\n",
+                                                          encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "application.properties:2")["lines"],
+                         ["a=1", render.LABELS["en"]["masked"], "b=2"])
+        (self.repo / "login.sh").write_text('echo hi\ndocker login --password \\\n  "hunter2"\necho done\n',
+                                            encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "login.sh:2")["lines"],
+                         ["echo hi", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"], "echo done"])
+        (self.repo / "config.yml").write_text("db:\n  password: ${DB_PASSWORD}\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "config.yml:2")["lines"], ["db:", "  password: ${DB_PASSWORD}"])
+        (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
+        shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]
+        self.assertEqual(shown, ["const a = 1;", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"],
+                                 "const label =", '  "Password";'])
         (self.repo / "KeyForm.tsx").write_text(
             'const a = 1;\nconst b = 2;\nconst c = 3;\n<textarea placeholder="-----BEGIN PRIVATE KEY-----" />\n'
             "const d = 4;\nconst e = { outline: 'none' };\nconst f = 6;\n", encoding="utf-8")

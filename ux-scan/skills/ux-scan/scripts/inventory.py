@@ -154,11 +154,12 @@ SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
 # Matched against a field name split into words (user_email, firstName, cc-number).
 # Distinctive stems match inside a word (useremail, telephone, billingaddress);
 # short ones must be whole words, so capacity, wildcard and microphone are not personal.
-PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)phone|tele?phone|(?<!auto)mobile|address|street|postal|post_?code|zip|"
+PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)(?<!micro_)phone|tele?phone|(?<!auto)(?<!auto_)mobile|address|street|postal|post_?code|zip|"
                       r"country|(?:first|last|full|given|family|user)_?name|one_?time|"
                       r"_(?:tel|name|city|card|otp|cc_\w+)_")
 EMAIL_WORD = re.compile(r"e_?mail")
-PHONE_WORD = re.compile(r"(?<!micro)phone|_tel_|(?<!auto)mobile")
+# microPhone and autoMobile split into micro_phone and auto_mobile, so the exceptions cover both forms.
+PHONE_WORD = re.compile(r"(?<!micro)(?<!micro_)phone|_tel_|(?<!auto)(?<!auto_)mobile")
 
 
 def field_words(name):
@@ -245,6 +246,9 @@ def read_text(path, root=None):
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return None
+
+
+LONE_CR = re.compile(r"\r(?!\n)")
 
 
 class SourceLines:
@@ -393,8 +397,8 @@ def mask_markup_comments(text, *, jsx=False, template=False):
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
             cursor = end = match.end()
             continue
-        if jsx and found == "/*" and closes_regex(text, match.start()):
-            cursor = match.end()  # The end of a regular expression (/a/*2), not a comment.
+        if jsx and found == "/*" and inside_regex(text, match.start(), budget):
+            cursor = match.end()  # Inside or at the end of a regular expression (/a/*2, /[/*]/), not a comment.
             continue
         if jsx and found not in ("{/*", "/*"):
             cursor = match.end()  # A JS string, not a comment or an HTML fragment.
@@ -524,17 +528,87 @@ def comment_start(text, i):
     return i == 0 or text[i - 1] in " \t\r\n{}(),;"
 
 
-def closes_regex(text, i):
-    """Whether the "/" at text[i] closes a regular-expression literal opened earlier on its line.
+REGEX_BEFORE = set("(,=:[!&|?{};+-*%<>~^")
+CONTROL_WORDS = {"if", "while", "for", "with"}
+REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
 
-    Otherwise "/*" starts a block comment, whatever precedes it (x=/* … */1).
+
+def inside_regex(text, i, budget=None):
+    """Whether the "/" at text[i] lies inside a regular-expression literal opened earlier on its line.
+
+    The line is read forward from its start (at most 2000 characters back),
+    skipping quoted strings and regex literals with their [character classes],
+    so /a/*2 and /[/*]/ hold no comment, while x=/* … */1 starts one.
+    budget, a one-item list shared across a file, caps the characters read;
+    once it is spent, every "/*" starts a comment.
     """
-    if i == 0 or not (text[i - 1].isalnum() or text[i - 1] in "_$)]\\"):
-        return False
-    line = text.rfind("\n", max(0, i - 2000), i) + 1
-    opening = text.rfind("/", line, i)
-    before = text[line:opening].rstrip()[-1:] if opening >= 0 else ""
-    return opening >= 0 and (before == "" or before in "(,=:[!&|?{};")
+    floor = max(0, i - 2000)
+    if budget is not None:
+        floor = max(floor, i - max(budget[0], 0))
+        budget[0] -= i - floor
+    newline = text.rfind("\n", floor, i)
+    j = newline + 1 if newline >= 0 else floor
+    previous = ""  # The last significant token: a character, or "a" for an operand.
+    word_before = ""  # The identifier just before the last token, to spot if ( … ) and while ( … ).
+    parens = []  # For each open "(": whether it opened a control condition.
+    while j < i:
+        c = text[j]
+        if c in "\"'`":
+            close = j + 1
+            while close < i and text[close] != c:
+                close += 2 if text[close] == "\\" else 1
+            if close >= i:
+                return False  # Inside a string, which the caller's scanner already handles.
+            j, previous = close + 1, "a"
+            continue
+        if c == "/" and text.startswith("/*", j):
+            close = text.find("*/", j + 2, i)
+            if close < 0:
+                return False
+            j = close + 2
+            continue
+        if c == "/" and text.startswith("//", j):
+            return False
+        if c == "/" and previous in REGEX_BEFORE | {""} and text[j - 1:j] != "<":  # "</" closes a JSX tag.
+            j += 1
+            in_class = False
+            while j < len(text) and text[j] != "\n" and (in_class or text[j] != "/"):
+                if text[j] == "\\":
+                    j += 1
+                elif text[j] == "[":
+                    in_class = True
+                elif text[j] == "]":
+                    in_class = False
+                if j >= i:
+                    return True  # i is inside this literal.
+                j += 1
+            if j >= i:
+                return True  # i is the literal's closing "/".
+            j, previous = j + 1, "a"
+            continue
+        word = re.match(r"[A-Za-z_$][\w$]*", text[j:j + 64])
+        if word:
+            dotted = previous == "."  # obj.return is a property, not the keyword.
+            previous = "" if word.group(0) in REGEX_WORDS and not dotted else "a"
+            word_before = "" if dotted else word.group(0)
+            j += len(word.group(0))
+            continue
+        if c in "+-" and text.startswith(c, j + 1):
+            previous, word_before = "a", ""  # i++ and i-- end an operand, so a following "/" divides.
+            j += 2
+            continue
+        if c == "(":
+            parens.append(word_before in CONTROL_WORDS)
+        elif c == ")":
+            # After if ( … ), while ( … ) or for ( … ) a statement starts, so "/" opens a regex.
+            previous = "" if parens and parens.pop() else ")"
+            word_before = ""
+            j += 1
+            continue
+        if not c.isspace():
+            previous, word_before = c, ""
+        j += 1
+    return False
 
 
 def skip_braces(text, i, limit):
@@ -558,7 +632,7 @@ def skip_braces(text, i, limit):
                 i = line_end
                 continue
             i += 1
-        elif text.startswith("/*", i) and not closes_regex(text, i):
+        elif text.startswith("/*", i) and not inside_regex(text, i):
             close = text.find("*/", i + 2, n)
             i = n if close < 0 else close + 2
             continue
@@ -576,6 +650,49 @@ BUTTON_OPEN = re.compile(r"<button\b")
 BUTTON_OPEN_I = re.compile(r"<button\b", re.I)
 BUTTON_CLOSE = re.compile(r"</button\s*>")
 BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
+VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
+# An open tag whose attributes are read quote-aware, so "1 > 0" or title="aria-hidden='true'"
+# inside a value neither ends the tag nor counts as an attribute.
+_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^<>"'{}])*?)"""
+OPEN_TAG = re.compile(r"(?s)<([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
+TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|\{[^{}]*\}|[^\s>"']+))?""")
+
+
+def aria_hidden(attributes):
+    """Whether an attribute string sets aria-hidden to true ("true", 'true', true or {true})."""
+    return any(name.lower() == "aria-hidden" and re.fullmatch(r"""["']?true["']?|\{\s*true\s*\}""", value or "")
+               for name, value in TAG_ATTRIBUTE.findall(attributes))
+
+
+def strip_aria_hidden(markup):
+    """markup with each aria-hidden="true" element, content included, replaced by <i></i>.
+
+    Same-name descendants are counted, so <span aria-hidden><span>×</span>close</span>
+    hides "close" too; an unclosed element hides the rest, and a void element only
+    itself. Linear in len(markup).
+    """
+    parts, cursor, scan = [], 0, 0
+    while opening := OPEN_TAG.search(markup, scan):
+        scan = opening.end()
+        if not aria_hidden(opening.group(2)):
+            continue
+        parts.append(markup[cursor:opening.start()])
+        cursor = opening.end()
+        name = opening.group(1)
+        if not opening.group(3) and name.lower() not in VOID_ELEMENTS:  # Find the matching close tag.
+            same = re.compile(r"(?si)<(/?)" + re.escape(name) + r"(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
+            depth = 1
+            while depth and (tag := same.search(markup, cursor)):
+                cursor = tag.end()
+                depth += -1 if tag.group(1) else 0 if tag.group(3) else 1
+            if depth:
+                cursor = len(markup)
+        parts.append("<i></i>")
+        scan = cursor
+    parts.append(markup[cursor:])
+    return "".join(parts)
+
+
 ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>.*?</\1\s*>")
 # Bindings that set a button's text, so an empty element still has a name unless the value is blank.
 TEXT_BINDINGS = ("v-text", "v-html", "innertext", "textcontent", "innerhtml", "dangerouslysetinnerhtml",
@@ -1078,6 +1195,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             if close:
                 # Icon-font ligatures (<mat-icon>delete</mat-icon>) are hidden from assistive technology.
                 inner = ICON_ELEMENT.sub("<i></i>", clean[end:close.start()])
+                # Content hidden from assistive technology (<span aria-hidden="true">×</span>) names nothing.
+                inner = strip_aria_hidden(inner)
                 if not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
                     acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
@@ -1119,6 +1238,9 @@ def inventory(root, flows=None):
             skipped += 1
             continue
         scanned += 1
+        # A lone CR ends a line, as in the report excerpts; turning it into LF keeps
+        # every offset while line counting and line-based patterns see the break.
+        text = LONE_CR.sub("\n", text)
         bundle = locale_bundle(rel)
         if bundle:
             try:

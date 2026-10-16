@@ -1244,5 +1244,40 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertLess(time.monotonic() - started, 3)
 
 
+    def test_regex_classes_and_camel_case_exceptions(self):
+        import time
+        # "/*" inside a regex character class starts no block comment, so later comments are still masked.
+        data = self.scan({"a.jsx": 'const r = /[/*]/;\n// <img src="old" />\nconst x=/* <img src="c" /> */1;\n'
+                                   'if (ready) /[/*]/.test(value);\n// <img src="old2" />\n'
+                                   'const q = i++ / /* <img src="old3" /> */ divisor;\n'
+                                   'export const A = () => <img src="a.png" />;\n'
+                                   'export const B = () => <p><b>x</b>/* <img src="d" /> */</p>;\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:7"])
+        started = time.monotonic()
+        self.scan({"b.jsx": "/*" * 300000})
+        self.assertLess(time.monotonic() - started, 5)
+        # microPhone and autoMobile split into micro_phone and auto_mobile; neither is personal.
+        data = self.scan({"c.html": '<label>Mic <input name="microPhone"></label>\n'
+                                    '<label>Car <input name="autoMobile"></label>\n'
+                                    '<label>Tel <input name="mobilePhone"></label>\n'})
+        self.assertEqual([(r["name"], r["missing"]) for r in data["inputs"]],
+                         [("mobilePhone", ["autocomplete", "type=tel"])])
+
+    def test_aria_hidden_glyph_buttons_and_cr_line_ends(self):
+        data = self.scan({"a.html": '<button onclick="closeIt()"><span aria-hidden="true">&times;</span></button>\n'
+                                    '<button><span aria-hidden="true">×</span> Close</button>\n'
+                                    '<button><span aria-hidden="true"><span>×</span>close</span></button>\n'
+                                    '<button><img src="x.svg" aria-hidden="true">Close</button>\n'
+                                    '<button><span title="1 > 0" aria-hidden="true">×</span></button>\n'
+                                    '<button><span title="x aria-hidden=\'true\'">Close</span></button>\n',
+                          "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
+                                   '</button>;\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "a.html:5", "b.tsx:1"])
+        # A lone CR ends a line, as in the report excerpts.
+        data = self.scan({"c.html": '<!doctype html>\r<p>one</p>\r<img src="x.png">\r',
+                          "d.jsx": 'const a = 1;\r// <img src="c" />\rexport const D = () => <img src="d" />;\r'})
+        self.assertEqual([r["location"] for r in data["images"]], ["c.html:3", "d.jsx:3"])
+
+
 if __name__ == "__main__":
     unittest.main()

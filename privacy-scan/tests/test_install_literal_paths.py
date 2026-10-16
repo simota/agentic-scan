@@ -8,6 +8,7 @@ import unittest
 
 REPO = Path(__file__).resolve().parents[1]
 SKILL = REPO / "skills" / "privacy-scan"
+ENVIRONMENT_NARROWING = {"SKILLS_DIR", "PROJECT"}
 INSTALL_PATHS = (
     ("SKILLS_DIR", (), "agy"),
     ("PROJECT", (".claude", "skills"), "agy"),
@@ -31,9 +32,16 @@ class LiteralEnvironmentPathTests(unittest.TestCase):
         return environment
 
     def run_make(self, root, target, agent, environment, *variables, options=()):
+        # An environment SKILLS_DIR or PROJECT applies only while no narrowing is
+        # given on the command line, so AGENT then comes from the environment too.
+        if ENVIRONMENT_NARROWING & environment.keys():
+            environment = {**environment, "AGENT": agent}
+            agent_options = []
+        else:
+            agent_options = [f"AGENT={agent}"]
         return subprocess.run(
             ["make", "--no-print-directory", *options, "-f", str(REPO / "Makefile"),
-             target, f"AGENT={agent}", *variables],
+             target, *agent_options, *variables],
             cwd=root, env=environment, capture_output=True, text=True, timeout=10,
         )
 

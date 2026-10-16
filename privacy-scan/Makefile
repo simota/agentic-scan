@@ -12,6 +12,10 @@
 #   make link PROJECT=/path/to/repo    # that project's .claude/skills instead
 #   make link SKILLS_DIR=/some/path    # one literal path; AGENT unused
 #   make demo LANG_OUT=en              # English
+#
+# SKILLS_DIR wins over PROJECT, and PROJECT over AGENT. A narrowing given on
+# the command line wins over SKILLS_DIR or PROJECT from the environment, so an
+# unrelated exported PROJECT never redirects `make link AGENT=claude`.
 
 # Paths are literal shell arguments, never Make whitespace-separated lists.
 shell_quote = '$(subst ','"'"',$(1))'
@@ -68,20 +72,41 @@ root_agy    := $(call path_value,AGY_HOME)
 project_path := $(call path_value,PROJECT)
 skills_dir_path := $(call path_value,SKILLS_DIR)
 
-UNKNOWN := $(filter-out claude codex agy,$(AGENT))
-ifneq ($(UNKNOWN),)
-$(error unknown AGENT '$(UNKNOWN)' - use claude, codex or agy, or set SKILLS_DIR)
+# Command-line narrowing first, then the environment's (see the header).
+command_line = $(filter command line,$(origin $(1)))
+ifneq ($(if $(call command_line,SKILLS_DIR),$(skills_dir_path)),)
+NARROW := skills_dir
+else ifneq ($(if $(call command_line,PROJECT),$(project_path)),)
+NARROW := project
+else ifneq ($(call command_line,AGENT),)
+NARROW := agent
+else ifneq ($(skills_dir_path),)
+NARROW := skills_dir
+else ifneq ($(project_path),)
+NARROW := project
+else
+NARROW := agent
 endif
+
+# AGENT is checked only where it is used, so an unrelated AGENT in the
+# environment does not stop `make demo`, `make check` or a SKILLS_DIR link.
+# The check is a prerequisite of link, unlink and status, so it also runs
+# when another makefile reaches them (`install: link`).
+UNKNOWN := $(if $(filter agent,$(NARROW)),$(filter-out claude codex agy,$(AGENT)))
 
 # Pass each guard and destination as separate, quoted shell arguments. No
 # delimiter is reserved inside a path; only host IDs enter Make's list functions.
 # Recipes prefix leading-hyphen paths with ./ before passing them to utilities.
-ifneq ($(skills_dir_path),)
+# QWHERE names the narrowing in use for messages.
+ifeq ($(NARROW),skills_dir)
 QTARGETS := $(call shell_quote,$(skills_dir_path)) $(call shell_quote,$(skills_dir_path))
-else ifneq ($(project_path),)
+QWHERE   := $(call shell_quote,SKILLS_DIR $(skills_dir_path))
+else ifeq ($(NARROW),project)
 QTARGETS := $(call shell_quote,$(project_path)) $(call shell_quote,$(project_path)/.claude/skills)
+QWHERE   := $(call shell_quote,PROJECT $(project_path))
 else
 QTARGETS := $(foreach a,$(sort $(AGENT)),$(call shell_quote,$(root_$(a))) $(call shell_quote,$(root_$(a))/skills))
+QWHERE   := $(call shell_quote,AGENT $(sort $(AGENT)))
 endif
 
 DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
@@ -90,7 +115,7 @@ DEMO_OUT ?= $(or $(call path_value,TMPDIR),/tmp)/$(NAME)-demo
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
-.PHONY: help link unlink status check demo test
+.PHONY: help link unlink status check demo test agent-known
 
 help: ## list targets
 	@echo "$(NAME) - skill install"
@@ -101,7 +126,10 @@ help: ## list targets
 	@printf '  skill:  %s\n' $(QSKILL)
 	@echo "  vars:   AGENT PROJECT SKILLS_DIR DEMO_OUT LANG_OUT"
 
-link: ## symlink the skill into every installed host's skills dir
+agent-known:
+	@$(if $(UNKNOWN),$(error unknown AGENT '$(UNKNOWN)' ($(origin AGENT)) - use claude, codex or agy, or set SKILLS_DIR),:)
+
+link: agent-known ## symlink the skill into every installed host's skills dir
 	@skill=$(QSKILL); n=0; $(ours_fn); \
 	if [ ! -f "$$skill/SKILL.md" ]; then \
 	  printf '%s\n' "refusing $$skill is not a skill directory (missing SKILL.md)" >&2; exit 1; \
@@ -120,10 +148,10 @@ link: ## symlink the skill into every installed host's skills dir
 	  mkdir -p "$$dir" && ln -s "$$skill" "$$d" || exit 1; \
 	  printf '%s\n' "linked   $$d -> $$skill"; n=$$((n+1)); \
 	done; \
-	if [ $$n -eq 0 ]; then printf '%s\n' "nothing linked - no skills directory found for: $(AGENT)" >&2; exit 1; fi; \
+	if [ $$n -eq 0 ]; then printf '%s %s\n' "nothing linked - no skills directory found for:" $(QWHERE) >&2; exit 1; fi; \
 	printf '%s\n' "invoke it with:  $(NAME)   (or /$(NAME) in a slash-command harness)"
 
-unlink: ## remove the symlinks this Makefile created
+unlink: agent-known ## remove the symlinks this Makefile created
 	@skill=$(QSKILL); $(ours_fn); set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  dir=$$2; shift 2; \
@@ -135,7 +163,7 @@ unlink: ## remove the symlinks this Makefile created
 	  else printf '%s\n' "absent   $$d"; fi; \
 	done
 
-status: ## show what is installed, per host
+status: agent-known ## show what is installed, per host
 	@set -- $(QTARGETS); \
 	while [ "$$#" -gt 0 ]; do \
 	  guard=$$1; dir=$$2; shift 2; \

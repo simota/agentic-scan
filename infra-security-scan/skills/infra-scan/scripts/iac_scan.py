@@ -54,8 +54,9 @@ from urllib.parse import unquote as url_unquote
 
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BASELINE_REFERENCE, RECORD_LISTS, SEV_RANK, STATE_FILE, shape_problems, split_yaml_documents,
-                    sub_references, unique_object, write_json_atomic)
+from common import (BASELINE_REFERENCE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE, has_symlink_parent,
+                    json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
+                    write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
 # Tool caches hold copies of the configuration (downloaded modules, the
@@ -384,10 +385,12 @@ class _Lit:
     def ws(self, newlines=True):
         self.i = skip_space(self.s, self.i, len(self.s), newlines)
 
-    def value(self, multiline=False):
+    def value(self, multiline=False, depth=0):
+        if depth > MAX_HCL_DEPTH:
+            raise RecursionError("HCL expression nested deeper than %d" % MAX_HCL_DEPTH)
         self.ws()
         start = self.i
-        v = self.primary(multiline)
+        v = self.primary(multiline, depth)
         self.ws(newlines=multiline)
         if self.i < len(self.s) and self.s[self.i] not in self.SEP:
             self.skip_term(multiline)
@@ -397,7 +400,7 @@ class _Lit:
             return UNKNOWN
         return v
 
-    def primary(self, multiline=False):
+    def primary(self, multiline=False, depth=0):
         s, i = self.s, self.i
         if i >= len(s):
             return UNKNOWN
@@ -412,14 +415,17 @@ class _Lit:
             self.i = after
             return s[a:b]
         if c == "[":
-            return self.seq()
+            return self.seq(depth + 1)
         if c == "{":
-            return self.obj()
+            return self.obj(depth + 1)
         m = NUMBER.match(s, i)
         if m:
             self.i = m.end()
             text = m.group()
-            return int(text) if re.fullmatch(r"-?\d+", text) else float(text)
+            try:
+                return int(text) if re.fullmatch(r"-?\d+", text) else float(text)
+            except (ValueError, OverflowError):
+                return UNKNOWN
         m = IDENT.match(s, i)
         if m:
             word, after = m.group(), m.end()
@@ -429,7 +435,7 @@ class _Lit:
                 return {"true": True, "false": False, "null": None}[word]
             if word in ("jsonencode", "tolist", "toset") and nxt == "(":
                 self.i = after + 1
-                v = self.value()
+                v = self.value(depth=depth + 1)
                 self.ws()
                 if self.i < len(s) and s[self.i] == ")":
                     self.i += 1
@@ -439,7 +445,7 @@ class _Lit:
         self.skip_term(multiline)
         return UNKNOWN
 
-    def seq(self):
+    def seq(self, depth=0):
         s, start = self.s, self.i
         self.i += 1
         out = []
@@ -457,14 +463,14 @@ class _Lit:
             # Tuple elements end at commas, not newlines. An unsupported
             # multiline expression must stay one UNKNOWN, including its branches.
             # Object attributes retain their separate newline-delimited context.
-            out.append(self.value(multiline=True))
+            out.append(self.value(multiline=True, depth=depth))
             self.ws()
             if self.i < len(s) and s[self.i] == ",":
                 self.i += 1
             elif self.i == before:
                 self.i += 1
 
-    def obj(self):
+    def obj(self, depth=0):
         s, start = self.s, self.i
         self.i += 1
         out = {}
@@ -497,7 +503,7 @@ class _Lit:
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             self.i += 1
-            v = self.value()
+            v = self.value(depth=depth)
             if isinstance(key, str):
                 out[key] = v
             else:
@@ -736,7 +742,20 @@ def cfn_string(value):
     return value
 
 
-def norm_statements(doc):
+ARN_WILDCARD_ROOT = re.compile(r"\Aarn:[^:]+:iam::\*:root\Z", re.IGNORECASE)
+PASSROLE_WILDCARD_ARN = re.compile(r"\Aarn:[^:]+:iam::[^:]*:role/\*\Z", re.IGNORECASE)
+
+
+def _norm_principal(kind, raw_val):
+    val = cfn_string(raw_val)
+    norm_kind = "AWS" if isinstance(kind, str) and kind.upper() == "AWS" else (
+        "Federated" if isinstance(kind, str) and kind.lower() == "federated" else kind)
+    if norm_kind in ("*", "AWS") and isinstance(val, str) and (val == "*" or ARN_WILDCARD_ROOT.match(val)):
+        return (norm_kind, "*")
+    return (norm_kind, val)
+
+
+def norm_statements(doc, raw=""):
     if not isinstance(doc, dict):
         return None
     sts = doc.get("Statement")
@@ -754,7 +773,12 @@ def norm_statements(doc):
             principals.append(("*", "*"))
         elif isinstance(p, dict):
             for kind, ids in p.items():
-                principals.extend((kind, cfn_string(x)) for x in aslist(ids))
+                for x in aslist(ids):
+                    nk, nv = _norm_principal(kind, x)
+                    if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw and (
+                            "github" in raw.lower() or GITHUB_ISSUER in raw):
+                        nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
+                    principals.append((nk, nv))
         elif p is not None:
             principals.append((UNKNOWN, UNKNOWN))
         if "NotPrincipal" in st:
@@ -765,13 +789,19 @@ def norm_statements(doc):
         if isinstance(cond, dict):
             for op, pairs in cond.items():
                 if isinstance(pairs, dict):
-                    conds.extend((op, key, aslist(vals)) for key, vals in pairs.items())
+                    conds.extend((op, key, [cfn_string(v) for v in aslist(vals)]) for key, vals in pairs.items())
                 else:
                     conds.append((op, UNKNOWN, [UNKNOWN]))
         elif cond is not None:
             conds.append((UNKNOWN, UNKNOWN, [UNKNOWN]))
-        out.append({"effect": st.get("Effect"), "actions": aslist(st.get("Action")),
-                    "not_action": "NotAction" in st, "resources": aslist(st.get("Resource")),
+        raw_effect = st.get("Effect")
+        effect = "Allow" if isinstance(raw_effect, str) and raw_effect.lower() == "allow" else raw_effect
+        out.append({"effect": effect,
+                    "actions": [cfn_string(x) for x in aslist(st.get("Action"))],
+                    "not_action": "NotAction" in st,
+                    "not_actions": [cfn_string(x) for x in aslist(st.get("NotAction"))],
+                    "resources": [cfn_string(x) for x in aslist(st.get("Resource"))],
+                    "not_resource": "NotResource" in st,
                     "principals": principals, "conditions": conds})
     return out
 
@@ -787,24 +817,41 @@ def doc_statements(view):
         return UNKNOWN
     out = []
     for st in view.blocks("statement"):
-        effect = st.get("effect")
+        raw_effect = st.get("effect")
+        effect = "Allow" if raw_effect is None or (
+            isinstance(raw_effect, str) and raw_effect.lower() == "allow") else raw_effect
         principals = []
         for p in st.blocks("principals"):
-            principals.extend((p.get("type"), x) for x in aslist(p.get("identifiers")))
+            raw_ids = p.raw("identifiers") or ""
+            ptype = p.get("type")
+            for x in aslist(p.get("identifiers")):
+                nk, nv = _norm_principal(ptype, x)
+                if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw_ids and (
+                        "github" in raw_ids.lower() or GITHUB_ISSUER in raw_ids):
+                    nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
+                principals.append((nk, nv))
         if st.blocks("not_principals"):
             principals.append(("*", "*"))  # everyone except the named principals
         conds = [(c.get("test"), c.get("variable"), aslist(c.get("values")))
                  for c in st.blocks("condition")]
-        out.append({"effect": "Allow" if effect is None else effect,
+        out.append({"effect": effect,
                     "actions": aslist(st.get("actions")),
                     "not_action": st.get("not_actions") is not None,
+                    "not_actions": aslist(st.get("not_actions")),
                     "resources": aslist(st.get("resources")),
+                    "not_resource": st.get("not_resources") is not None,
                     "principals": principals, "conditions": conds})
     return out
 
 
 def lower_strs(values):
     return {v.lower() for v in values if isinstance(v, str)}
+
+
+ADMIN_SVC_WILDCARDS = {
+    "iam", "sts", "organizations", "ec2", "s3", "lambda", "kms",
+    "secretsmanager", "ssm", "rds", "dynamodb", "cloudformation", "ecs", "eks",
+}
 
 
 def matches_action(st, action):
@@ -844,6 +891,7 @@ class Scan:
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
         self.k8s_bindings, self.k8s_wildcard_roles = [], {}  # role key: directories defining it
+        self.k8s_sa_automount, self.k8s_pod_sa_refs = {}, []
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
         self.gcp_policy_data = {}
@@ -868,14 +916,23 @@ class Scan:
 
     def identity_policy(self, res, stmts, line):
         for st in stmts or []:
-            if st["effect"] != "Allow" or st["not_action"]:
+            if st["effect"] != "Allow":
+                continue
+            full_res = st.get("not_resource") or "*" in st["resources"]
+            if st["not_action"]:
+                not_acts = lower_strs(st.get("not_actions", []))
+                if full_res and not_acts and not any(
+                        a in ("*", "*:*", "iam:*") or a.startswith("iam:passrole") for a in not_acts):
+                    self.hit("AWS-IAM-001", res, line, "Allow NotAction on Resource *")
                 continue
             acts = lower_strs(st["actions"])
-            if "*" not in st["resources"]:
-                continue
-            if acts & {"*", "*:*"}:
+            svc_wildcards = {a.split(":", 1)[0] for a in acts
+                             if a.endswith(":*") and a != "*:*" and ":" in a}
+            if full_res and ((acts & {"*", "*:*"}) or len(svc_wildcards & ADMIN_SVC_WILDCARDS) >= 2):
                 self.hit("AWS-IAM-001", res, line, "Allow Action * on Resource *")
-            elif matches_action(st, "iam:PassRole") is True:
+            if not (full_res and (acts & {"*", "*:*"})) and (
+                    full_res or any(isinstance(r, str) and PASSROLE_WILDCARD_ARN.match(r)
+                                    for r in st["resources"])) and matches_action(st, "iam:PassRole") is True:
                 self.hit("AWS-IAM-002", res, line, "Allow iam:PassRole on Resource *")
 
     def trust_policy(self, res, stmts, line):
@@ -919,14 +976,14 @@ class Scan:
     def statements(self, res, attr, view=None):
         view = view or res.view
         value = view.get(attr)
+        raw = view.raw(attr) or ""
         if isinstance(value, str):
             try:
-                value = json.loads(value)
+                value = json.loads(value, object_pairs_hook=unique_object)
             except ValueError:
                 return None
         if isinstance(value, dict):
-            return norm_statements(value)
-        raw = view.raw(attr)
+            return norm_statements(value, raw=raw)
         if raw:
             m = DOC_REF.match(raw.strip())
             if m:
@@ -939,6 +996,12 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
+                if attr == "assume_role_policy" and "aws_iam_openid_connect_provider" in raw and (
+                        "github" in raw.lower() or GITHUB_ISSUER in raw) and "condition" not in raw.lower():
+                    return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
+                             "not_action": False, "resources": ["*"], "not_resource": False,
+                             "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
+                             "conditions": []}]
                 line = view.line(attr)
                 self.not_run.append(f"policy document not resolved from the inputs; {attr} checks not run: "
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
@@ -1020,9 +1083,36 @@ OPEN_CONDITION_KEYS = {
 }
 
 
+def _condition_narrows(op, key, vals):
+    if not isinstance(key, str):
+        return True
+    if key.lower() in OPEN_CONDITION_KEYS:
+        return False
+    if not isinstance(op, str):
+        return True
+    op_base = op.lower()
+    for prefix in ("forallvalues:", "foranyvalue:"):
+        if op_base.startswith(prefix):
+            op_base = op_base[len(prefix):]
+    if op_base.endswith("ifexists"):
+        return False
+    if not vals or all(v == "" or v == [] for v in vals):
+        return False
+    if op_base in ("stringnotequals", "stringnotequalsignorecase", "stringnotlike",
+                   "arnnotequals", "arnnotlike", "notipaddress"):
+        return False
+    if op_base == "ipaddress" and bool(world_cidrs(vals)):
+        return False
+    if op_base == "null" and any(v is True or (isinstance(v, str) and v.lower() == "true") for v in vals):
+        return False
+    if op_base in ("stringlike", "stringlikeignorecase", "arnlike") and vals and all(
+            isinstance(v, str) and v.strip("*") in ("", "arn:", "arn:aws:") for v in vals):
+        return False
+    return True
+
+
 def narrowing(conditions):
-    return any(not isinstance(key, str) or key.lower() not in OPEN_CONDITION_KEYS
-               for _, key, _ in conditions)
+    return any(_condition_narrows(op, key, vals) for op, key, vals in conditions)
 
 
 def world_cidrs(values):
@@ -1066,6 +1156,16 @@ def sensitive_ports(proto, lo, hi):
 
 GITHUB_ISSUER = "token.actions.githubusercontent.com"
 GITHUB_REPO_SUB = re.compile(r"^repo:[^/*?:]+/[^/*?:]+:")
+GITHUB_EXACT_OPS = {
+    "StringEquals", "StringEqualsIgnoreCase",
+}
+GITHUB_LIKE_OPS = {
+    "StringLike", "StringLikeIgnoreCase",
+}
+GITHUB_WEAK_OPS = {
+    "foranyvalue:stringequals", "foranyvalue:stringequalsignorecase",
+    "foranyvalue:stringlike", "foranyvalue:stringlikeignorecase",
+}
 
 
 def github_trust_gap(st):
@@ -1081,10 +1181,12 @@ def github_trust_gap(st):
     allows_assume = matches_action(st, "sts:AssumeRoleWithWebIdentity")
     if allows_assume is False:
         return None
-    fed = any(k == "Federated" and isinstance(x, str) and
-              (x == GITHUB_ISSUER or x.endswith(":oidc-provider/" + GITHUB_ISSUER))
+    fed = any(k == "Federated" and isinstance(x, str) and (
+              x.removeprefix("https://").rstrip("/") == GITHUB_ISSUER or
+              x.rstrip("/").endswith(":oidc-provider/" + GITHUB_ISSUER) or
+              ("aws_iam_openid_connect_provider" in x and ("github" in x.lower() or GITHUB_ISSUER in x)))
               for k, x in st["principals"])
-    keyed = any(isinstance(key, str) and key.lower().startswith(GITHUB_ISSUER + ":")
+    keyed = any(isinstance(key, str) and key.lower().removeprefix("https://").startswith(GITHUB_ISSUER + ":")
                 for _, key, _ in st["conditions"])
     if not fed and keyed and any((k == "Federated" and not isinstance(x, str)) or k is UNKNOWN
                                  for k, x in st["principals"]):
@@ -1093,32 +1195,43 @@ def github_trust_gap(st):
         fed = True
     if not fed:
         return None
-    subs, unsupported = [], allows_assume is UNKNOWN or contains_unknown(st["conditions"])
+    subs, weak_aud, unsupported = [], False, allows_assume is UNKNOWN or contains_unknown(st["conditions"])
     for op, key, vals in st["conditions"]:
         if not isinstance(key, str):
             unsupported = True
-        elif key.lower() == GITHUB_ISSUER + ":sub":
+        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":sub":
             subs.append((op, vals))
-        elif key.lower() != GITHUB_ISSUER + ":aud":
+        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":aud":
+            if isinstance(op, str) and (op.lower() in GITHUB_WEAK_OPS or op.lower().endswith("ifexists")):
+                weak_aud = True
+        else:
             # Other claims can narrow an otherwise broad subject. Do not
             # pretend to evaluate their effect on the set of repositories.
             unsupported = True
     broad = 0
+    pinned = False
     for op, vals in subs:
-        if not vals or not all(isinstance(v, str) and "${" not in v for v in vals):
+        if not vals or not all(isinstance(v, str) and "${" not in v for v in vals) or not isinstance(op, str):
             unsupported = True
-        elif op in ("StringEquals", "StringEqualsIgnoreCase"):
+        elif op in GITHUB_EXACT_OPS:
             # These operators do not expand '*' or '?'. Even a wildcard-
             # shaped value is an exact subject, not an all-repository grant.
-            return None
-        elif op == "StringLike":
+            pinned = True
+        elif op in GITHUB_LIKE_OPS:
             if all(not any(c in v for c in "*?") or GITHUB_REPO_SUB.match(v) for v in vals):
-                return None
+                pinned = True
+            else:
+                broad += 1
+        elif op.lower() in GITHUB_WEAK_OPS or op.lower().endswith("ifexists"):
             broad += 1
         else:
             unsupported = True
+    if pinned and not weak_aud:
+        return None
     if unsupported or broad > 1:
         return UNKNOWN
+    if weak_aud:
+        return "GitHub OIDC :aud condition uses ForAnyValue or IfExists"
     if not subs:
         return "no :sub condition on the GitHub OIDC token"
     return "GitHub :sub pattern does not pin the organization and repository"
@@ -1322,9 +1435,11 @@ def check_tf_shared(scan, res):
     if t in ("google_bigquery_dataset", "google_bigquery_dataset_access"):
         grants = v.blocks("access") if t == "google_bigquery_dataset" else [v]
         for grant in grants:
-            who = grant.get("special_group") if grant.get("special_group") is not None else grant.get("iam_member")
-            if who in ("allUsers", "allAuthenticatedUsers"):
-                scan.hit("GCP-GCS-002", res, grant.line(), f"dataset access granted to {who}")
+            for key in ("special_group", "iam_member"):
+                who = grant.get(key)
+                if who in ("allUsers", "allAuthenticatedUsers"):
+                    scan.hit("GCP-GCS-002", res, grant.line(), f"dataset access granted to {who}")
+                    break
 
 
 def check_tf(scan, res):
@@ -1494,10 +1609,22 @@ def check_tf(scan, res):
     elif GCP_IAM.match(t):
         members = [v.get("member")] if v.get("member") is not None else aslist(v.get("members"))
         # Every member must be a Google-managed agent; a templated single member
-        # (service-${number}@gcp-sa-...) is judged on its raw text.
+        # (service-${number}@gcp-sa-...) is judged on its raw text, unless the
+        # raw expression branches or combines multiple values.
         raw = (v.raw("member") or "") if hasattr(v, "raw") and v.get("member") is not None else ""
+        if members == [UNKNOWN] and raw.strip() in ("each.value", "each.key"):
+            fe = v.get("for_each")
+            if isinstance(fe, list):
+                members = [m if isinstance(m, str) else UNKNOWN for m in fe] or members
+            elif isinstance(fe, dict):
+                vals = list(fe.keys()) if raw.strip() == "each.key" else list(fe.values())
+                members = [m if isinstance(m, str) else UNKNOWN for m in vals] or members
+        raw_single_template = (
+            bool(raw) and not any(c in raw for c in "?,[") and " for " not in raw and raw.count('"') <= 2
+            and bool(SERVICE_AGENT.search(raw))
+        )
         agents = bool(members) and all(
-            (isinstance(m, str) and SERVICE_AGENT.search(m)) or (m is UNKNOWN and SERVICE_AGENT.search(raw))
+            (isinstance(m, str) and SERVICE_AGENT.search(m)) or (m is UNKNOWN and raw_single_template)
             for m in members)
         role = v.get("role")
         each = role is UNKNOWN and (v.raw("role") or "").strip() in ("each.value", "each.key")
@@ -1514,7 +1641,7 @@ def check_tf(scan, res):
         data = v.get("policy_data")
         if isinstance(data, str):
             try:
-                data = json.loads(data)
+                data = json.loads(data, object_pairs_hook=unique_object)
             except ValueError:
                 data = None
         if isinstance(data, dict) and isinstance(data.get("bindings"), list):
@@ -1580,7 +1707,7 @@ def check_tf(scan, res):
             if not configs and v.get("initial_node_count") is not None and not v.blocks("node_pool"):
                 if removed is UNKNOWN:
                     line = v.line("remove_default_node_pool")
-                    scan.not_run.append("GCP-GCE-001: unknown remove_default_node_pool; default pool check not run: "
+                    scan.not_run.append("GCP-GKE-001: unknown remove_default_node_pool; default pool check not run: "
                                         f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
                 else:
                     scan.hit("GCP-GCE-001", res, v.line("initial_node_count"),
@@ -1628,8 +1755,10 @@ def check_tf(scan, res):
                 scan.not_run.append("GCP-GKE-001: unknown Autopilot mode; workload identity check not run: "
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
     elif t == "google_iam_workload_identity_pool_provider":
-        if any(oidc.known_present for oidc in v.blocks("oidc")) and \
-                v.get("attribute_condition") in (None, ""):
+        cond = v.get("attribute_condition")
+        vacuous = cond is None or (
+            isinstance(cond, str) and re.sub(r"\s+", " ", cond.strip().lower()) in ("", "true", "1 == 1", "true == true"))
+        if any(p.known_present for k in ("oidc", "aws") for p in v.blocks(k)) and vacuous:
             scan.hit("GCP-WIF-001", res, res.line, "OIDC provider without attribute_condition")
 
 
@@ -1704,7 +1833,10 @@ def terraform_overrides(scan, parsed):
         return name in ("override.tf", "override.tofu") or name.endswith(("_override.tf", "_override.tofu"))
 
     def header(rel, block):
-        alias = HclView(block).get("alias") if block.type == "provider" else None
+        try:
+            alias = HclView(block).get("alias") if block.type == "provider" else None
+        except RecursionError:
+            alias = UNKNOWN
         # A provider alias must be a literal string; invalid aliases must not
         # accidentally match a different provider configuration.
         if alias is not None and not isinstance(alias, str):
@@ -1805,12 +1937,14 @@ def collect_context(scan, d, type_, view, text, defaults=True):
         on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
         if key and on and (defaults or not account):
             scan.s3_blocks.setdefault((d, key), set()).update(on)
-    if type_ == "aws_ec2_instance_metadata_defaults" and view.get("http_tokens") == "required" and defaults:
+    if type_ == "aws_ec2_instance_metadata_defaults" and surely_created(view) and \
+            view.get("http_tokens") == "required" and defaults:
         scan.imds_required_dirs.add((d, provider_key(view)))
-    elif type_ == "aws_ebs_encryption_by_default" and tf_bool(view.get("enabled")) in (True, None) and defaults:
+    elif type_ == "aws_ebs_encryption_by_default" and surely_created(view) and \
+            tf_bool(view.get("enabled")) in (True, None) and defaults:
         scan.ebs_default_dirs.add((d, provider_key(view)))
     elif type_ in ("google_org_policy_policy", "google_organization_policy", "google_folder_organization_policy",
-                   "google_project_organization_policy"):
+                   "google_project_organization_policy") and surely_created(view):
         # A dry-run spec is not enforced.
         enforced = without_block(text, "dry_run_spec")
         for constraint in ("storage.publicAccessPrevention", "storage.uniformBucketLevelAccess"):
@@ -1886,14 +2020,22 @@ def handle_terraform(scan, parsed):
             pending.extend(reversed(block.blocks))
         for b in blocks:
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "google_iam_policy":
-                scan.gcp_policy_data[(d, b.labels[1])] = [
-                    (binding.get("role"), aslist(binding.get("members")), _HclLine(binding.line(), rel))
-                    for binding in HclView(b).blocks("binding")]
+                try:
+                    scan.gcp_policy_data[(d, b.labels[1])] = [
+                        (binding.get("role"), aslist(binding.get("members")), _HclLine(binding.line(), rel))
+                        for binding in HclView(b).blocks("binding")]
+                except RecursionError:
+                    scan.not_run.append(f"Terraform expression nested too deeply; checks not run: "
+                                        f"{getattr(b.line, 'file', rel)}:{b.line}")
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy":
-                view = HclView(b)
-                if view.get("name") == "AdministratorAccess" or (
-                        isinstance(view.get("arn"), str) and ADMIN_ARN.search(view.get("arn"))):
-                    scan.admin_policy_data.add((d, b.labels[1]))
+                try:
+                    view = HclView(b)
+                    if view.get("name") == "AdministratorAccess" or (
+                            isinstance(view.get("arn"), str) and ADMIN_ARN.search(view.get("arn"))):
+                        scan.admin_policy_data.add((d, b.labels[1]))
+                except RecursionError:
+                    scan.not_run.append(f"Terraform expression nested too deeply; checks not run: "
+                                        f"{getattr(b.line, 'file', rel)}:{b.line}")
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
                 try:
                     statements = doc_statements(view_of(b, rel))
@@ -1907,8 +2049,9 @@ def handle_terraform(scan, parsed):
         for b in blocks:
             try:
                 if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
-                    collect_context(scan, str(Path(rel).parent), b.labels[0], HclView(b), block_text(b))
-                    if b.labels[0] == "aws_launch_template":
+                    b_view = HclView(b)
+                    collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
+                    if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
                 collect_policy_references(scan, str(Path(rel).parent), b)
             except RecursionError:
@@ -2020,40 +2163,39 @@ def handle_terragrunt(scan, rel, text):
     file are substituted into source ("${local.base_source_url}?ref=v1.2.0")."""
     try:
         blocks = parse_hcl(text)
+        locals_ = {}
+        for b in blocks:
+            if b.type == "locals":
+                view = HclView(b)
+                locals_.update({name: value for name in b.attrs if isinstance(value := view.get(name), str)})
+        for b in blocks:
+            view = HclView(b)
+            if b.type == "remote_state" and view.get("backend") == "s3" and isinstance(view.get("config"), dict):
+                config = view.get("config")
+                encrypt = tf_bool(config.get("encrypt"))
+                if encrypt is False or (encrypt is None and "encrypt" not in config and
+                                        config.get("kms_key_id") in (None, "")):
+                    scan.hit("PS-002", Res("backend", "terragrunt.remote_state.s3", rel, b.line), view.line("config"),
+                             "Terragrunt s3 remote_state without encrypt = true; relies on bucket default encryption",
+                             "Low")
+            if b.type != "terraform":
+                continue
+            source = view.get("source")
+            raw = view.raw("source")
+            if source is UNKNOWN and raw and raw.startswith('"') and raw.endswith('"'):
+                substituted = re.sub(r"\$\{\s*local\.(\w+)\s*\}",
+                                     lambda m: locals_.get(m.group(1), m.group()), raw[1:-1])
+                source = substituted if "${" not in substituted else UNKNOWN
+            if not isinstance(source, str) or not GIT_SOURCE.search(source):
+                continue
+            res = Res("terragrunt", f"terragrunt:{rel}", rel, b.line)
+            m = re.search(r"[?&]ref=([^&]+)", source)
+            if not m:
+                scan.hit("PS-001", res, view.line("source"), "git source without ?ref=")
+            elif not PINNED_REF.fullmatch(m.group(1)):
+                scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
     except RecursionError:
         scan.not_run.append(f"HCL nested too deeply, skipped: {rel}")
-        return
-    locals_ = {}
-    for b in blocks:
-        if b.type == "locals":
-            view = HclView(b)
-            locals_.update({name: value for name in b.attrs if isinstance(value := view.get(name), str)})
-    for b in blocks:
-        view = HclView(b)
-        if b.type == "remote_state" and view.get("backend") == "s3" and isinstance(view.get("config"), dict):
-            config = view.get("config")
-            encrypt = tf_bool(config.get("encrypt"))
-            if encrypt is False or (encrypt is None and "encrypt" not in config and
-                                    config.get("kms_key_id") in (None, "")):
-                scan.hit("PS-002", Res("backend", "terragrunt.remote_state.s3", rel, b.line), view.line("config"),
-                         "Terragrunt s3 remote_state without encrypt = true; relies on bucket default encryption",
-                         "Low")
-        if b.type != "terraform":
-            continue
-        source = view.get("source")
-        raw = view.raw("source")
-        if source is UNKNOWN and raw and raw.startswith('"') and raw.endswith('"'):
-            substituted = re.sub(r"\$\{\s*local\.(\w+)\s*\}",
-                                 lambda m: locals_.get(m.group(1), m.group()), raw[1:-1])
-            source = substituted if "${" not in substituted else UNKNOWN
-        if not isinstance(source, str) or not GIT_SOURCE.search(source):
-            continue
-        res = Res("terragrunt", f"terragrunt:{rel}", rel, b.line)
-        m = re.search(r"[?&]ref=([^&]+)", source)
-        if not m:
-            scan.hit("PS-001", res, view.line("source"), "git source without ?ref=")
-        elif not PINNED_REF.fullmatch(m.group(1)):
-            scan.hit("PS-001", res, view.line("source"), f"ref={m.group(1)} is not a commit or version tag")
 
 
 def handle_backend(scan, rel, block):
@@ -2083,7 +2225,7 @@ def backend_config_encrypts(scan, rel):
     directory = Path(scan.root) / Path(rel).parent
     try:
         candidates = sorted(p for p in directory.iterdir()
-                            if p.is_file() and not p.is_symlink() and
+                            if p.is_file() and not p.is_symlink() and p.stat().st_size <= MAX_BYTES and
                             (p.name.endswith(".tfbackend") or re.fullmatch(r"backend.*\.hcl", p.name)))
         # Every config that sets encrypt must enable it: prod.tfbackend may differ from dev.
         settings = []
@@ -2097,6 +2239,21 @@ def backend_config_encrypts(scan, rel):
     return bool(settings) and all(settings)
 
 
+def _safe_terragrunt_include(base_dir, rel_path, root):
+    raw_cand = base_dir / rel_path
+    cur = raw_cand
+    while cur != base_dir and cur != root and cur != cur.parent:
+        if cur.is_symlink():
+            return None
+        cur = cur.parent
+    if raw_cand.is_symlink():
+        return None
+    resolved = raw_cand.resolve()
+    if resolved == root or root in resolved.parents:
+        return resolved
+    return None
+
+
 def terragrunt_remote_state(scan, d):
     """Terragrunt writes the backend at run time, from remote_state or generate
     "backend" in the unit's terragrunt.hcl (here or above, within the scanned
@@ -2108,7 +2265,7 @@ def terragrunt_remote_state(scan, d):
     chain = [p for p in (here, *here.parents) if p == root or root in p.parents]
     try:
         unit = next((p / "terragrunt.hcl" for p in chain if (p / "terragrunt.hcl").is_file()), None)
-        if unit is None or unit.is_symlink():
+        if unit is None or unit.is_symlink() or unit.stat().st_size > MAX_BYTES:
             return False
         text = unit.read_text(encoding="utf-8-sig")
         if terragrunt_backend(text):
@@ -2120,10 +2277,14 @@ def terragrunt_remote_state(scan, d):
         if re.search(r"find_in_parent_folders\(\s*\)", includes):
             names.add("terragrunt.hcl")  # the no-argument form finds terragrunt.hcl only
         candidates = [p / name for p in unit.parent.parents if p == root or root in p.parents for name in names]
-        candidates += [(unit.parent / m).resolve() for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', includes)]
+        for m in re.findall(r'\bpath\s*=\s*"([^"$]+\.hcl)"', includes):
+            safe_cand = _safe_terragrunt_include(unit.parent, m, root)
+            if safe_cand is not None:
+                candidates.append(safe_cand)
         for candidate in candidates:
             if (candidate == root or root in candidate.parents) and candidate.is_file() and \
-                    not candidate.is_symlink() and terragrunt_backend(candidate.read_text(encoding="utf-8-sig")):
+                    not candidate.is_symlink() and candidate.stat().st_size <= MAX_BYTES and \
+                    terragrunt_backend(candidate.read_text(encoding="utf-8-sig")):
                 return True
     except (OSError, UnicodeError):
         return False
@@ -2386,8 +2547,11 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         scan.not_run.append(f"CloudFormation Transform (SAM or macro): rules read the template as written, not the "
                             f"expanded resources; review the transformed template by hand: {rel}")
     globals_ = doc.get("Globals", {}).get("Function") if isinstance(doc.get("Globals"), dict) else None
-    scan.cfn_checked_templates[rel] = {lid for lid, r in (doc.get("Resources") or {}).items()
-                                       if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"}
+    scan.cfn_checked_templates[rel] = {
+        lid for lid, r in (doc.get("Resources") or {}).items()
+        if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"
+        and isinstance((r.get("Properties") or {}).get("LaunchTemplateData"), dict)
+    }
     cfn_parameter_defaults(scan, rel, text, doc)
     for lid, r in (doc.get("Resources") or {}).items():
         if not isinstance(r, dict):
@@ -2494,7 +2658,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
             if props.get("AuthType") == "NONE":
                 scan.hit("AWS-LAMBDA-001", res, line, "AuthType = NONE")
         elif type_ == "AWS::Lambda::Permission":
-            if props.get("Principal") == "*" and not ({"SourceArn", "SourceAccount", "PrincipalOrgID"} & props.keys()):
+            if props.get("Principal") == "*" and not any(
+                    props.get(k) not in (None, "", {}) for k in ("SourceArn", "SourceAccount", "PrincipalOrgID")):
                 scan.hit("AWS-LAMBDA-002", res, line, "Principal = * without a source condition")
 
 
@@ -2583,20 +2748,24 @@ SECRET_REFERENCE_TYPES = {"PARAMETER_STORE", "SECRETS_MANAGER"}
 SECRET_REFERENCE = re.compile(r'(?i)\btype"?\s*[:=]\s*"(?:PARAMETER_STORE|SECRETS_MANAGER)"')
 FLAG_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|enabled?|disabled?|[0-9]{1,5})")
 # CloudFormation property names (CamelCase) that hold a credential.
-CFN_SECRET_KEY = re.compile(r"(?i)[A-Za-z0-9_-]*(?:password|passwd|secret|secret_?key|secret_?string|token|"
-                            r"api_?key|access_?key|private_?key|credentials?|(?<![A-Za-z])(?:pass|pwd|pw))")
+CFN_SECRET_KEY = re.compile(
+    r"(?i)[A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_?key|secret_?string|"
+    r"secret_?data|secret_?binary|token|api_?key|access_?key|private_?key|client_?key|"
+    r"ssh_?key|tls\.key|passphrase|bearer|auth_?token|credentials?)"
+    r"(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|"
+    r"(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z]))")
 
 
 def literal_secret(value):
     """A CloudFormation string holding a secret. ${...} is literal text outside
     Fn::Sub (an intrinsic, so a dict here), so it does not exempt the value."""
-    return isinstance(value, str) and not value.startswith("{{resolve:") and \
+    return isinstance(value, str) and not value.startswith(("{{resolve:secretsmanager:", "{{resolve:ssm-secure:")) and \
         not PLACEHOLDER.match(value.strip()) and not FLAG_VALUE.fullmatch(value.strip())
 
 
 def cfn_parameter_defaults(scan, rel, text, doc):
-    """SEC-001 for a literal Default of a secret-named parameter: NoEcho hides the
-    value in the console, not in the repository."""
+    """SEC-001 for a literal Default of a secret-named parameter: NoEcho
+    hides the value in the console, not in the repository."""
     params = doc.get("Parameters")
     if not isinstance(params, dict):
         return
@@ -2622,12 +2791,13 @@ def cfn_secrets(scan, res, props, line):
             stack.extend(item)
         elif isinstance(item, dict):
             keys = {k.lower(): k for k in item if isinstance(k, str)}
-            name = item.get(keys.get("name", ""))
             # CodeBuild variables of type PARAMETER_STORE / SECRETS_MANAGER hold a reference.
             reference = str(item.get(keys.get("type", ""), "")).upper() in SECRET_REFERENCE_TYPES
-            if "value" in keys and isinstance(name, str) and CFN_SECRET_KEY.fullmatch(name) and not reference \
-                    and literal_secret(item[keys["value"]]):
-                found.append(name)
+            for nk, vk in (("name", "value"), ("parameterkey", "parametervalue")):
+                name = item.get(keys.get(nk, ""))
+                if vk in keys and isinstance(name, str) and CFN_SECRET_KEY.fullmatch(name) and not reference \
+                        and literal_secret(item[keys[vk]]):
+                    found.append(name)
             for key, value in item.items():
                 if isinstance(key, str) and CFN_SECRET_KEY.fullmatch(key) and literal_secret(value):
                     found.append(key)
@@ -2712,7 +2882,7 @@ def aws_export(scan, rel, doc, keys):
     def policy(document):
         if isinstance(document, str):  # get-account-authorization-details may URL-encode documents
             try:
-                document = json.loads(url_unquote(document))
+                document = json.loads(url_unquote(document), object_pairs_hook=unique_object)
             except ValueError:
                 return None
         return norm_statements(document) if isinstance(document, dict) else None
@@ -2769,6 +2939,13 @@ def aws_export(scan, rel, doc, keys):
             opts = instance.get("MetadataOptions")
             if isinstance(opts, dict) and opts.get("HttpEndpoint") != "disabled" and opts.get("HttpTokens") == "optional":
                 scan.hit("AWS-EC2-001", res, line, "HttpTokens = optional")
+    # aws lambda list-functions / get-function-configuration
+    for i, fn in items("Functions"):
+        matched = True
+        line = at(("Functions", i), "FunctionName")
+        res = Res("aws_lambda_function", f"snapshot:aws_lambda_function.{fn.get('FunctionName', i)}", rel, line)
+        scan.add_resource(res, "aws")
+        cfn_secrets(scan, res, fn.get("Environment"), line)
     # aws lambda list-function-url-configs
     for i, url in items("FunctionUrlConfigs"):
         matched = True
@@ -2822,7 +2999,7 @@ def handle_snapshot(scan, rel, text, doc):
         return "snapshot"
     if isinstance(doc, dict) and isinstance(doc.get("Policy"), str):
         try:
-            doc = json.loads(doc["Policy"])
+            doc = json.loads(doc["Policy"], object_pairs_hook=unique_object)
         except ValueError:
             return None
     if isinstance(doc, dict) and "Statement" in doc:
@@ -3183,8 +3360,11 @@ def finish_k8s(scan):
     A role of that name only in a sibling tree (dev/ for a prod/ binding) may be
     another cluster's: recorded as unresolved instead."""
     for res, kind, namespace, role_kind, role_name, line in scan.k8s_bindings:
-        key = (role_kind, namespace if role_kind == "Role" else None, role_name)
-        dirs = scan.k8s_wildcard_roles.get(key, set())
+        ns_key = (namespace or "default") if role_kind == "Role" else None
+        dirs = set(scan.k8s_wildcard_roles.get((role_kind, ns_key, role_name), set()))
+        if role_kind == "Role" and namespace in (None, "", "default"):
+            dirs |= scan.k8s_wildcard_roles.get((role_kind, None, role_name), set())
+            dirs |= scan.k8s_wildcard_roles.get((role_kind, "default", role_name), set())
         here = posixpath.dirname(res.file)
         if any(same_tree(here, d) for d in dirs):
             severity = "Medium" if kind == "RoleBinding" else None
@@ -3193,10 +3373,14 @@ def finish_k8s(scan):
             scan.not_run.append(f"K8S-002: {role_kind} {role_name} grants * on * in {', '.join(sorted(dirs))}, "
                                 f"another tree than the binding; check it is the same cluster: {res.file}:{line} "
                                 f"({res.address})")
+    for res, namespace, sa_name, line in scan.k8s_pod_sa_refs:
+        sa_info = scan.k8s_sa_automount.get((namespace or "default", sa_name))
+        if sa_info and same_tree(posixpath.dirname(res.file), sa_info[0]):
+            scan.hit("K8S-001", res, line, f"serviceAccountName {sa_name} has automountServiceAccountToken: true", "Low")
 
 
 def _check_k8s(scan, rel, doc, fallback_kind=None):
-    kind = doc.get("kind", fallback_kind)
+    kind = doc.get("kind") or fallback_kind
     if not isinstance(kind, str):
         scan.not_run.append(f"kubernetes rules not applied (missing or opaque kind): {rel}:{doc.line}")
         return
@@ -3229,7 +3413,7 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         # Kubernetes' own bootstrap RBAC (exported with kubectl get -o json):
         # system:* bindings labelled rbac-defaults, and cluster-admin to system:masters.
         bootstrap = labels.get("kubernetes.io/bootstrapping") == "rbac-defaults" and \
-            isinstance(name, str) and name.startswith("system:")
+            isinstance(name, str) and name.startswith("system:") and role.get("name") == name
         masters_only = bool(subjects) and all(s.get("kind") == "Group" and s.get("name") == "system:masters"
                                               for s in subjects)
         # kubeadm and EKS create these bindings themselves; matched on name, role and subjects.
@@ -3248,18 +3432,28 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             # A role granting * on * is cluster-admin under another name; roles may be in other files.
             scan.k8s_bindings.append((res, kind, namespace, role.get("kind"), role.get("name"), role.lines["name"]))
         for subject in subjects if not (bootstrap or platform) else []:
-            if (subject.get("kind") == "Group" and subject.get("name") in
-                    ("system:authenticated", "system:unauthenticated", "system:serviceaccounts")) or (
-                    subject.get("kind") == "User" and subject.get("name") == "system:anonymous"):
-                scan.hit("K8S-002", res, subject.lines["name"], f"binds {subject['name']}")
+            skind, sname = subject.get("kind"), subject.get("name")
+            if (skind == "Group" and isinstance(sname, str) and (
+                    sname in ("system:authenticated", "system:unauthenticated", "system:serviceaccounts") or
+                    sname.startswith("system:serviceaccounts:"))) or (
+                    skind == "User" and sname in ("system:anonymous", "system:unauthenticated")):
+                scan.hit("K8S-002", res, subject.lines["name"], f"binds {sname}")
     if kind in ("ClusterRole", "Role") and isinstance(name, str):
         for rule in aslist(doc.get("rules")):
-            if isinstance(rule, dict) and "*" in aslist(rule.get("verbs")) and "*" in aslist(rule.get("resources")) \
-                    and "*" in aslist(rule.get("apiGroups")):
-                scan.k8s_wildcard_roles.setdefault((kind, namespace if kind == "Role" else None, name), set()).add(
-                    posixpath.dirname(rel))
+            if not isinstance(rule, dict):
+                continue
+            verbs = set(aslist(rule.get("verbs")))
+            resources = set(aslist(rule.get("resources")))
+            groups = set(aslist(rule.get("apiGroups")))
+            if ("*" in resources and ("*" in groups or "" in groups) and "*" in verbs) or (
+                    "*" in resources and "*" in groups and bool(verbs & {"*", "bind", "escalate", "impersonate"})):
+                ns_key = (namespace or "default") if kind == "Role" else None
+                scan.k8s_wildcard_roles.setdefault((kind, ns_key, name), set()).add(posixpath.dirname(rel))
     if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
+    if kind == "ServiceAccount" and isinstance(name, str) and doc.get("automountServiceAccountToken") is True:
+        scan.k8s_sa_automount[(namespace or "default", name)] = (
+            posixpath.dirname(rel), doc.lines.get("automountServiceAccountToken", res.line))
     if kind == "Secret":
         for key in ("data", "stringData"):
             # Charts ship placeholder Secrets with empty values.
@@ -3278,6 +3472,10 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
     if kind in ("Service", "Configuration") and api.startswith("serving.knative.dev/"):
         paths[kind] = ("spec", "template", "spec")
     pod = _k8s_map(doc, *paths[kind]) if kind in paths else _YamlMap(res.line)
+    sa_name = pod.get("serviceAccountName") or pod.get("serviceAccount")
+    if kind in paths and isinstance(sa_name, str) and pod.get("automountServiceAccountToken") is not False:
+        sa_key = "serviceAccountName" if "serviceAccountName" in pod.lines else "serviceAccount"
+        scan.k8s_pod_sa_refs.append((res, namespace or "default", sa_name, pod.lines.get(sa_key, res.line)))
     containers = [c for key in ("containers", "initContainers", "ephemeralContainers") for c in aslist(pod.get(key))]
     if kind in ("Workflow", "WorkflowTemplate", "ClusterWorkflowTemplate", "CronWorkflow") and \
             api.startswith("argoproj.io/"):
@@ -3552,8 +3750,12 @@ SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})")) for label, pattern i
 SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 # The short spellings (db_pass, admin_pw) count only as a whole word, as in
 # redaction's CREDENTIAL_WORD: bypass or compass name no secret.
-SECRET_KEY_NAME = (r'"?([A-Za-z0-9_-]*(?:password|passwd|secret|secret_key|secret_string|token|api_key|apikey|'
-                   r'access_key|private_key|credentials?|connection_string|(?<![A-Za-z])(?:pass|pwd|pw)))"?')
+SECRET_KEY_NAME = (
+    r'"?([A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_key|secret_string|secret_data|secret_binary|'
+    r'token|api_key|apikey|access_key|private_key|client_key|ssh_key|tls\.key|passphrase|bearer|auth_token|'
+    r'credentials?|connection_string)(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|'
+    r'(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z])))"?'
+)
 # A key file path or a connection string without a password is no secret.
 NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|pem|p12|key)$"),
                 # Neither Password=... nor URI userinfo (postgres://user:pass@host).
@@ -3650,20 +3852,25 @@ HCL_KINDS = ("terraform", "tfvars", "terragrunt")
 
 
 HEREDOC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*<<-?([A-Za-z_]\w*)\s*$', re.IGNORECASE)
-SECRET_VARIABLE = re.compile(rf'^\s*variable\s+"({SECRET_KEY_NAME[3:-3]})"\s*\{{', re.IGNORECASE)
+SECRET_VARIABLE = re.compile(rf'^\s*variable\s+"?({SECRET_KEY_NAME[3:-3]})"?\s*\{{', re.IGNORECASE)
+SECRET_OUTPUT = re.compile(rf'^\s*output\s+"?({SECRET_KEY_NAME[3:-3]})"?\s*\{{', re.IGNORECASE)
+LOCALS_BLOCK = re.compile(r'^\s*locals\s*\{')
+INLINE_LOCALS_SECRET = re.compile(rf'(?:^|[{{\s]){SECRET_KEY_NAME}\s*=\s*"((?:\\.|[^"\\])*)"', re.IGNORECASE)
 
 
 def hcl_literal_secrets(scan, res, lines, mocks):
     """SEC-001 for what the one-line patterns cannot see: a heredoc assigned to a
     secret-named argument, and the literal default of a secret-named variable
-    (variable "db_password" { default = "..." } or default = <<EOT). One pass:
-    a heredoc's body is read once and then skipped, as it is text, not configuration."""
+    (variable "db_password" { default = "..." } or default = <<EOT), the literal
+    value of a secret-named output, or a secret-named local inside a locals block.
+    One pass: a heredoc's body is read once and then skipped, as it is text, not
+    configuration."""
     def literal(value):
         value = value.strip()
         return value and "${" not in value and not PLACEHOLDER.match(value) and not FLAG_VALUE.fullmatch(value)
 
     skeleton = hcl_code("\n".join(lines), strings=False).split("\n")  # braces outside strings, heredocs
-    variable, depth, i = None, 0, 0
+    variable, output, in_locals, depth, i = None, None, False, 0, 0
     while i < len(lines):
         line = lines[i]
         after = i + 1
@@ -3672,22 +3879,38 @@ def hcl_literal_secrets(scan, res, lines, mocks):
             after = next((j for j in range(i + 1, len(lines)) if lines[j].strip() == opener.group(1)), len(lines))
             body = "\n".join(lines[i + 1:after])
             after += 1
+        if depth == 0:
+            if (m := SECRET_VARIABLE.match(line)):
+                variable = m.group(1)
+            elif (m := SECRET_OUTPUT.match(line)):
+                output = m.group(1)
+            elif LOCALS_BLOCK.match(line):
+                in_locals = True
+        eff_depth = 1 if depth == 0 and (variable or output or in_locals) else depth
         label = None
         if (m := HEREDOC_SECRET.match(line)):
             label = f"literal value assigned to {m.group(1)}"
-        elif variable and depth == 1 and (m := re.match(r'\s*default\s*=\s*(.*)$', line)):
+        elif variable and eff_depth == 1 and (m := re.search(r'(?:^|[\s{])default\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)', line)):
             label = f"literal default for variable {variable}"
-            if (quoted := re.fullmatch(r'"((?:\\.|[^"\\])*)"', m.group(1).strip())):
-                body = quoted.group(1)
+            if m.group(2) is not None:
+                body = m.group(2)
             elif not opener:
                 body = None
+        elif output and eff_depth == 1 and (m := re.search(r'(?:^|[\s{])value\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)', line)):
+            label = f"literal value for output {output}"
+            if m.group(2) is not None:
+                body = m.group(2)
+            elif not opener:
+                body = None
+        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and (m := INLINE_LOCALS_SECRET.search(line)):
+            label = f"literal value assigned to {m.group(1)}"
+            body = m.group(2)
         if label and body is not None and i + 1 not in mocks and literal(body):
             scan.hit("SEC-001", res, i + 1, label)
-        if depth == 0 and (m := SECRET_VARIABLE.match(line)):
-            variable = m.group(1)
         depth = max(0, depth + skeleton[i].count("{") - skeleton[i].count("}"))
         if depth == 0:
-            variable = None
+            variable = output = None
+            in_locals = False
         i = after
 
 
@@ -3705,7 +3928,7 @@ def scan_secrets(scan, rel, text, kind):
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
-        if kind not in HCL_KINDS or n in mocks:
+        if kind not in (*HCL_KINDS, "snapshot") or n in mocks:
             continue
         for name, value, entry in env_pairs(code_lines, n - 1):
             # The entry's own type: CodeBuild writes type = "PARAMETER_STORE" after the value.
@@ -3721,7 +3944,8 @@ def scan_secrets(scan, rel, text, kind):
             exempt = next((p for keys, p in NOT_A_SECRET.items() if m.group(1).lower().endswith(keys)), None)
             if exempt and exempt.search(m.group(2)):
                 continue
-            if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()):
+            if "${" not in m.group(2) and not PLACEHOLDER.match(m.group(2).strip()) \
+                    and not FLAG_VALUE.fullmatch(m.group(2).strip()):
                 scan.hit("SEC-001", res, n, f"literal value assigned to {m.group(1)}")
     if kind in HCL_KINDS:
         hcl_literal_secrets(scan, res, code_lines, mocks)
@@ -3927,7 +4151,7 @@ def run(root, snapshots=()):
             handle_terragrunt(scan, rel, text)
         elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
             try:
-                doc = json.loads(text)
+                doc = json.loads(text, object_pairs_hook=unique_object)
             except RecursionError:
                 doc = None
                 scan.not_run.append(f"JSON nested too deeply, skipped: {rel}")
@@ -4203,6 +4427,8 @@ def merge_into(path, findings, inventory, commit):
     path = Path(path)
     if path.exists():
         data = json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
+        if json_depth(data) > MAX_JSON_DEPTH:
+            raise ValueError(f"JSON nesting exceeds maximum depth ({MAX_JSON_DEPTH})")
         problems = shape_problems(data)
         if problems:
             raise ValueError("; ".join(problems))
@@ -4270,12 +4496,13 @@ def main(argv=None):
         if target is None:
             continue
         target = Path(target)
-        if target.is_symlink():
+        if target.is_symlink() or has_symlink_parent(target) or (target.exists() and not target.is_file()):
             print(f"iac_scan: {option} {target} is a symlink; refusing to write through it", file=sys.stderr)
             return 2
         # The assessment writes nothing inside the repository it reads, and
         # a previous iac.json there would be rescanned as input.
-        if resolved in target.resolve().parents:
+        target_resolved = target.resolve()
+        if target_resolved == resolved or resolved in target_resolved.parents:
             print(f"iac_scan: {option} {target} is inside the scanned repository; write it elsewhere",
                   file=sys.stderr)
             return 2

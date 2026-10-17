@@ -58,13 +58,16 @@ FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regress
 PAYLOAD = re.compile(
     # Narrow shapes only: relative module paths (../../modules/app) and
     # quoted names joined by "and"/"or" are ordinary infrastructure prose.
-    r"<script\b|javascript:|onerror\s*=|'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
+    r"<script\b|(?:<svg|<img|<iframe)\b|javascript:|data:text/html|\bon(?:error|load|focus|toggle)\s*=|"
+    r"'\s*(?:or|and)\s+'?(\w+)'?\s*=\s*'?\1\b|union\s+select|"
     r"(?:\.\./){2,}(?:etc|proc|root|windows|var|home|run)\b|;\s*(?:rm|curl|wget|nc|bash|sh)\s|\$\(\s*(?:curl|wget|id|cat)\b|"
     r"\{\{\s*\d+\s*\*\s*\d+\s*\}\}|/etc/passwd|"
     r"169\.254\.169\.254|169\.254\.170\.2\b|fd00:ec2::254|\b2852039166\b|0xa9fea9fe|"
     r"metadata\.google\.internal",
     re.IGNORECASE,
 )
+MARKUP_PAYLOAD = re.compile(r"<(?:script|svg|img|iframe)\b|javascript:|data:text/html|\bon(?:error|load|focus|toggle)\s*=",
+                            re.IGNORECASE)
 # Share the renderer's known credential formats and retain the merge gate's
 # conservative handling of private-key fields and incomplete Slack tokens.
 
@@ -94,11 +97,33 @@ def credential_problems(value, name):
 
 def prose_strings(fragment):
     """Yield fields where literal attack payloads are prohibited."""
+    meta = fragment.get("meta")
+    if isinstance(meta, dict):
+        for key in ("project", "scope", "assessor", "method"):
+            if isinstance(meta.get(key), str):
+                yield f"meta.{key}", meta[key]
+        for i, item in enumerate(meta.get("inputs", []) if isinstance(meta.get("inputs"), list) else []):
+            if isinstance(item, dict):
+                if isinstance(item.get("note"), str):
+                    yield f"meta.inputs[{i}].note", item["note"]
+                if isinstance(item.get("path"), str) and MARKUP_PAYLOAD.search(item["path"]):
+                    yield f"meta.inputs[{i}].path", item["path"]
     for f in fragment.get("findings", []):
         fid = f.get("id", "?")
         for key in FINDING_PROSE:
             if isinstance(f.get(key), str):
                 yield f"{fid}.{key}", f[key]
+        if isinstance(f.get("location"), str) and MARKUP_PAYLOAD.search(f["location"]):
+            yield f"{fid}.location", f["location"]
+        for i, ctrl in enumerate(f.get("controls", []) if isinstance(f.get("controls"), list) else []):
+            if isinstance(ctrl, str):
+                yield f"{fid}.controls[{i}]", ctrl
+        for i, res in enumerate(f.get("resources", []) if isinstance(f.get("resources"), list) else []):
+            if isinstance(res, str):
+                yield f"{fid}.resources[{i}]", res
+        for i, ref in enumerate(f.get("references", []) if isinstance(f.get("references"), list) else []):
+            if isinstance(ref, dict) and isinstance(ref.get("title"), str):
+                yield f"{fid}.references[{i}].title", ref["title"]
         val = f.get("validation")
         if isinstance(val, dict) and isinstance(val.get("evidence"), str):
             yield f"{fid}.validation.evidence", val["evidence"]
@@ -181,7 +206,9 @@ def payload_problems(record, name):
     problems = []
     for where, text in prose_strings(record):
         if (m := PAYLOAD.search(text)):
-            problems.append(f"{name}: {where}: {m.group()[:40]!r} reads as an exploit string; describe the "
+            safe_where = CREDENTIAL.sub("[REDACTED]", str(where))
+            snippet = CREDENTIAL.sub("[REDACTED]", m.group()[:40])
+            problems.append(f"{name}: {safe_where}: {snippet!r} reads as an exploit string; describe the "
                             "weakness, not a payload or credential, with placeholders such as <attacker account> "
                             "or <metadata endpoint>")
     return problems

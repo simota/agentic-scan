@@ -32,10 +32,11 @@ import sys
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
-from common import (BASELINE_REFERENCE, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES, STATE_FILE,
-                    STRING_LISTS, find_references, shape_problems, split_yaml_documents, unique_object)
-from iac_scan import MAX_BYTES, _YamlSubset, is_export, literal, parse_hcl
-from redaction import (has_escaped_secret_keys, has_structured_secrets, is_secret_name,
+from common import (BASELINE_REFERENCE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES,
+                    STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth, shape_problems,
+                    split_yaml_documents, unique_object)
+from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
+from redaction import (CREDENTIAL, SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, is_secret_name,
                        redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
@@ -82,7 +83,8 @@ BASE_FIELDS = ("title", "location")
 
 class SchemaError(Exception):
     def __init__(self, problems):
-        self.problems = [problems] if isinstance(problems, str) else list(problems)
+        items = [problems] if isinstance(problems, str) else list(problems)
+        self.problems = [CREDENTIAL.sub("[REDACTED]", str(item)) for item in items]
         super().__init__("; ".join(self.problems))
 
 
@@ -114,18 +116,8 @@ def blank(value):
     return not isinstance(value, str) or not value.strip()
 
 
-MAX_DEPTH = 32  # a record nests about six levels; the tools copy and walk it recursively
-
-
-def depth(value):
-    """Nesting depth of parsed JSON, without recursion."""
-    deepest, stack = 0, [(value, 1)]
-    while stack:
-        item, level = stack.pop()
-        if isinstance(item, (dict, list)):
-            deepest = max(deepest, level)
-            stack.extend((x, level + 1) for x in (item.values() if isinstance(item, dict) else item))
-    return deepest
+MAX_DEPTH = MAX_JSON_DEPTH
+depth = json_depth
 
 
 def load(path):
@@ -148,6 +140,20 @@ def load_record(path):
 
 
 CWE = re.compile(r"^CWE-[0-9]+\Z")
+LINE_BREAK = re.compile(r"[\r\n\x85\u2028\u2029]")
+URL_UNSAFE = re.compile(r"[\s\x00-\x1f\x7f-\x9f<>`\"']")
+
+
+def _balanced_parens(text):
+    depth_count = 0
+    for ch in text:
+        if ch == "(":
+            depth_count += 1
+        elif ch == ")":
+            if depth_count == 0:
+                return False
+            depth_count -= 1
+    return depth_count == 0
 
 
 def valid_date(value):
@@ -188,6 +194,8 @@ def all_strings(data):
 
 def location_problem(location):
     """path:line or path:line-line, with lines counted from 1."""
+    if LINE_BREAK.search(location):
+        return "location must be path:line or path:line-line"
     m = LOCATION.match(location)
     if not m:
         return "location must be path:line or path:line-line"
@@ -278,6 +286,8 @@ def validate(data, partial=False):
     for key in ("project", "scope", "date", "assessor", "method", "commit"):
         if key in meta and not isinstance(meta[key], str):
             add(f"meta.{key}: must be a string")
+        elif isinstance(meta.get(key), str) and LINE_BREAK.search(meta[key].strip()):
+            add(f"meta.{key}: must be one line")
     if "providers" in meta:
         prov = meta["providers"]
         if not isinstance(prov, list) or any(x not in PROVIDERS[:4] for x in prov):
@@ -350,7 +360,7 @@ def validate(data, partial=False):
         for key in BASE_FIELDS:
             if blank(f.get(key)):
                 add(f"{where}: {key} required")
-        if isinstance(f.get("title"), str) and "\n" in f["title"].strip():
+        if isinstance(f.get("title"), str) and LINE_BREAK.search(f["title"].strip()):
             add(f"{where}: title must be one line")
         if f.get("severity") not in SEVERITIES:
             add(f"{where}: severity must be one of {', '.join(SEVERITIES)}")
@@ -361,7 +371,7 @@ def validate(data, partial=False):
         if f.get("provider") not in PROVIDERS:
             add(f"{where}: provider must be one of {', '.join(PROVIDERS)}")
         res = f.get("resources")
-        if not isinstance(res, list) or not res or any(blank(r) for r in res):
+        if not isinstance(res, list) or not res or any(blank(r) or LINE_BREAK.search(r) for r in res):
             add(f"{where}: resources must be a nonempty list of resource addresses")
         if not blank(f.get("location")):
             problem = location_problem(f["location"])
@@ -379,7 +389,8 @@ def validate(data, partial=False):
                     "detail"):
             if key in f and not isinstance(f[key], str):
                 add(f"{where}: {key} must be a string")
-        if "controls" in f and (not isinstance(f["controls"], list) or any(blank(c) for c in f["controls"])):
+        if "controls" in f and (not isinstance(f["controls"], list) or any(
+                blank(c) or LINE_BREAK.search(c) for c in f["controls"])):
             add(f"{where}: controls must be a list of strings")
         if isinstance(f.get("cwe"), str) and not CWE.match(f["cwe"]):
             add(f"{where}: cwe must look like CWE-284")
@@ -391,7 +402,8 @@ def validate(data, partial=False):
                     if not isinstance(ap, str) or ap not in ap_ids:
                         add(f"{where}: attack path {ap} does not exist (merge linked records in one call, or add the link later)")
         for i, ref in enumerate(f.get("references", []) if isinstance(f.get("references", []), list) else [None]):
-            if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")):
+            if not isinstance(ref, dict) or blank(ref.get("url")) or blank(ref.get("title")) or \
+                    LINE_BREAK.search(ref["title"]):
                 add(f"{where}: references[{i}] needs title and url")
                 continue
             if set(ref) - REFERENCE_KEYS:
@@ -401,7 +413,8 @@ def validate(data, partial=False):
                 hostname = u.hostname
             except (ValueError, AttributeError):
                 u, hostname = None, None
-            if u is None or u.scheme != "https" or not hostname or "@" in u.netloc:
+            if u is None or u.scheme != "https" or not hostname or "@" in u.netloc or \
+                    URL_UNSAFE.search(ref["url"]) or not _balanced_parens(ref["url"]):
                 add(f"{where}: references[{i}] must be an https URL without credentials")
         val = f.get("validation")
         if not isinstance(val, dict) or val.get("verdict") not in VERDICTS:
@@ -436,7 +449,7 @@ def validate(data, partial=False):
         if unknown:
             add(f"{where}: unknown keys {unknown}")
         for key in ("entry", "target"):
-            if blank(a.get(key)):
+            if blank(a.get(key)) or LINE_BREAK.search(a[key].strip()):
                 add(f"{where}: {key} required")
         if a.get("status") not in AP_STATUSES:
             add(f"{where}: status must be one of {', '.join(AP_STATUSES)}")
@@ -699,9 +712,10 @@ def hcl_declares_sensitive(text):
 
 HCL_MARKED_SECRET = re.compile(
     r'(?<![\w.])sensitive\s*\(|\bephemeral\s*=\s*true\b|"SecureString"|'
-    r'resource\s+"kubernetes_secret(?:_v1)?"')
-HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key)"?\s*[=:]\s*"([^"\n]*)"')
-HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?value"?\s*[=:]')
+    r'resource\s+"(?:kubernetes_secret(?:_v1)?|aws_secretsmanager_secret_version|'
+    r'google_secret_manager_secret_version)"')
+HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*"([^"\n]*)"')
+HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?(?:value|parameter_?value)"?\s*[=:]')
 
 
 def hcl_has_paired_secret(text):
@@ -725,8 +739,9 @@ def hcl_has_paired_secret(text):
         block = pending.pop()
         pending.extend(block.blocks)
         # A secret-named parameter or env block with its value anywhere in the block.
-        names = [literal(block.attrs[k][0]) for k in ("name", "key") if k in block.attrs]
-        if "value" in block.attrs and any(not isinstance(x, str) or is_secret_name(x) for x in names):
+        names = [literal(block.attrs[k][0]) for k in ("name", "key", "parameter_key") if k in block.attrs]
+        if ("value" in block.attrs or "parameter_value" in block.attrs) and any(
+                not isinstance(x, str) or is_secret_name(x) for x in names):
             return True
     for block in top:
         if block.type == "variable" and block.labels and "default" in block.attrs and \
@@ -735,6 +750,18 @@ def hcl_has_paired_secret(text):
             # A number (secret_recovery_window_in_days = 7) or an empty string is no secret.
             if not isinstance(default, (int, float, bool)) and default not in (None, ""):
                 return True
+        if block.type == "output" and block.labels and "value" in block.attrs and \
+                is_secret_name(block.labels[0]):
+            raw_val = block.attrs["value"][0].strip()
+            val = literal(raw_val)
+            if not SAFE_VALUE.fullmatch(raw_val) and isinstance(val, str) and val != "":
+                return True
+        if block.type == "locals":
+            for attr_name, (raw_val, _) in block.attrs.items():
+                if is_secret_name(attr_name):
+                    val = literal(raw_val.strip())
+                    if not SAFE_VALUE.fullmatch(raw_val.strip()) and isinstance(val, str) and val != "":
+                        return True
     return False
 
 
@@ -748,7 +775,7 @@ def hcl_module_sensitive(directory):
         for sibling in directory.iterdir():
             if sibling.name.lower().endswith((".tf.json", ".tofu.json")):
                 return True  # Unsupported Terraform JSON can also override sensitivity.
-            if sibling.suffix.lower() not in (".tf", ".tofu"):
+            if sibling.suffix.lower() not in (".tf", ".tofu", ".hcl"):
                 continue
             if sibling.is_symlink():
                 return True
@@ -777,16 +804,24 @@ def source_lines(path):
     suffix = path.suffix.lower()
     syntax = "text"
     try:
-        if suffix == ".json":
+        if suffix == ".json" or (suffix == ".template" and text.lstrip().startswith("{")):
             syntax = "json"
             docs = [json.loads(text, object_pairs_hook=unique_object)]
-        elif suffix in (".yaml", ".yml"):
+        elif suffix in (".yaml", ".yml", ".template"):
             syntax = "yaml"
+            cfn_hint = suffix == ".template" or "AWSTemplateFormatVersion" in text or "Resources:" in text
             # The scanner's document split and YAML subset, so both read the same documents.
-            docs = [_YamlSubset(rows).parse() for rows in split_yaml_documents(lines)]
+            docs = []
+            for rows in split_yaml_documents(lines):
+                try:
+                    docs.append(_YamlSubset(rows).parse())
+                except ValueError:
+                    if not cfn_hint:
+                        raise
+                    docs.append(_YamlSubset(rows, cfn=True).parse())
         else:
             docs = []
-            if suffix in (".tf", ".tofu"):
+            if suffix in (".tf", ".tofu", ".hcl"):
                 syntax = "hcl"
                 # Sensitivity belongs to the block, not to the default/value
                 # line. Only a known false declaration permits an excerpt.
@@ -834,14 +869,16 @@ def attach_sources(data, repo, context=3):
         # "terraform.tfstate/." names the state file too.
         if rel in secret_manifests or SENSITIVE_NAME.search(rel) or rel.startswith(("../", "/")) or rel == "..":
             continue
+        if any(part in SKIP_DIRS for part in Path(rel).parts):
+            continue
         cand = root / rel
         try:
-            if cand.is_symlink() or not cand.is_file():
+            if any(p.is_symlink() for p in (cand, *cand.parents) if p != root and root in p.parents) or not cand.is_file():
                 continue
             real = cand.resolve().relative_to(root).as_posix()
-            if real in secret_manifests or SENSITIVE_NAME.search(real):
+            if real in secret_manifests or SENSITIVE_NAME.search(real) or any(part in SKIP_DIRS for part in Path(real).parts):
                 continue
-            if cand.suffix.lower() in (".tf", ".tofu") or cand.name.lower().endswith((".tf.json", ".tofu.json")):
+            if cand.suffix.lower() in (".tf", ".tofu", ".hcl") or cand.name.lower().endswith((".tf.json", ".tofu.json")):
                 directory = cand.parent.resolve()
                 directory.relative_to(root)
                 if directory not in hcl_modules:
@@ -849,7 +886,7 @@ def attach_sources(data, repo, context=3):
                 if hcl_modules[directory]:
                     continue
             lines = source_lines(cand)
-        except (OSError, ValueError):
+        except (OSError, ValueError, RecursionError):
             continue
         if lines is None:
             continue
@@ -879,23 +916,38 @@ def field_text(f, key):
     return value
 
 
+def _md_code_span(value):
+    text = LINE_BREAK.sub(" ", str(value or ""))
+    return f"`{text.replace('`', chr(39))}`"
+
+
+def _md_link_title(value):
+    text = LINE_BREAK.sub(" ", str(value or ""))
+    return text.replace("\\", "\\\\").replace("[", "\\[").replace("]", "\\]")
+
+
+def _md_link_url(value):
+    return str(value or "").replace("(", "%28").replace(")", "%29")
+
+
 def finding_markdown(f, L, lang, covered=()):
     """Single-line fields as one list, then each multi-line field under its own heading."""
     # An excluded or covered finding needs no change of its own.
     intro = L["md_excluded"] if is_excluded(f) else (L["md_covered"] % ", ".join(covered) if covered else L["md_intro"])
-    lines = [intro, "", f"## {f['id']} {shown(f.get('title', ''), lang)}", ""]
+    title = LINE_BREAK.sub(" ", str(shown(f.get("title", ""), lang)))
+    lines = [intro, "", f"## {f['id']} {title}", ""]
     lines.append(f"- {L['severity']}: {shown(f.get('severity'), lang)} / "
                  f"{L['confidence']}: {shown(f.get('confidence'), lang)}")
     lines.append(f"- {L['category']}: {shown(f.get('category'), lang)} / {L['provider']}: {f.get('provider')}")
-    lines.append(f"- {L['location']}: `{f.get('location')}`")
-    lines.append(f"- {L['resources']}: " + ", ".join(f"`{r}`" for r in f.get("resources", [])))
+    lines.append(f"- {L['location']}: {_md_code_span(f.get('location'))}")
+    lines.append(f"- {L['resources']}: " + ", ".join(_md_code_span(r) for r in f.get("resources", [])))
     if f.get("attack_paths"):
         lines.append(f"- {L['attack_paths']}: " + ", ".join(f["attack_paths"]))
     blocks = []
     for key in FIELD_ORDER:
         value = field_text(f, key)
         if value:
-            if "\n" in str(value):
+            if LINE_BREAK.search(str(value)):
                 blocks += ["", f"### {L[key]}", "", str(value)]
             else:
                 lines.append(f"- {L[key]}: {value}")
@@ -905,7 +957,8 @@ def finding_markdown(f, L, lang, covered=()):
     lines += ["", f"### {L['verdict']}", "", f"{verdict}: {val['evidence']}" if val.get("evidence") else verdict]
     if f.get("references"):
         lines += ["", f"### {L['references']}", ""]
-        lines += [f"- [{ref.get('title') or ref['url']}]({ref['url']})" for ref in f["references"]]
+        lines += [f"- [{_md_link_title(ref.get('title') or ref['url'])}]({_md_link_url(ref['url'])})"
+                  for ref in f["references"]]
     return "\n".join(lines).strip() + "\n"
 
 
@@ -1059,7 +1112,8 @@ facets.forEach(function(b){b.addEventListener('click',function(){
   f.sev.value=b.getAttribute('aria-pressed')==='true'?'':b.dataset.sev;apply();document.getElementById('findings').scrollIntoView();
 });});
 function reveal(){
-  var el=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
+  var h='';try{h=location.hash?decodeURIComponent(location.hash.slice(1)):'';}catch(e){return;}
+  var el=h&&document.getElementById(h);
   if(!el||!el.classList.contains('row'))return;
   if(el.hidden){Object.keys(f).forEach(function(k){f[k].value='';});apply();}
   var b=el.querySelector('.finding-toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();
@@ -1118,7 +1172,8 @@ def render_dashboard(data, L, lang, sources):
     # Escape every markup character: "<!--<script>" in a finding would
     # otherwise keep the real </script> from closing this block.
     md_json = (json.dumps(md, ensure_ascii=False).replace("<", "\\u003c")
-               .replace(">", "\\u003e").replace("&", "\\u0026"))
+               .replace(">", "\\u003e").replace("&", "\\u0026")
+               .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029"))
     banner = " · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES) + \
         f" — {L['excluded_n']} {c['excluded']}, {L['covered_n']} {c['covered']}, {L['unverified_n']} {c['unverified']}"
     cards = "".join(f'<div class="card {s}"><span class="l">{esc(shown(s, lang))}</span><span class="n">{c[s]}</span></div>'
@@ -1333,6 +1388,9 @@ OUTPUTS = ("dashboard.html", "assessment.html", "assessment.pdf")
 
 def output_dir_problem(out, repo):
     """Refuse outputs inside the assessed repository or through symlinks."""
+    out = Path(out)
+    if out.is_symlink() or has_symlink_parent(out):
+        return f"{out} is a symlink or has a symlinked parent directory; refusing to write through it"
     if repo:
         root, target = Path(repo).resolve(), out.resolve()
         if target == root or root in target.parents:

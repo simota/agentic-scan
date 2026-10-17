@@ -465,8 +465,7 @@ def _collides(existing, record):
     return new_title and new_location
 
 
-def _merge_records(current, incoming, where, required, at=None):
-    """Update known records by id; insert new ones at `at`, else append them."""
+def _merge_records(current, incoming, where, required):
     for records in (current, incoming):
         ids = [r.get("id") if isinstance(r, dict) else None for r in _list(records, where)]
         if any(not isinstance(fid, str) for fid in ids) or len(set(ids)) != len(ids):
@@ -484,16 +483,22 @@ def _merge_records(current, incoming, where, required, at=None):
                     f"{where}: {rid} already holds {index[rid].get('title')!r}; {hint}")
             _apply(index[rid], record, required, f"{where}.{rid}")
         else:
-            index[rid] = _apply({}, record, required, f"{where}.{rid}")
-            if at is None:
-                current.append(index[rid])
-            else:
-                current.insert(at, index[rid])
-                at += 1
+            current.append(_apply({}, record, required, f"{where}.{rid}"))
+            index[rid] = current[-1]
+
+
+class _Slot(dict):
+    """Where a removed rule stood, so a rule sent back with its ID keeps that place."""
+
+
+def _fill_slots(rules):
+    """Turn refilled slots into rules and drop the ones nothing was sent for."""
+    return [dict(r) if isinstance(r, _Slot) else r for r in rules
+            if not (isinstance(r, _Slot) and len(r) == 1)]
 
 
 def _remove_items(doc, removals, where):
-    """Delete the named items; return, per list, where the first one stood."""
+    """Delete the named items; return, per string list, where the first one stood."""
     if not isinstance(removals, dict):
         raise SchemaError(f"{where}: must be an object of list names")
     unknown = set(removals) - set(LISTS) - {"rules"}
@@ -507,12 +512,12 @@ def _remove_items(doc, removals, where):
         if key == "rules":
             # A spurious ledger entry, by id; check then catches a finding citing it.
             for rid in _list(values, f"{where}.rules"):
-                ids = [r.get("id") for r in doc.get("rules", [])]
-                if rid not in ids:
+                rules = doc.get("rules", [])
+                at = next((i for i, r in enumerate(rules) if r.get("id") == rid
+                           and not isinstance(r, _Slot)), None)
+                if at is None:
                     raise SchemaError(f"{where}.rules: {rid!r} is not recorded")
-                index = ids.index(rid)
-                slots[key] = min(slots.get(key, index), index)
-                del doc["rules"][index]
+                rules[at] = _Slot(id=rid)
             continue
         for value in _list(values, f"{where}.{key}"):
             if value not in doc.get(key, []):
@@ -561,8 +566,9 @@ def merge(doc, fragment, where):
             doc[key].extend(fragment[key])
         else:
             required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
-            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required,
-                           slots.get(key))
+            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
+    if "rules" in doc:
+        doc["rules"] = _fill_slots(doc["rules"])
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):

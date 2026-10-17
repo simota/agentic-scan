@@ -17,6 +17,21 @@ class RuleReplacementTests(unittest.TestCase):
         self.assertEqual([r["id"] for r in doc["rules"]], ["R-01", "R-05", "R-06"])
         self.assertEqual(doc["rules"][1]["statement"], "billing is the only writer")
 
+    def test_another_new_rule_does_not_take_the_removed_rules_place(self):
+        doc = complete_doc()
+        first = copy.deepcopy(doc["rules"][0])
+        doc["rules"] = [dict(first, id=rid) for rid in ("R-01", "R-05", "R-06")]
+        fragment = {"remove": {"rules": ["R-05", "R-06"]},
+                    "rules": [dict(first, id="R-99"), dict(first, id="R-05")]}
+        findings.merge(doc, fragment, "f")
+        self.assertEqual([r["id"] for r in doc["rules"]], ["R-01", "R-05", "R-99"])
+        self.assertTrue(all(type(r) is dict for r in doc["rules"]))
+
+    def test_a_rule_cannot_be_removed_twice(self):
+        doc = complete_doc()
+        with self.assertRaisesRegex(findings.SchemaError, "not recorded"):
+            findings.merge(doc, {"remove": {"rules": ["R-01", "R-01"]}}, "f")
+
     def test_a_new_rule_without_a_removal_is_still_appended(self):
         doc = complete_doc()
         rule = dict(copy.deepcopy(doc["rules"][0]), id="R-99")

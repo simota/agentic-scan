@@ -135,7 +135,8 @@ make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (L
 ```
 
 Requirements: Python 3.9+. No third-party packages. `make check` also needs
-`shasum` or `sha256sum`; pandoc is optional (the GFM parser tests skip without it).
+`shasum` or `sha256sum`; pandoc and node are optional (the GFM parser and
+dashboard script syntax tests skip without them).
 
 The format follows the sibling `security-scan` and `performance-scan` skills
 (same phases, run contract, verdicts and report shape), adapted to application

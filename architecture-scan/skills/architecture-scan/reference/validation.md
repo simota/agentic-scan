@@ -102,6 +102,6 @@ Then render and check again.
 
 - Headline totals exclude `FalsePositive` and `NotApplicable`; exclusions stay
   visible with their evidence
-- State the `Unverified` and `Likely` counts separately from `Valid`
+- State the `Unverified`, `Likely` and `Unlikely` counts separately from `Valid`
 - Schema checks prove structure, not truth; zero findings is not evidence that
   the design is sound for changes no one has made yet

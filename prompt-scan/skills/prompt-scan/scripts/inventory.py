@@ -38,6 +38,8 @@ TEXT_SUFFIXES = {".md", ".mdx", ".mdc", ".txt", ".prompt", ".prompty", ".j2", ".
 CODE_SUFFIXES = {".py", ".js", ".mjs", ".cjs", ".ts", ".tsx", ".jsx", ".go", ".rb", ".java", ".kt", ".cs",
                  ".php", ".rs", ".swift", ".ex", ".exs"}
 CONFIG_SUFFIXES = {".yaml", ".yml", ".json", ".toml"}
+# Files a template engine renders by definition, whether or not they open a {{ yet.
+ENGINE_SUFFIXES = {".j2", ".jinja", ".jinja2", ".mustache", ".hbs", ".tmpl", ".tpl"}
 AGENT_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurfrules",
                "copilot-instructions.md"}
 PROMPT_DIRS = {"prompts", "prompt", "system_prompts", "system-prompts", "instructions"}
@@ -223,11 +225,12 @@ def fenced_lines(lines):
     return result
 
 
-def lint_template(lines, fenced):
+def lint_template(lines, fenced, engine=False):
     stack, hits = [], []
     prose = [(number, line) for number, line in enumerate(lines, 1) if number not in fenced]
-    # A file that never opens {{ or {% is not an engine template: a }} there is JSON or literal text.
-    templated = any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
+    # Outside an engine template file, a file that never opens {{ or {% is not a template: a }} there is
+    # JSON or literal text.
+    templated = engine or any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
     for number, line in prose:
         for token in TEMPLATE_TOKEN.findall(line):
             if token in PAIRS:
@@ -261,7 +264,7 @@ def lint_file(rel, text, tokens):
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [INLINE_CODE.sub("", line) for line in lines]
     hits = []
-    for number, detail in lint_template(prose, fenced):
+    for number, detail in lint_template(prose, fenced, Path(rel).suffix.lower() in ENGINE_SUFFIXES):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))

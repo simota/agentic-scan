@@ -92,6 +92,9 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(rules('Reply as {"user": {"id": 1}}\nPhone: XXX-XXX-XXXX, code AXXXB\n'), [])
         # In a file that uses the template engine, a stray closer and a bare XXX still count.
         self.assertEqual(rules("{{ a }}\nstray }}\nXXX: decide later\n"), ["unbalanced-template", "placeholder"])
+        # An engine template file whose only delimiter is a stray closer (a forgotten opener) still counts.
+        for name in ("reply.j2", "reply.mustache"):
+            self.assertEqual([h["rule"] for h in inventory.lint_file(name, "Hello }}\n", 1)], ["unbalanced-template"])
 
     def test_fences_and_first_template_line(self):
         self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})

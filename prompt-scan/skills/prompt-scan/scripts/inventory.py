@@ -80,7 +80,8 @@ input ins kbd label li link main mark meta nav ol option p path picture pre q s 
 small source span strong style sub summary sup svg table tbody td textarea th thead time title tr u ul var
 video""".split())
 INLINE_CODE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")  # Markdown code span: an example, not markup
-PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD|XXX)\b|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
+# XXX inside a hyphenated run is a format mask (XXX-XXX-XXXX), not a placeholder.
+PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD)\b|(?<![\w-])XXX(?![\w-])|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
 SECRET_RE = render.SECRET_RE
 LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
@@ -220,15 +221,16 @@ def fenced_lines(lines):
 
 def lint_template(lines, fenced):
     stack, hits = [], []
-    for number, line in enumerate(lines, 1):
-        if number in fenced:
-            continue
+    prose = [(number, line) for number, line in enumerate(lines, 1) if number not in fenced]
+    # A file that never opens {{ or {% is not an engine template: a }} there is JSON or literal text.
+    templated = any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
+    for number, line in prose:
         for token in TEMPLATE_TOKEN.findall(line):
             if token in PAIRS:
                 stack.append((token, number))
             elif stack and PAIRS[stack[-1][0]] == token:
                 stack.pop()
-            else:
+            elif templated:
                 hits.append((number, f"closing {token} with no matching opener"))
     hits += [(number, f"{token} opened and never closed") for token, number in stack]
     return [min(hits)] if hits else []
@@ -301,7 +303,8 @@ def git_state(root):
     if not commit:
         return None, None
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
-    status = git("status", "--porcelain", "--", ".")
+    # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
+    status = git("status", "--porcelain", "--untracked-files=normal", "--", ".")
     return commit, None if status is None else bool(status)
 
 

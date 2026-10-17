@@ -31,9 +31,9 @@ per other character). Use it to rank prompts by size, not as a provider count.
 | Rule | Kind / severity / confidence | Hit when |
 |---|---|---|
 | `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access key, GitHub and Slack tokens, private-key block). Location and kind only; the value is never copied |
-| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code |
+| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in a file that opens `{{` or `{%` somewhere: elsewhere `}}` is JSON or literal text |
 | `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
-| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX`, lorem ipsum or `[INSERT …]` outside code |
+| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX` (not inside a format mask such as `XXX-XXX-XXXX`), lorem ipsum or `[INSERT …]` outside code |
 | `duplicate-line` | improvement / Info / Confirmed | A line of 40 or more characters (not a table row) appears again in the same file |
 | `large-prompt` | improvement / Info / Confirmed | The file alone is estimated at more than 8000 tokens |
 

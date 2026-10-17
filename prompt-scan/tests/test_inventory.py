@@ -86,6 +86,12 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(inventory.variables("{{- user }} {{~ name}} {amount:.2f} {who!r} {a: 1} {{ x }}"),
                          ["user", "name", "x", "amount", "who"])
 
+    def test_literal_braces_and_format_masks_are_not_template_or_placeholder_hits(self):
+        rules = lambda text: [h["rule"] for h in inventory.lint_file("p.md", text, 1)]  # noqa: E731
+        self.assertEqual(rules('Reply as {"user": {"id": 1}}\nPhone: XXX-XXX-XXXX, code AXXXB\n'), [])
+        # In a file that uses the template engine, a stray closer and a bare XXX still count.
+        self.assertEqual(rules("{{ a }}\nstray }}\nXXX: decide later\n"), ["unbalanced-template", "placeholder"])
+
     def test_fences_and_first_template_line(self):
         self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})
         self.assertEqual(inventory.lint_template(["{{ name", "", "stray %}"], set()),
@@ -131,7 +137,8 @@ class InventoryTest(unittest.TestCase):
         self.assertIs(dirty, False)
         self.assertIs(inventory.git_state(root)[1], True)
         self.assertEqual(index.stat().st_mtime_ns, before, "git status rewrote the reviewed repository's index")
-        # An untracked prompt is part of the scan but not of HEAD.
+        # An untracked prompt is part of the scan but not of HEAD, whatever the repository's status config says.
+        subprocess.run(["git", "-C", str(root), "config", "status.showUntrackedFiles", "no"], check=True)
         (root / "svc" / "prompts" / "new.md").write_text("new\n", encoding="utf-8")
         self.assertIs(inventory.git_state(root / "svc")[1], True)
 

@@ -93,7 +93,8 @@ evidence.
 - An `L-*` may receive only `validation`
 - New `F-*` ids follow merge order; after VERIFY, `scripts/findings.py renumber
   <out>/findings.json` puts them in severity order (then path and line,
-  excluded findings last) and rewrites every `F-*` reference in the record
+  excluded findings last) and rewrites every `F-*` reference in the record,
+  except quoted `proposal` text and reference URLs
 - `remove` deletes exact entries from `checked_ok`, `decisions`,
   `limitations` or `next_steps`
 - Literal instruction-override strings and credential-shaped values in any

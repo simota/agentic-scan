@@ -143,6 +143,8 @@ class MergeTest(unittest.TestCase):
         # Quoted prompt text and links are not finding references.
         self.assertEqual(data["findings"][2]["proposal"], {"before": "error F-002", "after": "error F-002 or F-004"})
         self.assertEqual(data["findings"][2]["references"][0]["url"], "https://example.com/F-002")
+        # A reference's title is prose and follows the new numbers.
+        self.assertEqual(data["findings"][2]["references"][0]["title"], "F-001 docs")
         code, out, _ = run(findings.main, "renumber", self.out)
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)

@@ -27,7 +27,8 @@ strings and credential-shaped values in report prose are refused.
 `renumber` gives the F-* findings the order the run contract asks for, once
 severities are final: F-001.. by severity, then path and line, with
 FalsePositive / NotApplicable findings after the rest. Every F-* reference in
-the record (ids, eval_runs, prose) follows the new numbers.
+the record (ids, eval_runs, prose, reference titles) follows the new numbers;
+quoted `proposal` text and reference URLs are left as written.
 
 FINDINGS is created when absent and replaced atomically, only if no other
 writer changed it meanwhile. The merged report must pass render.py's schema.
@@ -198,8 +199,8 @@ def merge(base, fragment):
 
 
 CODE_REF = re.compile(r"\bF-[0-9]{3,}\b")
-# Quoted prompt text and links are not references to findings, even when they contain an F-NNN.
-VERBATIM = {"proposal", "references"}
+# Quoted prompt text and link targets are not references to findings, even when they contain an F-NNN.
+VERBATIM = {"proposal", "url"}
 
 
 def order_key(f):

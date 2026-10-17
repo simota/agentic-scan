@@ -215,7 +215,7 @@ def validate_data(data):
             _enum(v, "verdict", VERDICTS, f"{where}.{key}")
             _str(v, "evidence", f"{where}.{key}")
             _str(v, "method", f"{where}.{key}")
-        if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not str(f["validation"].get("evidence", "")).strip():
+        if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not (f["validation"].get("evidence") or "").strip():
             raise SchemaError(f"{where}: verdict {f['validation']['verdict']} needs validation.evidence")
         for j, ref in enumerate(f.get("references", [])):
             if not isinstance(ref, dict) or not re.match(r"https?://", str(ref.get("url", ""))):
@@ -410,7 +410,7 @@ def finding_html(f, L, excerpts):
         fields.append((L["evidence"], para(v["evidence"])))
     if f.get("previous_validation"):
         pv = f["previous_validation"]
-        fields.append((L["previous"], para(pv["verdict"] + ": " + pv.get("evidence", ""))))
+        fields.append((L["previous"], para(pv["verdict"] + ": " + (pv.get("evidence") or ""))))
     if f["id"] in excerpts:
         fields.append((L["excerpt"], snippet_html(excerpts[f["id"]])))
     if f.get("references"):
@@ -701,10 +701,10 @@ DASH_LABELS = {
         "perspectives": "Coverage by perspective", "coverage_missing": "No perspective coverage was recorded.",
         "not_recorded": "Not recorded",
         "overview": "Results overview",
-        "count_basis": "Severity is potential impact; confidence is certainty. Validation records whether the "
+        "count_basis": "Severity is potential impact; confidence is certainty. The verdict records whether the "
                        "finding applies.",
         "by_sev": "By severity", "by_kind": "By kind", "by_conf": "By confidence", "by_cat": "By perspective",
-        "by_status": "By status", "by_verdict": "By validation",
+        "by_status": "By status", "by_verdict": "By verdict",
         "excluded_note": "Excluded findings are retained with their justification. They are not counted in "
                          "included totals.",
         "findings_register": "Findings register",
@@ -712,8 +712,8 @@ DASH_LABELS = {
                          "report-wide while filtering.",
         "record_set": "Records", "included_set": "Included (excludes ruled-out findings)",
         "excluded_set": "Excluded only", "severity": "Severity", "confidence": "Confidence",
-        "category": "Perspective", "prompt": "Prompt", "status": "Status", "verdict": "Validation",
-        "all_verdicts": "All validations", "sort": "Order", "priority_sort": "Open first, then severity",
+        "category": "Perspective", "prompt": "Prompt", "status": "Status", "verdict": "Verdict",
+        "all_verdicts": "All verdicts", "sort": "Order", "priority_sort": "Open first, then severity",
         "severity_sort": "Severity", "search": "Search", "all": "All", "reset": "Clear filters",
         "showing": "Showing {shown} of {total} records in this view",
         "no_matches": "No findings match these filters. Clear filters to see more.",
@@ -722,7 +722,7 @@ DASH_LABELS = {
         "copy_llm": "Copy for LLM", "copied": "Copied", "copy_failed": "Copy failed",
         "location": "Location", "symptom": "Symptom", "cause": "Cause", "impact": "Impact",
         "fix": "Fix direction", "proposal_before": "Current text", "proposal_after": "Proposed text",
-        "test": "How to check", "evidence": "Validation evidence", "validation_method": "Validation method",
+        "test": "How to check", "evidence": "Verdict evidence", "validation_method": "Validation method",
         "snippet": "Source", "references": "References",
         "previous_validation": "Previous validation (historical; not the current verdict)",
         "history_note": "Revalidate this evidence against the current prompts and code.",
@@ -738,13 +738,13 @@ DASH_LABELS = {
         "report_note": "静的レビュー · 読み取り専用 · オフラインレポート",
         "report_link": "印刷用のレポート", "theme": "配色を切り替え",
         "priority": "まず取り組むこと",
-        "priority_note": "未対応の指摘を重大度順、同じ重大度では修正判断の準備ができた順に表示します。"
+        "priority_note": "未対応の指摘を深刻度順、同じ深刻度では修正判断の準備ができた順に表示します。"
                          "文面を変える前に、該当プロンプトと呼び出し箇所を確認してください。",
         "fix_now": "修正を計画", "verify_first": "先に検証する",
-        "fix_now_note": "Valid・Confirmed の指摘です。記録された対応方針または改善案を適用し、記録された評価・テストで確認してください。",
+        "fix_now_note": "Valid・Confirmed の指摘です。記録された修正方針または改善案を適用し、記録された評価・テストで確認してください。",
         "verify_first_note": "送信されるプロンプト全体と周辺コードを読み直すか、記録された評価ケースを実行してから変更要否を判断してください。",
         "more_high": "この種別には未対応の High がほかに {n} 件あります（指摘一覧に記載）。",
-        "missing_fix": "対応方針が未記録です。根拠を確認し、変更内容を具体化してください。",
+        "missing_fix": "修正方針が未記録です。根拠を確認し、変更内容を具体化してください。",
         "no_open": "未対応の指摘は記録されていません。プロンプトが意図どおりに動くことを保証するものではありません。",
         "no_findings": "集計対象の指摘はありません。診断範囲と制約を確認してから判断してください。",
         "included": "集計対象の指摘", "excluded_short": "除外", "open_count": "未対応の指摘",
@@ -772,29 +772,29 @@ DASH_LABELS = {
         "perspectives": "観点別の診断結果", "coverage_missing": "観点ごとの確認状況が記録されていません。",
         "not_recorded": "未記録",
         "overview": "結果概要",
-        "count_basis": "重大度は想定される影響、確度は確かさ、妥当性はこの対象に指摘が成立するかを表します。",
-        "by_sev": "重大度別", "by_kind": "種別別", "by_conf": "確度別", "by_cat": "観点別",
-        "by_status": "対応状況別", "by_verdict": "妥当性別",
+        "count_basis": "深刻度は想定される影響、確度は確かさ、検証判定はこの対象に指摘が成立するかを表します。",
+        "by_sev": "深刻度別", "by_kind": "種別別", "by_conf": "確度別", "by_cat": "観点別",
+        "by_status": "状態別", "by_verdict": "検証判定別",
         "excluded_note": "除外した指摘も、その根拠とともに保持します。集計対象の件数には含めません。",
         "findings_register": "指摘一覧",
         "findings_note": "指摘を開くと原因・改善案・修正の確認方法を確認できます。絞り込んでも上部の全体集計は変わりません。",
         "record_set": "表示対象", "included_set": "集計対象（誤検知・対象外を除く）",
-        "excluded_set": "除外した指摘のみ", "severity": "重大度", "confidence": "確度",
-        "category": "観点", "prompt": "プロンプト", "status": "状況", "verdict": "妥当性",
-        "all_verdicts": "すべての妥当性", "sort": "表示順", "priority_sort": "未対応を先に、重大度順",
-        "severity_sort": "重大度順", "search": "検索", "all": "すべて", "reset": "絞り込みを解除",
+        "excluded_set": "除外した指摘のみ", "severity": "深刻度", "confidence": "確度",
+        "category": "観点", "prompt": "プロンプト", "status": "状態", "verdict": "検証判定",
+        "all_verdicts": "すべての検証判定", "sort": "表示順", "priority_sort": "未対応を先に、深刻度順",
+        "severity_sort": "深刻度順", "search": "検索", "all": "すべて", "reset": "絞り込みを解除",
         "showing": "この表示対象 {total} 件中 {shown} 件を表示",
         "no_matches": "条件に一致する指摘はありません。絞り込みを解除すると、ほかの指摘を確認できます。",
         "no_records": "この表示対象に該当する記録はありません。", "title_col": "件名",
         "expand": "詳細を開く", "collapse": "詳細を閉じる", "permalink": "この指摘へのリンク",
         "copy_llm": "LLM用にコピー", "copied": "コピーしました", "copy_failed": "コピーできませんでした",
         "location": "場所", "symptom": "症状", "cause": "原因", "impact": "影響",
-        "fix": "対応方針", "proposal_before": "現在の文面", "proposal_after": "提案する文面",
-        "test": "確認方法", "evidence": "妥当性の根拠", "validation_method": "検証方法",
+        "fix": "修正方針", "proposal_before": "現在の文面", "proposal_after": "提案する文面",
+        "test": "確認方法", "evidence": "判定の根拠", "validation_method": "検証方法",
         "snippet": "該当ソース", "references": "参照",
         "previous_validation": "以前の判定（履歴。現在の判定ではありません）",
         "history_note": "現在のプロンプト・コードに照らして再検証してください。",
-        "missing_evidence": "妥当性の根拠が記録されていません。",
+        "missing_evidence": "判定の根拠が記録されていません。",
         "next_steps": "推奨する対応順", "checked_ok": "問題がなかった確認項目",
         "source_note": "ソース抜粋の伏せ字は完全ではありません。共有前に内容を確認してください。",
         "no_script": "対話型ダッシュボードには JavaScript が必要です。レポートではすべての記録を確認できます。",

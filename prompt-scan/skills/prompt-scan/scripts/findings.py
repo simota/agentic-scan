@@ -200,14 +200,17 @@ def merge(base, fragment):
 CODE_REF = re.compile(r"\bF-[0-9]{3}\b")
 
 
+def order_key(f):
+    """The run contract's F-* order: severity, then path and line (the old id breaks ties)."""
+    m = render.LOC_RE.match(f["location"])
+    path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
+    return render.SEVERITIES.index(f["severity"]), path, line, f["id"]
+
+
 def renumber_map(findings):
-    """Old F-* id -> new id: severity, then path and line; excluded findings last, in their old order."""
-    def key(f):
-        m = render.LOC_RE.match(f["location"])
-        path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
-        return render.SEVERITIES.index(f["severity"]), path, line, f["id"]
+    """Old F-* id -> new id: order_key; excluded findings last, in their old order."""
     code = [f for f in findings if f["id"].startswith("F-")]
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=key)
+    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=order_key)
     excluded = sorted((f for f in code if f["validation"]["verdict"] in render.EXCLUDED), key=lambda f: f["id"])
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 

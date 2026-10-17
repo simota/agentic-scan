@@ -29,7 +29,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language (`ja` or `en`) |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
-| `dirty` | `true` when tracked files had uncommitted changes at scan time |
+| `dirty` | `true` when tracked files under the scanned directory had uncommitted changes at scan time; `null` when Git could not tell |
 
 ## Prompt record
 
@@ -70,8 +70,9 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 *contract* = required on every `F-*` by `contract_check.py`.
 
 `Valid`, `FalsePositive` and `NotApplicable` need nonblank
-`validation.evidence`; `contract_check.py` also requires it on every High and
-Medium `F-*`.
+`validation.evidence`. `contract_check.py` also requires, on every High and
+Medium finding (`F-*` and `L-*`), a verdict other than `Unverified` and nonblank
+evidence.
 
 ## Eval run record
 

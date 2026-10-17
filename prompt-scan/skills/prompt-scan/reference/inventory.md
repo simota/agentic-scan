@@ -19,7 +19,7 @@ symlinks, binary files and files over 1 MiB.
 |---|---|
 | `prompt_files` | Files under a `prompts/`, `prompt/`, `system_prompts/`, `system-prompts/` or `instructions/` directory; `.prompt`, `.prompty`, `*.prompt.md`; `SKILL.md` (not the files it tells the model to read: `reference/recon.md` §2); `AGENTS.md`, `CLAUDE.md`, `GEMINI.md`, `.cursorrules`, `.windsurfrules`, `copilot-instructions.md`; files under `.claude/agents`, `.claude/commands`, `.cursor/rules`, `.github/prompts`, `.codex/agents`. Each with kind, size, an estimated token count and the template variables found (`{{name}}`, `{name}`, `${name}`) |
 | `call_sites` | Lines in code that call a model API or build a prompt object: Anthropic `messages.create`, OpenAI `chat.completions.create` / `responses.create`, Gemini `generate_content`, the AI SDK `generateText` family, LangChain prompt and message classes, `role: "system"` literals and `SYSTEM_PROMPT`-style assignments |
-| `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
+| `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location, including the cloud forms `us.anthropic.claude-…-v1:0` (Bedrock), `claude-…@YYYYMMDD` (Vertex) and `models/gemini-…`. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
 | `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
 
@@ -51,5 +51,6 @@ A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
 larger defect the agent found, keep the `L-*` and cite it from the `F-*`
 finding's `cause`.
 
-A rescan keeps a reviewed verdict on the same rule and location as
-`previous_validation`; the new hit starts `Unverified` and needs a fresh look.
+A rescan keeps the latest reviewed verdict on the same rule and location as
+`previous_validation` (a later rescan before a new review keeps it too); the
+new hit starts `Unverified` and needs a fresh look.

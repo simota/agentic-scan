@@ -46,6 +46,12 @@ class RenderTest(unittest.TestCase):
         self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; y", report)
         self.assertNotIn("<b>x</b>", report)
 
+    def test_previous_validation_without_evidence_renders(self):
+        data = sample()
+        data["findings"][-1]["previous_validation"] = {"verdict": "Likely", "evidence": None, "method": "static"}
+        report = (self.render(data) / "report.html").read_text(encoding="utf-8")
+        self.assertIn("Likely: </p>", report)
+
     def test_no_pdf_removes_a_stale_pdf(self):
         out = Path(tempfile.mkdtemp())
         write_json(out / "findings.json", sample())
@@ -132,6 +138,7 @@ class RenderTest(unittest.TestCase):
             (lambda d: d["findings"][0].update(id="X-001"), "F-NNN or L-NNN"),
             (lambda d: d["findings"][0].update(kind="bug"), "kind must be one of"),
             (lambda d: d["findings"][0]["validation"].update(evidence=""), "needs validation.evidence"),
+            (lambda d: d["findings"][0]["validation"].update(evidence=None), "needs validation.evidence"),
             (lambda d: d["findings"][0].update(prompt="P-99"), "recorded prompt ids"),
             (lambda d: d["findings"][0].update(prompt=[["P-01"]]), "recorded prompt ids"),
             (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": ["F-001"], "model": "m", "date": "d",

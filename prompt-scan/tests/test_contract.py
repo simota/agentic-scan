@@ -49,6 +49,10 @@ class ContractTest(unittest.TestCase):
             (lambda d: d["perspectives"].pop(), "'Maintainability' must be recorded"),
             (lambda d: d["findings"][7].update(id="F-010"), "without gaps"),
             (lambda d: d["findings"][0].update(severity="Low"), "severity order"),
+            (lambda d: d["findings"][0].update(location="z.py:1"), "then path and line"),
+            (lambda d: d["findings"][9].update(severity="High", validation={
+                "verdict": "Unverified", "evidence": "", "method": "inventory.py lint"}), "L-002: a High finding needs a verdict"),
+            (lambda d: d["findings"][2]["validation"].update(verdict="Unverified"), "other than Unverified"),
             (lambda d: d["findings"][5].pop("proposal"), "needs proposal.after"),
             (lambda d: d["findings"][0].pop("test"), "test (an eval"),
             (lambda d: d["findings"][0].update(category="Bugs"), "not a perspective name"),
@@ -71,6 +75,13 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(self.problems(out, "--allow", "notes.md")[0], 0)
         (out / "inventory.json").unlink()
         self.assertIn("missing output inventory.json", self.problems(out, "--allow", "notes.md")[1])
+
+    def test_inventory_must_be_the_scanner_object(self):
+        out = self.build()
+        write_json(out / "inventory.json", [])
+        code, err = self.problems(out)
+        self.assertEqual(code, 1)
+        self.assertIn("inventory.json was not written by inventory.py", err)
 
     def test_pdf_limitation_rules(self):
         out = self.build()

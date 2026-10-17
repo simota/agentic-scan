@@ -3,6 +3,7 @@ import contextlib
 import io
 import json
 from pathlib import Path
+import re
 import sys
 import tempfile
 import unittest
@@ -38,6 +39,27 @@ class ReportViewTest(unittest.TestCase):
         self.assertNotIn("tr.detail{display:table-row!important}}", dash.replace("+tr.detail", ""))
         self.assertIn(".ap{break-inside:avoid-page}", report)
         self.assertNotIn("opacity", dash + report)
+
+    def test_dashboard_opts_into_the_kit_application_shell(self):
+        # The kit scopes its app bar, sidebar and pinned register to html.app-shell.
+        dash, _ = pages(SAMPLE, "en")
+        data = json.loads(SAMPLE.read_text(encoding="utf-8"))
+        self.assertIn('<html lang="en" class="app-shell">', dash)
+        self.assertIn('<header class="appbar">', dash)
+        self.assertNotIn('class="masthead"', dash)
+        nav = dash.split('<nav class="sidebar"')[1].split("</nav>")[0]
+        hrefs = re.findall(r'<a href="#([^"]+)">', nav)
+        self.assertEqual(len(hrefs), 6)
+        for href in hrefs:
+            self.assertIn(f'id="{href}"', dash, href)
+        # Facets count what the severity cards count.
+        counts = render.counts(data)
+        for s in render.SEVERITIES:
+            self.assertIn(f'data-sev="{s}" aria-controls="findings" aria-pressed="false">'
+                          f'<span class="facet-name {s}">{s}</span><span class="facet-n">{counts[s]}</span>', dash)
+        ja, _ = pages(SAMPLE_JA, "ja")
+        self.assertIn('aria-label="目次"', ja)
+        self.assertIn("<kbd>Enter</kbd> 詳細の表示・非表示", ja)
 
     def test_japanese_pages_translate_perspectives_and_inputs(self):
         dash, report = pages(SAMPLE_JA, "ja")

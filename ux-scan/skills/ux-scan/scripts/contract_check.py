@@ -9,6 +9,9 @@ metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
 left Unverified; and both complete pages match the current findings, flows and PDF.
+An allowed en or ja directory is a second-language render: it must hold exactly
+both pages (and its report.pdf unless --no-pdf) in that language, rendered from
+the same findings and flows.
 Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 """
 
@@ -26,6 +29,9 @@ from render import (FLOWS_STAMP, OUTPUT_GENERATION, OUTPUT_LOCK, PAGE_KIND_STAMP
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
+LANGUAGES = ("en", "ja")
+# "N/A" in its common spellings, in English and Japanese.
+NOT_APPLICABLE = re.compile(r"(?i)^(?:N\s*[/／]?\s*A|not\s+applicable|該当なし|対象外|適用外)(?![\w/／])")
 
 
 class PageMetadata(HTMLParser):
@@ -124,6 +130,10 @@ def problems(out, no_pdf=False, allow=()):
         try:
             flows = check_flows(loads_json(sources["flows.json"].decode("utf-8"), "flows.json"))
             flows_digest = canonical_digest(flows)
+            shared = sum(fl["priority"] == "shared" for fl in flows["flows"])
+            if shared != 1:
+                yield (f"flows.json: {shared} shared flows; record exactly one shared unit (app shell, navigation, "
+                       "global styles and shared components), added with findings.py flows")
         except (ValueError, RecordError) as e:
             flows = None
             yield f"flows.json: {e}"
@@ -146,8 +156,10 @@ def problems(out, no_pdf=False, allow=()):
                 yield f"perspectives: {name!r} needs a non-empty result (applied, N/A with a reason, or not checked)"
                 continue
             recorded.add(family[1])
-            na = re.match(r"(?i)^N/A(?=$|[\s:—–-])", result)
-            if na and not result[na.end():].strip(" \t\r\n:—–-") and not perspective.get("note", "").strip():
+            na = NOT_APPLICABLE.match(result)
+            # Punctuation alone, in either script, is not a reason.
+            if (na and not re.sub(r"[\W_]", "", result[na.end():])
+                    and not perspective.get("note", "").strip()):
                 yield f"perspectives: {name!r} is N/A without a reason in result or note"
         missing = [f for f in FAMILIES if f not in recorded]
         if missing:
@@ -162,7 +174,8 @@ def problems(out, no_pdf=False, allow=()):
         if no_pdf and not explained:
             yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
         if not no_pdf and limited:
-            yield f"limitations: says '{NO_PDF}' but report.pdf is expected; remove that line"
+            yield (f"limitations: says '{NO_PDF}' but report.pdf is expected; on the no-PDF path run "
+                   "contract_check.py with --no-pdf, otherwise render the PDF and remove that line")
     if "inventory.json" in sources:
         try:
             inventory = loads_json(sources["inventory.json"].decode("utf-8"), "inventory.json")
@@ -185,39 +198,11 @@ def problems(out, no_pdf=False, allow=()):
             expected_stamps[PDF_STAMP] = pdf_stamp(sources["report.pdf"])
         except ValueError as e:
             yield f"report.pdf: {e}; run {rerender}"
-    pages = {}
-    for name in ("dashboard.html", "report.html"):
-        if name not in sources:
-            continue
-        try:
-            page = pages[name] = PageMetadata(sources[name].decode("utf-8"))
-        except ValueError as e:
-            yield f"{name}: not valid UTF-8 HTML: {e}"
-            continue
-        try:
-            digest = page_stamp(sources[name])
-        except ValueError as e:
-            yield f"{name}: invalid page fingerprint: {e}; run {rerender}"
-        else:
-            if page.stamps.get(PAGE_STAMP) != [digest]:
-                yield f"{name}: altered or incomplete HTML (page fingerprint mismatch); run {rerender}"
-        if page.stamps.get(PAGE_KIND_STAMP) != [name]:
-            yield f"{name}: wrong or missing page kind (expected {name}); run {rerender}"
-        for stamp, digest in expected_stamps.items():
-            if page.stamps.get(stamp) != [digest]:
-                yield f"{name}: stale {stamp}; re-render after the last input or PDF change ({rerender})"
-        identity = page.stamps.get(RENDER_STAMP, [])
-        if len(identity) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", identity[0] or ""):
-            yield f"{name}: stale or missing render identity; run {rerender}"
-        if len(page.languages) != 1 or page.languages[0] not in ("en", "ja"):
-            yield f"{name}: missing or invalid report language; run {rerender}"
-        if no_pdf and PDF_STAMP in page.stamps:
-            yield f"{name}: stale PDF metadata with --no-pdf; run {rerender}"
-    if len(pages) == 2:
-        dashboard, document = pages["dashboard.html"], pages["report.html"]
-        if (dashboard.stamps.get(RENDER_STAMP) != document.stamps.get(RENDER_STAMP)
-                or dashboard.languages != document.languages):
-            yield f"pages: different render versions; run {rerender}"
+    yield from page_problems(sources, expected_stamps, no_pdf, rerender)
+    if "findings.json" in sources:
+        # A requested second language must exist; it is not merely tolerated.
+        for name in sorted(set(allow) & set(LANGUAGES)):
+            yield from translation_problems(out, name, expected_stamps, no_pdf)
     # The renderer can acquire its lock after the initial directory listing,
     # even after all the old, complete files have already been read. Do not
     # approve that snapshot while a new publication is still in progress.
@@ -242,6 +227,79 @@ def problems(out, no_pdf=False, allow=()):
         if current_generation != generation:
             yield (f"{out}: render generation changed during the contract check; "
                    "run contract_check.py again after rendering finishes")
+
+
+def translation_problems(out, lang, parent_stamps, no_pdf):
+    """A second-language render in OUT/<lang> must come from the current record and flows."""
+    directory = out / lang
+    rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(directory))}"
+                f" --lang {lang} --repo <repo>" + (" --no-pdf" if no_pdf else ""))
+    try:
+        if not directory.is_dir() or directory.is_symlink():
+            yield f"{lang}: expected a directory holding the {lang} render; run {rerender}"
+            return
+        found = {p.name for p in directory.iterdir()}
+    except OSError as e:
+        yield f"{lang}: cannot read directory: {e.strerror or e}"
+        return
+    if rendered_lang(out) == lang:
+        yield f"{lang}: the main pages are already in {lang}; a second-language render needs the other language"
+        return
+    expected = {"dashboard.html", "report.html"} | (set() if no_pdf else {"report.pdf"})
+    for name in sorted(expected - found):
+        yield f"{lang}/{name}: missing; run {rerender}"
+    for name in sorted(found - expected - {OUTPUT_GENERATION}):
+        yield f"{lang}/{name}: not part of a second-language render"
+    sources = {}
+    for name in sorted(found & expected):
+        try:
+            sources[name] = read_regular(directory / name)
+        except (OSError, ValueError) as e:
+            yield f"{lang}/{name}: {e}"
+    stamps = {k: v for k, v in parent_stamps.items() if k != PDF_STAMP}
+    if "report.pdf" in sources:
+        try:
+            stamps[PDF_STAMP] = pdf_stamp(sources["report.pdf"])
+        except ValueError as e:
+            yield f"{lang}/report.pdf: {e}; run {rerender}"
+    yield from page_problems(sources, stamps, no_pdf, rerender, prefix=f"{lang}/", lang=lang)
+
+
+def page_problems(sources, expected_stamps, no_pdf, rerender, prefix="", lang=None):
+    """Both pages are complete, current, of one render and (when given) in lang."""
+    pages = {}
+    for name in ("dashboard.html", "report.html"):
+        if name not in sources:
+            continue
+        try:
+            page = pages[name] = PageMetadata(sources[name].decode("utf-8"))
+        except ValueError as e:
+            yield f"{prefix}{name}: not valid UTF-8 HTML: {e}"
+            continue
+        try:
+            digest = page_stamp(sources[name])
+        except ValueError as e:
+            yield f"{prefix}{name}: invalid page fingerprint: {e}; run {rerender}"
+        else:
+            if page.stamps.get(PAGE_STAMP) != [digest]:
+                yield f"{prefix}{name}: altered or incomplete HTML (page fingerprint mismatch); run {rerender}"
+        if page.stamps.get(PAGE_KIND_STAMP) != [name]:
+            yield f"{prefix}{name}: wrong or missing page kind (expected {name}); run {rerender}"
+        for stamp, digest in expected_stamps.items():
+            if page.stamps.get(stamp) != [digest]:
+                yield f"{prefix}{name}: stale {stamp}; re-render after the last input or PDF change ({rerender})"
+        identity = page.stamps.get(RENDER_STAMP, [])
+        if len(identity) != 1 or not re.fullmatch(r"sha256:[0-9a-f]{64}", identity[0] or ""):
+            yield f"{prefix}{name}: stale or missing render identity; run {rerender}"
+        if len(page.languages) != 1 or page.languages[0] not in LANGUAGES or lang not in (None, page.languages[0]):
+            yield f"{prefix}{name}: missing or invalid report language; run {rerender}"
+        if no_pdf and PDF_STAMP in page.stamps:
+            yield f"{prefix}{name}: stale PDF metadata with --no-pdf; run {rerender}"
+    if len(pages) == 2:
+        dashboard, document = pages["dashboard.html"], pages["report.html"]
+        if (dashboard.stamps.get(RENDER_STAMP) != document.stamps.get(RENDER_STAMP)
+                or dashboard.languages != document.languages):
+            yield f"{prefix}pages: different render versions; run {rerender}"
 
 
 def main(argv=None):

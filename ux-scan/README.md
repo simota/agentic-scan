@@ -58,7 +58,7 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
 | `scripts/findings.py flows|merge|check|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
-| `scripts/contract_check.py OUT [--no-pdf]` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; detects concurrent renders |
+| `scripts/contract_check.py OUT [--no-pdf] [--allow ja\|en]` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; an allowed language directory must be a current second-language render; detects concurrent renders |
 
 ## Develop
 
@@ -78,7 +78,10 @@ quotes and shell metacharacters. `PYTHON` remains a shell command, so options
 such as `PYTHON='python3 -B'` work; quote the interpreter path inside its value
 when that path contains spaces, for example `PYTHON="'/path with spaces/python3' -B"`.
 In Make variable values, write a literal dollar sign as `$$` because Make
-expands `$` before invoking the shell. The demo refuses output inside its
+expands `$` before invoking the shell. That includes values inherited from the
+environment (`HOME`, `CODEX_HOME`, `AGY_HOME`, `TMPDIR`): when one of those
+paths contains `$`, pass the path explicitly on the command line with `$$`
+(`CODEX_HOME=…`, `SKILLS_DIR=…` or `DEMO_OUT=…`). The demo refuses output inside its
 reviewed fixture before creating or overwriting any records. Demo inputs and
 inventory flow definitions must also be distinct from their outputs, including
 filesystem aliases; collisions fail before publication.

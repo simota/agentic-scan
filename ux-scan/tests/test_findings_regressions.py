@@ -501,7 +501,8 @@ class TransactionRegressions(unittest.TestCase):
         data["next_steps"].extend(["Fix U-002. <!-- U-002 with <b>markup", "Fix `` U-002 ``."])
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["next_steps"], [f"{code}\nFix U-001." for code in evidence] + [
-            "Fix U-001. <!-- U-002 with <b>markup", "Fix `` U-001 ``.",
+            # As in CommonMark, an unclosed inline comment is literal text.
+            "Fix U-001. <!-- U-001 with <b>markup", "Fix `` U-001 ``.",
         ])
         findings.check_findings(changed)
 
@@ -531,6 +532,220 @@ class TransactionRegressions(unittest.TestCase):
         ])
         findings.check_findings(changed)
         self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_treats_comparisons_as_prose_and_bullets_as_separate_ids(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:4]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium", "Info")):
+            item["severity"] = severity
+        data["summary"] = "Fix first:\n- U-001\n- U-004\n\n- **U-002**\n-U-003\nThen U-001 through\nU-003."
+        data["next_steps"] = [
+            "Below <640px fix U-002 first; above >1024px U-003 can wait.",
+            "Widths < 360 break U-002 and widths > 1280 break U-003. Keep <b>U-001</b>.",
+            "参照: https://www.w3.org/WAI/WCAG22/ とU-001も同様。https://www.w3.org/WAI/とU-001",
+            "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-001.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["summary"],
+                         "Fix first:\n- U-003\n- U-004\n\n- **U-001**\n-U-002\nThen U-003 through\nU-002.")
+        self.assertEqual(changed["next_steps"], [
+            "Below <640px fix U-001 first; above >1024px U-002 can wait.",
+            "Widths < 360 break U-001 and widths > 1280 break U-002. Keep <b>U-003</b>.",
+            "参照: https://www.w3.org/WAI/WCAG22/ とU-003も同様。https://www.w3.org/WAI/とU-001",
+            "See https://example.com/日本?finding=U-001, https://example.com/日本U-001 and U-003.",
+        ])
+        findings.check_findings(changed)
+
+    def test_renumber_follows_tag_grammar_url_brackets_and_underscore_emphasis(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Medium", "High", "Low")):
+            item["severity"] = severity
+        data["next_steps"] = [
+            "Viewports <sm (U-001) and >=lg (U-002); if a<b, U-001.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-001</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-001の通り。参考(https://example.com)U-002、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-001 to U-003_, _see U-001_ and __U-002, U-001__; keep a_U-001 and U-001_b.",
+            "Fix U-001 to\n\nU-002.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
+            "<Button style={{ content: \"}\" }} data-f=\"U-001\"> <B a={`}${x}`} b=\"U-001\"> {don't} U-001",
+            "foo__U-001, U-001__bar, ___U-001___ and __U-001__.",
+        ]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"], [
+            "Viewports <sm (U-002) and >=lg (U-001); if a<b, U-002.",
+            "Keep <Button variant=\"primary\" onClick={go}>U-002</Button> as written.",
+            "詳細は[WCAG](https://www.w3.org/x)U-002の通り。参考(https://example.com)U-001、"
+            "https://en.wikipedia.org/wiki/A_(B)?q=U-001 stays.",
+            "_U-002, U-001, U-003_, _see U-002_ and __U-001, U-002__; keep a_U-001 and U-001_b.",
+            "Fix U-002 to\n\nU-001.",
+            "See https://example.com/a_(b_(c))?ref=U-001 and <Button style={{ color: \"red\" }} data-f=\"U-001\">.",
+            "<Button style={{ content: \"}\" }} data-f=\"U-001\"> <B a={`}${x}`} b=\"U-001\"> {don't} U-002",
+            "foo__U-001, U-001__bar, ___U-002___ and __U-002__.",
+        ])
+        findings.check_findings(changed)
+
+    def test_angular_markup_in_prose_stays_literal(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+        data["next_steps"] = ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-001 <input #q aria-label=\"U-001\">"]
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"],
+                         ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-002 <input #q aria-label=\"U-001\">"])
+
+    def test_escaped_quotes_and_long_underscore_runs(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+        data["next_steps"] = ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-001']
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(changed["next_steps"],
+                         # An unmatched delimiter run keeps its id literal, as in every other position.
+                         ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-002'])
+
+    def test_jsx_expressions_are_scanned_as_javascript(self):
+        mapping = {"U-001": "U-002", "U-002": "U-001"}
+        kept = ['<Button pattern={/[}]/} data-id="U-001">', '<B a={x / 2} b="U-001">',
+                '<B a={`${ {a: "}"}.a }`} b="U-001">', '<B a={/* } */ x} b="U-001">',
+                '<B a={c // }\n} b="U-001">', '<B a={{ deep: { deeper: { deepest: {} } } }} b="U-001">']
+        for tag in kept:
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        for prose in ("<sm (U-001) and >lg", "<B a={unclosed U-001"):
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), prose.replace("U-001", "U-002"))
+
+    def test_round_three_prose_cases(self):
+        mapping = {"U-001": "U-002", "U-002": "U-001"}
+        cases = {
+            "Press the ` key (U-001).\n\nSee `U-002`.": "Press the ` key (U-002).\n\nSee `U-001`.",
+            "Press ` then U-001.\n```\nx ` y\n```\nThen U-002 and U-001.":
+                "Press ` then U-002.\n```\nx ` y\n```\nThen U-001 and U-002.",
+            '<a onClick={() => { return /}/.test(x) }} title="U-001"> U-001':
+                '<a onClick={() => { return /}/.test(x) }} title="U-001"> U-002',
+            '<a b={typeof /}/} c="U-001"> U-001': '<a b={typeof /}/} c="U-001"> U-002',
+            '<Foo render={() => <b>x</b>} title="U-001" /> U-001': '<Foo render={() => <b>x</b>} title="U-001" /> U-002',
+            '<a b={i++ / 2} c="U-001"> U-001': '<a b={i++ / 2} c="U-001"> U-002',
+            '<X p={x < /}/.test(y)} data-id="U-001" /> U-001': '<X p={x < /}/.test(y)} data-id="U-001" /> U-002',
+            '<X p={a && <b>x</b>} data-id="U-001" /> U-001': '<X p={a && <b>x</b>} data-id="U-001" /> U-002',
+            "Use <!-- in templates (U-001). Later U-002.": "Use <!-- in templates (U-002). Later U-001.",
+            "<!-- open\nU-001": "<!-- open\nU-001",
+            '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-001': '<a :[key]="U-001" v-slot:[name]="x" @[evt]="go"> U-002',
+        }
+        for prose, expected in cases.items():
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
+        # A keyword used as a property divides: obj.return / 2 is no regex.
+        for tag in ('<X p={obj.return / 2} data-id="U-001" />', '<X p={a.typeof / b.in / 2} data-id="U-001" />'):
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        # Svelte modifiers and Lit bindings are attributes too.
+        for tag in ('<button on:click|once={go} data-id="U-001">', '<my-el ?disabled=${x} data-id="U-001">',
+                    '<button @click=${this.go} data-id="U-001">', '<my-el .value=${v} data-id="U-001">'):
+            with self.subTest(tag=tag):
+                self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        ranged = {"U-001": "U-005", "U-002": "U-002", "U-003": "U-004"}
+        self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
+        self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")
+
+    def test_unclosed_inline_comments_stay_fast(self):
+        import time
+        started = time.monotonic()
+        result = findings._rewrite_prose("x <!-- " * 40000 + "U-001", {"U-001": "U-002"})
+        self.assertLess(time.monotonic() - started, 3)
+        self.assertTrue(result.endswith("U-002"))
+
+    def test_code_spans_stay_fast_with_many_unclosed_backtick_runs(self):
+        import time
+        text = "".join("`" * (n % 7 + 1) + " word " for n in range(40000))
+        started = time.monotonic()
+        findings._rewrite_prose(text + " U-001", {"U-001": "U-002"})
+        self.assertLess(time.monotonic() - started, 3)
+
+    def test_prose_scanning_stays_fast_on_unbalanced_markup_and_brackets(self):
+        import time
+        for text in ("<a " * 50000, "<a {" * 20000, "https://x.org/" + "(" * 50000, "{" * 50000 + "U-001",
+                     "<a b={" + "'\"`" * 20000, "<a b={{{{" + "\"'" * 20000):
+            with self.subTest(text=text[:8]):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"] = data["findings"][:2]
+                data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
+                data["summary"], data["next_steps"] = text, []
+                started = time.monotonic()
+                findings.renumber(data, findings.renumber_map(data["findings"]))
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_nested_unknown_keys_and_invisible_location_characters_are_refused(self):
+        cases = (
+            (lambda d: d["findings"][0].update(occurences=["a.tsx:1"]), "unknown key 'occurences'"),
+            (lambda d: d["findings"][0].update(references=[{"href": "https://x.org"}]), "unknown key 'href'"),
+            (lambda d: d["findings"][0]["validation"].update(evidnce="x"), "unknown key 'evidnce'"),
+            (lambda d: d["meta"].update(comit="abc"), "unknown key 'comit'"),
+            (lambda d: d["perspectives"][0].update(resutl="x"), "unknown key 'resutl'"),
+            (lambda d: d["findings"][0].update(occurrences=[]), "occurrences"),
+            (lambda d: d["findings"][0].update(location="src/a\u2028b.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\x85.tsx:1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a.tsx :1"), "location"),
+            (lambda d: d["findings"][0].update(location="src/a\u200b.tsx:1"), "location"),
+        )
+        for mutate, message in cases:
+            with self.subTest(message=message):
+                data = copy.deepcopy(SAMPLE)
+                mutate(data)
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, ordered=False)
+        flows = copy.deepcopy(FLOWS)
+        flows["flows"][0]["screens"][0]["path"] = "x"
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'path'"):
+            findings.check_flows(flows)
+
+    def test_missing_output_directory_is_named(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            fragment = Path(tmp) / "fragment.json"
+            fragment.write_text(json.dumps({"flows": []}), encoding="utf-8")
+            for cmd, name in (("merge", "findings.json"), ("flows", "flows.json")):
+                result = run(cmd, Path(tmp) / "missing" / name, fragment)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("output directory does not exist", result.stderr)
+
+    def test_unknown_sections_are_refused(self):
+        data = copy.deepcopy(SAMPLE)
+        data["limitation"] = ["typo"]
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'limitation'"):
+            findings.check_findings(data)
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'finding'"):
+            findings.merge(copy.deepcopy(SAMPLE), {"finding": []})
+        flows = copy.deepcopy(FLOWS)
+        flows["viewport"] = ["360x640"]
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'viewport'"):
+            findings.check_flows(flows)
+        with self.assertRaisesRegex(findings.RecordError, "unknown key 'findings'"):
+            findings.merge_flows(copy.deepcopy(FLOWS), {"findings": []})
+
+    def test_flows_can_drop_tokens_and_flows_recorded_in_error(self):
+        flows = copy.deepcopy(FLOWS)
+        flows["tokens"] = {"source": "src/styles/tokens.css:2"}
+        with self.assertRaisesRegex(findings.RecordError, "at least one scale"):
+            findings.check_flows(flows)
+        dropped = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"tokens": None}))
+        self.assertNotIn("tokens", dropped)
+        last = next(fl["id"] for fl in FLOWS["flows"] if fl["priority"] == "secondary")
+        removed = findings.check_flows(findings.merge_flows(copy.deepcopy(FLOWS), {"remove": {"flows": [last]}}))
+        self.assertNotIn(last, findings.flow_ids(removed))
+        for remove in ({"flows": ["FL-99"]}, {"flows": "FL-01"}, {"screens": []}, []):
+            with self.subTest(remove=remove), self.assertRaises(findings.RecordError):
+                findings.merge_flows(copy.deepcopy(FLOWS), {"remove": remove})
+        with tempfile.TemporaryDirectory() as tmp:
+            target, fragment = Path(tmp) / "flows.json", Path(tmp) / "fragment.json"
+            target.write_text(json.dumps(FLOWS), encoding="utf-8")
+            cited = SAMPLE["findings"][0]["flow_ref"]
+            (Path(tmp) / "findings.json").write_text(json.dumps(SAMPLE), encoding="utf-8")
+            fragment.write_text(json.dumps({"remove": {"flows": [cited]}}), encoding="utf-8")
+            before = target.read_bytes()
+            self.assert_refused(run("flows", target, fragment))
+            self.assertEqual(target.read_bytes(), before)
 
     def test_renumber_leaves_unchanged_ranges_and_protects_source_ranges(self):
         data = copy.deepcopy(SAMPLE)
@@ -657,7 +872,8 @@ class TransactionRegressions(unittest.TestCase):
             ("____U-001\n~~~\nU-002\n~~~\n to U-003____", "____U-001\n~~~\nU-002\n~~~\n to U-003____"),
             ("U-001\n\n to U-003", "U-003\n\n to U-002"),
             ("__U-001__\n\n to __U-003__", "__U-003__\n\n to __U-002__"),
-            ("U-001\n to \nU-003", "U-003, U-001, U-002"),
+            # A range stays on one line; each id across lines is renumbered alone.
+            ("U-001\n to \nU-003", "U-003\n to \nU-002"),
         )
         data["next_steps"] = [source + "; then U-002." for source, _ in cases]
         original = copy.deepcopy(data)

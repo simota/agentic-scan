@@ -953,6 +953,433 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_preprocessor_line_comments_do_not_hide_or_invent_candidates(self):
+        data = self.scan({
+            "a.scss": "// Don't change these without design review\n"
+                      ".icon-btn { width: 20px; height: 20px; }\n"
+                      ".close:focus { outline: none; }\n"
+                      "// Won't fix (later\n"
+                      ".tab { height: 30px; // padding: 13px; z-index: 9999\n"
+                      "  background: url(//cdn.example/x.png); }\n",
+            "b.vue": '<template><p>x</p></template>\n<style lang="scss">\n'
+                     "// Isn't used\n.chip { height: 18px; }\n</style>\n",
+            "c.scss": ".hero { background: url( //cdn.example.com/hero.png) no-repeat; }\n"
+                      ".bg { background: url(#{$cdn}//img/x.png); }\n"
+                      ".link:focus { outline: none; }\n",
+        })
+        self.assertEqual([(r["selector"], r["location"]) for r in data["tap_targets"]], [
+            (".icon-btn", "a.scss:2"), (".tab", "a.scss:5"), (".chip", "b.vue:4")])
+        self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]],
+                         [(".close:focus", "a.scss:3"), (".link:focus", "c.scss:3")])
+        self.assertEqual(data["spacing"], [])
+        self.assertEqual(data["z_index"], [])
+
+    def test_plain_css_strings_end_at_a_newline(self):
+        data = self.scan({"a.css": ".x::after { content: 'it\n}\n.btn { width: 20px; }\n"})
+        self.assertEqual([r["selector"] for r in data["tap_targets"]], [".btn"])
+
+    def test_focus_replacement_requires_a_visible_focus_style(self):
+        data = self.scan({"a.css":
+            ".btn:focus { outline: 0; box-shadow: none; }\n"
+            ".link { outline: none; border-radius: 4px; border: 1px solid; }\n"
+            ".tab:focus { outline: 0px; box-shadow: 0 0 0 3px blue; }\n"
+            ".chip:focus { outline: none; --border-color: red; background: transparent !important; }\n"})
+        self.assertEqual([(r["selector"], r["replacement_in_rule"]) for r in data["focus_outline"]], [
+            (".btn:focus", False), (".link", False), (".tab:focus", True), (".chip:focus", False)])
+
+    def test_style_object_outline_zero_is_a_candidate(self):
+        data = self.scan({"a.jsx": "export const s = { outline: 0, color: 'red' };\n"
+                                   "export const t = { outline: '0px' };\n"})
+        self.assertEqual([r["location"] for r in data["focus_outline"]], ["a.jsx:1", "a.jsx:2"])
+
+    def test_locale_namespaces_and_region_tags(self):
+        data = self.scan({
+            "locales/en/app.json": json.dumps({"save": "Save changes"}),
+            "locales/de/app.json": json.dumps({"save": "Änderungen speichern"}),
+            "i18n/en-US.json": json.dumps({"save": "Save changes"}),
+            "i18n/de-DE.json": json.dumps({"save": "Änderungen speichern"}),
+        })
+        self.assertEqual([(e["bundle"], e["base"], e["lang"]) for e in data["locale_expansion"]], [
+            ("i18n/{lang}.json", "en-US", "de-DE"), ("locales/{lang}/app.json", "en", "de")])
+
+    def test_camel_case_destructive_handlers(self):
+        data = self.scan({"D.tsx":
+            "export const D = (props) => <>\n"
+            "<button onClick={() => handleDelete(1)}>x</button>\n"
+            "<button onClick={() => onDelete(2)}>x</button>\n"
+            "<button onClick={() => props.onRemove(3)}>x</button>\n"
+            "<button onClick={() => toggleDropdown()}>x</button>\n"
+            "<button onClick={() => dropdown()}>x</button>\n"
+            "<button onClick={() => onDrop(file)}>x</button>\n"
+            "<button onClick={() => setOpen(isDeleted(x))}>x</button>\n"
+            "<button onClick={() => wasDestroyed()}>x</button>\n"
+            "</>;\n"})
+        self.assertEqual([r["call"] for r in data["destructive_actions"]],
+                         ["handleDelete", "onDelete", "props.onRemove"])
+
+    def test_dynamic_label_targets_match_identical_ids(self):
+        data = self.scan({"F.jsx":
+            "export const F = ({ id, other }) => <>\n"
+            "<label htmlFor={id}>Email</label><input id={ id } type=\"email\" autoComplete=\"email\" />\n"
+            "<input id={other} type=\"text\" />\n"
+            "</>;\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["F.jsx:3"])
+        data = self.scan({"G.jsx":
+            "export function Billing({ id }) {\n"
+            "  return <><label htmlFor={id}>Card</label><input id={id} /></>;\n"
+            "}\n"
+            "export function Search({ id }) {\n"
+            "  return <input id={id} />;\n"
+            "}\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["G.jsx:2", "G.jsx:5"])
+        data = self.scan({"H.tsx":
+            "export const Billing: React.FC<Props> = ({ id }) => (\n"
+            "  <><label htmlFor={id}>Card</label><input id={id} /></>\n"
+            ");\n"
+            "export default ({ id }) => <input id={id} />;\n"})
+        self.assertEqual([r["location"] for r in data["inputs"]], ["H.tsx:2", "H.tsx:4"])
+
+    def test_relative_child_routes_are_not_orphans(self):
+        data = self.scan({"routes.jsx":
+            '<Route path="/account"><Route path="settings" /></Route>\n'
+            '<Link to="/account">Account</Link>\n'})
+        self.assertEqual([r["route"] for r in data["routes"]], ["/account", "settings"])
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_framework_key_handler_aliases(self):
+        data = self.scan({
+            "a.svelte": '<div on:click={go} on:keyup={key} role="button" tabindex="0">x</div>\n',
+            "b.vue": '<template><div @click="go" v-on:keyup.enter="go" role="button" tabindex="0">x</div>'
+                     '<span (click)="go()" (keypress)="go()" role="button" tabindex="0">y</span></template>\n',
+            "c.html": '<div (click)="go()" (keyup.enter)="go()" role="button" tabindex="0">x</div>\n',
+            "d.svelte": '<div on:click|preventDefault={go} on:keydown|self={key} role="button" tabindex="0">x</div>\n'
+                        '<span on:click|once={go}>y</span>\n',
+        })
+        self.assertEqual([(r["location"], r["missing"]) for r in data["click_handlers"]],
+                         [("d.svelte:2", ["role", "tabindex", "key handler"])])
+        data = self.scan({"e.html": '<div (click)="go()" (keyup.enter)="go()" role="button" tabindex="0">x</div>\n'})
+        self.assertEqual(data["click_handlers"], [])
+
+    def test_range_media_queries_and_em_widths(self):
+        data = self.scan({"a.css":
+            "@media (768px <= width) { .a { width: 30em; } }\n"
+            "@media (400px <= width <= 700px) { .b { color: red; } }\n"
+            "@media (width >= 1024px) { .c { color: red; } }\n"
+            ".icon { width: 1.25em; height: 1.25em; }\n"})
+        self.assertEqual(sorted(r["value"] for r in data["breakpoints"]), ["1024px", "400px", "700px", "768px"])
+        self.assertEqual([r["value"] for r in data["fixed_widths"]], ["480px"])
+        self.assertEqual(data["tap_targets"][0]["sizes"], {"width": "20px", "height": "20px"})
+
+    def test_icon_buttons_named_by_a_child(self):
+        data = self.scan({"B.jsx":
+            '<button onClick={go}><img src="/x.svg" alt="Close" width="16" height="16"/></button>\n'
+            '<button onClick={go}><svg aria-label="Menu"><path d="M0"/></svg></button>\n'
+            '<button onClick={go}><img src="/x.svg" alt="" width="16" height="16"/></button>\n'
+            '<button onClick={go}><img src="/x.svg" alt={""} width="16" height="16"/></button>\n'
+            '<button onClick={go}><svg aria-label={""}/></button>\n'
+            '<button onClick={go}><svg aria-labelledby={ \'\' }/></button>\n'
+            '<button onClick={go}><svg aria-label={label}/></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.jsx:3", "B.jsx:4", "B.jsx:5", "B.jsx:6"])
+
+    def test_sveltekit_layout_reset_pages_are_routes(self):
+        data = self.scan({"src/routes/about/+page@.svelte": "<h1>About</h1>\n",
+                          "src/routes/team/+page@(app).svelte": "<h1>Team</h1>\n"})
+        self.assertEqual(sorted(r["route"] for r in data["routes"]), ["/about", "/team"])
+
+    def test_destructive_handlers_passed_by_reference(self):
+        data = self.scan({
+            "D.jsx": "<button onClick={handleDelete}>x</button>\n<button onClick={ props.onRemove }>x</button>\n"
+                     "<button onClick={openMenu}>x</button>\n",
+            "E.vue": '<template><button @click="deleteTask">x</button></template>\n',
+        })
+        self.assertEqual([(r["call"], r["location"]) for r in data["destructive_actions"]],
+                         [("handleDelete", "D.jsx:1"), ("props.onRemove", "D.jsx:2"), ("deleteTask", "E.vue:1")])
+
+    def test_pathological_inputs_stay_linear(self):
+        import time
+        cases = {
+            "a.html": '<div onclick="' + "a." * 20000 + 'x">y</div>\n',
+            "b.html": '<div onclick="' + "aDelete" * 10000 + '">y</div>\n',
+            "c.jsx": "<Route " * 20000,
+            "d.scss": ".a { b: " + "url(" * 20000 + " }\n",
+            "e.jsx": "<a {" * 20000,
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_javascript_comments_in_braces_do_not_hide_later_markup(self):
+        data = self.scan({"P.svelte": "<button on:click={() => { // don't\n go() }}>ok</button>\n"
+                                      '<img src="a.png">\n<div on:click={x}>y</div>\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["P.svelte:3"])
+        self.assertEqual([r["location"] for r in data["click_handlers"]], ["P.svelte:4"])
+
+    def test_icon_button_with_long_svg_path(self):
+        data = self.scan({"I.jsx": '<button onClick={go}>\n<svg viewBox="0 0 24 24"><path d="M' + "1 2 " * 600
+                                   + '"/></svg>\n</button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["I.jsx:1"])
+
+    def test_choice_inputs_and_separate_name_and_id(self):
+        data = self.scan({"f.html":
+            '<label><input type="checkbox" name="email_notifications"> Email me</label>\n'
+            '<label><input type="radio" name="phone_verified"> Verified</label>\n'
+            '<label for="n2">Name</label><input name="name" id="n2">\n'})
+        self.assertEqual([(r["location"], r["missing"]) for r in data["inputs"]], [("f.html:3", ["autocomplete"])])
+
+    def test_round_two_scans_stay_linear(self):
+        import time
+        cases = {"a.css": "(min-width:1px)" * 60000,
+                 "b.html": '<div onclick="' + "aDelete" * 8000 + '-">x</div>\n',
+                 "c.css": ".a:focus{outline:none;border:0." + "0" * 20000 + "x}\n"}
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 3)
+
+    def test_destructive_calls_after_calls_indexes_and_optional_chains(self):
+        data = self.scan({"D.jsx": "<button onClick={() => useStore.getState().removeTask(id)}>x</button>\n"
+                                   "<button onClick={() => api?.deleteTask(id)}>x</button>\n"
+                                   "<button onClick={() => list[0].remove()}>x</button>\n"})
+        self.assertEqual([r["call"] for r in data["destructive_actions"]], ["removeTask", "deleteTask", "remove"])
+
+    def test_jsx_text_with_slashes_and_regex_braces_does_not_hide_later_tags(self):
+        for opener in ("<List renderEmpty={() => <p>Type // to search</p>} />",
+                       "<Tip content={<span>Docs at example.com //v2</span>} />",
+                       "<input aria-label=\"q\" onChange={e => /[{]/.test(v)} />"):
+            with self.subTest(opener=opener):
+                data = self.scan({"a.jsx": opener + '\n<img src="a.png">\n<div onClick={x}>y</div>\n'
+                                           "<button onClick={() => deleteTask(id)}>z</button>\n"})
+                self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:2"])
+                self.assertEqual([r["location"] for r in data["click_handlers"]], ["a.jsx:3"])
+                self.assertEqual([r["location"] for r in data["destructive_actions"]], ["a.jsx:4"])
+
+    def test_preprocessor_interpolation_stays_in_the_selector(self):
+        data = self.scan({"a.scss": ".btn-#{$s} { height: 20px; }\n.icon-#{$s}:focus { outline: none; }\n"
+                                    ".chip-@{x} { width: 18px; }\n"})
+        self.assertEqual([r["selector"] for r in data["tap_targets"]], [".btn-#{$s}", ".chip-@{x}"])
+        self.assertEqual([r["selector"] for r in data["focus_outline"]], [".icon-#{$s}:focus"])
+
+    def test_angular_bindings_and_router_links(self):
+        data = self.scan({"c.component.html":
+            '<button [attr.aria-label]="label" (click)="close()"><mat-icon svgIcon="x"></mat-icon></button>\n'
+            '<input [attr.aria-label]="label" name="q">\n'
+            '<a routerLink="/account" (click)="track()">Account</a>\n'
+            '<a [routerLink]="\'/billing\'">Billing</a><a [routerLink]="[\'/team\', id]">Team</a>\n',
+            "routes.ts": "export const routes = [{ path: '/account' }, { path: '/billing' }, { path: '/team' }];\n"})
+        self.assertEqual(data["icon_buttons"], [])
+        self.assertEqual(data["inputs"], [])
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_container_queries_are_not_breakpoints(self):
+        data = self.scan({"a.css": "@container card (min-width: 400px) { .a { color: red; } }\n"
+                                   "@media (min-width: 640px) { .b { color: red; } }\n"})
+        self.assertEqual([r["value"] for r in data["breakpoints"]], ["640px"])
+
+    def test_invisible_focus_values_are_not_replacements(self):
+        data = self.scan({"a.css": ".a:focus { outline: none; border: 0 none; }\n"
+                                   ".b:focus { outline: none; background: inherit; }\n"
+                                   ".c:focus { outline: none; border: 2px solid; }\n"})
+        self.assertEqual([r["replacement_in_rule"] for r in data["focus_outline"]], [False, False, True])
+
+    def test_vue_string_literal_links_reach_routes(self):
+        data = self.scan({"Nav.vue": "<template><router-link :to=\"'/about'\">About</router-link></template>\n",
+                          "router.js": "export default [{ path: '/about' }];\n"})
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_server_template_styles_are_measured(self):
+        data = self.scan({"page.php": "<style>\n.btn { width: 20px; outline: none; padding: 13px; }\n</style>\n"
+                                      '<div style="width: 400px">x</div>\n'})
+        self.assertEqual([r["location"] for r in data["tap_targets"]], ["page.php:2"])
+        self.assertEqual([r["location"] for r in data["focus_outline"]], ["page.php:2"])
+        self.assertEqual([r["value"] for r in data["fixed_widths"]], ["400px"])
+        self.assertEqual([r["value"] for r in data["spacing"]], ["13px"])
+
+    def test_server_template_tags_and_attribute_groups_are_spreads(self):
+        data = self.scan({
+            "a.erb": '<input type="text" name="q" <%= "required" if strict %>>\n<img src="a" <%= attrs %>>\n',
+            "b.php": '<input type="checkbox" <?php checked($a, 1); ?>>\n',
+            "c.html": '<input type="{{ widget.type }}" name="{{ widget.name }}"{% include "attrs.html" %}>\n'
+                      '<img src="{{ src }}" {{ img_attrs }}>\n',
+        })
+        self.assertEqual(data["inputs"], [])
+        self.assertEqual(data["images"], [])
+
+    def test_svelte_shorthand_attributes(self):
+        data = self.scan({"P.svelte": '<a {href} on:click={track}>x</a>\n<img {src} {alt} width="1" height="1">\n'
+                                      '<label for={id}>Email</label><input {id} type="email" autocomplete="email">\n'})
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual(data["images"], [])
+        self.assertEqual(data["inputs"], [])
+
+    def test_more_destructive_call_shapes_and_housekeeping(self):
+        data = self.scan({"D.jsx":
+            "<button onClick={() => onDelete?.(task.id)}>x</button>\n"
+            "<button onClick={() => props.onRemove?.()}>x</button>\n"
+            "<button onClick={() => deleteMutation.mutate(id)}>x</button>\n"
+            "<button onClick={deleteMutation.mutate}>x</button>\n"
+            "<button onClick={() => document.body.classList.remove('open')}>x</button>\n"
+            "<button onClick={() => params.delete('q')}>x</button>\n"})
+        self.assertEqual([r["location"] for r in data["destructive_actions"]], ["D.jsx:1", "D.jsx:2", "D.jsx:3", "D.jsx:4"])
+
+    def test_nav_arrays_reach_routes(self):
+        data = self.scan({"app/settings/page.tsx": "export default () => null;\n",
+                          "Nav.tsx": 'const navigation = [{ name: "Settings", href: "/settings" }];\n'})
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_commented_out_markup_is_not_scanned(self):
+        data = self.scan({
+            "a.tsx": '// <img src="old.png" />\n/* <input name="email" /> */\nexport const A = () => <p>Type // to search</p>;\n',
+            "b.html": '{# <img src="x"> #}\n{% comment %}<input name="email">{% endcomment %}\n'
+                      '{{!-- <img src="y"> --}}\n{{! <img src="z"> }}\n',
+            "c.erb": '<%# <img src="w"> %>\n<img src="real.png">\n',
+        })
+        self.assertEqual([r["location"] for r in data["images"]], ["c.erb:2"])
+        self.assertEqual(data["inputs"], [])
+
+    def test_icon_font_ligatures_and_empty_buttons(self):
+        data = self.scan({"a.html": '<button mat-icon-button (click)="remove(t)"><mat-icon>delete</mat-icon></button>\n'
+                                    '<button class="btn-close"></button>\n<button>Save</button>\n'
+                                    '<button v-text="label"></button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:2"])
+        data = self.scan({"b.vue": '<template>\n<button v-text=""></button>\n<button v-text="label"></button>\n</template>\n',
+                          "c.jsx": 'export const C = () => <div><button children="" /><button children={label}></button>\n'
+                                   '<button children=""></button></div>;\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:2"])
+        data = self.scan({"d.jsx": 'const x=/* <img src="a" /> */1;\nconst r = /a/*2;\nconst y = a /* <img src="b" /> */ + 1;\n'})
+        self.assertEqual(data["images"], [])
+
+    def test_truncate_in_class_helpers_inline_outline_next_viewport(self):
+        data = self.scan({"a.tsx": 'export const A = () => <p className={cn("truncate text-sm", c)}>x</p>;\n'
+                                   "export const viewport = { width: 'device-width', maximumScale: 1, userScalable: false };\n",
+                          "b.html": '<a href="/x" style="outline: none">x</a>\n'})
+        self.assertEqual([r["pattern"] for r in data["truncation"]], ['className={cn("truncate'])
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]], [("a.tsx:2", True)])
+        self.assertEqual([(r["selector"], r["location"]) for r in data["focus_outline"]], [("(inline style)", "b.html:1")])
+        files = {f"s{n}.tsx": f"export const viewport = {{ maximumScale: {value} }};\n"
+                 for n, value in enumerate((".5", "1e5", "1_000", "0x10", "1 / 2", "1.5 // tight"))}
+        data = self.scan(files)
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]],
+                         [("s0.tsx:1", True), ("s1.tsx:1", False), ("s2.tsx:1", False), ("s3.tsx:1", False),
+                          ("s4.tsx:1", False), ("s5.tsx:1", True)])
+
+    def test_alpine_jinja2_and_whole_word_personal_fields(self):
+        data = self.scan({"a.jinja2": '<div x-on:click="go" x-on:keydown.enter="go" role="button" tabindex="0">x</div>\n'
+                                      '<label>Capacity <input name="capacity"></label>\n'
+                                      '<label>Pattern <input name="wildcard"></label>\n'
+                                      '<label>Mic <input name="microphone"></label>\n'
+                                      '<label>Mail <input name="user_email"></label>\n'})
+        self.assertEqual(data["files_scanned"], 1)
+        self.assertEqual(data["click_handlers"], [])
+        self.assertEqual([(r["name"], r["missing"]) for r in data["inputs"]], [("user_email", ["autocomplete", "type=email"])])
+
+    def test_numeric_regions_three_letter_languages_and_label_components(self):
+        data = self.scan({
+            "locales/en.json": json.dumps({"save": "Save"}), "locales/es-419.json": json.dumps({"save": "Guardar cambios"}),
+            "i18n/en/app.json": json.dumps({"save": "Save"}), "i18n/fil/app.json": json.dumps({"save": "I-save ang mga pagbabago"}),
+            "F.tsx": '<Label htmlFor="phone">Phone</Label><input id="phone" type="tel" autoComplete="tel" />\n',
+        })
+        self.assertEqual(sorted((e["bundle"], e["lang"]) for e in data["locale_expansion"]),
+                         [("i18n/{lang}/app.json", "fil"), ("locales/{lang}.json", "es-419")])
+        self.assertEqual(data["inputs"], [])
+
+    def test_round_three_slow_paths(self):
+        import time
+        cases = {"a.svelte": "<div on:click={() => { // it's }\n" * 20000,
+                 "b.tsx": "<a b={ ' <c d={ \n" * 20000,
+                 "c.html": "<button><span>x</span>\n" * 20000}
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                started = time.monotonic()
+                self.scan({name: text})
+                self.assertLess(time.monotonic() - started, 4)
+
+    def test_round_three_self_review_regressions(self):
+        data = self.scan({
+            "list.hbs": '{{#each items}}<li>{{this}}</li>{{/each}}\n<!-- <img src="old-banner.png"> -->\n'
+                        '<!-- <input name="legacy"> -->\n',
+            "D.jsx": "<button onClick={deleteModal.onOpen}>Delete</button>\n"
+                     "<button onClick={() => removeDrawer.open()}>x</button>\n"
+                     "<button onClick={() => deleteTask(id).then(done)}>x</button>\n",
+            "f.html": "".join(f'<label>{n} <input name="{n}" type="text"></label>\n' for n in (
+                "telephone", "phonenumber", "cellphone", "emailaddress", "useremail", "newpassword", "postcode",
+                "billingaddress", "microphone", "capacity")),
+        })
+        self.assertEqual(data["images"], [])
+        self.assertEqual([r["call"] for r in data["destructive_actions"]], ["deleteTask"])
+        self.assertEqual([r["name"] for r in data["inputs"]], [
+            "telephone", "phonenumber", "cellphone", "emailaddress", "useremail", "newpassword", "postcode",
+            "billingaddress"])
+        self.assertIn("type=tel", data["inputs"][0]["missing"])
+        self.assertIn("type=email", data["inputs"][3]["missing"])
+
+    def test_line_leading_slashes_in_jsx_text_are_text(self):
+        import time
+        data = self.scan({"a.jsx": 'export const A = () => (\n<div>\n// visible text <img src="x" />\n</div>\n);\n'
+                                   'const f = () =>\n// <img src="commented" />\nnull;\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:3"])
+        started = time.monotonic()
+        self.scan({"b.jsx": "<div>\n" + "// note\n" * 50000})
+        self.assertLess(time.monotonic() - started, 3)
+        data = self.scan({"c.jsx": 'export const C = () => (\n<div>\n{x}\n// after an expression <img src="x" />\n'
+                                   '{a.map((v) => {\n  return v;\n})}\n// after a callback <img src="y" />\n</div>\n);\n'
+                                   'function f() {\n  return 1;\n}\n// <img src="commented" />\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["c.jsx:4", "c.jsx:8"])
+        data = self.scan({"e.jsx": 'export const E = () => (\n<div>\n{foo("}")}\n// a string <img src="a" />\n'
+                                   '{x.replace(/}/g, "")}\n// a regex <img src="b" />\n{`}${y}`}\n// a template <img src="c" />\n'
+                                   '</div>\n);\nfunction f() {\n  return "}";\n}\n// <img src="commented" />\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["e.jsx:4", "e.jsx:6", "e.jsx:8"])
+        data = self.scan({"g.jsx": 'export const G = () => (\n<div>\nhello\n// after text <img src="a" />\n'
+                                   'Hello {name}, welcome\n// after mixed text <img src="b" />\n</div>\n);\n'
+                                   'const a = b\n// <img src="commented" />\nconst o = {\n  label: "x"\n}\n// <img src="c2" />\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["g.jsx:4", "g.jsx:6"])
+        data = self.scan({"h.jsx": 'const compared = foo >\n  bar\n// <img src="commented" />\n'
+                                   'export const H = () => (\n<div className="a"\n  onClick={() => go()}>\n'
+                                   '// visible <img src="a" />\n</div>\n);\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["h.jsx:7"])
+        for text in ("<div>\n" + "text\n// note\n" * 30000, "{}\n" + "// note\n" * 50000, '}"\n// note\n' * 30000, "}/ /\n// note\n" * 30000, "}\n// note\n" * 30000, "}" * 100000 + "\n// note\n" * 1000):
+            started = time.monotonic()
+            self.scan({"d.jsx": text})
+            self.assertLess(time.monotonic() - started, 3)
+
+
+    def test_regex_classes_and_camel_case_exceptions(self):
+        import time
+        # "/*" inside a regex character class starts no block comment, so later comments are still masked.
+        data = self.scan({"a.jsx": 'const r = /[/*]/;\n// <img src="old" />\nconst x=/* <img src="c" /> */1;\n'
+                                   'if (ready) /[/*]/.test(value);\n// <img src="old2" />\n'
+                                   'const q = i++ / /* <img src="old3" /> */ divisor;\n'
+                                   'export const A = () => <img src="a.png" />;\n'
+                                   'export const B = () => <p><b>x</b>/* <img src="d" /> */</p>;\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:7"])
+        started = time.monotonic()
+        self.scan({"b.jsx": "/*" * 300000})
+        self.assertLess(time.monotonic() - started, 5)
+        # microPhone and autoMobile split into micro_phone and auto_mobile; neither is personal.
+        data = self.scan({"c.html": '<label>Mic <input name="microPhone"></label>\n'
+                                    '<label>Car <input name="autoMobile"></label>\n'
+                                    '<label>Tel <input name="mobilePhone"></label>\n'})
+        self.assertEqual([(r["name"], r["missing"]) for r in data["inputs"]],
+                         [("mobilePhone", ["autocomplete", "type=tel"])])
+
+    def test_aria_hidden_glyph_buttons_and_cr_line_ends(self):
+        data = self.scan({"a.html": '<button onclick="closeIt()"><span aria-hidden="true">&times;</span></button>\n'
+                                    '<button><span aria-hidden="true">×</span> Close</button>\n'
+                                    '<button><span aria-hidden="true"><span>×</span>close</span></button>\n'
+                                    '<button><img src="x.svg" aria-hidden="true">Close</button>\n'
+                                    '<button><span title="1 > 0" aria-hidden="true">×</span></button>\n'
+                                    '<button><span title="x aria-hidden=\'true\'">Close</span></button>\n',
+                          "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
+                                   '</button>;\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "a.html:5", "b.tsx:1"])
+        # A lone CR ends a line, as in the report excerpts.
+        data = self.scan({"c.html": '<!doctype html>\r<p>one</p>\r<img src="x.png">\r',
+                          "d.jsx": 'const a = 1;\r// <img src="c" />\rexport const D = () => <img src="d" />;\r'})
+        self.assertEqual([r["location"] for r in data["images"]], ["c.html:3", "d.jsx:3"])
+
 
 if __name__ == "__main__":
     unittest.main()

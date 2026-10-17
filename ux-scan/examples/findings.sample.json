@@ -18,10 +18,31 @@
       "ja"
     ]
   },
-  "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every button, and German labels are cut off.",
+  "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, saving a new task throws the typed title away, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every .btn button, and task titles are cut off with no way to read them.",
   "findings": [
     {
       "id": "U-001",
+      "title": "Saving a new task discards the typed title",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM5",
+      "flow_ref": "FL-02",
+      "screen": "Add task dialog (/)",
+      "criterion": "Primary task completes and the user's input is kept (severity table: data or input lost)",
+      "location": "src/components/AddTaskModal.tsx:11",
+      "observed": "<button onClick={onClose}>Save</button>: the title state is never sent, and api.ts has no create call",
+      "expected": "Save creates the task, shows it in the list, and closes the dialog only on success.",
+      "impact": "Adding a task, a primary task, cannot be completed: the dialog closes and the typed title is gone.",
+      "fix": "Call a create endpoint with the title, close on success and keep the input with an error message on failure.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "AddTaskModal.tsx:5 and :10 hold the title only in local state; :11 only closes; src/api.ts exports open and remove only.",
+        "intent_checked": "No other code path creates tasks."
+      }
+    },
+    {
+      "id": "U-002",
       "title": "Sign-up clears every field when the server rejects the request",
       "severity": "High",
       "confidence": "Confirmed",
@@ -46,7 +67,7 @@
       }
     },
     {
-      "id": "U-002",
+      "id": "U-003",
       "title": "Task rows open only on mouse click",
       "severity": "High",
       "confidence": "Confirmed",
@@ -74,7 +95,7 @@
       ]
     },
     {
-      "id": "U-003",
+      "id": "U-004",
       "title": "Delete is an icon-only button with no accessible name",
       "severity": "High",
       "confidence": "Confirmed",
@@ -95,7 +116,7 @@
       }
     },
     {
-      "id": "U-004",
+      "id": "U-005",
       "title": "Deleting a task is immediate, with no confirmation or undo",
       "severity": "High",
       "confidence": "Confirmed",
@@ -116,7 +137,7 @@
       }
     },
     {
-      "id": "U-005",
+      "id": "U-006",
       "title": "480px sidebar overflows the 360px phone viewport",
       "severity": "High",
       "confidence": "Confirmed",
@@ -138,7 +159,7 @@
       }
     },
     {
-      "id": "U-006",
+      "id": "U-007",
       "title": "Viewport meta disables pinch zoom",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -155,12 +176,12 @@
       "validation": {
         "verdict": "Valid",
         "evidence": "inventory viewport_meta blocks_zoom: true; index.html is the single entry page.",
-        "intent_checked": "No comment explains it; it is not needed to stop input zoom when inputs are 16px."
+        "intent_checked": "No comment explains it; to stop iOS zooming into inputs, set inputs to at least 16px instead."
       }
     },
     {
-      "id": "U-007",
-      "title": "Add-task dialog does not trap, return or release focus",
+      "id": "U-008",
+      "title": "Add-task dialog does not trap or return focus, or close on Escape",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -180,7 +201,7 @@
       }
     },
     {
-      "id": "U-008",
+      "id": "U-009",
       "title": "Archive has a route but no navigation entry",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -205,7 +226,7 @@
       }
     },
     {
-      "id": "U-009",
+      "id": "U-010",
       "title": "Email error appears on the first keystroke",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -213,7 +234,7 @@
       "perspective": "FM3",
       "flow_ref": "FL-01",
       "screen": "Sign-up form (/signup)",
-      "criterion": "Validate on blur or submit, not while typing (form usability); WCAG 2.2 SC 3.3.1 Error Identification",
+      "criterion": "Validate on blur or submit, not while typing (form usability heuristic)",
       "location": "src/components/SignupForm.tsx:11",
       "observed": "onChange runs the email check and sets \"Invalid input\" until the address is complete",
       "expected": "Check on blur and on submit; once shown, clear the message as soon as the value becomes valid.",
@@ -226,7 +247,32 @@
       }
     },
     {
-      "id": "U-010",
+      "id": "U-011",
+      "title": "Sign-up fields are labelled only by placeholders",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FM1",
+      "flow_ref": "FL-01",
+      "screen": "Sign-up form (/signup)",
+      "criterion": "WCAG 2.2 SC 3.3.2 Labels or Instructions; SC 1.3.1 Info and Relationships",
+      "location": "src/components/SignupForm.tsx:26",
+      "occurrences": [
+        "src/components/SignupForm.tsx:26",
+        "src/components/SignupForm.tsx:27"
+      ],
+      "observed": "<input name=\"email\" placeholder=\"Email\"> and <input type=\"password\" placeholder=…> with no <label>, aria-label or aria-labelledby",
+      "expected": "A visible <label> tied to each field.",
+      "impact": "The field name disappears as soon as the visitor types, and the accessible name depends on a placeholder that vanishes on input.",
+      "fix": "Add a visible <label htmlFor> for each field.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory inputs: label missing, placeholder_only on both fields.",
+        "intent_checked": "No wrapping <label> or aria-label."
+      }
+    },
+    {
+      "id": "U-012",
       "title": "Task list has no loading, empty or error state",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -247,7 +293,7 @@
       }
     },
     {
-      "id": "U-011",
+      "id": "U-013",
       "title": "Sign-up errors say \"Invalid input\" and \"Error 500\"",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -273,7 +319,7 @@
       }
     },
     {
-      "id": "U-012",
+      "id": "U-014",
       "title": "Two primary buttons compete on the dashboard",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -298,7 +344,28 @@
       }
     },
     {
-      "id": "U-013",
+      "id": "U-015",
+      "title": "The Import button does nothing",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FB2",
+      "flow_ref": "FL-02",
+      "screen": "Dashboard (/)",
+      "criterion": "Every control responds to input; nothing fails silently",
+      "location": "src/pages/Dashboard.tsx:16",
+      "observed": "<Button variant=\"primary\">{t(\"task.import\")}</Button> with no onClick",
+      "expected": "Import opens an import flow, or the button is removed until one exists.",
+      "impact": "A prominent primary-styled button gives no response, so users retry or assume the app is broken.",
+      "fix": "Wire Import to its flow or remove it.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Button.tsx spreads only the given props; Dashboard.tsx:16 passes no handler.",
+        "intent_checked": "No feature flag or disabled state marks it as coming soon."
+      }
+    },
+    {
+      "id": "U-016",
       "title": "Settings \"Save\" is a hand-styled link: no keyboard access, off-system style",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -319,8 +386,8 @@
       }
     },
     {
-      "id": "U-014",
-      "title": "Focus outline removed from every button with no replacement",
+      "id": "U-017",
+      "title": "Focus outline removed from every .btn button with no replacement",
       "severity": "Medium",
       "confidence": "Confirmed",
       "status": "Open",
@@ -330,7 +397,7 @@
       "criterion": "WCAG 2.2 SC 2.4.7 Focus Visible",
       "location": "src/styles/app.css:4",
       "observed": ".btn:focus { outline: none; }",
-      "expected": ".btn:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }",
+      "expected": ".btn:focus-visible { outline: 2px solid currentColor; outline-offset: 2px; } (or a --focus token added to tokens.css)",
       "impact": "Keyboard users lose track of where they are on every screen that uses the shared button.",
       "fix": "Delete the rule and add a :focus-visible style from the tokens.",
       "validation": {
@@ -340,53 +407,53 @@
       }
     },
     {
-      "id": "U-015",
-      "title": "German button labels are cut to \"Neue Aufgab…\"",
+      "id": "U-018",
+      "title": "Task titles are cut at 120px with no way to read the rest",
       "severity": "Medium",
       "confidence": "Runtime-dependent",
       "status": "Open",
-      "perspective": "IN1",
+      "perspective": "IN2",
       "flow_ref": "FL-02",
-      "screen": "Dashboard (/)",
-      "criterion": "Labels fit the longest shipped locale (de)",
+      "screen": "Task list (/)",
+      "criterion": "Truncation keeps the full text available (title, tooltip or detail view); labels fit the longest shipped locale (de)",
       "location": "src/styles/app.css:13",
-      "observed": ".btn-label { max-width: 120px; white-space: nowrap; text-overflow: ellipsis }",
-      "expected": "Labels wrap or the button grows; truncation only where the full text is available.",
-      "impact": "German users see \"Neue Aufgab…\" on the main action; \"Einstellungen\" is clipped as a title.",
-      "fix": "Remove max-width from .btn-label; keep ellipsis only on .task-title with a title attribute.",
+      "observed": ".task-title { max-width: 120px; white-space: nowrap; text-overflow: ellipsis } on the row's <div> (TaskList.tsx:15), with no title attribute",
+      "expected": "Titles wrap to two lines (line-clamp) and the full title is exposed; truncation only where the full text is available.",
+      "impact": "Users cannot tell similar tasks apart (\"Prepare quarterly…\"), and longer German titles lose most of their text.",
+      "fix": "Let .task-title wrap or clamp to two lines and expose the full title; drop the max-width that has no effect on the inline .btn-label.",
       "validation": {
         "verdict": "Likely",
-        "evidence": "inventory locale_expansion de: task.new 2.75x (22 vs 8 characters); at 14px, 22 characters exceed 120px.",
-        "intent_checked": "Exact width depends on the font; not rendered."
+        "evidence": "inventory truncation app.css:13; .task-title is a block <div> (TaskList.tsx:15), so max-width and the ellipsis apply. .btn-label is an inline <span> (Button.tsx:4), so its button labels are not cut.",
+        "intent_checked": "Exact width depends on the font and the title; not rendered."
       }
     },
     {
-      "id": "U-016",
-      "title": "Email field typed as text, without labels or autocomplete",
+      "id": "U-019",
+      "title": "Email field typed as text, and sign-up fields have no autocomplete",
       "severity": "Low",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "FM4",
       "flow_ref": "FL-01",
       "screen": "Sign-up form (/signup)",
-      "criterion": "WCAG 2.2 SC 1.3.5 Identify Input Purpose; SC 3.3.2 Labels or Instructions",
+      "criterion": "WCAG 2.2 SC 1.3.5 Identify Input Purpose",
       "location": "src/components/SignupForm.tsx:26",
       "occurrences": [
         "src/components/SignupForm.tsx:26",
         "src/components/SignupForm.tsx:27"
       ],
-      "observed": "type=\"text\" name=\"email\" placeholder=\"Email\"; password with placeholder only; no autocomplete",
-      "expected": "Visible <label>s; type=\"email\" autocomplete=\"email\"; autocomplete=\"new-password\".",
-      "impact": "Phones show the wrong keyboard, password managers do not fill, and the placeholder label vanishes on input.",
-      "fix": "Add labels and the input types and autocomplete tokens.",
+      "observed": "type=\"text\" name=\"email\"; neither field sets autocomplete",
+      "expected": "type=\"email\" autocomplete=\"email\"; autocomplete=\"new-password\".",
+      "impact": "Phones show the wrong keyboard and password managers do not fill or save the new password.",
+      "fix": "Set the email input type and both autocomplete tokens.",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory inputs: label, autocomplete, type=email missing; placeholder_only.",
-        "intent_checked": "No wrapping <label> or aria-label."
+        "evidence": "inventory inputs: autocomplete and type=email missing.",
+        "intent_checked": "No custom autofill handling."
       }
     },
     {
-      "id": "U-017",
+      "id": "U-020",
       "title": "\"Create account\" stays active while the request runs",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -407,100 +474,120 @@
       }
     },
     {
-      "id": "U-018",
-      "title": "Avatars have no alt text or dimensions",
+      "id": "U-021",
+      "title": "Avatars have no alt text",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AX4",
+      "flow_ref": "FL-02",
+      "screen": "Task list (/)",
+      "criterion": "WCAG 2.2 SC 1.1.1 Non-text Content",
+      "location": "src/components/TaskList.tsx:14",
+      "observed": "<img src={task.assignee.avatar} className=\"avatar\" />",
+      "expected": "alt=\"\" when the assignee's name is shown beside it, otherwise alt with the name.",
+      "impact": "Screen readers announce the image file name on every row.",
+      "fix": "Add alt.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory images: missing alt.",
+        "intent_checked": "No aria-hidden or role=presentation."
+      }
+    },
+    {
+      "id": "U-022",
+      "title": "Avatars have no dimensions, so rows shift as they load",
       "severity": "Low",
       "confidence": "Runtime-dependent",
       "status": "Open",
       "perspective": "PP2",
       "flow_ref": "FL-02",
       "screen": "Task list (/)",
-      "criterion": "Reserve space for media (Cumulative Layout Shift); WCAG 2.2 SC 1.1.1 Non-text Content",
+      "criterion": "Reserve space for media (Cumulative Layout Shift)",
       "location": "src/components/TaskList.tsx:14",
-      "observed": "<img src={task.assignee.avatar} className=\"avatar\" />",
-      "expected": "<img alt=\"\" width={24} height={24}> (decorative next to the assignee's name) or alt with the name.",
-      "impact": "Rows jump as avatars load, moving the delete icon under the pointer; screen readers read the file URL.",
-      "fix": "Add width, height and alt.",
+      "observed": "<img src={task.assignee.avatar} className=\"avatar\" /> with no width, height or aspect-ratio",
+      "expected": "width={24} height={24}, or a fixed size on .avatar.",
+      "impact": "Rows jump as avatars load, moving the delete icon under the pointer.",
+      "fix": "Add width and height, or size .avatar in CSS.",
       "validation": {
-        "verdict": "Valid",
-        "evidence": "inventory images: missing alt and dimensions; .avatar sets no size (app.css:14).",
+        "verdict": "Likely",
+        "evidence": "inventory images: missing dimensions; .avatar sets no size (app.css:14).",
         "intent_checked": "The size of the shift depends on the image."
       }
     },
     {
-      "id": "U-019",
+      "id": "U-023",
       "title": "Spacing and type literals off the token scales",
       "severity": "Low",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "LG2",
       "flow_ref": "FL-05",
-      "screen": "Cards, sidebar title, settings",
+      "screen": "Cards, sidebar title",
       "criterion": "Spacing scale 4/8/12/16/24/32 and type scale 12–32 (src/styles/tokens.css:2-3)",
       "location": "src/styles/app.css:7",
       "occurrences": [
         "src/styles/app.css:7",
-        "src/styles/app.css:8",
-        "src/pages/Settings.tsx:9"
+        "src/styles/app.css:8"
       ],
-      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px; padding: 10",
+      "observed": "padding: 13px; margin-bottom: 18px; font-size: 15px",
       "expected": "var(--space-3), var(--space-4), var(--text-md)",
       "impact": "Cards and headings sit off the rhythm of the rest of the UI.",
       "fix": "Replace the literals with the nearest tokens.",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px.",
+        "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px. The 10px is Settings.tsx:9, which U-016's fix replaces.",
         "intent_checked": "No comment justifies the values."
       }
     },
     {
-      "id": "U-020",
-      "title": "Dropdown z-index 99999 sits above modals and toasts",
-      "severity": "Low",
-      "confidence": "Runtime-dependent",
+      "id": "U-024",
+      "title": "Unused .dropdown class sets z-index 99999, above the modal and toast layers",
+      "severity": "Info",
+      "confidence": "Confirmed",
       "status": "Open",
       "perspective": "LG3",
       "flow_ref": "FL-05",
-      "screen": "Any page with a dropdown",
+      "screen": "None today (no component uses .dropdown)",
       "criterion": "Layer scale dropdown 10 < modal 100 < toast 1000 (docs/design.md:7)",
       "location": "src/styles/app.css:9",
       "observed": ".dropdown { z-index: 99999 }",
       "expected": "z-index: var(--z-dropdown)",
-      "impact": "An open dropdown would cover a dialog opened from it and hide toasts.",
-      "fix": "Use the token.",
+      "impact": "No user sees it today; the first dropdown built on this class would cover a dialog opened from it and hide toasts.",
+      "fix": "Use the token, or delete the class until a dropdown exists.",
       "validation": {
-        "verdict": "Likely",
-        "evidence": "inventory off_scale z_index 99999.",
-        "intent_checked": "No dropdown component exists yet in the fixture; the class is shared CSS."
+        "verdict": "Valid",
+        "evidence": "inventory off_scale z_index 99999; no component references .dropdown.",
+        "intent_checked": "No dropdown component exists yet; the class is shared CSS."
       }
     },
     {
-      "id": "U-021",
-      "title": "Motion ignores prefers-reduced-motion",
-      "severity": "Low",
+      "id": "U-025",
+      "title": "Declared motion has no reduced-motion path",
+      "severity": "Info",
       "confidence": "Confirmed",
       "status": "Open",
       "perspective": "MO2",
       "flow_ref": "FL-02",
-      "screen": "Add task dialog, spinners",
+      "screen": "None today (add-task dialog and spinner)",
       "criterion": "WCAG 2.2 SC 2.3.3 Animation from Interactions (AAA); platform reduced-motion setting",
       "location": "src/styles/app.css:15",
       "occurrences": [
         "src/styles/app.css:15",
         "src/styles/app.css:16"
       ],
-      "observed": ".panel { transition: transform 600ms } and an infinite spin, no reduced-motion query",
+      "observed": ".panel { transition: transform 600ms } and an infinite .spinner animation, with no reduced-motion query",
       "expected": "@media (prefers-reduced-motion: reduce) { .panel { transition: none } }; 200–300ms for the panel.",
-      "impact": "The dialog slides for 0.6s every time, including for people who asked their OS for less motion.",
+      "impact": "No motion reaches users today; once the dialog animates its entrance or a spinner is used, it would move for 0.6s or spin even for people who asked their OS for less motion.",
       "fix": "Shorten the transition and add a reduced-motion override.",
       "validation": {
         "verdict": "Valid",
-        "evidence": "inventory motion: 2 declarations, reduced_motion empty.",
+        "evidence": "inventory motion: 2 declarations, reduced_motion empty. The dialog mounts conditionally (Dashboard.tsx:19) and nothing changes its transform, so the transition never runs; no component uses .spinner.",
         "intent_checked": "No JS motion library."
       }
     },
     {
-      "id": "U-022",
+      "id": "U-026",
       "title": "Skip link z-index 9999 off the layer scale",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -534,7 +621,7 @@
     {
       "name": "RS Responsive",
       "result": "2 findings",
-      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is below WCAG 2.5.8's 24px; listed in next_steps with the delete-control fixes."
+      "note": "360x640 checked by reading widths and media queries. The 20x20px delete target (app.css:12) is a WCAG 2.5.8 candidate; its spacing exception was not checked, so it is listed in next_steps with the delete-control fixes rather than as a finding. The 700px media query (app.css:18) is off the 640/1024 breakpoint scale; it only adjusts card padding and moves to 640px with U-006's fix."
     },
     {
       "name": "VH Visual hierarchy",
@@ -553,12 +640,12 @@
     },
     {
       "name": "FM Forms and input",
-      "result": "3 findings",
+      "result": "5 findings",
       "note": "Sign-up form, add-task and settings inputs."
     },
     {
       "name": "FB Feedback and status",
-      "result": "2 findings",
+      "result": "3 findings",
       "note": "Settings save() is a stub in the fixture, so its success feedback was not judged."
     },
     {
@@ -568,7 +655,7 @@
     },
     {
       "name": "AX Accessibility",
-      "result": "3 findings",
+      "result": "4 findings",
       "note": "html lang set; skip link present; contrast not measurable without rendered colours (limitations)."
     },
     {
@@ -584,7 +671,7 @@
     {
       "name": "PP Perceived performance",
       "result": "1 finding",
-      "note": "Skeleton absence is part of U-010."
+      "note": "Skeleton absence is part of U-012."
     }
   ],
   "checked_ok": [
@@ -601,8 +688,8 @@
     "Hover and selected states are undefined in the tokens; decide whether the design system should own them."
   ],
   "next_steps": [
-    "Fix U-001 to U-005 first: they block the two primary flows.",
-    "Enlarge .icon-btn (app.css:12) to at least 24x24px, 44 preferred, with the U-003 and U-004 fixes.",
-    "Re-run inventory.py --flows after the fixes and render the dashboard at 360px to confirm U-005 and U-015."
+    "Fix U-001 to U-006 first: they block the two primary flows.",
+    "Enlarge .icon-btn (app.css:12) to at least 24x24px, 44 preferred, with the U-004 and U-005 fixes.",
+    "Re-run inventory.py --flows after the fixes and render the dashboard at 360px to confirm U-006 and U-018."
   ]
 }

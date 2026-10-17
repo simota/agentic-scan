@@ -4,8 +4,11 @@
 
 ```sh
 python3 <skill-dir>/scripts/render.py <out>/findings.json --out <out> --lang ja|en --repo <repo> [--no-pdf]
-python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf]
+python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf] [--allow <lang>]
 ```
+
+`--allow ja` or `--allow en` names a second-language render in `<out>/<lang>`
+(SKILL.md *Independence*); the checker requires it to be current.
 
 `<skill-dir>` is the directory holding SKILL.md; never run a same-named script
 from the reviewed repository (SKILL.md *Paths*).
@@ -13,12 +16,36 @@ from the reviewed repository (SKILL.md *Paths*).
 `render.py` maps `findings.json` into scan-report-kit's common format
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
 in the shared design. Each finding shows its flow (from `flows.json`), screen,
-viewport and criterion. With `--repo`, each finding's first `path:line` is
+viewport and criterion, and both pages state the viewports and locales from
+`flows.json` that the review was judged against. With `--repo`, each finding's first `path:line` is
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
 from a UTF-8 file no larger than 2 MiB. Files outside the repository, binaries,
 symlinks (including directory links), and secret-looking paths are omitted;
-secret-looking assignment lines are masked in full. These name and text rules
-are conservative heuristics, not a complete credential audit. Report text and
+lines that hold a secret are masked in full (`scripts/secret_lines.py`): known
+credential formats (provider token prefixes, JWTs, PEM and PGP private-key
+blocks found anywhere in the file, credentials in URLs including
+`redis://:password@host`, command lines including `--password value` (quoted
+too, or on the next line after `\`, but not `"$PASSWORD"`), bearer
+and basic authorization values), and secret-like names (password, secret,
+token, API key, credentials…, also after acronyms, inside upper-case names
+and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
+`SECRET_KEY_BASE`) assigned a literal that is not a label. That includes
+short values, passphrases with spaces, typed declarations
+(`password: string = "…"`), literals passed to a call or wrapped in
+delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
+reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto a later line after
+`=` or an operator (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
+as "Password", "Enter your password" or "パスワード", types, code expressions
+and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
+since forms and locale files are what UX findings cite. In configuration files
+(`.properties`, `.env`, `.ini`, `.cfg`, `.conf`, `.toml`, YAML) and on `NAME=value`
+lines every bare value is a literal (`password = Sommer.x`), as is a value with a
+digit in its root (`Pa55.word`); in code a digit-free bare identifier is a
+reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables (a `${VAR:-default}` default is
+judged as a value). Each line is judged on
+the shown text plus 512 characters after it, so a credential cut off at the
+limit is masked too. These rules are conservative heuristics, not
+a complete credential audit. Report text and
 source excerpts remain escaped text in the HTML. `--out` must resolve outside
 `--repo`, which must name an existing directory. The findings input must not
 occupy any generated output path, including through a directory symlink or hardlink;
@@ -116,8 +143,15 @@ N/A with a reason; last, where to start and the one decision a human must make
 
 ## Chat summary
 
-Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 5 High, 10 Medium,
-6 Low (21 open) across 5 flows; both primary flows blocked`. Then:
+Satisfy SKILL.md *Done when* first. First line: status and counts, e.g. `ux-scan complete: 6 High, 12 Medium,
+5 Low, 2 Info (25 open) across 5 flows; both primary flows blocked`. The
+status is `complete` when every flow and perspective family was reviewed, else
+`partial` (the gaps are in `limitations`). Counts are by severity over included
+findings (`FalsePositive` and `NotApplicable` left out), with Info counted;
+`open` counts those with status `Open`. A primary flow is blocked when an
+included High finding cites it in `flow_ref`, or cites the `shared` flow
+(the shell or a shared component it uses). A missing PDF is reported in the
+outputs line, not in the status. Then:
 
 - the High findings, one line each with `path:line` and the flow they block
 - decisions that need a human (`decisions`)

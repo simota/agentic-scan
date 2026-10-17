@@ -42,6 +42,16 @@ PRIORITIES = ("primary", "secondary", "shared")
 SOURCES = ("documented", "stated", "inferred")
 TOKEN_SCALES = ("spacing", "font_sizes", "breakpoints", "z_index")
 LIST_KEYS = ("checked_ok", "limitations", "decisions", "next_steps")
+RECORD_KEYS = ("schema_version", "meta", "summary", "perspectives", "findings", *LIST_KEYS)
+FLOWS_KEYS = ("app", "viewports", "locales", "tokens", "flows")
+FLOW_KEYS = ("id", "name", "priority", "actor", "goal", "source", "evidence", "screens")
+SCREEN_KEYS = ("name", "route", "location")
+META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales")
+FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
+                "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
+                "validation", "references")
+VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
+REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
               "FB": 5, "CP": 4, "AX": 6, "MO": 3, "IN": 4, "PP": 4}
 FAMILIES = tuple(HUNT_STEPS)
@@ -63,6 +73,13 @@ def _unicode_text(value, where):
     return value
 
 
+def _known_keys(obj, allowed, where):
+    """Refuse a misspelled section instead of keeping it where nothing reads it."""
+    unknown = sorted(str(k) for k in set(obj) - set(allowed))
+    if unknown:
+        raise RecordError(f"{where}: unknown key {unknown[0]!r}; expected {', '.join(allowed)}")
+
+
 def _str(obj, key, where, required=False):
     value = obj.get(key, "")
     if not isinstance(value, str):
@@ -82,7 +99,8 @@ def _strings(value, where, nonempty=True):
 
 def _location(value, where):
     if (not isinstance(value, str) or not LOCATION.match(value) or "\\" in value
-            or any(ord(c) < 32 or ord(c) == 127 for c in value)):
+            or any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") for c in value)
+            or value.rpartition(":")[0] != value.rpartition(":")[0].strip()):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
     path, _, lines = value.rpartition(":")
     if path.rsplit("/", 1)[-1] in ("", "."):
@@ -148,6 +166,7 @@ def _indexed(items, where, key, pattern=None):
 def _perspectives(items, where="perspectives"):
     result = _indexed(items, where, "name")
     for name, item in result.items():
+        _known_keys(item, ("name", "result", "note"), f"{where} {name}")
         _str(item, "result", f"{where} {name}")
         _str(item, "note", f"{where} {name}")
     return result
@@ -157,6 +176,7 @@ def check_flows(flows):
     """Raise RecordError unless flows matches reference/flows.md; return it."""
     if not isinstance(flows, dict):
         raise RecordError("flows: expected an object")
+    _known_keys(flows, FLOWS_KEYS, "flows")
     _str(flows, "app", "flows", required=True)
     _viewports(flows.get("viewports", []), "flows.viewports")
     _strings(flows.get("locales", []), "flows.locales")
@@ -165,6 +185,9 @@ def check_flows(flows):
         raise RecordError("flows.tokens: expected an object")
     if "tokens" in flows:
         _location(_str(tokens, "source", "flows.tokens", required=True), "flows.tokens.source")
+        if not any(key in tokens for key in TOKEN_SCALES):
+            raise RecordError(f"flows.tokens: expected at least one scale ({', '.join(TOKEN_SCALES)}); "
+                              "omit tokens when there is no token source")
     for key in TOKEN_SCALES:
         if key in tokens:
             scale = tokens[key]
@@ -189,6 +212,7 @@ def check_flows(flows):
             raise RecordError(f"{where}.id: duplicate {fid}")
         seen.add(fid)
         where = f"flow {fid}"
+        _known_keys(fl, FLOW_KEYS, where)
         if fl.get("priority") not in PRIORITIES:
             raise RecordError(f"{where}.priority: expected one of {', '.join(PRIORITIES)}")
         if fl.get("source") not in SOURCES:
@@ -202,6 +226,7 @@ def check_flows(flows):
         for j, s in enumerate(screens):
             if not isinstance(s, dict):
                 raise RecordError(f"{where}.screens[{j}]: expected an object")
+            _known_keys(s, SCREEN_KEYS, f"{where}.screens[{j}]")
             _str(s, "name", f"{where}.screens[{j}]", required=True)
             _str(s, "route", f"{where}.screens[{j}]")
             _location(s.get("location"), f"{where}.screens[{j}].location")
@@ -218,11 +243,13 @@ def check_findings(data, flow_ids=None, ordered=True):
     """
     if not isinstance(data, dict):
         raise RecordError("findings: expected an object")
+    _known_keys(data, RECORD_KEYS, "findings")
     if type(data.get("schema_version")) is not int or data["schema_version"] != 1:
         raise RecordError("schema_version: expected 1")
     meta = data.get("meta")
     if not isinstance(meta, dict):
         raise RecordError("meta: expected an object")
+    _known_keys(meta, META_KEYS, "meta")
     for key in ("project", "date", "assessor"):
         _str(meta, key, "meta", required=True)
     if not re.match(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z", meta["date"]):
@@ -259,6 +286,7 @@ def check_findings(data, flow_ids=None, ordered=True):
             raise RecordError(f"{where}.id: duplicate {fid}")
         seen.add(fid)
         where = f"finding {fid}"
+        _known_keys(f, FINDING_KEYS, where)
         for key, allowed in (("severity", SEVERITIES), ("confidence", CONFIDENCES), ("status", STATUSES)):
             if f.get(key) not in allowed:
                 raise RecordError(f"{where}.{key}: expected one of {', '.join(allowed)}")
@@ -277,11 +305,14 @@ def check_findings(data, flow_ids=None, ordered=True):
         if flow_ids is not None and ref not in flow_ids:
             raise RecordError(f"{where}.flow_ref: {ref} is not a flow in flows.json")
         location = _location(_str(f, "location", where, required=True), f"{where}.location")
+        if "occurrences" in f and not f["occurrences"]:
+            raise RecordError(f"{where}.occurrences: omit it or list every path:line the fix covers")
         for loc in _strings(f.get("occurrences", [location]), f"{where}.occurrences"):
             _location(loc, f"{where}.occurrences")
         validation = f.get("validation")
         if not isinstance(validation, dict):
             raise RecordError(f"{where}.validation: required")
+        _known_keys(validation, VALIDATION_KEYS, f"{where}.validation")
         if validation.get("verdict") not in VERDICTS:
             raise RecordError(f"{where}.validation.verdict: expected one of {', '.join(VERDICTS)}")
         _str(validation, "evidence", f"{where}.validation", required=validation["verdict"] != "Unverified")
@@ -292,6 +323,7 @@ def check_findings(data, flow_ids=None, ordered=True):
         for j, ref_ in enumerate(refs):
             if not isinstance(ref_, dict):
                 raise RecordError(f"{where}.references[{j}]: expected an object")
+            _known_keys(ref_, REFERENCE_KEYS, f"{where}.references[{j}]")
             _http(ref_.get("url"), f"{where}.references[{j}].url")
             for key in ("type", "title"):
                 _str(ref_, key, f"{where}.references[{j}]")
@@ -309,7 +341,8 @@ FINDING_RANGE = re.compile(
     r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`+)?"
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P=first_style)"
-    r"\s*(?:(?i:to|through)|[-–—−〜～~]|から)\s*"
+    # A range stays on one line, so a Markdown bullet list of ids is not a range.
+    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
@@ -320,7 +353,8 @@ UNDERSCORE_RANGE = re.compile(
     r"(?<![A-Za-z0-9_`])(?P<first_open>_*)(?P<first_ticks>`+)?"
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
-    r"\s*(?:(?i:to|through)|[-–—−〜～~]|から)\s*"
+    # A range stays on one line, so a Markdown bullet list of ids is not a range.
+    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
     r"(?P<last_open>_*)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
@@ -346,6 +380,197 @@ FINDING_LIST = re.compile(
 # Parentheses may be part of a path, especially Next.js route groups. Keep
 # balanced path components together without swallowing Markdown link labels.
 SOURCE_COMPONENT = r"(?:[^\s`<>\"'(),;/\\，、。；（）「」『』]|\([^()\s`<>\"',;/\\，、。；（）「」『』]*\))+"
+def _balanced(open_, close, inner, depth=4):
+    """A regex for open_…close nested up to depth levels, each level holding inner or a deeper group."""
+    pattern = re.escape(open_) + inner + "*" + re.escape(close)
+    for _ in range(depth - 1):
+        pattern = re.escape(open_) + "(?:" + inner + "|" + pattern + ")*" + re.escape(close)
+    return pattern
+
+
+TAG_NAME = re.compile(r"[a-z][\w.:-]*", re.IGNORECASE)
+# Attribute names: plain, Angular (event)/[prop]/[(model)]/*ngIf (these always
+# take a value) and #ref. JSX {…} attributes and values are scanned as JavaScript.
+# Vue dynamic arguments (:[key], v-slot:[name], @[event]) follow the name.
+# Svelte modifiers follow with "|" (on:click|once); Lit prefixes ? and . (?disabled, .value).
+PLAIN_ATTRIBUTE = re.compile(r"[a-z_:@?.][\w.:@-]*(?:\[[^\]\s]*\])?(?:\|[\w-]+)*", re.IGNORECASE)
+BOUND_ATTRIBUTE = re.compile(r"(?:\[\(?|\(|\*)[a-z][\w.@-]*(?:\)\]?|\])?", re.IGNORECASE)
+REF_ATTRIBUTE = re.compile(r"#[a-z][\w-]*", re.IGNORECASE)
+UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
+MAX_TAG = 8000  # A tag longer than this stays prose; it also bounds every scan.
+# Characters tag scans may read per character of prose, plus a fixed allowance;
+# past it, remaining "<" are prose. Only text built to defeat the scanner gets there.
+TAG_SCAN_BUDGET = (4, 200_000)
+# After these, "/" starts a regular expression rather than a division.
+REGEX_AFTER = set("(,=:[!&|?{};+-*%>~^") | {""}
+# After these keywords, "/" also starts a regular expression.
+REGEX_KEYWORDS = {"return", "typeof", "instanceof", "in", "of", "new", "delete", "void", "throw", "case", "do",
+                  "else", "yield", "await"}
+IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+
+
+def _scan_js(text, i, stop):
+    """(end of the {…} JavaScript expression opening at text[i] or None, index reached).
+
+    Strings, template literals (with ${…}), comments and regular-expression
+    literals are skipped, so braces inside them do not count. Linear in the
+    scanned length.
+    """
+    depth, stack, previous = 0, [], ""
+    while i < stop:
+        c = text[i]
+        if c in "\"'":
+            i += 1
+            while i < stop and text[i] != c and text[i] != "\n":
+                i += 2 if text[i] == "\\" else 1
+            if i >= stop or text[i] != c:
+                return None, i
+            previous = c
+        elif c == "`":
+            stack.append(depth)  # Inside a template literal until the next unescaped backtick or ${.
+            i += 1
+            while i < stop and text[i] != "`" and not text.startswith("${", i):
+                i += 2 if text[i] == "\\" else 1
+            if i >= stop:
+                return None, i
+            if text[i] == "`":
+                stack.pop()
+                previous = "`"
+            else:
+                depth += 1
+                i += 1
+                previous = "{"
+        elif c == "/" and text.startswith("//", i):
+            newline = text.find("\n", i, stop)
+            if newline < 0:
+                return None, i
+            i = newline
+            continue
+        elif c == "/" and text.startswith("/*", i):
+            close = text.find("*/", i + 2, stop)
+            if close < 0:
+                return None, i
+            i = close + 2
+            continue
+        elif c == "/" and (previous in REGEX_AFTER or previous == "<" and text[i - 1] != "<"):
+            # After "<", a regex follows a space (x < /a/.test(y)); "</" closes a JSX element.
+            i += 1
+            in_class = False
+            while i < stop and text[i] != "\n" and (in_class or text[i] != "/"):
+                if text[i] == "\\":
+                    i += 1
+                elif text[i] == "[":
+                    in_class = True
+                elif text[i] == "]":
+                    in_class = False
+                i += 1
+            if i >= stop or text[i] != "/":
+                return None, i
+            previous = "/x"  # A regex literal ends an operand.
+        elif c == "{":
+            depth += 1
+            previous = c
+        elif c == "}":
+            depth -= 1
+            if depth == 0:
+                return i + 1, i + 1
+            if stack and depth == stack[-1]:
+                # Back inside a template literal after ${…}: continue to its end.
+                i += 1
+                while i < stop and text[i] != "`" and not text.startswith("${", i):
+                    i += 2 if text[i] == "\\" else 1
+                if i >= stop:
+                    return None, i
+                if text[i] == "`":
+                    stack.pop()
+                    previous = "`"
+                else:
+                    depth += 1
+                    i += 1
+                    previous = "{"
+            else:
+                previous = c
+        elif (c == "+" or c == "-") and text.startswith(c, i + 1):
+            previous = ")"  # i++ and i-- end an operand, so a following "/" divides.
+            i += 2
+            continue
+        elif identifier := IDENTIFIER.match(text, i, stop):
+            # A keyword after "." is a property (obj.return / 2), so "/" then divides.
+            previous = "" if identifier.group(0) in REGEX_KEYWORDS and previous != "." else "a"
+            i = identifier.end()
+            continue
+        elif not c.isspace():
+            previous = c
+        i += 1
+    return None, i
+
+
+def _scan_tag(text, i):
+    """(end of the HTML, JSX or Angular open tag at text[i] or None, index reached).
+
+    Follows the CommonMark tag grammar for names and attributes, with JSX
+    {expressions} scanned as JavaScript, so "<640px … >1024px" and
+    "<sm (U-001) and >lg" are not tags.
+    """
+    stop = min(len(text), i + MAX_TAG)
+    name = TAG_NAME.match(text, i + 1, stop)
+    if not name:
+        return None, i + 1
+    j = name.end()
+    while j < stop:
+        k = j
+        while k < stop and text[k].isspace():
+            k += 1
+        if k >= stop:
+            return None, k
+        if text.startswith("/>", k):
+            return k + 2, k + 2
+        if text[k] == ">":
+            return k + 1, k + 1
+        if k == j:
+            return None, k  # Attributes are separated by whitespace.
+        j = k
+        if text[j] == "{":
+            end, reached = _scan_js(text, j, stop)
+            if end is None:
+                return None, reached
+            j = end
+            continue
+        if (m := PLAIN_ATTRIBUTE.match(text, j, stop)) or (m := REF_ATTRIBUTE.match(text, j, stop)):
+            needs_value = False
+        elif m := BOUND_ATTRIBUTE.match(text, j, stop):
+            needs_value = True
+        else:
+            return None, j
+        j = m.end()
+        k = j
+        while k < stop and text[k].isspace():
+            k += 1
+        if k < stop and text[k] == "=":
+            k += 1
+            while k < stop and text[k].isspace():
+                k += 1
+            if k < stop and text[k] in "\"'":
+                close = text.find(text[k], k + 1, stop)
+                if close < 0:
+                    return None, stop
+                j = close + 1
+            elif k < stop and (text[k] == "{" or text.startswith("${", k)):
+                k += text[k] == "$"  # A Lit binding: @click=${this.go}.
+                end, reached = _scan_js(text, k, stop)
+                if end is None:
+                    return None, reached
+                j = end
+            elif value := UNQUOTED_VALUE.match(text, k, stop):
+                j = value.end()
+            else:
+                return None, k
+        elif needs_value:
+            return None, k
+    return None, j
+
+
+URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     r"(?P<fence>^[ \t]{0,3}(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
@@ -353,10 +578,18 @@ PROSE_PART = re.compile(
     r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
     r"(?:^[ \t]{0,3}(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
     # A code span closes only at a backtick run of exactly the opening length.
-    r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>.*?)(?<!`)(?P=ticks)(?!`)"
-    r"|(?P<comment><!--.*?(?:-->|\Z))"
-    r"|(?P<markup><(?:\"[^\"]*\"|'[^']*'|[^<>\"'])*>)"
-    r"|(?P<url>https?://[^\s<>\"'`，、。；（）「」『』]+)"
+    # Like CommonMark, a code span stays within its paragraph: it never crosses
+    # a blank line or a fence opener, so a stray backtick is literal text.
+    r"|(?<!`)(?P<ticks>`+)(?!`)(?P<code>(?:(?!\n[ \t]*\r?\n|\n[ \t]{0,3}(?:```|~~~)).)*?)(?<!`)(?P=ticks)(?!`)"
+    # A comment opener; its end is found in _rewrite_prose (see there).
+    r"|(?P<comment><!--)"
+    # Closing tags, declarations and processing instructions; an open tag is
+    # only marked here ("<" before a name) and measured by _scan_tag.
+    r"|(?P<markup></[a-z][\w.:-]*\s*>|<[!?][^<>]*>)"
+    r"|(?P<open_tag><)(?=[a-z])"
+    # A URL, including raw Japanese path or query text and balanced (…), runs
+    # to whitespace, quotes, an unbalanced bracket or Japanese punctuation.
+    r"|(?P<url>https?://(?:" + URL_CHAR + "|" + _balanced("(", ")", r"[^\s()<>]") + r")+)"
     r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(
@@ -607,9 +840,37 @@ def _rewrite_prose(value, mapping):
 
     block_spans = [match.span() for match in PROSE_BLOCK_BREAK.finditer(value)]
     protected_spans, literal_spans, source_spans = list(block_spans), [], []
-    for match in PROSE_PART.finditer(value):
-        literal = (match["fence"] is not None or match["comment"] is not None
-                   or match["markup"] is not None or match["url"] is not None
+    position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    next_close = None  # The first "-->" at or after the last opener searched, or -1.
+    while (match := PROSE_PART.search(value, position)) is not None:
+        position = match.end()
+        if match["comment"] is not None:
+            # The first "-->" after one opener is also the first after any later
+            # opener before it, so each close is searched for once: linear time.
+            if next_close is None or (next_close != -1 and next_close < match.end()):
+                next_close = value.find("-->", match.end())
+            line_start = value.rfind("\n", 0, match.start()) + 1
+            if next_close != -1:
+                end = next_close + 3
+            elif re.fullmatch(r"[ \t]{0,3}", value[line_start:match.start()]):
+                end = len(value)  # An unclosed comment opening a line starts an HTML block.
+            else:
+                continue  # As in CommonMark, an unclosed inline <!-- is literal text.
+            protected_spans.append((match.start(), end))
+            literal_spans.append((match.start(), end))
+            position = end
+            continue
+        if match["open_tag"] is not None:
+            if budget <= 0:
+                continue
+            end, reached = _scan_tag(value, match.start())
+            budget -= reached - match.start()
+            if end is not None:
+                protected_spans.append((match.start(), end))
+                literal_spans.append((match.start(), end))
+                position = end
+            continue
+        literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
         if literal:
             protected_spans.append(match.span())
@@ -741,8 +1002,20 @@ def merge_flows(base, fragment):
         raise RecordError("flows: expected an object")
     if not isinstance(fragment, dict):
         raise RecordError("flows fragment: expected an object with a flows list")
-    out = {**base, **{k: v for k, v in fragment.items() if k != "flows"}}
+    _known_keys(fragment, (*FLOWS_KEYS, "remove"), "flows fragment")
+    out = {**base, **{k: v for k, v in fragment.items() if k not in ("flows", "remove")}}
+    if "tokens" in fragment and fragment["tokens"] is None:  # Drops a token source recorded in error.
+        out.pop("tokens", None)
     by_id = _indexed(base.get("flows", []), "flows.flows", "id", FLOW_ID)
+    remove = fragment.get("remove", {})
+    if (not isinstance(remove, dict) or set(remove) - {"flows"}
+            or not isinstance(remove.get("flows", []), list)
+            or not all(isinstance(x, str) for x in remove.get("flows", []))):
+        raise RecordError('flows fragment.remove: expected {"flows": [flow ids]}')
+    for fid in remove.get("flows", []):
+        if fid not in by_id:
+            raise RecordError(f"flows fragment.remove.flows: no such flow {fid!r}")
+        del by_id[fid]
     by_id.update(_indexed(fragment.get("flows", []), "flows fragment.flows", "id", FLOW_ID))
     out["flows"] = list(by_id.values())
     return out
@@ -753,6 +1026,7 @@ def merge(base, fragment):
         raise RecordError("findings: expected an object")
     if not isinstance(fragment, dict):
         raise RecordError("fragment: expected an object")
+    _known_keys(fragment, (*RECORD_KEYS, "remove"), "fragment")
     for key in LIST_KEYS:
         if key in base:
             _strings(base[key], key, nonempty=False)
@@ -800,6 +1074,8 @@ def main(argv=None):
             check_findings(load_json(target), flow_ids_beside(target))
             print(f"ok {target}")
             return 0
+        if not target.parent.is_dir():
+            raise RecordError(f"{target.parent}: output directory does not exist")
         bad = unsafe_target(target.parent, (target.name,))
         if bad is not None:
             raise RecordError(f"refusing to write {bad}: it exists as a symlink or non-regular file")

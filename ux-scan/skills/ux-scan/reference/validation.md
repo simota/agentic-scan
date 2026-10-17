@@ -1,6 +1,6 @@
 # Validation
 
-**Read when:** VERIFY — before any finding is merged with a verdict.
+**Read when:** VERIFY — before settling any finding's verdict (merging may record `Unverified` until then).
 
 Every finding answers four questions, each with evidence (`path:line`, flow id,
 inventory key, screenshot the requester supplied):
@@ -40,7 +40,7 @@ the rendered report before sharing it (`reference/report.md`).
 
 | Verdict | When |
 |---|---|
-| `Valid` | All four answered with evidence; the defect is reached and not compensated |
+| `Valid` | All four answered with evidence; the defect is reached and not compensated (for an Info finding: present in shipped code, with no user-visible effect today) |
 | `Likely` | Defect confirmed in code; its rendered effect or reach not fully shown |
 | `Unverified` | A candidate not yet read in context. A working state only: `scripts/contract_check.py` rejects a record that still has one |
 | `Unlikely` | Evidence points to compensation, intent or a state nobody reaches |

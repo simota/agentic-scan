@@ -25,6 +25,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from file_io import read_regular  # noqa: E402
+from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
@@ -38,9 +39,13 @@ PDF_STAMP = "ux-scan-pdf"
 PAGE_STAMP = "ux-scan-page"
 PAGE_KIND_STAMP = "ux-scan-page-kind"
 PAGE_TAG = re.compile(rb'<meta name="ux-scan-page" content="sha256:[0-9a-f]{64}">')
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\..*)?|.*\.(?:pem|key|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|"
-                       r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*secrets?(?:\..*)?|\.npmrc|\.pypirc)$")
-SECRET_LINE = re.compile(r"(?i)(?:secret|token|passw(?:or)?d|api[_-]?key|private[_-]?key|client[_-]?secret)\s*[\"']?\s*[:=]")
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:[-_.].*)?|.*\.env|\.envrc|\.dev\.vars|.*\.tfvars(?:\.json)?|\.git|"
+                       r".*\.(?:pem|key|p8|p12|pfx|jks|keystore)|id_[rd]sa.*|\.netrc|\.htpasswd|kubeconfig|\.docker|"
+                       r"id_(?:ecdsa|ed25519).*|.*credentials.*|.*service[-_]?account.*\.json|.*secrets?(?:\..*)?|"
+                       r"\.npmrc|\.pypirc|.*\.tfstate(?:\.backup)?|client_secret.*\.json|.*adminsdk.*\.json|"
+                       r"google-services\.json|\.pgpass|_netrc|\.vault-token|\.s3cfg|\.boto)$")
+# Only these end a line for path:line, as in editors and grep -n.
+SOURCE_LINE_END = re.compile(r"\r\n|\r|\n")
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 40
@@ -64,13 +69,15 @@ LABELS = {
            "verify_text": "Confirm the user reaches this state and it is not compensated elsewhere before changing it.",
            "observed": "Observed", "expected": "Expected", "criterion": "Criterion", "flow": "Flow",
            "screen": "Screen", "viewport": "Viewport", "occurrences": "Occurrences", "impact": "Impact",
-           "evidence": "Verification", "intent": "Intent checked"},
+           "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]",
+           "viewports": "Viewports", "locales": "Locales"},
     "ja": {"kind": "UX診断", "title": "UX診断書", "dashboard_title": "UX診断結果",
            "running_footer": "UX診断", "fix": "修正", "verify": "先に検証",
            "verify_text": "変更する前に、利用者が実際にこの状態に到達し、他の箇所で補われていないことを確認してください。",
            "observed": "現状", "expected": "あるべき状態", "criterion": "判断基準", "flow": "フロー",
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
-           "evidence": "検証根拠", "intent": "意図の確認"},
+           "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]",
+           "viewports": "ビューポート", "locales": "ロケール"},
 }
 
 
@@ -146,7 +153,7 @@ def output_lock(out):
         lock.rmdir()
 
 
-def snippet(repo, location):
+def snippet(repo, location, masked="[masked: looks like a secret]"):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
     if not repo or not m or SENSITIVE.search(m["path"]):
@@ -162,16 +169,38 @@ def snippet(repo, location):
         text = read_regular(root / relative, MAX_SNIPPET_BYTES, root=root).decode("utf-8")
         if "\0" in text:
             return None
-        lines = text.splitlines()
+        lines = SOURCE_LINE_END.split(text)
+        if lines[-1] == "":
+            lines.pop()
     except (ValueError, OSError, RuntimeError):
         return None
     if start > len(lines):
         return None
     first = max(1, start - CONTEXT)
     last = min(len(lines), end + CONTEXT, first + MAX_SNIPPET_LINES - 1)
-    shown = ["[masked: looks like a secret]" if SECRET_LINE.search(line) else line[:240]
-             for line in lines[first - 1:last]]
+    # Private-key blocks are found across the whole file, since an excerpt may
+    # start inside one. Other Unicode line breaks stay inside their line, shown
+    # as a visible marker.
+    config = CONFIG_FILE.search(m["path"]) is not None  # .env, .properties, YAML: values, never code.
+    hidden = private_key_lines(lines) | continued_secret_lines(lines, first - 1 - CONTINUATION_LINES, last, config)
+    shown = [masked if index in hidden or secret_line(line, config)
+             else report.LINE_BREAKS.sub("\u2424", line[:SHOWN_CHARACTERS])
+             for index, line in enumerate(lines[first - 1:last], first - 1)]
     return {"start": first, "hit": [start, min(end, last)], "lines": shown}
+
+
+def judged_scope(meta, flows, T):
+    """The scope with the supported viewports and locales it was judged against.
+
+    flows.json is the record severity is judged against, so its values win
+    over the optional copies in meta.
+    """
+    parts = [meta.get("scope", "")]
+    for key in ("viewports", "locales"):
+        values = (flows or {}).get(key) or meta.get(key)
+        if values:
+            parts.append(f"{T[key]}: {', '.join(values)}")
+    return " · ".join(p for p in parts if p)
 
 
 def to_common(data, lang, flows=None, repo=None):
@@ -190,7 +219,7 @@ def to_common(data, lang, flows=None, repo=None):
                   (T["occurrences"], "\n".join(f.get("occurrences", []))),
                   (T["evidence"], f["validation"].get("evidence", "")),
                   (T["intent"], f["validation"].get("intent_checked", ""))]
-        fix_is_action = f["status"] == "Open" and verdict == "Valid"
+        fix_is_action = f["status"] == "Open" and verdict == "Valid" and bool(f.get("fix", "").strip())
         if fix_is_action:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["fix"]]
         item = {"id": f["id"], "title": f["title"], "severity": f["severity"], "status": f["status"],
@@ -202,14 +231,15 @@ def to_common(data, lang, flows=None, repo=None):
         if f["status"] == "Open" and verdict not in EXCLUDED:
             item["action"] = ({"label": T["fix"], "text": f.get("fix", "")} if fix_is_action
                               else {"label": T["verify"], "text": T["verify_text"]})
-        excerpt = snippet(repo, f["location"])
+        excerpt = snippet(repo, f["location"], T["masked"])
         if excerpt:
             item["snippet"] = excerpt
         findings.append(item)
     meta = data["meta"]
     return {
         "format": report.FORMAT,
-        "meta": {k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
+        "meta": {**{k: meta[k] for k in ("project", "date", "assessor", "scope", "method", "commit") if meta.get(k)},
+                 **({"scope": scope} if (scope := judged_scope(meta, flows, T)) else {})},
         "report": {k: T[k] for k in ("kind", "title", "dashboard_title", "running_footer")},
         "summary": data.get("summary", ""),
         "findings": findings,

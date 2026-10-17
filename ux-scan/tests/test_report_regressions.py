@@ -192,6 +192,295 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
 
+    def test_excerpts_mask_suffixed_secret_names_and_url_credentials(self):
+        (self.repo / "settings.py").write_text(
+            "DEBUG = False\n"
+            "SECRET_KEY = 'django-insecure-HIDDEN_ONE'\n"
+            "AWS_SECRET_ACCESS_KEY = 'HIDDEN_TWO'\n"
+            "const config = { secretKey: 'HIDDEN_THREE' };\n"
+            "DATABASE_URL = postgres://user:HIDDEN_FOUR@db/app\n"
+            "label = 'Password'\n", encoding="utf-8")
+        lines = render.snippet(self.repo, "settings.py:3")["lines"]
+        self.assertNotIn("HIDDEN", "\n".join(lines))
+        self.assertIn("label = 'Password'", lines)
+        ui = ['  "passwordLabel": "Password",', '  "passwordPlaceholder": "At least 8 characters",',
+              '  "secretQuestion": "Your first pet?",', '  passwordHint: "Use a phrase",']
+        (self.repo / "en.json").write_text("{\n" + "\n".join(ui) + "\n}\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "en.json:3")["lines"][1:5], ui)
+        more = ["STRIPE_SECRET_KEY_LIVE=HIDDEN_FIVE", "DB_PASSWORD_PROD=HIDDEN_SIX", "AUTH_TOKEN_V2=HIDDEN_SEVEN",
+                "apiKeys: ['HIDDEN_EIGHT']", 'headers = {"Authorization": "Bearer HIDDEN9f8e7d6c5b4a"}',
+                "key = 'sk_live_HIDDEN_TEN'", "aws = 'AKIAHIDDENELEVEN1234'"]
+        keep = ["tokens: { spacing: [4, 8, 12] },", "const designTokens = loadTokens();",
+                "passwordConfirmLabel: 'Repeat password',"]
+        (self.repo / "more.ts").write_text("\n".join(more + keep) + "\n", encoding="utf-8")
+        lines = render.snippet(self.repo, "more.ts:4-7")["lines"]
+        self.assertNotIn("HIDDEN", "\n".join(lines))
+        self.assertEqual(lines[-3:], keep)
+        for name in (".envrc", ".dev.vars", "prod.tfvars", ".git/config", "deploy/prod.env", ".env-local",
+                     "service-account.json", "AuthKey.p8", ".htpasswd", "kubeconfig", ".docker/config.json"):
+            path = self.repo / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("value = 1\n", encoding="utf-8")
+            with self.subTest(name=name):
+                self.assertIsNone(render.snippet(self.repo, f"{name}:1"))
+
+    def test_pages_state_the_viewports_and_locales_judged_against(self):
+        # flows.json is authoritative; a stale copy in meta is not shown.
+        self.data["meta"].update(viewports=["999x999"], locales=["xx"])
+        self.flows.update(viewports=["360x640", "1280x800"], locales=["en", "de"])
+        self.save_inputs()
+        for lang, labels in (("en", ("Viewports: 360x640, 1280x800", "Locales: en, de")),
+                             ("ja", ("ビューポート: 360x640, 1280x800", "ロケール: en, de"))):
+            with self.subTest(lang=lang):
+                self.assertEqual(self.invoke(lang=lang)[0], 0)
+                for page in ("report.html", "dashboard.html"):
+                    text = (self.out / page).read_text(encoding="utf-8")
+                    for label in labels:
+                        self.assertIn(label, text)
+                    self.assertNotIn("999x999", text)
+
+    def test_secret_masking_keeps_ui_lines_and_stays_linear(self):
+        import time
+        ui = ["--token-color-primary: #333;", "passwordConfirm: z.string().min(8, 'Too short'),",
+              "const isPasswordValid = password.length >= 8;", "secretariat: 'Secretariat office',",
+              "const pwdInput = useRef(null);", "tokens: { spacing: [4, 8] },", "passwordLabel: 'Password',"]
+        secrets = ["accessToken: 'HIDDEN'", "STRIPE_SECRET_KEY_LIVE=HIDDEN", "PRIVATE_KEY_PEM=HIDDEN",
+                   "password2 = 'HIDDEN'", "apiKeys: ['HIDDEN']", "DB_PASSWORD_PROD=HIDDEN", "AUTH_TOKEN_V2=HIDDEN"]
+        for line in ui:
+            with self.subTest(line=line):
+                self.assertFalse(render.secret_line(line))
+        for line in secrets:
+            with self.subTest(line=line):
+                self.assertTrue(render.secret_line(line))
+        (self.repo / "min.js").write_text("secret" * 300000 + "\n", encoding="utf-8")
+        started = time.monotonic()
+        render.snippet(self.repo, "min.js:1")
+        self.assertLess(time.monotonic() - started, 2)
+
+    def test_secrets_crossing_the_excerpt_cutoff_are_masked(self):
+        lines = ["x" * 220 + " url = https://user:SECRETSECRETSECRET@db.example/app",
+                 "y" * 226 + " Bearer abcdefghijklmnop",
+                 "z" * 225 + " https://user:" + "S" * 1000 + "@host",
+                 "w" * 300]
+        (self.repo / "long.ts").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "long.ts:1-4")["lines"]
+        self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
+        self.assertEqual(shown[3], "w" * 240)
+
+    def test_secret_values_are_masked_by_format_or_assigned_value(self):
+        leaks = ["const t = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig';",
+                 "key: 'AIzaSyA1234567890abcdefghijklmnopqrstu'", "pk = 'pk_live_51Habc'",
+                 "WEBHOOK=whsec_abc123", "OPENAI=sk-proj-abcdefghijklmnop1234",
+                 "token = 'github_pat_11ABC'", "SG.abcdefghijklmnopq.rstuvwxyz",
+                 "url: 'https://hooks.slack.com/services/T0/B0/XX'", "Authorization: 'Basic dXNlcjpwYXNz'",
+                 "define('DB_PASSWORD', 'hunter2');", 'os.environ.setdefault("SECRET_KEY", "django-insecure-x")',
+                 "<password>s3cr3t!</password>", '<add key="ApiKey" value="abc123def"/>',
+                 '<string name="api_key">abc123def</string>', "passphrase: correcthorse9",
+                 "credentials: 'user:pa55w0rd'", "pass: 'letmein'", 'Password string = "hunter22"',
+                 "curl -u admin:hunter2 https://x", "mysql -uroot -phunter2", "PASSWORD=HIDDENVALUE",
+                 "const KEY = `-----BEGIN PRIVATE KEY-----", "ADMIN_PASSWORD=Secret", "spring.datasource.password=Sommer",
+                 'password: "Welcome"', '$password = "Admin";', "'password' => 'Secret',",
+                 'secret = "Correct-Horse-Battery"', 'password = "contraseña123"', "password={'hunter22'}",
+                 "DB_PASSWORD=p@ss", "API_KEY=12345", 'const API_KEY = "Abcdefghijklmnop";',
+                 'headers: { Authorization: "Bearer abcdefghijklmnopqrstuvwxyzABCDEF" }',
+                 'password = "password123"', 'SECRET_KEY = "mysecretvalue123"', 'token = "token_abcdef123"',
+                 "password: 'password'", 'password = "correct horse battery staple"', 'password = "abc"',
+                 "pwd: 'x'", 'DBPassword = "hunter2"', 'APISecret: "s3cr3t"', 'AWSAccessKey = "abcd1234"',
+                 "define('DBPassword', 'x');", 'password = "it\'s me"',
+                 'const password: string = "hunter2";', 'password: str = "hunter2"', 'password?: string | null = "x9";',
+                 'password = String("hunter2")', '<Login password={String("hunter2")} />',
+                 'password = "' + "k" * 1000 + '"', 'password = "abc', 'DBPASS = "hunter2"', 'APITOKEN: "abc1"',
+                 'MYSECRET = "z"', 'userPASSWORD = "x"', 'password = (("hunter2"))', 'password={("hunter2")}',
+                 'password = (( String("x9") ))', "SECRET_KEY_BASE=8f3a9c2b7e1d4f60", "secret_key_base: 8f3a",
+                 "PASSWORD_ADMIN=hunter2", 'password_confirmation: "hunter2"', "DB_PASSWORD=Pa55.word",
+                 "password: hunter2.secret", 'const SECRET = process.env.SECRET || "dev-secret-9f8e7d";',
+                 'const password = process.env.PW ?? "hunter2";', "REDIS_URL: redis://:s3cr3tPass@cache:6379/0",
+                 'mypassword = "hunter2"', "docker login --username bob --password hunter2", "cli --token=abc123",
+                 "-----BEGIN PGP PRIVATE KEY BLOCK-----", 'password = os.getenv("PW") or "hunter2"',
+                 'docker login --password "hunter2"', "cli --token='abc123'",
+                 'const password = process.env.PASSWORD || ("hunter2")',
+                 'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
+                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 "spring.datasource.password=Sommer.x"]
+        for line in leaks:
+            with self.subTest(leak=line):
+                self.assertTrue(render.secret_line(line))
+        ux = ['"signup": {"password": "Password", "invalid": "Invalid input", "failed": "Error 500"}',
+              "password: string;", "password: z.string().min(8),", "password: { minLength: 8 },",
+              'forgotPassword: "Forgot password?",', "showPassword: false,", '"password": "パスワード",',
+              "token: colors.primary,", "<PasswordField password={password} />",
+              "// Send the token as Bearer authentication", "const [password, setPassword] = useState('');",
+              "apiKey: process.env.API_KEY,", '<input type="password" autoComplete="new-password" />',
+              "--token-color: #ff0000;", "--color-token-primary: #0f62fe;", "$token-spacing: 1.5rem;",
+              "tokenColor: '#ff0000',", "--password-field-border: #d0d0d0;", 'credentials: "include",',
+              'passwordStrength: "strong",', "passwordLabel: 'password_label',",
+              'password_reset_url: "/reset-password",', 'secretQuestion: "mother_maiden_name",',
+              '"password": "Passwort",', '"password": "パスワード",', 'password: "Enter your password",',
+              '"password": "Password is required.",', 'password: "",',
+              "<PasswordInput label='Password' />",
+              'elif token == "{":', "see /etc/passwd:1", "password: Optional[str] = None",
+              "const password: string = '';", 'password={useState("")}', 'password: "Enter your password',
+              "password={(password)}", "password: ((props.value))", 'password={("Password")}',
+              "password: form.password,", "password: values.pw", 'password_confirmation: "Confirm password"',
+              "docker login --password-stdin", "--password $PASSWORD", 'compass: "north"',
+              'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
+              'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
+              "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
+              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", 'password: "${DB_PASSWORD}"', "password: '$PW'",
+              'password: "Password" /* label */']
+        for line in ux:
+            with self.subTest(ux=line):
+                self.assertFalse(render.secret_line(line))
+        (self.repo / "keys.ts").write_text(
+            "const a = 1;\nconst KEY = `-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSj\n"
+            "AoIBAQC7VJTUt9Us8cKjMzEfYyjiWA4R4/M2bS1G\n-----END PRIVATE KEY-----`;\nconst b = 2;\n",
+            encoding="utf-8")
+        shown = render.snippet(self.repo, "keys.ts:4")["lines"]
+        self.assertNotIn("MII", "\n".join(shown))
+        self.assertNotIn("AoIB", "\n".join(shown))
+        self.assertNotIn("END PRIVATE", "\n".join(shown))
+        self.assertIn("const b = 2;", shown)
+        self.assertEqual(render.private_key_lines(
+            ["-----BEGIN PGP PRIVATE KEY BLOCK-----", "", "lQOYBF3xQ1wB", "=a1Bc", "-----END PGP PRIVATE KEY BLOCK-----"]),
+            {0, 1, 2, 3, 4})
+        (self.repo / "wrapped.ts").write_text(
+            'const a = 1;\nexport const clientToken =\n  "a8f9e7d6c5b4a3f2e1d0";\nconst label =\n  "Password";\n',
+            encoding="utf-8")
+        # A long line before the name cannot push the wrapped value past the search limit.
+        self.assertEqual(render.continued_secret_lines(["x" * 740 + " password =", '  "hunter2";'], 0, 2), {0, 1})
+        # A value wrapped after a fallback operator, or after a comment line, is masked with its name.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = process.env.PASSWORD ||", '  "hunter2";'], 0, 2), {0, 1})
+        self.assertEqual(render.continued_secret_lines(["password =", "  // production override", '  "hunter2"'], 0, 3),
+                         {0, 2})
+        # A block comment spanning lines after the operator is skipped.
+        self.assertEqual(render.continued_secret_lines(
+            ["password = process.env.PW || /* dev", "   still comment", '*/ "hunter2"'], 0, 3), {0, 2})
+        self.assertEqual(render.continued_secret_lines(
+            ["password =", "  process.env.PW || /* dev", '*/ "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["password =", '  /* dev */ "hunter2"'], 0, 2), {0, 1})
+        # The look-back covers the whole continuation window before the excerpt.
+        (self.repo / "early.ts").write_text(
+            "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",
+            encoding="utf-8")
+        early = render.snippet(self.repo, f"early.ts:{14 + render.CONTEXT}")
+        self.assertEqual((early["start"], early["lines"][0]), (14, render.LABELS["en"]["masked"]))
+        # An expression wrapped over several lines is followed while it stays open.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password =", "  process.env.PASSWORD ||", '  "hunter2"'], 0, 3), {0, 1, 2})
+        for lines in (["const password = process.env.PW ||", '  ""'], ["const label = isNew ?", '  "Password"'],
+                      ["const password =", "  process.env.PASSWORD ||", '  ""'],
+                      ["password: z.string(),", '  "hunter2"']):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+        # Configuration files hold values, never code; a shell continuation carries a flag's value.
+        (self.repo / "application.properties").write_text("a=1\nspring.datasource.password = Sommer.x\nb=2\n",
+                                                          encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "application.properties:2")["lines"],
+                         ["a=1", render.LABELS["en"]["masked"], "b=2"])
+        (self.repo / "login.sh").write_text('echo hi\ndocker login --password \\\n  "hunter2"\necho done\n',
+                                            encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "login.sh:2")["lines"],
+                         ["echo hi", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"], "echo done"])
+        (self.repo / "config.yml").write_text("db:\n  password: ${DB_PASSWORD}\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "config.yml:2")["lines"], ["db:", "  password: ${DB_PASSWORD}"])
+        (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
+        self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
+        shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]
+        self.assertEqual(shown, ["const a = 1;", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"],
+                                 "const label =", '  "Password";'])
+        (self.repo / "KeyForm.tsx").write_text(
+            'const a = 1;\nconst b = 2;\nconst c = 3;\n<textarea placeholder="-----BEGIN PRIVATE KEY-----" />\n'
+            "const d = 4;\nconst e = { outline: 'none' };\nconst f = 6;\n", encoding="utf-8")
+        shown = render.snippet(self.repo, "KeyForm.tsx:6")["lines"]
+        # A BEGIN with no END masks only its own line, not the rest of the file.
+        self.assertEqual(shown, ["const c = 3;", render.LABELS["en"]["masked"], "const d = 4;",
+                                 "const e = { outline: 'none' };", "const f = 6;"])
+        for path in ("terraform.tfstate", "client_secret_123.json", "firebase-adminsdk-abc.json",
+                     "google-services.json", ".pgpass", "_netrc", ".vault-token", ".s3cfg", ".boto"):
+            with self.subTest(path=path):
+                self.assertIsNotNone(render.SENSITIVE.search(path))
+
+    def test_excerpt_lines_follow_editor_line_numbers(self):
+        (self.repo / "a.js").write_bytes(
+            "line1\n\fline2\nline3\nline4 \u2028 has LS\nline5\x85\nline6 TARGET\r\nline7\rline8\n".encode("utf-8"))
+        excerpt = render.snippet(self.repo, "a.js:6")
+        self.assertEqual(excerpt["start"], 3)
+        self.assertEqual(excerpt["lines"][excerpt["hit"][0] - excerpt["start"]], "line6 TARGET")
+        self.assertEqual(excerpt["lines"][-1], "line8")
+        self.data["findings"][0]["location"] = "a.js:6"
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+
+    def test_japanese_reports_localize_the_mask(self):
+        (self.repo / "a.ts").write_text("const token = 'HIDDEN';\n", encoding="utf-8")
+        self.data["findings"][0]["location"] = "a.ts:1"
+        self.save_inputs()
+        self.assertEqual(self.invoke(lang="ja")[0], 0)
+        page = (self.out / "report.html").read_text(encoding="utf-8")
+        self.assertIn(render.LABELS["ja"]["masked"], page)
+        self.assertNotIn("HIDDEN", page)
+
+    def test_open_valid_finding_without_a_fix_is_not_offered_as_an_empty_fix(self):
+        finding = self.data["findings"][0]
+        self.assertEqual((finding["status"], finding["validation"]["verdict"]), ("Open", "Valid"))
+        del finding["fix"]
+        item = render.to_common(self.data, "en", self.flows)["findings"][0]
+        self.assertEqual(item["action"]["label"], render.LABELS["en"]["verify"])
+
+    def test_not_applicable_punctuation_is_not_a_reason(self):
+        perspective = self.data["perspectives"][0]
+        for result in ("N/A.", "N/A：", "n/a —", "N/A。", "該当なし", "Not applicable", "NA", "N／A", "対象外。"):
+            with self.subTest(result=result):
+                perspective.update(result=result, note="")
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertIn("N/A without a reason", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        perspective.update(result="N/A: no motion in the product")
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_allowed_second_language_render_is_verified(self):
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertIn("ja: expected a directory holding the ja render",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True, allow=["ja"])), [])
+        self.data["findings"][0]["title"] = "Changed after the translation"
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("ja/report.html: stale ux-scan-source", errors)
+        self.assertIn("ja/dashboard.html: stale ux-scan-source", errors)
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True, allow=["ja"])), [])
+        (self.out / "ja" / "notes.txt").write_text("extra", encoding="utf-8")
+        (self.out / "ja" / "report.html").unlink()
+        errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("ja/report.html: missing", errors)
+        self.assertIn("ja/notes.txt: not part of", errors)
+        (self.out / "ja" / "notes.txt").unlink()
+        self.assertEqual(self.invoke(lang="en", out=self.out / "ja")[0], 0)
+        self.assertIn("ja/report.html: missing or invalid report language",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
+        self.assertIn("en: the main pages are already in en",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))
+
+    def test_contract_requires_exactly_one_shared_flow(self):
+        for priorities in (("secondary",), ("shared", "shared")):
+            with self.subTest(priorities=priorities):
+                self.flows = copy.deepcopy(FLOWS)
+                shared = [fl for fl in self.flows["flows"] if fl["priority"] == "shared"]
+                shared[0]["priority"] = priorities[0]
+                if len(priorities) == 2:
+                    self.flows["flows"][-2]["priority"] = "shared"
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertIn("shared flows; record exactly one shared unit",
+                              "\n".join(contract_check.problems(self.out, no_pdf=True)))
+
     def test_contract_rejects_non_object_and_invalid_utf8_without_tracebacks(self):
         self.assertEqual(self.invoke()[0], 0)
         for source in (b"[]", b"null", b"42", b'"text"', b"\xff"):

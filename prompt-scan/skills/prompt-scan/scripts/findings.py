@@ -145,8 +145,8 @@ def fragment_problems(fragment, name, base):
                 elif record.keys() - LINT_REVIEW:
                     problems.append(f"{name}: {ident}: L-* scanner fields {sorted(record.keys() - LINT_REVIEW)} "
                                     "come only from inventory.py; merge only validation")
-            elif ident not in known:
-                new += 1
+            else:
+                new += ident not in known
                 if {"source", "rule", "previous_validation"} & record.keys():
                     problems.append(f"{name}: {ident}: source, rule and previous_validation belong to inventory.py")
     if new > MAX_NEW_FINDINGS:
@@ -197,18 +197,23 @@ def merge(base, fragment):
     return base
 
 
-CODE_REF = re.compile(r"\bF-[0-9]{3}\b")
+CODE_REF = re.compile(r"\bF-[0-9]{3,}\b")
+# Quoted prompt text and links are not references to findings, even when they contain an F-NNN.
+VERBATIM = {"proposal", "references"}
+
+
+def order_key(f):
+    """The run contract's F-* order: severity, then path and line (the old id breaks ties)."""
+    m = render.LOC_RE.match(f["location"])
+    path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
+    return render.SEVERITIES.index(f["severity"]), path, line, render.id_key(f["id"])
 
 
 def renumber_map(findings):
-    """Old F-* id -> new id: severity, then path and line; excluded findings last, in their old order."""
-    def key(f):
-        m = render.LOC_RE.match(f["location"])
-        path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
-        return render.SEVERITIES.index(f["severity"]), path, line, f["id"]
+    """Old F-* id -> new id: order_key; excluded findings last, in their old order."""
     code = [f for f in findings if f["id"].startswith("F-")]
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=key)
-    excluded = sorted((f for f in code if f["validation"]["verdict"] in render.EXCLUDED), key=lambda f: f["id"])
+    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=order_key)
+    excluded = sorted((f for f in code if f["validation"]["verdict"] in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
@@ -218,12 +223,12 @@ def renumber(data, mapping):
         if isinstance(value, str):
             return CODE_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
         if isinstance(value, dict):
-            return {k: rewrite(v) for k, v in value.items()}
+            return {k: v if k in VERBATIM else rewrite(v) for k, v in value.items()}
         if isinstance(value, list):
             return [rewrite(v) for v in value]
         return value
     data = rewrite(data)
-    code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: f["id"])
+    code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: render.id_key(f["id"]))
     data["findings"] = code + [f for f in data["findings"] if not f["id"].startswith("F-")]
     return data
 
@@ -246,12 +251,14 @@ def write_report(path, data, original):
         current = path.read_bytes() if path.exists() else None
         if path.is_symlink() or current != original:
             raise MergeConflict(f"{path}: file changed concurrently; no update written")
+        # Keep an existing file's permissions; a new one is private, like the rendered outputs.
+        mode = stat.S_IMODE(os.stat(str(path)).st_mode) if current is not None else 0o600
         fd, temp = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
         with os.fdopen(fd, "wb") as stream:
             stream.write((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
             stream.flush()
             os.fsync(stream.fileno())
-        os.chmod(temp, 0o644)
+        os.chmod(temp, mode)
         os.replace(temp, path)
         temp = None
     finally:

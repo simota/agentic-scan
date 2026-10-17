@@ -18,7 +18,8 @@ and verdict are separate: a High finding can be `Likely`, a Low one `Valid`.
 | `FalsePositive` | The cited text or code does not have the claimed problem | Nonblank `evidence` |
 | `NotApplicable` | The problem is real in general but not on this path, model or configuration | Nonblank `evidence` |
 
-`contract_check.py` also requires `evidence` on every High and Medium `F-*`.
+`contract_check.py` also requires, on every High and Medium finding (`F-*` and
+`L-*`), a verdict other than `Unverified` and nonblank `evidence`.
 
 ## Falsification checks
 

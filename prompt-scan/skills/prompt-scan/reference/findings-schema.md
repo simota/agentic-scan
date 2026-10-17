@@ -29,7 +29,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language (`ja` or `en`) |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
-| `dirty` | `true` when tracked files had uncommitted changes at scan time |
+| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, or untracked files that are not ignored); `null` when Git could not tell. Excerpts come from `commit` only when `dirty` is `false`, otherwise from the working tree |
 
 ## Prompt record
 
@@ -70,15 +70,16 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 *contract* = required on every `F-*` by `contract_check.py`.
 
 `Valid`, `FalsePositive` and `NotApplicable` need nonblank
-`validation.evidence`; `contract_check.py` also requires it on every High and
-Medium `F-*`.
+`validation.evidence`. `contract_check.py` also requires, on every High and
+Medium finding (`F-*` and `L-*`), a verdict other than `Unverified` and nonblank
+evidence.
 
 ## Eval run record
 
 | Field | Meaning |
 |---|---|
 | `id` | `E-001`… |
-| `finding` | The finding it tests |
+| `finding` | The `F-*` finding it tests (`L-*` IDs are reassigned on every rescan) |
 | `model` | Model ID and parameters used |
 | `date` | Run date |
 | `cases`, `passed`, `failed` | Nonnegative integers; `passed + failed ≤ cases` (the rest errored or were skipped) |

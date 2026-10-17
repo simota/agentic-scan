@@ -37,27 +37,6 @@
       "kind": "defect",
       "severity": "High",
       "confidence": "Confirmed",
-      "category": "Output contract",
-      "title": "Parser reads key \"response\" but the prompt asks for \"answer\"",
-      "location": "app/llm/answer.py:23",
-      "prompt": "P-02",
-      "symptom": "Every successful call raises KeyError after the model returns valid JSON.",
-      "cause": "answer.prompt:11 asks for keys \"answer\" and \"sources\"; answer.py:23 reads data[\"response\"].",
-      "impact": "The feature never returns an answer; every request fails in the parser.",
-      "fix": "Read data[\"answer\"] in answer.py, or rename the key in the prompt; keep one source for the key names.",
-      "test": "Given a model reply that follows the prompt's format, answer() returns its \"answer\" string without raising.",
-      "validation": {
-        "verdict": "Valid",
-        "evidence": "Re-read answer.prompt:11 and answer.py:22-23; no other code path renames the key.",
-        "method": "static trace"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-002",
-      "kind": "defect",
-      "severity": "High",
-      "confidence": "Confirmed",
       "category": "Variables and assembly",
       "title": "Template variable context is never filled",
       "location": "app/llm/answer.py:14",
@@ -78,7 +57,77 @@
       "status": "Open"
     },
     {
+      "id": "F-002",
+      "kind": "defect",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Output contract",
+      "title": "Parser reads key \"response\" but the prompt asks for \"answer\"",
+      "location": "app/llm/answer.py:23",
+      "prompt": "P-02",
+      "symptom": "Every successful call raises KeyError after the model returns valid JSON.",
+      "cause": "answer.prompt:11 asks for keys \"answer\" and \"sources\"; answer.py:23 reads data[\"response\"].",
+      "impact": "The feature never returns an answer; every request fails in the parser.",
+      "fix": "Read data[\"answer\"] in answer.py, or rename the key in the prompt; keep one source for the key names.",
+      "test": "Given a model reply that follows the prompt's format, answer() returns its \"answer\" string without raising.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Re-read answer.prompt:11 and answer.py:22-23; no other code path renames the key.",
+        "method": "static trace"
+      },
+      "status": "Open"
+    },
+    {
       "id": "F-003",
+      "kind": "defect",
+      "severity": "Medium",
+      "confidence": "Model-dependent",
+      "category": "Output contract",
+      "title": "max_tokens 200 can cut the JSON reply mid-structure",
+      "location": "app/llm/answer.py:17",
+      "prompt": [
+        "P-01",
+        "P-02"
+      ],
+      "symptom": "Long answers stop before the closing brace and json.loads raises.",
+      "cause": "max_tokens=200 at answer.py:17; P-01 line 6 asks for every step; answer.py:22 parses without checking stop_reason.",
+      "impact": "Error-report answers, the case most likely to be long, fail in the parser.",
+      "fix": "Raise max_tokens to fit the longest valid reply, and treat stop_reason \"max_tokens\" as a handled failure.",
+      "test": "A reply stopped by max_tokens is reported as truncated, not passed to json.loads.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "200 tokens is below a step-by-step answer plus JSON framing; no stop_reason check in answer.py.",
+        "method": "static reading"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "kind": "defect",
+      "severity": "Medium",
+      "confidence": "Model-dependent",
+      "category": "Instruction consistency",
+      "title": "\"Under 50 words\" contradicts \"explain every step\"",
+      "location": "app/llm/prompts/support_system.md:5-6",
+      "prompt": "P-01",
+      "symptom": "Error reports get either a truncated explanation or a long answer that breaks the length rule, depending on which instruction the model weights.",
+      "cause": "Line 5 caps every answer at 50 words; line 6 requires every resolution step for errors. Neither states which wins.",
+      "impact": "Inconsistent answers for the most common support case; long answers also hit the max_tokens limit (F-003).",
+      "fix": "Scope the length rule: short answers for questions, numbered steps for error reports, with a stated upper bound.",
+      "proposal": {
+        "before": "Always answer in under 50 words.\nWhen a customer reports an error, explain every step needed to resolve it.",
+        "after": "Keep answers to questions under 50 words. When a customer reports an error, give the resolution as numbered steps (at most 8), one sentence each."
+      },
+      "test": "Eval: 20 error reports; assert each reply has numbered steps and at most 8 of them.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "Both lines are in the prompt as sent; no later layer resolves the conflict. Model behaviour not run.",
+        "method": "static reading"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
       "kind": "defect",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -103,53 +152,35 @@
       "status": "Open"
     },
     {
-      "id": "F-004",
-      "kind": "defect",
-      "severity": "Medium",
-      "confidence": "Model-dependent",
-      "category": "Instruction consistency",
-      "title": "\"Under 50 words\" contradicts \"explain every step\"",
-      "location": "app/llm/prompts/support_system.md:5-6",
-      "prompt": "P-01",
-      "symptom": "Error reports get either a truncated explanation or a long answer that breaks the length rule, depending on which instruction the model weights.",
-      "cause": "Line 5 caps every answer at 50 words; line 6 requires every resolution step for errors. Neither states which wins.",
-      "impact": "Inconsistent answers for the most common support case; long answers also hit the max_tokens limit (F-005).",
-      "fix": "Scope the length rule: short answers for questions, numbered steps for error reports, with a stated upper bound.",
-      "proposal": {
-        "before": "Always answer in under 50 words.\nWhen a customer reports an error, explain every step needed to resolve it.",
-        "after": "Keep answers to questions under 50 words. When a customer reports an error, give the resolution as numbered steps (at most 8), one sentence each."
-      },
-      "test": "Eval: 20 error reports; assert each reply has numbered steps and at most 8 of them.",
-      "validation": {
-        "verdict": "Likely",
-        "evidence": "Both lines are in the prompt as sent; no later layer resolves the conflict. Model behaviour not run.",
-        "method": "static reading"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-005",
-      "kind": "defect",
-      "severity": "Medium",
-      "confidence": "Model-dependent",
-      "category": "Output contract",
-      "title": "max_tokens 200 can cut the JSON reply mid-structure",
-      "location": "app/llm/answer.py:17",
-      "prompt": ["P-01", "P-02"],
-      "symptom": "Long answers stop before the closing brace and json.loads raises.",
-      "cause": "max_tokens=200 at answer.py:17; P-01 line 6 asks for every step; answer.py:22 parses without checking stop_reason.",
-      "impact": "Error-report answers, the case most likely to be long, fail in the parser.",
-      "fix": "Raise max_tokens to fit the longest valid reply, and treat stop_reason \"max_tokens\" as a handled failure.",
-      "test": "A reply stopped by max_tokens is reported as truncated, not passed to json.loads.",
-      "validation": {
-        "verdict": "Likely",
-        "evidence": "200 tokens is below a step-by-step answer plus JSON framing; no stop_reason check in answer.py.",
-        "method": "static reading"
-      },
-      "status": "Open"
-    },
-    {
       "id": "F-006",
+      "kind": "improvement",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Evaluation",
+      "title": "No eval or snapshot test covers the support prompts",
+      "location": "app/llm/answer.py:12",
+      "prompt": [
+        "P-01",
+        "P-02"
+      ],
+      "symptom": "F-002 and F-001 would have failed any end-to-end check, yet shipped.",
+      "cause": "The repository has no test or eval that renders the prompts or calls answer().",
+      "impact": "Prompt regressions reach users unnoticed.",
+      "fix": "Add a snapshot test of the rendered messages and a small eval set for the answer contract.",
+      "proposal": {
+        "before": "(no tests)",
+        "after": "tests/test_answer_prompt.py: render the full message list for a fixed ticket, question and two documents; compare with a stored snapshot. evals/answer.jsonl: 20 cases with expected sources."
+      },
+      "test": "The snapshot test fails when a template variable is dropped.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "No tests or evals directory in the repository.",
+        "method": "repository search"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-007",
       "kind": "improvement",
       "severity": "Low",
       "confidence": "Model-dependent",
@@ -174,7 +205,7 @@
       "status": "Open"
     },
     {
-      "id": "F-007",
+      "id": "F-008",
       "kind": "improvement",
       "severity": "Low",
       "confidence": "Model-dependent",
@@ -195,31 +226,6 @@
         "verdict": "Likely",
         "evidence": "No language rule in P-01 or P-02.",
         "method": "static reading"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-008",
-      "kind": "improvement",
-      "severity": "Low",
-      "confidence": "Confirmed",
-      "category": "Evaluation",
-      "title": "No eval or snapshot test covers the support prompts",
-      "location": "app/llm/answer.py:12",
-      "prompt": ["P-01", "P-02"],
-      "symptom": "F-001 and F-002 would have failed any end-to-end check, yet shipped.",
-      "cause": "The repository has no test or eval that renders the prompts or calls answer().",
-      "impact": "Prompt regressions reach users unnoticed.",
-      "fix": "Add a snapshot test of the rendered messages and a small eval set for the answer contract.",
-      "proposal": {
-        "before": "(no tests)",
-        "after": "tests/test_answer_prompt.py: render the full message list for a fixed ticket, question and two documents; compare with a stored snapshot. evals/answer.jsonl: 20 cases with expected sources."
-      },
-      "test": "The snapshot test fails when a template variable is dropped.",
-      "validation": {
-        "verdict": "Valid",
-        "evidence": "No tests or evals directory in the repository.",
-        "method": "repository search"
       },
       "status": "Open"
     },
@@ -269,20 +275,76 @@
     }
   ],
   "perspectives": [
-    {"name": "Task and intent", "result": "applied", "note": "TI1–TI5; TI3 via F-007"},
-    {"name": "Instruction consistency", "result": "applied", "note": "IC1–IC5; IC1 F-004"},
-    {"name": "Structure and placement", "result": "applied", "note": "ST1–ST5; ST4 L-001"},
-    {"name": "Variables and assembly", "result": "applied", "note": "VA1–VA6; VA1 F-002"},
-    {"name": "Output contract", "result": "applied", "note": "OC1–OC5; OC1 F-001, OC5 F-005"},
-    {"name": "Examples", "result": "N/A", "note": "No few-shot examples in P-01 or P-02"},
-    {"name": "Tools and agents", "result": "N/A", "note": "No tools passed on the only call (answer.py:15-21)"},
-    {"name": "Untrusted input", "result": "applied", "note": "UI1–UI5; UI1 F-003; UI3 no tools; UI4 output not rendered as HTML in this repository"},
-    {"name": "Safety and refusal", "result": "applied", "note": "SR1–SR4; no finding for a billing support scope"},
-    {"name": "Context budget", "result": "applied", "note": "CB1–CB5; prompts under 100 estimated tokens"},
-    {"name": "Model and parameters", "result": "applied", "note": "MP1–MP5; MP2 F-006, MP3 F-005; MP1 model list not checked (decision)"},
-    {"name": "Language and tone", "result": "applied", "note": "LT1–LT4; LT1, LT3 F-007"},
-    {"name": "Evaluation", "result": "applied", "note": "EV1–EV4; EV1 F-008"},
-    {"name": "Maintainability", "result": "applied", "note": "MT1–MT4; MT3 L-002"}
+    {
+      "name": "Task and intent",
+      "result": "applied",
+      "note": "TI1–TI5; TI3 via F-008"
+    },
+    {
+      "name": "Instruction consistency",
+      "result": "applied",
+      "note": "IC1–IC5; IC1 F-004"
+    },
+    {
+      "name": "Structure and placement",
+      "result": "applied",
+      "note": "ST1–ST5; ST4 L-001"
+    },
+    {
+      "name": "Variables and assembly",
+      "result": "applied",
+      "note": "VA1–VA6; VA1 F-001"
+    },
+    {
+      "name": "Output contract",
+      "result": "applied",
+      "note": "OC1–OC5; OC1 F-002, OC5 F-003"
+    },
+    {
+      "name": "Examples",
+      "result": "N/A",
+      "note": "No few-shot examples in P-01 or P-02"
+    },
+    {
+      "name": "Tools and agents",
+      "result": "N/A",
+      "note": "No tools passed on the only call (answer.py:15-21)"
+    },
+    {
+      "name": "Untrusted input",
+      "result": "applied",
+      "note": "UI1–UI5; UI1 F-005; UI3 no tools; UI4 output not rendered as HTML in this repository"
+    },
+    {
+      "name": "Safety and refusal",
+      "result": "applied",
+      "note": "SR1–SR4; no finding for a billing support scope"
+    },
+    {
+      "name": "Context budget",
+      "result": "applied",
+      "note": "CB1–CB5; prompts under 100 estimated tokens"
+    },
+    {
+      "name": "Model and parameters",
+      "result": "applied",
+      "note": "MP1–MP5; MP2 F-007, MP3 F-003; MP1 model list not checked (decision)"
+    },
+    {
+      "name": "Language and tone",
+      "result": "applied",
+      "note": "LT1–LT4; LT1, LT3 F-008"
+    },
+    {
+      "name": "Evaluation",
+      "result": "applied",
+      "note": "EV1–EV4; EV1 F-006"
+    },
+    {
+      "name": "Maintainability",
+      "result": "applied",
+      "note": "MT1–MT4; MT3 L-002"
+    }
   ],
   "checked_ok": [
     "answer.prompt keeps documents and the question in separate tags (answer.prompt:3-9)",
@@ -299,8 +361,8 @@
     "provider-side or framework-added system text is not visible"
   ],
   "next_steps": [
-    "Fix F-001 and F-002 together, then add F-008's snapshot test so both stay fixed",
-    "Move the ticket out of the system prompt (F-003) and close the <policy> tag (L-001)",
-    "Decide the length rule, then run F-004 and F-005's eval cases"
+    "Fix F-002 and F-001 together, then add F-006's snapshot test so both stay fixed",
+    "Move the ticket out of the system prompt (F-005) and close the <policy> tag (L-001)",
+    "Decide the length rule, then run F-004 and F-003's eval cases"
   ]
 }

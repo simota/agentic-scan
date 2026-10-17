@@ -1,5 +1,7 @@
 import json
+import os
 from pathlib import Path
+import stat
 import tempfile
 import unittest
 
@@ -61,6 +63,19 @@ class MergeTest(unittest.TestCase):
             "verdict": "FalsePositive", "evidence": "literal brace in a comment", "method": "static"}}]})
         self.assertEqual(code, 0, err)
 
+    def test_scanner_fields_refused_on_known_findings_too(self):
+        self.merge({"meta": META, "findings": [finding(1)]})
+        code, _, err = self.merge({"findings": [{"id": "F-001", "rule": "placeholder"}]})
+        self.assertEqual(code, 1)
+        self.assertIn("belong to inventory.py", err)
+
+    def test_write_keeps_permissions_and_creates_private_files(self):
+        self.merge({"meta": META})
+        self.assertEqual(stat.S_IMODE(self.out.stat().st_mode), 0o600)
+        os.chmod(self.out, 0o640)
+        self.merge({"checked_ok": ["x"]})
+        self.assertEqual(stat.S_IMODE(self.out.stat().st_mode), 0o640)
+
     def test_refuses_scanner_meta(self):
         code, _, err = self.merge({"meta": dict(META, commit="0" * 40)})
         self.assertEqual(code, 1)
@@ -106,7 +121,8 @@ class MergeTest(unittest.TestCase):
     def test_renumber_orders_by_severity_then_location_and_follows_references(self):
         excluded = {"verdict": "FalsePositive", "evidence": "handled in code", "method": "static"}
         self.merge({"meta": META, "findings": [
-            finding(1, location="b.py:9"),
+            finding(1, location="b.py:9", proposal={"before": "error F-002", "after": "error F-002 or F-004"},
+                    references=[{"title": "F-002 docs", "url": "https://example.com/F-002"}]),
             finding(2, severity="High", location="z.py:1", cause="same root as F-004"),
             finding(3, severity="High", location="a.py:5", validation=excluded),
             finding(4, location="b.py:2"),
@@ -124,6 +140,9 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(data["findings"][0]["cause"], "same root as F-002")
         self.assertEqual(data["eval_runs"][0]["finding"], "F-001")
         self.assertEqual(data["next_steps"], ["fix F-001 first, then F-003"])
+        # Quoted prompt text and links are not finding references.
+        self.assertEqual(data["findings"][2]["proposal"], {"before": "error F-002", "after": "error F-002 or F-004"})
+        self.assertEqual(data["findings"][2]["references"][0]["url"], "https://example.com/F-002")
         code, out, _ = run(findings.main, "renumber", self.out)
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)

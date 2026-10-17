@@ -10,9 +10,9 @@ executed and nothing leaves the machine.
 
 With --into, the lint hits replace every `L-*` finding in an existing
 findings.json (scanner text stays in English), and `meta.commit` / `meta.dirty`
-are set from the repository's Git state. A reviewer's earlier verdict on the
-same rule and location is kept as `previous_validation`; the new hit starts
-`Unverified`.
+are set from the repository's Git state. A reviewer's latest verdict on the
+same rule and location is kept as `previous_validation`, across rescans until a
+new review replaces it; the new hit starts `Unverified`.
 
 Exit codes: 0 written, 2 unreadable input or schema error.
 """
@@ -56,12 +56,18 @@ CALL_PATTERNS = [
     ("prompt-variable", re.compile(r"\b(?:SYSTEM_PROMPT|system_prompt|systemPrompt|PROMPT_TEMPLATE|"
                                    r"prompt_template|promptTemplate)\b\s*[:=]")),
 ]
-MODEL_RE = re.compile(r"""["'`]((?:claude-[a-z0-9][a-z0-9.-]*[a-z0-9])|(?:gpt-[0-9a-z][a-z0-9.-]*[a-z0-9])|"""
-                      r"""(?:o[134](?:-mini|-pro)?)|(?:gemini-[0-9][a-z0-9.-]*[a-z0-9])|"""
-                      r"""(?:mistral-[a-z0-9.-]*[a-z0-9])|(?:llama-?[0-9][a-z0-9.-]*[a-z0-9]))["'`]""")
+# Bare IDs plus the forms clouds use: Bedrock `us.anthropic.claude-…-v1:0`, Vertex `claude-…@20240620`,
+# Gemini `models/gemini-…`.
+_TAIL = r"(?:[a-z0-9.-]*[a-z0-9])?"
+MODEL_RE = re.compile(r"""["'`]((?:(?:[a-z]{2,6}\.)?anthropic\.)?claude-[a-z0-9]""" + _TAIL + r"""(?:@[0-9]{8})?"""
+                      r"""(?::[0-9]+)?|(?:chat)?gpt-[0-9a-z]""" + _TAIL + r"""|"""
+                      r"""o[134](?:-mini|-pro|-preview)?(?:-[0-9]{4}-[0-9]{2}-[0-9]{2})?|"""
+                      r"""(?:models/)?gemini-(?:[0-9]|pro|flash|ultra|nano|exp)""" + _TAIL + r"""|"""
+                      r"""mistral-[a-z0-9]""" + _TAIL + r"""|llama-?[0-9]""" + _TAIL + r""")["'`]""")
 VARIABLE_RES = [
-    re.compile(r"\{\{\s*([A-Za-z_][\w.]*)"),            # Jinja, Mustache, Handlebars
-    re.compile(r"(?<![{$])\{([A-Za-z_]\w*)\}(?!\})"),   # str.format, f-string style
+    re.compile(r"\{\{[-~]?\s*([A-Za-z_][\w.]*)"),       # Jinja ({{- x }}), Mustache, Handlebars ({{~ x}})
+    # str.format and f-string style, with an optional conversion and format spec: {amount:.2f}, {name!r}
+    re.compile(r"(?<![{$])\{([A-Za-z_]\w*)(?:![rsa])?(?::[^{}\s]*)?\}(?!\})"),
     re.compile(r"\$\{([A-Za-z_]\w*)\}"),                # JS template literal, string.Template
 ]
 TEMPLATE_TOKEN = re.compile(r"\{\{|\}\}|\{%|%\}")
@@ -188,15 +194,27 @@ def variables(text):
     return found
 
 
+FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+
+
 def fenced_lines(lines):
-    """Line numbers (1-based) inside Markdown code fences, which hold examples rather than prompt markup."""
-    inside, result = False, set()
+    """Line numbers (1-based) inside Markdown code fences, which hold examples rather than prompt markup.
+
+    As in CommonMark, a fence closes only on a bare run of its own character at least as long as the
+    opener, so a ``` line inside a ```` fence stays inside.
+    """
+    fence, result = None, set()
     for number, line in enumerate(lines, 1):
-        if line.lstrip().startswith(("```", "~~~")):
-            inside = not inside
+        m = FENCE.match(line)
+        if fence is None:
+            if m:
+                fence = m.group(1)
+                result.add(number)
+        else:
             result.add(number)
-        elif inside:
-            result.add(number)
+            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
+                    and not line[m.end():].strip():
+                fence = None
     return result
 
 
@@ -213,7 +231,7 @@ def lint_template(lines, fenced):
             else:
                 hits.append((number, f"closing {token} with no matching opener"))
     hits += [(number, f"{token} opened and never closed") for token, number in stack]
-    return hits[:1]
+    return [min(hits)] if hits else []
 
 
 def lint_tags(lines, fenced):
@@ -232,7 +250,7 @@ def lint_tags(lines, fenced):
 
 
 def lint_file(rel, text, tokens):
-    lines = text.splitlines()
+    lines = render.source_lines(text)
     fenced = fenced_lines(lines)
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [INLINE_CODE.sub("", line) for line in lines]
@@ -265,9 +283,16 @@ def lint_file(rel, text, tokens):
 
 
 def git_state(root):
+    """HEAD, and whether the tree under root differs from it (None when Git cannot tell).
+
+    Untracked files that are not ignored count: the scan read them, but HEAD does not hold them.
+    """
     def git(*args):
         try:
-            r = subprocess.run(["git", "-C", str(root), *args], capture_output=True, text=True, timeout=20)
+            # A repository's core.fsmonitor names a command that `git status` would run.
+            # --no-optional-locks: status must not refresh .git/index, a write inside the reviewed repository.
+            r = subprocess.run(["git", "--no-optional-locks", "-C", str(root), "-c", "core.fsmonitor=false", *args],
+                               capture_output=True, text=True, timeout=20)
         except (OSError, subprocess.TimeoutExpired):
             return None
         return r.stdout.strip() if r.returncode == 0 else None
@@ -275,8 +300,9 @@ def git_state(root):
     commit = git("rev-parse", "HEAD")
     if not commit:
         return None, None
-    status = git("status", "--porcelain", "--untracked-files=no")
-    return commit, bool(status)
+    # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
+    status = git("status", "--porcelain", "--", ".")
+    return commit, None if status is None else bool(status)
 
 
 def scan(root):
@@ -291,7 +317,7 @@ def scan(root):
         text = read_text(path)
         if text is None:
             continue
-        lines = text.splitlines()
+        lines = render.source_lines(text)
         if kind is not None:
             tokens = estimate_tokens(text)
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
@@ -306,7 +332,8 @@ def scan(root):
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
     commit, dirty = git_state(root)
-    lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"]))
+    lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
+                             int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
         "tool": "inventory.py", "version": 1, "root": root.name, "commit": commit, "dirty": dirty,
         "prompt_files": prompt_files, "call_sites": call_sites,
@@ -331,18 +358,28 @@ def lint_findings(lint):
     return result
 
 
+def hit_key(rule, location, text):
+    """What identifies one hit across rescans: unclosed-tag reports one hit per tag, possibly on one line."""
+    tag = re.search(r"<([a-z][\w-]*)>", text or "") if rule == "unclosed-tag" else None
+    return rule, location, tag.group(1) if tag else None
+
+
 def merge_into(findings_path, inventory):
     original = merge_tool.read_regular(findings_path)
     data = merge_tool.read_json(findings_path, original)
     if not isinstance(data, dict):
         raise render.SchemaError(f"{findings_path}: report must be an object")
-    old = {(f.get("rule"), f.get("location")): f.get("validation") for f in data.get("findings", [])
+    old = {hit_key(f.get("rule"), f.get("location"), f.get("cause")): f for f in data.get("findings", [])
            if isinstance(f, dict) and str(f.get("id", "")).startswith("L-")}
     new = lint_findings(inventory["lint"])
     for finding in new:
-        previous = old.get((finding["rule"], finding["location"]))
-        if isinstance(previous, dict) and previous.get("verdict") != "Unverified":
-            finding["previous_validation"] = previous
+        hit = old.get(hit_key(finding["rule"], finding["location"], finding["cause"]), {})
+        review = hit.get("validation")
+        # The latest review wins; a hit nobody re-reviewed since the last rescan keeps the older one.
+        if isinstance(review, dict) and review.get("verdict") != "Unverified":
+            finding["previous_validation"] = review
+        elif isinstance(hit.get("previous_validation"), dict):
+            finding["previous_validation"] = hit["previous_validation"]
     data["findings"] = [f for f in data.get("findings", [])
                         if not (isinstance(f, dict) and str(f.get("id", "")).startswith("L-"))] + new
     meta = data.setdefault("meta", {})

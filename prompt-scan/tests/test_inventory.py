@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 import unittest
+from unittest import mock
 
 from helpers import SAMPLE_APP, inventory, run, sample, write_json
 
@@ -64,6 +66,92 @@ class InventoryTest(unittest.TestCase):
     def test_skips_env_and_vendor(self):
         root = make_repo({"prompts/.env": "x\n", "node_modules/p/prompts/a.md": "TODO\n", "prompts/ok.md": "Hi\n"})
         self.assertEqual([f["path"] for f in inventory.scan(root)["prompt_files"]], ["prompts/ok.md"])
+
+    def test_model_ids_in_cloud_forms(self):
+        root = make_repo({"cfg.py": "\n".join([
+            'BEDROCK = "us.anthropic.claude-sonnet-4-20250514-v1:0"',
+            'VERTEX = "claude-3-5-sonnet@20240620"',
+            'GEMINI = ["models/gemini-1.5-pro", "gemini-pro"]',
+            'OPENAI = ["o1-preview", "o3-mini-2025-01-31", "chatgpt-4o-latest"]',
+            'SHORT = ["gpt-4", "claude-2", "llama3", "gemini-flash-latest"]',
+            'GLOBAL = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"',
+            'NOT_A_MODEL = ["gemini-cli", "claude-", "o3x"]',
+        ]) + "\n"})
+        self.assertEqual([m["id"] for m in inventory.scan(root)["models"]], [
+            "chatgpt-4o-latest", "claude-2", "claude-3-5-sonnet@20240620", "gemini-flash-latest", "gemini-pro",
+            "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "gpt-4", "llama3", "models/gemini-1.5-pro",
+            "o1-preview", "o3-mini-2025-01-31", "us.anthropic.claude-sonnet-4-20250514-v1:0"])
+
+    def test_variable_forms(self):
+        self.assertEqual(inventory.variables("{{- user }} {{~ name}} {amount:.2f} {who!r} {a: 1} {{ x }}"),
+                         ["user", "name", "x", "amount", "who"])
+
+    def test_fences_and_first_template_line(self):
+        self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})
+        self.assertEqual(inventory.lint_template(["{{ name", "", "stray %}"], set()),
+                         [(1, "{{ opened and never closed")])
+
+    def test_rescan_keeps_each_tag_review_on_a_shared_line(self):
+        root = make_repo({"prompts/a.md": "<rules><context>\n"})
+        out = Path(tempfile.mkdtemp())
+        data = sample()
+        data["findings"] = [f for f in data["findings"] if f["id"].startswith("F-")]
+        write_json(out / "findings.json", data)
+        args = (root, "--out", out / "inventory.json", "--into", out / "findings.json")
+        self.assertEqual(run(inventory.main, *args)[0], 0)
+        merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        verdicts = {}
+        for f in merged["findings"]:
+            if f["id"].startswith("L-"):
+                verdicts[f["id"]] = "FalsePositive" if "<rules>" in f["cause"] else "Valid"
+                f["validation"] = {"verdict": verdicts[f["id"]], "evidence": f["cause"], "method": "static"}
+        write_json(out / "findings.json", merged)
+        self.assertEqual(run(inventory.main, *args)[0], 0)
+        merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        kept = {f["cause"]: f["previous_validation"]["verdict"] for f in merged["findings"] if f["id"].startswith("L-")}
+        self.assertEqual(sorted(kept.values()), ["FalsePositive", "Valid"])
+        for cause, verdict in kept.items():
+            self.assertEqual(verdict, "FalsePositive" if "<rules>" in cause else "Valid")
+
+    def test_lint_order_compares_line_numbers(self):
+        root = make_repo({"prompts/a.md": "x\n" * 8 + "TODO\n<rules>\n"})
+        self.assertEqual([h["location"] for h in inventory.scan(root)["lint"]], ["prompts/a.md:9", "prompts/a.md:10"])
+
+    def test_dirty_is_scoped_to_the_scanned_tree(self):
+        root = make_repo({"svc/prompts/a.md": "one\n", "other/b.md": "two\n"})
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        (root / "other" / "b.md").write_text("changed\n", encoding="utf-8")
+        index = root / ".git" / "index"
+        before = index.stat().st_mtime_ns
+        commit, dirty = inventory.git_state(root / "svc")
+        self.assertRegex(commit, r"^[0-9a-f]{40}$")
+        self.assertIs(dirty, False)
+        self.assertIs(inventory.git_state(root)[1], True)
+        self.assertEqual(index.stat().st_mtime_ns, before, "git status rewrote the reviewed repository's index")
+        # An untracked prompt is part of the scan but not of HEAD.
+        (root / "svc" / "prompts" / "new.md").write_text("new\n", encoding="utf-8")
+        self.assertIs(inventory.git_state(root / "svc")[1], True)
+
+    def test_dirty_is_unknown_when_git_status_fails(self):
+        def fake(cmd, **kwargs):
+            ok = "rev-parse" in cmd
+            return subprocess.CompletedProcess(cmd, 0 if ok else 128, stdout="0" * 40 if ok else "", stderr="")
+        with mock.patch.object(inventory.subprocess, "run", side_effect=fake):
+            self.assertEqual(inventory.git_state(Path(".")), ("0" * 40, None))
+
+    def test_rescans_keep_the_latest_review(self):
+        out = Path(tempfile.mkdtemp())
+        write_json(out / "findings.json", sample())
+        for _ in range(2):  # The second rescan comes before anyone re-reviewed the hit.
+            code, _, err = run(inventory.main, SAMPLE_APP, "--out", out / "inventory.json",
+                               "--into", out / "findings.json")
+            self.assertEqual(code, 0, err)
+        merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        lint = [f for f in merged["findings"] if f["id"].startswith("L-")]
+        self.assertEqual([f["previous_validation"]["verdict"] for f in lint], ["Valid", "Valid"])
 
     def test_into_replaces_lint_findings_and_keeps_review(self):
         out = Path(tempfile.mkdtemp())

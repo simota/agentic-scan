@@ -4,9 +4,10 @@
     python3 render.py FINDINGS --out DIR [--lang ja|en] [--repo REPO] [--no-pdf]
 
 With --repo, each finding's `location` excerpt is embedded: read from the blob
-at `meta.commit` when the record names one (never from later working-tree
-edits), otherwise from the working tree. Credential-shaped values in excerpts
-are masked. Styles, PDF printing and safe writes come from the vendored
+at `meta.commit` when the record names one and the tree was known clean at scan time
+(never from later working-tree edits), otherwise from the working tree.
+Credential-shaped values in excerpts are masked, private-key blocks whole.
+--lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
 PROMPT_SCAN_PDF_TIMEOUT seconds (default: 120 plus 0.05 per finding, at most 900).
@@ -39,20 +40,24 @@ RESULTS = ["applied", "N/A", "not checked"]
 TOP_KEYS = {"schema_version", "meta", "prompts", "findings", "eval_runs", "perspectives",
             "checked_ok", "decisions", "limitations", "next_steps"}
 STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-FINDING_ID = re.compile(r"[FL]-[0-9]{3}")
+FINDING_ID = re.compile(r"[FL]-[0-9]{3,}")
 PROMPT_ID = re.compile(r"P-[0-9]{2,3}")
 EVAL_ID = re.compile(r"E-[0-9]{3}")
 LOC_RE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|"
                        r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# A whole private-key block, so masking it also hides the key body lines (an unterminated block runs to the end).
+KEY_BLOCK_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)",
+                          re.S)
 MAX_JSON_DEPTH = 100
 STAMP = '<meta name="prompt-scan-source" content="sha256:{}">'
 
 LABELS = {
     "en": {
         "title": "Prompt review report", "dashboard": "Prompt review dashboard",
-        "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present", "date": "Date",
+        "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present",
+        "dirty_unknown": "uncommitted changes not determined", "date": "Date",
         "assessor": "Assessor", "scope": "Scope", "abstract": "Summary",
         "summary_line": "{total} findings ({defects} defects, {improvements} improvements); "
                         "{high} High, {medium} Medium. {excluded} excluded with evidence.",
@@ -79,7 +84,8 @@ LABELS = {
     },
     "ja": {
         "title": "プロンプト診断レポート", "dashboard": "プロンプト診断ダッシュボード",
-        "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり", "date": "診断日",
+        "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり",
+        "dirty_unknown": "未コミットの変更は未確認", "date": "診断日",
         "assessor": "診断者", "scope": "範囲", "abstract": "要旨",
         "summary_line": "指摘 {total} 件（不具合 {defects} 件、改善提案 {improvements} 件）。"
                         "High {high} 件、Medium {medium} 件。根拠付きで除外 {excluded} 件。",
@@ -215,8 +221,10 @@ def validate_data(data):
             _enum(v, "verdict", VERDICTS, f"{where}.{key}")
             _str(v, "evidence", f"{where}.{key}")
             _str(v, "method", f"{where}.{key}")
-        if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not str(f["validation"].get("evidence", "")).strip():
+        if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not (f["validation"].get("evidence") or "").strip():
             raise SchemaError(f"{where}: verdict {f['validation']['verdict']} needs validation.evidence")
+        if not isinstance(f.get("references", []), list):
+            raise SchemaError(f"{where}.references must be a list")
         for j, ref in enumerate(f.get("references", [])):
             if not isinstance(ref, dict) or not re.match(r"https?://", str(ref.get("url", ""))):
                 raise SchemaError(f"{where}.references[{j}] needs an http(s) url")
@@ -232,6 +240,8 @@ def validate_data(data):
         seen.add(run["id"])
         if not isinstance(run.get("finding"), str) or run["finding"] not in findings:
             raise SchemaError(f"{where}.finding must name a recorded finding")
+        if not run["finding"].startswith("F-"):
+            raise SchemaError(f"{where}.finding must be an F-* id; L-* ids are reassigned on every rescan")
         for key in ("model", "date"):
             _str(run, key, where, True)
         _str(run, "note", where)
@@ -261,10 +271,16 @@ def load(path, raw=None):
     return validate_data(data)
 
 
+def id_key(ident):
+    """F-/L-/E- ids in numeric order, so F-1000 follows F-999."""
+    prefix, _, number = ident.partition("-")
+    return prefix, int(number) if number.isdigit() else 0
+
+
 def ordered(findings):
-    """Active findings by severity, then kind and location; excluded ones last."""
+    """Active findings by severity, then kind and id; excluded ones last."""
     return sorted(findings, key=lambda f: (f["validation"]["verdict"] in EXCLUDED, SEVERITIES.index(f["severity"]),
-                                           KINDS.index(f["kind"]), f["id"]))
+                                           KINDS.index(f["kind"]), id_key(f["id"])))
 
 
 def counts(data):
@@ -277,6 +293,23 @@ def counts(data):
 
 def mask(text):
     return SECRET_RE.sub("[REDACTED]", text)
+
+
+def mask_key_blocks(text):
+    """Replace each private-key block line by line, so line numbers stay put."""
+    return KEY_BLOCK_RE.sub(lambda m: "\n".join("[REDACTED]" for _ in m.group(0).split("\n")), text)
+
+
+def source_lines(text):
+    """Lines as editors and `path:line` count them: split on newline only.
+
+    str.splitlines() also breaks at form feeds, U+2028 and other separators, which
+    would shift every later line number.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
 
 
 def _source(repo, commit, rel):
@@ -301,7 +334,9 @@ def attach_sources(data, repo, context=3, limit=40):
     excerpts = {}
     if repo is None:
         return excerpts
-    commit = data.get("meta", {}).get("commit")
+    meta = data.get("meta", {})
+    # Only a scan known to be clean reviewed the commit's blob; a dirty or undetermined one read the working tree.
+    commit = meta.get("commit") if meta.get("dirty") is False else None
     cache = {}
     for f in data.get("findings", []):
         m = LOC_RE.match(f["location"])
@@ -313,7 +348,7 @@ def attach_sources(data, repo, context=3, limit=40):
         text = cache[rel]
         if text is None:
             continue
-        lines = text.splitlines()
+        lines = source_lines(mask_key_blocks(text))
         start = int(m["start"])
         end = max(start, int(m["end"] or start))
         if start < 1 or start > len(lines):
@@ -344,11 +379,19 @@ def snippet_html(excerpt):
     return f'<pre class="snippet">{rows}</pre>'
 
 
+def revision(meta, L):
+    """The short commit with the tree state at scan time, or None outside Git."""
+    commit = meta.get("commit")
+    if not commit:
+        return None
+    state = {True: L["dirty"], None: L["dirty_unknown"]}.get(meta.get("dirty"))
+    return commit[:12] + (f" ({state})" if state else "")
+
+
 def meta_lines(data, L):
     meta = data.get("meta", {})
-    commit = meta.get("commit")
-    revision = (commit[:12] + (f" ({L['dirty']})" if meta.get("dirty") else "")) if commit else "—"
-    rows = [(L["commit"], revision), (L["date"], meta.get("date") or "—"),
+    revision_text = revision(meta, L) or "—"
+    rows = [(L["commit"], revision_text), (L["date"], meta.get("date") or "—"),
             (L["assessor"], meta.get("assessor") or "—"), (L["scope"], meta.get("scope") or "—")]
     return "".join(f'<p class="meta-line"><strong>{esc(k)}</strong><span>{esc(v)}</span></p>' for k, v in rows)
 
@@ -410,7 +453,7 @@ def finding_html(f, L, excerpts):
         fields.append((L["evidence"], para(v["evidence"])))
     if f.get("previous_validation"):
         pv = f["previous_validation"]
-        fields.append((L["previous"], para(pv["verdict"] + ": " + pv.get("evidence", ""))))
+        fields.append((L["previous"], para(pv["verdict"] + ": " + (pv.get("evidence") or ""))))
     if f["id"] in excerpts:
         fields.append((L["excerpt"], snippet_html(excerpts[f["id"]])))
     if f.get("references"):
@@ -634,7 +677,7 @@ if(f.previous_validation&&typeof f.previous_validation==='object'){var history=e
 var searchCache=new Map();
 function searchText(f){if(searchCache.has(f))return searchCache.get(f);var val=f.validation||{},pr=f.proposal||{},text=[f.id,f.title,f.location,f.category,f.prompts.join(' '),f.symptom,f.cause,f.impact,f.fix,pr.before,pr.after,asText(f.test),f.status,f.severity,f.kind,kindText(f),f.confidence,f.verdict,val.evidence,val.method].filter(Boolean).join('\n').toLowerCase();searchCache.set(f,text);return text;}
 function draw(){clearTimeout(searchTimer);var tb=byId('rows');tb.textContent='';var term=q.value.trim().toLowerCase(),scope=v('f-scope');var pool=scope==='all'?ALL:ALL.filter(function(f){return scope==='excluded'?excluded(f):!excluded(f);});var shown=pool.filter(function(f){return (!v('f-part')||f.kind===v('f-part'))&&(!v('f-sev')||f.severity===v('f-sev'))&&(!v('f-conf')||f.confidence===v('f-conf'))&&(!v('f-cat')||f.category===v('f-cat'))&&(!v('f-prompt')||f.prompts.indexOf(v('f-prompt'))>=0)&&(!v('f-status')||f.status===v('f-status'))&&(!v('f-verdict')||f.verdict===v('f-verdict'))&&(!term||searchText(f).indexOf(term)>=0);});
-shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||(String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);});
+shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||String(a.id).localeCompare(String(b.id),'en',{numeric:true});});
 byId('result-count').textContent=fmt(L.showing,{shown:shown.length,total:pool.length});
 if(!shown.length){var empty=el('tr'),td=el('td',{colspan:7,'class':'empty'},pool.length?L.no_matches:L.no_records);empty.appendChild(td);tb.appendChild(empty);return;}
 shown.forEach(function(f){var anchor=D.anchors[f.id],tr=el('tr',{'class':'row',id:anchor}),dt=details(f,anchor);var labels=['ID',L.severity,L.part,L.confidence,L.verdict,L.title_col,L.category];var values=[f.id,null,kindText(f),f.confidence,f.verdict,null,f.category],button;
@@ -701,10 +744,10 @@ DASH_LABELS = {
         "perspectives": "Coverage by perspective", "coverage_missing": "No perspective coverage was recorded.",
         "not_recorded": "Not recorded",
         "overview": "Results overview",
-        "count_basis": "Severity is potential impact; confidence is certainty. Validation records whether the "
+        "count_basis": "Severity is potential impact; confidence is certainty. The verdict records whether the "
                        "finding applies.",
         "by_sev": "By severity", "by_kind": "By kind", "by_conf": "By confidence", "by_cat": "By perspective",
-        "by_status": "By status", "by_verdict": "By validation",
+        "by_status": "By status", "by_verdict": "By verdict",
         "excluded_note": "Excluded findings are retained with their justification. They are not counted in "
                          "included totals.",
         "findings_register": "Findings register",
@@ -712,8 +755,8 @@ DASH_LABELS = {
                          "report-wide while filtering.",
         "record_set": "Records", "included_set": "Included (excludes ruled-out findings)",
         "excluded_set": "Excluded only", "severity": "Severity", "confidence": "Confidence",
-        "category": "Perspective", "prompt": "Prompt", "status": "Status", "verdict": "Validation",
-        "all_verdicts": "All validations", "sort": "Order", "priority_sort": "Open first, then severity",
+        "category": "Perspective", "prompt": "Prompt", "status": "Status", "verdict": "Verdict",
+        "all_verdicts": "All verdicts", "sort": "Order", "priority_sort": "Open first, then severity",
         "severity_sort": "Severity", "search": "Search", "all": "All", "reset": "Clear filters",
         "showing": "Showing {shown} of {total} records in this view",
         "no_matches": "No findings match these filters. Clear filters to see more.",
@@ -722,7 +765,7 @@ DASH_LABELS = {
         "copy_llm": "Copy for LLM", "copied": "Copied", "copy_failed": "Copy failed",
         "location": "Location", "symptom": "Symptom", "cause": "Cause", "impact": "Impact",
         "fix": "Fix direction", "proposal_before": "Current text", "proposal_after": "Proposed text",
-        "test": "How to check", "evidence": "Validation evidence", "validation_method": "Validation method",
+        "test": "How to check", "evidence": "Verdict evidence", "validation_method": "Validation method",
         "snippet": "Source", "references": "References",
         "previous_validation": "Previous validation (historical; not the current verdict)",
         "history_note": "Revalidate this evidence against the current prompts and code.",
@@ -738,13 +781,13 @@ DASH_LABELS = {
         "report_note": "静的レビュー · 読み取り専用 · オフラインレポート",
         "report_link": "印刷用のレポート", "theme": "配色を切り替え",
         "priority": "まず取り組むこと",
-        "priority_note": "未対応の指摘を重大度順、同じ重大度では修正判断の準備ができた順に表示します。"
+        "priority_note": "未対応の指摘を深刻度順、同じ深刻度では修正判断の準備ができた順に表示します。"
                          "文面を変える前に、該当プロンプトと呼び出し箇所を確認してください。",
         "fix_now": "修正を計画", "verify_first": "先に検証する",
-        "fix_now_note": "Valid・Confirmed の指摘です。記録された対応方針または改善案を適用し、記録された評価・テストで確認してください。",
+        "fix_now_note": "Valid・Confirmed の指摘です。記録された修正方針または改善案を適用し、記録された評価・テストで確認してください。",
         "verify_first_note": "送信されるプロンプト全体と周辺コードを読み直すか、記録された評価ケースを実行してから変更要否を判断してください。",
         "more_high": "この種別には未対応の High がほかに {n} 件あります（指摘一覧に記載）。",
-        "missing_fix": "対応方針が未記録です。根拠を確認し、変更内容を具体化してください。",
+        "missing_fix": "修正方針が未記録です。根拠を確認し、変更内容を具体化してください。",
         "no_open": "未対応の指摘は記録されていません。プロンプトが意図どおりに動くことを保証するものではありません。",
         "no_findings": "集計対象の指摘はありません。診断範囲と制約を確認してから判断してください。",
         "included": "集計対象の指摘", "excluded_short": "除外", "open_count": "未対応の指摘",
@@ -772,29 +815,29 @@ DASH_LABELS = {
         "perspectives": "観点別の診断結果", "coverage_missing": "観点ごとの確認状況が記録されていません。",
         "not_recorded": "未記録",
         "overview": "結果概要",
-        "count_basis": "重大度は想定される影響、確度は確かさ、妥当性はこの対象に指摘が成立するかを表します。",
-        "by_sev": "重大度別", "by_kind": "種別別", "by_conf": "確度別", "by_cat": "観点別",
-        "by_status": "対応状況別", "by_verdict": "妥当性別",
+        "count_basis": "深刻度は想定される影響、確度は確かさ、検証判定はこの対象に指摘が成立するかを表します。",
+        "by_sev": "深刻度別", "by_kind": "種別別", "by_conf": "確度別", "by_cat": "観点別",
+        "by_status": "状態別", "by_verdict": "検証判定別",
         "excluded_note": "除外した指摘も、その根拠とともに保持します。集計対象の件数には含めません。",
         "findings_register": "指摘一覧",
         "findings_note": "指摘を開くと原因・改善案・修正の確認方法を確認できます。絞り込んでも上部の全体集計は変わりません。",
         "record_set": "表示対象", "included_set": "集計対象（誤検知・対象外を除く）",
-        "excluded_set": "除外した指摘のみ", "severity": "重大度", "confidence": "確度",
-        "category": "観点", "prompt": "プロンプト", "status": "状況", "verdict": "妥当性",
-        "all_verdicts": "すべての妥当性", "sort": "表示順", "priority_sort": "未対応を先に、重大度順",
-        "severity_sort": "重大度順", "search": "検索", "all": "すべて", "reset": "絞り込みを解除",
+        "excluded_set": "除外した指摘のみ", "severity": "深刻度", "confidence": "確度",
+        "category": "観点", "prompt": "プロンプト", "status": "状態", "verdict": "検証判定",
+        "all_verdicts": "すべての検証判定", "sort": "表示順", "priority_sort": "未対応を先に、深刻度順",
+        "severity_sort": "深刻度順", "search": "検索", "all": "すべて", "reset": "絞り込みを解除",
         "showing": "この表示対象 {total} 件中 {shown} 件を表示",
         "no_matches": "条件に一致する指摘はありません。絞り込みを解除すると、ほかの指摘を確認できます。",
         "no_records": "この表示対象に該当する記録はありません。", "title_col": "件名",
         "expand": "詳細を開く", "collapse": "詳細を閉じる", "permalink": "この指摘へのリンク",
         "copy_llm": "LLM用にコピー", "copied": "コピーしました", "copy_failed": "コピーできませんでした",
         "location": "場所", "symptom": "症状", "cause": "原因", "impact": "影響",
-        "fix": "対応方針", "proposal_before": "現在の文面", "proposal_after": "提案する文面",
-        "test": "確認方法", "evidence": "妥当性の根拠", "validation_method": "検証方法",
+        "fix": "修正方針", "proposal_before": "現在の文面", "proposal_after": "提案する文面",
+        "test": "確認方法", "evidence": "判定の根拠", "validation_method": "検証方法",
         "snippet": "該当ソース", "references": "参照",
         "previous_validation": "以前の判定（履歴。現在の判定ではありません）",
         "history_note": "現在のプロンプト・コードに照らして再検証してください。",
-        "missing_evidence": "妥当性の根拠が記録されていません。",
+        "missing_evidence": "判定の根拠が記録されていません。",
         "next_steps": "推奨する対応順", "checked_ok": "問題がなかった確認項目",
         "source_note": "ソース抜粋の伏せ字は完全ではありません。共有前に内容を確認してください。",
         "no_script": "対話型ダッシュボードには JavaScript が必要です。レポートではすべての記録を確認できます。",
@@ -813,7 +856,7 @@ def dashboard_model(data):
         return "fix_now" if f["validation"]["verdict"] == "Valid" and f["confidence"] == "Confirmed" else "verify_first"
 
     queue = sorted(open_, key=lambda f: (SEVERITIES.index(f["severity"]), action(f) != "fix_now",
-                                         KINDS.index(f["kind"]), f["id"]))
+                                         KINDS.index(f["kind"]), id_key(f["id"])))
     return {
         "queue": [{"id": f["id"], "kind": f["kind"], "action": action(f)} for f in queue],
         "open_count": len(open_), "open_hm": sum(f["severity"] in ("High", "Medium") for f in open_),
@@ -842,12 +885,11 @@ def render_dashboard(data, L, lang, excerpts):
                     prompts=[prompt] if isinstance(prompt, str) else (prompt or []),
                     snippet={"start": x[0], "lines": x[1], "hit": list(x[2])} if x else None)
         items.append(item)
-    commit = meta.get("commit")
     prompts = data.get("prompts", [])
     payload = {
         "meta": {"target": meta.get("target", ""), "date": meta.get("date"), "assessor": meta.get("assessor"),
                  "scope": meta.get("scope"),
-                 "commit": (commit[:12] + (" (" + L["dirty"] + ")" if meta.get("dirty") else "")) if commit else None,
+                 "commit": revision(meta, L),
                  "prompts": ", ".join(f'{p["id"]} {p["name"]}' for p in prompts) or None},
         "labels": labels, "headline": summary_line(data, L), "report": dashboard_model(data), "findings": items,
         "anchors": {f["id"]: "finding-" + f["id"].lower() for f in data.get("findings", [])},
@@ -891,7 +933,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("findings")
     p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="ja")
+    p.add_argument("--lang", choices=sorted(LABELS), help="report language (default: meta.lang, else ja)")
     p.add_argument("--repo", help="reviewed repository, for embedded excerpts")
     p.add_argument("--no-pdf", action="store_true")
     a = p.parse_args(argv)
@@ -899,10 +941,11 @@ def main(argv=None):
         source = Path(a.findings).read_bytes()
         data = load(a.findings, source)
         excerpts = attach_sources(data, a.repo)
-        L = LABELS[a.lang]
+        lang = a.lang or (data.get("meta", {}).get("lang") if data.get("meta", {}).get("lang") in LABELS else "ja")
+        L = LABELS[lang]
         stamp = STAMP.format(hashlib.sha256(source).hexdigest())
-        pages = {"dashboard.html": render_dashboard(data, L, a.lang, excerpts),
-                 "report.html": render_report_html(data, L, a.lang, excerpts)}
+        pages = {"dashboard.html": render_dashboard(data, L, lang, excerpts),
+                 "report.html": render_report_html(data, L, lang, excerpts)}
     except (SchemaError, OSError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2

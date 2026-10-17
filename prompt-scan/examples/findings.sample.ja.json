@@ -37,27 +37,6 @@
       "kind": "defect",
       "severity": "High",
       "confidence": "Confirmed",
-      "category": "Output contract",
-      "title": "パーサーは \"response\" キーを読むが、プロンプトは \"answer\" を要求している",
-      "location": "app/llm/answer.py:23",
-      "prompt": "P-02",
-      "symptom": "モデルが正しい JSON を返しても、毎回 KeyError になる。",
-      "cause": "answer.prompt:11 は \"answer\" と \"sources\" を要求し、answer.py:23 は data[\"response\"] を読んでいる。",
-      "impact": "機能が一度も回答を返せず、すべてのリクエストがパーサーで失敗する。",
-      "fix": "answer.py で data[\"answer\"] を読む（またはプロンプト側のキー名を変える）。キー名の定義は 1 か所にまとめる。",
-      "test": "プロンプトの形式どおりの応答を与えたとき、answer() が例外を出さずに \"answer\" の文字列を返す。",
-      "validation": {
-        "verdict": "Valid",
-        "evidence": "answer.prompt:11 と answer.py:22-23 を読み直した。キー名を変換する別経路はない。",
-        "method": "静的トレース"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-002",
-      "kind": "defect",
-      "severity": "High",
-      "confidence": "Confirmed",
       "category": "Variables and assembly",
       "title": "テンプレート変数 context が一度も埋められていない",
       "location": "app/llm/answer.py:14",
@@ -78,7 +57,77 @@
       "status": "Open"
     },
     {
+      "id": "F-002",
+      "kind": "defect",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Output contract",
+      "title": "パーサーは \"response\" キーを読むが、プロンプトは \"answer\" を要求している",
+      "location": "app/llm/answer.py:23",
+      "prompt": "P-02",
+      "symptom": "モデルが正しい JSON を返しても、毎回 KeyError になる。",
+      "cause": "answer.prompt:11 は \"answer\" と \"sources\" を要求し、answer.py:23 は data[\"response\"] を読んでいる。",
+      "impact": "機能が一度も回答を返せず、すべてのリクエストがパーサーで失敗する。",
+      "fix": "answer.py で data[\"answer\"] を読む（またはプロンプト側のキー名を変える）。キー名の定義は 1 か所にまとめる。",
+      "test": "プロンプトの形式どおりの応答を与えたとき、answer() が例外を出さずに \"answer\" の文字列を返す。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "answer.prompt:11 と answer.py:22-23 を読み直した。キー名を変換する別経路はない。",
+        "method": "静的トレース"
+      },
+      "status": "Open"
+    },
+    {
       "id": "F-003",
+      "kind": "defect",
+      "severity": "Medium",
+      "confidence": "Model-dependent",
+      "category": "Output contract",
+      "title": "max_tokens 200 では JSON 応答が途中で切れうる",
+      "location": "app/llm/answer.py:17",
+      "prompt": [
+        "P-01",
+        "P-02"
+      ],
+      "symptom": "長い回答が閉じ括弧の前で止まり、json.loads が例外を出す。",
+      "cause": "answer.py:17 で max_tokens=200。P-01 の 6 行目はすべての手順を求める。answer.py:22 は stop_reason を確認せずに解析する。",
+      "impact": "最も長くなりやすいエラー報告への回答がパーサーで失敗する。",
+      "fix": "max_tokens を最長の正しい応答が収まる値に上げ、stop_reason が \"max_tokens\" の場合を失敗として扱う。",
+      "test": "max_tokens で止まった応答は、json.loads に渡されず「途中で切れた」として報告される。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "200 トークンは手順付きの回答と JSON の枠組みには足りない。answer.py に stop_reason の確認がない。",
+        "method": "静的な読解"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "kind": "defect",
+      "severity": "Medium",
+      "confidence": "Model-dependent",
+      "category": "Instruction consistency",
+      "title": "「50 語以内」と「すべての手順を説明」が矛盾している",
+      "location": "app/llm/prompts/support_system.md:5-6",
+      "prompt": "P-01",
+      "symptom": "エラー報告への回答が、モデルがどちらの指示を重視するかによって、途中で切れた説明か長さ制限を破る長文になる。",
+      "cause": "5 行目はすべての回答を 50 語以内に制限し、6 行目はエラー時にすべての解決手順を求める。どちらを優先するか書かれていない。",
+      "impact": "最も多いサポートケースで回答が不安定になる。長い回答は max_tokens にも当たる（F-003）。",
+      "fix": "長さの規則に適用範囲を付ける。質問には短く、エラー報告には上限付きの番号付き手順で答える。",
+      "proposal": {
+        "before": "Always answer in under 50 words.\nWhen a customer reports an error, explain every step needed to resolve it.",
+        "after": "Keep answers to questions under 50 words. When a customer reports an error, give the resolution as numbered steps (at most 8), one sentence each."
+      },
+      "test": "評価: エラー報告 20 件で、各応答が番号付き手順を含み、手順が 8 個以内であることを確認する。",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "両方の行が送信されるプロンプトにあり、後続の層で矛盾が解消されていない。モデルでの実行は未実施。",
+        "method": "静的な読解"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
       "kind": "defect",
       "severity": "Medium",
       "confidence": "Confirmed",
@@ -103,53 +152,35 @@
       "status": "Open"
     },
     {
-      "id": "F-004",
-      "kind": "defect",
-      "severity": "Medium",
-      "confidence": "Model-dependent",
-      "category": "Instruction consistency",
-      "title": "「50 語以内」と「すべての手順を説明」が矛盾している",
-      "location": "app/llm/prompts/support_system.md:5-6",
-      "prompt": "P-01",
-      "symptom": "エラー報告への回答が、モデルがどちらの指示を重視するかによって、途中で切れた説明か長さ制限を破る長文になる。",
-      "cause": "5 行目はすべての回答を 50 語以内に制限し、6 行目はエラー時にすべての解決手順を求める。どちらを優先するか書かれていない。",
-      "impact": "最も多いサポートケースで回答が不安定になる。長い回答は max_tokens にも当たる（F-005）。",
-      "fix": "長さの規則に適用範囲を付ける。質問には短く、エラー報告には上限付きの番号付き手順で答える。",
-      "proposal": {
-        "before": "Always answer in under 50 words.\nWhen a customer reports an error, explain every step needed to resolve it.",
-        "after": "Keep answers to questions under 50 words. When a customer reports an error, give the resolution as numbered steps (at most 8), one sentence each."
-      },
-      "test": "評価: エラー報告 20 件で、各応答が番号付き手順を含み、手順が 8 個以内であることを確認する。",
-      "validation": {
-        "verdict": "Likely",
-        "evidence": "両方の行が送信されるプロンプトにあり、後続の層で矛盾が解消されていない。モデルでの実行は未実施。",
-        "method": "静的な読解"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-005",
-      "kind": "defect",
-      "severity": "Medium",
-      "confidence": "Model-dependent",
-      "category": "Output contract",
-      "title": "max_tokens 200 では JSON 応答が途中で切れうる",
-      "location": "app/llm/answer.py:17",
-      "prompt": ["P-01", "P-02"],
-      "symptom": "長い回答が閉じ括弧の前で止まり、json.loads が例外を出す。",
-      "cause": "answer.py:17 で max_tokens=200。P-01 の 6 行目はすべての手順を求める。answer.py:22 は stop_reason を確認せずに解析する。",
-      "impact": "最も長くなりやすいエラー報告への回答がパーサーで失敗する。",
-      "fix": "max_tokens を最長の正しい応答が収まる値に上げ、stop_reason が \"max_tokens\" の場合を失敗として扱う。",
-      "test": "max_tokens で止まった応答は、json.loads に渡されず「途中で切れた」として報告される。",
-      "validation": {
-        "verdict": "Likely",
-        "evidence": "200 トークンは手順付きの回答と JSON の枠組みには足りない。answer.py に stop_reason の確認がない。",
-        "method": "静的な読解"
-      },
-      "status": "Open"
-    },
-    {
       "id": "F-006",
+      "kind": "improvement",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Evaluation",
+      "title": "サポート用プロンプトを検証する評価・スナップショットテストがない",
+      "location": "app/llm/answer.py:12",
+      "prompt": [
+        "P-01",
+        "P-02"
+      ],
+      "symptom": "F-002 と F-001 はどんなエンドツーエンドの確認でも失敗するはずだが、そのまま出荷されている。",
+      "cause": "プロンプトをレンダリングする、または answer() を呼ぶテストや評価がリポジトリにない。",
+      "impact": "プロンプトの劣化が気づかれずに利用者へ届く。",
+      "fix": "レンダリング後のメッセージのスナップショットテストと、回答形式の小さな評価セットを追加する。",
+      "proposal": {
+        "before": "（テストなし）",
+        "after": "tests/test_answer_prompt.py: 固定のチケット・質問・文書 2 件でメッセージ列全体をレンダリングし、保存済みスナップショットと比較する。evals/answer.jsonl: 期待する sources 付きの 20 ケース。"
+      },
+      "test": "テンプレート変数が欠落すると、スナップショットテストが失敗する。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "リポジトリに tests や evals のディレクトリがない。",
+        "method": "リポジトリ検索"
+      },
+      "status": "Open"
+    },
+    {
+      "id": "F-007",
       "kind": "improvement",
       "severity": "Low",
       "confidence": "Model-dependent",
@@ -174,7 +205,7 @@
       "status": "Open"
     },
     {
-      "id": "F-007",
+      "id": "F-008",
       "kind": "improvement",
       "severity": "Low",
       "confidence": "Model-dependent",
@@ -195,31 +226,6 @@
         "verdict": "Likely",
         "evidence": "P-01 にも P-02 にも言語の規則がない。",
         "method": "静的な読解"
-      },
-      "status": "Open"
-    },
-    {
-      "id": "F-008",
-      "kind": "improvement",
-      "severity": "Low",
-      "confidence": "Confirmed",
-      "category": "Evaluation",
-      "title": "サポート用プロンプトを検証する評価・スナップショットテストがない",
-      "location": "app/llm/answer.py:12",
-      "prompt": ["P-01", "P-02"],
-      "symptom": "F-001 と F-002 はどんなエンドツーエンドの確認でも失敗するはずだが、そのまま出荷されている。",
-      "cause": "プロンプトをレンダリングする、または answer() を呼ぶテストや評価がリポジトリにない。",
-      "impact": "プロンプトの劣化が気づかれずに利用者へ届く。",
-      "fix": "レンダリング後のメッセージのスナップショットテストと、回答形式の小さな評価セットを追加する。",
-      "proposal": {
-        "before": "（テストなし）",
-        "after": "tests/test_answer_prompt.py: 固定のチケット・質問・文書 2 件でメッセージ列全体をレンダリングし、保存済みスナップショットと比較する。evals/answer.jsonl: 期待する sources 付きの 20 ケース。"
-      },
-      "test": "テンプレート変数が欠落すると、スナップショットテストが失敗する。",
-      "validation": {
-        "verdict": "Valid",
-        "evidence": "リポジトリに tests や evals のディレクトリがない。",
-        "method": "リポジトリ検索"
       },
       "status": "Open"
     },
@@ -269,20 +275,76 @@
     }
   ],
   "perspectives": [
-    {"name": "Task and intent", "result": "applied", "note": "TI1–TI5、TI3 は F-007"},
-    {"name": "Instruction consistency", "result": "applied", "note": "IC1–IC5、IC1 は F-004"},
-    {"name": "Structure and placement", "result": "applied", "note": "ST1–ST5、ST4 は L-001"},
-    {"name": "Variables and assembly", "result": "applied", "note": "VA1–VA6、VA1 は F-002"},
-    {"name": "Output contract", "result": "applied", "note": "OC1–OC5、OC1 は F-001、OC5 は F-005"},
-    {"name": "Examples", "result": "N/A", "note": "P-01 にも P-02 にも few-shot 例がない"},
-    {"name": "Tools and agents", "result": "N/A", "note": "唯一の呼び出し（answer.py:15-21）でツールを渡していない"},
-    {"name": "Untrusted input", "result": "applied", "note": "UI1–UI5、UI1 は F-003、UI3 はツールなし、UI4 はこのリポジトリでは出力を HTML として描画しない"},
-    {"name": "Safety and refusal", "result": "applied", "note": "SR1–SR4、請求サポートの範囲では指摘なし"},
-    {"name": "Context budget", "result": "applied", "note": "CB1–CB5、各プロンプトは推定 100 トークン未満"},
-    {"name": "Model and parameters", "result": "applied", "note": "MP1–MP5、MP2 は F-006、MP3 は F-005、MP1 はモデル一覧未確認（判断事項）"},
-    {"name": "Language and tone", "result": "applied", "note": "LT1–LT4、LT1 と LT3 は F-007"},
-    {"name": "Evaluation", "result": "applied", "note": "EV1–EV4、EV1 は F-008"},
-    {"name": "Maintainability", "result": "applied", "note": "MT1–MT4、MT3 は L-002"}
+    {
+      "name": "Task and intent",
+      "result": "applied",
+      "note": "TI1–TI5、TI3 は F-008"
+    },
+    {
+      "name": "Instruction consistency",
+      "result": "applied",
+      "note": "IC1–IC5、IC1 は F-004"
+    },
+    {
+      "name": "Structure and placement",
+      "result": "applied",
+      "note": "ST1–ST5、ST4 は L-001"
+    },
+    {
+      "name": "Variables and assembly",
+      "result": "applied",
+      "note": "VA1–VA6、VA1 は F-001"
+    },
+    {
+      "name": "Output contract",
+      "result": "applied",
+      "note": "OC1–OC5、OC1 は F-002、OC5 は F-003"
+    },
+    {
+      "name": "Examples",
+      "result": "N/A",
+      "note": "P-01 にも P-02 にも few-shot 例がない"
+    },
+    {
+      "name": "Tools and agents",
+      "result": "N/A",
+      "note": "唯一の呼び出し（answer.py:15-21）でツールを渡していない"
+    },
+    {
+      "name": "Untrusted input",
+      "result": "applied",
+      "note": "UI1–UI5、UI1 は F-005、UI3 はツールなし、UI4 はこのリポジトリでは出力を HTML として描画しない"
+    },
+    {
+      "name": "Safety and refusal",
+      "result": "applied",
+      "note": "SR1–SR4、請求サポートの範囲では指摘なし"
+    },
+    {
+      "name": "Context budget",
+      "result": "applied",
+      "note": "CB1–CB5、各プロンプトは推定 100 トークン未満"
+    },
+    {
+      "name": "Model and parameters",
+      "result": "applied",
+      "note": "MP1–MP5、MP2 は F-007、MP3 は F-003、MP1 はモデル一覧未確認（判断事項）"
+    },
+    {
+      "name": "Language and tone",
+      "result": "applied",
+      "note": "LT1–LT4、LT1 と LT3 は F-008"
+    },
+    {
+      "name": "Evaluation",
+      "result": "applied",
+      "note": "EV1–EV4、EV1 は F-006"
+    },
+    {
+      "name": "Maintainability",
+      "result": "applied",
+      "note": "MT1–MT4、MT3 は L-002"
+    }
   ],
   "checked_ok": [
     "answer.prompt は文書と質問を別々のタグに分けている（answer.prompt:3-9）",
@@ -299,8 +361,8 @@
     "プロバイダー側やフレームワークが追加するシステムテキストは見えない"
   ],
   "next_steps": [
-    "F-001 と F-002 を一緒に修正し、F-008 のスナップショットテストを追加して再発を防ぐ",
-    "チケットをシステムプロンプトから移し（F-003）、<policy> タグを閉じる（L-001）",
-    "長さの規則を決めてから、F-004 と F-005 の評価ケースを実行する"
+    "F-002 と F-001 を一緒に修正し、F-006 のスナップショットテストを追加して再発を防ぐ",
+    "チケットをシステムプロンプトから移し（F-005）、<policy> タグを閉じる（L-001）",
+    "長さの規則を決めてから、F-004 と F-003 の評価ケースを実行する"
   ]
 }

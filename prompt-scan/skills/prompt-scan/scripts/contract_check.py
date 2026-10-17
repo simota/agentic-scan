@@ -19,12 +19,13 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import findings as merge_tool  # noqa: E402
 import render  # noqa: E402
 
 SKILL = Path(__file__).resolve().parents[1]
 OUTPUTS = {"findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf"}
 RENDERED = ("dashboard.html", "report.html")
-CODE_ID = re.compile(r"F-([0-9]{3})")
+CODE_ID = re.compile(r"F-([0-9]{3,})")
 REQUIRED_TEXT = ("symptom", "cause", "impact", "fix")
 NO_PDF = "report.pdf not produced: no PDF engine"
 NO_EVAL = "model behaviour not executed: static review only"
@@ -86,7 +87,7 @@ def check(out, no_pdf=False, allow=()):
         except (OSError, ValueError) as e:
             problems.append(f"inventory.json is unreadable: {e}")
             inventory = {}
-        if inventory.get("tool") != "inventory.py":
+        if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
             problems.append("inventory.json was not written by inventory.py")
         elif inventory.get("prompt_files") and not data.get("prompts"):
             problems.append("inventory.json lists prompt files but findings.json records no prompts")
@@ -103,13 +104,18 @@ def check(out, no_pdf=False, allow=()):
     numbers = sorted(int(CODE_ID.fullmatch(f["id"]).group(1)) for f in code)
     if numbers != list(range(1, len(code) + 1)):
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: f["id"])
-    ranks = [render.SEVERITIES.index(f["severity"]) for f in active]
-    if ranks != sorted(ranks):
-        problems.append("F-* ids are not in severity order (excluded findings are exempt)")
+    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
+    if active != sorted(active, key=merge_tool.order_key):
+        problems.append("F-* ids are not in severity order, then path and line (excluded findings are exempt): "
+                        "run findings.py renumber <out>/findings.json")
     for f in findings:
         if f["id"].startswith("L-") and f.get("source") != "inventory.py":
             problems.append(f"{f['id']}: L-* findings come only from inventory.py --into")
+        if f["severity"] in ("High", "Medium"):
+            if f["validation"]["verdict"] == "Unverified":
+                problems.append(f"{f['id']}: a {f['severity']} finding needs a verdict other than Unverified")
+            elif not str(f["validation"].get("evidence") or "").strip():
+                problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence")
 
     canonical = perspective_names()
     has_prompts = bool(data.get("prompts"))
@@ -129,8 +135,6 @@ def check(out, no_pdf=False, allow=()):
             problems.append(f"{ident}: prompt (the P-NN it affects) is missing")
         if f["category"] not in canonical:
             problems.append(f"{ident}: category {f['category']!r} is not a perspective name")
-        if f["severity"] in ("High", "Medium") and not str(f["validation"].get("evidence") or "").strip():
-            problems.append(f"{ident}: a {f['severity']} finding needs validation.evidence")
 
     recorded = [p["name"] for p in data.get("perspectives", [])]
     for name in canonical:

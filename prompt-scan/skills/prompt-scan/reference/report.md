@@ -4,7 +4,7 @@
 Write in the requester's language.
 
 ```
-python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en> --repo <repo>
+python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en> --repo <repo>   # --lang defaults to meta.lang
 python3 scripts/contract_check.py <out>
 ```
 

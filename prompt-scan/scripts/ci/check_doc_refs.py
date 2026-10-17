@@ -4,9 +4,10 @@
     python3 scripts/ci/check_doc_refs.py
 
 Checks backticked `reference/...`, `scripts/...` and `templates/...` paths
-(resolved against the skill), backticked repository paths such as
-`skills/prompt-scan/...`, `docs/...`, `examples/...` and `tests/...`, and
-relative Markdown links, in every tracked Markdown document.
+(resolved against the skill), including a script or document named inside a
+backticked command, backticked repository paths such as `skills/prompt-scan/...`,
+`docs/...`, `examples/...` and `tests/...`, and relative Markdown links, in every
+Markdown document of the repository.
 """
 from pathlib import Path
 import re
@@ -14,24 +15,27 @@ import sys
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills" / "prompt-scan"
-DOCS = sorted({*REPO.glob("*.md"), *REPO.glob("docs/*.md"), *SKILL.glob("*.md"),
-               *SKILL.glob("reference/*.md"), *SKILL.glob("templates/*.md")})
+DOCS = sorted(p for p in REPO.rglob("*.md") if not {".git", "node_modules"} & set(p.relative_to(REPO).parts))
 SKILL_REF = re.compile(r"`((?:reference|scripts|templates)/[A-Za-z][A-Za-z0-9._/-]*)`")
-REPO_REF = re.compile(r"`((?:skills/prompt-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])`")
-LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
+CODE_SPAN = re.compile(r"`([^`\n]+)`")
+# A skill file named as one word of a command, e.g. `scripts/findings.py renumber <out>/findings.json`.
+COMMAND_REF = re.compile(r"(?<![\w./<>-])((?:reference|scripts|templates)/[A-Za-z][A-Za-z0-9._/-]*\.(?:py|md))(?=\s)")
+REPO_REF = re.compile(r"`((?:skills/prompt-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_/-])`")
+LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)\s]*)?(?:\s+\"[^\"]*\")?\)")
 
 
 def problems():
     for doc in DOCS:
         text = doc.read_text(encoding="utf-8")
         rel = doc.relative_to(REPO)
-        for ref in sorted(set(SKILL_REF.findall(text))):
+        commands = {ref for span in CODE_SPAN.findall(text) for ref in COMMAND_REF.findall(span)}
+        for ref in sorted(set(SKILL_REF.findall(text)) | commands):
             # A bare scripts/ci/... path is a repository path, not a skill path.
             base = REPO if ref.startswith("scripts/ci/") else SKILL
             if not (base / ref.rstrip("/")).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for ref in sorted(set(REPO_REF.findall(text))):
-            if "*" not in ref and not (REPO / ref).exists():
+            if not (REPO / ref).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for target in sorted(set(LINK.findall(text))):
             if re.match(r"[a-z][a-z0-9+.-]*:", target) or "{{" in target:

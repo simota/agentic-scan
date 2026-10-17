@@ -63,7 +63,7 @@ Then invoke `prompt-scan` (or `/prompt-scan`).
 ## Try it
 
 ```sh
-make demo                       # Japanese sample → $TMPDIR/prompt-scan-demo
+make demo                       # Japanese sample → $TMPDIR/prompt-scan-demo (PDF needs Chrome or WeasyPrint)
 make demo LANG_OUT=en NO_PDF=1  # English, HTML only
 make inventory TARGET=examples/sample-app
 ```

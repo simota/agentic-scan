@@ -49,7 +49,8 @@ verdict and evidence — for example `FalsePositive` for a literal brace that th
 template engine never sees, or `Valid` for a `TODO` that reaches the model.
 A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
 larger defect the agent found, keep the `L-*` and cite it from the `F-*`
-finding's `cause`.
+finding's `cause` by rule and location (`unclosed-tag at prompts/a.md:3`), not by
+its ID: `L-*` IDs are reassigned on every `--into`.
 
 A rescan keeps the latest reviewed verdict on the same rule and location as
 `previous_validation` (a later rescan before a new review keeps it too); the

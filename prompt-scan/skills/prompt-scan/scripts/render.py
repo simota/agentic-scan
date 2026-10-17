@@ -4,9 +4,10 @@
     python3 render.py FINDINGS --out DIR [--lang ja|en] [--repo REPO] [--no-pdf]
 
 With --repo, each finding's `location` excerpt is embedded: read from the blob
-at `meta.commit` when the record names one (never from later working-tree
-edits), otherwise from the working tree. Credential-shaped values in excerpts
-are masked. Styles, PDF printing and safe writes come from the vendored
+at `meta.commit` when the record names one and the tree was clean at scan time
+(never from later working-tree edits), otherwise from the working tree.
+Credential-shaped values in excerpts are masked, private-key blocks whole.
+--lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
 PROMPT_SCAN_PDF_TIMEOUT seconds (default: 120 plus 0.05 per finding, at most 900).
@@ -39,20 +40,24 @@ RESULTS = ["applied", "N/A", "not checked"]
 TOP_KEYS = {"schema_version", "meta", "prompts", "findings", "eval_runs", "perspectives",
             "checked_ok", "decisions", "limitations", "next_steps"}
 STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-FINDING_ID = re.compile(r"[FL]-[0-9]{3}")
+FINDING_ID = re.compile(r"[FL]-[0-9]{3,}")
 PROMPT_ID = re.compile(r"P-[0-9]{2,3}")
 EVAL_ID = re.compile(r"E-[0-9]{3}")
 LOC_RE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|"
                        r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# A whole private-key block, so masking it also hides the key body lines (an unterminated block runs to the end).
+KEY_BLOCK_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)",
+                          re.S)
 MAX_JSON_DEPTH = 100
 STAMP = '<meta name="prompt-scan-source" content="sha256:{}">'
 
 LABELS = {
     "en": {
         "title": "Prompt review report", "dashboard": "Prompt review dashboard",
-        "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present", "date": "Date",
+        "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present",
+        "dirty_unknown": "uncommitted changes not determined", "date": "Date",
         "assessor": "Assessor", "scope": "Scope", "abstract": "Summary",
         "summary_line": "{total} findings ({defects} defects, {improvements} improvements); "
                         "{high} High, {medium} Medium. {excluded} excluded with evidence.",
@@ -79,7 +84,8 @@ LABELS = {
     },
     "ja": {
         "title": "プロンプト診断レポート", "dashboard": "プロンプト診断ダッシュボード",
-        "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり", "date": "診断日",
+        "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり",
+        "dirty_unknown": "未コミットの変更は未確認", "date": "診断日",
         "assessor": "診断者", "scope": "範囲", "abstract": "要旨",
         "summary_line": "指摘 {total} 件（不具合 {defects} 件、改善提案 {improvements} 件）。"
                         "High {high} 件、Medium {medium} 件。根拠付きで除外 {excluded} 件。",
@@ -217,6 +223,8 @@ def validate_data(data):
             _str(v, "method", f"{where}.{key}")
         if f["validation"]["verdict"] in {"Valid", *EXCLUDED} and not (f["validation"].get("evidence") or "").strip():
             raise SchemaError(f"{where}: verdict {f['validation']['verdict']} needs validation.evidence")
+        if not isinstance(f.get("references", []), list):
+            raise SchemaError(f"{where}.references must be a list")
         for j, ref in enumerate(f.get("references", [])):
             if not isinstance(ref, dict) or not re.match(r"https?://", str(ref.get("url", ""))):
                 raise SchemaError(f"{where}.references[{j}] needs an http(s) url")
@@ -232,6 +240,8 @@ def validate_data(data):
         seen.add(run["id"])
         if not isinstance(run.get("finding"), str) or run["finding"] not in findings:
             raise SchemaError(f"{where}.finding must name a recorded finding")
+        if not run["finding"].startswith("F-"):
+            raise SchemaError(f"{where}.finding must be an F-* id; L-* ids are reassigned on every rescan")
         for key in ("model", "date"):
             _str(run, key, where, True)
         _str(run, "note", where)
@@ -261,10 +271,16 @@ def load(path, raw=None):
     return validate_data(data)
 
 
+def id_key(ident):
+    """F-/L-/E- ids in numeric order, so F-1000 follows F-999."""
+    prefix, _, number = ident.partition("-")
+    return prefix, int(number) if number.isdigit() else 0
+
+
 def ordered(findings):
-    """Active findings by severity, then kind and location; excluded ones last."""
+    """Active findings by severity, then kind and id; excluded ones last."""
     return sorted(findings, key=lambda f: (f["validation"]["verdict"] in EXCLUDED, SEVERITIES.index(f["severity"]),
-                                           KINDS.index(f["kind"]), f["id"]))
+                                           KINDS.index(f["kind"]), id_key(f["id"])))
 
 
 def counts(data):
@@ -277,6 +293,23 @@ def counts(data):
 
 def mask(text):
     return SECRET_RE.sub("[REDACTED]", text)
+
+
+def mask_key_blocks(text):
+    """Replace each private-key block line by line, so line numbers stay put."""
+    return KEY_BLOCK_RE.sub(lambda m: "\n".join("[REDACTED]" for _ in m.group(0).split("\n")), text)
+
+
+def source_lines(text):
+    """Lines as editors and `path:line` count them: split on newline only.
+
+    str.splitlines() also breaks at form feeds, U+2028 and other separators, which
+    would shift every later line number.
+    """
+    lines = text.split("\n")
+    if lines and lines[-1] == "":
+        lines.pop()
+    return [line[:-1] if line.endswith("\r") else line for line in lines]
 
 
 def _source(repo, commit, rel):
@@ -301,7 +334,9 @@ def attach_sources(data, repo, context=3, limit=40):
     excerpts = {}
     if repo is None:
         return excerpts
-    commit = data.get("meta", {}).get("commit")
+    meta = data.get("meta", {})
+    # A dirty scan reviewed the working tree, so the commit's blob would not match its line numbers.
+    commit = None if meta.get("dirty") else meta.get("commit")
     cache = {}
     for f in data.get("findings", []):
         m = LOC_RE.match(f["location"])
@@ -313,7 +348,7 @@ def attach_sources(data, repo, context=3, limit=40):
         text = cache[rel]
         if text is None:
             continue
-        lines = text.splitlines()
+        lines = source_lines(mask_key_blocks(text))
         start = int(m["start"])
         end = max(start, int(m["end"] or start))
         if start < 1 or start > len(lines):
@@ -344,11 +379,19 @@ def snippet_html(excerpt):
     return f'<pre class="snippet">{rows}</pre>'
 
 
+def revision(meta, L):
+    """The short commit with the tree state at scan time, or None outside Git."""
+    commit = meta.get("commit")
+    if not commit:
+        return None
+    state = {True: L["dirty"], None: L["dirty_unknown"]}.get(meta.get("dirty"))
+    return commit[:12] + (f" ({state})" if state else "")
+
+
 def meta_lines(data, L):
     meta = data.get("meta", {})
-    commit = meta.get("commit")
-    revision = (commit[:12] + (f" ({L['dirty']})" if meta.get("dirty") else "")) if commit else "—"
-    rows = [(L["commit"], revision), (L["date"], meta.get("date") or "—"),
+    revision_text = revision(meta, L) or "—"
+    rows = [(L["commit"], revision_text), (L["date"], meta.get("date") or "—"),
             (L["assessor"], meta.get("assessor") or "—"), (L["scope"], meta.get("scope") or "—")]
     return "".join(f'<p class="meta-line"><strong>{esc(k)}</strong><span>{esc(v)}</span></p>' for k, v in rows)
 
@@ -634,7 +677,7 @@ if(f.previous_validation&&typeof f.previous_validation==='object'){var history=e
 var searchCache=new Map();
 function searchText(f){if(searchCache.has(f))return searchCache.get(f);var val=f.validation||{},pr=f.proposal||{},text=[f.id,f.title,f.location,f.category,f.prompts.join(' '),f.symptom,f.cause,f.impact,f.fix,pr.before,pr.after,asText(f.test),f.status,f.severity,f.kind,kindText(f),f.confidence,f.verdict,val.evidence,val.method].filter(Boolean).join('\n').toLowerCase();searchCache.set(f,text);return text;}
 function draw(){clearTimeout(searchTimer);var tb=byId('rows');tb.textContent='';var term=q.value.trim().toLowerCase(),scope=v('f-scope');var pool=scope==='all'?ALL:ALL.filter(function(f){return scope==='excluded'?excluded(f):!excluded(f);});var shown=pool.filter(function(f){return (!v('f-part')||f.kind===v('f-part'))&&(!v('f-sev')||f.severity===v('f-sev'))&&(!v('f-conf')||f.confidence===v('f-conf'))&&(!v('f-cat')||f.category===v('f-cat'))&&(!v('f-prompt')||f.prompts.indexOf(v('f-prompt'))>=0)&&(!v('f-status')||f.status===v('f-status'))&&(!v('f-verdict')||f.verdict===v('f-verdict'))&&(!term||searchText(f).indexOf(term)>=0);});
-shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||(String(a.id)<String(b.id)?-1:String(a.id)>String(b.id)?1:0);});
+shown.sort(function(a,b){var status=v('f-sort')==='priority'?Number(a.status!=='Open')-Number(b.status!=='Open'):0;return status||SEV.indexOf(a.severity)-SEV.indexOf(b.severity)||(v('f-sort')==='priority'?Number(action(a)!=='fix_now')-Number(action(b)!=='fix_now'):0)||D.parts.indexOf(a.kind)-D.parts.indexOf(b.kind)||String(a.id).localeCompare(String(b.id),'en',{numeric:true});});
 byId('result-count').textContent=fmt(L.showing,{shown:shown.length,total:pool.length});
 if(!shown.length){var empty=el('tr'),td=el('td',{colspan:7,'class':'empty'},pool.length?L.no_matches:L.no_records);empty.appendChild(td);tb.appendChild(empty);return;}
 shown.forEach(function(f){var anchor=D.anchors[f.id],tr=el('tr',{'class':'row',id:anchor}),dt=details(f,anchor);var labels=['ID',L.severity,L.part,L.confidence,L.verdict,L.title_col,L.category];var values=[f.id,null,kindText(f),f.confidence,f.verdict,null,f.category],button;
@@ -813,7 +856,7 @@ def dashboard_model(data):
         return "fix_now" if f["validation"]["verdict"] == "Valid" and f["confidence"] == "Confirmed" else "verify_first"
 
     queue = sorted(open_, key=lambda f: (SEVERITIES.index(f["severity"]), action(f) != "fix_now",
-                                         KINDS.index(f["kind"]), f["id"]))
+                                         KINDS.index(f["kind"]), id_key(f["id"])))
     return {
         "queue": [{"id": f["id"], "kind": f["kind"], "action": action(f)} for f in queue],
         "open_count": len(open_), "open_hm": sum(f["severity"] in ("High", "Medium") for f in open_),
@@ -842,12 +885,11 @@ def render_dashboard(data, L, lang, excerpts):
                     prompts=[prompt] if isinstance(prompt, str) else (prompt or []),
                     snippet={"start": x[0], "lines": x[1], "hit": list(x[2])} if x else None)
         items.append(item)
-    commit = meta.get("commit")
     prompts = data.get("prompts", [])
     payload = {
         "meta": {"target": meta.get("target", ""), "date": meta.get("date"), "assessor": meta.get("assessor"),
                  "scope": meta.get("scope"),
-                 "commit": (commit[:12] + (" (" + L["dirty"] + ")" if meta.get("dirty") else "")) if commit else None,
+                 "commit": revision(meta, L),
                  "prompts": ", ".join(f'{p["id"]} {p["name"]}' for p in prompts) or None},
         "labels": labels, "headline": summary_line(data, L), "report": dashboard_model(data), "findings": items,
         "anchors": {f["id"]: "finding-" + f["id"].lower() for f in data.get("findings", [])},
@@ -891,7 +933,7 @@ def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("findings")
     p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="ja")
+    p.add_argument("--lang", choices=sorted(LABELS), help="report language (default: meta.lang, else ja)")
     p.add_argument("--repo", help="reviewed repository, for embedded excerpts")
     p.add_argument("--no-pdf", action="store_true")
     a = p.parse_args(argv)
@@ -899,10 +941,11 @@ def main(argv=None):
         source = Path(a.findings).read_bytes()
         data = load(a.findings, source)
         excerpts = attach_sources(data, a.repo)
-        L = LABELS[a.lang]
+        lang = a.lang or (data.get("meta", {}).get("lang") if data.get("meta", {}).get("lang") in LABELS else "ja")
+        L = LABELS[lang]
         stamp = STAMP.format(hashlib.sha256(source).hexdigest())
-        pages = {"dashboard.html": render_dashboard(data, L, a.lang, excerpts),
-                 "report.html": render_report_html(data, L, a.lang, excerpts)}
+        pages = {"dashboard.html": render_dashboard(data, L, lang, excerpts),
+                 "report.html": render_report_html(data, L, lang, excerpts)}
     except (SchemaError, OSError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2

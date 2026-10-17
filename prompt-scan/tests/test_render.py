@@ -52,6 +52,36 @@ class RenderTest(unittest.TestCase):
         report = (self.render(data) / "report.html").read_text(encoding="utf-8")
         self.assertIn("Likely: </p>", report)
 
+    def test_private_key_block_is_masked_whole(self):
+        repo = Path(tempfile.mkdtemp())
+        body = ["MIIBOgIBAAJBAKj34GkxFhD90vcNLYLInFEX6Ppy1tPf9Cnzj4p4WGeKLs1Pt8Qu", "KUpRKfFLfRYC9AIKjbJTWit+CqvjWYzv"]
+        (repo / "p.md").write_text("\n".join(["intro", "-----BEGIN RSA PRIVATE KEY-----", *body,
+                                               "-----END RSA PRIVATE KEY-----", "after"]) + "\n", encoding="utf-8")
+        data = sample()
+        first = data["findings"][0]
+        first.pop("prompt")
+        first["location"] = "p.md:2"
+        data["prompts"], data["findings"] = [], [first]
+        start, lines, _ = render.attach_sources(data, repo)[first["id"]]
+        self.assertEqual((start, lines), (1, ["intro"] + ["[REDACTED]"] * 4))
+
+    def test_line_numbers_split_on_newlines_only(self):
+        self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
+
+    def test_lang_defaults_to_the_record(self):
+        out = self.render(sample("en"))
+        self.assertIn(render.LABELS["en"]["title"], (out / "report.html").read_text(encoding="utf-8"))
+
+    def test_unknown_tree_state_is_shown(self):
+        data = sample()
+        data["meta"].update(commit="a" * 40, dirty=None)
+        self.assertIn("aaaaaaaaaaaa (uncommitted changes not determined)", render.meta_lines(data, render.LABELS["en"]))
+        data["meta"]["dirty"] = False
+        self.assertIn("<span>aaaaaaaaaaaa</span>", render.meta_lines(data, render.LABELS["en"]))
+
+    def test_ids_past_999_sort_numerically(self):
+        self.assertEqual(sorted(["F-1000", "F-999", "L-002"], key=render.id_key), ["F-999", "F-1000", "L-002"])
+
     def test_no_pdf_removes_a_stale_pdf(self):
         out = Path(tempfile.mkdtemp())
         write_json(out / "findings.json", sample())
@@ -125,6 +155,9 @@ class RenderTest(unittest.TestCase):
         lines = render.attach_sources(data, repo)[first["id"]][1]
         self.assertIn("committed line", lines)
         self.assertNotIn("edited line", lines)
+        # A dirty scan reviewed the working tree, so its excerpts come from there.
+        data["meta"]["dirty"] = True
+        self.assertIn("edited line", render.attach_sources(data, repo)[first["id"]][1])
 
     def test_excerpt_path_cannot_leave_the_repository(self):
         data = sample()
@@ -145,6 +178,9 @@ class RenderTest(unittest.TestCase):
                                             "cases": 1, "passed": 1, "failed": 0}]), "name a recorded finding"),
             (lambda d: d.update(extra=1), "unknown top-level keys"),
             (lambda d: d["meta"].update(commit="abc"), "full Git object id"),
+            (lambda d: d["findings"][0].update(references=None), "references must be a list"),
+            (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": "L-001", "model": "m", "date": "d",
+                                            "cases": 1, "passed": 1, "failed": 0}]), "must be an F-* id"),
             (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": "F-001", "model": "m", "date": "d",
                                             "cases": 1, "passed": 1, "failed": 1}]), "exceeds cases"),
         ]

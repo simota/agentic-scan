@@ -73,11 +73,45 @@ class InventoryTest(unittest.TestCase):
             'VERTEX = "claude-3-5-sonnet@20240620"',
             'GEMINI = ["models/gemini-1.5-pro", "gemini-pro"]',
             'OPENAI = ["o1-preview", "o3-mini-2025-01-31", "chatgpt-4o-latest"]',
+            'SHORT = ["gpt-4", "claude-2", "llama3", "gemini-flash-latest"]',
+            'GLOBAL = "global.anthropic.claude-sonnet-4-5-20250929-v1:0"',
             'NOT_A_MODEL = ["gemini-cli", "claude-", "o3x"]',
         ]) + "\n"})
         self.assertEqual([m["id"] for m in inventory.scan(root)["models"]], [
-            "chatgpt-4o-latest", "claude-3-5-sonnet@20240620", "gemini-pro", "models/gemini-1.5-pro",
+            "chatgpt-4o-latest", "claude-2", "claude-3-5-sonnet@20240620", "gemini-flash-latest", "gemini-pro",
+            "global.anthropic.claude-sonnet-4-5-20250929-v1:0", "gpt-4", "llama3", "models/gemini-1.5-pro",
             "o1-preview", "o3-mini-2025-01-31", "us.anthropic.claude-sonnet-4-20250514-v1:0"])
+
+    def test_variable_forms(self):
+        self.assertEqual(inventory.variables("{{- user }} {{~ name}} {amount:.2f} {who!r} {a: 1} {{ x }}"),
+                         ["user", "name", "x", "amount", "who"])
+
+    def test_fences_and_first_template_line(self):
+        self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})
+        self.assertEqual(inventory.lint_template(["{{ name", "", "stray %}"], set()),
+                         [(1, "{{ opened and never closed")])
+
+    def test_rescan_keeps_each_tag_review_on_a_shared_line(self):
+        root = make_repo({"prompts/a.md": "<rules><context>\n"})
+        out = Path(tempfile.mkdtemp())
+        data = sample()
+        data["findings"] = [f for f in data["findings"] if f["id"].startswith("F-")]
+        write_json(out / "findings.json", data)
+        args = (root, "--out", out / "inventory.json", "--into", out / "findings.json")
+        self.assertEqual(run(inventory.main, *args)[0], 0)
+        merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        verdicts = {}
+        for f in merged["findings"]:
+            if f["id"].startswith("L-"):
+                verdicts[f["id"]] = "FalsePositive" if "<rules>" in f["cause"] else "Valid"
+                f["validation"] = {"verdict": verdicts[f["id"]], "evidence": f["cause"], "method": "static"}
+        write_json(out / "findings.json", merged)
+        self.assertEqual(run(inventory.main, *args)[0], 0)
+        merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
+        kept = {f["cause"]: f["previous_validation"]["verdict"] for f in merged["findings"] if f["id"].startswith("L-")}
+        self.assertEqual(sorted(kept.values()), ["FalsePositive", "Valid"])
+        for cause, verdict in kept.items():
+            self.assertEqual(verdict, "FalsePositive" if "<rules>" in cause else "Valid")
 
     def test_lint_order_compares_line_numbers(self):
         root = make_repo({"prompts/a.md": "x\n" * 8 + "TODO\n<rules>\n"})
@@ -90,10 +124,16 @@ class InventoryTest(unittest.TestCase):
         subprocess.run([*git, "add", "."], check=True)
         subprocess.run([*git, "commit", "-qm", "init"], check=True)
         (root / "other" / "b.md").write_text("changed\n", encoding="utf-8")
+        index = root / ".git" / "index"
+        before = index.stat().st_mtime_ns
         commit, dirty = inventory.git_state(root / "svc")
         self.assertRegex(commit, r"^[0-9a-f]{40}$")
         self.assertIs(dirty, False)
         self.assertIs(inventory.git_state(root)[1], True)
+        self.assertEqual(index.stat().st_mtime_ns, before, "git status rewrote the reviewed repository's index")
+        # An untracked prompt is part of the scan but not of HEAD.
+        (root / "svc" / "prompts" / "new.md").write_text("new\n", encoding="utf-8")
+        self.assertIs(inventory.git_state(root / "svc")[1], True)
 
     def test_dirty_is_unknown_when_git_status_fails(self):
         def fake(cmd, **kwargs):

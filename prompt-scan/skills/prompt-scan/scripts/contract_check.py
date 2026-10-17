@@ -25,7 +25,7 @@ import render  # noqa: E402
 SKILL = Path(__file__).resolve().parents[1]
 OUTPUTS = {"findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf"}
 RENDERED = ("dashboard.html", "report.html")
-CODE_ID = re.compile(r"F-([0-9]{3})")
+CODE_ID = re.compile(r"F-([0-9]{3,})")
 REQUIRED_TEXT = ("symptom", "cause", "impact", "fix")
 NO_PDF = "report.pdf not produced: no PDF engine"
 NO_EVAL = "model behaviour not executed: static review only"
@@ -104,7 +104,7 @@ def check(out, no_pdf=False, allow=()):
     numbers = sorted(int(CODE_ID.fullmatch(f["id"]).group(1)) for f in code)
     if numbers != list(range(1, len(code) + 1)):
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: f["id"])
+    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
     if active != sorted(active, key=merge_tool.order_key):
         problems.append("F-* ids are not in severity order, then path and line (excluded findings are exempt): "
                         "run findings.py renumber <out>/findings.json")

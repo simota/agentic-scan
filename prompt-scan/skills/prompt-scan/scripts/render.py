@@ -4,7 +4,7 @@
     python3 render.py FINDINGS --out DIR [--lang ja|en] [--repo REPO] [--no-pdf]
 
 With --repo, each finding's `location` excerpt is embedded: read from the blob
-at `meta.commit` when the record names one and the tree was clean at scan time
+at `meta.commit` when the record names one and the tree was known clean at scan time
 (never from later working-tree edits), otherwise from the working tree.
 Credential-shaped values in excerpts are masked, private-key blocks whole.
 --lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
@@ -335,8 +335,8 @@ def attach_sources(data, repo, context=3, limit=40):
     if repo is None:
         return excerpts
     meta = data.get("meta", {})
-    # A dirty scan reviewed the working tree, so the commit's blob would not match its line numbers.
-    commit = None if meta.get("dirty") else meta.get("commit")
+    # Only a scan known to be clean reviewed the commit's blob; a dirty or undetermined one read the working tree.
+    commit = meta.get("commit") if meta.get("dirty") is False else None
     cache = {}
     for f in data.get("findings", []):
         m = LOC_RE.match(f["location"])

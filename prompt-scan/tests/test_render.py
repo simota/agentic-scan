@@ -150,14 +150,15 @@ class RenderTest(unittest.TestCase):
         first.pop("prompt")
         first["location"] = "prompts/a.md:2"
         data["prompts"], data["findings"] = [], [first]
-        data["meta"]["commit"] = commit
+        data["meta"].update(commit=commit, dirty=False)
         # --repo is a subdirectory of the work tree, as when inventory.py scanned svc/.
         lines = render.attach_sources(data, repo)[first["id"]][1]
         self.assertIn("committed line", lines)
         self.assertNotIn("edited line", lines)
         # A dirty scan reviewed the working tree, so its excerpts come from there.
-        data["meta"]["dirty"] = True
-        self.assertIn("edited line", render.attach_sources(data, repo)[first["id"]][1])
+        for dirty in (True, None):
+            data["meta"]["dirty"] = dirty
+            self.assertIn("edited line", render.attach_sources(data, repo)[first["id"]][1], dirty)
 
     def test_excerpt_path_cannot_leave_the_repository(self):
         data = sample()

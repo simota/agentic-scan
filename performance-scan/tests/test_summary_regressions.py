@@ -52,7 +52,7 @@ class SummaryRegressions(unittest.TestCase):
                     self.assertIn(f"{incomplete} 3", overview)
                 self.assertIn(f"**{incomplete} 3**", markdown)
                 self.assertIn(f"{incomplete} 3", [
-                    element_text(item) for item in root.findall(".//main/p/strong")])
+                    element_text(item) for item in root.findall(".//section[@id='overview']/p/strong")])
                 self.assertIn("High 4 / Medium 1 / Low 2 / Info 0", markdown)
                 cards = {element_text(card.find("span")): int(card.findtext("b"))
                          for card in root.findall(".//div[@class='card']")}

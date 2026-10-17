@@ -33,7 +33,9 @@ class InstallerTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="performance-install-")
         self.addCleanup(self.scratch.cleanup)
-        self.root = Path(self.scratch.name)
+        # Resolved: macOS temp dirs sit behind /tmp and /var symlinks, and the
+        # installer records real paths.
+        self.root = Path(self.scratch.name).resolve()
         self.skill = self.root / "repo with spaces" / "skills" / "performance-scan"
         self.skill.mkdir(parents=True)
         self.hosts = {name: self.root / f"{name} home" for name in ("claude", "codex", "agy")}
@@ -238,7 +240,9 @@ class MakefilePathTests(unittest.TestCase):
     def setUp(self):
         self.scratch = tempfile.TemporaryDirectory(prefix="performance-make-")
         self.addCleanup(self.scratch.cleanup)
-        self.root = Path(self.scratch.name)
+        # Resolved: macOS temp dirs sit behind /tmp and /var symlinks, and the
+        # installer records real paths.
+        self.root = Path(self.scratch.name).resolve()
         self.repo = self.root / "repo with spaces"
         self.repo.mkdir()
         for name in ("Makefile", "README.md"):

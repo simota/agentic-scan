@@ -57,6 +57,9 @@ LABELS = {
         "copy_failed": "Copy failed",
         "findings_note": "Open a finding for its cost model, evidence and fix direction. "
                          "Copy for LLM copies that finding as Markdown.",
+        "jump_findings": "Jump to findings", "contents": "Contents", "nav_summary": "Summary",
+        "nav_lists": "Checks, limits and next steps", "shortcuts": "Keyboard",
+        "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
     },
     "ja": {
         "title": "パフォーマンス診断", "scope": "対象と方法",
@@ -85,6 +88,9 @@ LABELS = {
         "copy_failed": "コピーできませんでした",
         "findings_note": "検出事項を開くとコストモデル・根拠・修正方針を確認できます。"
                          "「LLM用にコピー」でその検出事項を Markdown としてコピーします。",
+        "jump_findings": "検出事項へ移動", "contents": "目次", "nav_summary": "概要",
+        "nav_lists": "確認結果・制約・次の作業", "shortcuts": "キー操作",
+        "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
     },
 }
 # Display names for fixed values. Severity, confidence and verdict names stay as
@@ -387,9 +393,11 @@ def render_markdown(doc, lang):
 
 
 # The shared *-scan dashboard style (scan-report-kit, vendored in
-# scan_report_kit/) comes first; these rules cover only what performance-scan
-# renders differently: <details> findings, severity filter buttons, h2 section
-# rules, summary card spacing and plain data tables.
+# scan_report_kit/) comes first, with the page opted into its application shell
+# (app bar, contents sidebar with severity facets, pinned filter bar); these
+# rules cover only what performance-scan renders differently: <details>
+# findings, severity filter buttons, h2 section rules, summary card spacing and
+# plain data tables.
 CSS = """
 h2{margin:36px 0 12px;padding-top:14px;border-top:1.5px solid var(--text)}
 .lists h2{font-size:19px}
@@ -422,13 +430,38 @@ tr:last-child td{border-bottom:0}
 @media (max-width:850px){details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
 @media (max-width:480px){.card{padding:12px 2px 6px}}
 @media print{.filters,.detail-actions{display:none}details{break-inside:avoid}}
+/* Application shell: findings are <details>, not the kit's register table, so the
+   filter bar and the focused finding get the shell's pinning and focus marks here. */
+.app-shell #budgets:focus{outline:0}
+.app-shell .nav-title{padding-top:0;border-top:0}
+.app-shell .filters-panel .filters{margin:0}
+.app-shell details[data-sev]:focus-within>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
+@media print{.app-shell details[data-sev]:focus-within>summary{background:none;box-shadow:none}}
 """
 CSS = kit_style.dashboard_css() + CSS
 
 JS = """
-document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
-const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}));
+const filters=[...document.querySelectorAll('[data-filter]')],facets=[...document.querySelectorAll('.facet')];
+function filter(s){filters.forEach(x=>x.setAttribute('aria-pressed',x.dataset.filter===s));
+facets.forEach(x=>x.setAttribute('aria-pressed',x.dataset.sev===s));
+document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}
+filters.forEach(b=>b.addEventListener('click',()=>filter(b.dataset.filter)));
+// Sidebar facets: a press filters the findings by severity, a second press clears it.
+facets.forEach(b=>b.addEventListener('click',()=>{filter(b.getAttribute('aria-pressed')==='true'?'all':b.dataset.sev);
+document.getElementById('findings').scrollIntoView();}));
+// Keyboard: j/k step through the visible findings; Enter on the focused title opens it.
+document.addEventListener('keydown',e=>{if(e.altKey||e.ctrlKey||e.metaKey||e.isComposing||(e.key!=='j'&&e.key!=='k'))return;
+const t=e.target;if(t&&t.closest&&t.closest('input,select,textarea'))return;
+const shown=[...document.querySelectorAll('details[data-sev]:not([hidden])>summary')];if(!shown.length)return;
+const current=document.activeElement&&document.activeElement.closest('details[data-sev]'),
+at=shown.findIndex(s=>s.parentNode===current),next=at<0?0:Math.min(shown.length-1,Math.max(0,at+(e.key==='j'?1:-1)));
+e.preventDefault();shown[next].focus();shown[next].scrollIntoView({block:'nearest'});});
+// Mark the section in view in the sidebar contents.
+const navLinks=[...document.querySelectorAll('#nav a[href^="#"]')];if(window.IntersectionObserver){const visible=new Map(),
+spy=new IntersectionObserver(entries=>{entries.forEach(en=>visible.set(en.target.id,en.isIntersecting));
+const first=navLinks.find(a=>visible.get(a.getAttribute('href').slice(1)));
+navLinks.forEach(a=>{if(a===first)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');});},
+{rootMargin:'-35% 0px -60% 0px'});navLinks.forEach(a=>{const s=document.getElementById(a.getAttribute('href').slice(1));if(s)spy.observe(s);});}
 document.getElementById('theme').addEventListener('click',()=>{const r=document.documentElement,
 dark=r.dataset.theme?r.dataset.theme==='dark':matchMedia('(prefers-color-scheme: dark)').matches;
 r.dataset.theme=dark?'light':'dark';});
@@ -551,14 +584,30 @@ def render_html(doc, lang):
     by_sev, excluded = counts(findings)
     verdicts, incomplete_high = verification_summary(findings, t)
     e = html_text
+    nav = [("overview", t["nav_summary"]), ("findings", t["findings"])]
+    nav += [("budgets", t["budgets"])] if doc.get("budgets") else []
+    nav += [("coverage", t["perspectives"]), ("lists", t["nav_lists"])]
     # The record's text is the bulk of the page, so it sets the document language.
-    out = [f"<!doctype html><html lang='{meta['lang']}'><head><meta charset='utf-8'>",
+    out = [f"<!doctype html><html lang='{meta['lang']}' class='app-shell'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body><main>",
-           f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
-           f"<div class='tools'><button type='button' id='theme'>{e(t['theme'])}</button></div></header>",
+           f"<title>{e(t['title'])}</title><style>{CSS}</style></head><body>",
+           f"<a class='skip' href='#findings'>{e(t['jump_findings'])}</a>",
+           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(t['brand'])}</span>"
+           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span>"
+           f"<div class='tools'><button type='button' id='theme'>{e(t['theme'])}</button></div></div></header>",
+           f"<div class='shell'><nav class='sidebar' id='nav' aria-label='{e(t['contents'])}'>"
+           f"<h2 class='nav-title'>{e(t['contents'])}</h2><ol class='nav-links'>"
+           + "".join(f"<li><a href='#{i}'>{e(label)}</a></li>" for i, label in nav) + "</ol>",
+           f"<div class='facets'><h2 class='nav-title'>{e(t['severity'])}</h2>"
+           + "".join(f"<button type='button' class='facet' data-sev='{s}' aria-pressed='false'>"
+                     f"<span class='facet-name {s}'>{s}</span><span class='facet-n'>{by_sev[s]}</span></button>"
+                     for s in SEVERITIES) + "</div>",
+           f"<dl class='keys'><dt class='nav-title'>{e(t['shortcuts'])}</dt>"
+           f"<dd><kbd>j</kbd> <kbd>k</kbd> {e(t['key_move'])}</dd>"
+           f"<dd><kbd>Enter</kbd> {e(t['key_toggle'])}</dd></dl></nav>",
+           "<main><section id='overview' tabindex='-1' aria-labelledby='h'>",
            f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
-           f"<h1>{e(meta.get('project', ''))}</h1>",
+           f"<h1 id='h'>{e(meta.get('project', ''))}</h1>",
            f"<p class='meta'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
            + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
            + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p></div>"
@@ -567,31 +616,35 @@ def render_html(doc, lang):
            "<div class='cards'>"]
     for s in SEVERITIES:
         out.append(f"<div class='card'><span class='l {s}'>{s}</span><b class='n'>{by_sev[s]}</b></div>")
-    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>")
-    out.append(f"<h2>{e(t['findings'])}</h2><p class='section-note'>{e(t['findings_note'])}</p>"
-               f"<div class='filters'><button type='button' data-filter='all' aria-pressed='true'>"
-               f"{e(t['all'])}</button>"
+    out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>"
+               "</section>")
+    out.append(f"<section id='findings' tabindex='-1'><h2>{e(t['findings'])}</h2>"
+               f"<p class='section-note'>{e(t['findings_note'])}</p>"
+               f"<div class='filters-panel'><div class='filters'><button type='button' data-filter='all' "
+               f"aria-pressed='true'>{e(t['all'])}</button>"
                + "".join(f"<button type='button' data-filter='{s}' aria-pressed='false'>{s}</button>"
                          for s in SEVERITIES)
                + f"<button type='button' data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
-               + "</div>")
+               + "</div></div>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
     out += [html_finding(f, t, meta) for f in findings]
+    out.append("</section>")
     if doc.get("budgets"):
-        out.append(f"<h2>{e(t['budgets'])}</h2>"
+        out.append(f"<section id='budgets' tabindex='-1'><h2>{e(t['budgets'])}</h2>"
                    + html_table(budget_headers(t),
-                                [budget_cells(b, t, findings) for b in doc["budgets"]], id_column=True))
-    out.append(f"<h2>{e(t['perspectives'])}</h2>"
+                                [budget_cells(b, t, findings) for b in doc["budgets"]], id_column=True)
+                   + "</section>")
+    out.append(f"<section id='coverage' tabindex='-1'><h2>{e(t['perspectives'])}</h2>"
                + html_table((t["perspective_col"], t["status_col"], t["note"]),
-                            perspective_rows(doc, lang)))
-    out.append("<div class='lists'>")
+                            perspective_rows(doc, lang)) + "</section>")
+    out.append("<div class='lists' id='lists' tabindex='-1'>")
     for key in LIST_SECTIONS:
         items = doc.get(key, [])
         out.append(f"<section><h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
                       else f"<p class='muted'>{e(t['none'])}</p>") + "</section>")
-    out.append(f"</div></main><script>{JS}</script></body></html>")
+    out.append(f"</div></main></div><script>{JS}</script></body></html>")
     return "".join(out)
 
 

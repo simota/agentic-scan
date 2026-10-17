@@ -23,6 +23,9 @@ class AtomicRenderTests(unittest.TestCase):
         return result, errors
 
     def prepare(self, root, existing=True, project="Updated project"):
+        # Resolved: render.py writes to real paths, and macOS temp dirs sit behind
+        # /tmp and /var symlinks that would make the os.replace patches miss.
+        root = root.resolve()
         source = root / "findings.json"
         out = root / "reports"
         out.mkdir()

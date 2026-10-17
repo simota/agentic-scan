@@ -653,7 +653,11 @@ def _backup(target):
         except FileExistsError:
             continue
         except OSError:
-            shutil.copy2(target, backup)
+            try:
+                shutil.copy2(target, backup)
+            except BaseException:
+                backup.unlink(missing_ok=True)  # a partial copy is no backup
+                raise
         return backup
 
 
@@ -668,7 +672,9 @@ def _atomic_write_all(files):
         for target, data in files.items():
             staged.append(_stage(target, data))
         if len(staged) > 1:
-            backups = [_backup(target) for _, target in staged]
+            # One at a time, so the finally below removes those made before a failure.
+            for _, target in staged:
+                backups.append(_backup(target))
         for i, (temporary, target) in enumerate(staged):
             os.replace(temporary, target)
             replaced.append(i)
@@ -1003,8 +1009,8 @@ def contract_problems(out, allow=()):
         keys = [(x, SEVERITIES.index(f["severity"]), _first_location(f))
                 for x, f in zip(excluded, findings)]
         if keys != sorted(keys):
-            problems.append("findings of one severity must be numbered in path order; "
-                            "run renumber")
+            problems.append("findings must be numbered by severity, then path and line of "
+                            "the first location (excluded ones too); run renumber")
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:

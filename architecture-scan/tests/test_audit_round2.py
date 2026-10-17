@@ -118,6 +118,29 @@ class PairWriteTests(unittest.TestCase):
             self.write_failing_second(d)
             self.assertEqual(list(d.iterdir()), [])
 
+    def test_a_failed_backup_leaves_no_file_behind(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            d = Path(tmp)
+            (d / "report.md").write_bytes(b"old report")
+            (d / "dashboard.html").write_bytes(b"old dashboard")
+            real = findings.os.link
+
+            def link(src, dst):
+                if Path(src).name == "dashboard.html":
+                    raise PermissionError(1, "Operation not permitted")
+                return real(src, dst)
+
+            def copy2(src, dst):
+                Path(dst).write_bytes(b"part")
+                raise OSError(28, "No space left on device")
+
+            with mock.patch.object(findings.os, "link", side_effect=link), \
+                    mock.patch.object(findings.shutil, "copy2", side_effect=copy2):
+                with self.assertRaises(OSError):
+                    findings._atomic_write_all({d / "report.md": b"new", d / "dashboard.html": b"new"})
+            self.assertEqual(sorted(p.name for p in d.iterdir()), ["dashboard.html", "report.md"])
+            self.assertEqual((d / "report.md").read_bytes(), b"old report")
+
     def test_a_successful_write_leaves_no_backup(self):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
@@ -182,9 +205,16 @@ class RunContractTests(unittest.TestCase):
         doc = complete_doc()
         doc["findings"] = [finding("A-001", location=["z/late.py:1"], rule="R-01"),
                            finding("A-002", location=["a/early.py:9"])]
-        self.assertIn("path order", self.problems(doc))
+        self.assertIn("then path and line", self.problems(doc))
         renumbered, _ = findings.renumber(doc)
-        self.assertNotIn("path order", self.problems(renumbered))
+        self.assertNotIn("then path and line", self.problems(renumbered))
+
+    def test_excluded_findings_out_of_severity_order_get_an_accurate_reason(self):
+        doc = complete_doc()
+        excluded = {"verdict": "FalsePositive", "method": "static", "evidence": "a.py:1 delegates"}
+        doc["findings"] += [finding("A-003", "Low", validation=dict(excluded)),
+                            finding("A-004", "High", validation=dict(excluded))]
+        self.assertIn("by severity, then path", self.problems(doc))
 
     def test_an_invisible_reason_on_a_closed_rule_is_no_reason(self):
         doc = complete_doc()

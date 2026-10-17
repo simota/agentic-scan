@@ -107,6 +107,29 @@ def unique_object(pairs):
     return result
 
 
+MAX_JSON_DEPTH = 32  # a record nests about six levels; the tools copy and walk it recursively
+
+
+def json_depth(value):
+    """Nesting depth of parsed JSON, without recursion."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        item, level = stack.pop()
+        if isinstance(item, (dict, list)):
+            deepest = max(deepest, level)
+            stack.extend((x, level + 1) for x in (item.values() if isinstance(item, dict) else item))
+    return deepest
+
+
+def has_symlink_parent(path):
+    """True when any existing parent directory of path (relative or anchored to cwd) is a symlink."""
+    raw_path = Path(path)
+    abs_path = Path(os.path.abspath(str(raw_path)))
+    temp_parents = set(Path(tempfile.gettempdir()).parents) | {Path("/tmp"), Path("/var"), Path("/etc")}
+    candidates = (*raw_path.parents, abs_path.parent, *abs_path.parent.parents)
+    return any(p.is_symlink() for p in candidates if p not in temp_parents and os.path.lexists(p))
+
+
 def split_yaml_documents(lines):
     """[(line number, text)] per document, split on --- and ... markers.
 
@@ -144,6 +167,10 @@ def write_text_atomic(path, text, *, mkdir=False):
         raise OSError(f"{path}: text contains a lone surrogate and cannot be written as UTF-8") from None
     if path.is_symlink():
         raise OSError(f"{path} is a symlink; refusing to replace it")
+    if os.path.lexists(path) and not path.is_file():
+        raise OSError(f"{path} is not a regular file; refusing to replace it")
+    if has_symlink_parent(path):
+        raise OSError(f"{path}: parent directory is a symlink; refusing to write through it")
     if mkdir:
         path.parent.mkdir(parents=True, exist_ok=True)
     try:

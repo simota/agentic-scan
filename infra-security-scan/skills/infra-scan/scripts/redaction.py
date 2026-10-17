@@ -1,16 +1,22 @@
 """Conservative redaction for values copied into scan outputs (stdlib only)."""
 import bisect
 import json
+from pathlib import Path
 import re
+import sys
 from urllib.parse import unquote_plus, urlsplit, urlunsplit
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from common import unique_object  # noqa: E402
 
 
 # The second alternative takes the short spellings (DB_PASS, admin_pw, pwd)
 # only as whole words, so bypass_mode or upwards are not keys of a secret.
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])(?:[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
-    r"client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*|"
-    r"(?:[\w/.-]*[^a-zA-Z\s\"'=:])?(pass(?:phrase)?|pwd|pw)(?:[^a-zA-Z\s\"'=:][\w/.-]*)?)[\"']?\s*[:=]")
+    r"client[-_]?key|tls\.key|ssh[-_]?key|client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*|"
+    r"(?:[\w/.-]*[^a-zA-Z\s\"'=:])?(pass(?:phrase)?|pwd|pw|authorization|bearer)"
+    r"(?:[^a-zA-Z\s\"'=:][\w/.-]*)?)[\"']?\s*[:=]")
 # Known credential formats, labelled for the scanner's SEC-001 detail. The
 # scanner, redaction and the merge gate all build their patterns from these.
 CREDENTIAL_SHAPES = (
@@ -27,9 +33,11 @@ CREDENTIAL = re.compile(
     "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
 KEY_BEGIN = re.compile(KEY_MARKER.pattern.replace("(BEGIN|END)", "BEGIN"))
 SAFE_VALUE = re.compile(
-    r"(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false)"
+    r'(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false|'
+    r'"?(?:none|NONE|AWS_IAM|IAM|CUSTOM|JWT|COGNITO_USER_POOLS)"?)'
     r"\s*[,}]?\s*$")
-SAFE_SCALAR = re.compile(r"(?:null|true|false)\s*[,}]?\s*$")
+SAFE_SCALAR = re.compile(
+    r'(?:null|true|false|"?(?:none|NONE|AWS_IAM|IAM|CUSTOM|JWT|COGNITO_USER_POOLS)"?)\s*[,}]?\s*$')
 HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 # Apostrophes are valid in URL userinfo. Keep it through the last @ so a
 # surrounding string's quote cannot cut off credentials before module_source.
@@ -150,7 +158,7 @@ def has_structured_secrets(value):
         text = value.strip()
         if text[:1] in ("{", "[") and len(text) > 1:
             try:
-                return has_structured_secrets(json.loads(text))
+                return has_structured_secrets(json.loads(text, object_pairs_hook=unique_object))
             except (ValueError, RecursionError):
                 return False
         return False
@@ -202,12 +210,13 @@ def has_structured_secrets(value):
     # pairs and other literal collections, including a value that precedes its
     # name in the source. CloudFormation capitalizes these keys.
     keys = {key.lower(): key for key in value if isinstance(key, str)}
-    if "value" in keys:
-        for label in ("name", "key"):
-            if label in keys:
-                name = value[keys[label]]
-                if not isinstance(name, str) or is_secret_name(name):
-                    return True
+    for val_key, label_keys in (("value", ("name", "key")), ("parametervalue", ("parameterkey",))):
+        if val_key in keys:
+            for label in label_keys:
+                if label in keys:
+                    name = value[keys[label]]
+                    if not isinstance(name, str) or is_secret_name(name):
+                        return True
     if "env" in value and value["env"] is not None:
         entries = value["env"]
         if not isinstance(entries, (dict, list)):
@@ -304,14 +313,20 @@ def module_source(source):
 
 def redact(line, *, syntax="hcl"):
     """Redact a line; only HCL may treat reference-shaped values as public."""
-    match = _secret_field(line)
-    if match:
-        rest = line[match.end():].strip()
+    matches = list(_secret_fields(line))
+    safe = SAFE_VALUE if syntax == "hcl" else SAFE_SCALAR
+    for i, match in enumerate(matches):
+        rest_to_end = line[match.end():].strip()
+        if not rest_to_end or safe.fullmatch(rest_to_end):
+            continue
+        if i + 1 < len(matches):
+            rest_to_next = line[match.end():matches[i + 1].start()].strip()
+            if safe.fullmatch(rest_to_next):
+                continue
         # Only complete references/booleans are safe, not expressions that
         # happen to start with a reference and then contain a literal value.
-        safe = SAFE_VALUE if syntax == "hcl" else SAFE_SCALAR
-        if rest and not safe.fullmatch(rest):
-            line = line[:match.end()] + " [redacted]"
+        line = line[:match.end()] + " [redacted]"
+        break
     if KEY_MARKER.search(line):
         return "[redacted]"
     line = URL.sub(lambda m: module_source(m.group(0)), line)
@@ -325,30 +340,48 @@ class _Value:
         self.quote = None
         self.escaped = False
         self.started = False
+        self.trailing_op = False
 
     def feed(self, text):
         for n, char in enumerate(text):
             if self.quote:
+                self.trailing_op = False
                 if self.escaped:
                     self.escaped = False
                 elif char == "\\":
                     self.escaped = True
+                elif self.quote == '"' and char == "{" and n > 0 and text[n - 1] in "$%":
+                    sig = text[n - 1]
+                    k = n - 1
+                    while k >= 0 and text[k] == sig:
+                        k -= 1
+                    if (n - 1 - k) % 2 == 1:
+                        self.stack.append("${")
+                        self.quote = None
                 elif char == self.quote:
                     self.quote = None
-            elif char in "\"'":
+            elif char == '"' or (char == "'" and "${" not in self.stack):
                 self.quote = char
+                self.trailing_op = False
             elif char == "#" or text[n:n + 2] == "//":
                 break
             elif char.isspace():
                 continue
             elif char in "([{":
                 self.stack.append(char)
+                self.trailing_op = False
             elif char in ")]}":
-                if self.stack and self.stack[-1] == {")": "(", "]": "[", "}": "{"}[char]:
+                if char == "}" and self.stack and self.stack[-1] == "${":
                     self.stack.pop()
+                    self.quote = '"'
+                elif self.stack and self.stack[-1] == {")": "(", "]": "[", "}": "{"}[char]:
+                    self.stack.pop()
+                self.trailing_op = False
+            else:
+                self.trailing_op = char in "?:+"
             self.started = True
         # Whitespace/comments before the first token do not complete a value.
-        return not self.started or bool(self.stack or self.quote)
+        return not self.started or bool(self.stack or self.quote or self.trailing_op)
 
 
 def redact_lines(lines, *, syntax="hcl"):
@@ -395,14 +428,14 @@ def redact_lines(lines, *, syntax="hcl"):
                 block_indent = None
             else:
                 hidden = True
-        if not hidden:
-            match = _secret_field(line)
-            if match:
+        if heredoc is None and value is None and block_indent is None and not private:
+            for match in reversed(list(_secret_fields(line))):
                 rest = line[match.end():].strip()
                 start = HEREDOC.fullmatch(rest)
                 if start:
                     heredoc = start.group(1)
-                elif not rest or rest.startswith("#") or re.fullmatch(r"[|>][1-9+-]*(?:\s+#.*)?", rest):
+                    break
+                if not rest or rest.startswith("#") or re.fullmatch(r"[|>][1-9+-]*(?:\s+#.*)?", rest):
                     block_indent = len(line) - len(line.lstrip())
                     empty = not rest or rest.startswith("#")
                     indentless = syntax == "yaml" and empty
@@ -410,10 +443,11 @@ def redact_lines(lines, *, syntax="hcl"):
                         # JSON permits a value on the next line at any indent.
                         # YAML instead follows its mapping/list indentation.
                         value = _Value()
-                else:
-                    pending = _Value()
-                    if pending.feed(rest):
-                        value = pending
+                    break
+                pending = _Value()
+                if pending.feed(rest):
+                    value = pending
+                    break
         if start_heredoc is not None:
             heredoc = start_heredoc
         result.append("[redacted]" if hidden else redact(line, syntax=syntax))
@@ -437,6 +471,7 @@ SECRET_WORD = re.compile(
     r"tls\.key|ssh[-_]?key)(?![a-z])")
 # Public spellings that contain a secret word but name no secret.
 PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|"
+                          r"block[-_]project[-_]ssh[-_]keys|authori[sz]ation[-_]scopes|"
                           r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
                           r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
                           r"(?:secret|token|auth)[\w-]{0,64}\.(?:arn|id|name)\b")
@@ -659,6 +694,19 @@ def scrub_line(line, syntax="hcl"):
     return line
 
 
+def _is_safe_json_block(body_lines):
+    body = "\n".join(body_lines).strip()
+    if not body.startswith(("{", "[")):
+        return False
+    try:
+        doc = json.loads(body, object_pairs_hook=unique_object)
+    except (ValueError, RecursionError):
+        return False
+    raw_lines = list(body_lines)
+    return (not has_escaped_secret_keys(body, [doc]) and not has_structured_secrets(doc)
+            and redact_json_values("\n".join(raw_lines), raw_lines) == raw_lines)
+
+
 def scrub_lines(lines, syntax="hcl", original=None):
     """Hide script and text bodies, comments, secret-word lines and opaque tokens.
 
@@ -668,8 +716,9 @@ def scrub_lines(lines, syntax="hcl", original=None):
     out = []
     heredoc = block = None
     putty = continued = False
-    original = lines if original is None else original
-    for line, source in zip(lines, original):
+    lines = list(lines)
+    original = lines if original is None else list(original)
+    for idx, (line, source) in enumerate(zip(lines, original)):
         if continued:
             # A backslash continuation of a line whose value was hidden.
             out.append("[redacted]")
@@ -690,9 +739,6 @@ def scrub_lines(lines, syntax="hcl", original=None):
             if source.strip() == term:
                 heredoc = None
                 out.append(line)
-            elif opaque is None and source.strip():
-                heredoc = (term, not source.lstrip().startswith(("{", "[")))
-                out.append("[redacted]" if heredoc[1] else scrub_line(line, "json"))
             else:
                 out.append("[redacted]" if opaque else scrub_line(line, "json") if line.strip() else line)
             continue
@@ -703,9 +749,6 @@ def scrub_lines(lines, syntax="hcl", original=None):
                 out.append(line)
                 continue
             if current > indent:
-                if opaque is None:
-                    opaque = not source.lstrip().startswith(("{", "["))
-                    block = (indent, opaque)
                 out.append("[redacted]" if opaque else scrub_line(line, "json"))
                 continue
             block = None
@@ -719,7 +762,15 @@ def scrub_lines(lines, syntax="hcl", original=None):
             continue  # an opener inside a comment opens nothing
         start = re.search(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$", line)
         if syntax == "hcl" and start:
-            heredoc = (start.group(1), None)
+            term = start.group(1)
+            end_idx = next((j for j in range(idx + 1, len(original)) if original[j].strip() == term), len(original))
+            heredoc = (term, not _is_safe_json_block(original[idx + 1:end_idx]))
         elif syntax == "yaml" and re.search(r"(?:^|:\s|-\s)\s*[|>][1-9+-]*\s*(?:#.*)?$", line):
-            block = (len(line) - len(line.lstrip()), None)
+            indent = len(line) - len(line.lstrip())
+            body_lines = []
+            for next_line in original[idx + 1:]:
+                if next_line.strip() and (len(next_line) - len(next_line.lstrip())) <= indent:
+                    break
+                body_lines.append(next_line)
+            block = (indent, not _is_safe_json_block(body_lines))
     return out

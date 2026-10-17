@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -141,6 +142,47 @@ class InventoryTest(unittest.TestCase):
         subprocess.run(["git", "-C", str(root), "config", "status.showUntrackedFiles", "no"], check=True)
         (root / "svc" / "prompts" / "new.md").write_text("new\n", encoding="utf-8")
         self.assertIs(inventory.git_state(root / "svc")[1], True)
+
+    def git_repo(self, files):
+        root = make_repo(files)
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        return root
+
+    def test_no_filter_driver_from_the_repository_runs(self):
+        root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n",
+                              "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n"})
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        for driver in ("x", "my x"):  # A driver name may contain a space.
+            for key in ("clean", "process"):
+                subprocess.run(["git", "-C", str(root), "config", f"filter.{driver}.{key}",
+                                f"sh -c 'touch {marker}; cat'"], check=True)
+        # A newer mtime makes git status re-hash the file through the filter driver.
+        for name in ("a.md", "b.txt"):
+            os.utime(root / "prompts" / name, (2_000_000_000, 2_000_000_000))
+        inventory.scan(root)
+        self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
+
+    def test_ignored_files_the_scan_read_make_it_dirty(self):
+        root = self.git_repo({".gitignore": "prompts/local.md\n*.log\n", "prompts/a.md": "hi\n"})
+        (root / "debug.log").write_text("ignored, never read\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], False)
+        (root / "prompts" / "local.md").write_text("TODO\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], True)
+
+    def test_non_utf8_file_name_is_reported_escaped(self):
+        root = make_repo({"prompts/ok.md": "hi\n"})
+        try:
+            (root / os.fsdecode(b"prompts/\xff.md")).write_text("hi\n", encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        out = Path(tempfile.mkdtemp()) / "inventory.json"
+        code, _, err = run(inventory.main, root, "--out", out)
+        self.assertEqual(code, 0, err)
+        paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
+        self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
 
     def test_dirty_is_unknown_when_git_status_fails(self):
         def fake(cmd, **kwargs):

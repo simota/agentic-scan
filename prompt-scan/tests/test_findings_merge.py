@@ -76,6 +76,13 @@ class MergeTest(unittest.TestCase):
         self.merge({"checked_ok": ["x"]})
         self.assertEqual(stat.S_IMODE(self.out.stat().st_mode), 0o640)
 
+    def test_too_deep_fragment_is_an_input_error(self):
+        path = self.dir / "deep.json"
+        path.write_text('{"meta":' + "[" * 100000 + "]" * 100000 + "}", encoding="utf-8")
+        code, _, err = run(findings.main, "merge", self.out, path)
+        self.assertEqual(code, 2, err)
+        self.assertIn("error:", err)
+
     def test_refuses_scanner_meta(self):
         code, _, err = self.merge({"meta": dict(META, commit="0" * 40)})
         self.assertEqual(code, 1)

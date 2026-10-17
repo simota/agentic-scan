@@ -87,7 +87,7 @@ def read_json(path, raw=None):
     try:
         raw = read_regular(path) if raw is None else raw
         value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
-    except (OSError, UnicodeError, ValueError) as e:
+    except (OSError, UnicodeError, ValueError, RecursionError) as e:
         raise render.SchemaError(f"{path}: {e}") from None
     if render.json_depth(value) > render.MAX_JSON_DEPTH:
         raise render.SchemaError(f"{path}: JSON nesting deeper than {render.MAX_JSON_DEPTH} levels")

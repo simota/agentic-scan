@@ -145,7 +145,8 @@ def walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            rel = path.relative_to(root).as_posix()
+            # A name that is not UTF-8 is reported with its bytes escaped (\xff); JSON cannot hold it as is.
+            rel = os.fsencode(path.relative_to(root).as_posix()).decode("utf-8", "backslashreplace")
             if path.is_symlink() or not path.is_file() or name.startswith(".env") \
                     or path.suffix.lower() in SENSITIVE_SUFFIXES:
                 continue
@@ -284,28 +285,42 @@ def lint_file(rel, text, tokens):
         k: RULES[rule][k] for k in ("kind", "severity", "confidence", "category")}) for rule, number, detail in hits]
 
 
-def git_state(root):
-    """HEAD, and whether the tree under root differs from it (None when Git cannot tell).
+def git_state(root, read=()):
+    """HEAD, and whether what the scan read under root differs from it (None when Git cannot tell).
 
-    Untracked files that are not ignored count: the scan read them, but HEAD does not hold them.
+    Untracked files count, and so do ignored ones among `read` (the paths the inventory reports):
+    the scan read them, but HEAD does not hold them.
     """
-    def git(*args):
+    def git(*args, ok=(0,), stdin=None):
         try:
             # A repository's core.fsmonitor names a command that `git status` would run.
             # --no-optional-locks: status must not refresh .git/index, a write inside the reviewed repository.
             r = subprocess.run(["git", "--no-optional-locks", "-C", str(root), "-c", "core.fsmonitor=false", *args],
-                               capture_output=True, text=True, timeout=20)
+                               capture_output=True, text=True, timeout=20, input=stdin, errors="surrogateescape")
         except (OSError, subprocess.TimeoutExpired):
             return None
-        return r.stdout.strip() if r.returncode == 0 else None
+        return r.stdout.strip() if r.returncode in ok else None
 
     commit = git("rev-parse", "HEAD")
     if not commit:
         return None, None
+    # git status hashes stat-dirty files through each filter driver's clean or process command, which the
+    # repository configures; blank them all so no command from the reviewed repository runs.
+    # -z --name-only: a driver name may contain spaces (filter."my x".clean).
+    drivers = git("config", "-z", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$", ok=(0, 1))
+    if drivers is None:
+        return commit, None
+    no_filters = [arg for key in drivers.split("\0") if key for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
-    status = git("status", "--porcelain", "--untracked-files=normal", "--", ".")
-    return commit, None if status is None else bool(status)
+    status = git(*no_filters, "status", "--porcelain", "--untracked-files=normal", "--", ".")
+    if status is None:
+        return commit, None
+    if status or not read:
+        return commit, bool(status)
+    # check-ignore exits 0 when some path is ignored and 1 when none is.
+    ignored = git("check-ignore", "--stdin", "-z", ok=(0, 1), stdin="\0".join(read) + "\0")
+    return commit, None if ignored is None else bool(ignored)
 
 
 def scan(root):
@@ -334,7 +349,9 @@ def scan(root):
                             call_sites.append({"path": rel, "line": number, "api": api})
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
-    commit, dirty = git_state(root)
+    read = {f["path"] for f in prompt_files} | {c["path"] for c in call_sites} | \
+        {loc.rpartition(":")[0] for locs in models.values() for loc in locs}
+    commit, dirty = git_state(root, sorted(read))
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {

@@ -40,8 +40,11 @@ LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)\s]*)?(?:\s+\"[^\"]*\")?\)")
 
 def problems():
     for doc in DOCS:
-        text = doc.read_text(encoding="utf-8")
         rel = doc.relative_to(REPO)
+        if not doc.is_file():
+            yield f"{rel} is tracked by Git but missing from the work tree"
+            continue
+        text = doc.read_text(encoding="utf-8")
         commands = {ref for span in CODE_SPAN.findall(text) for ref in COMMAND_REF.findall(span)}
         for ref in sorted(set(SKILL_REF.findall(text)) | commands):
             # A bare scripts/ci/... path is a repository path, not a skill path.

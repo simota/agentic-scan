@@ -9,7 +9,10 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/find
 ```
 
 It reads files only. It never executes code from the repository and sends
-nothing over the network. Directories such as `.git`, `node_modules`, virtual
+nothing over the network; the Git state it records comes from `git status`
+and `git check-ignore`, with the repository's fsmonitor and filter-driver
+commands switched off and without refreshing the index. A file whose name is
+not UTF-8 is listed with the bytes escaped (`\xff`). Directories such as `.git`, `node_modules`, virtual
 environments and build output are skipped, as are `.env*` files, key files,
 symlinks, binary files and files over 1 MiB.
 

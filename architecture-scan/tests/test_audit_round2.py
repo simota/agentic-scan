@@ -1,15 +1,19 @@
 """Second full review: the sample, the drafting templates and the zero-findings caveat."""
+import copy
+import io
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from unittest import mock
 
-from test_architecture_scan import REPO, SKILL, complete_doc, findings, render
+from test_architecture_scan import REPO, SKILL, complete_doc, finding, findings, render
 
 SAMPLE = REPO / "examples" / "findings.sample.json"
 
@@ -158,6 +162,106 @@ class MergeInputTests(unittest.TestCase):
         doc["meta"]["context"] = nested(8000)
         with self.assertRaises(findings.SchemaError):
             findings.validate(doc)
+
+
+class RunContractTests(unittest.TestCase):
+    """Claims of the run contract that no test held before (found by mutation testing)."""
+
+    def build(self, doc):
+        out = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, out)
+        (out / "findings.json").write_text(json.dumps(doc), encoding="utf-8")
+        with redirect_stdout(io.StringIO()):
+            self.assertEqual(render.main([str(out / "findings.json"), "--out", str(out)]), 0)
+        return out
+
+    def problems(self, doc):
+        return "\n".join(findings.contract_problems(self.build(doc)))
+
+    def test_one_severity_is_numbered_in_path_order(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("A-001", location=["z/late.py:1"], rule="R-01"),
+                           finding("A-002", location=["a/early.py:9"])]
+        self.assertIn("path order", self.problems(doc))
+        renumbered, _ = findings.renumber(doc)
+        self.assertNotIn("path order", self.problems(renumbered))
+
+    def test_an_invisible_reason_on_a_closed_rule_is_no_reason(self):
+        doc = complete_doc()
+        doc["rules"][0]["reason"] = "\u00ad"
+        self.assertNotIn("a reason explains", self.problems(doc))
+        doc["rules"][0]["reason"] = "provisional: traced by unit 2"
+        self.assertIn("a reason explains", self.problems(doc))
+
+    def test_an_invisible_reason_does_not_explain_a_not_checked_rule(self):
+        doc = complete_doc()
+        doc["rules"].append({"id": "R-02", "statement": "s", "source": "adr",
+                             "status": "not checked", "reason": "\u200b"})
+        self.assertIn("R-02", self.problems(doc))
+
+    def test_a_missing_output_is_named(self):
+        out = self.build(complete_doc())
+        (out / "report.md").unlink()
+        self.assertIn("missing output: report.md", findings.contract_problems(out))
+
+    def test_empty_checked_ok_and_limitations_are_refused(self):
+        for key, message in (("limitations", "limitations: state"), ("checked_ok", "checked_ok: list")):
+            with self.subTest(key=key):
+                doc = complete_doc()
+                doc[key] = []
+                self.assertIn(message, self.problems(doc))
+
+    def test_evidence_may_name_the_location_by_its_file_name(self):
+        doc = complete_doc()
+        doc["findings"][1] = finding("A-002", "Low", location=["bin/server:9"], validation={
+            "verdict": "Valid", "method": "static", "evidence": "server:9 opens the pool"})
+        self.assertNotIn("A-002", self.problems(doc))
+
+    def test_a_range_ending_past_the_file_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "a.py").write_text("x\n" * 10, encoding="utf-8")
+            doc = {"findings": [finding(location=["a.py:3-11"])]}
+            self.assertIn("line 11 is past", "\n".join(findings.location_problems(doc, tmp)))
+            doc = {"findings": [finding(location=["a.py:3-10"])]}
+            self.assertEqual(findings.location_problems(doc, tmp), [])
+
+
+class SchemaRefusalTests(unittest.TestCase):
+    """Each bad value is refused with its field named, never accepted or a traceback."""
+
+    CASES = [
+        ("meta.project", lambda d: d["meta"].pop("project")),
+        ("meta.lang", lambda d: d["meta"].update(lang="fr")),
+        ("title", lambda d: d["findings"][0].update(title=" ")),
+        ("confidence", lambda d: d["findings"][0].update(confidence="Sure")),
+        ("category", lambda d: d["findings"][0].update(category="Security")),
+        ("location", lambda d: d["findings"][0].update(location=[])),
+        ("validation.verdict", lambda d: d["findings"][0]["validation"].update(verdict="Maybe")),
+        ("validation.method", lambda d: d["findings"][0]["validation"].update(method="guess")),
+        ("validation", lambda d: d["findings"][0].update(validation="Valid")),
+        ("analysis", lambda d: d["findings"][0].update(
+            analysis={"tool": "t", "command": "c", "reslt": "r"})),
+        ("references[0]", lambda d: d["findings"][0].update(references=["https://e.example"])),
+        ("references[0].url", lambda d: d["findings"][0].update(references=[{"title": "x"}])),
+        ("top level", lambda d: d.update(notes="x")),
+        ("statement", lambda d: d["rules"][0].update(statement="")),
+        ("status", lambda d: d["rules"][0].update(status="fine")),
+        ("perspectives", lambda d: d["perspectives"].append(
+            {"name": "Security", "status": "applied", "note": "x"})),
+        ("status", lambda d: d["perspectives"][0].update(status="done")),
+        ("note", lambda d: d["perspectives"][0].pop("note")),
+        ("checked_ok", lambda d: d.update(checked_ok=["\x01"])),
+    ]
+
+    def test_each_bad_value_is_a_schema_error_naming_its_field(self):
+        findings.validate(complete_doc(), complete=True)
+        for field, change in self.CASES:
+            with self.subTest(field=field):
+                doc = copy.deepcopy(complete_doc())
+                change(doc)
+                with self.assertRaises(findings.SchemaError) as caught:
+                    findings.validate(doc, complete=True)
+                self.assertIn(field, str(caught.exception))
 
 
 if __name__ == "__main__":

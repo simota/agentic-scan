@@ -34,7 +34,7 @@ per line, counted as report.md counts them (excluded verdicts apart).
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
-record is complete, IDs are gapless in severity order with excluded verdicts
+record is complete, IDs are gapless in severity order, then path, with excluded verdicts
 last, every perspective in
 `reference/perspectives.md` is recorded, every cited rule exists, every
 violated rule is cited in the `rule` of a Valid or Likely finding (which may
@@ -998,6 +998,13 @@ def contract_problems(out, allow=()):
     if excluded != sorted(excluded):
         problems.append("excluded findings (FalsePositive, NotApplicable) are numbered after "
                         "the rest; run renumber")
+    elif ranks == sorted(ranks):
+        # renumber's order: within one severity, by path and line of the first location.
+        keys = [(x, SEVERITIES.index(f["severity"]), _first_location(f))
+                for x, f in zip(excluded, findings)]
+        if keys != sorted(keys):
+            problems.append("findings of one severity must be numbered in path order; "
+                            "run renumber")
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for name in PERSPECTIVES:
         if name not in recorded:
@@ -1048,7 +1055,7 @@ def contract_problems(out, allow=()):
             problems.append(f"{r['id']}: a violated rule needs a Valid or Likely finding that "
                             "cites it in rule (list several, `R-01, R-02`, when one root "
                             "cause breaks them all)")
-        if r["status"] in ("holds", "violated") and r.get("reason", "").strip():
+        if r["status"] in ("holds", "violated") and visible(r.get("reason", "")):
             # Usually a provisional `not checked` reason left behind by the fragment
             # that closed the rule; it would render under the final status.
             problems.append(f"{r['id']}: a reason explains a not-checked or partly-read rule; "

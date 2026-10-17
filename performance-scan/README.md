@@ -111,7 +111,7 @@ concurrent updates.
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: counts, findings filterable by severity or Excluded, budgets, perspective coverage; a Copy-for-LLM button per finding; light and dark themes |
+| `dashboard.html` | Self-contained dashboard in the kit's application shell (app bar, contents sidebar with severity facets, j/k keys, pinned filter bar): counts, findings filterable by severity or Excluded, budgets, perspective coverage; a Copy-for-LLM button per finding; light and dark themes |
 | `report.md` | Severity and verification counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, checked and sound, limitations, decisions, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,
@@ -174,8 +174,8 @@ performance.
 
 The dashboard uses the shared *-scan report format,
 [scan-report-kit](https://github.com/simota/scan-report-kit): its dashboard
-stylesheet (light and dark themes, journal-style typography) comes first, and
-`render.py` adds only the rules for what this skill renders differently
+stylesheet (light and dark themes, journal-style typography) comes first, the
+page opts into its application shell (`html.app-shell`), and `render.py` adds only the rules for what this skill renders differently
 (collapsible findings, severity filter buttons, budget and coverage tables).
 The kit is vendored in `skills/performance-scan/scripts/scan_report_kit/`;
 change it upstream and re-vendor, never in place (`make check` verifies the

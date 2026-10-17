@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import complete_doc, finding, findings, render, run_main
+from support import HtmlTreeReader, complete_doc, element_text, finding, findings, render, run_main
 
 
 class ReportLayoutTests(unittest.TestCase):
@@ -67,6 +67,30 @@ class ReportLayoutTests(unittest.TestCase):
         self.assertIn("| Scope | repo root |", report)
         self.assertIn("- **perspective:** Database access\n", report)
         self.assertIn("· Database access (DB1)</span>", render.render_html(complete_doc(), "en"))
+
+
+class AppShellTests(unittest.TestCase):
+    def test_dashboard_opts_into_the_kit_shell_with_contents_and_facets(self):
+        doc = complete_doc()
+        doc["findings"].append(finding("P-003", "High", validation={
+            "verdict": "NotApplicable", "method": "static", "evidence": "x.py:3"}))
+        for budgets in (doc.get("budgets", []), []):
+            doc["budgets"] = budgets
+            with self.subTest(budgets=bool(budgets)):
+                root = HtmlTreeReader(render.render_html(doc, "en")).root
+                self.assertEqual(root.find("html").get("class"), "app-shell")
+                self.assertIsNotNone(root.find(".//header[@class='appbar']"))
+                targets = [a.get("href")[1:] for a in root.findall(".//nav[@id='nav']//a")]
+                expected = ["overview", "findings"] + (["budgets"] if budgets else []) + ["coverage", "lists"]
+                self.assertEqual(targets, expected)
+                for target in targets:
+                    self.assertIsNotNone(root.find(f".//*[@id='{target}']"), target)
+                # Facets count what their filter shows: included findings only.
+                facets = {b.get("data-sev"): int(b.findtext("span[@class='facet-n']"))
+                          for b in root.findall(".//button[@class='facet']")}
+                shown = {s: sum(d.get("data-sev") == s for d in root.findall(".//details"))
+                         for s in ("High", "Medium", "Low", "Info")}
+                self.assertEqual(facets, shown)
 
 
 class AllExcludedLayoutTests(unittest.TestCase):

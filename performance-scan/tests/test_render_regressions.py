@@ -260,7 +260,7 @@ class RenderRegressions(unittest.TestCase):
         for lang in ("ja", "en"):
             with self.subTest(lang=lang):
                 root = HtmlTreeReader(render.render_html(self.doc, lang)).root
-                self.assertEqual(root.findall(".//a"), [])
+                self.assertEqual(root.findall(".//details//a"), [])
                 cells = [element_text(dd) for dd in root.findall(".//details/dl/dd")]
                 for ref in references:
                     self.assertIn(f"{ref['title']} ({ref['url']})", cells)
@@ -342,7 +342,7 @@ class RenderRoundEightTests(unittest.TestCase):
 
     def test_html_lang_follows_the_record(self):
         self.doc["meta"]["lang"] = "ja"
-        self.assertIn("<html lang='ja'>", render.render_html(self.doc, "en"))
+        self.assertIn("<html lang='ja' class='app-shell'>", render.render_html(self.doc, "en"))
 
     def test_an_empty_out_is_refused(self):
         with tempfile.TemporaryDirectory() as directory:

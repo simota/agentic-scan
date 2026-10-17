@@ -150,7 +150,8 @@ Never edit `findings.json` by hand; every correction is a fragment:
   fragment replaces an item in place: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
   It also deletes a spurious ledger entry by id: `{"remove": {"rules":
-  ["R-05"]}}`. An item that is not recorded is refused, so a typo cannot pass
+  ["R-05"]}}`; a complete rule sent in the same fragment takes its place in
+  the ledger. An item that is not recorded is refused, so a typo cannot pass
   silently
 - A finding is never removed (SKILL.md, *Never*): a wrong one is marked
   `FalsePositive`, a duplicate `NotApplicable`, each with evidence

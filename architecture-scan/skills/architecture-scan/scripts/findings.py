@@ -117,7 +117,7 @@ TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
-STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
+STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
 # label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
 # is not a line; it has a letter (`10:30` is not one) and a line from 1. A
@@ -465,7 +465,8 @@ def _collides(existing, record):
     return new_title and new_location
 
 
-def _merge_records(current, incoming, where, required):
+def _merge_records(current, incoming, where, required, at=None):
+    """Update known records by id; insert new ones at `at`, else append them."""
     for records in (current, incoming):
         ids = [r.get("id") if isinstance(r, dict) else None for r in _list(records, where)]
         if any(not isinstance(fid, str) for fid in ids) or len(set(ids)) != len(ids):
@@ -483,12 +484,16 @@ def _merge_records(current, incoming, where, required):
                     f"{where}: {rid} already holds {index[rid].get('title')!r}; {hint}")
             _apply(index[rid], record, required, f"{where}.{rid}")
         else:
-            current.append(_apply({}, record, required, f"{where}.{rid}"))
-            index[rid] = current[-1]
+            index[rid] = _apply({}, record, required, f"{where}.{rid}")
+            if at is None:
+                current.append(index[rid])
+            else:
+                current.insert(at, index[rid])
+                at += 1
 
 
 def _remove_items(doc, removals, where):
-    """Delete the named items; return, per string list, where the first one stood."""
+    """Delete the named items; return, per list, where the first one stood."""
     if not isinstance(removals, dict):
         raise SchemaError(f"{where}: must be an object of list names")
     unknown = set(removals) - set(LISTS) - {"rules"}
@@ -505,7 +510,9 @@ def _remove_items(doc, removals, where):
                 ids = [r.get("id") for r in doc.get("rules", [])]
                 if rid not in ids:
                     raise SchemaError(f"{where}.rules: {rid!r} is not recorded")
-                del doc["rules"][ids.index(rid)]
+                index = ids.index(rid)
+                slots[key] = min(slots.get(key, index), index)
+                del doc["rules"][index]
             continue
         for value in _list(values, f"{where}.{key}"):
             if value not in doc.get(key, []):
@@ -554,7 +561,8 @@ def merge(doc, fragment, where):
             doc[key].extend(fragment[key])
         else:
             required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
-            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
+            _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required,
+                           slots.get(key))
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):

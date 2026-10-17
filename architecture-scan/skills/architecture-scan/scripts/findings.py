@@ -57,6 +57,7 @@ import os
 from pathlib import Path
 import re
 import secrets
+import shutil
 import stat
 import sys
 import unicodedata
@@ -376,6 +377,21 @@ def _validate_perspectives(records, where):
     return names
 
 
+META_DEPTH = 32
+
+
+def _depth(value):
+    """Nesting depth of a JSON value, iteratively so deep input cannot recurse."""
+    deepest, stack = 0, [(value, 1)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, (dict, list)):
+            deepest = max(deepest, depth)
+            if depth <= META_DEPTH:
+                stack.extend((v, depth + 1) for v in (item.values() if isinstance(item, dict) else item))
+    return deepest
+
+
 def validate(doc, complete=False):
     """Raise SchemaError when doc does not match reference/findings-schema.md."""
     if not isinstance(doc, dict):
@@ -394,6 +410,10 @@ def validate(doc, complete=False):
     for key in ("method", "commit"):
         if key in meta and not isinstance(meta[key], str):
             raise SchemaError(f"meta.{key}: must be a string")
+    for key, value in meta.items():
+        # Extra run context is small; deep nesting would inflate the indented record.
+        if _depth(value) > META_DEPTH:
+            raise SchemaError(f"meta.{key}: nested more than {META_DEPTH} levels deep")
     seen = set()
     for i, f in enumerate(_list(doc.get("findings", []), "findings")):
         try:
@@ -621,17 +641,54 @@ def _stage(target, data):
     return temporary, target
 
 
+def _backup(target):
+    """Keep target's current content beside it, or None when there is none."""
+    if not target.exists():
+        return None
+    while True:
+        backup = target.parent / f".findings-{secrets.token_hex(16)}.tmp"
+        try:
+            # A hard link keeps the old file itself; copy where links are not supported.
+            os.link(target, backup)
+        except FileExistsError:
+            continue
+        except OSError:
+            shutil.copy2(target, backup)
+        return backup
+
+
 def _atomic_write_all(files):
-    """Replace every target only after all of them are staged, keeping links and modes."""
-    staged = []
+    """Replace every target only after all of them are staged, keeping links and modes.
+
+    When one replacement fails, those already made are undone, so a failed
+    write keeps the previous set of files rather than a mix of old and new.
+    """
+    staged, backups, replaced = [], [], []
     try:
         for target, data in files.items():
             staged.append(_stage(target, data))
-        for temporary, target in staged:
+        if len(staged) > 1:
+            backups = [_backup(target) for _, target in staged]
+        for i, (temporary, target) in enumerate(staged):
             os.replace(temporary, target)
+            replaced.append(i)
+    except BaseException:
+        for i in reversed(replaced if backups else []):
+            target, backup = staged[i][1], backups[i]
+            try:
+                if backup is None:
+                    target.unlink(missing_ok=True)
+                else:
+                    os.replace(backup, target)
+            except OSError:
+                pass
+        raise
     finally:
         for temporary, _ in staged:
             temporary.unlink(missing_ok=True)
+        for backup in backups:
+            if backup is not None:
+                backup.unlink(missing_ok=True)
 
 
 # A run of IDs standing free in prose: one ID, or several joined by `/` or `-`
@@ -826,8 +883,9 @@ def _report_renumber(target, changed, rewritten):
 def _merge_all(doc, fragments):
     validate(doc)
     for path in fragments:
+        fragment = read_json(path)  # its errors name the file already
         try:
-            merge(doc, read_json(path), "fragment")
+            merge(doc, fragment, "fragment")
         except SchemaError as exc:
             raise SchemaError(f"{path}: {exc}") from exc
         # Each fragment must leave a valid record, even in a batch; name the
@@ -846,6 +904,9 @@ def cmd_merge(args):
             # Refuse a bad first batch before creating the output directory.
             _merge_all({}, args.fragments)
         with _exclusive(target):
+            if target.exists() and not target.is_file():
+                # A FIFO would block the read while holding the lock.
+                raise SchemaError(f"{target}: not a regular file")
             doc = _merge_all(read_json(target) if target.exists() else {}, args.fragments)
             # Serialize before staging any output.
             _atomic_write(target, _serialize(doc))

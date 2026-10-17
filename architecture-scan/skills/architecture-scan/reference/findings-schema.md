@@ -113,7 +113,8 @@ Merge semantics:
 - Every record is checked against the keys the schema knows: an unknown key
   in a finding, `validation`, `analysis`, a reference, a rule or a perspective
   (a typo such as `contrats`) is refused rather than kept and never shown.
-  `meta` accepts extra keys for run context the outputs do not show
+  `meta` accepts extra keys for run context the outputs do not show,
+  nested at most 32 levels deep
 - `meta` updates key by key
 - `findings` and `rules` match by `id`: a known record is updated key by key
   (so a later fragment can add just `validation` to `A-003`), a new one is

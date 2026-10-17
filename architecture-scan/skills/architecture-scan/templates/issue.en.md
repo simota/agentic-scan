@@ -6,6 +6,8 @@ section whose only content is empty (e.g. References when the finding has none).
 - ({{step}}): drop the parentheses when the finding has no step
 - {{rule}}: each ID, then the statement and source from the rules[] entry with that id
 - {{trace}}: keep the numbered steps, one per line
+- {{meta.commit}}: UNKNOWN when meta.commit is absent, as report.md shows it; keep the row
+- {{references[].title}}: the URL when the title is absent or empty, as report.md labels it
 - Open questions: no field holds them; write the conditions static reading could not settle
 
 Before filing:

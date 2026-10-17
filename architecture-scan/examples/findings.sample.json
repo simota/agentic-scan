@@ -5,7 +5,7 @@
     "commit": "0000000",
     "date": "2026-10-09",
     "assessor": "Sample (not a real assessment)",
-    "method": "Static review with read-only git history",
+    "method": "Static review; read-only git history; import-linter with a scratch contract",
     "lang": "en"
   },
   "rules": [
@@ -26,7 +26,7 @@
       "location": ["worker/refunds/job.py:58", "api/billing/service.py:120"],
       "scenario": "Refund flow (core): every refund issued by support",
       "blast_radius": "invoices table; 2 writers in 2 deployable units",
-      "trace": "1. worker/refunds/job.py:58 updates invoices.total directly. 2. api/billing/service.py:120 recomputes tax on every invoice change. 3. The job never calls it",
+      "trace": "1. worker/refunds/job.py:58 updates invoices.total directly. 2. api/billing/service.py:120 recomputes tax on every invoice change. 3. Nothing under worker/refunds/ calls service.py:120, so refunded invoices keep the old tax",
       "contrast": "api/orders/cancel.py:40 calls BillingService.adjust()",
       "impact": "Expected (R-01): every invoice change goes through billing. Actual: refunded invoices keep the pre-refund tax amount",
       "rule": "R-01",
@@ -45,7 +45,7 @@
       "location": "worker/consumers/shipment.py:31",
       "scenario": "Order shipping (core): one message per shipped parcel",
       "blast_radius": "stock_levels table; 1 consumer",
-      "trace": "1. The consumer decrements stock per message. 2. It does not use the dedup helper at worker/consumers/base.py:20. 3. A redelivered message decrements again",
+      "trace": "1. worker/consumers/shipment.py:31 decrements stock per message. 2. It does not use the dedup helper at worker/consumers/base.py:20. 3. A redelivered message runs shipment.py:31 again and decrements twice",
       "contrast": "worker/consumers/payment.py:18 uses the dedup helper",
       "impact": "Expected (R-03): one effect per message. Actual: stock drifts low on every redelivery, if the broker delivers at least once",
       "rule": "R-03",
@@ -71,7 +71,7 @@
       "fix": "Pass a coupon repository into the discount function",
       "guard": "R-02: add api.pricing.domain to the import-linter layers contract",
       "validation": {"verdict": "Valid", "method": "analysed", "evidence": "discounts.py:3"},
-      "analysis": {"tool": "import-linter", "command": "lint-imports", "result": "1 broken contract: api.pricing.domain -> db"},
+      "analysis": {"tool": "import-linter", "command": "lint-imports --config <scratch>/pricing-layers.ini", "result": "1 broken contract in the scratch copy of the layers contract with api.pricing.domain added: api.pricing.domain -> db"},
       "status": "Open"
     }
   ],

@@ -6,6 +6,8 @@
 - （{{step}}）: finding に step がないときは括弧ごと削除する
 - {{rule}}: ID ごとに、rules[] の同じ id のエントリから statement と source を書く
 - {{trace}}: 番号付きの手順を 1 行に 1 つずつ書く
+- {{meta.commit}}: meta.commit がないときは report.md と同じく UNKNOWN と書き、行は残す
+- {{references[].title}}: title がない・空のときは report.md と同じく URL をラベルにする
 - 未確定事項: 対応するフィールドはない。静的な読解で確定できなかった条件を書く
 
 登録前に確認すること:
@@ -22,7 +24,7 @@
 | 項目 | 値 |
 |---|---|
 | ID | {{id}} |
-| 深刻度 | {{severity}} |
+| 重大度 | {{severity}} |
 | 確度 | {{confidence}}（Environment-dependent なら、前提となる条件を「未確定事項」に書く） |
 | 検証判定 | {{validation.verdict}}（検証方法: {{validation.method}}） |
 | 観点 | {{category}}（{{step}}） |

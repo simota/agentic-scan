@@ -238,8 +238,8 @@ class SchemaRefusalTests(unittest.TestCase):
         ("location", lambda d: d["findings"][0].update(location=[])),
         ("validation.verdict", lambda d: d["findings"][0]["validation"].update(verdict="Maybe")),
         ("validation.method", lambda d: d["findings"][0]["validation"].update(method="guess")),
-        ("validation", lambda d: d["findings"][0].update(validation="Valid")),
-        ("analysis", lambda d: d["findings"][0].update(
+        ("validation: must be an object", lambda d: d["findings"][0].update(validation="Valid")),
+        ("analysis: unknown keys ['reslt']", lambda d: d["findings"][0].update(
             analysis={"tool": "t", "command": "c", "reslt": "r"})),
         ("references[0]", lambda d: d["findings"][0].update(references=["https://e.example"])),
         ("references[0].url", lambda d: d["findings"][0].update(references=[{"title": "x"}])),
@@ -262,6 +262,18 @@ class SchemaRefusalTests(unittest.TestCase):
                 with self.assertRaises(findings.SchemaError) as caught:
                     findings.validate(doc, complete=True)
                 self.assertIn(field, str(caught.exception))
+
+
+class HandEditTests(unittest.TestCase):
+    def test_two_findings_with_one_id_are_refused(self):
+        doc = complete_doc()
+        doc["findings"][1]["id"] = "A-001"
+        with self.assertRaisesRegex(findings.SchemaError, r"findings\[1\]\.id: duplicate A-001"):
+            findings.validate(doc)
+
+    def test_a_dotfile_with_a_long_name_is_a_file(self):
+        self.assertTrue(findings.cites_line(".a_very_long_dotfile_name:3"))
+        self.assertFalse(findings.cites_line("a_very_long_name_without_dot:3"))
 
 
 if __name__ == "__main__":

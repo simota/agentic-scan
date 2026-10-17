@@ -7,15 +7,29 @@ Checks backticked `reference/...`, `scripts/...` and `templates/...` paths
 (resolved against the skill), including a script or document named inside a
 backticked command, backticked repository paths such as `skills/prompt-scan/...`,
 `docs/...`, `examples/...` and `tests/...`, and relative Markdown links, in every
-Markdown document of the repository.
+Markdown document the repository tracks.
 """
 from pathlib import Path
 import re
+import subprocess
 import sys
 
 REPO = Path(__file__).resolve().parents[2]
 SKILL = REPO / "skills" / "prompt-scan"
-DOCS = sorted(p for p in REPO.rglob("*.md") if not {".git", "node_modules"} & set(p.relative_to(REPO).parts))
+SKIP_DIRS = {".git", "node_modules", ".venv", "venv", "env", "build", "dist", ".tox", "site-packages"}
+
+
+def documents():
+    """The repository's own Markdown: Git's tracked files, else a walk that skips environments and builds."""
+    try:
+        listed = subprocess.run(["git", "-C", str(REPO), "ls-files", "-z", "--", "*.md"],
+                                capture_output=True, check=True, timeout=20).stdout
+        return sorted(REPO / name for name in listed.decode("utf-8").split("\0") if name)
+    except (OSError, subprocess.SubprocessError, UnicodeError):
+        return sorted(p for p in REPO.rglob("*.md") if not SKIP_DIRS & set(p.relative_to(REPO).parts))
+
+
+DOCS = documents()
 SKILL_REF = re.compile(r"`((?:reference|scripts|templates)/[A-Za-z][A-Za-z0-9._/-]*)`")
 CODE_SPAN = re.compile(r"`([^`\n]+)`")
 # A skill file named as one word of a command, e.g. `scripts/findings.py renumber <out>/findings.json`.

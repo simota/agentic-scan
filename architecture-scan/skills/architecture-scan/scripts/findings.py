@@ -4,7 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
-    python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME ...]
+    python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME]...
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
@@ -117,7 +117,7 @@ TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
 RULE_ID = re.compile(r"R-[0-9]{2,}")
-STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]*)")
+STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
 # label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
 # is not a line; it has a letter (`10:30` is not one) and a line from 1. A
@@ -487,6 +487,16 @@ def _merge_records(current, incoming, where, required):
             index[rid] = current[-1]
 
 
+class _Slot(dict):
+    """Where a removed rule stood, so a rule sent back with its ID keeps that place."""
+
+
+def _fill_slots(rules):
+    """Turn refilled slots into rules and drop the ones nothing was sent for."""
+    return [dict(r) if isinstance(r, _Slot) else r for r in rules
+            if not (isinstance(r, _Slot) and len(r) == 1)]
+
+
 def _remove_items(doc, removals, where):
     """Delete the named items; return, per string list, where the first one stood."""
     if not isinstance(removals, dict):
@@ -502,10 +512,12 @@ def _remove_items(doc, removals, where):
         if key == "rules":
             # A spurious ledger entry, by id; check then catches a finding citing it.
             for rid in _list(values, f"{where}.rules"):
-                ids = [r.get("id") for r in doc.get("rules", [])]
-                if rid not in ids:
+                rules = doc.get("rules", [])
+                at = next((i for i, r in enumerate(rules) if r.get("id") == rid
+                           and not isinstance(r, _Slot)), None)
+                if at is None:
                     raise SchemaError(f"{where}.rules: {rid!r} is not recorded")
-                del doc["rules"][ids.index(rid)]
+                rules[at] = _Slot(id=rid)
             continue
         for value in _list(values, f"{where}.{key}"):
             if value not in doc.get(key, []):
@@ -555,6 +567,8 @@ def merge(doc, fragment, where):
         else:
             required = FINDING_REQUIRED if key == "findings" else RULE_REQUIRED
             _merge_records(doc.setdefault(key, []), fragment[key], f"{where}.{key}", required)
+    if "rules" in doc:
+        doc["rules"] = _fill_slots(doc["rules"])
     for key in LISTS:
         if key in fragment:
             if not isinstance(fragment[key], list):

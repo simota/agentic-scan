@@ -21,7 +21,7 @@ Write in the requester's language.
 
 1. **First line** — severity counts and review scope; whether the work was
    static or included read-only analysis (history, dependency graph); the
-   `Unverified` and `Likely` counts, highlighting High findings. Severity
+   `Unverified`, `Likely` and `Unlikely` counts, highlighting High findings. Severity
    counts leave out `FalsePositive` and `NotApplicable`, exactly as the
    counts line under `report.md`'s title does
 2. **Evidence line** — assessed revision, what was read, the history window

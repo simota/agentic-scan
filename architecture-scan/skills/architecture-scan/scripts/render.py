@@ -24,7 +24,8 @@ import unicodedata
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (CONFIDENCES, EXCLUDED, PERSPECTIVES, SEVERITIES, STATUSES, VERDICTS,  # noqa: E402
-                      SchemaError, _atomic_write_all, as_locations, read_json, safe_output, validate)
+                      SchemaError, _atomic_write_all, as_locations, read_json, safe_output, validate,
+                      visible)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
@@ -119,7 +120,7 @@ def as_text(value):
 
 def review_method(doc, lang):
     """Keep the recorded scope of analysis, including runs with no findings."""
-    if doc["meta"].get("method", "").strip():
+    if visible(as_text(doc["meta"].get("method", ""))):
         return doc["meta"]["method"]
     analysed = any(f["validation"]["method"] == "analysed" or "analysis" in f
                    for f in doc.get("findings", []))
@@ -254,7 +255,7 @@ def markdown_table_cell(value):
 
 def revision(meta):
     commit = meta.get("commit", "")
-    return commit if commit.strip() else "UNKNOWN"
+    return commit if visible(as_text(commit)) else "UNKNOWN"
 
 
 def category(f):
@@ -292,16 +293,22 @@ def rule_statement(rule, lang):
 
 def filled(record, key):
     """A recorded value worth a row: present and not blank."""
-    return key in record and bool(as_text(record[key]).strip())
+    return key in record and visible(as_text(record[key]))
+
+
+def reference_title(ref):
+    """The recorded title, or None when it shows nothing (the URL stands in)."""
+    title = ref.get("title")
+    return title if title and visible(as_text(title)) else None
 
 
 def markdown_reference(ref):
     if not is_safe_link(ref["url"]):
         # Web URLs and relative paths become links; any other scheme stays literal.
-        title = ref.get("title")
+        title = reference_title(ref)
         code = markdown_code(ref["url"])
         return f"{markdown_inline(title)}: {code}" if title and title != ref["url"] else code
-    title = markdown_inline(ref.get("title") or ref["url"])
+    title = markdown_inline(reference_title(ref) or ref["url"])
     title = title.replace("[", "&#91;").replace("]", "&#93;")
     # Angle destinations allow parentheses; entities keep input from ending
     # the destination or escaping its closing delimiter.
@@ -389,6 +396,7 @@ DASH = {
     "en": {
         "eyebrow": "ARCHITECTURE REVIEW",
         "report_note": "Static review · read-only · offline dashboard",
+        "report_note_method": "Architecture review · offline dashboard",
         "report_link": "Markdown report", "theme": "Toggle color theme",
         "jump_findings": "Jump to findings",
         "risk_summary": "{n} open High / Medium findings need attention.",
@@ -398,8 +406,8 @@ DASH = {
         "no_open": "No open findings are recorded. This does not establish that the design is sound.",
         "no_findings": "No included findings are recorded. Review the scope and limitations before "
                        "drawing conclusions.",
-        "unverified_line": "{n} included findings are not yet Valid (Likely or Unverified).",
-        "unverified_line_one": "1 included finding is not yet Valid (Likely or Unverified).",
+        "unverified_line": "{n} included findings are not yet Valid (Likely, Unlikely or Unverified).",
+        "unverified_line_one": "1 included finding is not yet Valid (Likely, Unlikely or Unverified).",
         "none_unverified_line": "Every included finding has a definitive verdict.",
         "open_hm": "Open High/Medium", "open_count": "Open findings",
         "needs_validation": "Open, needs validation", "closed_count": "Fix recorded / accepted",
@@ -456,13 +464,14 @@ DASH = {
     "ja": {
         "eyebrow": "ARCHITECTURE REVIEW",
         "report_note": "静的レビュー · 読み取り専用 · オフラインダッシュボード",
+        "report_note_method": "アーキテクチャレビュー · オフラインダッシュボード",
         "report_link": "Markdown レポート", "theme": "配色を切り替え",
         "jump_findings": "検出事項一覧へ移動",
         "risk_summary": "未対応の High / Medium が {n} 件あります。",
         "open_summary": "未対応の検出事項は {n} 件です。High / Medium は含まれていません。",
         "no_open": "未対応の検出事項は記録されていません。設計の健全性を保証するものではありません。",
         "no_findings": "集計対象の検出事項はありません。対象範囲と制約を確認してから判断してください。",
-        "unverified_line": "集計対象のうち {n} 件は判定が確定していません（Likely または Unverified）。",
+        "unverified_line": "集計対象のうち {n} 件は判定が確定していません（Likely・Unlikely・Unverified）。",
         "none_unverified_line": "集計対象の検出事項はすべて判定が確定しています。",
         "open_hm": "未対応の高・中", "open_count": "未対応の検出事項",
         "needs_validation": "未対応・要検証", "closed_count": "修正の申告 / 受容",
@@ -574,11 +583,13 @@ function fmt(text,values){return text.replace(/\\{(\\w+)\\}/g,function(_,k){retu
 document.querySelectorAll('[data-js]').forEach(function(e){e.hidden=false;});
 byId('theme').onclick=function(){var dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';};
 document.querySelectorAll('.bar .fill').forEach(function(f){f.style.width=f.dataset.w+'%';});
-var list=byId('register-list'),items=list?Array.prototype.slice.call(list.querySelectorAll('.finding')):[];
+// With no findings the register is a note only: no search box, no filters.
+var list=byId('f-q')?byId('register-list'):null,items=list?Array.prototype.slice.call(list.querySelectorAll('.finding')):[];
 var m=document.querySelector('[data-empty]'),q=byId('f-q'),searchCache=new Map();
 function v(id){return byId(id).value;}
-function text(d){if(!searchCache.has(d))searchCache.set(d,d.textContent.toLowerCase());return searchCache.get(d);}
-function show(){var scope=v('f-scope'),term=q.value.trim().toLowerCase(),key=v('f-sort')==='severity'?'s':'p',pool=0,n=0;
+// Search the recorded values only, not the dashboard's own labels and buttons.
+function text(d){if(!searchCache.has(d))searchCache.set(d,Array.prototype.map.call(d.querySelectorAll('summary>span:not(.reg-title),.reg-title>span:not(.toggle-label),.reg-title>code,.detail dd'),function(n){return n.textContent;}).join(' ').toLowerCase());return searchCache.get(d);}
+function show(){if(!list)return;var scope=v('f-scope'),term=q.value.trim().toLowerCase(),key=v('f-sort')==='severity'?'s':'p',pool=0,n=0;
 items.slice().sort(function(a,b){return a.dataset[key]-b.dataset[key];}).forEach(function(d){list.appendChild(d);
 var x=d.dataset.x==='1',inPool=scope==='all'||(scope==='excluded')===x;if(inPool)pool++;
 d.hidden=!(inPool&&(!v('f-sev')||d.dataset.sev===v('f-sev'))&&(!v('f-conf')||d.dataset.conf===v('f-conf'))&&(!v('f-cat')||d.dataset.cat===v('f-cat'))&&(!v('f-status')||d.dataset.status===v('f-status'))&&(!v('f-verdict')||d.dataset.verdict===v('f-verdict'))&&(!term||text(d).indexOf(term)>=0));if(!d.hidden)n++;});
@@ -592,7 +603,7 @@ byId('reset').onclick=function(){reset();show();};}
 var facets=Array.prototype.slice.call(document.querySelectorAll('.facet'));
 facets.forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true';byId('f-scope').value='included';byId('f-sev').value=on?'':b.dataset.sev;show();byId('findings').scrollIntoView();};});
 if(list)show();
-function openHash(){var d=byId(decodeURIComponent(location.hash.slice(1)));if(!d||!d.classList.contains('finding'))return;if(d.hidden){reset();if(d.dataset.x==='1')byId('f-scope').value='all';show();}d.querySelector('details').open=true;d.scrollIntoView({block:'start'});d.querySelector('summary').focus({preventScroll:true});}
+function openHash(){var id;try{id=decodeURIComponent(location.hash.slice(1));}catch(err){return;}var d=byId(id);if(!d||!d.classList.contains('finding'))return;if(d.hidden){reset();if(d.dataset.x==='1')byId('f-scope').value='all';show();}d.querySelector('details').open=true;d.scrollIntoView({block:'start'});d.querySelector('summary').focus({preventScroll:true});}
 window.addEventListener('hashchange',openHash);if(location.hash)openHash();
 document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#finding-"]');if(a&&a.getAttribute('href')===location.hash){e.preventDefault();openHash();}});
 // A denied or unavailable Clipboard API falls back to the selection copy.
@@ -630,7 +641,7 @@ CSP = (f"default-src 'none'; style-src {csp_hash(CSS)}; script-src {csp_hash(JS)
 
 def html_reference(ref):
     """Link only web URLs; any other scheme stays visible as text."""
-    title, url = ref.get("title") or ref["url"], ref["url"]
+    title, url = reference_title(ref) or ref["url"], ref["url"]
     label = html_text(f"{title}: {url}" if title != url else url)
     if is_web_url(url):
         return f"<a href='{escape(url)}' rel='noopener noreferrer'>{label}</a>"
@@ -694,7 +705,7 @@ def finding_markdown(f, lang):
     refs = f.get("references", [])
     if refs:
         out += ["", f"### {t['references']}", ""]
-        out += [f"- {one(r['title']) + ' — ' if r.get('title') and r['title'] != r['url'] else ''}"
+        out += [f"- {one(r['title']) + ' — ' if reference_title(r) not in (None, r['url']) else ''}"
                 f"{one(r['url'])}" for r in refs]
     return "\n".join(out) + "\n"
 
@@ -738,7 +749,7 @@ def render_html(doc, lang):
     rank = {s: i for i, s in enumerate(SEVERITIES)}
     queue = sorted(open_, key=lambda f: (rank[f["severity"]], action(f) != "fix_now", f["id"]))
     fix_now = sum(action(f) == "fix_now" for f in open_)
-    pending = sum(f["validation"]["verdict"] in ("Likely", "Unverified") for f in included)
+    pending = sum(f["validation"]["verdict"] != "Valid" for f in included)
 
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
            ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"])]
@@ -757,6 +768,8 @@ def render_html(doc, lang):
                        f"<dd><kbd>/</kbd> {e(d['key_search'])}</dd><dd><kbd>j</kbd> <kbd>k</kbd> {e(d['key_move'])}</dd>"
                        f"<dd><kbd>Enter</kbd> {e(d['key_toggle'])}</dd></dl>")
     sidebar.append("</nav>")
+    # A recorded method (e.g. a GUARD step) supersedes the read-only note.
+    note = "report_note_method" if visible(as_text(meta.get("method", ""))) else "report_note"
 
     out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
@@ -774,7 +787,7 @@ def render_html(doc, lang):
            f"<h1 id='h'>{e(meta.get('project', ''))}</h1>"
            f"<div class='meta'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "
            f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</div></div>"
-           f"<div class='hero-aside'>{e(d['report_note'])}</div></div>"]
+           f"<div class='hero-aside'>{e(d[note])}</div></div>"]
 
     if not included:
         headline = d["no_findings"]

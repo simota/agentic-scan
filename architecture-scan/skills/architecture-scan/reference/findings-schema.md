@@ -132,8 +132,10 @@ Merge semantics:
   the changed field (`{"findings": [{"id": "A-003", "title": "…"}]}`); to
   correct both, send them in two fragments. Each unit numbers in its
   own block (`A-101`…, `A-201`…); `renumber` compacts them. IDs are always
-  `A-` and three digits, so blocks allow nine units of 99 findings each; a
-  unit with more continues in a free block, and a record holds at most 999
+  `A-` and three digits, so blocks of 100 allow nine units; with ten or
+  more units, split `A-001`–`A-999` into equal blocks instead (twelve units:
+  83 IDs each, unit 1 from `A-001`, unit 2 from `A-084`). A unit with more
+  findings than its block continues in a free block, and a record holds at most 999
 
 ## Correcting the record
 
@@ -150,7 +152,8 @@ Never edit `findings.json` by hand; every correction is a fragment:
   fragment replaces an item in place: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
   It also deletes a spurious ledger entry by id: `{"remove": {"rules":
-  ["R-05"]}}`. An item that is not recorded is refused, so a typo cannot pass
+  ["R-05"]}}`; a complete rule sent in the same fragment takes its place in
+  the ledger. An item that is not recorded is refused, so a typo cannot pass
   silently
 - A finding is never removed (SKILL.md, *Never*): a wrong one is marked
   `FalsePositive`, a duplicate `NotApplicable`, each with evidence
@@ -274,12 +277,12 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM5`, not `DM9`) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. The path is relative to the repository root (the checkout given to `check --repo`), not to the review scope. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID, or several separated by commas (`R-01, R-02`) |
-| `validation.verdict` | `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |
+| `validation.verdict` | Required, also for an unexamined finding (`Unverified`): `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |
 | `meta.commit`, `validation.evidence`, `references[].title`, `rules[].reason` | Strings when present. Empty values and omission are allowed except where a nonblank value is required by the verdict or run contract |
-| `validation.method` | `static` or `analysed`; `analysed` requires `analysis` |
+| `validation.method` | Required: `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |

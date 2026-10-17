@@ -134,7 +134,8 @@ make check   # tests plus citations resolve, references headed, frontmatter vali
 make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
 ```
 
-Requirements: Python 3.9+. No third-party packages.
+Requirements: Python 3.9+. No third-party packages. `make check` also needs
+`shasum` or `sha256sum`; pandoc is optional (the GFM parser tests skip without it).
 
 The format follows the sibling `security-scan` and `performance-scan` skills
 (same phases, run contract, verdicts and report shape), adapted to application

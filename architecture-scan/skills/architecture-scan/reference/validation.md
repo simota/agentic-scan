@@ -14,7 +14,7 @@ finding judged false stays in the record with its exclusion and evidence.
 |---|---|---|
 | `Valid` | The violation exists on the traced path, no mechanism compensates, and the consequence (defect or change cost) follows | Agent or person, with evidence |
 | `Likely` | Strong signals, at least one necessary link not yet confirmed (e.g. delivery semantics, history too short) | Agent or person |
-| `Unverified` | Not yet examined | Default |
+| `Unverified` | Not yet examined | The initial verdict; still written in the record |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
 | `FalsePositive` | Evidence contradicts the claim (e.g. the second writer delegates to the owner) | Agent or person, with evidence |
 | `NotApplicable` | The rule does not apply here (dead code, a deliberate documented exception, a module scheduled for removal with a date) | Agent or person, with evidence |

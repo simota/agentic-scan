@@ -4,7 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
-    python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME ...]
+    python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME]...
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:

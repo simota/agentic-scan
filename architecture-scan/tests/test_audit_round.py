@@ -1,8 +1,10 @@
 """Defects found by a full review of the scripts, docs and Makefile."""
 import copy
+import shutil
+import subprocess
 import unittest
 
-from test_architecture_scan import complete_doc, findings
+from test_architecture_scan import complete_doc, findings, render
 
 
 class RuleReplacementTests(unittest.TestCase):
@@ -28,6 +30,69 @@ class StepNumberTests(unittest.TestCase):
         doc["findings"][0]["step"] = doc["findings"][0].get("step", "CP1")[:2] + "1" * 5000
         with self.assertRaisesRegex(findings.SchemaError, r"step: .* must be a hunt step ID"):
             findings.validate(doc)
+
+
+class VerdictBannerTests(unittest.TestCase):
+    def test_an_unlikely_finding_is_not_called_definitive(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"] = {"verdict": "Valid", "method": "static",
+                                            "evidence": "a.py:1"}
+        doc["findings"][1]["validation"] = {"verdict": "Unlikely", "method": "static"}
+        html = render.render_html(doc, "en")
+        self.assertNotIn("Every included finding has a definitive verdict", html)
+        self.assertIn("1 included finding is not yet Valid (Likely, Unlikely or Unverified).", html)
+        self.assertIn("Likely・Unlikely・Unverified", render.render_html(doc, "ja"))
+
+
+class BlankLookingValueTests(unittest.TestCase):
+    def test_invisible_values_get_no_row_and_fall_back(self):
+        doc = complete_doc()
+        doc["findings"][0]["contrast"] = "\u200b"
+        doc["findings"][0]["references"] = [{"url": "https://e.example/a", "title": "\u200b "}]
+        doc["meta"]["method"] = "\u200b"
+        doc["meta"]["commit"] = "\u3164"
+        markdown = render.render_markdown(doc, "en")
+        html = render.render_html(doc, "en")
+        for out in (markdown, html):
+            with self.subTest(out=out[:20]):
+                self.assertNotIn("\u200b", out)
+                self.assertNotIn("\u3164", out)
+                self.assertIn("UNKNOWN", out)
+        self.assertIn("[https&#58;//e.example/a](<https://e.example/a>)", markdown)
+        self.assertIn(render.LABELS["en"]["static_note"], markdown)
+        self.assertNotIn(">Contrast<", html)
+
+
+class ReadOnlyNoteTests(unittest.TestCase):
+    def test_a_recorded_method_replaces_the_read_only_note(self):
+        doc = complete_doc()
+        self.assertIn(render.DASH["en"]["report_note"], render.render_html(doc, "en"))
+        doc["meta"]["method"] = "Static review; GUARD: ci/test.py added for R-01"
+        html = render.render_html(doc, "en")
+        self.assertNotIn(render.DASH["en"]["report_note"], html)
+        self.assertIn(render.DASH["en"]["report_note_method"], html)
+
+
+class DashboardScriptTests(unittest.TestCase):
+    """The script must survive an empty register and a malformed URL fragment."""
+
+    def test_the_register_is_wired_only_when_the_search_box_exists(self):
+        self.assertIn("var list=byId('f-q')?byId('register-list'):null", render.JS)
+        self.assertIn("function show(){if(!list)return;", render.JS)
+
+    def test_a_malformed_fragment_is_ignored(self):
+        self.assertIn("try{id=decodeURIComponent(location.hash.slice(1));}catch(err){return;}",
+                      render.JS)
+
+    @unittest.skipUnless(shutil.which("node"), "node is not installed")
+    def test_the_script_parses(self):
+        result = subprocess.run(["node", "--check", "-"], input=render.JS, text=True,
+                                capture_output=True)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_search_reads_recorded_values_not_the_page_labels(self):
+        self.assertNotIn("d.textContent.toLowerCase()", render.JS)
+        self.assertIn(".detail dd", render.JS)
 
 
 if __name__ == "__main__":

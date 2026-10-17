@@ -380,10 +380,11 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# The dashboard follows security-scan's layout and visual language: masthead,
-# summary, counts, a priority queue, coverage, overview charts and a filterable
-# register. Unlike security-scan it is rendered here, not by its script, so it
-# reads in full without JavaScript and runs under a hash-only CSP.
+# The dashboard follows security-scan's layout and visual language: the kit's
+# application shell (app bar, contents sidebar with severity facets), summary,
+# counts, a priority queue, coverage, overview charts and a filterable register.
+# Unlike security-scan it is rendered here, not by its script, so it reads in
+# full without JavaScript and runs under a hash-only CSP.
 DASH = {
     "en": {
         "eyebrow": "ARCHITECTURE REVIEW",
@@ -446,6 +447,9 @@ DASH = {
         "copy_llm": "Copy for LLM", "copied": "Copied", "copy_failed": "Copy failed",
         "permalink": "Link to finding", "expand": "Show details", "collapse": "Hide details",
         "method_row": "Method",
+        "contents": "Contents", "nav_summary": "Summary", "nav_coverage": "Scope and coverage",
+        "nav_lists": "Next steps and checks", "shortcuts": "Keyboard", "key_search": "Search",
+        "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
         "footer": "Rendered from findings.json; every value is shown as recorded. Inspect this "
                   "dashboard before sharing.",
     },
@@ -502,6 +506,9 @@ DASH = {
         "copy_llm": "LLM用にコピー", "copied": "コピーしました", "copy_failed": "コピーできませんでした",
         "permalink": "この検出事項へのリンク", "expand": "詳細を開く", "collapse": "詳細を閉じる",
         "method_row": "方法",
+        "contents": "目次", "nav_summary": "概要", "nav_coverage": "対象範囲と確認状況",
+        "nav_lists": "次の作業と確認済み事項", "shortcuts": "キー操作", "key_search": "検索",
+        "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
         "footer": "findings.json から生成しています。値はすべて記録どおりに表示しています。共有前に内容を"
                   "確認してください。",
     },
@@ -544,6 +551,15 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .empty{padding:20px 12px;margin:0}
 @media(max-width:850px){.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary>span:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
 @media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}}
+/* Application shell: the register is a list of details, not the kit's table, so
+   its head row and focused finding get the shell's pinning and focus marks here. */
+.app-shell #decisions-section:focus,.app-shell #rules-section:focus{outline:0}
+.app-shell .filters{grid-template-columns:minmax(0,2fr) repeat(3,minmax(0,1fr))}
+.app-shell .finding:focus-within>details>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
+@media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
+@media print{.app-shell .reg-head{position:static}.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}}
 @media print{.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
@@ -566,11 +582,16 @@ function show(){var scope=v('f-scope'),term=q.value.trim().toLowerCase(),key=v('
 items.slice().sort(function(a,b){return a.dataset[key]-b.dataset[key];}).forEach(function(d){list.appendChild(d);
 var x=d.dataset.x==='1',inPool=scope==='all'||(scope==='excluded')===x;if(inPool)pool++;
 d.hidden=!(inPool&&(!v('f-sev')||d.dataset.sev===v('f-sev'))&&(!v('f-conf')||d.dataset.conf===v('f-conf'))&&(!v('f-cat')||d.dataset.cat===v('f-cat'))&&(!v('f-status')||d.dataset.status===v('f-status'))&&(!v('f-verdict')||d.dataset.verdict===v('f-verdict'))&&(!term||text(d).indexOf(term)>=0));if(!d.hidden)n++;});
-byId('result-count').textContent=fmt(L.showing,{shown:n,total:pool});if(m)m.hidden=n>0;}
+byId('result-count').textContent=fmt(L.showing,{shown:n,total:pool});if(m)m.hidden=n>0;
+facets.forEach(function(b){b.setAttribute('aria-pressed',String(scope==='included'&&v('f-sev')===b.dataset.sev));});}
 function reset(){['f-sev','f-conf','f-cat','f-status','f-verdict'].forEach(function(id){byId(id).value='';});byId('f-scope').value='included';byId('f-sort').value='priority';q.value='';}
 if(list){document.querySelectorAll('.filters select').forEach(function(s){s.onchange=function(){if(s.id==='f-verdict'&&s.dataset.excluded.split(' ').indexOf(s.value)>=0)byId('f-scope').value='all';show();};});
 var timer=null;q.oninput=function(){clearTimeout(timer);timer=setTimeout(show,items.length>300?150:0);};
-byId('reset').onclick=function(){reset();show();};show();}
+byId('reset').onclick=function(){reset();show();};}
+// Sidebar facets: a press filters the register by severity, a second press clears it.
+var facets=Array.prototype.slice.call(document.querySelectorAll('.facet'));
+facets.forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true';byId('f-scope').value='included';byId('f-sev').value=on?'':b.dataset.sev;show();byId('findings').scrollIntoView();};});
+if(list)show();
 function openHash(){var d=byId(decodeURIComponent(location.hash.slice(1)));if(!d||!d.classList.contains('finding'))return;if(d.hidden){reset();if(d.dataset.x==='1')byId('f-scope').value='all';show();}d.querySelector('details').open=true;d.scrollIntoView({block:'start'});d.querySelector('summary').focus({preventScroll:true});}
 window.addEventListener('hashchange',openHash);if(location.hash)openHash();
 document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#finding-"]');if(a&&a.getAttribute('href')===location.hash){e.preventDefault();openHash();}});
@@ -578,6 +599,13 @@ document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#
 function copyFallback(value){return new Promise(function(resolve,reject){var prev=document.activeElement,t=document.createElement('textarea');t.value=value;t.readOnly=true;t.style.position='fixed';t.style.top='0';t.style.left='-9999px';document.body.appendChild(t);t.select();var ok=false;try{ok=document.execCommand('copy');}catch(err){}t.remove();if(prev&&prev.focus)prev.focus({preventScroll:true});if(ok)resolve();else reject(new Error('copy'));});}
 function copyText(value){if(navigator.clipboard&&window.isSecureContext)return navigator.clipboard.writeText(value).catch(function(){return copyFallback(value);});return copyFallback(value);}
 document.querySelectorAll('.copy-finding').forEach(function(b){var t;b.onclick=function(){var done=function(label){b.textContent=label;clearTimeout(t);t=setTimeout(function(){b.textContent=L.copy_llm;},2000);};copyText(COPY[b.dataset.copy]).then(function(){done(L.copied);},function(){done(L.copy_failed);});};});
+// Keyboard: "/" searches, j/k step through the visible findings (Enter on the focused title toggles it), Escape clears the search.
+document.addEventListener('keydown',function(e){if(!q||e.altKey||e.ctrlKey||e.metaKey||e.isComposing)return;var t=e.target;if(t&&t.closest&&t.closest('input,select,textarea')){if(e.key==='Escape'&&t===q&&q.value){q.value='';show();}return;}
+if(e.key==='/'){e.preventDefault();q.focus();}else if(e.key==='j'||e.key==='k'){var shown=Array.prototype.slice.call(list.querySelectorAll('.finding:not([hidden])>details>summary')),current=document.activeElement&&document.activeElement.closest('.finding');if(!shown.length)return;var at=shown.findIndex(function(s){return s.closest('.finding')===current;}),next=at<0?0:Math.min(shown.length-1,Math.max(0,at+(e.key==='j'?1:-1)));e.preventDefault();shown[next].focus();shown[next].scrollIntoView({block:'nearest'});}});
+// The register's head row pins below the filter bar, whose height depends on the language and viewport.
+var panel=document.querySelector('.filters-panel');if(panel&&window.ResizeObserver)new window.ResizeObserver(function(entries){byId('findings').style.setProperty('--filters-h',entries[0].target.offsetHeight+'px');}).observe(panel);
+// Mark the section in view in the sidebar contents.
+var navLinks=Array.prototype.slice.call(byId('nav').querySelectorAll('a[href^="#"]'));if(window.IntersectionObserver){var visible=new Map(),spy=new window.IntersectionObserver(function(entries){entries.forEach(function(en){visible.set(en.target.id,en.isIntersecting);});var first=navLinks.find(function(a){return visible.get(a.getAttribute('href').slice(1));});navLinks.forEach(function(a){if(a===first)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');});},{rootMargin:'-35% 0px -60% 0px'});navLinks.forEach(function(a){var s=byId(a.getAttribute('href').slice(1));if(s)spy.observe(s);});}
 // Printing shows and opens every finding, then restores the filtered view.
 var shut=[];addEventListener('beforeprint',function(){shut=[];items.forEach(function(f){var d=f.querySelector('details');if(!d.open)shut.push(d);f.hidden=false;d.open=true;});if(m)m.hidden=true;});
 addEventListener('afterprint',function(){shut.forEach(function(d){d.open=false;});if(list)show();});
@@ -712,17 +740,38 @@ def render_html(doc, lang):
     fix_now = sum(action(f) == "fix_now" for f in open_)
     pending = sum(f["validation"]["verdict"] in ("Likely", "Unverified") for f in included)
 
-    out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
+    nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
+           ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"])]
+    nav += [("rules-section", t["rules"])] if doc.get("rules") else []
+    nav += [("findings", d["findings_register"]), ("lists", d["nav_lists"])]
+    sidebar = [f"<nav class='sidebar' id='nav' aria-label='{escape(d['contents'])}'>"
+               f"<h2 class='nav-title'>{e(d['contents'])}</h2><ol class='nav-links'>"
+               + "".join(f"<li><a href=\"#{i}\">{e(label)}</a></li>" for i, label in nav) + "</ol>"]
+    if findings:
+        # Facets and keys act on the register through the script, so they appear with it.
+        sidebar.append(f"<div class='facets' data-js hidden><h2 class='nav-title'>{e(d['severity'])}</h2>"
+                       + "".join(f"<button type='button' class='facet' data-sev='{s}' aria-controls='register-list' "
+                                 f"aria-pressed='false'><span class='facet-name {s}'>{s}</span>"
+                                 f"<span class='facet-n'>{by_sev[s]}</span></button>" for s in SEVERITIES)
+                       + f"</div><dl class='keys' data-js hidden><dt class='nav-title'>{e(d['shortcuts'])}</dt>"
+                       f"<dd><kbd>/</kbd> {e(d['key_search'])}</dd><dd><kbd>j</kbd> <kbd>k</kbd> {e(d['key_move'])}</dd>"
+                       f"<dd><kbd>Enter</kbd> {e(d['key_toggle'])}</dd></dl>")
+    sidebar.append("</nav>")
+
+    out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
            f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            f"<title>{escape(t['title'])}: {escape(' '.join(as_text(meta.get('project', '')).split()))}</title>"
            f"<style>{CSS}</style></head><body>",
-           f"<a class='skip' href=\"#findings\">{e(d['jump_findings'])}</a><main>",
-           f"<header class='masthead'><span class='brand'>{e(d['eyebrow'])}</span><div class='tools'>"
+           f"<a class='skip' href=\"#findings\">{e(d['jump_findings'])}</a>",
+           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(d['eyebrow'])}</span>"
+           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span><div class='tools'>"
            f"<a class='button' href=\"report.md\">{e(d['report_link'])}</a>"
-           f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button></div></header>",
+           f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button></div></div></header>",
+           "<div class='shell'>", *sidebar,
+           "<main><section id='overview' tabindex='-1' aria-labelledby='h'>",
            f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
-           f"<h1>{e(meta.get('project', ''))}</h1>"
+           f"<h1 id='h'>{e(meta.get('project', ''))}</h1>"
            f"<div class='meta'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "
            f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</div></div>"
            f"<div class='hero-aside'>{e(d['report_note'])}</div></div>"]
@@ -748,12 +797,13 @@ def render_html(doc, lang):
     out.append("<div class='cards'>" + "".join(
         f"<div class='card {cls}'><span class='l'>{e(label)}</span><div class='n'>{n}</div>"
         f"<div class='sub'>{e(sub)}</div></div>" for label, n, cls, sub in cards) + "</div>")
-    out.append(f"<p class='report-note'>{e(d['counts_note'])}</p>")
+    out.append(f"<p class='report-note'>{e(d['counts_note'])}</p></section>")
 
     # The priority queue: every open High, at least four items, at most twelve.
     highs = sum(f["severity"] == "High" for f in queue)
     top = queue[:max(4, min(highs, 12))]
-    out.append(f"<section aria-labelledby='priority-heading'><div class='section-head'><div>"
+    out.append(f"<section id='priority-section' tabindex='-1' aria-labelledby='priority-heading'>"
+               f"<div class='section-head'><div>"
                f"<h2 id='priority-heading'>{e(d['priority'])}</h2><p>{e(d['priority_note'])}</p></div>"
                f"<a href=\"#findings\">{e(d['view_all'])}</a></div>")
     if any(action(f) == "verify_first" for f in top):
@@ -784,13 +834,14 @@ def render_html(doc, lang):
         out.append(f"<p class='section-note'>{e(d['queue_more'].format(shown=len(top), total=len(queue)))}</p>")
     out.append("</section>")
 
-    out.append(f"<section class='panel'><h2>{e(t['decisions'])}</h2><div id='decisions'>"
+    out.append(f"<section class='panel' id='decisions-section' tabindex='-1'><h2>{e(t['decisions'])}</h2>"
+               f"<div id='decisions'>"
                f"{bullet_list(doc.get('decisions', []), t['none'])}</div></section>")
 
     rows = perspective_rows(doc, lang)
     applied = sum(p["status"] == "applied" for _, p in rows)
     limitations = doc.get("limitations", [])
-    out.append(f"<section class='panel coverage'><h2>{e(d['coverage_heading'])}<span class='small'>"
+    out.append(f"<section class='panel coverage' id='coverage' tabindex='-1'><h2>{e(d['coverage_heading'])}<span class='small'>"
                f"{e(d['limitations_count'])}: {len(limitations)}</span></h2>"
                f"<p>{e(d['coverage_note'])}</p><dl class='scope-meta'>"
                f"<dt>{e(t['scope_row'])}</dt><dd>{e(meta.get('scope', ''))}</dd>"
@@ -806,7 +857,7 @@ def render_html(doc, lang):
     out.append("</tbody></table></div></section>")
 
     if doc.get("rules"):
-        out.append(f"<section class='panel'><h2>{e(t['rules'])}</h2><p class='section-note'>"
+        out.append(f"<section class='panel' id='rules-section' tabindex='-1'><h2>{e(t['rules'])}</h2><p class='section-note'>"
                    f"{e(d['rules_note'])}</p><div class='tablewrap'><table class='rules'><thead><tr>"
                    f"<th>{e(t['id'])}</th><th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
                    f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>")
@@ -828,7 +879,7 @@ def render_html(doc, lang):
                f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings))}"
                f"<p class='section-note'>{e(d['excluded_note'])}</p></div></div></section>")
 
-    out.append(f"<section id='findings' aria-labelledby='findings-heading'><div class='section-head'><div>"
+    out.append(f"<section id='findings' tabindex='-1' aria-labelledby='findings-heading'><div class='section-head'><div>"
                f"<h2 id='findings-heading'>{e(d['findings_register'])}</h2><p>{e(d['findings_note'])}</p>"
                f"</div></div>")
     if findings:
@@ -918,10 +969,10 @@ def render_html(doc, lang):
             + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in fields) + "</dl></div></details></div>")
     out.append("</div></div></section>")
 
-    out.append("<div class='lists'>" + "".join(
+    out.append("<div class='lists' id='lists' tabindex='-1'>" + "".join(
         f"<section class='panel'><h2>{e(t[k])}</h2>{bullet_list(doc.get(k, []), t['none'])}</section>"
         for k in ("next_steps", "checked_ok")) + "</div>")
-    out.append(f"<footer class='footer'>{e(d['footer'])}</footer></main>")
+    out.append(f"<footer class='footer'>{e(d['footer'])}</footer></main></div>")
     labels = {k: d[k] for k in ("showing", "copy_llm", "copied", "copy_failed")}
     out.append(f"<script type='application/json' id='labels'>{json_data(labels)}</script>"
                f"<script type='application/json' id='copy-data'>{json_data(copy)}</script>"

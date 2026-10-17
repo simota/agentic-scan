@@ -65,6 +65,20 @@ class DashboardTests(unittest.TestCase):
             self.assertIn("U+202E", output)
 
 
+    def test_the_dashboard_opts_into_the_kits_application_shell(self):
+        # The kit scopes its app bar, sidebar and pinned filters to html.app-shell.
+        html = render.render_html(complete_doc(), "en")
+        self.assertIn("<html lang='en' class='app-shell'>", html)
+        self.assertIn("<header class='appbar'>", html)
+        nav = re.search(r"<nav class='sidebar'.*?</nav>", html, re.S)[0]
+        targets = re.findall(r'href="#([^"]+)"', nav)
+        self.assertIn("findings", targets)
+        for target in targets:
+            self.assertIn(f"id='{target}'", html)
+        self.assertEqual(len(re.findall(r"<button type='button' class='facet'", nav)), len(render.SEVERITIES))
+        empty = render.render_html({**complete_doc(), "findings": []}, "en")
+        self.assertNotIn("class='facet'", empty)
+
 class MakefileEdgeTests(unittest.TestCase):
     def make(self, *args):
         return subprocess.run(["make", "--no-print-directory", "-f", str(REPO / "Makefile"), *args],

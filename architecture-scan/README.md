@@ -144,6 +144,9 @@ The dashboard uses the shared *-scan report format,
 [scan-report-kit](https://github.com/simota/scan-report-kit): its stylesheet
 (light and dark themes, journal-style typography) comes first, and `render.py`
 adds only the rules for architecture-scan's own records (the findings register,
-coloured severity bars). The kit is vendored in
+coloured severity bars). The page opts into the kit's application shell: a
+sticky app bar, a contents sidebar with per-severity counts that filter the
+register, pinned register filters and head row, and the keys `/` (search),
+`j`/`k` (next or previous finding) and Enter (show or hide details). The kit is vendored in
 `skills/architecture-scan/scripts/scan_report_kit/`; change it upstream and
 re-vendor, never in place (`make check` verifies the copy).

@@ -165,6 +165,22 @@ class InventoryTest(unittest.TestCase):
         inventory.scan(root)
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
 
+    def test_no_filter_driver_from_a_submodule_runs(self):
+        sub = self.git_repo({".gitattributes": "*.md filter=x\n", "p.md": "hi\n"})
+        top = self.git_repo({"a.md": "x\n"})
+        git = ["git", "-C", str(top), "-c", "user.name=t", "-c", "user.email=t@example.com",
+               "-c", "protocol.file.allow=always"]
+        subprocess.run([*git, "submodule", "add", "-q", str(sub), "prompts"], check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-qm", "submodule"], check=True)
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        subprocess.run(["git", "-C", str(top / "prompts"), "config", "filter.x.clean", f"sh -c 'touch {marker}; cat'"],
+                       check=True)
+        os.utime(top / "prompts" / "p.md", (2_000_000_000, 2_000_000_000))
+        result = inventory.scan(top)
+        self.assertFalse(marker.exists(), "a filter command configured in a submodule ran")
+        # The submodule's files are not in the superproject's commit, so the scan read more than HEAD holds.
+        self.assertIs(result["dirty"], True)
+
     def test_ignored_files_the_scan_read_make_it_dirty(self):
         root = self.git_repo({".gitignore": "prompts/local.md\n*.log\n", "prompts/a.md": "hi\n"})
         (root / "debug.log").write_text("ignored, never read\n", encoding="utf-8")
@@ -183,6 +199,17 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
         self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
+
+    def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
+        root = self.git_repo({"prompts/ok.md": "hi\n"})
+        (root / ".gitignore").write_bytes(b"prompts/\xff.md\n")
+        try:
+            (root / os.fsdecode(b"prompts/\xff.md")).write_text("TODO\n", encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        # .gitignore is untracked, so clear that signal: only the ignored read should count.
+        (root / ".git" / "info" / "exclude").write_text(".gitignore\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], True)
 
     def test_dirty_is_unknown_when_git_status_fails(self):
         def fake(cmd, **kwargs):

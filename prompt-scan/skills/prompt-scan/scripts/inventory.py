@@ -145,12 +145,15 @@ def walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            # A name that is not UTF-8 is reported with its bytes escaped (\xff); JSON cannot hold it as is.
-            rel = os.fsencode(path.relative_to(root).as_posix()).decode("utf-8", "backslashreplace")
             if path.is_symlink() or not path.is_file() or name.startswith(".env") \
                     or path.suffix.lower() in SENSITIVE_SUFFIXES:
                 continue
-            yield path, rel
+            yield path, path.relative_to(root).as_posix()
+
+
+def shown(rel):
+    """A path as reported: a name that is not UTF-8 gets its bytes escaped (\\xff), which JSON can hold."""
+    return os.fsencode(rel).decode("utf-8", "backslashreplace")
 
 
 def read_text(path):
@@ -288,8 +291,8 @@ def lint_file(rel, text, tokens):
 def git_state(root, read=()):
     """HEAD, and whether what the scan read under root differs from it (None when Git cannot tell).
 
-    Untracked files count, and so do ignored ones among `read` (the paths the inventory reports):
-    the scan read them, but HEAD does not hold them.
+    Untracked files count, and so do ignored ones and files inside submodules among `read` (the paths
+    the inventory reports, as on disk): the scan read them, but HEAD does not hold them.
     """
     def git(*args, ok=(0,), stdin=None):
         try:
@@ -313,11 +316,20 @@ def git_state(root, read=()):
     no_filters = [arg for key in drivers.split("\0") if key for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
-    status = git(*no_filters, "status", "--porcelain", "--untracked-files=normal", "--", ".")
+    # --ignore-submodules=all keeps status out of submodules, whose own config may name filter commands too.
+    status = git(*no_filters, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all",
+                 "--", ".")
     if status is None:
         return commit, None
     if status or not read:
         return commit, bool(status)
+    # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files.
+    stage = git("ls-files", "-z", "--stage", "--", ".")
+    if stage is None:
+        return commit, None
+    modules = [entry.split("\t", 1)[1] for entry in stage.split("\0") if entry.startswith("160000 ")]
+    if any(path.startswith(module + "/") for path in read for module in modules):
+        return commit, True
     # check-ignore exits 0 when some path is ignored and 1 when none is.
     ignored = git("check-ignore", "--stdin", "-z", ok=(0, 1), stdin="\0".join(read) + "\0")
     return commit, None if ignored is None else bool(ignored)
@@ -325,8 +337,9 @@ def git_state(root, read=()):
 
 def scan(root):
     root = Path(root).resolve()
-    prompt_files, call_sites, models, lint = [], [], {}, []
-    for path, rel in walk(root):
+    prompt_files, call_sites, models, lint, read = [], [], {}, [], set()
+    for path, on_disk in walk(root):
+        rel = shown(on_disk)
         suffix = path.suffix.lower()
         kind = prompt_kind(rel)
         is_code = suffix in CODE_SUFFIXES
@@ -341,16 +354,17 @@ def scan(root):
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
                                  "est_tokens": tokens, "variables": variables(text)})
             lint += lint_file(rel, text, tokens)
+            read.add(on_disk)
         if is_code or suffix in CONFIG_SUFFIXES:
             for number, line in enumerate(lines, 1):
                 if is_code:
                     for api, pattern in CALL_PATTERNS:
                         if pattern.search(line):
                             call_sites.append({"path": rel, "line": number, "api": api})
+                            read.add(on_disk)
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
-    read = {f["path"] for f in prompt_files} | {c["path"] for c in call_sites} | \
-        {loc.rpartition(":")[0] for locs in models.values() for loc in locs}
+                    read.add(on_disk)
     commit, dirty = git_state(root, sorted(read))
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))

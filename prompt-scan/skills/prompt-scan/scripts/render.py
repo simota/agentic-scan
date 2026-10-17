@@ -264,7 +264,7 @@ def load(path, raw=None):
     try:
         raw = Path(path).read_bytes() if raw is None else raw
         data = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeError, ValueError) as e:
+    except (OSError, UnicodeError, ValueError, RecursionError) as e:
         raise SchemaError(f"{path}: {e}") from None
     if json_depth(data) > MAX_JSON_DEPTH:
         raise SchemaError(f"{path}: JSON nesting deeper than {MAX_JSON_DEPTH} levels")

@@ -9,7 +9,12 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/find
 ```
 
 It reads files only. It never executes code from the repository and sends
-nothing over the network. Directories such as `.git`, `node_modules`, virtual
+nothing over the network; the Git state it records comes from `git status`
+and `git check-ignore`, with the repository's fsmonitor and filter-driver
+commands switched off, without entering submodules and without refreshing the
+index. A file whose name is not UTF-8 is listed with the bytes escaped
+(`\xff`); Git still sees its real name, but `render.py` cannot reopen the
+escaped one, so its findings carry no excerpt. Directories such as `.git`, `node_modules`, virtual
 environments and build output are skipped, as are `.env*` files, key files,
 symlinks, binary files and files over 1 MiB.
 
@@ -31,9 +36,9 @@ per other character). Use it to rank prompts by size, not as a provider count.
 | Rule | Kind / severity / confidence | Hit when |
 |---|---|---|
 | `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access key, GitHub and Slack tokens, private-key block). Location and kind only; the value is never copied |
-| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code |
+| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in an engine template file (`.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs`, `.tmpl`, `.tpl`) or a file that opens `{{` or `{%` somewhere: elsewhere `}}` is JSON or literal text |
 | `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
-| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX`, lorem ipsum or `[INSERT …]` outside code |
+| `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX` (not inside a format mask such as `XXX-XXX-XXXX`), lorem ipsum or `[INSERT …]` outside code |
 | `duplicate-line` | improvement / Info / Confirmed | A line of 40 or more characters (not a table row) appears again in the same file |
 | `large-prompt` | improvement / Info / Confirmed | The file alone is estimated at more than 8000 tokens |
 

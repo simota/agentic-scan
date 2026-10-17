@@ -68,6 +68,13 @@ class RenderTest(unittest.TestCase):
     def test_line_numbers_split_on_newlines_only(self):
         self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
 
+    def test_too_deep_json_is_a_schema_error(self):
+        out = Path(tempfile.mkdtemp())
+        (out / "findings.json").write_text('{"meta":' + "[" * 100000 + "]" * 100000 + "}", encoding="utf-8")
+        code, _, err = run(render.main, out / "findings.json", "--out", out, "--no-pdf")
+        self.assertEqual(code, 2, err)
+        self.assertIn("render.py:", err)
+
     def test_lang_defaults_to_the_record(self):
         out = self.render(sample("en"))
         self.assertIn(render.LABELS["en"]["title"], (out / "report.html").read_text(encoding="utf-8"))

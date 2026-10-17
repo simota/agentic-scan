@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 import subprocess
 import tempfile
@@ -86,6 +87,15 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(inventory.variables("{{- user }} {{~ name}} {amount:.2f} {who!r} {a: 1} {{ x }}"),
                          ["user", "name", "x", "amount", "who"])
 
+    def test_literal_braces_and_format_masks_are_not_template_or_placeholder_hits(self):
+        rules = lambda text: [h["rule"] for h in inventory.lint_file("p.md", text, 1)]  # noqa: E731
+        self.assertEqual(rules('Reply as {"user": {"id": 1}}\nPhone: XXX-XXX-XXXX, code AXXXB\n'), [])
+        # In a file that uses the template engine, a stray closer and a bare XXX still count.
+        self.assertEqual(rules("{{ a }}\nstray }}\nXXX: decide later\n"), ["unbalanced-template", "placeholder"])
+        # An engine template file whose only delimiter is a stray closer (a forgotten opener) still counts.
+        for name in ("reply.j2", "reply.mustache"):
+            self.assertEqual([h["rule"] for h in inventory.lint_file(name, "Hello }}\n", 1)], ["unbalanced-template"])
+
     def test_fences_and_first_template_line(self):
         self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})
         self.assertEqual(inventory.lint_template(["{{ name", "", "stray %}"], set()),
@@ -131,9 +141,78 @@ class InventoryTest(unittest.TestCase):
         self.assertIs(dirty, False)
         self.assertIs(inventory.git_state(root)[1], True)
         self.assertEqual(index.stat().st_mtime_ns, before, "git status rewrote the reviewed repository's index")
-        # An untracked prompt is part of the scan but not of HEAD.
+        # An untracked prompt is part of the scan but not of HEAD, whatever the repository's status config says.
+        subprocess.run(["git", "-C", str(root), "config", "status.showUntrackedFiles", "no"], check=True)
         (root / "svc" / "prompts" / "new.md").write_text("new\n", encoding="utf-8")
         self.assertIs(inventory.git_state(root / "svc")[1], True)
+
+    def git_repo(self, files):
+        root = make_repo(files)
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        return root
+
+    def test_no_filter_driver_from_the_repository_runs(self):
+        root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n",
+                              "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n"})
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        for driver in ("x", "my x"):  # A driver name may contain a space.
+            for key in ("clean", "process"):
+                subprocess.run(["git", "-C", str(root), "config", f"filter.{driver}.{key}",
+                                f"sh -c 'touch {marker}; cat'"], check=True)
+        # A newer mtime makes git status re-hash the file through the filter driver.
+        for name in ("a.md", "b.txt"):
+            os.utime(root / "prompts" / name, (2_000_000_000, 2_000_000_000))
+        inventory.scan(root)
+        self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
+
+    def test_no_filter_driver_from_a_submodule_runs(self):
+        sub = self.git_repo({".gitattributes": "*.md filter=x\n", "p.md": "hi\n"})
+        top = self.git_repo({"a.md": "x\n"})
+        git = ["git", "-C", str(top), "-c", "user.name=t", "-c", "user.email=t@example.com",
+               "-c", "protocol.file.allow=always"]
+        subprocess.run([*git, "submodule", "add", "-q", str(sub), "prompts"], check=True, capture_output=True)
+        subprocess.run([*git, "commit", "-qm", "submodule"], check=True)
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        subprocess.run(["git", "-C", str(top / "prompts"), "config", "filter.x.clean", f"sh -c 'touch {marker}; cat'"],
+                       check=True)
+        os.utime(top / "prompts" / "p.md", (2_000_000_000, 2_000_000_000))
+        result = inventory.scan(top)
+        self.assertFalse(marker.exists(), "a filter command configured in a submodule ran")
+        # The submodule's files are not in the superproject's commit, so the scan read more than HEAD holds.
+        self.assertIs(result["dirty"], True)
+
+    def test_ignored_files_the_scan_read_make_it_dirty(self):
+        root = self.git_repo({".gitignore": "prompts/local.md\n*.log\n", "prompts/a.md": "hi\n"})
+        (root / "debug.log").write_text("ignored, never read\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], False)
+        (root / "prompts" / "local.md").write_text("TODO\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], True)
+
+    def test_non_utf8_file_name_is_reported_escaped(self):
+        root = make_repo({"prompts/ok.md": "hi\n"})
+        try:
+            (root / os.fsdecode(b"prompts/\xff.md")).write_text("hi\n", encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        out = Path(tempfile.mkdtemp()) / "inventory.json"
+        code, _, err = run(inventory.main, root, "--out", out)
+        self.assertEqual(code, 0, err)
+        paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
+        self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
+
+    def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
+        root = self.git_repo({"prompts/ok.md": "hi\n"})
+        (root / ".gitignore").write_bytes(b"prompts/\xff.md\n")
+        try:
+            (root / os.fsdecode(b"prompts/\xff.md")).write_text("TODO\n", encoding="utf-8")
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        # .gitignore is untracked, so clear that signal: only the ignored read should count.
+        (root / ".git" / "info" / "exclude").write_text(".gitignore\n", encoding="utf-8")
+        self.assertIs(inventory.scan(root)["dirty"], True)
 
     def test_dirty_is_unknown_when_git_status_fails(self):
         def fake(cmd, **kwargs):

@@ -29,7 +29,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language (`ja` or `en`) |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
-| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, or untracked files that are not ignored); `null` when Git could not tell. Excerpts come from `commit` only when `dirty` is `false`, otherwise from the working tree |
+| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell. Excerpts come from `commit` only when `dirty` is `false`, otherwise from the working tree |
 
 ## Prompt record
 
@@ -93,7 +93,8 @@ evidence.
 - An `L-*` may receive only `validation`
 - New `F-*` ids follow merge order; after VERIFY, `scripts/findings.py renumber
   <out>/findings.json` puts them in severity order (then path and line,
-  excluded findings last) and rewrites every `F-*` reference in the record
+  excluded findings last) and rewrites every `F-*` reference in the record,
+  except quoted `proposal` text and reference URLs
 - `remove` deletes exact entries from `checked_ok`, `decisions`,
   `limitations` or `next_steps`
 - Literal instruction-override strings and credential-shaped values in any

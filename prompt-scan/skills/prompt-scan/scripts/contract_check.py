@@ -84,7 +84,7 @@ def check(out, no_pdf=False, allow=()):
     if (out / "inventory.json").is_file():
         try:
             inventory = json.loads((out / "inventory.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError) as e:
+        except (OSError, ValueError, RecursionError) as e:
             problems.append(f"inventory.json is unreadable: {e}")
             inventory = {}
         if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":

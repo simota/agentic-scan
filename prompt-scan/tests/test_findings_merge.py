@@ -76,6 +76,13 @@ class MergeTest(unittest.TestCase):
         self.merge({"checked_ok": ["x"]})
         self.assertEqual(stat.S_IMODE(self.out.stat().st_mode), 0o640)
 
+    def test_too_deep_fragment_is_an_input_error(self):
+        path = self.dir / "deep.json"
+        path.write_text('{"meta":' + "[" * 100000 + "]" * 100000 + "}", encoding="utf-8")
+        code, _, err = run(findings.main, "merge", self.out, path)
+        self.assertEqual(code, 2, err)
+        self.assertIn("error:", err)
+
     def test_refuses_scanner_meta(self):
         code, _, err = self.merge({"meta": dict(META, commit="0" * 40)})
         self.assertEqual(code, 1)
@@ -143,6 +150,8 @@ class MergeTest(unittest.TestCase):
         # Quoted prompt text and links are not finding references.
         self.assertEqual(data["findings"][2]["proposal"], {"before": "error F-002", "after": "error F-002 or F-004"})
         self.assertEqual(data["findings"][2]["references"][0]["url"], "https://example.com/F-002")
+        # A reference's title is prose and follows the new numbers.
+        self.assertEqual(data["findings"][2]["references"][0]["title"], "F-001 docs")
         code, out, _ = run(findings.main, "renumber", self.out)
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)

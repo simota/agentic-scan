@@ -338,6 +338,9 @@ def render_markdown(doc, lang):
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
+    if not any(by_sev.values()):
+        # As on the dashboard: zero findings is not evidence of a sound design.
+        lines += [text(DASH[lang]["no_findings"]), ""]
     for f in findings:
         v = f["validation"]
         lines.append(f"### {f['id']} [{f['severity']}][{f['confidence']}][{v['verdict']}] "

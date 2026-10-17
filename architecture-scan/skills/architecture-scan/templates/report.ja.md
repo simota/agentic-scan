@@ -16,7 +16,7 @@
 <!-- 結論から書く。例:「請求書の書き込み元が 2 つあり、返金処理が税計算ルールを通っていない。まず billing 経由に揃える。」 -->
 
 
-| 深刻度 | 件数 | うち Valid |
+| 重大度 | 件数 | うち Valid |
 |---|---|---|
 | High | {{n_high}} | {{n_high_valid}} |
 | Medium | {{n_medium}} | {{n_medium_valid}} |
@@ -41,12 +41,12 @@
 
 ## 3. 優先して対応すべき検出事項
 
-<!-- 判定が FalsePositive / NotApplicable でない High と Medium の finding を深刻度順に載せる。finding ごとに
+<!-- 判定が FalsePositive / NotApplicable でない High と Medium の finding を重大度順に載せる。finding ごとに
 このブロックを繰り返し、templates/issue.ja.md で登録した issue へリンクする。Low と Info は添付の report.md に任せる。 -->
 
 ### {{id}}: {{title}}
 
-- **深刻度 / 確度 / 検証判定:** {{severity}} / {{confidence}} / {{validation.verdict}}
+- **重大度 / 確度 / 検証判定:** {{severity}} / {{confidence}} / {{validation.verdict}}
 - **場所:** {{location}} <!-- location ごとにコードスパンにし、読点で区切る -->
 - **シナリオ / 影響範囲:** {{scenario}} / {{blast_radius}}
 - **何が起きるか:** {{impact}}

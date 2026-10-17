@@ -84,7 +84,7 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 | `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
-gapless `A-NNN` IDs in severity order (excluded verdicts last), every perspective recorded, nonempty
+gapless `A-NNN` IDs in severity order, then path (excluded verdicts last), every perspective recorded, nonempty
 `checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
 recorded as violated, a `Likely` one violated or partly read), every violated rule
 cited by a Valid or Likely finding and no reason left on a closed rule, traced and evidenced

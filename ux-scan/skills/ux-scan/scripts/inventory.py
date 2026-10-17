@@ -167,6 +167,7 @@ def field_words(name):
     return "_" + "_".join(w.lower() for w in re.findall(r"[A-Z]+(?![a-z])|[A-Z]?[a-z]+|\d+", name)) + "_"
 NON_INTERACTIVE = {"div", "span", "li", "td", "tr", "p", "img", "section", "article", "header", "footer", "main",
                    "i", "svg", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6"}
+LABELABLE = {"button", "input", "meter", "output", "progress", "select", "textarea"}
 CLICK_ATTRS = ("onclick", "@click", "v-on:click", "on:click", "(click)", "x-on:click")
 DESTRUCTIVE_ATTRS = (*CLICK_ATTRS, "onpress", "ontap")
 KEY_ATTRS = tuple(prefix + event for prefix, event in (
@@ -922,15 +923,35 @@ def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
 
 
 def label_regions(parsed):
-    """Disjoint ranges of complete wrapping labels, including nested templates."""
+    """Ranges of potentially associated controls in complete wrapping labels."""
+    controls = [tag for tag in parsed if not tag.closing and tag.name in LABELABLE
+                and not (tag.name == "input" and (literal(tag.attrs.get("type")) or "").lower() == "hidden")]
+    control_starts = [tag.start for tag in controls]
+    definite = [tag for tag in controls if tag.name != "input" or not (tag.spread or (
+        isinstance(tag.attrs.get("type"), str) and literal(tag.attrs["type"]) is None))]
+    definite_starts = [tag.start for tag in definite]
     stack, regions = [], []
     for tag in parsed:
         if tag.name not in LABEL_TAGS:
             continue
         if tag.closing and stack:
-            regions.append((stack.pop(), tag.end))
+            opening = stack.pop()
+            target = opening.attrs.get("for", opening.attrs.get("htmlfor"))
+            if opening.spread or (isinstance(target, str) and literal(target) is None):
+                # Unknown targets can associate any wrapped control at runtime.
+                regions.append((opening.end, tag.start))
+                continue
+            if target is not None:
+                continue  # A static explicit target overrides implicit association.
+            index = bisect_left(control_starts, opening.end)
+            if index < len(controls) and controls[index].start < tag.start:
+                first_definite = bisect_left(definite_starts, opening.end)
+                stop = definite[first_definite].end if first_definite < len(definite) else tag.start
+                # An unresolved input type could be hidden, so every candidate
+                # through the first definitely labelable control remains possible.
+                regions.append((controls[index].start, min(stop, tag.start)))
         elif not tag.closing and not tag.self_closing:
-            stack.append(tag.start)
+            stack.append(tag)
     merged = []
     for start, stop in sorted(regions):
         if merged and start <= merged[-1][1]:
@@ -1100,6 +1121,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     destructive_offsets = set()
     label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
+
     for tag in parsed:
         if tag.name in LABEL_TAGS and not tag.closing:
             target = tag.attrs.get("for") or tag.attrs.get("htmlfor")
@@ -1481,8 +1503,11 @@ def main(argv=None):
     flows = None
     if a.flows:
         try:
+            source_path = Path(a.flows).resolve()
+            if source_path == out.resolve() or (out.exists() and source_path.samefile(out)):
+                raise ValueError("--flows input must be different from --out")
             flows = check_flows(load_json(a.flows))
-        except (OSError, ValueError, RecordError) as e:
+        except (OSError, RuntimeError, ValueError, RecordError) as e:
             print(f"inventory.py: flows: {e}", file=sys.stderr)
             return 2
     result = inventory(root, flows)

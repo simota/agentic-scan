@@ -24,13 +24,14 @@ import json
 import math
 import re
 import sys
-import unicodedata
 from datetime import date
 from pathlib import Path
+from unicodedata import category as unicode_category
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Runtime-dependent", "Suspected")
@@ -66,6 +67,12 @@ class RecordError(Exception):
     pass
 
 
+def _unicode_text(value, where):
+    if "\x00" in value or re.search(r"[\ud800-\udfff]", value):
+        raise RecordError(f"{where}: expected Unicode text without NUL or surrogate code points")
+    return value
+
+
 def _known_keys(obj, allowed, where):
     """Refuse a misspelled section instead of keeping it where nothing reads it."""
     unknown = sorted(str(k) for k in set(obj) - set(allowed))
@@ -79,18 +86,20 @@ def _str(obj, key, where, required=False):
         raise RecordError(f"{where}.{key}: expected a string")
     if required and not value.strip():
         raise RecordError(f"{where}.{key}: required")
-    return value
+    return _unicode_text(value, f"{where}.{key}")
 
 
 def _strings(value, where, nonempty=True):
     if not isinstance(value, list) or not all(isinstance(x, str) and (x.strip() or not nonempty) for x in value):
         raise RecordError(f"{where}: expected a list of {'non-empty ' if nonempty else ''}strings")
+    for i, text in enumerate(value):
+        _unicode_text(text, f"{where}[{i}]")
     return value
 
 
 def _location(value, where):
     if (not isinstance(value, str) or not LOCATION.match(value) or "\\" in value
-            or any(unicodedata.category(c) in ("Cc", "Cf", "Zl", "Zp") for c in value)
+            or any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") for c in value)
             or value.rpartition(":")[0] != value.rpartition(":")[0].strip()):
         raise RecordError(f"{where}: {value!r} is not a repository-relative path:line")
     path, _, lines = value.rpartition(":")
@@ -107,20 +116,18 @@ def _location(value, where):
 
 
 def _http(url, where):
-    if isinstance(url, str) and not any(c.isspace() or ord(c) < 32 or ord(c) == 127 or c in '\\<>"'
-                                        for c in url):
-        try:
-            parts = urlsplit(url)
-            if parts.scheme in ("http", "https") and parts.hostname:
-                # Python versions differ in whether urlsplit rejects text after an IPv6 host.
-                authority = parts.netloc.rsplit("@", 1)[-1]
-                if authority.startswith("[") and not re.fullmatch(r"\[[^\]]+\](?::[0-9]*)?", authority):
-                    raise ValueError("invalid bracketed host")
-                parts.port  # Access checks malformed and out-of-range ports.
-                return
-        except ValueError:
-            pass
-    raise RecordError(f"{where}: expected an http(s) URL")
+    try:
+        # Use the renderer's public URL validator so merge cannot accept a
+        # record that its eventual report will reject (notably encoded hosts).
+        http_url(url, where)
+        if any(c in '<>"' for c in url):
+            raise ValueError("unescaped URL delimiter")
+        # Python versions differ in whether urlsplit rejects text after an IPv6 host.
+        authority = urlsplit(url).netloc.rsplit("@", 1)[-1]
+        if authority.startswith("[") and not re.fullmatch(r"\[[^\]]+\](?::[0-9]*)?", authority):
+            raise ValueError("invalid bracketed host")
+    except (FormatError, ValueError):
+        raise RecordError(f"{where}: expected an http(s) URL") from None
 
 
 def _viewports(value, where):
@@ -285,6 +292,8 @@ def check_findings(data, flow_ids=None, ordered=True):
                 raise RecordError(f"{where}.{key}: expected one of {', '.join(allowed)}")
         for key in TEXT_FIELDS:
             _str(f, key, where, required=key in ("title", "screen", "criterion"))
+        if LINE_BREAKS.search(f["title"]):
+            raise RecordError(f"{where}.title: expected one line")
         if f.get("viewport"):
             _viewports([f["viewport"]], f"{where}.viewport")
         perspective = _str(f, "perspective", where, required=True)
@@ -326,22 +335,46 @@ def check_findings(data, flow_ids=None, ordered=True):
     return data
 
 
-# An id is not part of a word or snake_case name, but may sit inside _emphasis_.
-# Emphasis uses one to three underscores, so foo__U-001 and U-001__bar stay names.
-BEFORE_ID = r"(?<![A-Za-z0-9])(?<![A-Za-z0-9]_)(?<![A-Za-z0-9]__)(?<![A-Za-z0-9]___)"
-AFTER_ID = r"(?![A-Za-z0-9])(?!_{1,3}[A-Za-z0-9])"
-FINDING_REF = re.compile(BEFORE_ID + r"U-[0-9]{3}" + AFTER_ID)
+FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
 FINDING_RANGE = re.compile(
-    BEFORE_ID + r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`*)"
-    r"(?P<first>U-[0-9]{3})(?P=first_ticks)(?P=first_style)"
+    r"(?<![A-Za-z0-9_])(?P<range_style>\*{1,3}|_{1,3}|~~|)"
+    r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`+)?"
+    r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
+    r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P=first_style)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
     r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
-    r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`*)(?P<last>U-[0-9]{3})"
-    r"(?P=last_ticks)(?P=last_style)" + AFTER_ID + r"(?:まで)?")
+    r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
+    r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
+    r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
+    r"(?:まで)?(?P=range_style)(?![A-Za-z0-9_])")
+# Capture each underscore run once, then split outer and endpoint emphasis by
+# position. Adjacent unbounded style groups would backtrack quadratically.
+UNDERSCORE_RANGE = re.compile(
+    r"(?<![A-Za-z0-9_`])(?P<first_open>_*)(?P<first_ticks>`+)?"
+    r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
+    r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
+    # A range stays on one line, so a Markdown bullet list of ids is not a range.
+    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
+    r"(?P<last_open>_*)(?P<last_ticks>`+)?"
+    r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
+    r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
+    r"(?P<until>まで(?P<outer_close>_*))?(?![A-Za-z0-9_`])")
 FINDING_MENTION = re.compile(
     FINDING_RANGE.pattern
-    + "|" + BEFORE_ID + r"(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)" + AFTER_ID
-    + "|" + FINDING_REF.pattern)
+    + r"|(?<![A-Za-z0-9_])(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)(?![A-Za-z0-9_])"
+    # A neighboring underscore is checked against real emphasis delimiters
+    # during rewriting; identifier underscores must remain literal.
+    + r"|(?<![A-Za-z0-9])U-[0-9]{3}(?![A-Za-z0-9])")
+UNDERSCORE_RUN = re.compile(r"_+")
+PROSE_BLOCK_BREAK = re.compile(r"\r?\n[ \t]*\r?\n")
+# Other_ID_Start + Other_ID_Continue, Unicode 18.0.0 PropList.txt:
+# https://www.unicode.org/Public/18.0.0/ucd/PropList.txt
+# UAX #31 includes ID_Start in ID_Continue; both exception sets are needed.
+OTHER_IDENTIFIER_CHARACTERS = frozenset(
+    "\u1885\u1886\u2118\u212e\u309b\u309c"
+    "\u00b7\u0387\u1369\u136a\u136b\u136c\u136d\u136e\u136f\u1370\u1371"
+    "\u19da\u200c\u200d\u30fb\uff65"
+)
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
@@ -622,52 +655,191 @@ def _source_token(token):
             or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?$", token))
 
 
+def _word_character(char):
+    # Normal character categories follow the runtime's Unicode database. Keep
+    # existing alphanumeric/mark protection and include all Other_ID exceptions,
+    # even where an older Python's narrower XID/isidentifier test excludes them.
+    return bool(char) and (char.isalnum() or unicode_category(char) in ("Mn", "Mc", "Me", "Pc")
+                           or char in OTHER_IDENTIFIER_CHARACTERS)
+
+
+def _underscore_delimiters(value, literal_spans, block_spans=()):
+    """Find paired emphasis boundaries without taking delimiters from quoted code."""
+    if "_" not in value:
+        return set()
+    parts, start = [], 0
+    for left, right in sorted(literal_spans):
+        if right <= start:
+            continue
+        if left > start:
+            parts.append(value[start:left])
+        parts.append(value[max(start, left):right].replace("_", "\x00"))
+        start = right
+    parts.append(value[start:])
+    text = "".join(parts)
+    delimiters, pending = set(), []
+    barriers = iter(sorted(right for _, right in block_spans))
+    barrier = next(barriers, None)
+    # Six buckets find the nearest compatible opener without repeatedly
+    # scanning an unmatched stack. The rule of three uses original run lengths.
+    buckets = {(can_close, remainder): [] for can_close in (False, True) for remainder in range(3)}
+
+    def discard():
+        opener = pending.pop()
+        buckets[opener[2]].pop()
+
+    for match in UNDERSCORE_RUN.finditer(text):
+        left, right = match.span()
+        while barrier is not None and barrier <= left:
+            pending.clear()
+            for candidates in buckets.values():
+                candidates.clear()
+            barrier = next(barriers, None)
+        backslash = left
+        while backslash and text[backslash - 1] == "\\":
+            backslash -= 1
+        escaped = (left - backslash) % 2
+        if escaped:
+            left += 1  # An escaped first underscore is not part of the run.
+        if left == right:
+            continue
+        width = right - left
+        before = text[left - 1] if left else ""
+        after = text[right] if right < len(text) else ""
+        before_space, after_space = not before or before.isspace(), not after or after.isspace()
+        before_punct = bool(before) and unicode_category(before)[0] in ("P", "S")
+        after_punct = bool(after) and unicode_category(after)[0] in ("P", "S")
+        left_flanking = not after_space and (not after_punct or before_space or before_punct)
+        right_flanking = not before_space and (not before_punct or after_space or after_punct)
+        can_open = (left_flanking and (not right_flanking or before_punct)
+                    and (escaped or not _word_character(before)))
+        can_close = right_flanking and (not left_flanking or after_punct) and not _word_character(after)
+        while can_close and left < right:
+            opener = None
+            for (also_closes, remainder), candidates in buckets.items():
+                if (candidates and not ((can_open or also_closes) and width % 3
+                                       and (remainder + width) % 3 == 0)
+                        and (opener is None or candidates[-1][0] > opener[0])):
+                    opener = candidates[-1]
+            if opener is None:
+                break
+            # Delimiters inside a completed pair cannot match outside it.
+            while pending[-1] is not opener:
+                discard()
+            used = 2 if opener[1] - opener[0] >= 2 and right - left >= 2 else 1
+            delimiters.update(range(opener[1] - used, opener[1]))
+            delimiters.update(range(left, left + used))
+            opener[1] -= used
+            left += used
+            if opener[0] == opener[1]:
+                discard()
+        if can_open and left < right:
+            opener = [left, right, (can_close, width % 3)]
+            pending.append(opener)
+            buckets[opener[2]].append(opener)
+    return delimiters
+
+
 def _rewrite_prose(value, mapping):
     """Update finding references without changing code, URLs or source-like tokens."""
-    def references(text):
-        def reference_range(match):
-            first, last = (int(match[key][2:]) for key in ("first", "last"))
-            step = 1 if first <= last else -1
-            old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
-            if not any(mapping.get(fid, fid) != fid for fid in old_ids):
-                return match.group(0)
-            missing = next((fid for fid in old_ids if fid not in mapping), None)
-            if missing:
-                raise RecordError(f"finding range {match.group(0)!r} includes unknown {missing}; "
-                                  "replace it with an explicit list of existing finding ids before renumbering")
-            ticks = match["first_ticks"] or match["last_ticks"]
-            style = match["first_style"] or match["last_style"]
-            return ", ".join(f"{style}{ticks}{mapping[fid]}{ticks}{style}" for fid in old_ids)
+    def mapped_range(first, last, source):
+        first, last = int(first[2:]), int(last[2:])
+        step = 1 if first <= last else -1
+        old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
+        if not any(mapping.get(fid, fid) != fid for fid in old_ids):
+            return None
+        missing = next((fid for fid in old_ids if fid not in mapping), None)
+        if missing:
+            raise RecordError(f"finding range {source!r} includes unknown {missing}; "
+                              "replace it with an explicit list of existing finding ids before renumbering")
+        return [mapping[fid] for fid in old_ids]
 
-        def joined(start, end):
-            """An underscore run of any length joins the id to a name (foo____U-001, U-001____bar)."""
-            before = start
-            while before > 0 and text[before - 1] == "_":
-                before -= 1
-            after = end
-            while after < len(text) and text[after] == "_":
-                after += 1
-            return ((before < start and before > 0 and text[before - 1].isascii() and text[before - 1].isalnum())
-                    or (after > end and after < len(text) and text[after].isascii() and text[after].isalnum()))
+    def identifier_boundary(source, left, right):
+        return ((source.startswith("_") and left >= 0 and _word_character(value[left]))
+                or (source.endswith("_") and right < len(value) and _word_character(value[right])))
+
+    def references(text, offset):
+        def reference_range(match):
+            ids = mapped_range(match["first"], match["last"], match[0])
+            if ids is None:
+                return match.group(0)
+            ticks = match["first_ticks"] or match["last_ticks"] or ""
+            style = match["first_style"] or match["last_style"]
+            padded = "first" if match["first_ticks"] else "last"
+            left, right = (match[padded + suffix] or "" for suffix in ("_left", "_right"))
+            expanded = ", ".join(f"{style}{ticks}{left}{fid}{right}{ticks}{style}" for fid in ids)
+            return match["range_style"] + expanded + match["range_style"]
 
         # Rewrite ranges and single IDs in one pass so mapped IDs are not mapped again.
-        def mention(match):
-            if joined(match.start(), match.end()):
-                if not match["first"]:
-                    return match.group(0)
-                # A range with one end joined to a name is not a range: map each free id alone.
-                return FINDING_REF.sub(
-                    lambda ref: ref[0] if joined(match.start() + ref.start(), match.start() + ref.end())
-                    else mapping.get(ref[0], ref[0]), match.group(0))
+        def mention(match, relative):
+            source = match[0]
+            left, right = offset + relative + match.start() - 1, offset + relative + match.end()
+            # The range and styled-ID alternatives also consume their formatting
+            # underscores. Apply the same Unicode word boundary as plain IDs
+            # before accepting those underscores as emphasis.
+            if identifier_boundary(source, left, right):
+                return source
             if match["first"]:
                 return reference_range(match)
             if match["styled"]:
                 return match["style"] + mapping.get(match["styled"], match["styled"]) + match["style"]
-            return mapping.get(match[0], match[0])
+            if any(0 <= i < len(value) and value[i] == "_" and i not in emphasis for i in (left, right)):
+                return source
+            return mapping.get(source, source)
 
-        return FINDING_MENTION.sub(mention, text)
+        def underscore_range(match):
+            if not any(match[key] for key in ("first_open", "first_close", "last_open", "last_close", "outer_close")):
+                return None
+            if identifier_boundary(match[0], offset + match.start() - 1, offset + match.end()):
+                return match[0]
 
-    protected_spans, literal_spans = [], []
+            def paired_width(key, opening=False):
+                left, right = match.span(key)
+                cursor = right if opening else left
+                if opening:
+                    while cursor > left and offset + cursor - 1 in emphasis:
+                        cursor -= 1
+                    return right - cursor
+                while cursor < right and offset + cursor in emphasis:
+                    cursor += 1
+                return cursor - left
+
+            first_open = paired_width("first_open", opening=True)
+            first_close = paired_width("first_close")
+            last_open = paired_width("last_open", opening=True)
+            last_close = paired_width("last_close")
+            outer = first_open - first_close
+            closing = paired_width("outer_close") if match["until"] else last_close - last_open
+            if (not first_open and not last_close or outer < 0 or closing != outer
+                    or first_close != len(match["first_close"]) or last_open != len(match["last_open"])
+                    or (match["until"] and (last_close != last_open or last_close != len(match["last_close"])))):
+                return None
+            ids = mapped_range(match["first"], match["last"], match[0])
+            if ids is None:
+                return match[0]
+            style, whole = "_" * (first_close or last_open), "_" * outer
+            ticks = match["first_ticks"] or match["last_ticks"] or ""
+            padded = "first" if match["first_ticks"] else "last"
+            left, right = (match[padded + suffix] or "" for suffix in ("_left", "_right"))
+            expanded = ", ".join(f"{style}{ticks}{left}{fid}{right}{ticks}{style}" for fid in ids)
+            prefix = match["first_open"][:len(match["first_open"]) - first_open]
+            suffix = match["outer_close"][closing:] if match["until"] else match["last_close"][last_close:]
+            return prefix + whole + expanded + whole + suffix
+
+        def regular(left, right):
+            return FINDING_MENTION.sub(lambda match: mention(match, left), text[left:right])
+
+        parts, start = [], 0
+        for match in UNDERSCORE_RANGE.finditer(text):
+            rewritten = underscore_range(match)
+            if rewritten is not None:
+                parts.extend((regular(start, match.start()), rewritten))
+                start = match.end()
+        parts.append(regular(start, len(text)))
+        return "".join(parts)
+
+    block_spans = [match.span() for match in PROSE_BLOCK_BREAK.finditer(value)]
+    protected_spans, literal_spans, source_spans = list(block_spans), [], []
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
     next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
@@ -700,23 +872,31 @@ def _rewrite_prose(value, mapping):
             continue
         literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
-        protected = (literal
-                     or (match["path"] is not None and _source_token(match["path"]))
-                     or (match["token"] is not None and _source_token(match["token"])))
-        if protected:
-            protected_spans.append((match.start(), match.end()))
         if literal:
+            protected_spans.append(match.span())
             literal_spans.append((match.start(), match.end()))
-    protected_spans.extend(_markdown_destinations(value, literal_spans))
+        elif ((match["path"] is not None and _source_token(match["path"]))
+              or (match["token"] is not None and _source_token(match["token"]))):
+            source_spans.append(match.span())
+        if match["fence"] is not None:
+            block_spans.append(match.span())
+    destinations = list(_markdown_destinations(value, literal_spans))
+    protected_spans.extend(destinations)
+    emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)
+    for left, right in source_spans:
+        # Real formatting in U-001/__U-002__ is not a source-path component.
+        unstyled = "".join(value[i] for i in range(left, right) if i not in emphasis)
+        if _source_token(unstyled):
+            protected_spans.append((left, right))
     parts, start = [], 0
     for left, right in sorted(protected_spans):
         if right <= start:
             continue
         if left > start:
-            parts.append(references(value[start:left]))
+            parts.append(references(value[start:left], start))
         parts.append(value[max(start, left):right])
         start = right
-    parts.append(references(value[start:]))
+    parts.append(references(value[start:], start))
     return "".join(parts)
 
 

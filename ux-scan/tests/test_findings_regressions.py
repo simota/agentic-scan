@@ -89,12 +89,66 @@ class ValidationRegressions(unittest.TestCase):
         for url in ("https://example.com bad", "https://?q=host", "http://user@", "https://[broken",
                     "https://example.com:bad/", "https://example.com\n/path",
                     "https://exam\\ple.com/", "https://example.com<bad>/",
-                    'https://example.com/"bad"', "https://[::1]example.com/"):
+                    'https://example.com/"bad"', "https://[::1]example.com/",
+                    "https://exa%2fmple.com/", "https://exa%3ample.com/",
+                    "https://example%.com/", "https://example.com/\x80",
+                    "https://example.com/\x9f", "https://example\uff5cmore.com/"):
             with self.subTest(url=url):
                 data = copy.deepcopy(SAMPLE)
                 data["findings"][0]["references"] = [{"url": url}]
                 with self.assertRaisesRegex(findings.RecordError, "http"):
                     findings.check_findings(data)
+
+    def test_titles_require_one_line_before_the_record_can_be_merged(self):
+        for newline in ("\r", "\n", "\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", "\u2028", "\u2029"):
+            with self.subTest(newline=repr(newline)):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"][0]["title"] = "First" + newline + "second"
+                with self.assertRaisesRegex(findings.RecordError, "title.*one line"):
+                    findings.check_findings(data)
+
+    def test_report_text_rejects_nul_and_surrogates_at_the_input_boundary(self):
+        mutations = (
+            lambda d, text: d.update(summary=text),
+            lambda d, text: d["meta"].update(project=text),
+            lambda d, text: d.update(limitations=[text]),
+            lambda d, text: d["perspectives"][0].update(note=text),
+            lambda d, text: d["findings"][0].update(observed=text),
+            lambda d, text: d["findings"][0]["validation"].update(evidence=text),
+            lambda d, text: d["findings"][0].update(references=[{"url": "https://example.com", "title": text}]),
+        )
+        for text in ("contains\x00NUL", "contains\ud800surrogate"):
+            for mutate in mutations:
+                with self.subTest(text=repr(text), mutate=mutate):
+                    data = copy.deepcopy(SAMPLE)
+                    mutate(data, text)
+                    with self.assertRaisesRegex(findings.RecordError, "Unicode text"):
+                        findings.check_findings(data)
+            flows = copy.deepcopy(FLOWS)
+            flows["flows"][0]["name"] = text
+            with self.assertRaisesRegex(findings.RecordError, "Unicode text"):
+                findings.check_flows(flows)
+
+    def test_checked_unicode_and_reference_urls_are_renderable(self):
+        import render
+        from scan_report_kit import report
+
+        urls = (
+            "https://example.com/path?next=%2Fcheckout#section",
+            "https://example.com/%ZZ",  # Host validation does not rewrite literal paths.
+            "https://b%C3%BCcher.example/",
+            "https://例え.テスト/日本語",
+            "https://[2001:db8::1]:8443/path",
+            "https://[fe80::1%25eth0]/",
+        )
+        data = copy.deepcopy(SAMPLE)
+        data["summary"] = "日本語の説明と emoji 🚀\nThe next line is valid prose."
+        data["findings"][0]["references"] = [{"url": url} for url in urls]
+        ids = findings.flow_ids(findings.check_flows(copy.deepcopy(FLOWS)))
+        findings.check_findings(data, ids)
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                report.validate(render.to_common(data, lang, FLOWS))
 
     def test_flow_locations_require_files_including_token_sources(self):
         for target in ("screen", "tokens"):
@@ -170,6 +224,9 @@ class TransactionRegressions(unittest.TestCase):
             {"perspectives": [42]}, {"perspectives": [{"name": []}]},
             {"perspectives": [{"name": "AX Accessibility"}, {"name": "AX Accessibility"}]},
             {"remove": {"limitations": [{}]}},
+            {"findings": [{"id": "U-001", "title": "First\nsecond"}]},
+            {"summary": "Contains\x00NUL"}, {"limitations": ["Contains\x00NUL"]},
+            {"findings": [{"id": "U-001", "references": [{"url": "https://exa%2fmple.com/"}]}]},
         )
         with tempfile.TemporaryDirectory() as tmp:
             target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
@@ -185,6 +242,7 @@ class TransactionRegressions(unittest.TestCase):
         fragments = (
             {"flows": None}, {"flows": {}}, {"flows": [{"id": []}]}, {"flows": [42]},
             {"flows": [FLOWS["flows"][0], FLOWS["flows"][0]]},
+            {"flows": [{**FLOWS["flows"][0], "name": "Contains\x00NUL"}]},
         )
         with tempfile.TemporaryDirectory() as tmp:
             target, fragment = Path(tmp) / "flows.json", Path(tmp) / "fragment.json"
@@ -544,7 +602,8 @@ class TransactionRegressions(unittest.TestCase):
         data["next_steps"] = ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-001']
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
         self.assertEqual(changed["next_steps"],
-                         ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-002 U-002'])
+                         # An unmatched delimiter run keeps its id literal, as in every other position.
+                         ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-002'])
 
     def test_jsx_expressions_are_scanned_as_javascript(self):
         mapping = {"U-001": "U-002", "U-002": "U-001"}
@@ -701,22 +760,209 @@ class TransactionRegressions(unittest.TestCase):
             "Inspect src/U-001-U-002.tsx:1 and https://example.com/U-001-U-002; fix U-002, U-001."])
         findings.check_findings(changed)
 
+    def test_renumber_keeps_ranges_with_padded_code_ids_and_whole_range_emphasis(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        cases = (
+            ("Fix ` U-001 ` to ` U-003 `.", "Fix ` U-003 `, ` U-001 `, ` U-002 `."),
+            ("Fix `` U-001 `` through `` U-003 ``.", "Fix `` U-003 ``, `` U-001 ``, `` U-002 ``."),
+            ("Fix `U-001 ` to ` U-003`.", "Fix `U-003 `, `U-001 `, `U-002 `."),
+            ("Fix **U-001 to U-003**.", "Fix **U-003, U-001, U-002**."),
+            ("Fix __U-001 to U-003__.", "Fix __U-003, U-001, U-002__."),
+            ("Fix _U-001からU-003まで_.", "Fix _U-003, U-001, U-002_."),
+            ("Fix ~~U-001–U-003~~.", "Fix ~~U-003, U-001, U-002~~."),
+            ("Fix __` U-001 ` to ` U-003 `__.", "Fix __` U-003 `, ` U-001 `, ` U-002 `__."),
+            ("Fix ___U-001__ to __U-003___.", "Fix ___U-003__, __U-001__, __U-002___."),
+            ("Fix ___U-001_ to _U-003___.", "Fix ___U-003_, _U-001_, _U-002___."),
+            ("Fix __**U-001** to **U-003**__.", "Fix __**U-003**, **U-001**, **U-002**__."),
+            ("Fix **__U-001__ to __U-003__**.", "Fix **__U-003__, __U-001__, __U-002__**."),
+            ("Fix _U-001 to __U-003___.", "Fix ___U-003__, __U-001__, __U-002___."),
+            ("Fix __U-001 to _U-003___.", "Fix ___U-003_, _U-001_, _U-002___."),
+            ("Fix ____U-001 to U-003____.", "Fix ____U-003, U-001, U-002____."),
+            ("Fix ____U-003 to U-001____.", "Fix ____U-002, U-001, U-003____."),
+            ("Fix ______U-001____ to _U-003___.", "Fix ______U-003____, ____U-001____, ____U-002______."),
+            ("Fix ____U-001____ to _____U-003_____.", "Fix ____U-003____, ____U-001____, ____U-002____."),
+            ("Fix ____` U-001 ` to ` U-003 `____.", "Fix ____` U-003 `, ` U-001 `, ` U-002 `____."),
+            ("Fix ____U-001からU-003まで____.", "Fix ____U-003, U-001, U-002____."),
+            ("Fix _____U-001____ through ___U-003____.", "Fix _____U-003____, ____U-001____, ____U-002_____."),
+            # Unused delimiter characters remain literal outside the range.
+            ("Fix __U-001 to U-003_.", "Fix __U-003, U-001, U-002_."),
+            ("Fix _U-001 to U-003__.", "Fix _U-003, U-001, U-002__."),
+            # A whole range inside one code span stays literal source text.
+            ("Keep ` U-001 to U-003 `; fix U-001.", "Keep ` U-001 to U-003 `; fix U-003."),
+        )
+        data["next_steps"] = [source for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_rewrites_references_inside_underscore_emphasis_without_changing_identifiers(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        cases = (
+            ("__U-001 and U-003__", "__U-003 and U-002__"),
+            ("__U-001/U-003__", "__U-003/U-002__"),
+            ("_U-001, U-003_", "_U-003, U-002_"),
+            ("___U-001 and U-003___", "___U-003 and U-002___"),
+            ("_U-001 and __U-003___", "_U-003 and __U-002___"),
+            ("__U-001 and _U-003___", "__U-003 and _U-002___"),
+            ("___U-001_ and U-003__", "___U-003_ and U-002__"),
+            ("___U-001__ and U-003_", "___U-003__ and U-002_"),
+            ("____U-001__ and U-003__", "____U-003__ and U-002__"),
+            ("___U-001 and ___U-003______", "___U-003 and ___U-002______"),
+            ("__U-001 and ___U-003_____", "__U-003 and ___U-002_____"),
+            ("_U-001 and __U-003__ and U-002_", "_U-003 and __U-002__ and U-001_"),
+            ("_U-001/__U-003___", "_U-003/__U-002___"),
+            ("__U-001__/_U-003_", "__U-003__/_U-002_"),
+            ("__U-001 and `const id = U-003`__", "__U-003 and `const id = U-003`__"),
+            ("__`const id = U-001` and U-003__", "__`const id = U-001` and U-002__"),
+            ("__U-001 and `U-003`__", "__U-003 and `U-002`__"),
+            ("__U-001 and src/U-003.tsx:1__", "__U-003 and src/U-003.tsx:1__"),
+            ("__U-001 and [evidence](?issue=U-003)__", "__U-003 and [evidence](?issue=U-003)__"),
+            ("__U-001 and `literal __ U-003`__", "__U-003 and `literal __ U-003`__"),
+            ("__U-001_suffix and prefix_U-003 and U-002__", "__U-001_suffix and prefix_U-003 and U-001__"),
+            ("Keep prefix_U-001, U-003_suffix and XU-002.", "Keep prefix_U-001, U-003_suffix and XU-002."),
+            ("変数_U-001 と U-003_値", "変数_U-001 と U-003_値"),
+            ("é_U-001 and U-003_é", "é_U-001 and U-003_é"),
+            ("e\u0301_U-001 and U-003_e\u0301", "e\u0301_U-001 and U-003_e\u0301"),
+            ("e\u0301_U-001 and U-003_\u0301e", "e\u0301_U-001 and U-003_\u0301e"),
+            ("head\u203f_U-001 and U-003_\u203ftail", "head\u203f_U-001 and U-003_\u203ftail"),
+            ("先にU-001を修正し、次にU-003を確認。", "先にU-003を修正し、次にU-002を確認。"),
+            ("__é U-001 and U-003 e\u0301__", "__é U-003 and U-002 e\u0301__"),
+            ("Fix ____U-001 and U-003____.", "Fix ____U-003 and U-002____."),
+            ("__U-001 and src/__U-003__.tsx:1__", "__U-003 and src/__U-003__.tsx:1__"),
+            ("__U-001 and src/_U-003__", "__U-003 and src/_U-003__"),
+            ("Keep U-001/_U-003 and U-001/U-003_suffix.", "Keep U-001/_U-003 and U-001/U-003_suffix."),
+            ("Keep `__U-001 and U-003__`; fix U-002.", "Keep `__U-001 and U-003__`; fix U-001."),
+        )
+        data["next_steps"] = [source for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_respects_escaped_underscores_and_block_boundaries(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        cases = (
+            (r"\_U-001 and U-003_", r"\_U-001 and U-003_"),
+            (r"_U-001 and U-003\_", r"_U-001 and U-003\_"),
+            (r"_U-001 to U-003\_", r"_U-001 to U-003\_"),
+            (r"_U-001 and \_literal and U-003_", r"_U-003 and \_literal and U-002_"),
+            # Escaped source tokens stay literal; the remaining delimiter run,
+            # or a run after an even number of backslashes, still opens emphasis.
+            (r"\__U-001 and U-003__", r"\__U-001 and U-002__"),
+            (r"\\_U-001 and U-003_", r"\\_U-001 and U-002_"),
+            ("_U-001\nU-003_", "_U-003\nU-002_"),
+            ("_U-001\n\nU-003_", "_U-001\n\nU-003_"),
+            ("__U-001\n \t\nU-003__", "__U-001\n \t\nU-003__"),
+            ("_U-001\n```\nU-002\n```\nU-003_", "_U-001\n```\nU-002\n```\nU-003_"),
+            ("____U-001\n\n to U-003____", "____U-001\n\n to U-003____"),
+            ("____U-001\n~~~\nU-002\n~~~\n to U-003____", "____U-001\n~~~\nU-002\n~~~\n to U-003____"),
+            ("U-001\n\n to U-003", "U-003\n\n to U-002"),
+            ("__U-001__\n\n to __U-003__", "__U-003__\n\n to __U-002__"),
+            # A range stays on one line; each id across lines is renumbered alone.
+            ("U-001\n to \nU-003", "U-003\n to \nU-002"),
+        )
+        data["next_steps"] = [source + "; then U-002." for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected + "; then U-001." for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_preserves_unicode_identifiers_in_ranges_styled_ids_and_lists(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:3]
+        for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
+            item["severity"] = severity
+        contexts = (("変数", "値"), ("変数", ""), ("", "値"),
+                    ("é", "é"), ("é", ""), ("", "é"),
+                    ("e\u0301", "\u0301e"), ("e\u0301", ""), ("", "\u0301e"),
+                    ("head\u203f", "\u203ftail"))
+        # Every Other_ID_Start / Other_ID_Continue character in Unicode 18.0.0,
+        # including ID characters that Python's narrower XID test rejects.
+        other_identifier_chars = (
+            "\u1885\u1886\u2118\u212e\u309b\u309c"
+            "\u00b7\u0387\u1369\u136a\u136b\u136c\u136d\u136e\u136f\u1370\u1371"
+            "\u19da\u200c\u200d\u30fb\uff65"
+        )
+        contexts += tuple(pair for char in other_identifier_chars
+                          for pair in (("foo" + char, char + "bar"), ("foo" + char, ""), ("", char + "bar")))
+        patterns = ("_U-001 to U-003_", "__U-001 to U-003__", "____U-001 to U-003____", "__U-001__",
+                    "_U-001_ to U-003", "U-001 to _U-003_", "__U-001/U-003__", "_U-001 and U-003_")
+        cases = []
+        for before, after in contexts:
+            for pattern in patterns:
+                # For ranges with only one formatted endpoint, attach the
+                # identifier context only at that endpoint's underscore.
+                prefix = before if pattern.startswith("_") else ""
+                suffix = after if pattern.endswith("_") else ""
+                if not prefix and not suffix:
+                    continue
+                token = prefix + pattern + suffix
+                cases.append((token + "; 次にU-002を修正。", token + "; 次にU-001を修正。"))
+        data["next_steps"] = [source for source, _ in cases]
+        original = copy.deepcopy(data)
+        changed = findings.renumber(data, findings.renumber_map(data["findings"]))
+        self.assertEqual(data, original)
+        self.assertEqual(changed["next_steps"], [expected for _, expected in cases])
+        findings.check_findings(changed)
+        self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
+
+    def test_renumber_handles_long_underscore_inputs(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:1]
+        data["findings"][0]["id"] = "U-002"
+        data["next_steps"] = ["Fix U-002."]
+        markers = "_" * 20_000
+        cases = (
+            ("_item " * 20_000 + "U-002", "_item " * 20_000 + "U-001"),
+            (markers + "U-002 and U-002" + markers, markers + "U-001 and U-001" + markers),
+            (markers + "U-002 to U-002" + markers, markers + "U-001" + markers),
+        )
+        for source, expected in cases:
+            with self.subTest(source=source[:40]), tempfile.TemporaryDirectory() as tmp:
+                data["summary"] = source
+                target = Path(tmp) / "findings.json"
+                target.write_text(json.dumps(data), encoding="utf-8")
+                result = run("renumber", target)  # The CLI has a bounded completion timeout.
+                self.assertEqual(result.returncode, 0, result.stderr)
+                changed = json.loads(target.read_text(encoding="utf-8"))
+                self.assertEqual(changed["summary"], expected)
+                findings.check_findings(changed)
+
     def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):
         data = copy.deepcopy(SAMPLE)
         data["findings"] = data["findings"][:2]
         data["findings"][0]["severity"] = "Low"
         data["findings"][1]["id"] = "U-003"
-        data["next_steps"] = ["Fix U-001 to U-003."]
-        findings.check_findings(data, ordered=False)
-        with tempfile.TemporaryDirectory() as tmp:
-            target = Path(tmp) / "findings.json"
-            target.write_text(json.dumps(data), encoding="utf-8")
-            before = target.read_bytes()
-            result = run("renumber", target)
-            self.assert_refused(result)
-            self.assertIn("unknown U-002", result.stderr)
-            self.assertEqual(target.read_bytes(), before)
-            self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name})
+        for text in ("Fix U-001 to U-003.", "Fix ` U-001 ` to ` U-003 `.",
+                     "Fix __U-001 to U-003__.", "Fix __` U-001 ` to ` U-003 `__.",
+                     "Fix ____U-001 to U-003____.", "Fix _U-001 to ____U-003_____."):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                data["next_steps"] = [text]
+                findings.check_findings(data, ordered=False)
+                target = Path(tmp) / "findings.json"
+                target.write_text(json.dumps(data), encoding="utf-8")
+                before = target.read_bytes()
+                result = run("renumber", target)
+                self.assert_refused(result)
+                self.assertIn("unknown U-002", result.stderr)
+                self.assertEqual(target.read_bytes(), before)
+                self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name})
 
     def test_failed_atomic_replace_keeps_target_and_removes_temporary_file(self):
         with tempfile.TemporaryDirectory() as tmp:

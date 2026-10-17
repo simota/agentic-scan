@@ -12,7 +12,9 @@ python3 <skill-dir>/scripts/inventory.py <repo> --out <out>/inventory.json [--fl
 reviewed repository.
 The `--out` file must be outside the reviewed repository. The CLI rejects
 in-repository destinations, including parent-directory symlink aliases,
-before writing anything.
+before writing anything. When `--flows` is supplied, its input must not alias
+`--out`, including through symlinks or hardlinks; collisions are rejected
+before scanning or replacing any file.
 
 Standard library only, read-only. It walks style, script, template (including
 MDX), JSON token and JSON locale files under `<repo>` (skipping VCS and
@@ -56,7 +58,14 @@ later markup.
 Template tag scans do not re-enter quoted attributes or raw-text elements
 such as script, style and textarea. Embedded CSS uses those same boundaries,
 so style examples in attribute or script strings are not measured as CSS.
-Closed wrapping labels are matched to actual template tags. JSX source and
+Closed wrapping labels are matched to actual template tags. An explicit
+`for` / `htmlFor` target takes precedence over a nested control; a label
+without an explicit target names only its first labelable descendant, ignoring
+hidden inputs, as specified by the [HTML label rules](https://html.spec.whatwg.org/multipage/forms.html#the-label-element).
+Dynamic label targets and spread props remain unknown. A preceding input with
+an unresolved type could be hidden, so later controls through the first
+definitely labelable element are not reported as unlabelled solely on that basis.
+JSX source and
 attribute expressions keep heuristic tag scanning: check their candidates
 in context, including nested JSX, strings and regular expressions.
 HTML template tag names are case-insensitive, while component names in JSX,
@@ -87,7 +96,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `icon_buttons` | `<button>` that is empty or whose content is only elements (an icon, including icon-font ligatures such as `<mat-icon>delete</mat-icon>` and glyphs hidden with `aria-hidden="true"`, nested content included; a hidden void element such as `<img>` hides only itself), has no nonblank text binding (`v-text`, `[innerText]`…) and has no nonblank `aria-label`, `aria-labelledby` or `title`, nor a child `<img>` with nonblank `alt` or a child `aria-label`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1, ST3 |
-| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called (also `onDelete?.()`, `deleteMutation.mutate(id)`; other methods after the name, such as `deleteModal.onOpen`, do not count) or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), but not DOM or URL housekeeping such as `classList.remove` or `params.delete`, in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers and HTML `onclick` | FB4 |
+| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called (also `onDelete?.()`, `deleteMutation.mutate(id)`; other methods after the name, such as `deleteModal.onOpen`, do not count) or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), but not DOM or URL housekeeping such as `classList.remove` or `params.delete`, in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers, Svelte event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes (also inside `cn(…)` / template-literal class expressions) | IN1, IN2 |
 | `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present, else the first English region such as `en-US`, else the first tag) and 5 columns wider; East Asian wide characters count as two. Bundles are one file per language (`locales/de.json`) or one directory per language (`locales/de/app.json`); when both the file and its folder look like tags, an ISO 639-1 code (or a common three-letter code such as `fil`) wins, so `app.json` or `nav.json` namespaces are not read as languages; numeric regions such as `es-419` are tags | IN1 |
@@ -130,7 +139,10 @@ with dynamic attribute names are also treated as spreads. Vue named bindings
 (`:aria-label="label"`, `v-bind:aria-label="label"`) preserve the expression;
 event modifiers such as `@click.stop` do not hide the event. Angular property
 bindings (`[attr.aria-label]="label"`, `[title]="t"`) likewise supply that
-attribute, and `routerLink` (also `[routerLink]="'/x'"` or `"['/x', id]"`) counts as a link target. Dynamic name
+attribute, and `routerLink` (also `[routerLink]="'/x'"` or `"['/x', id]"`) counts as a link target. Svelte's
+[event modifiers](https://svelte.dev/docs/svelte/legacy-on), such as
+`on:click|preventDefault`, preserve click and keyboard-handler detection, as
+well as each listener's destructive calls. Dynamic name
 expressions are also treated as unknown;
 only statically blank name attributes are rejected, and referenced label text
 is not resolved. A dynamic input type is recorded as `unknown` and does not

@@ -8,9 +8,11 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "skills" / "ux-scan" / "scripts"))
 
 from findings import RecordError, check_findings, check_flows, dump, flow_ids, load_json, merge  # noqa: E402
+from render import OUTPUT_GENERATION  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_outputs  # noqa: E402
 
-OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf")
+OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf",
+           OUTPUT_GENERATION)
 
 
 def main(argv=None):
@@ -26,6 +28,11 @@ def main(argv=None):
             data = merge(data, load_json(ROOT / "examples" / "no-pdf.fragment.json"))
             check_findings(data, flow_ids(flows))
         out = Path(args.out)
+        source = Path(args.sample).resolve()
+        for name in OUTPUTS:
+            target = out / name
+            if source == target.resolve() or (target.exists() and source.samefile(target)):
+                raise RecordError("sample input must be different from every demo output")
         if out.is_symlink():
             raise RecordError(f"{out}: output directory must not be a symlink")
         if out.resolve().is_relative_to((ROOT / "examples" / "tasklane").resolve()):

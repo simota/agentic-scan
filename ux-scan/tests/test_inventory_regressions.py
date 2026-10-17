@@ -269,7 +269,46 @@ class InventoryRegressionTests(unittest.TestCase):
             '<label>Search<span data-example="</label>"><input /></span></label>\n'
             '<label>Outer<label>Inner<input /></label><input /></label>\n'
             '<input />\n'})
-        self.assertEqual([row["location"] for row in data["inputs"]], ["a.html:1", "a.html:4"])
+        self.assertEqual([row["location"] for row in data["inputs"]], ["a.html:1", "a.html:3", "a.html:4"])
+
+    def test_explicit_label_targets_do_not_label_unrelated_wrapped_controls(self):
+        for extension, target_attr in (("html", "for"), ("jsx", "htmlFor"), ("vue", "for")):
+            with self.subTest(extension=extension):
+                name = f"a.{extension}"
+                data = self.scan({name:
+                    f'<label {target_attr}="search">Search<input /></label>\n'
+                    '<input id="search" />\n'
+                    f'<label {target_attr}="">Missing target<textarea></textarea></label>\n'
+                    f'<label {target_attr}="nested">Nested<input id="nested" /></label>\n'})
+                self.assertEqual([(row["element"], row["location"], row["missing"]) for row in data["inputs"]],
+                                 [("input", f"{name}:1", ["label"]), ("textarea", f"{name}:3", ["label"])])
+
+    def test_implicit_label_only_names_its_first_labelable_descendant(self):
+        data = self.scan({"a.html":
+            '<label>Search<input type="hidden"><input id="first"><input id="second"></label>\n'
+            '<label>Action<button>Run</button><input id="after-button"></label>\n'
+            '<label>Choice<select></select><textarea></textarea></label>\n'
+            '<label>Progress<progress value="1" max="2"></progress><input id="after-progress"></label>\n'
+            '<label>Search<span><input id="deep"></span></label>\n'})
+        self.assertEqual([(row["name"], row["location"]) for row in data["inputs"]], [
+            ("second", "a.html:1"), ("after-button", "a.html:2"),
+            ("", "a.html:3"), ("after-progress", "a.html:4"),
+        ])
+
+    def test_wrapping_labels_keep_dynamic_targets_and_types_unknown(self):
+        data = self.scan({
+            "a.jsx": '<label htmlFor={fieldId}>Search<input id={fieldId} /></label>\n'
+                     '<label htmlFor={fieldId}>Search<input /><input id={fieldId} /></label>\n'
+                     '<label>Search<input type={kind} /><input /></label>\n'
+                     '<label>Search<input type={kind} /><input /><input /></label>\n'
+                     '<label {...props}>Search<input /><input /></label>\n'
+                     '<label>Search<input {...props} /><input /></label>\n',
+            "b.vue": '<label :for="fieldId">Search<input :id="fieldId" /></label>\n'
+                     '<label>Search<input :type="kind" /><input /></label>\n'
+                     '<label v-bind="props">Search<input /><input /></label>\n',
+        })
+        self.assertEqual([(row["type"], row["location"], row["missing"]) for row in data["inputs"]],
+                         [("text", "a.jsx:4", ["label"])])
 
     def test_jsx_regex_and_markup_strings_do_not_hide_later_elements(self):
         data = self.scan({"a.jsx":
@@ -571,6 +610,35 @@ class InventoryRegressionTests(unittest.TestCase):
         })
         self.assertEqual(data["destructive_actions"], [])
 
+    def test_svelte_event_modifiers_keep_click_keyboard_and_destructive_handlers(self):
+        data = self.scan({"a.svelte":
+            '<button on:click|preventDefault={() => deleteItem(id)}>Delete</button>\n'
+            '<span on:click|stopPropagation={go}>Go</span>\n'
+            '<div on:click|once|capture={go} on:keydown|preventDefault={go} '
+            'role="button" tabindex="0">Go</div>\n'
+            '<button on:click|once={() => removeItem(first)} '
+            'on:click|capture={() => discardItem(second)}>Remove both</button>\n'
+            '<button onclick={() => destroyItem(id)}>Destroy</button>\n'
+            '<button title="on:click|once={eraseExample()}">Example</button>\n'})
+        self.assertEqual(data["click_handlers"], [{
+            "element": "span", "missing": ["role", "tabindex", "key handler"], "location": "a.svelte:2",
+        }])
+        self.assertEqual([(row["call"], row["location"]) for row in data["destructive_actions"]], [
+            ("deleteItem", "a.svelte:1"), ("removeItem", "a.svelte:4"),
+            ("discardItem", "a.svelte:4"), ("destroyItem", "a.svelte:5"),
+        ])
+
+    def test_keyboard_handler_aliases_do_not_create_missing_handler_candidates(self):
+        data = self.scan({
+            "a.svelte": '<span on:click|stopPropagation={go} on:keyup|preventDefault={go} '
+                        'role="button" tabindex="0">Go</span>\n'
+                        '<span on:click={go} on:keypress={go} role="button" tabindex="0">Go</span>\n',
+            "b.vue": '<div @click="go" v-on:keyup.enter="go" role="button" tabindex="0">Go</div>\n'
+                     '<span @click="go" @keypress.enter="go" role="button" tabindex="0">Go</span>\n',
+            "c.html": '<div (click)="go()" (keyup)="go()" role="button" tabindex="0">Go</div>\n',
+        })
+        self.assertEqual(data["click_handlers"], [])
+
     def test_nested_handler_attributes_do_not_duplicate_the_same_destructive_call(self):
         data = self.scan({"a.jsx":
             '<Button onClick={() => setContent(<button onClick={() => removeItem(id)}>Remove</button>)} />\n'
@@ -826,6 +894,40 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertIn("flows", result.stderr)
             self.assertNotIn("Traceback", result.stderr)
             self.assertEqual(out.read_text(encoding="utf-8"), "keep")
+
+    def test_cli_refuses_output_that_aliases_flows_before_scanning(self):
+        for alias_kind in ("same", "parent-symlink", "symlink", "hardlink"):
+            with self.subTest(alias=alias_kind), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                repo = root / "repo"
+                repo.mkdir()
+                records = root / "records"
+                records.mkdir()
+                flows = records / "flows.json"
+                original = (ROOT / "examples" / "flows.sample.json").read_bytes()
+                flows.write_bytes(original)
+                out = flows
+                if alias_kind == "parent-symlink":
+                    parent = root / "alias"
+                    parent.symlink_to(records, target_is_directory=True)
+                    out = parent / "flows.json"
+                elif alias_kind in ("symlink", "hardlink"):
+                    out = records / "inventory.json"
+                    if alias_kind == "symlink":
+                        out.symlink_to(flows)
+                    else:
+                        os.link(flows, out)
+                # Reject argument collisions before traversing the reviewed app.
+                with patch.object(inventory, "inventory", side_effect=AssertionError("must not scan")):
+                    with patch("sys.stderr"):
+                        self.assertEqual(inventory.main([str(repo), "--out", str(out), "--flows", str(flows)]), 2)
+                result = self.run_cli(repo, out, "--flows", flows)
+                self.assertEqual(result.returncode, 2)
+                self.assertIn("--flows input must be different from --out", result.stderr)
+                self.assertNotIn("Traceback", result.stderr)
+                self.assertEqual(flows.read_bytes(), original)
+                self.assertEqual(out.read_bytes(), original)
+                self.assertEqual(out.is_symlink(), alias_kind == "symlink")
 
     def test_cli_refuses_output_inside_repository_including_symlink_aliases(self):
         with tempfile.TemporaryDirectory() as tmp:

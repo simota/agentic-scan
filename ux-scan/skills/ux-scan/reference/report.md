@@ -95,6 +95,28 @@ recovery files. An interrupted run can still leave an incomplete set of
 outputs: fix the reported error, rerender and pass the contract checker before
 sharing the report.
 
+Concurrent renders to the same output directory, including directory aliases,
+are refused with exit 2. An empty `.ux-scan-render.lock` directory reserves the
+outputs through HTML publication, PDF generation, metadata publication and
+failure cleanup. Normal returns and Python exceptions remove the lock. A
+forcibly terminated process can leave it behind: verify that no renderer still
+uses that directory before removing the empty lock with the diagnostic's
+`rmdir` command and rerendering. The contract checker checks for the lock at
+both the start and end of verification and refuses locked outputs, including
+when that name is passed through `--allow`.
+
+The renderer also publishes a new `.ux-scan-render-generation` token under the
+lock before changing any report files. It keeps this file after releasing the
+lock, so the checker can detect a render that both starts and finishes during
+verification. The checker reads the token before its first lock check and
+compares it after its last lock check. If a render overlaps verification, wait
+for that render to finish and check again. Keep the generation file with the
+outputs; it is permitted without `--allow`. Older output directories without
+one still work, but a malformed token or non-regular generation file is refused,
+even with `--allow`. A generation-publication failure leaves the reports
+unchanged; later report failures keep the new token so a concurrent check must
+retry.
+
 Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —
 the message says which. Engine diagnostic text is withheld because it can echo

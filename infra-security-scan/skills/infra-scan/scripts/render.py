@@ -520,6 +520,8 @@ LABELS = {
         "md_intro": "Infrastructure security finding from a static configuration review. Propose a minimal IaC change that restores the boundary, and a policy-as-code test for it.",
         "md_excluded": "Infrastructure configuration hit from a static review, excluded after triage (see the verdict). It needs no change; use it only as context.",
         "md_covered": "Infrastructure configuration hit from a static review, covered by review finding %s: fix that finding's root cause instead.",
+        "contents": "Contents", "nav_lists": "Decisions, limits, next steps", "shortcuts": "Keyboard",
+        "key_search": "Search", "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
     },
     "ja": {
         "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
@@ -551,6 +553,8 @@ LABELS = {
         "md_intro": "設定の静的レビューで見つかったインフラのセキュリティ検出事項です。境界を回復する最小限の IaC 変更と、それを守る policy-as-code テストを提案してください。",
         "md_excluded": "設定の静的レビューで検出し、精査の結果除外した項目です（判定を参照）。変更は不要で、文脈としてのみ使ってください。",
         "md_covered": "設定の静的レビューで検出した項目で、検出事項 %s に統合されています。その根本原因を修正してください。",
+        "contents": "目次", "nav_lists": "判断事項・制約・次の対応", "shortcuts": "キー操作",
+        "key_search": "検索", "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
     },
 }
 
@@ -996,6 +1000,11 @@ DASH_CSS = """
 .lists section{min-width:0}
 tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
 @media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
+/* Application shell: the kit styles the shell; these cover infra-scan's own sections and its five filter controls. */
+.app-shell #attack-paths:focus,.app-shell #perspectives-section:focus,.app-shell #scope-section:focus{outline:0}
+.app-shell .filters{grid-template-columns:minmax(0,2.2fr) repeat(4,minmax(0,1fr))}
+@media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 """
 
 ASSESSMENT_CSS = """
@@ -1042,7 +1051,13 @@ function apply(){
   // Match the severity cards: excluded and covered findings are counted on their own.
   count.textContent=n+' / '+active+' '+count.dataset.l+(xe?' + '+xe+' '+count.dataset.e:'')+
     (xc?' + '+xc+' '+count.dataset.c:'');
+  facets.forEach(function(b){b.setAttribute('aria-pressed',String(f.sev.value===b.dataset.sev));});
 }
+// Sidebar facets: a press filters the register by severity, a second press clears it.
+var facets=[].slice.call(document.querySelectorAll('.facet'));
+facets.forEach(function(b){b.addEventListener('click',function(){
+  f.sev.value=b.getAttribute('aria-pressed')==='true'?'':b.dataset.sev;apply();document.getElementById('findings').scrollIntoView();
+});});
 function reveal(){
   var el=location.hash&&document.getElementById(decodeURIComponent(location.hash.slice(1)));
   if(!el||!el.classList.contains('row'))return;
@@ -1061,6 +1076,27 @@ document.querySelectorAll('.copy').forEach(function(b){b.addEventListener('click
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(text).then(done,fallback);}else fallback();
   function fallback(){var ta=document.createElement('textarea');ta.value=text;document.body.appendChild(ta);ta.select();try{document.execCommand('copy');done();}catch(e){}ta.remove();}
 });});
+// Keyboard: "/" searches, j/k step through the visible findings (Enter on the focused title toggles it), Escape clears the search.
+document.addEventListener('keydown',function(e){
+  if(e.altKey||e.ctrlKey||e.metaKey||e.isComposing)return;var t=e.target;
+  if(t&&t.closest&&t.closest('input,select,textarea')){if(e.key==='Escape'&&t===f.q&&f.q.value){f.q.value='';apply();}return;}
+  if(e.key==='/'){e.preventDefault();f.q.focus();}
+  else if(e.key==='j'||e.key==='k'){
+    var toggles=rows.filter(function(r){return !r.hidden;}).map(function(r){return r.querySelector('.finding-toggle');});if(!toggles.length)return;
+    var current=document.activeElement&&document.activeElement.closest('tr.row'),at=toggles.findIndex(function(b){return b.closest('tr.row')===current;});
+    var next=at<0?0:Math.min(toggles.length-1,Math.max(0,at+(e.key==='j'?1:-1)));
+    e.preventDefault();toggles[next].focus();toggles[next].closest('tr.row').scrollIntoView({block:'nearest'});
+  }
+});
+// The register's column heads pin below the filter bar, whose height depends on the language and viewport.
+if(window.ResizeObserver)new ResizeObserver(function(entries){document.getElementById('findings').style.setProperty('--filters-h',entries[0].target.offsetHeight+'px');}).observe(document.querySelector('.filters-panel'));
+// Mark the section in view in the sidebar contents.
+var navLinks=[].slice.call(document.querySelectorAll('#nav a[href^="#"]'));
+if(window.IntersectionObserver){var visible={},spy=new IntersectionObserver(function(entries){
+  entries.forEach(function(en){visible[en.target.id]=en.isIntersecting;});
+  var first=navLinks.find(function(a){return visible[a.getAttribute('href').slice(1)];});
+  navLinks.forEach(function(a){if(a===first)a.setAttribute('aria-current','location');else a.removeAttribute('aria-current');});
+},{rootMargin:'-35% 0px -60% 0px'});navLinks.forEach(function(a){var s=document.getElementById(a.getAttribute('href').slice(1));if(s)spy.observe(s);});}
 apply();
 reveal();
 })();
@@ -1126,19 +1162,33 @@ def render_dashboard(data, L, lang, sources):
     used = lambda key: sorted({f.get(key) for f in fs if f.get(key)})
     lists = "".join(f'<section><h2>{L[k]}</h2>{list_block(data.get(k, []), L)}</section>' for k in STRING_LISTS)
     title = f'{L["doc_title"]} — {meta.get("project", "")}'
+    # Severity facets count what the cards count: excluded and covered findings stay out.
+    facets = "".join(f'<button class="facet" type="button" data-sev="{s}" aria-controls="findings" aria-pressed="false">'
+                     f'<span class="facet-name {s}">{esc(shown(s, lang))}</span><span class="facet-n">{c[s]}</span></button>'
+                     for s in SEVERITIES)
+    nav = "".join(f'<li><a href="#{anchor}">{L[key]}</a></li>' for anchor, key in (
+        ("overview", "summary"), ("attack-paths", "attack_paths"), ("findings", "findings"),
+        ("perspectives-section", "perspectives"), ("scope-section", "scope_method"), ("lists", "nav_lists")))
     return f"""<!doctype html>
-<html lang="{lang}">
+<html lang="{lang}" class="app-shell">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(title)}</title><style>{kit_style.dashboard_css()}{DASH_CSS}</style></head>
-<body><main>
-<header class="masthead"><span class="brand">{L["brand"]}</span><div class="tools">
-<a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button">{L["theme"]}</button></div></header>
-<div class="hero"><div><div class="eyebrow">{L["doc_title"]}</div><h1>{esc(meta.get("project", ""))}</h1>
+<body>
+<header class="appbar"><div class="appbar-in"><span class="brand"><span>{L["brand"]}</span><span class="appbar-project">{esc(meta.get("project", ""))}</span></span><div class="tools">
+<a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button">{L["theme"]}</button></div></div></header>
+<div class="shell">
+<nav class="sidebar" id="nav" aria-label="{L["contents"]}"><h2 class="nav-title">{L["contents"]}</h2><ol class="nav-links">{nav}</ol>
+<div class="facets"><h2 class="nav-title">{L["severity"]}</h2>{facets}</div>
+<dl class="keys"><dt class="nav-title">{L["shortcuts"]}</dt><dd><kbd>/</kbd> {L["key_search"]}</dd><dd><kbd>j</kbd> <kbd>k</kbd> {L["key_move"]}</dd><dd><kbd>Enter</kbd> {L["key_toggle"]}</dd></dl></nav>
+<main>
+<section id="overview" tabindex="-1" aria-labelledby="h">
+<div class="hero"><div><div class="eyebrow">{L["doc_title"]}</div><h1 id="h">{esc(meta.get("project", ""))}</h1>
 <div class="meta">{esc(meta.get("scope", ""))} · {esc(meta.get("date", ""))} · {esc(meta.get("assessor", ""))}{(" · " + esc(meta["commit"][:12])) if meta.get("commit") else ""}</div></div></div>
 <div class="summary-banner"><strong>{esc(banner)}</strong></div>
 <div class="cards">{cards}</div>
-<section><div class="section-head"><div><h2>{L["attack_paths"]}</h2></div></div><div class="aps">{aps}</div></section>
-<section><div class="section-head"><div><h2 id="findings-h">{L["findings"]}</h2></div></div>
+</section>
+<section id="attack-paths" tabindex="-1"><div class="section-head"><div><h2>{L["attack_paths"]}</h2></div></div><div class="aps">{aps}</div></section>
+<section id="findings" tabindex="-1"><div class="section-head"><div><h2 id="findings-h">{L["findings"]}</h2></div></div>
 <div class="panel filters-panel"><div class="filters">
 <label>{L["severity"]}<select id="f-sev">{options(SEVERITIES, L, lang)}</select></label>
 <label>{L["provider"]}<select id="f-prov">{options(used("provider"), L, lang)}</select></label>
@@ -1150,11 +1200,12 @@ def render_dashboard(data, L, lang, sources):
 <th scope="col">{L["confidence"]}</th><th scope="col">{L["provider"]}</th><th scope="col">{L["verdict"]}</th><th scope="col">{L["title"]}</th>
 <th scope="col">{L["category"]}</th></tr></thead>
 <tbody>{table}</tbody></table></div></section>
-<section><div class="section-head"><div><h2>{L["perspectives"]}</h2></div></div><div id="perspectives">{persp}</div></section>
-<section><div class="section-head"><div><h2>{L["scope_method"]}</h2></div></div><dl class="scope-meta">{meta_rows(data, L, lang)}</dl></section>
-<div class="lists">{lists}</div>
+<section id="perspectives-section" tabindex="-1"><div class="section-head"><div><h2>{L["perspectives"]}</h2></div></div><div id="perspectives">{persp}</div></section>
+<section id="scope-section" tabindex="-1"><div class="section-head"><div><h2>{L["scope_method"]}</h2></div></div><dl class="scope-meta">{meta_rows(data, L, lang)}</dl></section>
+<div class="lists" id="lists" tabindex="-1">{lists}</div>
 <footer class="footer">{L["static_note"]}</footer>
 </main>
+</div>
 <script type="application/json" id="md">{md_json}</script>
 <script>{DASH_JS}</script>
 </body></html>

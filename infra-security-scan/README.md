@@ -104,7 +104,11 @@ assessment (numbered sections, captioned booktabs tables, one mincho face for
 both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
 engine and safe writes are vendored under `skills/infra-scan/scripts/scan_report_kit/`;
 `render.py` adds only the rules for infra-scan's own records (attack paths,
-perspective status, covered and excluded rows). Change the kit upstream and
+perspective status, covered and excluded rows). The dashboard opts into the
+kit's application shell: a sticky app bar, a contents sidebar with per-severity
+counts that filter the register, pinned register filters and column heads, and
+the keys `/` (search), `j`/`k` (next or previous finding) and Enter (show or
+hide details). Change the kit upstream and
 re-vendor, never in place: `make check` verifies the copy against
 `scripts/scan_report_kit/MANIFEST`.
 

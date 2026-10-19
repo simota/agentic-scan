@@ -300,7 +300,7 @@ class ReportRegressions(unittest.TestCase):
                  'docker login --password "hunter2"', "cli --token='abc123'",
                  'const password = process.env.PASSWORD || ("hunter2")',
                  'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
-                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", "password: ${VALUE} hunter2", 'password: ${VALUE} "hunter2"', "password: ${VALUE} 'hunter2'", 'PASSWORD=${VALUE}"hunter2"', "PASSWORD=$VALUE'hunter2'", "PASSWORD=${VALUE}#hunter2", "PASSWORD=$VALUE//hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
                  "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
@@ -326,7 +326,7 @@ class ReportRegressions(unittest.TestCase):
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
-              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", 'password: "${DB_PASSWORD}"', "password: '$PW'",
+              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", "password: ${DB_PASSWORD} # from the vault", 'password: "${DB_PASSWORD}"', "password: '$PW'", "PASSWORD='${PW}'", 'PASSWORD="$PW"',
               'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):
@@ -359,6 +359,17 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(render.continued_secret_lines(
             ["password =", "  process.env.PW || /* dev", '*/ "hunter2"'], 0, 3), {0, 1, 2})
         self.assertEqual(render.continued_secret_lines(["password =", '  /* dev */ "hunter2"'], 0, 2), {0, 1})
+        # An unclosed "(" keeps the expression open across lines.
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = (", "  process.env.PASSWORD", '  || "hunter2"', ")"], 0, 4), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["const password = (", "  auth.pw", ")"], 0, 3), set())
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = (", "  process.env.PASSWORD // )", '  || "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = (", "  /[)]/.test(x)", '  || "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = (", "  x instanceof /[)]/.constructor", '  || "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["const password = (a / b)", '"hunter2"'], 0, 2), set())
         # The look-back covers the whole continuation window before the excerpt.
         (self.repo / "early.ts").write_text(
             "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",
@@ -384,6 +395,16 @@ class ReportRegressions(unittest.TestCase):
                          ["echo hi", render.LABELS["en"]["masked"], render.LABELS["en"]["masked"], "echo done"])
         (self.repo / "config.yml").write_text("db:\n  password: ${DB_PASSWORD}\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "config.yml:2")["lines"], ["db:", "  password: ${DB_PASSWORD}"])
+        # In configuration a spaced , ; ) does not end the value: the literal after it is masked,
+        # while a whole reference, a quoted one or one before a # comment stays visible.
+        for line in ("password: ${VALUE} , hunter2", "password: ${VALUE}, hunter2", "password: ${VALUE} ; hunter2"):
+            with self.subTest(config=line):
+                (self.repo / "leak.yml").write_text("a: 1\n" + line + "\n", encoding="utf-8")
+                self.assertEqual(render.snippet(self.repo, "leak.yml:2")["lines"], ["a: 1", render.LABELS["en"]["masked"]])
+        for line in ('password: "${DB_PASSWORD}"', "password: ${DB_PASSWORD} # vault", "password: ${PW:?required}"):
+            with self.subTest(config=line):
+                (self.repo / "ok.yml").write_text("a: 1\n" + line + "\n", encoding="utf-8")
+                self.assertEqual(render.snippet(self.repo, "ok.yml:2")["lines"], ["a: 1", line])
         (self.repo / "wrapped_ref.ts").write_text("let password =\n  auth.currentPassword\n", encoding="utf-8")
         self.assertEqual(render.snippet(self.repo, "wrapped_ref.ts:2")["lines"], ["let password =", "  auth.currentPassword"])
         shown = render.snippet(self.repo, "wrapped.ts:3")["lines"]
@@ -464,6 +485,22 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="en", out=self.out / "ja")[0], 0)
         self.assertIn("ja/report.html: missing or invalid report language",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        # The second-language directory gets the main directory's lock and generation checks.
+        (self.out / "ja" / render.OUTPUT_LOCK).mkdir()
+        self.assertIn("output directory is locked",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        (self.out / "ja" / render.OUTPUT_LOCK).rmdir()
+        original = contract_check.read_regular
+        def rerender_ja(path, *args, **kwargs):
+            data = original(path, *args, **kwargs)
+            if path == self.out / "ja" / "report.html":
+                contract_check.read_regular = original
+                self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+            return data
+        with mock.patch.object(contract_check, "read_regular", side_effect=rerender_ja):
+            errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("render generation changed during the contract check", errors)
         self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
         self.assertIn("en: the main pages are already in en",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))

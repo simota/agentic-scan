@@ -41,8 +41,8 @@ since forms and locale files are what UX findings cite. In configuration files
 (`.properties`, `.env`, `.ini`, `.cfg`, `.conf`, `.toml`, YAML) and on `NAME=value`
 lines every bare value is a literal (`password = Sommer.x`), as is a value with a
 digit in its root (`Pa55.word`); in code a digit-free bare identifier is a
-reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables (a `${VAR:-default}` default is
-judged as a value). Each line is judged on
+reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables when they are the whole value (a `${VAR:-default}` default is
+judged as a value; text joined to the variable, such as `${VAR}"x"`, or in configuration anything but a `#` comment after it, makes a literal). Each line is judged on
 the shown text plus 512 characters after it, so a credential cut off at the
 limit is masked too. These rules are conservative heuristics, not
 a complete credential audit. Report text and
@@ -115,7 +115,8 @@ outputs; it is permitted without `--allow`. Older output directories without
 one still work, but a malformed token or non-regular generation file is refused,
 even with `--allow`. A generation-publication failure leaves the reports
 unchanged; later report failures keep the new token so a concurrent check must
-retry.
+retry. A second-language directory passed with `--allow ja|en` gets the same lock
+and generation checks.
 
 Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —

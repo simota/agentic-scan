@@ -91,7 +91,7 @@ the record's prose, including ids immediately beside Japanese text. Structured
 `location`, `occurrences` and reference `url` values stay unchanged: an id in a
 file name or external URL does not identify a finding. Paths (including
 parenthesized route-group components), routes, relative Markdown link targets,
-http(s) URLs, inline code (within its paragraph), fenced code, closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
+http(s) URLs, inline code (within its paragraph), fenced code (also one opening after a list marker or `>`, with or without a space after `>`, though an ordered list not starting at 1 cannot interrupt a paragraph; each marker and the fence may sit at most three columns past the content before it, so a deeper opener is indented code, which is not protected; the fence ends at a closer repeating the marker at the opener's `>` depth, indented at most three columns past the container's content, or where its blockquote or list item ends), closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually when they follow the CommonMark tag grammar, with JSX
 `{…}` attributes read as JavaScript (nested braces, strings, template literals, comments and regular expressions; a tag longer than 8,000 characters stays prose) and Angular `(event)=`, `[prop]=`, `*ngIf=` and `#ref`, Vue `:[key]=`, Svelte `on:click|once=` and Lit
@@ -113,7 +113,7 @@ source paths with whitespace, punctuation or code spans; unseparated text that
 looks like one path is preserved as a source token.
 
 When ids move, explicit finding ranges written on one line using `to`,
-`through`, Japanese `から` (optionally followed by `まで`), or a hyphen, dash,
+`through`, Japanese `から` (optionally followed by `まで`), `..`, or a hyphen, dash,
 `~`, `〜` or `～` expand to a
 comma-separated list of the same findings in their original range order. Ids on
 different lines, such as a Markdown bullet list, are never a range: each is

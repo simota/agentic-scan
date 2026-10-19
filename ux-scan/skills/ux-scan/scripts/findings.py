@@ -745,6 +745,7 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
 
 
 CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
+ORDERED_NOT_ONE = re.compile(r"[ \t]*(?!0*1[.)])[0-9]{1,9}[.)]")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
 BLOCK_LINE = re.compile(r">|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
@@ -758,7 +759,8 @@ def _list_content_column(value, line_start, column):
     """The content column of a list item opened above line_start that holds column, or None.
 
     Looks back over at most 50 lines: a list-item line whose content starts at or before
-    column opens the container; an unindented line that is not a list item ends the search.
+    column opens the container; an unindented line that is not a list item ends the search,
+    and so does an ordered item not starting at 1 that only continues a paragraph.
     """
     end = line_start - 1
     for _ in range(50):
@@ -767,6 +769,8 @@ def _list_content_column(value, line_start, column):
         start = value.rfind("\n", 0, end) + 1
         line = value[start:end]
         item = LIST_ITEM.match(line)
+        if item and ORDERED_NOT_ONE.match(line) and _in_paragraph(value, start):
+            item = None  # 2. after paragraph text continues the paragraph; it opens no list.
         if item and _width(line[:item.end()]) <= column:
             return _width(line[:item.end()])
         if line.strip() and not line[:1].isspace():
@@ -815,11 +819,17 @@ def _fence_container(value, line_start, marker_start):
             list_column = base
         index = token.end()
     column = _width(prefix)
-    if column - base > 3:
+    # An indented opener with no list marker of its own may continue a list item above;
+    # the fence then ends where that item does.
+    parent = None
+    if list_column is None and quotes == 0 and column > 0:
         parent = _list_content_column(value, line_start, column)
-        if parent is None or column - parent > 3:
+    if parent is not None:
+        if column - parent > 3:
             return None
         list_column = base = parent
+    elif column - base > 3:
+        return None
     return quotes, list_column, base
 
 

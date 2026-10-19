@@ -678,6 +678,9 @@ class TransactionRegressions(unittest.TestCase):
             "---\n2. ```\n   U-001\n   ```\nU-001": "---\n2. ```\n   U-001\n   ```\nU-002",
             "Title\n===\n2. ```\n   U-001\n   ```\nU-001": "Title\n===\n2. ```\n   U-001\n   ```\nU-002",
             "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-001": "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-002",
+            # A lightly indented fence continuing a list item ends with that item.
+            "- item\n\n  ```\n  U-001\nroot U-001": "- item\n\n  ```\n  U-001\nroot U-002",
+            "- item\n\n  ```\n  U-001\n  ```\nU-001": "- item\n\n  ```\n  U-001\n  ```\nU-002",
             # Inside a blockquote the rule reads the quoted paragraph.
             "> paragraph U-001\n> 2. ~~~\n>    U-001\n> ~~~~\nU-001": "> paragraph U-002\n> 2. ~~~\n>    U-002\n> ~~~~\nU-002",
             "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-001": "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-002",

@@ -365,6 +365,9 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(render.continued_secret_lines(["const password = (", "  auth.pw", ")"], 0, 3), set())
         self.assertEqual(render.continued_secret_lines(
             ["const password = (", "  process.env.PASSWORD // )", '  || "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(
+            ["const password = (", "  /[)]/.test(x)", '  || "hunter2"'], 0, 3), {0, 1, 2})
+        self.assertEqual(render.continued_secret_lines(["const password = (a / b)", '"hunter2"'], 0, 2), set())
         # The look-back covers the whole continuation window before the excerpt.
         (self.repo / "early.ts").write_text(
             "\n".join(["a"] * 10 + ["const password =", "  // one", "  // two", '  "hunter2";'] + ["b"] * 10) + "\n",

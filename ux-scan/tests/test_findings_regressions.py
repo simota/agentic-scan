@@ -661,6 +661,8 @@ class TransactionRegressions(unittest.TestCase):
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",
             "```js `x` U-001": "```js `x` U-002",
             "```\n> ```\nU-001 code\n```\nU-001": "```\n> ```\nU-001 code\n```\nU-002",
+            # Four columns of indentation outside a list item is indented code, not a fence.
+            "    ```\nU-002 should update": "    ```\nU-001 should update",
         }
         for prose, expected in cases.items():
             with self.subTest(prose=prose):

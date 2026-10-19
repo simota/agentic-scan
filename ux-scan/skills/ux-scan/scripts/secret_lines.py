@@ -217,10 +217,20 @@ def _assigned_secret(text, config=False):
 CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
 
 
+REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield",
+                  "await"}
+REGEX_LITERAL = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/[a-z]*")
+
+
 def _unclosed(text):
     """Whether text leaves a ( [ or { open, outside quoted literals and comments: password = (\n x\n || "…"."""
     bare = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", "", text)
     bare = re.sub(r"/\*.*?(?:\*/|\Z)|//.*|(?<!\S)#.*", "", bare)  # Comments are not syntax: x // ).
+    # Nor are regular-expression literals: /[)]/.test(x). A "/" after an operand divides.
+    def literal(match):
+        before = re.search(r"([\w$]+|[)\]])\s*\Z", bare[:match.start()])
+        return match[0] if before and before[1] not in REGEX_KEYWORDS else " "
+    bare = REGEX_LITERAL.sub(literal, bare)
     return sum(bare.count(c) for c in "([{") > sum(bare.count(c) for c in ")]}")
 
 

@@ -91,7 +91,7 @@ the record's prose, including ids immediately beside Japanese text. Structured
 `location`, `occurrences` and reference `url` values stay unchanged: an id in a
 file name or external URL does not identify a finding. Paths (including
 parenthesized route-group components), routes, relative Markdown link targets,
-http(s) URLs, inline code (within its paragraph), fenced code (also one opening after a list marker or `>`, at any indentation; its closer repeats the marker indented at most three columns past the opener), closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
+http(s) URLs, inline code (within its paragraph), fenced code (also one opening after a list marker or `>`, or indented inside a list item; elsewhere an opener indented four or more columns is indented code, and a closer repeats the marker at the opener's `>` depth, indented at most three columns past it), closed HTML comments (or an unclosed one opening a line) and HTML/JSX markup quoted
 in prose also stay unchanged within their delimiters (raw HTML tags are
 protected individually when they follow the CommonMark tag grammar, with JSX
 `{…}` attributes read as JavaScript (nested braces, strings, template literals, comments and regular expressions; a tag longer than 8,000 characters stays prose) and Angular `(event)=`, `[prop]=`, `*ngIf=` and `#ref`, Vue `:[key]=`, Svelte `on:click|once=` and Lit

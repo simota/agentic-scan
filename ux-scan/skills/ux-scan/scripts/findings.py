@@ -744,6 +744,30 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
     return delimiters
 
 
+CONTAINER_MARKER = re.compile(r"(?:^|[ \t])(?:[-*+]|[0-9]{1,9}[.)]|>)[ \t]")
+LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
+
+
+def _in_list_item(value, line_start, column):
+    """Whether the line at line_start is indented content of a list item opened above it.
+
+    Looks back over at most 50 lines: a list-item line indented less than column
+    opens the container; an unindented line that is not a list item ends the search.
+    """
+    end = line_start - 1
+    for _ in range(50):
+        if end < 0:
+            return False
+        start = value.rfind("\n", 0, end) + 1
+        line = value[start:end]
+        if LIST_ITEM.match(line) and len(line[:LIST_ITEM.match(line).end()].expandtabs(4)) <= column:
+            return True
+        if line.strip() and not line[:1].isspace():
+            return False
+        end = start - 1
+    return False
+
+
 def _rewrite_prose(value, mapping):
     """Update finding references without changing code, URLs or source-like tokens."""
     def mapped_range(first, last, source):
@@ -857,6 +881,10 @@ def _rewrite_prose(value, mapping):
             line_start = value.rfind("\n", 0, match.start()) + 1
             prefix = value[line_start:match.start(key)]
             column, quotes = len(prefix.expandtabs(4)), prefix.count(">")
+            if column > 3 and not CONTAINER_MARKER.search(prefix) and not _in_list_item(value, line_start, column):
+                # Indented four or more columns outside a list item: indented code, not a fence.
+                position = match.start(key) + len(marker)
+                continue
             closer = re.compile(r"^([ \t]*(?:>[ \t]*)*)" + re.escape(marker[0]) + "{" + str(len(marker))
                                 + r",}[ \t]*\r?$", re.MULTILINE)
             end = len(value)

@@ -19,6 +19,7 @@ contract_check.py require that order. Standard library only.
 Exit status: 0 ok, 2 invalid input or unwritable output (reasons on stderr).
 """
 
+import bisect
 import contextlib
 import hashlib
 import json
@@ -747,7 +748,7 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
 CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
 ORDERED_NOT_ONE = re.compile(r"[ \t]*(?!0*1[.)])[0-9]{1,9}[.)]")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])()[ \t]+")
-BLOCK_LINE = re.compile(r">|<!--.*-->[ \t]*\Z|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
+BLOCK_LINE = re.compile(r">|(?:<!--.*-->|<\?.*\?>|<![A-Za-z][^>]*>|<!\[CDATA\[.*\]\]>|(?i:<(script|pre|style|textarea)\b.*</\1>))[ \t]*\Z|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
 
@@ -764,33 +765,49 @@ def _item_content(line, marker_end, end):
     return _width(line[:end])
 
 
-def _list_content_column(value, line_start, column, quotes=0):
-    """The content column of a list item opened above line_start that holds column, or None.
+class _ListItems:
+    """The list items open above a line, read forward once per blockquote depth.
 
-    Looks back over at most 50 lines: a list-item line whose content starts at or before
-    column opens the container; an unindented line that is not a list item ends the search,
-    and so does an ordered item not starting at 1 that only continues a paragraph. Inside
-    quotes blockquote markers each line is read after them, and a line without them ends it.
+    parent(line_start, column, quotes) is the content column of the nearest list item above
+    line_start that holds column, or None: an unindented line that is not a list item closes
+    every item, and so does a line without the quotes blockquote markers; an ordered item not
+    starting at 1 that only continues a paragraph opens none. Each depth's open items form a
+    stack of strictly increasing content columns (a new item replaces every item at or past its
+    own column), so the nearest holder is a binary search, and queries in document order read
+    every line once.
     """
-    end = line_start - 1
-    for _ in range(50):
-        if end < 0:
-            return None
-        start = value.rfind("\n", 0, end) + 1
-        line, index = value[start:end].rstrip("\r"), 0
-        for _ in range(quotes):
-            if not (quote := QUOTE_MARKER.match(line, index)):
-                return None
-            index = quote.end()
-        item = LIST_ITEM.match(line, index)
-        if item and ORDERED_NOT_ONE.match(line, index) and _in_paragraph(value, start, quotes):
-            item = None  # 2. after paragraph text continues the paragraph; it opens no list.
-        if item and (content := _item_content(line, item.start(1), item.end())) <= column:
-            return content
-        if line[index:].strip() and not line[index:index + 1].isspace():
-            return None
-        end = start - 1
-    return None
+
+    def __init__(self, value):
+        self.value, self.depths = value, {}
+
+    def parent(self, line_start, column, quotes=0):
+        position, stack = self.depths.get(quotes, (0, []))
+        if position > line_start:
+            position, stack = 0, []  # Queries out of order: read again from the start.
+        value = self.value
+        while position < line_start:
+            end = value.find("\n", position)
+            end = len(value) if end == -1 else end
+            line, index = value[position:end].rstrip("\r"), 0
+            for _ in range(quotes):
+                if not (quote := QUOTE_MARKER.match(line, index)):
+                    stack = []
+                    break
+                index = quote.end()
+            else:
+                item = LIST_ITEM.match(line, index)
+                if item and ORDERED_NOT_ONE.match(line, index) and _in_paragraph(value, position, quotes):
+                    item = None  # 2. after paragraph text continues the paragraph; it opens no list.
+                if item:
+                    content = _item_content(line, item.start(1), item.end())
+                    del stack[bisect.bisect_left(stack, content):]
+                    stack.append(content)
+                elif line[index:].strip() and not line[index:index + 1].isspace():
+                    stack = []
+            position = end + 1
+        self.depths[quotes] = (position, stack)
+        holder = bisect.bisect_right(stack, column)
+        return stack[holder - 1] if holder else None
 
 
 def _in_paragraph(value, line_start, quotes=0):
@@ -809,7 +826,7 @@ def _in_paragraph(value, line_start, quotes=0):
         and not BLOCK_LINE.match(line)
 
 
-def _fence_container(value, line_start, marker_start):
+def _fence_container(value, line_start, marker_start, lists):
     """(blockquote depth, list content column or None, content column) of a fence opener,
     or None when Markdown reads the line as indented code.
 
@@ -837,7 +854,7 @@ def _fence_container(value, line_start, marker_start):
     # the fence then ends where that item does.
     parent = None
     if list_column is None and column > base:
-        parent = _list_content_column(value, line_start, column, quotes)
+        parent = lists.parent(line_start, column, quotes)
     if parent is not None:
         if column - parent > 3:
             return None
@@ -973,6 +990,7 @@ def _rewrite_prose(value, mapping):
     block_spans = [match.span() for match in PROSE_BLOCK_BREAK.finditer(value)]
     protected_spans, literal_spans, source_spans = list(block_spans), [], []
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    lists = _ListItems(value)
     next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
@@ -983,7 +1001,7 @@ def _rewrite_prose(value, mapping):
             key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
             marker = match[key]
             line_start = value.rfind("\n", 0, match.start()) + 1
-            container = _fence_container(value, line_start, match.start(key))
+            container = _fence_container(value, line_start, match.start(key), lists)
             if container is None:
                 position = match.start(key) + len(marker)  # Indented code, not a fence.
                 continue

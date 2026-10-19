@@ -689,6 +689,12 @@ class TransactionRegressions(unittest.TestCase):
             "-     item\n\n  ```\n  U-001\nroot U-001": "-     item\n\n  ```\n  U-001\nroot U-002",
             # A closed HTML comment is a completed block, not paragraph text.
             "<!-- done -->\n2. ```\n   U-001\n   ```\nU-001": "<!-- done -->\n2. ```\n   U-001\n   ```\nU-002",
+            # So is any HTML block that ends on its line.
+            **{block + "\n2. ```\n   U-001\n   ```\nU-001": block + "\n2. ```\n   U-001\n   ```\nU-002"
+               for block in ("<?done?>", "<!DOCTYPE html>", "<![CDATA[x]]>", "<script>done</script>")},
+            # A parent list item is found however far above the fence it opens.
+            "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-001":
+                "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-002",
             # Inside a blockquote the rule reads the quoted paragraph.
             "> paragraph U-001\n> 2. ~~~\n>    U-001\n> ~~~~\nU-001": "> paragraph U-002\n> 2. ~~~\n>    U-002\n> ~~~~\nU-002",
             "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-001": "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-002",

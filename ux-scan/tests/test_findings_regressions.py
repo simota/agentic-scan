@@ -677,6 +677,10 @@ class TransactionRegressions(unittest.TestCase):
             "# Heading\n2. ```\n   U-001\n   ```\nU-001": "# Heading\n2. ```\n   U-001\n   ```\nU-002",
             "---\n2. ```\n   U-001\n   ```\nU-001": "---\n2. ```\n   U-001\n   ```\nU-002",
             "Title\n===\n2. ```\n   U-001\n   ```\nU-001": "Title\n===\n2. ```\n   U-001\n   ```\nU-002",
+            "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-001": "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-002",
+            # Inside a blockquote the rule reads the quoted paragraph.
+            "> paragraph U-001\n> 2. ~~~\n>    U-001\n> ~~~~\nU-001": "> paragraph U-002\n> 2. ~~~\n>    U-002\n> ~~~~\nU-002",
+            "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-001": "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-002",
             "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
             # A marker indented four or more columns past the opener is code, not the closer.
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",

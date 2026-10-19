@@ -88,7 +88,8 @@ REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
 ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
                            # ${VALUE} hunter2 carries a literal too; # and // start a comment only after a space.
-                           # A quote ends it only directly: ${VALUE} "hunter2" carries a literal.
+                           # A quote ends it only directly, and only as a closing quote (see _code_reference):
+                           # ${VALUE} "hunter2" and ${VALUE}"hunter2" carry a literal.
                            r"(?=[\"'`]|\s*(?:[,;)}\]]|\Z)|\s+(?:#|//))")
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
@@ -161,7 +162,12 @@ def _code_reference(text, bare, config=False):
     if default:  # ${VAR:-default}: the default is the value.
         return not default.group(1) or default.group(1).startswith("$") or bool(
             NOT_SECRET.fullmatch(default.group(1).strip("\"'")))
-    if ENV_REFERENCE.match(text, bare.start()):
+    if reference := ENV_REFERENCE.match(text, bare.start()):
+        after = text[reference.end():reference.end() + 1]
+        # A quote ends the reference only when it closes a quote opened just before it ("${PW}");
+        # elsewhere it starts a word the shell concatenates: ${VALUE}"hunter2" carries a literal.
+        if after in "\"'`" and after and text[bare.start() - 1:bare.start()] != after:
+            return False
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
     if text.startswith("${", bare.start()):
         return False  # ${VALUE} followed by more text: not a whole reference, so a literal.

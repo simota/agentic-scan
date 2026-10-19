@@ -300,7 +300,7 @@ class ReportRegressions(unittest.TestCase):
                  'docker login --password "hunter2"', "cli --token='abc123'",
                  'const password = process.env.PASSWORD || ("hunter2")',
                  'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
-                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", "password: ${VALUE} hunter2", 'password: ${VALUE} "hunter2"', "password: ${VALUE} 'hunter2'", "PASSWORD=${VALUE}#hunter2", "PASSWORD=$VALUE//hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
+                 "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", "password: ${VALUE} hunter2", 'password: ${VALUE} "hunter2"', "password: ${VALUE} 'hunter2'", 'PASSWORD=${VALUE}"hunter2"', "PASSWORD=$VALUE'hunter2'", "PASSWORD=${VALUE}#hunter2", "PASSWORD=$VALUE//hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
                  "spring.datasource.password=Sommer.x"]
         for line in leaks:
             with self.subTest(leak=line):
@@ -326,7 +326,7 @@ class ReportRegressions(unittest.TestCase):
               'const pw = process.env.PW || "";', 'password: isNew ? "New password" : "Current password",',
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
-              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", "password: ${DB_PASSWORD} # from the vault", 'password: "${DB_PASSWORD}"', "password: '$PW'",
+              "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", "password: ${DB_PASSWORD} # from the vault", 'password: "${DB_PASSWORD}"', "password: '$PW'", "PASSWORD='${PW}'", 'PASSWORD="$PW"',
               'password: "Password" /* label */']
         for line in ux:
             with self.subTest(ux=line):

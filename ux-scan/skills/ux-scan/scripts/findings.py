@@ -746,7 +746,7 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
 
 CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
-BLOCK_LINE = re.compile(r">|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|=+[ \t]*\Z|`{3,}|~{3,}")
+BLOCK_LINE = re.compile(r">|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
 
@@ -775,13 +775,18 @@ def _list_content_column(value, line_start, column):
     return None
 
 
-def _in_paragraph(value, line_start):
-    """Whether the line before line_start is paragraph text: not blank, not indented, and
-    not a list item, blockquote, heading, thematic break, setext underline or fence line,
-    which a new list item may follow."""
+def _in_paragraph(value, line_start, quotes=0):
+    """Whether the line before line_start, inside the same quotes blockquote markers, is
+    paragraph text: not blank, not indented, and not a list item, blockquote, heading,
+    thematic break, setext underline or fence line, which a new list item may follow."""
     if line_start == 0:
         return False
     line = value[value.rfind("\n", 0, line_start - 1) + 1:line_start - 1].rstrip("\r")
+    for _ in range(quotes):
+        quote = QUOTE_MARKER.match(line)
+        if quote is None:
+            return False  # Outside this blockquote: no paragraph of its own to interrupt.
+        line = line[quote.end():]
     return bool(line.strip()) and not line[:1].isspace() and not LIST_ITEM.match(line) \
         and not BLOCK_LINE.match(line)
 
@@ -801,7 +806,8 @@ def _fence_container(value, line_start, marker_start):
         marker = token.lastindex if token[1] is None else 1
         if _width(prefix[:token.start(marker)]) - base > 3:
             return None
-        if index == 0 and token[3] and int(token[3]) != 1 and _in_paragraph(value, line_start):
+        if list_column is None and token[3] and int(token[3]) != 1 \
+                and _in_paragraph(value, line_start, quotes):
             return None
         quotes += token[1] is not None
         base = _width(prefix[:token.end()])

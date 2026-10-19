@@ -1371,7 +1371,8 @@ class InventoryRegressionTests(unittest.TestCase):
                                     '<button><span aria-hidden="true"><span>×</span>close</span></button>\n'
                                     '<button><img src="x.svg" aria-hidden="true">Close</button>\n'
                                     '<button><span title="1 > 0" aria-hidden="true">×</span></button>\n'
-                                    '<button><span title="x aria-hidden=\'true\'">Close</span></button>\n',
+                                    '<button><span title="x aria-hidden=\'true\'">Close</span></button>\n'
+                                    '<button><span aria-hidden="true"><b title="<span>">x</b></span>Close</button>\n',
                           "b.tsx": 'export const B = () => <button onClick={close}><span aria-hidden="true">×</span>'
                                    '</button>;\n'})
         self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:3", "a.html:5", "b.tsx:1"])

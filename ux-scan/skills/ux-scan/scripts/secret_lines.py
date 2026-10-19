@@ -86,7 +86,8 @@ REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # A plain $VAR or ${VAR}; ${VAR:-default} and its kin carry a default that is judged as a value.
 # (${VAR:?message} carries an error message, not a value.)
 # It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
-ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)(?=[\s,;\"'`)}\]]|\Z)")
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
+                           r"(?=\s*(?:[,;\"'`)}\]]|#|//|\Z))")  # ${VALUE} hunter2 carries a literal too.
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
@@ -160,6 +161,8 @@ def _code_reference(text, bare, config=False):
             NOT_SECRET.fullmatch(default.group(1).strip("\"'")))
     if ENV_REFERENCE.match(text, bare.start()):
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
+    if text.startswith("${", bare.start()):
+        return False  # ${VALUE} followed by more text: not a whole reference, so a literal.
     dotted = REFERENCE.fullmatch(value) is not None
     if config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
         return False  # Configuration files hold values, never code.
@@ -211,6 +214,12 @@ def _assigned_secret(text, config=False):
 
 
 CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
+
+
+def _unclosed(text):
+    """Whether text leaves a ( [ or { open, outside quoted literals: password = (\n x\n || "…"."""
+    bare = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", "", text)
+    return sum(bare.count(c) for c in "([{") > sum(bare.count(c) for c in ")]}")
 
 
 def _opens_comment(text):
@@ -272,9 +281,9 @@ def continued_secret_lines(lines, start, stop, config=False):
             if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
                 joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
                 continue
-            if not OPEN_END.search(joined):
+            if not OPEN_END.search(joined) and not _unclosed(joined):
                 break  # The expression ended without a credential.
-            # Still open (process.env.PW ||): the value continues on the next line.
+            # Still open (process.env.PW ||, or an unclosed "("): the value continues on the next line.
     return hidden
 
 

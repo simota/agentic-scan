@@ -88,7 +88,8 @@ REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
 ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
                            # ${VALUE} hunter2 carries a literal too; # and // start a comment only after a space.
-                           r"(?=\s*(?:[,;\"'`)}\]]|\Z)|\s+(?:#|//))")
+                           # A quote ends it only directly: ${VALUE} "hunter2" carries a literal.
+                           r"(?=[\"'`]|\s*(?:[,;)}\]]|\Z)|\s+(?:#|//))")
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")

@@ -654,8 +654,18 @@ class TransactionRegressions(unittest.TestCase):
             "Open U-001.md and .U-002": "Open U-001.md and .U-002",
             "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-001": "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-002",
             "1. ```\n   U-001\n   ```": "1. ```\n   U-001\n   ```",
-            "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-001":
-                "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-002",
+            "1. Run:\n\n   ```\n   first\n\n   see U-001\n   ```\nU-001":
+                "1. Run:\n\n   ```\n   first\n\n   see U-001\n   ```\nU-002",
+            # Four columns past the list item's content (column 3) is indented code, not a fence.
+            "1. Run:\n\n       ```\n       see U-001\n       ```\nU-001":
+                "1. Run:\n\n       ```\n       see U-002\n       ```\nU-002",
+            # A list marker indented four columns at the root is indented code too.
+            "    - ```\nU-002 should update": "    - ```\nU-001 should update",
+            # Leaving the list item ends its fence: the root marker opens a new one.
+            "- ```\n  U-001\n```\nU-001 code": "- ```\n  U-001\n```\nU-001 code",
+            "- ```\n  U-001\n  ```\nU-001": "- ```\n  U-001\n  ```\nU-002",
+            # Leaving the blockquote (a non-lazy line) ends its fence the same way.
+            "> ```\n> U-001\n```\nU-001 code": "> ```\n> U-001\n```\nU-001 code",
             "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
             # A marker indented four or more columns past the opener is code, not the closer.
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",

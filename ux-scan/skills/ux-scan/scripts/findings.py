@@ -744,28 +744,85 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
     return delimiters
 
 
-CONTAINER_MARKER = re.compile(r"(?:^|[ \t])(?:[-*+]|[0-9]{1,9}[.)]|>)[ \t]")
+CONTAINER_TOKEN = re.compile(r"[ \t]*(>|[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|\Z)")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
+QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
 
-def _in_list_item(value, line_start, column):
-    """Whether the line at line_start is indented content of a list item opened above it.
+def _width(text):
+    return len(text.expandtabs(4))
 
-    Looks back over at most 50 lines: a list-item line indented less than column
-    opens the container; an unindented line that is not a list item ends the search.
+
+def _list_content_column(value, line_start, column):
+    """The content column of a list item opened above line_start that holds column, or None.
+
+    Looks back over at most 50 lines: a list-item line whose content starts at or before
+    column opens the container; an unindented line that is not a list item ends the search.
     """
     end = line_start - 1
     for _ in range(50):
         if end < 0:
-            return False
+            return None
         start = value.rfind("\n", 0, end) + 1
         line = value[start:end]
-        if LIST_ITEM.match(line) and len(line[:LIST_ITEM.match(line).end()].expandtabs(4)) <= column:
-            return True
+        item = LIST_ITEM.match(line)
+        if item and _width(line[:item.end()]) <= column:
+            return _width(line[:item.end()])
         if line.strip() and not line[:1].isspace():
-            return False
+            return None
         end = start - 1
-    return False
+    return None
+
+
+def _fence_container(value, line_start, marker_start):
+    """(blockquote depth, list content column or None, content column) of a fence opener,
+    or None when Markdown reads the line as indented code.
+
+    Each container marker on the line (- , 1. , >) and the fence marker itself may be
+    indented at most three columns past the content column before it; more indentation
+    is allowed only inside a list item opened on an earlier line.
+    """
+    prefix = value[line_start:marker_start]
+    base, quotes, list_column, index = 0, 0, None, 0
+    while token := CONTAINER_TOKEN.match(prefix, index):
+        if _width(prefix[:token.start(1)]) - base > 3:
+            return None
+        quotes += token[1] == ">"
+        base = _width(prefix[:token.end()])
+        if token[1] != ">":
+            list_column = base
+        index = token.end()
+    column = _width(prefix)
+    if column - base > 3:
+        parent = _list_content_column(value, line_start, column)
+        if parent is None or column - parent > 3:
+            return None
+        list_column = base = parent
+    return quotes, list_column, base
+
+
+def _fence_end(value, opener_end, marker, quotes, list_column, base):
+    """Where the fence opened before opener_end ends: after its closer, or before the first line
+    that leaves its blockquote or list item, or at the end of value. Reads each line once."""
+    closer = re.compile(re.escape(marker[0]) + "{" + str(len(marker)) + r",}[ \t]*")
+    newline = value.find("\n", opener_end)
+    while newline != -1:
+        start = newline + 1
+        end = value.find("\n", start)
+        end = len(value) if end == -1 else end
+        line = value[start:end].rstrip("\r")
+        depth, index = 0, 0
+        while depth < quotes and (quote := QUOTE_MARKER.match(line, index)):
+            depth, index = depth + 1, quote.end()
+        rest = line[index:]
+        if rest.strip():
+            column = _width(line[:index]) + _width(rest) - _width(rest.lstrip(" \t"))
+            if depth < quotes or (list_column is not None and column < list_column):
+                return newline  # The container ended, and the fence with it.
+            if column - base <= 3 and closer.fullmatch(rest.strip()):
+                return end
+        newline = end if end < len(value) else -1
+    return len(value)
 
 
 def _rewrite_prose(value, mapping):
@@ -873,26 +930,17 @@ def _rewrite_prose(value, mapping):
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
         if match["fence"] is not None:
-            # The closer repeats the marker, indented at most three columns past the
-            # opener's (its container's content); a more indented marker is code.
-            # An unclosed fence runs to the end. Each line is read once: linear time.
+            # A fence ends at a closer in the same container, indented at most three
+            # columns past the container's content, or where that container ends;
+            # a more indented marker is code, and an unclosed fence runs to the end.
             key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
             marker = match[key]
             line_start = value.rfind("\n", 0, match.start()) + 1
-            prefix = value[line_start:match.start(key)]
-            column, quotes = len(prefix.expandtabs(4)), prefix.count(">")
-            if column > 3 and not CONTAINER_MARKER.search(prefix) and not _in_list_item(value, line_start, column):
-                # Indented four or more columns outside a list item: indented code, not a fence.
-                position = match.start(key) + len(marker)
+            container = _fence_container(value, line_start, match.start(key))
+            if container is None:
+                position = match.start(key) + len(marker)  # Indented code, not a fence.
                 continue
-            closer = re.compile(r"^([ \t]*(?:>[ \t]*)*)" + re.escape(marker[0]) + "{" + str(len(marker))
-                                + r",}[ \t]*\r?$", re.MULTILINE)
-            end = len(value)
-            for candidate in closer.finditer(value, match.end()):
-                # The same blockquote depth: "> ```" inside a plain fence is code.
-                if candidate[1].count(">") == quotes and len(candidate[1].expandtabs(4)) <= column + 3:
-                    end = candidate.end()
-                    break
+            end = _fence_end(value, match.end(), marker, *container)
             for spans in (protected_spans, literal_spans, block_spans):
                 spans.append((match.start(), end))
             position = end

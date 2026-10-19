@@ -97,9 +97,7 @@ def problems(out, no_pdf=False, allow=()):
         yield f"{out}: cannot read output directory: {e.strerror or e}"
         return
     if OUTPUT_LOCK in found:
-        yield (f"{out}: output directory is locked; finish the active render before checking. "
-               "If a previous run was interrupted, verify that no renderer uses this directory, "
-               f"then remove the empty lock with 'rmdir {shlex.quote(str(out.absolute() / OUTPUT_LOCK))}' and rerender")
+        yield locked_problem(out)
         return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(out))}"
@@ -203,29 +201,42 @@ def problems(out, no_pdf=False, allow=()):
         # A requested second language must exist; it is not merely tolerated.
         for name in sorted(set(allow) & set(LANGUAGES)):
             yield from translation_problems(out, name, expected_stamps, no_pdf)
+    yield from render_race_problems(out, generation)
+
+
+def locked_problem(directory):
+    """The message for an output directory whose render lock is present."""
+    return (f"{directory}: output directory is locked; finish the active render before checking. "
+            "If a previous run was interrupted, verify that no renderer uses this directory, "
+            f"then remove the empty lock with 'rmdir {shlex.quote(str(directory.absolute() / OUTPUT_LOCK))}' "
+            "and rerender")
+
+
+def render_race_problems(directory, generation, prefix=""):
+    """Whether a render of directory started or finished while its files were being checked."""
     # The renderer can acquire its lock after the initial directory listing,
     # even after all the old, complete files have already been read. Do not
     # approve that snapshot while a new publication is still in progress.
     try:
-        (out / OUTPUT_LOCK).lstat()
+        (directory / OUTPUT_LOCK).lstat()
     except FileNotFoundError:
         pass
     except OSError as e:
-        yield f"{out}: cannot recheck output lock: {e.strerror or e}"
+        yield f"{directory}: cannot recheck output lock: {e.strerror or e}"
         return
     else:
-        yield (f"{out}: a render started during the contract check; wait for it to finish, "
+        yield (f"{directory}: a render started during the contract check; wait for it to finish, "
                "then run contract_check.py again")
         return
     # Pair this with the read before the initial lock check. The marker changes
     # before output mutations and is never rolled back, including failed runs.
     try:
-        current_generation = read_generation(out)
+        current_generation = read_generation(directory)
     except (OSError, ValueError) as e:
-        yield f"{OUTPUT_GENERATION}: cannot recheck render generation: {e}"
+        yield f"{prefix}{OUTPUT_GENERATION}: cannot recheck render generation: {e}"
     else:
         if current_generation != generation:
-            yield (f"{out}: render generation changed during the contract check; "
+            yield (f"{directory}: render generation changed during the contract check; "
                    "run contract_check.py again after rendering finishes")
 
 
@@ -238,9 +249,14 @@ def translation_problems(out, lang, parent_stamps, no_pdf):
         if not directory.is_dir() or directory.is_symlink():
             yield f"{lang}: expected a directory holding the {lang} render; run {rerender}"
             return
+        # The same race protection as the main directory: read the generation first.
+        generation = read_generation(directory)
         found = {p.name for p in directory.iterdir()}
-    except OSError as e:
-        yield f"{lang}: cannot read directory: {e.strerror or e}"
+    except (OSError, ValueError) as e:
+        yield f"{lang}: cannot read directory: {getattr(e, 'strerror', None) or e}"
+        return
+    if OUTPUT_LOCK in found:
+        yield locked_problem(directory)
         return
     if rendered_lang(out) == lang:
         yield f"{lang}: the main pages are already in {lang}; a second-language render needs the other language"
@@ -263,6 +279,7 @@ def translation_problems(out, lang, parent_stamps, no_pdf):
         except ValueError as e:
             yield f"{lang}/report.pdf: {e}; run {rerender}"
     yield from page_problems(sources, stamps, no_pdf, rerender, prefix=f"{lang}/", lang=lang)
+    yield from render_race_problems(directory, generation, prefix=f"{lang}/")
 
 
 def page_problems(sources, expected_stamps, no_pdf, rerender, prefix="", lang=None):

@@ -646,6 +646,21 @@ class TransactionRegressions(unittest.TestCase):
                     '<button @click=${this.go} data-id="U-001">', '<my-el .value=${v} data-id="U-001">'):
             with self.subTest(tag=tag):
                 self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        # ".." is a range separator, a capitalised word after an id is a sentence, and a fence
+        # opening after a list marker or blockquote protects its code.
+        cases = {
+            "Fix U-001..U-002 first.": "Fix U-002, U-001 first.",
+            "See U-001.Then U-002.": "See U-002.Then U-001.",
+            "Open U-001.md and .U-002": "Open U-001.md and .U-002",
+            "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-001": "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-002",
+            "1. ```\n   U-001\n   ```": "1. ```\n   U-001\n   ```",
+            "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-001":
+                "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-002",
+            "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
+        }
+        for prose, expected in cases.items():
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
         ranged = {"U-001": "U-005", "U-002": "U-002", "U-003": "U-004"}
         self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
         self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")
@@ -977,6 +992,26 @@ class TransactionRegressions(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertIn("replace denied", error.getvalue())
             self.assertEqual(target.read_bytes(), before)
+            self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name, fragment.name})
+
+    def test_concurrent_record_updates_are_refused_by_the_records_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
+            target.write_text(json.dumps(SAMPLE), encoding="utf-8")
+            fragment.write_text('{"summary":"updated"}', encoding="utf-8")
+            before = target.read_bytes()
+            (Path(tmp) / findings.RECORDS_LOCK).mkdir()  # Another merge, flows or renumber is running.
+            for cmd in (["merge", str(target), str(fragment)], ["renumber", str(target)],
+                        ["flows", str(Path(tmp) / "flows.json"), str(fragment)]):
+                error = io.StringIO()
+                with self.subTest(cmd=cmd[0]), contextlib.redirect_stderr(error):
+                    self.assertEqual(findings.main(cmd), 2)
+                    self.assertIn("records are locked", error.getvalue())
+                    self.assertIn("rmdir", error.getvalue())
+            self.assertEqual(target.read_bytes(), before)
+            (Path(tmp) / findings.RECORDS_LOCK).rmdir()
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 0)
             self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name, fragment.name})
 
     def test_write_errors_and_nonregular_inputs_return_clean_errors(self):

@@ -654,10 +654,12 @@ BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
 VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 # An open tag whose attributes are read quote-aware, so "1 > 0" or title="aria-hidden='true'"
 # inside a value neither ends the tag nor counts as an attribute.
-_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^<>"'{}])*?)"""
+# {…} values may nest three levels deep: style={{ fontSize: 20 }}, cn("a", { b: c }).
+_BRACES = r"\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"
+_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|""" + _BRACES + r"""|[^<>"'{}])*?)"""
 OPEN_TAG = re.compile(r"(?s)<([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
 ANY_TAG = re.compile(r"(?s)<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
-TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|\{[^{}]*\}|[^\s>"']+))?""")
+TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|""" + _BRACES + r"""|[^\s>"']+))?""")
 
 
 def aria_hidden(attributes):

@@ -115,7 +115,8 @@ outputs; it is permitted without `--allow`. Older output directories without
 one still work, but a malformed token or non-regular generation file is refused,
 even with `--allow`. A generation-publication failure leaves the reports
 unchanged; later report failures keep the new token so a concurrent check must
-retry.
+retry. A second-language directory passed with `--allow ja|en` gets the same lock
+and generation checks.
 
 Exit 3 means no PDF: no engine found, an engine that failed, a timeout, or
 output that failed the PDF envelope check —

@@ -468,6 +468,22 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="en", out=self.out / "ja")[0], 0)
         self.assertIn("ja/report.html: missing or invalid report language",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        # The second-language directory gets the main directory's lock and generation checks.
+        (self.out / "ja" / render.OUTPUT_LOCK).mkdir()
+        self.assertIn("output directory is locked",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"])))
+        (self.out / "ja" / render.OUTPUT_LOCK).rmdir()
+        original = contract_check.read_regular
+        def rerender_ja(path, *args, **kwargs):
+            data = original(path, *args, **kwargs)
+            if path == self.out / "ja" / "report.html":
+                contract_check.read_regular = original
+                self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+            return data
+        with mock.patch.object(contract_check, "read_regular", side_effect=rerender_ja):
+            errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["ja"]))
+        self.assertIn("render generation changed during the contract check", errors)
         self.assertEqual(self.invoke(lang="en", out=self.out / "en")[0], 0)
         self.assertIn("en: the main pages are already in en",
                       "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["en"])))

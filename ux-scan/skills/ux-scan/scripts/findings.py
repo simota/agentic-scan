@@ -19,10 +19,12 @@ contract_check.py require that order. Standard library only.
 Exit status: 0 ok, 2 invalid input or unwritable output (reasons on stderr).
 """
 
+import contextlib
 import hashlib
 import json
 import math
 import re
+import shlex
 import sys
 from datetime import date
 from pathlib import Path
@@ -342,7 +344,7 @@ FINDING_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P=first_style)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
+    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
@@ -354,7 +356,7 @@ UNDERSCORE_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
+    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
     r"(?P<last_open>_*)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
@@ -572,11 +574,13 @@ def _scan_tag(text, i):
 
 URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
-    r"(?P<fence>^[ \t]{0,3}(?:"
+    # A fence may open after list markers or a blockquote (- ```js, 1. ```, > ```) and
+    # inside an indented list item; its closer may sit at any indentation.
+    r"(?P<fence>^(?:[ \t]*(?:[-*+]|[0-9]{1,9}[.)]|>)[ \t]+)*[ \t]*(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
-    r"(?:^[ \t]{0,3}(?P=backtick_marker)`*[ \t]*\r?(?=\n|$)|\Z)"
+    r"(?:^[ \t]*(?:>[ \t]*)*(?P=backtick_marker)`*[ \t]*\r?(?=\n|$)|\Z)"
     r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
-    r"(?:^[ \t]{0,3}(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
+    r"(?:^[ \t]*(?:>[ \t]*)*(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
     # A code span closes only at a backtick run of exactly the opening length.
     # Like CommonMark, a code span stays within its paragraph: it never crosses
     # a blank line or a fence opener, so a stray backtick is literal text.
@@ -649,9 +653,12 @@ def _markdown_destinations(value, literal_spans):
 def _source_token(token):
     """Recognize paths/routes and source locations, without treating an ID list as a path."""
     token = token.rstrip(".!?:").strip("[]{}*_~")
+    token = re.sub(r"(U-[0-9]{3})\.(?=[A-Z][a-z])", r"\1 ", token)  # U-001.Then is a sentence; U-001.md a file.
     token = FINDING_LIST.sub("", token)
     return ("/" in token or "\\" in token
-            or re.search(r"\.[A-Za-z][A-Za-z0-9_-]*(?::[1-9][0-9]*(?:-[1-9][0-9]*)?)?(?:[#?].*)?$", token)
+            # A dot after a dot is a range (U-001..U-003), not an extension.
+            or re.search(r"(?<!\.)\.[A-Za-z][A-Za-z0-9_-]*"
+                         r"(?::[1-9][0-9]*(?:-[1-9][0-9]*)?)?(?:[#?].*)?$", token)
             or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?$", token))
 
 
@@ -1061,6 +1068,31 @@ def dump(data):
     return json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
 
 
+RECORDS_LOCK = ".ux-scan-records.lock"
+
+
+@contextlib.contextmanager
+def records_lock(directory):
+    """Hold the record directory for one read-merge-write, so two concurrent runs cannot
+    both read the old records and the last write drop the other's findings or flows.
+
+    mkdir is exclusive across processes. An existing lock is refused rather than
+    guessed stale; a killed process leaves it for explicit recovery.
+    """
+    lock = Path(directory).absolute() / RECORDS_LOCK
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError:
+        raise OSError(
+            f"records are locked: {lock}; another findings.py merge, flows or renumber may be running. "
+            "If a previous run was interrupted, verify that none is running, "
+            f"remove the empty lock with 'rmdir {shlex.quote(str(lock))}', and retry") from None
+    try:
+        yield
+    finally:
+        lock.rmdir()
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if (len(argv) < 2 or argv[0] not in ("check", "merge", "flows", "renumber")
@@ -1079,40 +1111,46 @@ def main(argv=None):
         bad = unsafe_target(target.parent, (target.name,))
         if bad is not None:
             raise RecordError(f"refusing to write {bad}: it exists as a symlink or non-regular file")
-        if cmd == "flows":
-            result = load_json(target) if target.exists() else {}
-            for fragment in fragments:
-                result = merge_flows(result, load_json(fragment))
-                check_flows(result)
-            beside = target.with_name("findings.json")
-            if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
-                check_findings(load_json(beside), flow_ids(result), ordered=False)
-            write_output(target, dump(result))
-            print(f"wrote {target} ({len(result['flows'])} flows)")
-            return 0
-        if cmd == "renumber":
-            ids = flow_ids_beside(target)
-            data = check_findings(load_json(target), ids, ordered=False)
-            mapping = renumber_map(data["findings"])
-            moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
-            normalized = check_findings(renumber(data, mapping), ids)
-            if normalized == data:
-                print(f"{target}: findings already in order")
-                return 0
-            write_output(target, dump(normalized))
-            print(f"renumbered {target}: {moved or 'restored findings array order'}")
-            return 0
-        data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
-        ids = flow_ids_beside(target)
-        for fragment in fragments:
-            data = merge(data, load_json(fragment))
-            check_findings(data, ids, ordered=False)
-        write_output(target, dump(data))
-        print(f"wrote {target} ({len(data['findings'])} findings)")
-        return 0
+        with records_lock(target.parent):
+            return _update(cmd, target, fragments)
     except (RecordError, OSError, ValueError, RecursionError) as e:
         print(f"findings.py: {e}", file=sys.stderr)
         return 2
+
+
+def _update(cmd, target, fragments):
+    """Run merge, flows or renumber on target while the records lock is held."""
+    if cmd == "flows":
+        result = load_json(target) if target.exists() else {}
+        for fragment in fragments:
+            result = merge_flows(result, load_json(fragment))
+            check_flows(result)
+        beside = target.with_name("findings.json")
+        if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
+            check_findings(load_json(beside), flow_ids(result), ordered=False)
+        write_output(target, dump(result))
+        print(f"wrote {target} ({len(result['flows'])} flows)")
+        return 0
+    if cmd == "renumber":
+        ids = flow_ids_beside(target)
+        data = check_findings(load_json(target), ids, ordered=False)
+        mapping = renumber_map(data["findings"])
+        moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
+        normalized = check_findings(renumber(data, mapping), ids)
+        if normalized == data:
+            print(f"{target}: findings already in order")
+            return 0
+        write_output(target, dump(normalized))
+        print(f"renumbered {target}: {moved or 'restored findings array order'}")
+        return 0
+    data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
+    ids = flow_ids_beside(target)
+    for fragment in fragments:
+        data = merge(data, load_json(fragment))
+        check_findings(data, ids, ordered=False)
+    write_output(target, dump(data))
+    print(f"wrote {target} ({len(data['findings'])} findings)")
+    return 0
 
 
 if __name__ == "__main__":

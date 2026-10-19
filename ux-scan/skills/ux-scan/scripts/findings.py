@@ -746,6 +746,7 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
 
 CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
+BLOCK_LINE = re.compile(r">|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|=+[ \t]*\Z|`{3,}|~{3,}")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
 
@@ -775,13 +776,14 @@ def _list_content_column(value, line_start, column):
 
 
 def _in_paragraph(value, line_start):
-    """Whether the line before line_start is paragraph text: not blank, not indented,
-    and not a list item or blockquote line, which a new list item may follow."""
+    """Whether the line before line_start is paragraph text: not blank, not indented, and
+    not a list item, blockquote, heading, thematic break, setext underline or fence line,
+    which a new list item may follow."""
     if line_start == 0:
         return False
     line = value[value.rfind("\n", 0, line_start - 1) + 1:line_start - 1].rstrip("\r")
     return bool(line.strip()) and not line[:1].isspace() and not LIST_ITEM.match(line) \
-        and not line.startswith(">")
+        and not BLOCK_LINE.match(line)
 
 
 def _fence_container(value, line_start, marker_start):

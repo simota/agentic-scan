@@ -673,6 +673,10 @@ class TransactionRegressions(unittest.TestCase):
             "Text U-001\n2. ```js\n   U-001\n   ````\nU-001": "Text U-002\n2. ```js\n   U-002\n   ````\nU-001",
             "Text\n1. ```\n   U-001\n   ```\nU-001": "Text\n1. ```\n   U-001\n   ```\nU-002",
             "1. a\n2. ```\n   U-001\n   ```\nU-001": "1. a\n2. ```\n   U-001\n   ```\nU-002",
+            # A heading, thematic break or setext underline is no paragraph, so 2. may follow it.
+            "# Heading\n2. ```\n   U-001\n   ```\nU-001": "# Heading\n2. ```\n   U-001\n   ```\nU-002",
+            "---\n2. ```\n   U-001\n   ```\nU-001": "---\n2. ```\n   U-001\n   ```\nU-002",
+            "Title\n===\n2. ```\n   U-001\n   ```\nU-001": "Title\n===\n2. ```\n   U-001\n   ```\nU-002",
             "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
             # A marker indented four or more columns past the opener is code, not the closer.
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",

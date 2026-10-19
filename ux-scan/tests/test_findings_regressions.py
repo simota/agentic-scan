@@ -666,6 +666,13 @@ class TransactionRegressions(unittest.TestCase):
             "- ```\n  U-001\n  ```\nU-001": "- ```\n  U-001\n  ```\nU-002",
             # Leaving the blockquote (a non-lazy line) ends its fence the same way.
             "> ```\n> U-001\n```\nU-001 code": "> ```\n> U-001\n```\nU-001 code",
+            # The space after > is optional.
+            ">```js\n>U-001\n>````\nU-001": ">```js\n>U-001\n>````\nU-002",
+            # An ordered list not starting at 1 cannot interrupt a paragraph, so no fence opens there;
+            # 1. can, and so can a later item of an existing list.
+            "Text U-001\n2. ```js\n   U-001\n   ````\nU-001": "Text U-002\n2. ```js\n   U-002\n   ````\nU-001",
+            "Text\n1. ```\n   U-001\n   ```\nU-001": "Text\n1. ```\n   U-001\n   ```\nU-002",
+            "1. a\n2. ```\n   U-001\n   ```\nU-001": "1. a\n2. ```\n   U-001\n   ```\nU-002",
             "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
             # A marker indented four or more columns past the opener is code, not the closer.
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",

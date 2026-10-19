@@ -576,7 +576,7 @@ URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     # A fence opener, also after list markers or a blockquote (- ```js, 1. ```, > ```)
     # and inside an indented list item; _rewrite_prose finds its closer.
-    r"(?P<fence>^(?:[ \t]*(?:[-*+]|[0-9]{1,9}[.)]|>)[ \t]+)*[ \t]*(?:"
+    r"(?P<fence>^(?:[ \t]*(?:(?:[-*+]|[0-9]{1,9}[.)])[ \t]+|>[ \t]?))*[ \t]*(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?=\n|\Z)|(?P<tilde_marker>~{3,})(?!~)[^\n]*))"
     # A code span closes only at a backtick run of exactly the opening length.
     # Like CommonMark, a code span stays within its paragraph: it never crosses
@@ -744,7 +744,7 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
     return delimiters
 
 
-CONTAINER_TOKEN = re.compile(r"[ \t]*(>|[-*+]|[0-9]{1,9}[.)])(?:[ \t]+|\Z)")
+CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
 LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
@@ -774,22 +774,36 @@ def _list_content_column(value, line_start, column):
     return None
 
 
+def _in_paragraph(value, line_start):
+    """Whether the line before line_start is paragraph text: not blank, not indented,
+    and not a list item or blockquote line, which a new list item may follow."""
+    if line_start == 0:
+        return False
+    line = value[value.rfind("\n", 0, line_start - 1) + 1:line_start - 1].rstrip("\r")
+    return bool(line.strip()) and not line[:1].isspace() and not LIST_ITEM.match(line) \
+        and not line.startswith(">")
+
+
 def _fence_container(value, line_start, marker_start):
     """(blockquote depth, list content column or None, content column) of a fence opener,
     or None when Markdown reads the line as indented code.
 
     Each container marker on the line (- , 1. , >) and the fence marker itself may be
     indented at most three columns past the content column before it; more indentation
-    is allowed only inside a list item opened on an earlier line.
+    is allowed only inside a list item opened on an earlier line. Like CommonMark, an
+    ordered list starting at a number other than 1 cannot interrupt a paragraph.
     """
     prefix = value[line_start:marker_start]
     base, quotes, list_column, index = 0, 0, None, 0
     while token := CONTAINER_TOKEN.match(prefix, index):
-        if _width(prefix[:token.start(1)]) - base > 3:
+        marker = token.lastindex if token[1] is None else 1
+        if _width(prefix[:token.start(marker)]) - base > 3:
             return None
-        quotes += token[1] == ">"
+        if index == 0 and token[3] and int(token[3]) != 1 and _in_paragraph(value, line_start):
+            return None
+        quotes += token[1] is not None
         base = _width(prefix[:token.end()])
-        if token[1] != ">":
+        if token[1] is None:
             list_column = base
         index = token.end()
     column = _width(prefix)

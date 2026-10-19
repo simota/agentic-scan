@@ -998,6 +998,16 @@ def _rewrite_prose(value, mapping):
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
     lists = _ListItems(value)
     next_close = None  # The first "-->" at or after the last opener searched, or -1.
+    known_line = [0, 0]  # The line start found last, and the offset it was found for.
+
+    def line_start(offset):
+        # Matches only move forward, so each search resumes where the last one
+        # stopped: one long line of openers stays linear.
+        start, searched = known_line
+        newline = value.rfind("\n", searched, offset)
+        known_line[:] = (newline + 1 if newline != -1 else start, offset)
+        return known_line[0]
+
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
         if match["fence"] is not None:
@@ -1006,8 +1016,7 @@ def _rewrite_prose(value, mapping):
             # a more indented marker is code, and an unclosed fence runs to the end.
             key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
             marker = match[key]
-            line_start = value.rfind("\n", 0, match.start()) + 1
-            container = _fence_container(value, line_start, match.start(key), lists)
+            container = _fence_container(value, line_start(match.start()), match.start(key), lists)
             if container is None:
                 position = match.start(key) + len(marker)  # Indented code, not a fence.
                 continue
@@ -1021,10 +1030,9 @@ def _rewrite_prose(value, mapping):
             # opener before it, so each close is searched for once: linear time.
             if next_close is None or (next_close != -1 and next_close < match.end()):
                 next_close = value.find("-->", match.end())
-            line_start = value.rfind("\n", 0, match.start()) + 1
             if next_close != -1:
                 end = next_close + 3
-            elif re.fullmatch(r"[ \t]{0,3}", value[line_start:match.start()]):
+            elif re.fullmatch(r"[ \t]{0,3}", value[line_start(match.start()):match.start()]):
                 end = len(value)  # An unclosed comment opening a line starts an HTML block.
             else:
                 continue  # As in CommonMark, an unclosed inline <!-- is literal text.

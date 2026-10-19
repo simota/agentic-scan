@@ -770,7 +770,8 @@ class _ListItems:
 
     parent(line_start, column, quotes) is the content column of the nearest list item above
     line_start that holds column, or None: an unindented line that is not a list item closes
-    every item, and so does a line without the quotes blockquote markers; an ordered item not
+    every item, and so does a line without the quotes blockquote markers; after a blank line an
+    indented line closes the items deeper than it; an ordered item not
     starting at 1 that only continues a paragraph opens none. Each depth's open items form a
     stack of strictly increasing content columns (a new item replaces every item at or past its
     own column), so the nearest holder is a binary search, and queries in document order read
@@ -784,7 +785,7 @@ class _ListItems:
         position, stack = self.depths.get(quotes, (0, []))
         if position > line_start:
             position, stack = 0, []  # Queries out of order: read again from the start.
-        value = self.value
+        value, blank = self.value, False
         while position < line_start:
             end = value.find("\n", position)
             end = len(value) if end == -1 else end
@@ -804,6 +805,11 @@ class _ListItems:
                     stack.append(content)
                 elif line[index:].strip() and not line[index:index + 1].isspace():
                     stack = []
+                elif line[index:].strip() and blank:
+                    # After a blank line, an indented line closes every item deeper than it;
+                    # without one it is a lazy continuation and closes none.
+                    del stack[bisect.bisect_right(stack, _width(line[:len(line) - len(line.lstrip(" \t"))])):]
+                blank = not line[index:].strip()
             position = end + 1
         self.depths[quotes] = (position, stack)
         holder = bisect.bisect_right(stack, column)

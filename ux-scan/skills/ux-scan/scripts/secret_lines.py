@@ -229,7 +229,7 @@ CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
 
 
 REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield",
-                  "await"}
+                  "await", "instanceof"}
 REGEX_LITERAL = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/[a-z]*")
 
 

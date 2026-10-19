@@ -692,6 +692,9 @@ class TransactionRegressions(unittest.TestCase):
             # So is any HTML block that ends on its line.
             **{block + "\n2. ```\n   U-001\n   ```\nU-001": block + "\n2. ```\n   U-001\n   ```\nU-002"
                for block in ("<?done?>", "<!DOCTYPE html>", "<![CDATA[x]]>", "<script>done</script>")},
+            # After a blank line, a line back at the outer item's column closes the nested item.
+            "- outer\n  - nested\n\n  outer\n\n    ```\n    U-001\n  ```\n  U-001":
+                "- outer\n  - nested\n\n  outer\n\n    ```\n    U-001\n  ```\n  U-002",
             # A parent list item is found however far above the fence it opens.
             "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-001":
                 "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-002",

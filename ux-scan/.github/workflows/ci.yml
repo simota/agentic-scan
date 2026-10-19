@@ -48,6 +48,15 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y fonts-noto-cjk
+      # Local runners (act, runthrough) use images without Chrome, and Chrome has no
+      # arm64 Linux build: render with WeasyPrint from a venv of its own instead.
+      - name: Install WeasyPrint for local runs
+        if: env.ACT
+        run: |
+          sudo apt-get install --no-install-recommends -y libpango-1.0-0 libpangoft2-1.0-0
+          python -m venv "${{ runner.temp }}/weasyprint"
+          "${{ runner.temp }}/weasyprint/bin/pip" install --quiet weasyprint
+          echo "${{ runner.temp }}/weasyprint/bin" >> "$GITHUB_PATH"
       - name: Render and validate both PDF reports
         env:
           UX_SCAN_PDF_TIMEOUT: "120"

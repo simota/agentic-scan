@@ -646,6 +646,72 @@ class TransactionRegressions(unittest.TestCase):
                     '<button @click=${this.go} data-id="U-001">', '<my-el .value=${v} data-id="U-001">'):
             with self.subTest(tag=tag):
                 self.assertEqual(findings._rewrite_prose(tag + " U-001", mapping), tag + " U-002")
+        # ".." is a range separator, a capitalised word after an id is a sentence, and a fence
+        # opening after a list marker or blockquote protects its code.
+        cases = {
+            "Fix U-001..U-002 first.": "Fix U-002, U-001 first.",
+            "See U-001.Then U-002.": "See U-002.Then U-001.",
+            "Open U-001.md and .U-002": "Open U-001.md and .U-002",
+            "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-001": "- ```js\n  const a = 1;\n\n  // U-001\n  ```\nU-002",
+            "1. ```\n   U-001\n   ```": "1. ```\n   U-001\n   ```",
+            "1. Run:\n\n   ```\n   first\n\n   see U-001\n   ```\nU-001":
+                "1. Run:\n\n   ```\n   first\n\n   see U-001\n   ```\nU-002",
+            # Four columns past the list item's content (column 3) is indented code, not a fence.
+            "1. Run:\n\n       ```\n       see U-001\n       ```\nU-001":
+                "1. Run:\n\n       ```\n       see U-002\n       ```\nU-002",
+            # A list marker indented four columns at the root is indented code too.
+            "    - ```\nU-002 should update": "    - ```\nU-001 should update",
+            # Leaving the list item ends its fence: the root marker opens a new one.
+            "- ```\n  U-001\n```\nU-001 code": "- ```\n  U-001\n```\nU-001 code",
+            "- ```\n  U-001\n  ```\nU-001": "- ```\n  U-001\n  ```\nU-002",
+            # Leaving the blockquote (a non-lazy line) ends its fence the same way.
+            "> ```\n> U-001\n```\nU-001 code": "> ```\n> U-001\n```\nU-001 code",
+            # The space after > is optional.
+            ">```js\n>U-001\n>````\nU-001": ">```js\n>U-001\n>````\nU-002",
+            # An ordered list not starting at 1 cannot interrupt a paragraph, so no fence opens there;
+            # 1. can, and so can a later item of an existing list.
+            "Text U-001\n2. ```js\n   U-001\n   ````\nU-001": "Text U-002\n2. ```js\n   U-002\n   ````\nU-001",
+            "Text\n1. ```\n   U-001\n   ```\nU-001": "Text\n1. ```\n   U-001\n   ```\nU-002",
+            "1. a\n2. ```\n   U-001\n   ```\nU-001": "1. a\n2. ```\n   U-001\n   ```\nU-002",
+            # A heading, thematic break or setext underline is no paragraph, so 2. may follow it.
+            "# Heading\n2. ```\n   U-001\n   ```\nU-001": "# Heading\n2. ```\n   U-001\n   ```\nU-002",
+            "---\n2. ```\n   U-001\n   ```\nU-001": "---\n2. ```\n   U-001\n   ```\nU-002",
+            "Title\n===\n2. ```\n   U-001\n   ```\nU-001": "Title\n===\n2. ```\n   U-001\n   ```\nU-002",
+            "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-001": "Heading\n--\n2. ~~~\n   U-001\n   ~~~\nU-002",
+            # A lightly indented fence continuing a list item ends with that item.
+            "- item\n\n  ```\n  U-001\nroot U-001": "- item\n\n  ```\n  U-001\nroot U-002",
+            "- item\n\n  ```\n  U-001\n  ```\nU-001": "- item\n\n  ```\n  U-001\n  ```\nU-002",
+            # The same holds for a list item inside a blockquote, and a tab after "> " is measured
+            # from the line start, so the closer below matches its opener.
+            "> - item\n>   ```\n>   U-001\n> root U-001": "> - item\n>   ```\n>   U-001\n> root U-002",
+            "> \t```\n> \tU-001\n> \t```\n> U-001": "> \t```\n> \tU-001\n> \t```\n> U-002",
+            # Five or more spaces after a list marker are one space of padding plus content.
+            "-     item\n\n  ```\n  U-001\nroot U-001": "-     item\n\n  ```\n  U-001\nroot U-002",
+            # A closed HTML comment is a completed block, not paragraph text.
+            "<!-- done -->\n2. ```\n   U-001\n   ```\nU-001": "<!-- done -->\n2. ```\n   U-001\n   ```\nU-002",
+            # So is any HTML block that ends on its line.
+            **{block + "\n2. ```\n   U-001\n   ```\nU-001": block + "\n2. ```\n   U-001\n   ```\nU-002"
+               for block in ("<?done?>", "<!DOCTYPE html>", "<![CDATA[x]]>", "<script>done</script>")},
+            # After a blank line, a line back at the outer item's column closes the nested item.
+            "- outer\n  - nested\n\n  outer\n\n    ```\n    U-001\n  ```\n  U-001":
+                "- outer\n  - nested\n\n  outer\n\n    ```\n    U-001\n  ```\n  U-002",
+            # A parent list item is found however far above the fence it opens.
+            "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-001":
+                "- item\n" + "\n  text\n" * 60 + "\n  ```\n  U-001\nroot U-002",
+            # Inside a blockquote the rule reads the quoted paragraph.
+            "> paragraph U-001\n> 2. ~~~\n>    U-001\n> ~~~~\nU-001": "> paragraph U-002\n> 2. ~~~\n>    U-002\n> ~~~~\nU-002",
+            "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-001": "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-002",
+            "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
+            # A marker indented four or more columns past the opener is code, not the closer.
+            "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",
+            "```js `x` U-001": "```js `x` U-002",
+            "```\n> ```\nU-001 code\n```\nU-001": "```\n> ```\nU-001 code\n```\nU-002",
+            # Four columns of indentation outside a list item is indented code, not a fence.
+            "    ```\nU-002 should update": "    ```\nU-001 should update",
+        }
+        for prose, expected in cases.items():
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
         ranged = {"U-001": "U-005", "U-002": "U-002", "U-003": "U-004"}
         self.assertEqual(findings._rewrite_prose("Fix U-001 to U-003____bar", ranged), "Fix U-005 to U-003____bar")
         self.assertEqual(findings._rewrite_prose("foo____U-001 to U-003", ranged), "foo____U-001 to U-004")
@@ -977,6 +1043,26 @@ class TransactionRegressions(unittest.TestCase):
             self.assertEqual(result, 2)
             self.assertIn("replace denied", error.getvalue())
             self.assertEqual(target.read_bytes(), before)
+            self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name, fragment.name})
+
+    def test_concurrent_record_updates_are_refused_by_the_records_lock(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
+            target.write_text(json.dumps(SAMPLE), encoding="utf-8")
+            fragment.write_text('{"summary":"updated"}', encoding="utf-8")
+            before = target.read_bytes()
+            (Path(tmp) / findings.RECORDS_LOCK).mkdir()  # Another merge, flows or renumber is running.
+            for cmd in (["merge", str(target), str(fragment)], ["renumber", str(target)],
+                        ["flows", str(Path(tmp) / "flows.json"), str(fragment)]):
+                error = io.StringIO()
+                with self.subTest(cmd=cmd[0]), contextlib.redirect_stderr(error):
+                    self.assertEqual(findings.main(cmd), 2)
+                    self.assertIn("records are locked", error.getvalue())
+                    self.assertIn("rmdir", error.getvalue())
+            self.assertEqual(target.read_bytes(), before)
+            (Path(tmp) / findings.RECORDS_LOCK).rmdir()
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(findings.main(["merge", str(target), str(fragment)]), 0)
             self.assertEqual({p.name for p in Path(tmp).iterdir()}, {target.name, fragment.name})
 
     def test_write_errors_and_nonregular_inputs_return_clean_errors(self):

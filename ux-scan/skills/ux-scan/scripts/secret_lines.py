@@ -86,7 +86,13 @@ REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
 # A plain $VAR or ${VAR}; ${VAR:-default} and its kin carry a default that is judged as a value.
 # (${VAR:?message} carries an error message, not a value.)
 # It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
-ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)(?=[\s,;\"'`)}\]]|\Z)")
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
+                           # ${VALUE} hunter2 carries a literal too; # and // start a comment only after a space.
+                           # A quote ends it only directly, and only as a closing quote (see _code_reference):
+                           # ${VALUE} "hunter2" and ${VALUE}"hunter2" carry a literal.
+                           r"(?=[\"'`]|\s*(?:[,;)}\]]|\Z)|\s+(?:#|//))")
+# In configuration files only the end of the line or a spaced # comment ends a reference.
+CONFIG_REFERENCE_END = re.compile(r"[ \t]*(?:\Z|\r?$)|[ \t]+#", re.MULTILINE)
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
@@ -158,8 +164,17 @@ def _code_reference(text, bare, config=False):
     if default:  # ${VAR:-default}: the default is the value.
         return not default.group(1) or default.group(1).startswith("$") or bool(
             NOT_SECRET.fullmatch(default.group(1).strip("\"'")))
-    if ENV_REFERENCE.match(text, bare.start()):
+    if reference := ENV_REFERENCE.match(text, bare.start()):
+        after = text[reference.end():reference.end() + 1]
+        # A quote ends the reference only when it closes a quote opened just before it ("${PW}");
+        # elsewhere it starts a word the shell concatenates: ${VALUE}"hunter2" carries a literal.
+        if after in "\"'`" and after and text[bare.start() - 1:bare.start()] != after:
+            return False
+        if config and not CONFIG_REFERENCE_END.match(text, reference.end() + (after in "\"'`" and bool(after))):
+            return False  # In configuration , ; ) ] } do not end a value: ${VALUE} , hunter2 is one.
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
+    if text.startswith("${", bare.start()):
+        return False  # ${VALUE} followed by more text: not a whole reference, so a literal.
     dotted = REFERENCE.fullmatch(value) is not None
     if config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
         return False  # Configuration files hold values, never code.
@@ -211,6 +226,23 @@ def _assigned_secret(text, config=False):
 
 
 CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
+
+
+REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield",
+                  "await", "instanceof"}
+REGEX_LITERAL = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/[a-z]*")
+
+
+def _unclosed(text):
+    """Whether text leaves a ( [ or { open, outside quoted literals and comments: password = (\n x\n || "…"."""
+    bare = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", "", text)
+    bare = re.sub(r"/\*.*?(?:\*/|\Z)|//.*|(?<!\S)#.*", "", bare)  # Comments are not syntax: x // ).
+    # Nor are regular-expression literals: /[)]/.test(x). A "/" after an operand divides.
+    def literal(match):
+        before = re.search(r"([\w$]+|[)\]])\s*\Z", bare[:match.start()])
+        return match[0] if before and before[1] not in REGEX_KEYWORDS else " "
+    bare = REGEX_LITERAL.sub(literal, bare)
+    return sum(bare.count(c) for c in "([{") > sum(bare.count(c) for c in ")]}")
 
 
 def _opens_comment(text):
@@ -272,9 +304,9 @@ def continued_secret_lines(lines, start, stop, config=False):
             if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
                 joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
                 continue
-            if not OPEN_END.search(joined):
+            if not OPEN_END.search(joined) and not _unclosed(joined):
                 break  # The expression ended without a credential.
-            # Still open (process.env.PW ||): the value continues on the next line.
+            # Still open (process.env.PW ||, or an unclosed "("): the value continues on the next line.
     return hidden
 
 

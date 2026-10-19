@@ -654,9 +654,12 @@ BUTTON_CLOSE_I = re.compile(r"</button\s*>", re.I)
 VOID_ELEMENTS = {"area", "base", "br", "col", "embed", "hr", "img", "input", "link", "meta", "source", "track", "wbr"}
 # An open tag whose attributes are read quote-aware, so "1 > 0" or title="aria-hidden='true'"
 # inside a value neither ends the tag nor counts as an attribute.
-_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|\{[^{}]*\}|[^<>"'{}])*?)"""
+# {…} values may nest three levels deep: style={{ fontSize: 20 }}, cn("a", { b: c }).
+_BRACES = r"\{(?:[^{}]|\{(?:[^{}]|\{[^{}]*\})*\})*\}"
+_TAG_ATTRS = r"""((?:"[^"]*"|'[^']*'|""" + _BRACES + r"""|[^<>"'{}])*?)"""
 OPEN_TAG = re.compile(r"(?s)<([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
-TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|\{[^{}]*\}|[^\s>"']+))?""")
+ANY_TAG = re.compile(r"(?s)<(/?)([A-Za-z][\w.:-]*)(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
+TAG_ATTRIBUTE = re.compile(r"""\s([^\s=/>"'{}]+)(?:\s*=\s*("[^"]*"|'[^']*'|""" + _BRACES + r"""|[^\s>"']+))?""")
 
 
 def aria_hidden(attributes):
@@ -681,11 +684,12 @@ def strip_aria_hidden(markup):
         cursor = opening.end()
         name = opening.group(1)
         if not opening.group(3) and name.lower() not in VOID_ELEMENTS:  # Find the matching close tag.
-            same = re.compile(r"(?si)<(/?)" + re.escape(name) + r"(?=[\s/>])" + _TAG_ATTRS + r"(/?)>")
             depth = 1
-            while depth and (tag := same.search(markup, cursor)):
+            # Every tag is read whole, so "<span>" inside another tag's attribute is not a tag.
+            while depth and (tag := ANY_TAG.search(markup, cursor)):
                 cursor = tag.end()
-                depth += -1 if tag.group(1) else 0 if tag.group(3) else 1
+                if tag.group(2).lower() == name.lower():
+                    depth += -1 if tag.group(1) else 0 if tag.group(4) else 1
             if depth:
                 cursor = len(markup)
         parts.append("<i></i>")

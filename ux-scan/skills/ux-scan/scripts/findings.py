@@ -19,10 +19,13 @@ contract_check.py require that order. Standard library only.
 Exit status: 0 ok, 2 invalid input or unwritable output (reasons on stderr).
 """
 
+import bisect
+import contextlib
 import hashlib
 import json
 import math
 import re
+import shlex
 import sys
 from datetime import date
 from pathlib import Path
@@ -342,7 +345,7 @@ FINDING_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P=first_style)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
+    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
@@ -354,7 +357,7 @@ UNDERSCORE_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|[-–—−〜～~])[ \t]*"
+    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
     r"(?P<last_open>_*)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
@@ -572,11 +575,10 @@ def _scan_tag(text, i):
 
 URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
-    r"(?P<fence>^[ \t]{0,3}(?:"
-    r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
-    r"(?:^[ \t]{0,3}(?P=backtick_marker)`*[ \t]*\r?(?=\n|$)|\Z)"
-    r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
-    r"(?:^[ \t]{0,3}(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
+    # A fence opener, also after list markers or a blockquote (- ```js, 1. ```, > ```)
+    # and inside an indented list item; _rewrite_prose finds its closer.
+    r"(?P<fence>^(?:[ \t]*(?:(?:[-*+]|[0-9]{1,9}[.)])[ \t]+|>[ \t]?))*[ \t]*(?:"
+    r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?=\n|\Z)|(?P<tilde_marker>~{3,})(?!~)[^\n]*))"
     # A code span closes only at a backtick run of exactly the opening length.
     # Like CommonMark, a code span stays within its paragraph: it never crosses
     # a blank line or a fence opener, so a stray backtick is literal text.
@@ -649,9 +651,12 @@ def _markdown_destinations(value, literal_spans):
 def _source_token(token):
     """Recognize paths/routes and source locations, without treating an ID list as a path."""
     token = token.rstrip(".!?:").strip("[]{}*_~")
+    token = re.sub(r"(U-[0-9]{3})\.(?=[A-Z][a-z])", r"\1 ", token)  # U-001.Then is a sentence; U-001.md a file.
     token = FINDING_LIST.sub("", token)
     return ("/" in token or "\\" in token
-            or re.search(r"\.[A-Za-z][A-Za-z0-9_-]*(?::[1-9][0-9]*(?:-[1-9][0-9]*)?)?(?:[#?].*)?$", token)
+            # A dot after a dot is a range (U-001..U-003), not an extension.
+            or re.search(r"(?<!\.)\.[A-Za-z][A-Za-z0-9_-]*"
+                         r"(?::[1-9][0-9]*(?:-[1-9][0-9]*)?)?(?:[#?].*)?$", token)
             or re.search(r":[1-9][0-9]*(?:-[1-9][0-9]*)?$", token))
 
 
@@ -738,6 +743,156 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
             pending.append(opener)
             buckets[opener[2]].append(opener)
     return delimiters
+
+
+CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
+ORDERED_NOT_ONE = re.compile(r"[ \t]*(?!0*1[.)])[0-9]{1,9}[.)]")
+LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])()[ \t]+")
+BLOCK_LINE = re.compile(r">|(?:<!--.*-->|<\?.*\?>|<![A-Za-z][^>]*>|<!\[CDATA\[.*\]\]>|(?i:<(script|pre|style|textarea)\b.*</\1>))[ \t]*\Z|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
+QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
+
+
+def _width(text):
+    return len(text.expandtabs(4))
+
+
+def _item_content(line, marker_end, end):
+    """The content column of a list item whose marker ends at marker_end and whose padding
+    ends at end: like CommonMark, five or more columns of padding count as one, the rest
+    being indented content."""
+    if _width(line[:end]) - _width(line[:marker_end]) > 4:
+        return _width(line[:marker_end]) + 1
+    return _width(line[:end])
+
+
+class _ListItems:
+    """The list items open above a line, read forward once per blockquote depth.
+
+    parent(line_start, column, quotes) is the content column of the nearest list item above
+    line_start that holds column, or None: an unindented line that is not a list item closes
+    every item, and so does a line without the quotes blockquote markers; after a blank line an
+    indented line closes the items deeper than it; an ordered item not
+    starting at 1 that only continues a paragraph opens none. Each depth's open items form a
+    stack of strictly increasing content columns (a new item replaces every item at or past its
+    own column), so the nearest holder is a binary search, and queries in document order read
+    every line once.
+    """
+
+    def __init__(self, value):
+        self.value, self.depths = value, {}
+
+    def parent(self, line_start, column, quotes=0):
+        position, stack = self.depths.get(quotes, (0, []))
+        if position > line_start:
+            position, stack = 0, []  # Queries out of order: read again from the start.
+        value, blank = self.value, False
+        while position < line_start:
+            end = value.find("\n", position)
+            end = len(value) if end == -1 else end
+            line, index = value[position:end].rstrip("\r"), 0
+            for _ in range(quotes):
+                if not (quote := QUOTE_MARKER.match(line, index)):
+                    stack = []
+                    break
+                index = quote.end()
+            else:
+                item = LIST_ITEM.match(line, index)
+                if item and ORDERED_NOT_ONE.match(line, index) and _in_paragraph(value, position, quotes):
+                    item = None  # 2. after paragraph text continues the paragraph; it opens no list.
+                if item:
+                    content = _item_content(line, item.start(1), item.end())
+                    del stack[bisect.bisect_left(stack, content):]
+                    stack.append(content)
+                elif line[index:].strip() and not line[index:index + 1].isspace():
+                    stack = []
+                elif line[index:].strip() and blank:
+                    # After a blank line, an indented line closes every item deeper than it;
+                    # without one it is a lazy continuation and closes none.
+                    del stack[bisect.bisect_right(stack, _width(line[:len(line) - len(line.lstrip(" \t"))])):]
+                blank = not line[index:].strip()
+            position = end + 1
+        self.depths[quotes] = (position, stack)
+        holder = bisect.bisect_right(stack, column)
+        return stack[holder - 1] if holder else None
+
+
+def _in_paragraph(value, line_start, quotes=0):
+    """Whether the line before line_start, inside the same quotes blockquote markers, is
+    paragraph text: not blank, not indented, and not a list item, blockquote, heading,
+    thematic break, setext underline or fence line, which a new list item may follow."""
+    if line_start == 0:
+        return False
+    line = value[value.rfind("\n", 0, line_start - 1) + 1:line_start - 1].rstrip("\r")
+    for _ in range(quotes):
+        quote = QUOTE_MARKER.match(line)
+        if quote is None:
+            return False  # Outside this blockquote: no paragraph of its own to interrupt.
+        line = line[quote.end():]
+    return bool(line.strip()) and not line[:1].isspace() and not LIST_ITEM.match(line) \
+        and not BLOCK_LINE.match(line)
+
+
+def _fence_container(value, line_start, marker_start, lists):
+    """(blockquote depth, list content column or None, content column) of a fence opener,
+    or None when Markdown reads the line as indented code.
+
+    Each container marker on the line (- , 1. , >) and the fence marker itself may be
+    indented at most three columns past the content column before it; more indentation
+    is allowed only inside a list item opened on an earlier line. Like CommonMark, an
+    ordered list starting at a number other than 1 cannot interrupt a paragraph.
+    """
+    prefix = value[line_start:marker_start]
+    base, quotes, list_column, index = 0, 0, None, 0
+    while token := CONTAINER_TOKEN.match(prefix, index):
+        marker = token.lastindex if token[1] is None else 1
+        if _width(prefix[:token.start(marker)]) - base > 3:
+            return None
+        if list_column is None and token[3] and int(token[3]) != 1 \
+                and _in_paragraph(value, line_start, quotes):
+            return None
+        quotes += token[1] is not None
+        base = _width(prefix[:token.end()])
+        if token[1] is None:
+            list_column = base = _item_content(prefix, token.end(2), token.end())
+        index = token.end()
+    column = _width(prefix)
+    # An indented opener with no list marker of its own may continue a list item above;
+    # the fence then ends where that item does.
+    parent = None
+    if list_column is None and column > base:
+        parent = lists.parent(line_start, column, quotes)
+    if parent is not None:
+        if column - parent > 3:
+            return None
+        list_column = base = parent
+    elif column - base > 3:
+        return None
+    return quotes, list_column, base
+
+
+def _fence_end(value, opener_end, marker, quotes, list_column, base):
+    """Where the fence opened before opener_end ends: after its closer, or before the first line
+    that leaves its blockquote or list item, or at the end of value. Reads each line once."""
+    closer = re.compile(re.escape(marker[0]) + "{" + str(len(marker)) + r",}[ \t]*")
+    newline = value.find("\n", opener_end)
+    while newline != -1:
+        start = newline + 1
+        end = value.find("\n", start)
+        end = len(value) if end == -1 else end
+        line = value[start:end].rstrip("\r")
+        depth, index = 0, 0
+        while depth < quotes and (quote := QUOTE_MARKER.match(line, index)):
+            depth, index = depth + 1, quote.end()
+        rest = line[index:]
+        if rest.strip():
+            # Tabs expand from the line start, so a tab after "> " lands on its true column.
+            column = _width(line[:len(line) - len(rest.lstrip(" \t"))])
+            if depth < quotes or (list_column is not None and column < list_column):
+                return newline  # The container ended, and the fence with it.
+            if column - base <= 3 and closer.fullmatch(rest.strip()):
+                return end
+        newline = end if end < len(value) else -1
+    return len(value)
 
 
 def _rewrite_prose(value, mapping):
@@ -841,9 +996,26 @@ def _rewrite_prose(value, mapping):
     block_spans = [match.span() for match in PROSE_BLOCK_BREAK.finditer(value)]
     protected_spans, literal_spans, source_spans = list(block_spans), [], []
     position, budget = 0, TAG_SCAN_BUDGET[0] * len(value) + TAG_SCAN_BUDGET[1]
+    lists = _ListItems(value)
     next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
+        if match["fence"] is not None:
+            # A fence ends at a closer in the same container, indented at most three
+            # columns past the container's content, or where that container ends;
+            # a more indented marker is code, and an unclosed fence runs to the end.
+            key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
+            marker = match[key]
+            line_start = value.rfind("\n", 0, match.start()) + 1
+            container = _fence_container(value, line_start, match.start(key), lists)
+            if container is None:
+                position = match.start(key) + len(marker)  # Indented code, not a fence.
+                continue
+            end = _fence_end(value, match.end(), marker, *container)
+            for spans in (protected_spans, literal_spans, block_spans):
+                spans.append((match.start(), end))
+            position = end
+            continue
         if match["comment"] is not None:
             # The first "-->" after one opener is also the first after any later
             # opener before it, so each close is searched for once: linear time.
@@ -870,7 +1042,7 @@ def _rewrite_prose(value, mapping):
                 literal_spans.append((match.start(), end))
                 position = end
             continue
-        literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
+        literal = (match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
         if literal:
             protected_spans.append(match.span())
@@ -878,8 +1050,6 @@ def _rewrite_prose(value, mapping):
         elif ((match["path"] is not None and _source_token(match["path"]))
               or (match["token"] is not None and _source_token(match["token"]))):
             source_spans.append(match.span())
-        if match["fence"] is not None:
-            block_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)
     emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)
@@ -1061,6 +1231,31 @@ def dump(data):
     return json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
 
 
+RECORDS_LOCK = ".ux-scan-records.lock"
+
+
+@contextlib.contextmanager
+def records_lock(directory):
+    """Hold the record directory for one read-merge-write, so two concurrent runs cannot
+    both read the old records and the last write drop the other's findings or flows.
+
+    mkdir is exclusive across processes. An existing lock is refused rather than
+    guessed stale; a killed process leaves it for explicit recovery.
+    """
+    lock = Path(directory).absolute() / RECORDS_LOCK
+    try:
+        lock.mkdir(mode=0o700)
+    except FileExistsError:
+        raise OSError(
+            f"records are locked: {lock}; another findings.py merge, flows or renumber may be running. "
+            "If a previous run was interrupted, verify that none is running, "
+            f"remove the empty lock with 'rmdir {shlex.quote(str(lock))}', and retry") from None
+    try:
+        yield
+    finally:
+        lock.rmdir()
+
+
 def main(argv=None):
     argv = sys.argv[1:] if argv is None else argv
     if (len(argv) < 2 or argv[0] not in ("check", "merge", "flows", "renumber")
@@ -1079,40 +1274,46 @@ def main(argv=None):
         bad = unsafe_target(target.parent, (target.name,))
         if bad is not None:
             raise RecordError(f"refusing to write {bad}: it exists as a symlink or non-regular file")
-        if cmd == "flows":
-            result = load_json(target) if target.exists() else {}
-            for fragment in fragments:
-                result = merge_flows(result, load_json(fragment))
-                check_flows(result)
-            beside = target.with_name("findings.json")
-            if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
-                check_findings(load_json(beside), flow_ids(result), ordered=False)
-            write_output(target, dump(result))
-            print(f"wrote {target} ({len(result['flows'])} flows)")
-            return 0
-        if cmd == "renumber":
-            ids = flow_ids_beside(target)
-            data = check_findings(load_json(target), ids, ordered=False)
-            mapping = renumber_map(data["findings"])
-            moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
-            normalized = check_findings(renumber(data, mapping), ids)
-            if normalized == data:
-                print(f"{target}: findings already in order")
-                return 0
-            write_output(target, dump(normalized))
-            print(f"renumbered {target}: {moved or 'restored findings array order'}")
-            return 0
-        data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
-        ids = flow_ids_beside(target)
-        for fragment in fragments:
-            data = merge(data, load_json(fragment))
-            check_findings(data, ids, ordered=False)
-        write_output(target, dump(data))
-        print(f"wrote {target} ({len(data['findings'])} findings)")
-        return 0
+        with records_lock(target.parent):
+            return _update(cmd, target, fragments)
     except (RecordError, OSError, ValueError, RecursionError) as e:
         print(f"findings.py: {e}", file=sys.stderr)
         return 2
+
+
+def _update(cmd, target, fragments):
+    """Run merge, flows or renumber on target while the records lock is held."""
+    if cmd == "flows":
+        result = load_json(target) if target.exists() else {}
+        for fragment in fragments:
+            result = merge_flows(result, load_json(fragment))
+            check_flows(result)
+        beside = target.with_name("findings.json")
+        if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
+            check_findings(load_json(beside), flow_ids(result), ordered=False)
+        write_output(target, dump(result))
+        print(f"wrote {target} ({len(result['flows'])} flows)")
+        return 0
+    if cmd == "renumber":
+        ids = flow_ids_beside(target)
+        data = check_findings(load_json(target), ids, ordered=False)
+        mapping = renumber_map(data["findings"])
+        moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
+        normalized = check_findings(renumber(data, mapping), ids)
+        if normalized == data:
+            print(f"{target}: findings already in order")
+            return 0
+        write_output(target, dump(normalized))
+        print(f"renumbered {target}: {moved or 'restored findings array order'}")
+        return 0
+    data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
+    ids = flow_ids_beside(target)
+    for fragment in fragments:
+        data = merge(data, load_json(fragment))
+        check_findings(data, ids, ordered=False)
+    write_output(target, dump(data))
+    print(f"wrote {target} ({len(data['findings'])} findings)")
+    return 0
 
 
 if __name__ == "__main__":

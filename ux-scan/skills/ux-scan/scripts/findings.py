@@ -755,25 +755,30 @@ def _width(text):
     return len(text.expandtabs(4))
 
 
-def _list_content_column(value, line_start, column):
+def _list_content_column(value, line_start, column, quotes=0):
     """The content column of a list item opened above line_start that holds column, or None.
 
     Looks back over at most 50 lines: a list-item line whose content starts at or before
     column opens the container; an unindented line that is not a list item ends the search,
-    and so does an ordered item not starting at 1 that only continues a paragraph.
+    and so does an ordered item not starting at 1 that only continues a paragraph. Inside
+    quotes blockquote markers each line is read after them, and a line without them ends it.
     """
     end = line_start - 1
     for _ in range(50):
         if end < 0:
             return None
         start = value.rfind("\n", 0, end) + 1
-        line = value[start:end]
-        item = LIST_ITEM.match(line)
-        if item and ORDERED_NOT_ONE.match(line) and _in_paragraph(value, start):
+        line, index = value[start:end].rstrip("\r"), 0
+        for _ in range(quotes):
+            if not (quote := QUOTE_MARKER.match(line, index)):
+                return None
+            index = quote.end()
+        item = LIST_ITEM.match(line, index)
+        if item and ORDERED_NOT_ONE.match(line, index) and _in_paragraph(value, start, quotes):
             item = None  # 2. after paragraph text continues the paragraph; it opens no list.
         if item and _width(line[:item.end()]) <= column:
             return _width(line[:item.end()])
-        if line.strip() and not line[:1].isspace():
+        if line[index:].strip() and not line[index:index + 1].isspace():
             return None
         end = start - 1
     return None
@@ -822,8 +827,8 @@ def _fence_container(value, line_start, marker_start):
     # An indented opener with no list marker of its own may continue a list item above;
     # the fence then ends where that item does.
     parent = None
-    if list_column is None and quotes == 0 and column > 0:
-        parent = _list_content_column(value, line_start, column)
+    if list_column is None and column > base:
+        parent = _list_content_column(value, line_start, column, quotes)
     if parent is not None:
         if column - parent > 3:
             return None
@@ -848,7 +853,8 @@ def _fence_end(value, opener_end, marker, quotes, list_column, base):
             depth, index = depth + 1, quote.end()
         rest = line[index:]
         if rest.strip():
-            column = _width(line[:index]) + _width(rest) - _width(rest.lstrip(" \t"))
+            # Tabs expand from the line start, so a tab after "> " lands on its true column.
+            column = _width(line[:len(line) - len(rest.lstrip(" \t"))])
             if depth < quotes or (list_column is not None and column < list_column):
                 return newline  # The container ended, and the fence with it.
             if column - base <= 3 and closer.fullmatch(rest.strip()):

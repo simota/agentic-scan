@@ -41,8 +41,8 @@ since forms and locale files are what UX findings cite. In configuration files
 (`.properties`, `.env`, `.ini`, `.cfg`, `.conf`, `.toml`, YAML) and on `NAME=value`
 lines every bare value is a literal (`password = Sommer.x`), as is a value with a
 digit in its root (`Pa55.word`); in code a digit-free bare identifier is a
-reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables (a `${VAR:-default}` default is
-judged as a value). Each line is judged on
+reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables when they are the whole value (a `${VAR:-default}` default is
+judged as a value; text joined to the variable, such as `${VAR}"x"`, or in configuration anything but a `#` comment after it, makes a literal). Each line is judged on
 the shown text plus 512 characters after it, so a credential cut off at the
 limit is masked too. These rules are conservative heuristics, not
 a complete credential audit. Report text and

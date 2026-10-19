@@ -91,6 +91,8 @@ ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
                            # A quote ends it only directly, and only as a closing quote (see _code_reference):
                            # ${VALUE} "hunter2" and ${VALUE}"hunter2" carry a literal.
                            r"(?=[\"'`]|\s*(?:[,;)}\]]|\Z)|\s+(?:#|//))")
+# In configuration files only the end of the line or a spaced # comment ends a reference.
+CONFIG_REFERENCE_END = re.compile(r"[ \t]*(?:\Z|\r?$)|[ \t]+#", re.MULTILINE)
 ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
@@ -168,6 +170,8 @@ def _code_reference(text, bare, config=False):
         # elsewhere it starts a word the shell concatenates: ${VALUE}"hunter2" carries a literal.
         if after in "\"'`" and after and text[bare.start() - 1:bare.start()] != after:
             return False
+        if config and not CONFIG_REFERENCE_END.match(text, reference.end() + (after in "\"'`" and bool(after))):
+            return False  # In configuration , ; ) ] } do not end a value: ${VALUE} , hunter2 is one.
         return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
     if text.startswith("${", bare.start()):
         return False  # ${VALUE} followed by more text: not a whole reference, so a literal.

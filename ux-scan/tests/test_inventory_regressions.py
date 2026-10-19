@@ -743,7 +743,9 @@ class InventoryRegressionTests(unittest.TestCase):
     def test_directory_scan_failures_are_visible_and_other_files_still_scan(self):
         for blocked_name in (".", "private"):
             with self.subTest(blocked=blocked_name), tempfile.TemporaryDirectory() as tmp:
-                root = Path(tmp)
+                # inventory() scans the resolved root, so the refused path must be resolved
+                # too: macOS keeps temporary directories behind the /var -> /private/var link.
+                root = Path(tmp).resolve()
                 (root / "private").mkdir()
                 (root / "private" / "hidden.html").write_text('<img src="hidden.png">', encoding="utf-8")
                 (root / "visible.html").write_text('<img src="visible.png">', encoding="utf-8")

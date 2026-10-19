@@ -574,13 +574,10 @@ def _scan_tag(text, i):
 
 URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
-    # A fence may open after list markers or a blockquote (- ```js, 1. ```, > ```) and
-    # inside an indented list item; its closer may sit at any indentation.
+    # A fence opener, also after list markers or a blockquote (- ```js, 1. ```, > ```)
+    # and inside an indented list item; _rewrite_prose finds its closer.
     r"(?P<fence>^(?:[ \t]*(?:[-*+]|[0-9]{1,9}[.)]|>)[ \t]+)*[ \t]*(?:"
-    r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?:\n|$).*?"
-    r"(?:^[ \t]*(?:>[ \t]*)*(?P=backtick_marker)`*[ \t]*\r?(?=\n|$)|\Z)"
-    r"|(?P<tilde_marker>~{3,})(?!~)[^\n]*(?:\n|$).*?"
-    r"(?:^[ \t]*(?:>[ \t]*)*(?P=tilde_marker)~*[ \t]*\r?(?=\n|$)|\Z)))"
+    r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?=\n|\Z)|(?P<tilde_marker>~{3,})(?!~)[^\n]*))"
     # A code span closes only at a backtick run of exactly the opening length.
     # Like CommonMark, a code span stays within its paragraph: it never crosses
     # a blank line or a fence opener, so a stray backtick is literal text.
@@ -851,6 +848,25 @@ def _rewrite_prose(value, mapping):
     next_close = None  # The first "-->" at or after the last opener searched, or -1.
     while (match := PROSE_PART.search(value, position)) is not None:
         position = match.end()
+        if match["fence"] is not None:
+            # The closer repeats the marker, indented at most three columns past the
+            # opener's (its container's content); a more indented marker is code.
+            # An unclosed fence runs to the end. Each line is read once: linear time.
+            key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
+            marker = match[key]
+            line_start = value.rfind("\n", 0, match.start()) + 1
+            column = len(value[line_start:match.start(key)].expandtabs(4))
+            closer = re.compile(r"^([ \t]*(?:>[ \t]*)*)" + re.escape(marker[0]) + "{" + str(len(marker))
+                                + r",}[ \t]*\r?$", re.MULTILINE)
+            end = len(value)
+            for candidate in closer.finditer(value, match.end()):
+                if len(candidate[1].expandtabs(4)) <= column + 3:
+                    end = candidate.end()
+                    break
+            for spans in (protected_spans, literal_spans, block_spans):
+                spans.append((match.start(), end))
+            position = end
+            continue
         if match["comment"] is not None:
             # The first "-->" after one opener is also the first after any later
             # opener before it, so each close is searched for once: linear time.
@@ -877,7 +893,7 @@ def _rewrite_prose(value, mapping):
                 literal_spans.append((match.start(), end))
                 position = end
             continue
-        literal = (match["fence"] is not None or match["markup"] is not None or match["url"] is not None
+        literal = (match["markup"] is not None or match["url"] is not None
                    or (match["code"] is not None and not FINDING_ID.fullmatch(match["code"].strip())))
         if literal:
             protected_spans.append(match.span())
@@ -885,8 +901,6 @@ def _rewrite_prose(value, mapping):
         elif ((match["path"] is not None and _source_token(match["path"]))
               or (match["token"] is not None and _source_token(match["token"]))):
             source_spans.append(match.span())
-        if match["fence"] is not None:
-            block_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)
     emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)

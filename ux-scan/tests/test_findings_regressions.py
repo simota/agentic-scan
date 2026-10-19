@@ -657,6 +657,9 @@ class TransactionRegressions(unittest.TestCase):
             "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-001":
                 "1. Run:\n\n       ```\n       first\n\n       see U-001\n       ```\nU-002",
             "> ```\n> U-001\n> ```\nU-001": "> ```\n> U-001\n> ```\nU-002",
+            # A marker indented four or more columns past the opener is code, not the closer.
+            "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",
+            "```js `x` U-001": "```js `x` U-002",
         }
         for prose, expected in cases.items():
             with self.subTest(prose=prose):

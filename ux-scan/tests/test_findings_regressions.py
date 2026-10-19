@@ -685,6 +685,10 @@ class TransactionRegressions(unittest.TestCase):
             # from the line start, so the closer below matches its opener.
             "> - item\n>   ```\n>   U-001\n> root U-001": "> - item\n>   ```\n>   U-001\n> root U-002",
             "> \t```\n> \tU-001\n> \t```\n> U-001": "> \t```\n> \tU-001\n> \t```\n> U-002",
+            # Five or more spaces after a list marker are one space of padding plus content.
+            "-     item\n\n  ```\n  U-001\nroot U-001": "-     item\n\n  ```\n  U-001\nroot U-002",
+            # A closed HTML comment is a completed block, not paragraph text.
+            "<!-- done -->\n2. ```\n   U-001\n   ```\nU-001": "<!-- done -->\n2. ```\n   U-001\n   ```\nU-002",
             # Inside a blockquote the rule reads the quoted paragraph.
             "> paragraph U-001\n> 2. ~~~\n>    U-001\n> ~~~~\nU-001": "> paragraph U-002\n> 2. ~~~\n>    U-002\n> ~~~~\nU-002",
             "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-001": "> # H\n> 2. ~~~\n>    U-001\n>    ~~~\nU-002",

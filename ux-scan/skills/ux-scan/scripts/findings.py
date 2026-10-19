@@ -746,13 +746,22 @@ def _underscore_delimiters(value, literal_spans, block_spans=()):
 
 CONTAINER_TOKEN = re.compile(r"[ \t]*(?:(>)[ \t]?|([-*+]|([0-9]{1,9})[.)])(?:[ \t]+|\Z))")
 ORDERED_NOT_ONE = re.compile(r"[ \t]*(?!0*1[.)])[0-9]{1,9}[.)]")
-LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
-BLOCK_LINE = re.compile(r">|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
+LIST_ITEM = re.compile(r"[ \t]*(?:[-*+]|[0-9]{1,9}[.)])()[ \t]+")
+BLOCK_LINE = re.compile(r">|<!--.*-->[ \t]*\Z|#{1,6}(?:[ \t]|\Z)|(?:[-*_][ \t]*){3,}\Z|(?:=+|-+)[ \t]*\Z|`{3,}|~{3,}")
 QUOTE_MARKER = re.compile(r"[ \t]{0,3}>[ \t]?")
 
 
 def _width(text):
     return len(text.expandtabs(4))
+
+
+def _item_content(line, marker_end, end):
+    """The content column of a list item whose marker ends at marker_end and whose padding
+    ends at end: like CommonMark, five or more columns of padding count as one, the rest
+    being indented content."""
+    if _width(line[:end]) - _width(line[:marker_end]) > 4:
+        return _width(line[:marker_end]) + 1
+    return _width(line[:end])
 
 
 def _list_content_column(value, line_start, column, quotes=0):
@@ -776,8 +785,8 @@ def _list_content_column(value, line_start, column, quotes=0):
         item = LIST_ITEM.match(line, index)
         if item and ORDERED_NOT_ONE.match(line, index) and _in_paragraph(value, start, quotes):
             item = None  # 2. after paragraph text continues the paragraph; it opens no list.
-        if item and _width(line[:item.end()]) <= column:
-            return _width(line[:item.end()])
+        if item and (content := _item_content(line, item.start(1), item.end())) <= column:
+            return content
         if line[index:].strip() and not line[index:index + 1].isspace():
             return None
         end = start - 1
@@ -821,7 +830,7 @@ def _fence_container(value, line_start, marker_start):
         quotes += token[1] is not None
         base = _width(prefix[:token.end()])
         if token[1] is None:
-            list_column = base
+            list_column = base = _item_content(prefix, token.end(2), token.end())
         index = token.end()
     column = _width(prefix)
     # An indented opener with no list marker of its own may continue a list item above;

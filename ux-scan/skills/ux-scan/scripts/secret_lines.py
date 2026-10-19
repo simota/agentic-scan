@@ -218,8 +218,9 @@ CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
 
 
 def _unclosed(text):
-    """Whether text leaves a ( [ or { open, outside quoted literals: password = (\n x\n || "…"."""
+    """Whether text leaves a ( [ or { open, outside quoted literals and comments: password = (\n x\n || "…"."""
     bare = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", "", text)
+    bare = re.sub(r"/\*.*?(?:\*/|\Z)|//.*|(?<!\S)#.*", "", bare)  # Comments are not syntax: x // ).
     return sum(bare.count(c) for c in "([{") > sum(bare.count(c) for c in ")]}")
 
 

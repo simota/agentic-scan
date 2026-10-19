@@ -855,12 +855,14 @@ def _rewrite_prose(value, mapping):
             key = "backtick_marker" if match["backtick_marker"] else "tilde_marker"
             marker = match[key]
             line_start = value.rfind("\n", 0, match.start()) + 1
-            column = len(value[line_start:match.start(key)].expandtabs(4))
+            prefix = value[line_start:match.start(key)]
+            column, quotes = len(prefix.expandtabs(4)), prefix.count(">")
             closer = re.compile(r"^([ \t]*(?:>[ \t]*)*)" + re.escape(marker[0]) + "{" + str(len(marker))
                                 + r",}[ \t]*\r?$", re.MULTILINE)
             end = len(value)
             for candidate in closer.finditer(value, match.end()):
-                if len(candidate[1].expandtabs(4)) <= column + 3:
+                # The same blockquote depth: "> ```" inside a plain fence is code.
+                if candidate[1].count(">") == quotes and len(candidate[1].expandtabs(4)) <= column + 3:
                     end = candidate.end()
                     break
             for spans in (protected_spans, literal_spans, block_spans):

@@ -660,6 +660,7 @@ class TransactionRegressions(unittest.TestCase):
             # A marker indented four or more columns past the opener is code, not the closer.
             "```\n    ```\nU-001 code\n```\nU-001": "```\n    ```\nU-001 code\n```\nU-002",
             "```js `x` U-001": "```js `x` U-002",
+            "```\n> ```\nU-001 code\n```\nU-001": "```\n> ```\nU-001 code\n```\nU-002",
         }
         for prose, expected in cases.items():
             with self.subTest(prose=prose):

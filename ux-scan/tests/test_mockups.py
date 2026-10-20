@@ -196,6 +196,10 @@ class MockupTests(unittest.TestCase):
                 with self.assertRaisesRegex(findings.RecordError, "<link>"):
                     findings.check_findings(data, findings.flow_ids(FLOWS))
         self.assertIn('http-equiv="x-dns-prefetch-control" content="off"', mockups.frame_document("", "en"))
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {"before": "<p>&lt;link&gt; and <linkedin-card></linkedin-card></p>",
+                                         "after": "<p>b</p>"}
+        findings.check_findings(data, findings.flow_ids(FLOWS))  # escaped text and other tag names pass
 
     def test_invalid_record_leaves_the_translated_mockup_page_unjudged(self):
         self.render()

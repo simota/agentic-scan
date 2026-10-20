@@ -89,16 +89,15 @@ JS = """
     try { window.localStorage.setItem(THEME_KEY, root.dataset.theme); } catch (e) { /* not remembered */ }
   };
   var sections = Array.prototype.slice.call(document.querySelectorAll('.mockup'));
-  // Below this, side-by-side text is too small to read (15px becomes 7px); open under the slider instead.
-  var MIN_SIDE_SCALE = 0.5;
-  function scaleFor(section) {
-    var compare = section.querySelector('.compare');
-    var avail = compare.clientWidth, w = +section.dataset.viewport.split('x')[0];
-    if (compare.dataset.mode === 'side' && window.getComputedStyle(compare).gridTemplateColumns.split(' ').length > 1) avail = (avail - 16) / 2;
+  // Below this, side-by-side text is too small to read (15px becomes 7px); use the slider instead.
+  var MIN_SIDE_SCALE = 0.5, ONE_COLUMN = window.matchMedia('(max-width: 700px)');
+  function scaleFor(section, mode) {
+    var avail = section.querySelector('.compare').clientWidth, w = +section.dataset.viewport.split('x')[0];
+    if (mode === 'side' && !ONE_COLUMN.matches) avail = (avail - 16) / 2;
     return Math.min(1, (avail - 2) / w);
   }
   function size(section) {
-    var compare = section.querySelector('.compare'), scale = scaleFor(section);
+    var compare = section.querySelector('.compare'), scale = scaleFor(section, compare.dataset.mode);
     var vp = section.dataset.viewport.split('x'), w = +vp[0], h = +vp[1];
     compare.classList.add('scaled');
     Array.prototype.forEach.call(compare.querySelectorAll('.stage'), function (stage) {
@@ -119,15 +118,23 @@ JS = """
     var split = section.querySelector('.split'), modes = controls.querySelector('.modes');
     controls.hidden = false;
     function mode(value) { compare.dataset.mode = value; press(modes, value); size(section); }
-    modes.onclick = function (e) { if (e.target.value) mode(e.target.value); };
+    // Until the viewer picks a view, choose the readable one whenever the size changes.
+    section.fit = function () {
+      if (section.dataset.chosen) size(section);
+      else mode(scaleFor(section, 'side') < MIN_SIDE_SCALE ? 'slider' : 'side');
+    };
+    modes.onclick = function (e) {
+      if (!e.target.value) return;
+      section.dataset.chosen = 'true'; mode(e.target.value);
+    };
     controls.querySelector('.viewports').onclick = function (e) {
       if (!e.target.value) return;
-      section.dataset.viewport = e.target.value; press(e.currentTarget, e.target.value); size(section);
+      section.dataset.viewport = e.target.value; press(e.currentTarget, e.target.value); section.fit();
     };
     split.oninput = function () { compare.style.setProperty('--split', split.value + '%'); };
-    if (scaleFor(section) < MIN_SIDE_SCALE) mode('slider'); else size(section);
+    section.fit();
   });
-  window.addEventListener('resize', function () { sections.forEach(size); });
+  window.addEventListener('resize', function () { sections.forEach(function (section) { section.fit(); }); });
 })();
 """
 

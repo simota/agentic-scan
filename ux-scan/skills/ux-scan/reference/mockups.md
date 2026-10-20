@@ -1,7 +1,8 @@
 # Before/after mockups
 
 **Read when:** REPORT — the requester asked for mockups, a before/after
-comparison of findings, or more than one design proposal for a fix.
+comparison of findings, more than one design proposal for a fix, or a
+comparison across screen states or screens.
 
 A mockup shows one finding as the user meets it today (`before`) and as its
 `fix` proposes (`after`). It illustrates the finding; it is not a redesign and
@@ -17,14 +18,17 @@ dashboard. The PDF does not include it.
 - Prefer findings a picture explains better than prose: layout and responsive
   defects, hierarchy, states, forms, feedback. A missing `alt` or an ARIA
   attribute shows nothing; leave those without one
-- One mockup per finding; alternative proposals go inside it (*Alternative
-  proposals*). When the requester names findings, mock those; when
-  not, the High findings on primary flows first, and say in `limitations`
-  which findings got none
+- One mockup per finding, unless the defect shows on more than one screen or
+  region (*Several mockups*); alternative proposals and screen states go
+  inside it (*Alternative proposals*, *States*). When the requester names
+  findings, mock those; when not, the High findings on primary flows first,
+  and say in `limitations` which findings got none
 
 ## Writing the two sides
 
-`mockup` sits on the finding (`reference/findings-schema.md`):
+`mockup` sits on the finding (`reference/findings-schema.md`). All its
+fragments together, states, alternatives and several mockups included, are at
+most 1 MiB as UTF-8, since they are published in one page:
 
 ```json
 "mockup": {"viewport": "360x640",
@@ -66,7 +70,7 @@ dashboard. The PDF does not include it.
 ## Alternative proposals
 
 When the requester asks for several designs, or the fix has more than one
-reasonable shape with different trade-offs, the mockup can carry up to three
+reasonable shape with different trade-offs, the mockup can carry up to five
 `alternatives` besides its `after`:
 
 ```json
@@ -93,13 +97,50 @@ reasonable shape with different trade-offs, the mockup can carry up to three
 - An alternative is replaced with the whole mockup: merge the full `mockup`
   object to add, change or drop one
 
+## States
+
+When the defect or its fix differs by screen state (empty, loading, error,
+success, a long or a short list), the mockup can replace `before` and `after`
+with two to four `states`, compared one state at a time:
+
+```json
+"mockup": {"viewport": "360x640", "label": "Inline retry",
+           "states": [{"label": "Loading", "before": "…", "after": "…"},
+                      {"label": "Error", "before": "…", "after": "…", "note": "The retry keeps the typed text."}],
+           "alternatives": [{"label": "Toast", "note": "…",
+                             "states": [{"label": "Loading", "after": "…"}, {"label": "Error", "after": "…"}]}]}
+```
+
+- Each state is `label` (required, unique within the mockup), `before` and
+  `after` (required, the same fragment rules) and an optional `note` on what
+  to look at in that state. A mockup has either `states` or `before` and
+  `after`, never both
+- Mock only the states the finding is about: a state whose two sides are the
+  same shows nothing. Keep every state at the same size and region
+- With states, each alternative gives `states` instead of `after`: one
+  object of `label` and `after` per state of the mockup, with the same labels
+  in the same order, so every proposal is shown in every state
+
+## Several mockups
+
+When one finding shows on more than one screen or region (a drawer missing on
+both the task list and settings), `mockup` can be a list of two to four
+mockups, each with a `title` naming its screen or region, unique within the
+finding. Each is a complete mockup with its own `viewport`, `states` and
+`alternatives`, and gets its own section: the first keeps the finding's
+anchor (`mockups.html#U-006`), the others add their position
+(`mockups.html#U-006-2`). Merge the whole list to change any of them.
+
 ## What the page does
 
 `mockups.html` lists each finding with a mockup, in record order, with its
 screen, viewport, location and flow, and shows the two sides side by side, under
 a slider, or one at a time, at any `flows.json` viewport, scaled to fit. A
 mockup with alternatives adds a proposal picker: every view compares `before`
-with the chosen proposal, whose note is shown above it under its label.
+with the chosen proposal, whose note is shown above it under its label, and an
+*All proposals* view sets `before` beside every proposal, in as many columns
+as stay readable. A mockup with states adds a state picker that switches every
+side and the state's note together. Frames load as they are shown.
 Without scripts every side and note is shown. Until
 the viewer picks a view, a comparison is shown side by side, or under the
 slider when side by side would shrink it below half size, where its text is

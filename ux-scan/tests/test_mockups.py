@@ -74,9 +74,11 @@ class MockupTests(unittest.TestCase):
         self.render()
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         parsed = Frames(page)
-        self.assertEqual([s["id"] for s in parsed.sections], ["U-006", "U-014"])
-        # U-006 carries one alternative: before, the fix and the alternative.
-        self.assertEqual(len(parsed.frames), 5)
+        self.assertEqual([s["id"] for s in parsed.sections], ["U-006", "U-012", "U-014"])
+        # U-006 carries one alternative (3 frames), U-012 three states (6), U-014 the two sides.
+        self.assertEqual(len(parsed.frames), 11)
+        self.assertEqual([f["title"] for f in parsed.frames[3:6]],
+                         ["U-012 Before · Loading", "U-012 Before · Empty", "U-012 Before · Error"])
         for frame in parsed.frames:
             self.assertEqual(frame["sandbox"], "")
             # Every side opens with the head that carries the frame's content policy.
@@ -96,7 +98,7 @@ class MockupTests(unittest.TestCase):
         self.render()
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         self.assertNotIn("<script>alert(1)", page)
-        self.assertEqual(len(Frames(page).frames), 5)
+        self.assertEqual(len(Frames(page).frames), 11)
         self.assertEqual(self.problems(), "")
 
     def test_page_follows_the_record(self):
@@ -183,9 +185,9 @@ class MockupTests(unittest.TestCase):
         base = {"before": "<p>a</p>", "after": "<p>b</p>", "label": "Drawer"}
         alt = {"label": "Chips", "after": "<p>c</p>"}
         for alternatives, message in (
-                ([], "1 to 3"),
-                ({"label": "x"}, "1 to 3"),
-                ([alt] * 4, "1 to 3"),
+                ([], "1 to 5"),
+                ({"label": "x"}, "1 to 5"),
+                ([{**alt, "label": f"Chips {i}"} for i in range(6)], "1 to 5"),
                 (["<p>c</p>"], "expected an object"),
                 ([{"after": "<p>c</p>"}], r"alternatives\[0\]\.label: required"),
                 ([{"label": "Chips"}], r"alternatives\[0\]\.after: required"),
@@ -281,6 +283,128 @@ class MockupTests(unittest.TestCase):
                                           "--repo", str(self.repo), "--lang", "en"]), 0)
         self.assertIn('<meta name="ux-scan-pdf"', (self.out / "mockups.html").read_text(encoding="utf-8"))
         self.assertEqual("\n".join(contract_check.problems(self.out)), "")
+
+    def staged(self):
+        """U-014's mockup compared in two states, with one alternative."""
+        mockup = {"label": "Secondary", "note": "Compare each state.",
+                  "states": [{"label": "Empty", "before": "<p>e0</p>", "after": "<p>e1</p>", "note": "No tasks yet."},
+                             {"label": "Error", "before": "<p>x0</p>", "after": "<p>x1</p>"}],
+                  "alternatives": [{"label": "Menu", "note": "One button fewer.",
+                                    "states": [{"label": "Empty", "after": "<p>e2</p>"},
+                                               {"label": "Error", "after": "<p>x2</p>"}]}]}
+        finding(self.data, "U-014")["mockup"] = mockup
+        self.save()
+        return mockup
+
+    def test_states_compare_each_state_with_every_proposal(self):
+        self.staged()
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        section = page[page.index('id="U-014"'):page.index("</section>", page.index('id="U-014"'))]
+        frames = Frames(section).frames
+        # Two befores, then each proposal's after in state order.
+        self.assertEqual([f["title"] for f in frames],
+                         ["U-014 Before · Empty", "U-014 Before · Error",
+                          "U-014 After — Secondary · Empty", "U-014 After — Secondary · Error",
+                          "U-014 Alternative — Menu · Empty", "U-014 Alternative — Menu · Error"])
+        self.assertEqual(frames[5]["srcdoc"], mockups.frame_document("<p>x2</p>", "en"))
+        self.assertTrue(all(f["loading"] == "lazy" for f in frames))
+        self.assertIn('<figure class="pane after" data-proposal="1" data-state="1">', section)
+        self.assertIn('<div class="group states" role="group" aria-label="State">'
+                      '<button type="button" value="0" aria-pressed="true">Empty</button>'
+                      '<button type="button" value="1" aria-pressed="false">Error</button></div>', section)
+        self.assertIn('<p class="mockup-note" data-state="0"><strong>Empty:</strong> No tasks yet.</p>', section)
+        self.assertIn('<button type="button" value="all" aria-pressed="false">All proposals</button>', section)
+        self.assertIn('data-options="2"', section)
+        self.assertEqual(self.problems(), "")
+
+    def test_all_proposals_view_is_offered_only_with_alternatives(self):
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        u006 = page[page.index('id="U-006"'):page.index('id="U-014"')]
+        self.assertIn('value="all"', u006)
+        self.assertNotIn('value="all"', page[page.index('id="U-014"'):])
+
+    def test_five_alternatives_are_accepted(self):
+        mockup = finding(self.data, "U-006")["mockup"]
+        mockup["alternatives"] = [{"label": f"Design {i}", "after": f"<p>{i}</p>"} for i in range(5)]
+        self.save()
+        self.render()
+        # Before and six proposals for U-006, beside U-012's six and U-014's two frames.
+        self.assertEqual(len(Frames((self.out / "mockups.html").read_text(encoding="utf-8")).frames), 15)
+
+    def test_a_finding_can_carry_several_titled_mockups(self):
+        first = finding(self.data, "U-006")["mockup"]
+        finding(self.data, "U-006")["mockup"] = [{**first, "title": "Task list"},
+                                                 {"title": "Settings", "viewport": "768x1024",
+                                                  "before": "<p>s0</p>", "after": "<p>s1</p>"}]
+        self.save()
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        parsed = Frames(page)
+        self.assertEqual([s["id"] for s in parsed.sections], ["U-006", "U-006-2", "U-012", "U-014"])
+        self.assertEqual(parsed.sections[1]["data-viewport"], "768x1024")
+        self.assertIn('<h2 id="U-006-2-h">U-006 ', page)
+        self.assertIn(' — Settings</h2>', page)
+        self.assertIn('href="#U-006-2"', page)
+        self.assertIn("U-006 Settings Before", [f["title"] for f in parsed.frames])
+        # The report still links the finding to its first mockup.
+        self.assertIn("mockups.html#U-006", (self.out / "report.html").read_text(encoding="utf-8"))
+        self.assertEqual(self.problems(), "")
+
+    def test_schema_rejects_malformed_states_and_mockup_lists(self):
+        good = self.staged()
+        state = {"label": "Empty", "before": "<p>a</p>", "after": "<p>b</p>"}
+        for change, message in (
+                ({"states": [state]}, "2 to 4"),
+                ({"states": [{**state, "label": f"S{i}"} for i in range(5)]}, "2 to 4"),
+                ({"states": [state, state]}, "already used by another state"),
+                ({"states": [state, {**state, "label": "Error", "after": " "}]}, r"states\[1\]\.after: required"),
+                ({"states": [state, {**state, "label": "Error", "viewport": "360x640"}]}, "unknown key 'viewport'"),
+                ({"before": "<p>a</p>"}, "keeps its sides in each state"),
+                ({"alternatives": [{"label": "Menu", "after": "<p>c</p>"}]}, "give this proposal's after side in states"),
+                ({"alternatives": [{"label": "Menu", "states": [{"label": "Error", "after": "<p>c</p>"},
+                                                                 {"label": "Empty", "after": "<p>d</p>"}]}]},
+                 "in order: Empty, Error"),
+                ({"alternatives": [{"label": "Menu", "states": [{"label": "Empty", "after": "<p>c</p>"}]}]},
+                 "in order: Empty, Error")):
+            with self.subTest(change=change):
+                data = copy.deepcopy(self.data)
+                finding(data, "U-014")["mockup"] = {**good, **change}
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        one = {"before": "<p>a</p>", "after": "<p>b</p>"}
+        big = "x" * findings.MAX_MOCKUP_BYTES
+        for mockup, message in (
+                ([{**one, "title": "A"}], "list of 2 to 4"),
+                ([{**one, "title": f"T{i}"} for i in range(5)], "list of 2 to 4"),
+                ([one, {**one, "title": "B"}], r"mockup\[0\]\.title: required"),
+                ([{**one, "title": "A"}, {**one, "title": " A "}], "already used by another mockup"),
+                # Each fragment fits, but 4 x 5 of them (1,280 KiB) would not fit the finding's page.
+                ([{"title": f"T{i}", "label": "Fix", "before": big, "after": big,
+                   "alternatives": [{"label": f"Alt {j}", "after": big} for j in range(3)]} for i in range(4)],
+                 "total more than 1024 KiB")):
+            with self.subTest(message=message):
+                data = copy.deepcopy(self.data)
+                finding(data, "U-014")["mockup"] = mockup
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        findings.check_findings(self.data, findings.flow_ids(FLOWS))
+
+    def test_renumber_rewrites_titles_and_state_notes_but_not_markup(self):
+        data = copy.deepcopy(SAMPLE)
+        target = finding(data, "U-014")
+        target["mockup"] = [{"title": "As U-001", "before": "<p>U-001</p>", "after": "<p>b</p>"},
+                            {"title": "Other", "states": [
+                                {"label": "A", "before": "<p>U-001</p>", "after": "<p>b</p>", "note": "U-001 too."},
+                                {"label": "B", "before": "<p>a</p>", "after": "<p>b</p>"}]}]
+        data["findings"][0]["severity"] = "Info"
+        mapping = findings.renumber_map(data["findings"])
+        moved = next(f for f in findings.renumber(data, mapping)["findings"] if f["title"] == target["title"])
+        self.assertEqual(moved["mockup"][0]["title"], f"As {mapping['U-001']}")
+        self.assertEqual(moved["mockup"][0]["before"], "<p>U-001</p>")
+        self.assertEqual(moved["mockup"][1]["states"][0]["before"], "<p>U-001</p>")
+        self.assertEqual(moved["mockup"][1]["states"][0]["note"], f"{mapping['U-001']} too.")
 
     def test_viewport_falls_back_to_the_finding_then_the_flows(self):
         f = {"mockup": {"before": "a", "after": "b"}, "viewport": "768x1024"}

@@ -193,5 +193,22 @@ class CheckoutPathTests(unittest.TestCase):
         self.assertFalse(link.is_symlink())
 
 
+    def test_link_to_a_users_own_link_is_not_ours(self):
+        skill = REPO / "skills" / "architecture-scan"
+        switcher = self.root / "current"
+        switcher.symlink_to(skill)  # e.g. a version switcher the user maintains
+        destination = self.root / "skills"
+        destination.mkdir()
+        link = destination / "architecture-scan"
+        link.symlink_to(switcher)
+        result = self.run_make(REPO, "directory", "link", SKILLS_DIR=destination)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("refusing", result.stderr)
+        result = self.run_make(REPO, "directory", "unlink", SKILLS_DIR=destination)
+        self.assert_success(result)
+        self.assertIn("left", result.stdout)
+        self.assertEqual(link.readlink(), switcher)
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -97,9 +97,11 @@ DEMO_OUT ?=
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
-# A symlink is ours when it resolves to this skill, whichever path it was made
-# from (an earlier link may name the checkout through a symlinked directory).
-is_ours = [ "$$(CDPATH= cd -P -- "$(1)" 2>/dev/null && pwd -P)" = $(QSKILL) ]
+# A symlink is ours when it names this skill directory, possibly through a
+# symlinked parent (an earlier link may use a logical checkout path). A link to
+# another link, such as a version switcher, is not one this Makefile made.
+is_ours = { t=$$(readlink -- "$(1)") && case "$$t" in (/*) ;; (*) t=$$(dirname -- "$(1)")/$$t;; esac && \
+  [ "$$(CDPATH= cd -P -- "$$(dirname -- "$$t")" 2>/dev/null && pwd -P)/$$(basename -- "$$t")" = $(QSKILL) ]; }
 
 .PHONY: help link unlink status check demo test
 # `make -j link unlink` must still run the goals in the order given.

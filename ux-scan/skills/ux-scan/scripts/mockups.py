@@ -3,6 +3,7 @@
 Each mockup side is an HTML fragment written by the reviewer. It is shown in a
 sandboxed iframe (no scripts, no same-origin access, no network fetches), at
 the mockup's viewport, side by side, under a slider, or one side at a time.
+A mockup with alternatives offers each proposal as an after side, one at a time.
 The page is self-contained and offline; it is not part of the PDF.
 Standard library only.
 """
@@ -26,17 +27,19 @@ LABELS = {
            "view": "View", "viewport": "Viewport", "split": "Before / After split",
            "contents": "Mockups", "screen": "Screen", "location": "Location", "flow": "Flow",
            "observed": "Observed", "expected": "Expected", "fix": "Fix", "field": "Before/After",
+           "proposal": "Proposal", "alternative": "Alternative",
            "lead": "Mockups illustrate each finding as it is and as its fix proposes. They are drawn for the "
                    "review, not rendered from the app, and are not part of the PDF report.",
-           "no_script": "Scripts are off: both sides are shown at full size."},
+           "no_script": "Scripts are off: every side is shown at full size."},
     "ja": {"kind": "UX診断", "title": "Before / After", "dashboard": "ダッシュボード", "report": "診断書",
            "theme": "テーマ", "before": "Before（現状）", "after": "After（修正案）", "side": "並べて表示",
            "slider": "スライダー", "view": "表示", "viewport": "ビューポート", "split": "Before / After の境界",
            "contents": "モック一覧", "screen": "画面", "location": "箇所", "flow": "フロー",
            "observed": "現状", "expected": "あるべき状態", "fix": "修正", "field": "Before/After",
+           "proposal": "案", "alternative": "別案",
            "lead": "各指摘の現状と修正案をモックで示します。モックは診断のために描いたもので、アプリを実際に"
                    "描画したものではありません。PDF の診断書には含まれません。",
-           "no_script": "スクリプトが無効のため、両方を原寸で表示しています。"},
+           "no_script": "スクリプトが無効のため、すべての面を原寸で表示しています。"},
 }
 
 CSS = """
@@ -53,6 +56,7 @@ CSS = """
 .mockup-controls button[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
 .compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pane{margin:0;min-width:0}
+.pane[hidden],.mockup-note[hidden]{display:none}
 .pane figcaption{font:700 12px/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin:0 0 6px}
 .pane.after figcaption{color:var(--accent)}
 .stage{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;max-width:100%}
@@ -116,8 +120,18 @@ JS = """
   sections.forEach(function (section) {
     var compare = section.querySelector('.compare'), controls = section.querySelector('.mockup-controls');
     var split = section.querySelector('.split'), modes = controls.querySelector('.modes');
+    var proposals = controls.querySelector('.proposals');
     controls.hidden = false;
     function mode(value) { compare.dataset.mode = value; press(modes, value); size(section); }
+    // One after side at a time, so every view compares the chosen proposal with before.
+    function proposal(value) {
+      Array.prototype.forEach.call(section.querySelectorAll('[data-proposal]'), function (el) {
+        el.hidden = el.dataset.proposal !== value;
+      });
+      if (proposals) press(proposals, value);
+    }
+    if (proposals) proposals.onclick = function (e) { if (e.target.value) proposal(e.target.value); };
+    proposal('0');
     // Until the viewer picks a view, choose the readable one whenever the size changes.
     section.fit = function () {
       if (section.dataset.chosen) size(section);
@@ -162,6 +176,22 @@ def viewport_of(finding, flows):
     return mockup.get("viewport") or finding.get("viewport") or ((flows or {}).get("viewports") or [DEFAULT_VIEWPORT])[0]
 
 
+def proposals(mockup, L):
+    """(label, caption, after, note) per proposal: the fix first, then each alternative."""
+    label = mockup.get("label", "").strip()
+    first = (label, f'{L["after"]} — {label}' if label else L["after"], mockup["after"], "")
+    return [first, *((a["label"].strip(), f'{L["alternative"]} — {a["label"].strip()}', a["after"], a.get("note", ""))
+                     for a in mockup.get("alternatives", []))]
+
+
+def _pane(side, caption, fragment, fid, viewport, lang, proposal=None):
+    data = "" if proposal is None else f' data-proposal="{proposal}"'
+    return (f'<figure class="pane {side}"{data}><figcaption>{esc(caption)}</figcaption><div class="stage">'
+            f'<iframe sandbox="" referrerpolicy="no-referrer" title="{esc(f"{fid} {caption}")}" '
+            f'width="{viewport.split("x")[0]}" height="{viewport.split("x")[1]}" '
+            f'srcdoc="{html.escape(frame_document(fragment, lang), quote=True)}"></iframe></div></figure>')
+
+
 def _section(f, flows, lang, L):
     mockup, fid = f["mockup"], f["id"]
     viewport = viewport_of(f, flows)
@@ -169,12 +199,18 @@ def _section(f, flows, lang, L):
     by_flow = {fl["id"]: fl["name"] for fl in (flows or {}).get("flows", [])}
     meta = [(L["screen"], f["screen"]), (L["viewport"], viewport), (L["location"], f["location"]),
             (L["flow"], f"{f['flow_ref']}: {by_flow[f['flow_ref']]}" if f["flow_ref"] in by_flow else f["flow_ref"])]
-    panes = "".join(
-        f'<figure class="pane {side}"><figcaption>{esc(L[side])}</figcaption><div class="stage">'
-        f'<iframe sandbox="" referrerpolicy="no-referrer" title="{esc(f"{fid} {L[side]}")}" '
-        f'width="{viewport.split("x")[0]}" height="{viewport.split("x")[1]}" '
-        f'srcdoc="{html.escape(frame_document(mockup[side], lang), quote=True)}"></iframe></div></figure>'
-        for side in ("before", "after"))
+    options = proposals(mockup, L)
+    several = len(options) > 1
+    panes = _pane("before", L["before"], mockup["before"], fid, viewport, lang) + "".join(
+        _pane("after", caption, after, fid, viewport, lang, i if several else None)
+        for i, (_, caption, after, _) in enumerate(options))
+    # Labelled, since without scripts every proposal's note is shown at once.
+    notes = "".join(f'<p class="mockup-note" data-proposal="{i}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
+                    for i, (label, _, _, note) in enumerate(options) if note.strip())
+    picker = "".join(f'<button type="button" value="{i}" aria-pressed="{str(i == 0).lower()}">{esc(button)}</button>'
+                     for i, (button, _, _, _) in enumerate(options))
+    picker = (f'<div class="group proposals" role="group" aria-label="{esc(L["proposal"])}">{picker}</div>'
+              if several else "")
     modes = "".join(f'<button type="button" value="{m}" aria-pressed="{str(m == "side").lower()}">{esc(L[m])}</button>'
                     for m in ("side", "slider", "before", "after"))
     sizes = "".join(f'<button type="button" value="{v}" aria-pressed="{str(v == viewport).lower()}">{v}</button>'
@@ -185,7 +221,8 @@ def _section(f, flows, lang, L):
             f'<h2 id="{esc(fid)}-h">{esc(fid)} {esc(f["title"])}</h2>'
             f'<p class="mockup-meta">{"".join(f"<span>{esc(k)}: {esc(v)}</span>" for k, v in meta)}</p>'
             + (f'<p class="mockup-note">{esc(mockup["note"])}</p>' if mockup.get("note", "").strip() else "")
-            + f'<div class="mockup-controls" hidden>'
+            + notes
+            + f'<div class="mockup-controls" hidden>{picker}'
             f'<div class="group modes" role="group" aria-label="{esc(L["view"])}">{modes}</div>'
             f'<div class="group viewports" role="group" aria-label="{esc(L["viewport"])}">{sizes}</div></div>'
             f'<div class="compare" data-mode="side">{panes}</div>'

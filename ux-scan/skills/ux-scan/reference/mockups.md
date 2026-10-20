@@ -1,7 +1,7 @@
 # Before/after mockups
 
-**Read when:** REPORT — the requester asked for mockups or a before/after
-comparison of findings.
+**Read when:** REPORT — the requester asked for mockups, a before/after
+comparison of findings, or more than one design proposal for a fix.
 
 A mockup shows one finding as the user meets it today (`before`) and as its
 `fix` proposes (`after`). It illustrates the finding; it is not a redesign and
@@ -17,7 +17,8 @@ dashboard. The PDF does not include it.
 - Prefer findings a picture explains better than prose: layout and responsive
   defects, hierarchy, states, forms, feedback. A missing `alt` or an ARIA
   attribute shows nothing; leave those without one
-- One mockup per finding. When the requester names findings, mock those; when
+- One mockup per finding; alternative proposals go inside it (*Alternative
+  proposals*). When the requester names findings, mock those; when
   not, the High findings on primary flows first, and say in `limitations`
   which findings got none
 
@@ -57,15 +58,49 @@ dashboard. The PDF does not include it.
   `flows.json` viewport, so write responsive CSS when the defect depends on
   width
 - `note` is optional prose shown above the comparison: what to look at.
-  `renumber` rewrites finding ids in `note`, never in `before` or `after`
+  `renumber` rewrites finding ids in `note` and `label` (the alternatives'
+  too), never in `before` or `after`
 - To take a mockup off a finding (not wanted, or holding something it should
   not), merge a fragment with `{"id": "U-006", "mockup": null}`
+
+## Alternative proposals
+
+When the requester asks for several designs, or the fix has more than one
+reasonable shape with different trade-offs, the mockup can carry up to three
+`alternatives` besides its `after`:
+
+```json
+"mockup": {"viewport": "360x640", "label": "Drawer",
+           "before": "…", "after": "…", "note": "…",
+           "alternatives": [{"label": "Chip row", "after": "…",
+                             "note": "Every list one tap away; costs 48px of height."}]}
+```
+
+- `after` stays the proposal `fix` describes; it is the recommendation.
+  `label` names it, and is required once there are alternatives
+- Each alternative is `label` (required) and `after` (required, the same
+  fragment rules as the two sides) with an optional `note`. Labels name the
+  design in a few words and are unique within the mockup, the fix's included
+- Every alternative must meet `expected` as fully as `after` does: a weaker
+  option is not an alternative. Build it from the same `before`, changing only
+  what that design changes, at the same size, so each proposal compares like
+  with like
+- Write the alternative's `note` as its trade-off against `after` (what it
+  gains, what it costs), so the reader can choose; the mockup's own `note`
+  stays what to look at
+- `fix` names the recommended design; mention the alternatives there only when
+  the choice is the requester's to make
+- An alternative is replaced with the whole mockup: merge the full `mockup`
+  object to add, change or drop one
 
 ## What the page does
 
 `mockups.html` lists each finding with a mockup, in record order, with its
 screen, viewport, location and flow, and shows the two sides side by side, under
-a slider, or one at a time, at any `flows.json` viewport, scaled to fit. Until
+a slider, or one at a time, at any `flows.json` viewport, scaled to fit. A
+mockup with alternatives adds a proposal picker: every view compares `before`
+with the chosen proposal, whose note is shown above it under its label.
+Without scripts every side and note is shown. Until
 the viewer picks a view, a comparison is shown side by side, or under the
 slider when side by side would shrink it below half size, where its text is
 too small to read; the choice is made again when the viewport or the window

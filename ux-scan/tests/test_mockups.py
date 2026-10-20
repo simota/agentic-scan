@@ -75,7 +75,8 @@ class MockupTests(unittest.TestCase):
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         parsed = Frames(page)
         self.assertEqual([s["id"] for s in parsed.sections], ["U-006", "U-014"])
-        self.assertEqual(len(parsed.frames), 4)
+        # U-006 carries one alternative: before, the fix and the alternative.
+        self.assertEqual(len(parsed.frames), 5)
         for frame in parsed.frames:
             self.assertEqual(frame["sandbox"], "")
             # Every side opens with the head that carries the frame's content policy.
@@ -95,7 +96,7 @@ class MockupTests(unittest.TestCase):
         self.render()
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         self.assertNotIn("<script>alert(1)", page)
-        self.assertEqual(len(Frames(page).frames), 4)
+        self.assertEqual(len(Frames(page).frames), 5)
         self.assertEqual(self.problems(), "")
 
     def test_page_follows_the_record(self):
@@ -159,6 +160,62 @@ class MockupTests(unittest.TestCase):
         data = copy.deepcopy(SAMPLE)
         data["findings"][0]["mockup"] = {**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3)}
         findings.check_findings(data, findings.flow_ids(FLOWS))  # 65,535 bytes: within the limit
+
+    def test_alternatives_render_as_proposals_of_one_comparison(self):
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        mockup = finding(self.data, "U-006")["mockup"]
+        frames = Frames(page).frames
+        self.assertEqual([f["title"] for f in frames[:3]],
+                         ["U-006 Before", "U-006 After — Drawer", "U-006 Alternative — Chip row"])
+        self.assertEqual(frames[2]["srcdoc"], mockups.frame_document(mockup["alternatives"][0]["after"], "en"))
+        self.assertIn('<div class="group proposals" role="group" aria-label="Proposal">'
+                      '<button type="button" value="0" aria-pressed="true">Drawer</button>'
+                      '<button type="button" value="1" aria-pressed="false">Chip row</button></div>', page)
+        self.assertIn('<p class="mockup-note" data-proposal="1"><strong>Chip row:</strong> Below 640px', page)
+        # A mockup without alternatives has no picker and no proposal markers.
+        u014 = page[page.index('id="U-014"'):page.index("</section>", page.index('id="U-014"'))]
+        self.assertNotIn("data-proposal", u014)
+        self.assertNotIn("proposals", u014)
+        self.assertEqual(self.problems(), "")
+
+    def test_schema_rejects_malformed_alternatives(self):
+        base = {"before": "<p>a</p>", "after": "<p>b</p>", "label": "Drawer"}
+        alt = {"label": "Chips", "after": "<p>c</p>"}
+        for alternatives, message in (
+                ([], "1 to 3"),
+                ({"label": "x"}, "1 to 3"),
+                ([alt] * 4, "1 to 3"),
+                (["<p>c</p>"], "expected an object"),
+                ([{"after": "<p>c</p>"}], r"alternatives\[0\]\.label: required"),
+                ([{"label": "Chips"}], r"alternatives\[0\]\.after: required"),
+                ([{**alt, "viewport": "360x640"}], "unknown key 'viewport'"),
+                ([{**alt, "label": " Drawer "}], "already used"),
+                ([alt, {**alt, "after": "<p>d</p>"}], r"alternatives\[1\]\.label: 'Chips' is already used"),
+                ([{**alt, "after": "x" * (findings.MAX_MOCKUP_BYTES + 1)}], "larger than"),
+                ([{**alt, "after": '<link rel="prefetch" href="//x">'}], "<link>")):
+            with self.subTest(alternatives=alternatives if len(str(alternatives)) < 80 else "long"):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"][0]["mockup"] = {**base, "alternatives": alternatives}
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        # Every button needs a name of its own, the fix's included.
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {"before": "<p>a</p>", "after": "<p>b</p>", "alternatives": [alt]}
+        with self.assertRaisesRegex(findings.RecordError, r"mockup\.label: required"):
+            findings.check_findings(data, findings.flow_ids(FLOWS))
+        data["findings"][0]["mockup"]["label"] = "Drawer"
+        findings.check_findings(data, findings.flow_ids(FLOWS))
+
+    def test_renumber_keeps_alternative_markup_and_rewrites_its_note(self):
+        data = copy.deepcopy(SAMPLE)
+        target = finding(data, "U-014")
+        target["mockup"]["alternatives"] = [{"label": "Menu", "after": "<p>U-001</p>", "note": "Like U-001."}]
+        data["findings"][0]["severity"] = "Info"
+        mapping = findings.renumber_map(data["findings"])
+        moved = next(f for f in findings.renumber(data, mapping)["findings"] if f["title"] == target["title"])
+        self.assertEqual(moved["mockup"]["alternatives"][0]["after"], "<p>U-001</p>")
+        self.assertEqual(moved["mockup"]["alternatives"][0]["note"], f"Like {mapping['U-001']}.")
 
     def test_renumber_rewrites_the_note_but_not_the_markup(self):
         data = copy.deepcopy(SAMPLE)

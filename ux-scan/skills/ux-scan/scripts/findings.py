@@ -53,8 +53,10 @@ META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewpo
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
                 "validation", "references", "mockup")
-MOCKUP_KEYS = ("before", "after", "viewport", "note")
+MOCKUP_KEYS = ("before", "after", "viewport", "note", "label", "alternatives")
+ALTERNATIVE_KEYS = ("label", "after", "note")
 MAX_MOCKUP_BYTES = 64 * 1024
+MAX_ALTERNATIVES = 3
 # Resource hints (preconnect, dns-prefetch, prefetch) reach the network outside the frame's content policy.
 LINK_ELEMENT = re.compile(r"(?i)<link[\s/>]")
 VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
@@ -148,16 +150,40 @@ def _mockup(mockup, where):
         raise RecordError(f"{where}: expected an object with before and after")
     _known_keys(mockup, MOCKUP_KEYS, where)
     for side in ("before", "after"):
-        # Measured as UTF-8, the unit of the documented KiB limit and of the published page.
-        if len(_str(mockup, side, where, required=True).encode("utf-8")) > MAX_MOCKUP_BYTES:
-            raise RecordError(f"{where}.{side}: larger than {MAX_MOCKUP_BYTES // 1024} KiB as UTF-8; "
-                              "mock the affected region, not the whole page")
-        if LINK_ELEMENT.search(mockup[side]):
-            raise RecordError(f"{where}.{side}: <link> elements can reach the network; "
-                              "inline styles in <style> and use data: URLs for images and fonts")
+        _fragment(mockup, side, where)
     _str(mockup, "note", where)
+    _str(mockup, "label", where)
     if mockup.get("viewport"):
         _viewports([_str(mockup, "viewport", where)], f"{where}.viewport")
+    if "alternatives" not in mockup:
+        return
+    alternatives = mockup["alternatives"]
+    if not isinstance(alternatives, list) or not 0 < len(alternatives) <= MAX_ALTERNATIVES:
+        raise RecordError(f"{where}.alternatives: expected a list of 1 to {MAX_ALTERNATIVES} objects "
+                          "with label and after")
+    # The page tells the proposals apart by their labels alone, the fix's included.
+    labels = [_str(mockup, "label", where, required=True).strip()]
+    for i, alternative in enumerate(alternatives):
+        at = f"{where}.alternatives[{i}]"
+        if not isinstance(alternative, dict):
+            raise RecordError(f"{at}: expected an object with label and after")
+        _known_keys(alternative, ALTERNATIVE_KEYS, at)
+        label = _str(alternative, "label", at, required=True).strip()
+        if label in labels:
+            raise RecordError(f"{at}.label: {label!r} is already used by another proposal of this mockup")
+        labels.append(label)
+        _fragment(alternative, "after", at)
+        _str(alternative, "note", at)
+
+
+def _fragment(obj, key, where):
+    # Measured as UTF-8, the unit of the documented KiB limit and of the published page.
+    if len(_str(obj, key, where, required=True).encode("utf-8")) > MAX_MOCKUP_BYTES:
+        raise RecordError(f"{where}.{key}: larger than {MAX_MOCKUP_BYTES // 1024} KiB as UTF-8; "
+                          "mock the affected region, not the whole page")
+    if LINK_ELEMENT.search(obj[key]):
+        raise RecordError(f"{where}.{key}: <link> elements can reach the network; "
+                          "inline styles in <style> and use data: URLs for images and fonts")
 
 
 def _finite_number(value):

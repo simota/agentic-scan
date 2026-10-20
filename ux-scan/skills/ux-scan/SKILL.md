@@ -100,7 +100,7 @@ only where the app chose and configured them.
 | `inventory.json` | `inventory.py` candidates (routes, scales, widths, states, inputs, images, focus, motion, truncation, locales) |
 | `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings |
-| `mockups.html` | Before/after mockups, side by side or under a slider, per viewport; only when asked (`reference/mockups.md`) |
+| `mockups.html` | Before/after mockups, side by side or under a slider, per viewport, with a picker when a mockup has alternative proposals; only when asked (`reference/mockups.md`) |
 
 Skip the files when only a checklist was asked for.
 
@@ -130,5 +130,6 @@ Skip the files when only a checklist was asked for.
 | The requester asks to run the app or open it in a browser | Allowed only as asked: start it from a copy or with the repository's own dev command, install dependencies only with their consent, write nothing inside the repository, and never touch shared or production backends. Cite each observation (screenshot path in scratch, URL, viewport) in `validation.evidence`; rendering claims seen this way can be `Confirmed`. Name in `limitations` what was run and what was not |
 | Native mobile (SwiftUI, Compose, Flutter) | Read screens by hand with the same perspectives; the inventory covers web markup and styles only — say so in `limitations` |
 | The requester asks for mockups or a before/after comparison | Attach a `mockup` to the findings asked for (`Valid` or `Likely`), built from the code read in REVIEW; `render.py` adds `mockups.html` (`reference/mockups.md`) |
+| The requester asks for several design proposals for a fix | Give the finding's `mockup` up to three `alternatives`, each meeting `expected` and noting its trade-off against the recommended `after` (`reference/mockups.md`) |
 | Request is "redesign it" or "make it look better" | Out of scope: report the findings and leave the redesign to a later request |
 | Request is about brand voice, palette or naming | That is brand-scan; record only UI clarity (CP) here |

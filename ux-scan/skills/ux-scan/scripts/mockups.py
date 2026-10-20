@@ -145,6 +145,7 @@ def frame_document(fragment, lang):
     """A complete document for one mockup side; its policy forbids every fetch but inline styles and data URLs."""
     return (f'<!doctype html><html lang="{esc(lang)}"><head><meta charset="utf-8">'
             f'<meta http-equiv="Content-Security-Policy" content="{esc(FRAME_POLICY)}">'
+            '<meta http-equiv="x-dns-prefetch-control" content="off">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"</head><body>{fragment}</body></html>")
 

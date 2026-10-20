@@ -6,7 +6,7 @@
 Maps the record into scan-report-kit's common format (scan-report/1) and writes
 DIR/dashboard.html, DIR/report.html and DIR/report.pdf (headless Chrome, else
 WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds), plus
-DIR/mockups.html when a finding carries a before/after mockup. With
+DIR/mockups.html when an included finding carries a before/after mockup. With
 --repo, each finding's location is embedded as a short excerpt; secret-looking
 files and symlinks are never read and secret-looking lines are masked. Every
 page fingerprints its findings, flows, render, complete HTML and (when produced) PDF.

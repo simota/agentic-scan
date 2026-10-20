@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -170,6 +171,48 @@ class MockupTests(unittest.TestCase):
         moved = next(f for f in renumbered["findings"] if f["title"] == target["title"])
         self.assertEqual(moved["mockup"]["before"], "<p>U-001</p>")
         self.assertEqual(moved["mockup"]["note"], f"See {mapping['U-001']}.")
+
+    def test_null_mockup_in_a_fragment_removes_it(self):
+        merged = findings.merge(copy.deepcopy(SAMPLE), {"findings": [{"id": "U-006", "mockup": None}]})
+        self.assertNotIn("mockup", finding(merged, "U-006"))
+        self.assertIn("mockup", finding(merged, "U-014"))
+        findings.check_findings(merged, findings.flow_ids(FLOWS))
+        # Removing one that is not there is harmless; null is never stored.
+        merged = findings.merge(merged, {"findings": [{"id": "U-006", "mockup": None}]})
+        self.assertNotIn("mockup", finding(merged, "U-006"))
+
+    def test_link_elements_are_refused_since_they_can_fetch_past_the_policy(self):
+        for markup in ('<link rel="preconnect" href="https://fonts.example">', "<LINK\nrel=dns-prefetch href=//x>"):
+            with self.subTest(markup=markup):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"][0]["mockup"] = {"before": "<p>a</p>" + markup, "after": "<p>b</p>"}
+                with self.assertRaisesRegex(findings.RecordError, "<link>"):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        self.assertIn('http-equiv="x-dns-prefetch-control" content="off"', mockups.frame_document("", "en"))
+
+    def test_invalid_record_leaves_the_translated_mockup_page_unjudged(self):
+        self.render()
+        self.render(lang="ja", out=self.out / "ja")
+        self.data["findings"][0]["severity"] = "Severe"
+        self.save()
+        problems = self.problems(allow=["ja"])
+        self.assertIn("record:", problems)
+        self.assertNotIn("mockups.html: not part of", problems)
+
+    def test_pdf_metadata_is_stamped_on_the_mockup_page(self):
+        self.data["limitations"] = [x for x in self.data["limitations"] if not x.startswith(contract_check.NO_PDF)]
+        self.save()
+
+        def engine(html_path, pdf_path, *args, **kwargs):
+            Path(pdf_path).write_bytes(b"%PDF-1.7\n% test engine output\n%%EOF\n")
+            return "test-engine"
+
+        with unittest.mock.patch.object(render.pdf, "to_pdf", side_effect=engine), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(render.main([str(self.out / "findings.json"), "--out", str(self.out),
+                                          "--repo", str(self.repo), "--lang", "en"]), 0)
+        self.assertIn('<meta name="ux-scan-pdf"', (self.out / "mockups.html").read_text(encoding="utf-8"))
+        self.assertEqual("\n".join(contract_check.problems(self.out)), "")
 
     def test_viewport_falls_back_to_the_finding_then_the_flows(self):
         f = {"mockup": {"before": "a", "after": "b"}, "viewport": "768x1024"}

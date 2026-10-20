@@ -55,6 +55,8 @@ FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective"
                 "validation", "references", "mockup")
 MOCKUP_KEYS = ("before", "after", "viewport", "note")
 MAX_MOCKUP_BYTES = 64 * 1024
+# Resource hints (preconnect, dns-prefetch, prefetch) reach the network outside the frame's content policy.
+LINK_ELEMENT = re.compile(r"(?i)<link[\s/>]")
 VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
 REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
@@ -150,6 +152,9 @@ def _mockup(mockup, where):
         if len(_str(mockup, side, where, required=True).encode("utf-8")) > MAX_MOCKUP_BYTES:
             raise RecordError(f"{where}.{side}: larger than {MAX_MOCKUP_BYTES // 1024} KiB as UTF-8; "
                               "mock the affected region, not the whole page")
+        if LINK_ELEMENT.search(mockup[side]):
+            raise RecordError(f"{where}.{side}: <link> elements can reach the network; "
+                              "inline styles in <style> and use data: URLs for images and fonts")
     _str(mockup, "note", where)
     if mockup.get("viewport"):
         _viewports([_str(mockup, "viewport", where)], f"{where}.viewport")
@@ -1249,7 +1254,11 @@ def merge(base, fragment):
             raise RecordError(f"remove.{key}: no such line {missing[0]!r}")
         out[key] = [x for x in out.get(key, []) if x not in lines]
     for f in _indexed(fragment.get("findings", []), "fragment.findings", "id", FINDING_ID).values():
-        by_id[f["id"]] = {**by_id.get(f["id"], {}), **f}
+        merged = {**by_id.get(f["id"], {}), **f}
+        # "mockup": null removes a mockup; other fields are emptied with "" or replaced.
+        if merged.get("mockup", ()) is None:
+            del merged["mockup"]
+        by_id[f["id"]] = merged
     out["findings"] = sorted(by_id.values(), key=lambda f: f["id"])
     return out
 

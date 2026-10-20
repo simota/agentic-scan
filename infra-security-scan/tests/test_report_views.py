@@ -32,7 +32,7 @@ class ReportViewTest(unittest.TestCase):
         self.assertRegex(dash, r"@media print\{[^@]*\.snippet\{white-space:pre-wrap;overflow:visible\}")
         self.assertRegex(report, r"\.snippet\{[^}]*white-space:pre-wrap;[^}]*overflow:visible")
         # Print is light: the kit's dashboard CSS forces its light tokens; the document has no dark theme at all.
-        self.assertIn("@media print{html:root,html:root[data-theme]{color-scheme:light", dash)
+        self.assertIn('@media print{html:root:not([data-theme="light"]),html:root[data-theme]{color-scheme:light', dash)
         self.assertNotIn("prefers-color-scheme", report)
         self.assertNotIn("data-theme", report)
         self.assertIn("tr.row:not([hidden])+tr.detail{display:table-row!important}", dash)

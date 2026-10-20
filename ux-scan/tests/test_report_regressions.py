@@ -305,8 +305,8 @@ class ReportRegressions(unittest.TestCase):
                  # Subscript assignments, form values after other attributes, curl's long user flag.
                  'settings["password"] = "hunter2";', 'os.environ["DB_PASSWORD"] = "hunter2"',
                  "data['password'] = 'hunter2'", '<input name="password" placeholder="x" value="hunter2">',
+                 '<input name="db_password" class="x" value="hunter2">',
                  '<input type="password" name="password" autoComplete="off" defaultValue="hunter2" />',
-                 '<TextField label="Password" type="password" defaultValue="hunter2" />',
                  "curl --user admin:hunter2 https://x", "curl --user=admin:hunter2 https://x",
                  'curl -u "admin:hunter2" https://x', "curl --user 'admin:hunter2' https://x"]
         for line in leaks:
@@ -337,7 +337,15 @@ class ReportRegressions(unittest.TestCase):
               'password: "Password" /* label */',
               '<input name="password" placeholder="Password" value={password} />',
               '<input type="password" placeholder="Enter your password" defaultValue="" />',
-              'if (data["password"] === "") return;']
+              'if (data["password"] === "") return;',
+              # Only a field's name reaches past other attributes to its value; a label, id or type does not.
+              '<Toggle label="Show password" size="sm" value="visible" />',
+              '<input type="checkbox" id="remember-token" checked value="on" />',
+              '<input type="password" class="form-control" value="remember">',
+              '<input type="radio" name="login-method" id="use-password" className="peer" value="password" />',
+              '<input type="checkbox" id="show-password" className="toggle" value="show" />',
+              '<SegmentedControl aria-label="Sign in with password" size="sm" value="email" />',
+              '<input data-name="password" class="x" value="shown" />']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

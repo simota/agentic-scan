@@ -59,10 +59,14 @@ NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-
               r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
 # Closing quotes or brackets (also a subscript, ["password"]), an optional type (Go "Password string = …"), then an
-# assignment: = : := ?= =>, XML >value< or value="…" (also defaultValue, after other attributes of the tag); == compares.
+# assignment: = : := ?= =>, XML >value< or value="…"; == compares.
 ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
-                        r"|\"?(?:\s+[\w:.-]+(?:=(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?\s+(?:value|defaultValue)="
-                        r"|\"?>(?=[^<\s])")
+                        r"|\"?\s+value=|\"?>(?=[^<\s])")
+# A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
+# attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
+FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"'][\w.\[\]-]{0,64}\Z")
+FIELD_VALUE = re.compile(r"[\"'](?:\s+[\w:.-]+(?:=(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?"
+                         r"\s+(?:value|defaultValue)=")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
@@ -138,7 +142,9 @@ def _value_starts(text):
             continue  # A CSS custom property such as --token-color.
         if name.start() and text[name.start() - 1] in "/\\":
             continue  # A path such as /etc/passwd.
-        assignment = ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
+        assignment = (ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
+                      or (FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+                          and FIELD_VALUE.match(text, name.end())))
         if assignment:
             yield assignment.end(), name.group(0)
     for call in CALL_ARGUMENT.finditer(text):

@@ -34,8 +34,9 @@ token, API key, credentials…, also after acronyms, inside upper-case names
 and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
 `SECRET_KEY_BASE`) assigned a literal that is not a label. That includes
 short values, passphrases with spaces, typed declarations
-(`password: string = "…"`), subscripts (`settings["password"] = "…"`), a form
-field's `value` or `defaultValue` after other attributes of its tag, literals passed to a call or wrapped in
+(`password: string = "…"`), subscripts (`settings["password"] = "…"`), the `value` or
+`defaultValue` of a field whose `name` is secret-like, after other attributes
+of its tag (a `label`, `id` or `type="password"` does not count), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
 reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto a later line after
 `=` or an operator (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such

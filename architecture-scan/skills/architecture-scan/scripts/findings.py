@@ -127,8 +127,9 @@ STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 PATH_RUN = re.compile(r"[^\s:]+")
 LINE_AFTER = re.compile(r":[1-9][0-9]*")
 PATH_START_AFTER = set("([{'\"`,;:")
-# From `://` to the next blank, a colon separates a user, password or port.
-URL_TAIL = re.compile(r"://\S*")
+# From `://` to the next blank or punctuation that can open a path, a colon
+# separates a user, password or port (`postgres://app:pw@db:5432`).
+URL_TAIL = re.compile(r"://[^\s,;()\[\]{}'\"`|<>]*")
 # Extensionless files that hold code or rules. A capitalised name ending in
 # `file` is one too (`Dockerfile`, `Jenkinsfile`), and so are the lowercase
 # names their tools also read; `file`, `profile` are words.
@@ -1127,23 +1128,34 @@ def _count_lines(file):
     return count + (last not in (b"", b"\n", b"\r"))
 
 
-def _spelled_as_on_disk(repo, path, listings):
-    """True when each part of `path` names a directory entry exactly.
+def _as_on_disk(repo, path, listings):
+    """The file `path` names, each part spelled as its directory entry, or None.
 
     A case-insensitive filesystem (macOS, Windows) opens `WORKER/JOB.PY` for
-    `worker/job.py`, a path the assessed revision does not hold. Names compare
-    in NFC: the same filesystems store either form of an accented name.
+    `worker/job.py`, a path the assessed revision does not hold, so a part must
+    match an entry exactly, up to Unicode normalisation: either form of an
+    accented name names the same file, whichever form the filesystem stores.
+    A directory that can be searched but not listed takes the part as given.
     """
     given = Path(path)
     current, parts = (Path(given.anchor), given.parts[1:]) if given.anchor else (repo, given.parts)
     for part in parts:
         if part not in (".", ".."):
             if current not in listings:
-                listings[current] = {unicodedata.normalize("NFC", n) for n in os.listdir(current)}
-            if unicodedata.normalize("NFC", part) not in listings[current]:
-                return False
+                try:
+                    names = os.listdir(current)
+                except PermissionError:
+                    listings[current] = None
+                else:
+                    listings[current] = (set(names), {unicodedata.normalize("NFC", n): n for n in names})
+            if listings[current] is not None:
+                exact, normalised = listings[current]
+                if part not in exact:
+                    part = normalised.get(unicodedata.normalize("NFC", part))
+                    if part is None:
+                        return None
         current = current / part
-    return True
+    return current
 
 
 def location_problems(doc, repo):
@@ -1156,14 +1168,16 @@ def location_problems(doc, repo):
     for f in doc.get("findings", []):
         for loc in as_locations(f["location"]):
             path, start, end = split_location(loc)
-            file = repo / path
             if path not in lines:
                 try:
+                    file = _as_on_disk(repo, path, listings)
+                    if file is None:
+                        raise FileNotFoundError(path)
                     resolved = file.resolve()
                     # A location names a file of the assessed checkout, never one outside it.
                     if resolved != root and root not in resolved.parents:
                         raise FileNotFoundError(path)
-                    if not resolved.is_file() or not _spelled_as_on_disk(repo, path, listings):
+                    if not resolved.is_file():
                         raise FileNotFoundError(path)
                     lines[path] = _count_lines(resolved)
                 # ValueError: a NUL in the path; RuntimeError: a symlink loop

@@ -25,8 +25,12 @@ class EvidenceTests(unittest.TestCase):
                          "amqp://guest:guest@rabbit.svc:5672/", "redis://:pw@cache.local:6379"):
             with self.subTest(evidence=evidence):
                 self.assertFalse(findings.cites_line(evidence))
-        # A citation beside a URL still counts.
-        self.assertTrue(findings.cites_line("postgres://app:pw@db.svc:5432 is read at app/db.py:7"))
+        # A citation beside a URL, or joined to it by punctuation, still counts.
+        for evidence in ("postgres://app:pw@db.svc:5432 is read at app/db.py:7",
+                         "PR https://github.com/o/r/pull/12,app/db.py:7",
+                         "see https://example.com/docs;app/db.py:7", "https://x/y(a.py:3)"):
+            with self.subTest(evidence=evidence):
+                self.assertTrue(findings.cites_line(evidence))
 
 
 class LocationTests(unittest.TestCase):
@@ -46,6 +50,19 @@ class LocationTests(unittest.TestCase):
                 with self.subTest(location=loc):
                     doc = {"findings": [{"id": "A-001", "location": [loc]}]}
                     self.assertEqual(findings.location_problems(doc, repo), [])
+            # The stored spelling is what gets opened, so a filesystem that keeps
+            # both forms apart (Linux) finds the file too.
+            self.assertEqual(findings._as_on_disk(repo, "worker/g\u00e1.py", {}).name, "ga\u0301.py")
+            # A directory that can be searched but not listed holds what the OS opens.
+            if os.geteuid() != 0:
+                (repo / "locked").mkdir()
+                (repo / "locked" / "a.py").write_text("x = 1\n", encoding="utf-8")
+                os.chmod(repo / "locked", 0o311)
+                try:
+                    doc = {"findings": [{"id": "A-001", "location": ["locked/a.py:1"]}]}
+                    self.assertEqual(findings.location_problems(doc, repo), [])
+                finally:
+                    os.chmod(repo / "locked", 0o755)
             # An absolute path inside the checkout was accepted before and still is.
             inside = f"{repo.resolve()}/worker/job.py:1"
             self.assertEqual(findings.location_problems({"findings": [{"id": "A-001", "location": [inside]}]}, repo), [])

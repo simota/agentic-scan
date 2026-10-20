@@ -178,8 +178,9 @@ NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 LABEL_TAGS = {"label", "Label", "FormLabel", "InputLabel"}
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
-# Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false }.
-NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{([^{}]{0,1000})\}")
+# Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false },
+# also around one level of nested objects (themeColor: [{ media, color }]).
+NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
 # The whole value of maximumScale, when it is a lone numeric literal (not an expression).
 NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
 JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")

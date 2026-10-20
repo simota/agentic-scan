@@ -1307,6 +1307,12 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]],
                          [("s0.tsx:1", True), ("s1.tsx:1", False), ("s2.tsx:1", False), ("s3.tsx:1", False),
                           ("s4.tsx:1", False), ("s5.tsx:1", True)])
+        # themeColor holds objects, as in the Next.js documentation.
+        data = self.scan({"app/layout.tsx": "export const viewport = {\n"
+                                            "  themeColor: [{ media: '(prefers-color-scheme: dark)', color: 'black' },\n"
+                                            "               { media: '(prefers-color-scheme: light)', color: 'white' }],\n"
+                                            "  maximumScale: 1,\n  userScalable: false,\n}\n"})
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]], [("app/layout.tsx:1", True)])
 
     def test_alpine_jinja2_and_whole_word_personal_fields(self):
         data = self.scan({"a.jinja2": '<div x-on:click="go" x-on:keydown.enter="go" role="button" tabindex="0">x</div>\n'

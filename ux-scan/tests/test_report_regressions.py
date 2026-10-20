@@ -301,7 +301,14 @@ class ReportRegressions(unittest.TestCase):
                  'const password = process.env.PASSWORD || ("hunter2")',
                  'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
                  "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", "password: ${VALUE} hunter2", 'password: ${VALUE} "hunter2"', "password: ${VALUE} 'hunter2'", 'PASSWORD=${VALUE}"hunter2"', "PASSWORD=$VALUE'hunter2'", "PASSWORD=${VALUE}#hunter2", "PASSWORD=$VALUE//hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
-                 "spring.datasource.password=Sommer.x"]
+                 "spring.datasource.password=Sommer.x",
+                 # Subscript assignments, form values after other attributes, curl's long user flag.
+                 'settings["password"] = "hunter2";', 'os.environ["DB_PASSWORD"] = "hunter2"',
+                 "data['password'] = 'hunter2'", '<input name="password" placeholder="x" value="hunter2">',
+                 '<input type="password" name="password" autoComplete="off" defaultValue="hunter2" />',
+                 '<TextField label="Password" type="password" defaultValue="hunter2" />',
+                 "curl --user admin:hunter2 https://x", "curl --user=admin:hunter2 https://x",
+                 'curl -u "admin:hunter2" https://x', "curl --user 'admin:hunter2' https://x"]
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -327,7 +334,10 @@ class ReportRegressions(unittest.TestCase):
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
               "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", "password: ${DB_PASSWORD} # from the vault", 'password: "${DB_PASSWORD}"', "password: '$PW'", "PASSWORD='${PW}'", 'PASSWORD="$PW"',
-              'password: "Password" /* label */']
+              'password: "Password" /* label */',
+              '<input name="password" placeholder="Password" value={password} />',
+              '<input type="password" placeholder="Enter your password" defaultValue="" />',
+              'if (data["password"] === "") return;']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

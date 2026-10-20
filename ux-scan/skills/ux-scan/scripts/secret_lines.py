@@ -35,7 +35,7 @@ KNOWN_SECRET = re.compile(
     r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%\\])[^\s\"'])"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
-    r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
+    r"|(?i:\bcurl\b[^\n]*?\s(?:-u\s*|--user(?:=|\s+))[\"']?[^\s:\"']+:[^\s\"'])|(?i:\bmysql\b[^\n]*?\s-p\S)")
 # The start of a known format at the very end of the shown text.
 CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]*:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
                         r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
@@ -58,10 +58,11 @@ _SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret)
 NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z]))"
               r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
-# Closing quotes or brackets, an optional type (Go "Password string = …"), then an
-# assignment: = : := ?= =>, XML >value< or value="…"; == compares.
-ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
-                        r"|\"?\s+value=|\"?>(?=[^<\s])")
+# Closing quotes or brackets (also a subscript, ["password"]), an optional type (Go "Password string = …"), then an
+# assignment: = : := ?= =>, XML >value< or value="…" (also defaultValue, after other attributes of the tag); == compares.
+ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
+                        r"|\"?(?:\s+[\w:.-]+(?:=(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?\s+(?:value|defaultValue)="
+                        r"|\"?>(?=[^<\s])")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")

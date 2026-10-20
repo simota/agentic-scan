@@ -57,7 +57,9 @@ dashboard. The PDF does not include it.
 
 `mockups.html` lists each finding with a mockup, in record order, with its
 screen, viewport, location and flow, and shows the two sides side by side, under
-a slider, or one at a time, at any `flows.json` viewport, scaled to fit. The
+a slider, or one at a time, at any `flows.json` viewport, scaled to fit. A
+comparison opens under the slider when side by side would shrink it below half
+size, where its text is too small to read. The
 dashboard's header links to it, and each finding in the dashboard and the
 report names its anchor (`mockups.html#U-006`). It carries the same
 fingerprints as the other pages: `contract_check.py` requires it exactly when

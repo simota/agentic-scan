@@ -955,6 +955,26 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_sources_that_are_not_utf8_are_skipped_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.css").write_bytes(b"/* caf\xe9 */\n.btn{width:20px;height:20px}\n")
+            (root / "b.js").write_bytes(b"\0\0")  # A binary is skipped silently.
+            data = inventory.inventory(root)
+        self.assertEqual(data["files_skipped"], 2)
+        self.assertEqual([w["location"] for w in data["parse_warnings"]], ["a.css:1"])
+        self.assertIn("not valid UTF-8", data["parse_warnings"][0]["reason"])
+
+    def test_locale_json_with_a_byte_order_mark_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "locales").mkdir()
+            (root / "locales" / "en.json").write_bytes(b'\xef\xbb\xbf{"hi": "Hello"}')
+            (root / "locales" / "de.json").write_bytes(b'\xef\xbb\xbf{"hi": "Hallo Hallo Hallo"}')
+            data = inventory.inventory(root)
+        self.assertEqual(data["parse_warnings"], [])
+        self.assertEqual([(r["base"], r["lang"]) for r in data["locale_expansion"]], [("en", "de")])
+
     def test_out_in_a_differently_cased_spelling_of_the_repository_is_refused(self):
         with tempfile.TemporaryDirectory() as tmp:
             repo = Path(tmp).resolve() / "repo"
@@ -1263,7 +1283,14 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"b.vue": '<template>\n<button v-text=""></button>\n<button v-text="label"></button>\n</template>\n',
                           "c.jsx": 'export const C = () => <div><button children="" /><button children={label}></button>\n'
                                    '<button children=""></button></div>;\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:2"])
+        # A self-closing button has no content: <button children="" /> is as empty as <button children=""></button>.
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:1", "c.jsx:2"])
+        data = self.scan({"e.jsx": 'export const E = () => (<div>\n<button className="close" onClick={close} />\n'
+                                   '<button aria-label="Close" />\n<button children="Close" />\n</div>);\n',
+                          "f.vue": '<template>\n<button class="close" @click="close" />\n</template>\n',
+                          # In HTML a slash does not close a button: its content follows.
+                          "g.html": '<button class="close"/>Close</button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["e.jsx:2", "f.vue:2"])
         data = self.scan({"d.jsx": 'const x=/* <img src="a" /> */1;\nconst r = /a/*2;\nconst y = a /* <img src="b" /> */ + 1;\n'})
         self.assertEqual(data["images"], [])
 

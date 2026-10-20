@@ -233,10 +233,10 @@ def iter_files(root, onerror=None):
 
 
 def read_text(path, root=None):
-    """Text or None for binaries, minified bundles and invalid UTF-8.
+    """Text or None for binaries and minified bundles.
 
-    Unsafe, unreadable and oversized files raise so the caller can record why
-    they were skipped.
+    Unsafe, unreadable, oversized and invalid UTF-8 files raise so the caller
+    can record why they were skipped.
     """
     if re.search(r"\.min\.(?:js|css)$", path.name):
         return None
@@ -245,8 +245,8 @@ def read_text(path, root=None):
         return None
     try:
         return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    except UnicodeDecodeError as e:
+        raise ValueError(f"not valid UTF-8 at byte {e.start}") from None
 
 
 LONE_CR = re.compile(r"\r(?!\n)")
@@ -1213,7 +1213,9 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
         named = has_name(attrs)
-        if name == "button" and not closing and not named and not has_name(attrs, TEXT_BINDINGS):
+        if name == "button" and closing and not html_names and not named and not has_name(attrs, TEXT_BINDINGS):
+            acc["icon_buttons"].append({"element": name, "location": loc})  # <button />: no content to name it.
+        elif name == "button" and not closing and not named and not has_name(attrs, TEXT_BINDINGS):
             # A following <button> ends the search: buttons do not nest, and it keeps unclosed ones cheap.
             following = (BUTTON_OPEN_I if html_names else BUTTON_OPEN).search(clean, end, end + 20000)
             close = (BUTTON_CLOSE_I if html_names else BUTTON_CLOSE).search(
@@ -1270,6 +1272,7 @@ def inventory(root, flows=None):
         bundle = locale_bundle(rel)
         if bundle:
             try:
+                text = text.removeprefix("\ufeff")  # Editors may save JSON with a byte order mark.
                 check_locale_depth(text, rel)
                 locales[bundle[0]][bundle[1]] = (rel, dict(flatten(loads_json(text, rel))))
             except (ValueError, RecordError, RecursionError) as e:

@@ -15,7 +15,8 @@ class EvidenceTests(unittest.TestCase):
             with self.subTest(evidence=evidence):
                 self.assertFalse(findings.cites_line(evidence))
         for evidence in ("Makefile:12", "makefile:3", "GNUmakefile:2", "Dockerfile:3",
-                         "Jenkinsfile:9", "Gemfile:4", "Procfile:1", "Dockerfile.dev:2"):
+                         "Jenkinsfile:9", "Gemfile:4", "Procfile:1", "Dockerfile.dev:2",
+                         "justfile:3", "rakefile:3", "vagrantfile:3"):
             with self.subTest(evidence=evidence):
                 self.assertTrue(findings.cites_line(evidence))
 

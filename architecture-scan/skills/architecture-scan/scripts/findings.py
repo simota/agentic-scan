@@ -130,7 +130,9 @@ PATH_START_AFTER = set("([{'\"`,;:")
 # From `://` to the next blank, a colon separates a user, password or port.
 URL_TAIL = re.compile(r"://\S*")
 # Extensionless files that hold code or rules. A capitalised name ending in
-# `file` is one too (`Dockerfile`, `Jenkinsfile`); `file`, `profile` are words.
+# `file` is one too (`Dockerfile`, `Jenkinsfile`), and so are the lowercase
+# names their tools also read; `file`, `profile` are words.
+LOWERCASE_FILES = {"makefile", "gnumakefile", "justfile", "rakefile", "vagrantfile"}
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
                  "CONTRIBUTING", "gradlew", "mvnw"}
@@ -363,7 +365,7 @@ def cites_line(evidence, locations=()):
             continue  # a host and port, whatever its first label looks like
         stem = name.split(".")[0]
         if (has_dir or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
-                or stem in EXTENSIONLESS or stem.lower() in ("makefile", "gnumakefile")
+                or stem in EXTENSIONLESS or stem.lower() in LOWERCASE_FILES
                 or (stem[:1].isupper() and stem.endswith("file") and len(stem) > 4)
                 or extension):
             return True

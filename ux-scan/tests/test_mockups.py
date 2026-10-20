@@ -7,6 +7,7 @@ import json
 import sys
 import tempfile
 import unittest
+import unittest.mock
 from html.parser import HTMLParser
 from pathlib import Path
 
@@ -146,13 +147,18 @@ class MockupTests(unittest.TestCase):
                 ({**base, "after": "  "}, "mockup.after: required"),
                 ({**base, "image": "x.png"}, "unknown key 'image'"),
                 ({**base, "viewport": "wide"}, "WIDTHxHEIGHT"),
-                ({**base, "before": "x" * (findings.MAX_MOCKUP_CHARS + 1)}, "longer than"),
+                ({**base, "before": "x" * (findings.MAX_MOCKUP_BYTES + 1)}, "larger than"),
+                # The limit is documented in KiB: multibyte text counts by its UTF-8 size.
+                ({**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3 + 1)}, "larger than"),
                 ({**base, "note": "\x00"}, "without NUL")):
             with self.subTest(mockup=mockup if len(str(mockup)) < 80 else "long"):
                 data = copy.deepcopy(SAMPLE)
                 data["findings"][0]["mockup"] = mockup
                 with self.assertRaisesRegex(findings.RecordError, message):
                     findings.check_findings(data, findings.flow_ids(FLOWS))
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3)}
+        findings.check_findings(data, findings.flow_ids(FLOWS))  # 65,535 bytes: within the limit
 
     def test_renumber_rewrites_the_note_but_not_the_markup(self):
         data = copy.deepcopy(SAMPLE)
@@ -165,6 +171,59 @@ class MockupTests(unittest.TestCase):
         moved = next(f for f in renumbered["findings"] if f["title"] == target["title"])
         self.assertEqual(moved["mockup"]["before"], "<p>U-001</p>")
         self.assertEqual(moved["mockup"]["note"], f"See {mapping['U-001']}.")
+
+    def test_null_mockup_in_a_fragment_removes_it(self):
+        merged = findings.merge(copy.deepcopy(SAMPLE), {"findings": [{"id": "U-006", "mockup": None}]})
+        self.assertNotIn("mockup", finding(merged, "U-006"))
+        self.assertIn("mockup", finding(merged, "U-014"))
+        findings.check_findings(merged, findings.flow_ids(FLOWS))
+        # Removing one that is not there is harmless; null is never stored.
+        merged = findings.merge(merged, {"findings": [{"id": "U-006", "mockup": None}]})
+        self.assertNotIn("mockup", finding(merged, "U-006"))
+        # Only a fragment's null removes: a malformed record stays malformed and is refused.
+        broken = copy.deepcopy(SAMPLE)
+        finding(broken, "U-006")["mockup"] = None
+        merged = findings.merge(broken, {"findings": [{"id": "U-006", "title": "Retitled"}]})
+        self.assertIsNone(finding(merged, "U-006")["mockup"])
+        with self.assertRaisesRegex(findings.RecordError, "mockup"):
+            findings.check_findings(merged, findings.flow_ids(FLOWS))
+
+    def test_link_elements_are_refused_since_they_can_fetch_past_the_policy(self):
+        for markup in ('<link rel="preconnect" href="https://fonts.example">', "<LINK\nrel=dns-prefetch href=//x>"):
+            with self.subTest(markup=markup):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"][0]["mockup"] = {"before": "<p>a</p>" + markup, "after": "<p>b</p>"}
+                with self.assertRaisesRegex(findings.RecordError, "<link>"):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        self.assertIn('http-equiv="x-dns-prefetch-control" content="off"', mockups.frame_document("", "en"))
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {"before": "<p>&lt;link&gt; and <linkedin-card></linkedin-card></p>",
+                                         "after": "<p>b</p>"}
+        findings.check_findings(data, findings.flow_ids(FLOWS))  # escaped text and other tag names pass
+
+    def test_invalid_record_leaves_the_translated_mockup_page_unjudged(self):
+        self.render()
+        self.render(lang="ja", out=self.out / "ja")
+        self.data["findings"][0]["severity"] = "Severe"
+        self.save()
+        problems = self.problems(allow=["ja"])
+        self.assertIn("record:", problems)
+        self.assertNotIn("mockups.html: not part of", problems)
+
+    def test_pdf_metadata_is_stamped_on_the_mockup_page(self):
+        self.data["limitations"] = [x for x in self.data["limitations"] if not x.startswith(contract_check.NO_PDF)]
+        self.save()
+
+        def engine(html_path, pdf_path, *args, **kwargs):
+            Path(pdf_path).write_bytes(b"%PDF-1.7\n% test engine output\n%%EOF\n")
+            return "test-engine"
+
+        with unittest.mock.patch.object(render.pdf, "to_pdf", side_effect=engine), \
+                contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(render.main([str(self.out / "findings.json"), "--out", str(self.out),
+                                          "--repo", str(self.repo), "--lang", "en"]), 0)
+        self.assertIn('<meta name="ux-scan-pdf"', (self.out / "mockups.html").read_text(encoding="utf-8"))
+        self.assertEqual("\n".join(contract_check.problems(self.out)), "")
 
     def test_viewport_falls_back_to_the_finding_then_the_flows(self):
         f = {"mockup": {"before": "a", "after": "b"}, "viewport": "768x1024"}

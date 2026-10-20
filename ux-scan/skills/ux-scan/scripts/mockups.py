@@ -45,7 +45,7 @@ CSS = """
 .mockup{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin:0 0 28px;scroll-margin-top:calc(var(--appbar-h) + 16px)}
 .mockup h2{margin:4px 0 6px;font-size:18px}
 .mockup-meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0 0 10px;font-size:12px;color:var(--muted)}
-.mockup-note{margin:0 0 12px}
+.mockup-note{margin:0 0 12px;white-space:pre-wrap}
 .mockup-controls{display:flex;flex-wrap:wrap;gap:8px 16px;align-items:center;margin:0 0 14px;font-size:12px}
 .mockup-controls[hidden]{display:none}
 .mockup-controls .group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
@@ -89,12 +89,16 @@ JS = """
     try { window.localStorage.setItem(THEME_KEY, root.dataset.theme); } catch (e) { /* not remembered */ }
   };
   var sections = Array.prototype.slice.call(document.querySelectorAll('.mockup'));
+  // Below this, side-by-side text is too small to read (15px becomes 7px); use the slider instead.
+  var MIN_SIDE_SCALE = 0.5, ONE_COLUMN = window.matchMedia('(max-width: 700px)');
+  function scaleFor(section, mode) {
+    var avail = section.querySelector('.compare').clientWidth, w = +section.dataset.viewport.split('x')[0];
+    if (mode === 'side' && !ONE_COLUMN.matches) avail = (avail - 16) / 2;
+    return Math.min(1, (avail - 2) / w);
+  }
   function size(section) {
-    var compare = section.querySelector('.compare'), mode = compare.dataset.mode;
+    var compare = section.querySelector('.compare'), scale = scaleFor(section, compare.dataset.mode);
     var vp = section.dataset.viewport.split('x'), w = +vp[0], h = +vp[1];
-    var avail = compare.clientWidth;
-    if (mode === 'side' && window.getComputedStyle(compare).gridTemplateColumns.split(' ').length > 1) avail = (avail - 16) / 2;
-    var scale = Math.min(1, (avail - 2) / w);
     compare.classList.add('scaled');
     Array.prototype.forEach.call(compare.querySelectorAll('.stage'), function (stage) {
       stage.style.width = Math.floor(w * scale + 2) + 'px';
@@ -111,20 +115,26 @@ JS = """
   }
   sections.forEach(function (section) {
     var compare = section.querySelector('.compare'), controls = section.querySelector('.mockup-controls');
-    var split = section.querySelector('.split');
+    var split = section.querySelector('.split'), modes = controls.querySelector('.modes');
     controls.hidden = false;
-    controls.querySelector('.modes').onclick = function (e) {
+    function mode(value) { compare.dataset.mode = value; press(modes, value); size(section); }
+    // Until the viewer picks a view, choose the readable one whenever the size changes.
+    section.fit = function () {
+      if (section.dataset.chosen) size(section);
+      else mode(scaleFor(section, 'side') < MIN_SIDE_SCALE ? 'slider' : 'side');
+    };
+    modes.onclick = function (e) {
       if (!e.target.value) return;
-      compare.dataset.mode = e.target.value; press(e.currentTarget, e.target.value); size(section);
+      section.dataset.chosen = 'true'; mode(e.target.value);
     };
     controls.querySelector('.viewports').onclick = function (e) {
       if (!e.target.value) return;
-      section.dataset.viewport = e.target.value; press(e.currentTarget, e.target.value); size(section);
+      section.dataset.viewport = e.target.value; press(e.currentTarget, e.target.value); section.fit();
     };
     split.oninput = function () { compare.style.setProperty('--split', split.value + '%'); };
-    size(section);
+    section.fit();
   });
-  window.addEventListener('resize', function () { sections.forEach(size); });
+  window.addEventListener('resize', function () { sections.forEach(function (section) { section.fit(); }); });
 })();
 """
 
@@ -142,6 +152,7 @@ def frame_document(fragment, lang):
     """A complete document for one mockup side; its policy forbids every fetch but inline styles and data URLs."""
     return (f'<!doctype html><html lang="{esc(lang)}"><head><meta charset="utf-8">'
             f'<meta http-equiv="Content-Security-Policy" content="{esc(FRAME_POLICY)}">'
+            '<meta http-equiv="x-dns-prefetch-control" content="off">'
             '<meta name="viewport" content="width=device-width, initial-scale=1">'
             f"</head><body>{fragment}</body></html>")
 

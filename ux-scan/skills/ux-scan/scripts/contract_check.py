@@ -4,7 +4,7 @@
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
 Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
-report.html and report.pdf (and mockups.html when a finding carries a mockup),
+report.html and report.pdf (and mockups.html when an included finding carries a mockup),
 plus optional reserved .ux-scan-render-generation metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
@@ -213,7 +213,8 @@ def problems(out, no_pdf=False, allow=()):
     if "findings.json" in sources:
         # A requested second language must exist; it is not merely tolerated.
         for name in sorted(set(allow) & set(LANGUAGES)):
-            yield from translation_problems(out, name, expected_stamps, no_pdf, mockups.PAGE in expected)
+            yield from translation_problems(out, name, expected_stamps, no_pdf,
+                                            None if data is None else mockups.PAGE in expected)
     yield from render_race_problems(out, generation)
 
 
@@ -254,7 +255,10 @@ def render_race_problems(directory, generation, prefix=""):
 
 
 def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups):
-    """A second-language render in OUT/<lang> must come from the current record and flows."""
+    """A second-language render in OUT/<lang> must come from the current record and flows.
+
+    with_mockups is None when the record is invalid: the mockup page is then left unjudged.
+    """
     directory = out / lang
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(directory))}"
                 f" --lang {lang} --repo <repo>" + (" --no-pdf" if no_pdf else ""))
@@ -278,7 +282,8 @@ def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups):
                 | ({mockups.PAGE} if with_mockups else set()))
     for name in sorted(expected - found):
         yield f"{lang}/{name}: missing; run {rerender}"
-    for name in sorted(found - expected - {OUTPUT_GENERATION}):
+    unjudged = {mockups.PAGE} if with_mockups is None else set()
+    for name in sorted(found - expected - unjudged - {OUTPUT_GENERATION}):
         yield f"{lang}/{name}: not part of a second-language render"
     sources = {}
     for name in sorted(found & expected):

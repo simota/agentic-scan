@@ -72,12 +72,13 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `observed` / `expected` | The code or behaviour as found, and as the criterion wants it |
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
-| `mockup` | Optional before/after illustration of the fix, published in `mockups.html` (`reference/mockups.md`): `before` and `after` are required HTML fragments of at most 64 KiB each; optional `viewport` (`WIDTHxHEIGHT`) and `note` (prose). No other keys |
+| `mockup` | Optional before/after illustration of the fix, published in `mockups.html` (`reference/mockups.md`): `before` and `after` are required HTML fragments of at most 64 KiB each, measured as UTF-8, with no `<link` tag text (`reference/mockups.md`); optional `viewport` (`WIDTHxHEIGHT`) and `note` (prose). No other keys. `"mockup": null` in a fragment removes it |
 | `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control characters, backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
-as `occurrences` replaces whole) and adds new ids. It replaces `meta` and
-`summary` when a fragment carries them, appends new lines to `checked_ok`,
+as `occurrences` replaces whole; `"mockup": null` removes the mockup) and adds
+new ids. It replaces `meta` and `summary` when a fragment carries them, appends
+new lines to `checked_ok`,
 `limitations`, `decisions` and `next_steps`, and replaces `perspectives` entries
 by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`.
 A fragment may carry only the record's documented sections and `remove`; a

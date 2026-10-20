@@ -16,7 +16,9 @@
 #   make demo LANG_OUT=en              # English
 #
 # Paths may hold spaces and quotes. A `$` in a path is expanded by make before
-# the shell sees it, so such a path must be written as `$$`. PYTHON is a
+# the shell sees it, so such a path must be written as `$$`. GNU Make 3.81
+# also loses a `$` in the checkout path given to -f; run make there or use -C.
+# Links name the checkout's physical path. PYTHON is a
 # command, not a path: `PYTHON=python3.12` or `PYTHON="uv run python"`; put an
 # interpreter whose path holds spaces on PATH instead.
 
@@ -31,9 +33,16 @@ HASH := \#
 INSTALL_MAKEFILE := $(shell candidate=$(call shell_quote,$(MAKEFILE_LIST)); \
   while [ ! -f "$$candidate" ]; do \
     case "$$candidate" in (*' '*) candidate=$${candidate$(HASH)* };; (*) break;; esac; \
-  done; printf '%s\n' "$$candidate")
+  done; [ -f "$$candidate" ] && printf '%s\n' "$$candidate")
+# GNU Make 3.81 expands a `$` in a -f path before recording it in MAKEFILE_LIST,
+# so the checkout cannot be found from it; an empty REPO would link `/skills`.
+ifeq ($(INSTALL_MAKEFILE),)
+$(error cannot locate this Makefile from MAKEFILE_LIST (GNU Make 3.81 drops a $$ in a -f path) - run make inside the checkout or with -C)
+endif
 NAME    := architecture-scan
-REPO    := $(shell CDPATH= cd -- "$$(dirname -- $(call shell_quote,$(INSTALL_MAKEFILE)))" && pwd)
+# The physical path, so every invocation (cwd, -C, -f, a symlinked checkout)
+# names the same link target.
+REPO    := $(shell CDPATH= cd -P -- "$$(dirname -- $(call shell_quote,$(INSTALL_MAKEFILE)))" && pwd -P)
 SKILL   := $(REPO)/skills/$(NAME)
 QSKILL  := $(call shell_quote,$(SKILL))
 PYTHON  ?= python3
@@ -88,6 +97,12 @@ DEMO_OUT ?=
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
+# A symlink is ours when it names this skill directory, possibly through a
+# symlinked parent (an earlier link may use a logical checkout path). A link to
+# another link, such as a version switcher, is not one this Makefile made.
+is_ours = { t=$$(readlink -- "$(1)") && case "$$t" in (/*) ;; (*) t=$$(dirname -- "$(1)")/$$t;; esac && \
+  [ "$$(CDPATH= cd -P -- "$$(dirname -- "$$t")" 2>/dev/null && pwd -P)/$$(basename -- "$$t")" = $(QSKILL) ]; }
+
 .PHONY: help link unlink status check demo test
 # `make -j link unlink` must still run the goals in the order given.
 .NOTPARALLEL:
@@ -111,7 +126,7 @@ link: ## symlink the skill into every installed host's skills dir
 	    if [ -e "$$guard" ]; then echo "skip     $$d - $$guard is not a directory"; \
 	    else echo "skip     $$d - $$guard does not exist"; fi; continue; fi; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink -- "$$d")" = $(QSKILL) ]; then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
+	    if $(call is_ours,$$d); then echo "ok       $$d already linked"; n=$$((n+1)); continue; fi; \
 	    echo "refusing $$d is a symlink to $$(readlink -- "$$d") - resolve it, then re-run" >&2; exit 1; \
 	  elif [ -e "$$d" ]; then \
 	    echo "refusing $$d exists and is not a symlink - move it aside first" >&2; exit 1; \
@@ -127,7 +142,7 @@ unlink: ## remove the symlinks this Makefile created
 	while [ "$$#" -gt 0 ]; do \
 	  dir="$$2"; shift 2; d="$$dir/$(NAME)"; \
 	  if [ -L "$$d" ]; then \
-	    if [ "$$(readlink -- "$$d")" = $(QSKILL) ]; then rm -f -- "$$d" || exit 1; echo "unlinked $$d"; \
+	    if $(call is_ours,$$d); then rm -f -- "$$d" || exit 1; echo "unlinked $$d"; \
 	    else echo "left     $$d - points at $$(readlink -- "$$d"), not this repo"; fi; \
 	  elif [ -e "$$d" ]; then echo "left     $$d - not a symlink"; \
 	  else echo "absent   $$d"; fi; \

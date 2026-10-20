@@ -1,4 +1,5 @@
 """Defects from a strict pre-PR review: renumber joins, `--`, odd paths, hand edits."""
+import errno
 import io
 import json
 import os
@@ -52,6 +53,12 @@ class OddPathTests(unittest.TestCase):
     def test_non_utf8_paths_print_instead_of_crashing_after_the_work(self):
         with tempfile.TemporaryDirectory() as d:
             base = os.fsencode(d)
+            try:
+                os.mkdir(base + b"/probe\xff")
+            except OSError as error:
+                if error.errno != errno.EILSEQ:  # APFS refuses names that are not UTF-8
+                    raise
+                self.skipTest("this filesystem refuses non-UTF-8 names")
             out = os.fsdecode(base + b"/o\xff")
             fragment = Path(d) / "f.json"
             fragment.write_text(json.dumps(complete_doc()), encoding="utf-8")

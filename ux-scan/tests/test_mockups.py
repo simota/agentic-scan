@@ -146,13 +146,18 @@ class MockupTests(unittest.TestCase):
                 ({**base, "after": "  "}, "mockup.after: required"),
                 ({**base, "image": "x.png"}, "unknown key 'image'"),
                 ({**base, "viewport": "wide"}, "WIDTHxHEIGHT"),
-                ({**base, "before": "x" * (findings.MAX_MOCKUP_CHARS + 1)}, "longer than"),
+                ({**base, "before": "x" * (findings.MAX_MOCKUP_BYTES + 1)}, "larger than"),
+                # The limit is documented in KiB: multibyte text counts by its UTF-8 size.
+                ({**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3 + 1)}, "larger than"),
                 ({**base, "note": "\x00"}, "without NUL")):
             with self.subTest(mockup=mockup if len(str(mockup)) < 80 else "long"):
                 data = copy.deepcopy(SAMPLE)
                 data["findings"][0]["mockup"] = mockup
                 with self.assertRaisesRegex(findings.RecordError, message):
                     findings.check_findings(data, findings.flow_ids(FLOWS))
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3)}
+        findings.check_findings(data, findings.flow_ids(FLOWS))  # 65,535 bytes: within the limit
 
     def test_renumber_rewrites_the_note_but_not_the_markup(self):
         data = copy.deepcopy(SAMPLE)

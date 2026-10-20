@@ -33,13 +33,17 @@ dashboard. The PDF does not include it.
 ```
 
 - `before` and `after` are HTML fragments: body markup with its own `<style>`
-  elements, at most 64 KiB each. Each is rendered as a complete page inside a
+  elements, at most 64 KiB each, measured as UTF-8 (about 21,000 Japanese
+  characters). Each is rendered as a complete page inside a
   sandboxed frame: no scripts run, nothing is fetched, forms do not submit.
   Images and fonts work only as `data:` URLs
 - Rebuild the affected region from the code read in REVIEW: the same
   structure, the app's real copy (from its locale files), its token values
   and the defect exactly as `observed` describes it. `after` changes only what
   `fix` changes, so the difference between the sides is the fix
+- Never copy credentials, tokens, personal data or other secret values into a
+  mockup: unlike source excerpts, mockups are published as written, without
+  secret masking. Use placeholder data shaped like the real values
 - Keep both sides the same size and content, so the slider compares like with
   like; mock the region the finding is about, not the whole app
 - `viewport` is the size the mockup opens at; it falls back to the finding's

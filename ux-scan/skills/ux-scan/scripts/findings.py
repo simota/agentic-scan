@@ -54,7 +54,7 @@ FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective"
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
                 "validation", "references", "mockup")
 MOCKUP_KEYS = ("before", "after", "viewport", "note")
-MAX_MOCKUP_CHARS = 64 * 1024
+MAX_MOCKUP_BYTES = 64 * 1024
 VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
 REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
@@ -146,8 +146,9 @@ def _mockup(mockup, where):
         raise RecordError(f"{where}: expected an object with before and after")
     _known_keys(mockup, MOCKUP_KEYS, where)
     for side in ("before", "after"):
-        if len(_str(mockup, side, where, required=True)) > MAX_MOCKUP_CHARS:
-            raise RecordError(f"{where}.{side}: longer than {MAX_MOCKUP_CHARS} characters; "
+        # Measured as UTF-8, the unit of the documented KiB limit and of the published page.
+        if len(_str(mockup, side, where, required=True).encode("utf-8")) > MAX_MOCKUP_BYTES:
+            raise RecordError(f"{where}.{side}: larger than {MAX_MOCKUP_BYTES // 1024} KiB as UTF-8; "
                               "mock the affected region, not the whole page")
     _str(mockup, "note", where)
     if mockup.get("viewport"):

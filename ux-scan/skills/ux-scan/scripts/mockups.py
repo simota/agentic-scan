@@ -3,7 +3,9 @@
 Each mockup side is an HTML fragment written by the reviewer. It is shown in a
 sandboxed iframe (no scripts, no same-origin access, no network fetches), at
 the mockup's viewport, side by side, under a slider, or one side at a time.
-A mockup with alternatives offers each proposal as an after side, one at a time.
+A mockup with alternatives offers each proposal as an after side, one at a time
+or all together; a mockup with states compares each state in turn. A finding can
+carry several mockups, one section each.
 The page is self-contained and offline; it is not part of the PDF.
 Standard library only.
 """
@@ -27,7 +29,7 @@ LABELS = {
            "view": "View", "viewport": "Viewport", "split": "Before / After split",
            "contents": "Mockups", "screen": "Screen", "location": "Location", "flow": "Flow",
            "observed": "Observed", "expected": "Expected", "fix": "Fix", "field": "Before/After",
-           "proposal": "Proposal", "alternative": "Alternative",
+           "proposal": "Proposal", "alternative": "Alternative", "state": "State", "all": "All proposals",
            "lead": "Mockups illustrate each finding as it is and as its fix proposes. They are drawn for the "
                    "review, not rendered from the app, and are not part of the PDF report.",
            "no_script": "Scripts are off: every side is shown at full size."},
@@ -36,7 +38,7 @@ LABELS = {
            "slider": "スライダー", "view": "表示", "viewport": "ビューポート", "split": "Before / After の境界",
            "contents": "モック一覧", "screen": "画面", "location": "箇所", "flow": "フロー",
            "observed": "現状", "expected": "あるべき状態", "fix": "修正", "field": "Before/After",
-           "proposal": "案", "alternative": "別案",
+           "proposal": "案", "alternative": "別案", "state": "状態", "all": "全案を並べる",
            "lead": "各指摘の現状と修正案をモックで示します。モックは診断のために描いたもので、アプリを実際に"
                    "描画したものではありません。PDF の診断書には含まれません。",
            "no_script": "スクリプトが無効のため、すべての面を原寸で表示しています。"},
@@ -56,7 +58,7 @@ CSS = """
 .mockup-controls button[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
 .compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pane{margin:0;min-width:0}
-.pane[hidden],.mockup-note[hidden]{display:none}
+.pane[hidden],.mockup-note[hidden],.mockup-controls .group[hidden]{display:none}
 .pane figcaption{font:700 12px/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin:0 0 6px}
 .pane.after figcaption{color:var(--accent)}
 .stage{overflow:auto;border:1px solid var(--line);border-radius:6px;background:#fff;max-width:100%}
@@ -64,6 +66,7 @@ CSS = """
 .compare.scaled .stage{overflow:hidden}
 .compare[data-mode="before"],.compare[data-mode="after"]{grid-template-columns:minmax(0,1fr)}
 .compare[data-mode="before"] .pane.after,.compare[data-mode="after"] .pane.before{display:none}
+.compare[data-mode="all"]{grid-template-columns:repeat(var(--columns,2),minmax(0,1fr))}
 .compare[data-mode="slider"]{display:block;position:relative}
 .compare[data-mode="slider"] .pane{position:absolute;top:0;left:0}
 .compare[data-mode="slider"] .pane.before{position:relative}
@@ -95,13 +98,22 @@ JS = """
   var sections = Array.prototype.slice.call(document.querySelectorAll('.mockup'));
   // Below this, side-by-side text is too small to read (15px becomes 7px); use the slider instead.
   var MIN_SIDE_SCALE = 0.5, ONE_COLUMN = window.matchMedia('(max-width: 700px)');
-  function scaleFor(section, mode) {
+  function scaleFor(section, columns) {
     var avail = section.querySelector('.compare').clientWidth, w = +section.dataset.viewport.split('x')[0];
-    if (mode === 'side' && !ONE_COLUMN.matches) avail = (avail - 16) / 2;
-    return Math.min(1, (avail - 2) / w);
+    return Math.min(1, ((avail - 16 * (columns - 1)) / columns - 2) / w);
+  }
+  // All proposals: as many columns as stay readable, down to one.
+  function columnsFor(section, mode) {
+    if (ONE_COLUMN.matches || (mode !== 'side' && mode !== 'all')) return 1;
+    if (mode === 'side') return 2;
+    var columns = +section.dataset.options + 1;
+    while (columns > 1 && scaleFor(section, columns) < MIN_SIDE_SCALE) columns--;
+    return columns;
   }
   function size(section) {
-    var compare = section.querySelector('.compare'), scale = scaleFor(section, compare.dataset.mode);
+    var compare = section.querySelector('.compare'), columns = columnsFor(section, compare.dataset.mode);
+    var scale = scaleFor(section, columns);
+    compare.style.setProperty('--columns', columns);
     var vp = section.dataset.viewport.split('x'), w = +vp[0], h = +vp[1];
     compare.classList.add('scaled');
     Array.prototype.forEach.call(compare.querySelectorAll('.stage'), function (stage) {
@@ -120,22 +132,29 @@ JS = """
   sections.forEach(function (section) {
     var compare = section.querySelector('.compare'), controls = section.querySelector('.mockup-controls');
     var split = section.querySelector('.split'), modes = controls.querySelector('.modes');
-    var proposals = controls.querySelector('.proposals');
+    var proposals = controls.querySelector('.proposals'), states = controls.querySelector('.states');
+    var chosen = {proposal: '0', state: '0'};
     controls.hidden = false;
-    function mode(value) { compare.dataset.mode = value; press(modes, value); size(section); }
-    // One after side at a time, so every view compares the chosen proposal with before.
-    function proposal(value) {
-      Array.prototype.forEach.call(section.querySelectorAll('[data-proposal]'), function (el) {
-        el.hidden = el.dataset.proposal !== value;
+    // One state at a time; one after side at a time, or every proposal under "all".
+    function show() {
+      var all = compare.dataset.mode === 'all';
+      Array.prototype.forEach.call(section.querySelectorAll('[data-proposal], [data-state]'), function (el) {
+        el.hidden = (el.dataset.state !== undefined && el.dataset.state !== chosen.state) ||
+          (el.dataset.proposal !== undefined && !all && el.dataset.proposal !== chosen.proposal);
       });
-      if (proposals) press(proposals, value);
+      if (proposals) { press(proposals, chosen.proposal); proposals.hidden = all; }
+      if (states) press(states, chosen.state);
     }
-    if (proposals) proposals.onclick = function (e) { if (e.target.value) proposal(e.target.value); };
-    proposal('0');
+    function mode(value) { compare.dataset.mode = value; press(modes, value); show(); size(section); }
+    function picker(group, key) {
+      if (group) group.onclick = function (e) { if (e.target.value) { chosen[key] = e.target.value; show(); } };
+    }
+    picker(proposals, 'proposal');
+    picker(states, 'state');
     // Until the viewer picks a view, choose the readable one whenever the size changes.
     section.fit = function () {
       if (section.dataset.chosen) size(section);
-      else mode(scaleFor(section, 'side') < MIN_SIDE_SCALE ? 'slider' : 'side');
+      else mode(scaleFor(section, columnsFor(section, 'side')) < MIN_SIDE_SCALE ? 'slider' : 'side');
     };
     modes.onclick = function (e) {
       if (!e.target.value) return;
@@ -171,60 +190,94 @@ def frame_document(fragment, lang):
             f"</head><body>{fragment}</body></html>")
 
 
-def viewport_of(finding, flows):
-    mockup = finding["mockup"]
+def viewport_of(finding, flows, mockup=None):
+    """The viewport a mockup (by default the finding's first) opens at."""
+    if mockup is None:
+        mockup = finding["mockup"][0] if isinstance(finding["mockup"], list) else finding["mockup"]
     return mockup.get("viewport") or finding.get("viewport") or ((flows or {}).get("viewports") or [DEFAULT_VIEWPORT])[0]
 
 
+def mockups_of(finding):
+    """(anchor, mockup) per mockup of the finding: the first keeps the finding's id as its anchor."""
+    mockup, fid = finding["mockup"], finding["id"]
+    items = mockup if isinstance(mockup, list) else [mockup]
+    return [(fid if i == 0 else f"{fid}-{i + 1}", m) for i, m in enumerate(items)]
+
+
+def states(mockup):
+    """(label, before, after, note) per state; a mockup without states is one unlabelled state."""
+    if "states" not in mockup:
+        return [("", mockup["before"], mockup["after"], "")]
+    return [(s["label"].strip(), s["before"], s["after"], s.get("note", "")) for s in mockup["states"]]
+
+
 def proposals(mockup, L):
-    """(label, caption, after, note) per proposal: the fix first, then each alternative."""
+    """(label, caption, afters, note) per proposal, one after per state: the fix first, then each alternative."""
     label = mockup.get("label", "").strip()
-    first = (label, f'{L["after"]} — {label}' if label else L["after"], mockup["after"], "")
-    return [first, *((a["label"].strip(), f'{L["alternative"]} — {a["label"].strip()}', a["after"], a.get("note", ""))
+    first = (label, f'{L["after"]} — {label}' if label else L["after"], [s[2] for s in states(mockup)], "")
+    return [first, *((a["label"].strip(), f'{L["alternative"]} — {a["label"].strip()}',
+                      [s["after"] for s in a["states"]] if "states" in a else [a["after"]], a.get("note", ""))
                      for a in mockup.get("alternatives", []))]
 
 
-def _pane(side, caption, fragment, fid, viewport, lang, proposal=None):
-    data = "" if proposal is None else f' data-proposal="{proposal}"'
+def _pane(side, caption, fragment, name, viewport, lang, proposal=None, state=None):
+    data = "".join(f' data-{k}="{v}"' for k, v in (("proposal", proposal), ("state", state)) if v is not None)
+    # Lazy, since a mockup with states and alternatives can hold dozens of hidden frames.
     return (f'<figure class="pane {side}"{data}><figcaption>{esc(caption)}</figcaption><div class="stage">'
-            f'<iframe sandbox="" referrerpolicy="no-referrer" title="{esc(f"{fid} {caption}")}" '
+            f'<iframe sandbox="" referrerpolicy="no-referrer" loading="lazy" title="{esc(f"{name} {caption}")}" '
             f'width="{viewport.split("x")[0]}" height="{viewport.split("x")[1]}" '
             f'srcdoc="{html.escape(frame_document(fragment, lang), quote=True)}"></iframe></div></figure>')
 
 
-def _section(f, flows, lang, L):
-    mockup, fid = f["mockup"], f["id"]
-    viewport = viewport_of(f, flows)
+def _buttons(label, values, cls, first="0"):
+    buttons = "".join(f'<button type="button" value="{v}" aria-pressed="{str(v == first).lower()}">{esc(text)}</button>'
+                      for v, text in values)
+    return f'<div class="group {cls}" role="group" aria-label="{esc(label)}">{buttons}</div>'
+
+
+def _section(f, anchor, mockup, flows, lang, L):
+    fid = f["id"]
+    title = mockup.get("title", "").strip()
+    name = f"{fid} {title}" if title else fid
+    viewport = viewport_of(f, flows, mockup)
     choices = list(dict.fromkeys([viewport, *((flows or {}).get("viewports") or [])]))
     by_flow = {fl["id"]: fl["name"] for fl in (flows or {}).get("flows", [])}
     meta = [(L["screen"], f["screen"]), (L["viewport"], viewport), (L["location"], f["location"]),
             (L["flow"], f"{f['flow_ref']}: {by_flow[f['flow_ref']]}" if f["flow_ref"] in by_flow else f["flow_ref"])]
-    options = proposals(mockup, L)
-    several = len(options) > 1
-    panes = _pane("before", L["before"], mockup["before"], fid, viewport, lang) + "".join(
-        _pane("after", caption, after, fid, viewport, lang, i if several else None)
-        for i, (_, caption, after, _) in enumerate(options))
-    # Labelled, since without scripts every proposal's note is shown at once.
-    notes = "".join(f'<p class="mockup-note" data-proposal="{i}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
-                    for i, (label, _, _, note) in enumerate(options) if note.strip())
-    picker = "".join(f'<button type="button" value="{i}" aria-pressed="{str(i == 0).lower()}">{esc(button)}</button>'
-                     for i, (button, _, _, _) in enumerate(options))
-    picker = (f'<div class="group proposals" role="group" aria-label="{esc(L["proposal"])}">{picker}</div>'
-              if several else "")
-    modes = "".join(f'<button type="button" value="{m}" aria-pressed="{str(m == "side").lower()}">{esc(L[m])}</button>'
-                    for m in ("side", "slider", "before", "after"))
-    sizes = "".join(f'<button type="button" value="{v}" aria-pressed="{str(v == viewport).lower()}">{v}</button>'
-                    for v in choices)
+    options, sides = proposals(mockup, L), states(mockup)
+    several, staged = len(options) > 1, len(sides) > 1
+
+    def mark(i):
+        return i if staged else None
+
+    def captioned(caption, j):
+        return f"{caption} · {sides[j][0]}" if staged else caption
+
+    panes = "".join(_pane("before", captioned(L["before"], j), before, name, viewport, lang, state=mark(j))
+                    for j, (_, before, _, _) in enumerate(sides))
+    panes += "".join(_pane("after", captioned(caption, j), after, name, viewport, lang,
+                           i if several else None, mark(j))
+                     for i, (_, caption, afters, _) in enumerate(options) for j, after in enumerate(afters))
+    # Labelled, since without scripts every state's and proposal's note is shown at once.
+    notes = "".join(f'<p class="mockup-note" data-state="{j}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
+                    for j, (label, _, _, note) in enumerate(sides) if note.strip())
+    notes += "".join(f'<p class="mockup-note" data-proposal="{i}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
+                     for i, (label, _, _, note) in enumerate(options) if note.strip())
+    pickers = _buttons(L["state"], [(j, s[0]) for j, s in enumerate(sides)], "states", 0) if staged else ""
+    pickers += _buttons(L["proposal"], [(i, o[0]) for i, o in enumerate(options)], "proposals", 0) if several else ""
+    modes = _buttons(L["view"], [(m, L[m]) for m in ("side", "slider", "before", "after", *(("all",) if several else ()))],
+                     "modes", "side")
+    sizes = _buttons(L["viewport"], [(v, v) for v in choices], "viewports", viewport)
     details = "".join(f"<dt>{esc(L[k])}</dt><dd>{esc(f[k])}</dd>" for k in ("observed", "expected", "fix") if f.get(k))
-    return (f'<section class="mockup" id="{esc(fid)}" data-viewport="{viewport}" aria-labelledby="{esc(fid)}-h">'
+    heading = f"{fid} {f['title']}" + (f" — {title}" if title else "")
+    return (f'<section class="mockup" id="{esc(anchor)}" data-viewport="{viewport}" data-options="{len(options)}" '
+            f'aria-labelledby="{esc(anchor)}-h">'
             f'<span class="badge {esc(f["severity"])}">{esc(f["severity"])}</span>'
-            f'<h2 id="{esc(fid)}-h">{esc(fid)} {esc(f["title"])}</h2>'
+            f'<h2 id="{esc(anchor)}-h">{esc(heading)}</h2>'
             f'<p class="mockup-meta">{"".join(f"<span>{esc(k)}: {esc(v)}</span>" for k, v in meta)}</p>'
             + (f'<p class="mockup-note">{esc(mockup["note"])}</p>' if mockup.get("note", "").strip() else "")
             + notes
-            + f'<div class="mockup-controls" hidden>{picker}'
-            f'<div class="group modes" role="group" aria-label="{esc(L["view"])}">{modes}</div>'
-            f'<div class="group viewports" role="group" aria-label="{esc(L["viewport"])}">{sizes}</div></div>'
+            + f'<div class="mockup-controls" hidden>{pickers}{modes}{sizes}</div>'
             f'<div class="compare" data-mode="side">{panes}</div>'
             f'<input class="split" type="range" min="0" max="100" value="50" aria-label="{esc(L["split"])}">'
             f"<dl>{details}</dl></section>")
@@ -235,8 +288,11 @@ def render_page(data, flows, lang):
     L = LABELS[lang]
     items = with_mockups(data)
     project = data["meta"]["project"]
-    toc = "".join(f'<li><a href="#{esc(f["id"])}">{esc(f["id"])} {esc(f["title"])}</a></li>' for f in items)
-    sections = "".join(_section(f, flows, lang, L) for f in items)
+    entries = [(f, anchor, m) for f in items for anchor, m in mockups_of(f)]
+    toc = "".join(f'<li><a href="#{esc(anchor)}">{esc(f["id"])} {esc(f["title"])}'
+                  f'{esc(" — " + m["title"].strip()) if m.get("title", "").strip() else ""}</a></li>'
+                  for f, anchor, m in entries)
+    sections = "".join(_section(f, anchor, m, flows, lang, L) for f, anchor, m in entries)
     return f"""<!doctype html>
 <html lang="{esc(lang)}" class="app-shell">
 <head>

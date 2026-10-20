@@ -53,10 +53,16 @@ META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewpo
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
                 "validation", "references", "mockup")
-MOCKUP_KEYS = ("before", "after", "viewport", "note", "label", "alternatives")
-ALTERNATIVE_KEYS = ("label", "after", "note")
+MOCKUP_KEYS = ("title", "before", "after", "states", "viewport", "note", "label", "alternatives")
+ALTERNATIVE_KEYS = ("label", "after", "states", "note")
+STATE_KEYS = ("label", "before", "after", "note")
+ALTERNATIVE_STATE_KEYS = ("label", "after")
 MAX_MOCKUP_BYTES = 64 * 1024
-MAX_ALTERNATIVES = 3
+# Every fragment of a finding's mockups is published in one page.
+MAX_FINDING_MOCKUP_BYTES = 1024 * 1024
+MAX_ALTERNATIVES = 5
+MAX_STATES = 4
+MAX_MOCKUPS = 4
 # Resource hints (preconnect, dns-prefetch, prefetch) reach the network outside the frame's content policy.
 LINK_ELEMENT = re.compile(r"(?i)<link[\s/>]")
 VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
@@ -146,17 +152,41 @@ def _viewports(value, where):
 
 
 def _mockup(mockup, where):
+    """Check a finding's mockup: one object, or a list of titled ones; returns the bytes of its fragments."""
+    if isinstance(mockup, list):
+        if not 2 <= len(mockup) <= MAX_MOCKUPS:
+            raise RecordError(f"{where}: expected one object, or a list of 2 to {MAX_MOCKUPS} objects with title")
+        titles, size = [], 0
+        for i, item in enumerate(mockup):
+            at = f"{where}[{i}]"
+            size += _one_mockup(item, at)
+            # The page names each mockup of the finding by its title alone.
+            title = _str(item, "title", at, required=True).strip()
+            if title in titles:
+                raise RecordError(f"{at}.title: {title!r} is already used by another mockup of this finding")
+            titles.append(title)
+    else:
+        size = _one_mockup(mockup, where)
+    if size > MAX_FINDING_MOCKUP_BYTES:
+        raise RecordError(f"{where}: fragments total more than {MAX_FINDING_MOCKUP_BYTES // 1024} KiB as UTF-8; "
+                          "use fewer states or alternatives")
+
+
+def _one_mockup(mockup, where):
     if not isinstance(mockup, dict):
-        raise RecordError(f"{where}: expected an object with before and after")
+        raise RecordError(f"{where}: expected an object with before and after, or with states")
     _known_keys(mockup, MOCKUP_KEYS, where)
-    for side in ("before", "after"):
-        _fragment(mockup, side, where)
+    _str(mockup, "title", where)
     _str(mockup, "note", where)
     _str(mockup, "label", where)
     if mockup.get("viewport"):
         _viewports([_str(mockup, "viewport", where)], f"{where}.viewport")
+    states = _states(mockup, where)
+    sides = mockup["states"] if states else [mockup]
+    size = sum(_fragment(side, key, f"{where}.states[{j}]" if states else where)
+               for j, side in enumerate(sides) for key in ("before", "after"))
     if "alternatives" not in mockup:
-        return
+        return size
     alternatives = mockup["alternatives"]
     if not isinstance(alternatives, list) or not 0 < len(alternatives) <= MAX_ALTERNATIVES:
         raise RecordError(f"{where}.alternatives: expected a list of 1 to {MAX_ALTERNATIVES} objects "
@@ -172,8 +202,53 @@ def _mockup(mockup, where):
         if label in labels:
             raise RecordError(f"{at}.label: {label!r} is already used by another proposal of this mockup")
         labels.append(label)
-        _fragment(alternative, "after", at)
         _str(alternative, "note", at)
+        size += _alternative_states(alternative, states, at) if states else _fragment(alternative, "after", at)
+    return size
+
+
+def _states(mockup, where):
+    """The mockup's state labels, or [] when it compares a single before and after."""
+    if "states" not in mockup:
+        return []
+    for side in ("before", "after"):
+        if side in mockup:
+            raise RecordError(f"{where}.{side}: a mockup with states keeps its sides in each state")
+    states = mockup["states"]
+    if not isinstance(states, list) or not 2 <= len(states) <= MAX_STATES:
+        raise RecordError(f"{where}.states: expected a list of 2 to {MAX_STATES} objects with label, before and after")
+    labels = []
+    for j, state in enumerate(states):
+        at = f"{where}.states[{j}]"
+        if not isinstance(state, dict):
+            raise RecordError(f"{at}: expected an object with label, before and after")
+        _known_keys(state, STATE_KEYS, at)
+        label = _str(state, "label", at, required=True).strip()
+        if label in labels:
+            raise RecordError(f"{at}.label: {label!r} is already used by another state of this mockup")
+        labels.append(label)
+        _str(state, "note", at)
+    return labels
+
+
+def _alternative_states(alternative, labels, where):
+    """An alternative of a mockup with states gives its after side for each state, in the mockup's order."""
+    if "after" in alternative:
+        raise RecordError(f"{where}.after: the mockup has states; give this proposal's after side in states")
+    states = alternative.get("states")
+    expected = f"{where}.states: expected one object with label and after per state, in order: {', '.join(labels)}"
+    if not isinstance(states, list) or len(states) != len(labels):
+        raise RecordError(expected)
+    size = 0
+    for j, (state, label) in enumerate(zip(states, labels)):
+        at = f"{where}.states[{j}]"
+        if not isinstance(state, dict):
+            raise RecordError(expected)
+        _known_keys(state, ALTERNATIVE_STATE_KEYS, at)
+        if _str(state, "label", at, required=True).strip() != label:
+            raise RecordError(expected)
+        size += _fragment(state, "after", at)
+    return size
 
 
 def _fragment(obj, key, where):
@@ -184,6 +259,7 @@ def _fragment(obj, key, where):
     if LINK_ELEMENT.search(obj[key]):
         raise RecordError(f"{where}.{key}: <link> elements can reach the network; "
                           "inline styles in <style> and use data: URLs for images and fonts")
+    return len(obj[key].encode("utf-8"))
 
 
 def _finite_number(value):

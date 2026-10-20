@@ -11,12 +11,26 @@ from test_architecture_scan import make_env
 REPO = Path(__file__).resolve().parents[1]
 
 
+def make_keeps_dollar_in_makefile_path(root):
+    """GNU Make 3.81 expands a `$` in a -f path before recording MAKEFILE_LIST."""
+    probe = root / "probe $keep"
+    probe.mkdir()
+    (probe / "probe.mk").write_text("$(info [$(MAKEFILE_LIST)])\nall: ;\n", encoding="utf-8")
+    result = subprocess.run(
+        ["make", "--no-print-directory", "-f", str(probe / "probe.mk")],
+        cwd=root, env=make_env(), text=True, capture_output=True, timeout=10,
+    )
+    return "$keep" in result.stdout
+
+
 @unittest.skipUnless(shutil.which("make"), "make is required for installation tests")
 class CheckoutPathTests(unittest.TestCase):
     def setUp(self):
         temporary = tempfile.TemporaryDirectory(prefix="architecture-scan-checkout-")
         self.addCleanup(temporary.cleanup)
-        self.root = Path(temporary.name)
+        # Links name the checkout's physical path, so expect it (macOS: /var -> /private/var).
+        self.root = Path(temporary.name).resolve()
+        self.keeps_dollar = make_keeps_dollar_in_makefile_path(self.root)
 
     def run_make(self, repo, invocation, target, preload=None, **variables):
         command = ["make", "--no-print-directory"]
@@ -46,6 +60,14 @@ class CheckoutPathTests(unittest.TestCase):
     def assert_success(self, result):
         self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
 
+    def assert_unlocatable(self, result, link):
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("cannot locate this Makefile", result.stderr)
+        self.assertFalse(link.is_symlink())
+
+    def unlocatable(self, name, invocation):
+        return "$" in name and invocation in ("absolute", "relative") and not self.keeps_dollar
+
     def test_checkout_paths_preserved_by_all_makefile_invocations(self):
         for case, name in enumerate(("checkout with spaces", "checkout's $cached `printf marker` files")):
             repo = self.root / name
@@ -56,7 +78,11 @@ class CheckoutPathTests(unittest.TestCase):
                     destination = self.root / f"skills-{case}-{invocation}"
                     destination.mkdir(exist_ok=True)
                     link = destination / "architecture-scan"
-                    self.assert_success(self.run_make(repo, invocation, "link", SKILLS_DIR=destination))
+                    result = self.run_make(repo, invocation, "link", SKILLS_DIR=destination)
+                    if self.unlocatable(name, invocation):
+                        self.assert_unlocatable(result, link)
+                        continue
+                    self.assert_success(result)
                     self.assertTrue(link.is_symlink())
                     self.assertEqual(link.readlink(), skill)
                     self.assertTrue((link / "SKILL.md").is_file())
@@ -118,14 +144,53 @@ class CheckoutPathTests(unittest.TestCase):
                     result = self.run_make(
                         repo, "absolute", "link", preload=preload, SKILLS_DIR=destination,
                     )
-                    self.assert_success(result)
                     link = destination / "architecture-scan"
+                    if self.unlocatable(name, "absolute"):
+                        self.assert_unlocatable(result, link)
+                        continue
+                    self.assert_success(result)
                     self.assertEqual(link.readlink(), skill)
                     self.assertTrue((link / "SKILL.md").is_file())
                     help_result = self.run_make(repo, "absolute", "help", preload=preload)
                     self.assert_success(help_result)
                     self.assertIn(f"skill:  {skill}", help_result.stdout)
                     self.assertIn("symlink the skill", help_result.stdout)
+
+
+    def test_symlinked_checkout_links_one_target_for_every_invocation(self):
+        real = self.root / "real"
+        shutil.copytree(REPO, real, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        alias = self.root / "alias"
+        alias.symlink_to(real)
+        skill = real / "skills" / "architecture-scan"
+        destination = self.root / "skills"
+        destination.mkdir()
+        link = destination / "architecture-scan"
+        # A shell inside the alias exports the logical PWD that `pwd` reports.
+        env = {**make_env(), "PWD": str(alias)}
+        command = ["make", "--no-print-directory"]
+        settings = [f"SKILLS_DIR={destination}", "AGENT=agy", "PROJECT="]
+        self.assert_success(subprocess.run(
+            command + ["link"] + settings, cwd=alias, env=env, text=True, capture_output=True, timeout=10,
+        ))
+        self.assertEqual(link.readlink(), skill)
+        self.assert_success(self.run_make(alias, "directory", "unlink", SKILLS_DIR=destination))
+        self.assertFalse(link.is_symlink())
+
+    def test_link_made_through_a_symlinked_checkout_still_counts_as_ours(self):
+        real = self.root / "real"
+        shutil.copytree(REPO, real, ignore=shutil.ignore_patterns(".git", "__pycache__"))
+        alias = self.root / "alias"
+        alias.symlink_to(real)
+        destination = self.root / "skills"
+        destination.mkdir()
+        link = destination / "architecture-scan"
+        link.symlink_to(alias / "skills" / "architecture-scan")  # made before links were physical
+        result = self.run_make(real, "directory", "link", SKILLS_DIR=destination)
+        self.assert_success(result)
+        self.assertIn("already linked", result.stdout)
+        self.assert_success(self.run_make(real, "directory", "unlink", SKILLS_DIR=destination))
+        self.assertFalse(link.is_symlink())
 
 
 if __name__ == "__main__":

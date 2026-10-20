@@ -92,7 +92,8 @@ be byte-identical to what `render.py` produces from the current
   nothing else (`Duplicate of A-004`, `重複: A-004`)
 
 With `--repo <checkout>` (a checkout of the assessed revision), `check` also
-refuses a `location` whose file is missing or outside that checkout, or
+refuses a `location` whose file is missing (including a path spelled in
+another letter case) or outside that checkout, or
 whose line is past the file's end; it catches a path typed from memory, not a line a few rows off, so the
 trace still reads each line it cites.
 
@@ -153,9 +154,9 @@ Never edit `findings.json` by hand; every correction is a fragment:
   fragment replaces an item in place: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
   It also deletes a spurious ledger entry by id: `{"remove": {"rules":
-  ["R-05"]}}`; a complete rule sent in the same fragment takes its place in
-  the ledger. An item that is not recorded is refused, so a typo cannot pass
-  silently
+  ["R-05"]}}`; a complete rule with the same id sent in the same fragment
+  takes its place in the ledger (a rule with another id is appended). An
+  item that is not recorded is refused, so a typo cannot pass silently
 - A finding is never removed (SKILL.md, *Never*): a wrong one is marked
   `FalsePositive`, a duplicate `NotApplicable`, each with evidence
 - A wrong value is replaced by sending the key again; nested `validation` and

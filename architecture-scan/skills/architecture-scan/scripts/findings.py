@@ -127,7 +127,13 @@ STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 PATH_RUN = re.compile(r"[^\s:]+")
 LINE_AFTER = re.compile(r":[1-9][0-9]*")
 PATH_START_AFTER = set("([{'\"`,;:")
-# Extensionless files that hold code or rules (`Makefile` and `*file` match by suffix).
+# From `://` to the next blank or punctuation that can open a path, a colon
+# separates a user, password or port (`postgres://app:pw@db:5432`).
+URL_TAIL = re.compile(r"://[^\s,;()\[\]{}'\"`|<>]*")
+# Extensionless files that hold code or rules. A capitalised name ending in
+# `file` is one too (`Dockerfile`, `Jenkinsfile`), and so are the lowercase
+# names their tools also read; `file`, `profile` are words.
+LOWERCASE_FILES = {"makefile", "gnumakefile", "justfile", "rakefile", "vagrantfile"}
 EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "LICENSE",
                  "VERSION", "MODULE.bazel", "README", "CHANGELOG", "NOTICE", "AUTHORS",
                  "CONTRIBUTING", "gradlew", "mvnw"}
@@ -302,8 +308,12 @@ def evidence_paths(text):
     Every start inside one run of non-blank, non-colon text ends at the same
     `:line`, so the earliest valid start is found without backtracking.
     """
+    in_url = bytearray(len(text))
+    for url in URL_TAIL.finditer(text):
+        in_url[url.start():url.end()] = b"\x01" * (url.end() - url.start())
+
     def starts_here(i):
-        return i == 0 or text[i - 1].isspace() or text[i - 1] in PATH_START_AFTER
+        return not in_url[i] and (i == 0 or text[i - 1].isspace() or text[i - 1] in PATH_START_AFTER)
 
     def letter(c):
         return c.isascii() and c.isalpha()
@@ -356,7 +366,9 @@ def cites_line(evidence, locations=()):
             continue  # a host and port, whatever its first label looks like
         stem = name.split(".")[0]
         if (has_dir or name.startswith(".")  # a dotfile: `.env.local`, `.eslintrc`
-                or stem in EXTENSIONLESS or stem.lower().endswith("file") or extension):
+                or stem in EXTENSIONLESS or stem.lower() in LOWERCASE_FILES
+                or (stem[:1].isupper() and stem.endswith("file") and len(stem) > 4)
+                or extension):
             return True
     return False
 
@@ -1116,19 +1128,51 @@ def _count_lines(file):
     return count + (last not in (b"", b"\n", b"\r"))
 
 
+def _as_on_disk(repo, path, listings):
+    """The file `path` names, each part spelled as its directory entry, or None.
+
+    A case-insensitive filesystem (macOS, Windows) opens `WORKER/JOB.PY` for
+    `worker/job.py`, a path the assessed revision does not hold, so a part must
+    match an entry exactly, up to Unicode normalisation: either form of an
+    accented name names the same file, whichever form the filesystem stores.
+    A directory that can be searched but not listed takes the part as given.
+    """
+    given = Path(path)
+    current, parts = (Path(given.anchor), given.parts[1:]) if given.anchor else (repo, given.parts)
+    for part in parts:
+        if part not in (".", ".."):
+            if current not in listings:
+                try:
+                    names = os.listdir(current)
+                except PermissionError:
+                    listings[current] = None
+                else:
+                    listings[current] = (set(names), {unicodedata.normalize("NFC", n): n for n in names})
+            if listings[current] is not None:
+                exact, normalised = listings[current]
+                if part not in exact:
+                    part = normalised.get(unicodedata.normalize("NFC", part))
+                    if part is None:
+                        return None
+        current = current / part
+    return current
+
+
 def location_problems(doc, repo):
     """Name each finding location whose file or line is not in the checkout."""
     repo = Path(repo)
     if not repo.is_dir():
         return [f"--repo: not a directory: {repo}"]
     root = repo.resolve()
-    problems, lines = [], {}
+    problems, lines, listings = [], {}, {}
     for f in doc.get("findings", []):
         for loc in as_locations(f["location"]):
             path, start, end = split_location(loc)
-            file = repo / path
             if path not in lines:
                 try:
+                    file = _as_on_disk(repo, path, listings)
+                    if file is None:
+                        raise FileNotFoundError(path)
                     resolved = file.resolve()
                     # A location names a file of the assessed checkout, never one outside it.
                     if resolved != root and root not in resolved.parents:
@@ -1150,7 +1194,8 @@ def location_problems(doc, repo):
 
 def cmd_check(args):
     problems = contract_problems(args.out, args.allow)
-    if args.repo is not None:
+    # Not a regular file (a FIFO would block the read): contract_problems has named it.
+    if args.repo is not None and (Path(args.out) / "findings.json").is_file():
         try:
             doc = read_json(Path(args.out) / "findings.json")
             validate(doc, complete=True)

@@ -35,7 +35,7 @@ KNOWN_SECRET = re.compile(
     r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%\\])[^\s\"'])"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
-    r"|(?i:\bcurl\b[^\n]*?\s(?:-u\s*|--user(?:=|\s+))[\"']?[^\s:\"']+:[^\s\"'])|(?i:\bmysql\b[^\n]*?\s-p\S)")
+    r"|(?i:\bcurl\b[^\n]*?\s(?:-u\s*|--user(?:=|\s+))[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
 # The start of a known format at the very end of the shown text.
 CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]*:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
                         r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
@@ -65,8 +65,8 @@ ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|
 # A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
 # attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
 FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"'][\w.\[\]-]{0,64}\Z")
-FIELD_VALUE = re.compile(r"[\"'](?:\s+[\w:.-]+(?:=(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?"
-                         r"\s+(?:value|defaultValue)=")
+FIELD_VALUE = re.compile(r"(?i)[\"'](?:\s+[\w:.-]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?"
+                         r"\s+(?:value|defaultValue)\s*=\s*")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")

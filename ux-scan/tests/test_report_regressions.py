@@ -308,7 +308,13 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="db_password" class="x" value="hunter2">',
                  '<input type="password" name="password" autoComplete="off" defaultValue="hunter2" />',
                  "curl --user admin:hunter2 https://x", "curl --user=admin:hunter2 https://x",
-                 'curl -u "admin:hunter2" https://x', "curl --user 'admin:hunter2' https://x"]
+                 'curl -u "admin:hunter2" https://x', "curl --user 'admin:hunter2' https://x",
+                 # The shell joins separately quoted parts into one user:password argument.
+                 'curl -u admin:"hunter2" https://x', "curl -u 'admin':'hunter2' https://x",
+                 'curl --user admin:"hunter2" https://x',
+                 # HTML attribute names are case-insensitive and may have spaces around "=".
+                 '<input name="password" disabled value = "hunter2">', '<input NAME="password" VALUE="hunter2">',
+                 '<input NAME="password" class="x" VALUE="hunter2">']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

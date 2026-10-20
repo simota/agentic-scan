@@ -180,6 +180,13 @@ class MockupTests(unittest.TestCase):
         # Removing one that is not there is harmless; null is never stored.
         merged = findings.merge(merged, {"findings": [{"id": "U-006", "mockup": None}]})
         self.assertNotIn("mockup", finding(merged, "U-006"))
+        # Only a fragment's null removes: a malformed record stays malformed and is refused.
+        broken = copy.deepcopy(SAMPLE)
+        finding(broken, "U-006")["mockup"] = None
+        merged = findings.merge(broken, {"findings": [{"id": "U-006", "title": "Retitled"}]})
+        self.assertIsNone(finding(merged, "U-006")["mockup"])
+        with self.assertRaisesRegex(findings.RecordError, "mockup"):
+            findings.check_findings(merged, findings.flow_ids(FLOWS))
 
     def test_link_elements_are_refused_since_they_can_fetch_past_the_policy(self):
         for markup in ('<link rel="preconnect" href="https://fonts.example">', "<LINK\nrel=dns-prefetch href=//x>"):

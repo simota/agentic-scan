@@ -1256,7 +1256,7 @@ def merge(base, fragment):
     for f in _indexed(fragment.get("findings", []), "fragment.findings", "id", FINDING_ID).values():
         merged = {**by_id.get(f["id"], {}), **f}
         # "mockup": null removes a mockup; other fields are emptied with "" or replaced.
-        if merged.get("mockup", ()) is None:
+        if "mockup" in f and f["mockup"] is None:
             del merged["mockup"]
         by_id[f["id"]] = merged
     out["findings"] = sorted(by_id.values(), key=lambda f: f["id"])

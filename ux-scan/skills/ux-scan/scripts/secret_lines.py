@@ -65,8 +65,11 @@ ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|
 # A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
 # attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
 FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"']?[\w.\[\]-]{0,64}\Z")
-FIELD_VALUE = re.compile(r"(?i)[\"']?(?:\s+[\w:.-]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}|[^\s\"'=<>`{}]+))?){0,16}?"
-                         r"\s+(?:value|defaultValue)\s*=\s*")
+# An attribute between them: name, name=value (quoted, unquoted or a {…} expression one level deep), or a {...spread}.
+_EXPRESSION = r"\{(?:[^{}\n]|\{[^{}\n]*\})*\}"
+_ATTRIBUTE = (r"(?:" + _EXPRESSION + r"|[^\s\"'=<>/{}`]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|" + _EXPRESSION
+              + r"|[^\s\"'=<>`{}]+))?)")
+FIELD_VALUE = re.compile(r"(?i)[\"']?(?:\s+" + _ATTRIBUTE + r"){0,16}?\s+(?:value|defaultValue)\s*=\s*")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")

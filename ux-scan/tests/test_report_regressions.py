@@ -316,7 +316,13 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="password" disabled value = "hunter2">', '<input NAME="password" VALUE="hunter2">',
                  '<input NAME="password" class="x" VALUE="hunter2">',
                  '<input name="password" class=form-control value="hunter2">',
-                 '<input name=password class=x value="hunter2">']
+                 '<input name=password class=x value="hunter2">',
+                 # Any attribute syntax may sit between: JSX spreads and nested expressions, Vue and Angular bindings.
+                 '<input name="password" {...props} value="hunter2" />',
+                 '<input name="password" onChange={(e) => set({ pw: e.target.value })} defaultValue="hunter2" />',
+                 '<input name="password" @input="onInput" :class="{ bad: err }" value="hunter2">',
+                 '<input name="password" [(ngModel)]="pw" #field value="hunter2">',
+                 '<input name="password" className={`f ${size}`} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -354,7 +360,8 @@ class ReportRegressions(unittest.TestCase):
               '<input type="checkbox" id="show-password" className="toggle" value="show" />',
               '<SegmentedControl aria-label="Sign in with password" size="sm" value="email" />',
               '<input data-name="password" class="x" value="shown" />',
-              '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">']
+              '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">',
+              '<input name="password" {...props} value={password} />', '<input name="password" @input="x" :value="pw">']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

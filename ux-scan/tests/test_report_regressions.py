@@ -314,7 +314,9 @@ class ReportRegressions(unittest.TestCase):
                  'curl --user admin:"hunter2" https://x',
                  # HTML attribute names are case-insensitive and may have spaces around "=".
                  '<input name="password" disabled value = "hunter2">', '<input NAME="password" VALUE="hunter2">',
-                 '<input NAME="password" class="x" VALUE="hunter2">']
+                 '<input NAME="password" class="x" VALUE="hunter2">',
+                 '<input name="password" class=form-control value="hunter2">',
+                 '<input name=password class=x value="hunter2">']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -351,7 +353,8 @@ class ReportRegressions(unittest.TestCase):
               '<input type="radio" name="login-method" id="use-password" className="peer" value="password" />',
               '<input type="checkbox" id="show-password" className="toggle" value="show" />',
               '<SegmentedControl aria-label="Sign in with password" size="sm" value="email" />',
-              '<input data-name="password" class="x" value="shown" />']
+              '<input data-name="password" class="x" value="shown" />',
+              '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

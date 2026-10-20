@@ -64,8 +64,8 @@ ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|
                         r"|\"?\s+value=|\"?>(?=[^<\s])")
 # A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
 # attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
-FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"'][\w.\[\]-]{0,64}\Z")
-FIELD_VALUE = re.compile(r"(?i)[\"'](?:\s+[\w:.-]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}))?){0,16}?"
+FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"']?[\w.\[\]-]{0,64}\Z")
+FIELD_VALUE = re.compile(r"(?i)[\"']?(?:\s+[\w:.-]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|\{[^{}\n]*\}|[^\s\"'=<>`{}]+))?){0,16}?"
                          r"\s+(?:value|defaultValue)\s*=\s*")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
@@ -142,11 +142,13 @@ def _value_starts(text):
             continue  # A CSS custom property such as --token-color.
         if name.start() and text[name.start() - 1] in "/\\":
             continue  # A path such as /etc/passwd.
-        assignment = (ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
-                      or (FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
-                          and FIELD_VALUE.match(text, name.end())))
+        assignment = ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
         if assignment:
             yield assignment.end(), name.group(0)
+        # Also judged apart: name=password class=x value="…" reads as a typed declaration above.
+        field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start()) and FIELD_VALUE.match(text, name.end())
+        if field:
+            yield field.end(), name.group(0)
     for call in CALL_ARGUMENT.finditer(text):
         yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 

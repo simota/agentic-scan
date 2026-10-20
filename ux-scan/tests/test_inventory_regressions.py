@@ -955,6 +955,19 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_out_in_a_differently_cased_spelling_of_the_repository_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve() / "repo"
+            repo.mkdir()
+            (repo / "app.css").write_text(".a{margin:8px}\n", encoding="utf-8")
+            alias = repo.with_name("REPO")
+            if not alias.exists():
+                self.skipTest("case-sensitive filesystem: a differently cased name is another directory")
+            result = self.run_cli(repo, alias / "inventory.json")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("outside the reviewed repository", result.stderr)
+            self.assertFalse((repo / "inventory.json").exists())
+
     def test_preprocessor_line_comments_do_not_hide_or_invent_candidates(self):
         data = self.scan({
             "a.scss": "// Don't change these without design review\n"

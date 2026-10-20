@@ -11,7 +11,8 @@ python3 <skill-dir>/scripts/inventory.py <repo> --out <out>/inventory.json [--fl
 *Paths*); route and folder patterns such as `app/**/page.*` describe the
 reviewed repository.
 The `--out` file must be outside the reviewed repository. The CLI rejects
-in-repository destinations, including parent-directory symlink aliases,
+in-repository destinations, including parent-directory symlink aliases and
+differently cased spellings on a case-insensitive filesystem,
 before writing anything. When `--flows` is supplied, its input must not alias
 `--out`, including through symlinks or hardlinks; collisions are rejected
 before scanning or replacing any file.

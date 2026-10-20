@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from file_io import read_regular  # noqa: E402
+from file_io import read_regular, within  # noqa: E402
 from findings import RecordError, canonical_digest, check_flows, load_json, loads_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -1501,7 +1501,7 @@ def main(argv=None):
     except (OSError, RuntimeError) as e:
         print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
         return 1
-    if out == root or root in out.parents:
+    if out == root or root in out.parents or within(out.parent, root):
         print(f"inventory.py: --out must be outside the reviewed repository: {a.out}", file=sys.stderr)
         return 2
     flows = None

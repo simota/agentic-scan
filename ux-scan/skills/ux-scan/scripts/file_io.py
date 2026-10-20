@@ -73,3 +73,21 @@ when a file grows after its size was checked.
         if max_bytes is not None and len(source) > max_bytes:
             raise ValueError(f"{path}: exceeds {max_bytes} bytes")
         return source
+
+
+def within(path, root):
+    """Whether absolute path is root or lies under it.
+
+Directories are compared by identity, not spelling, so a differently cased
+name on a case-insensitive filesystem or another alias of root still counts.
+Ancestors that do not exist yet, or cannot be inspected, are skipped.
+"""
+    target = os.stat(root)
+    for directory in (path, *path.parents):
+        try:
+            info = os.stat(directory)
+        except OSError:  # Missing or not inspectable: nothing to compare.
+            continue
+        if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
+            return True
+    return False

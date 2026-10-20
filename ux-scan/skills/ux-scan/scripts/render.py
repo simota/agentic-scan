@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from file_io import read_regular  # noqa: E402
+from file_io import read_regular, within  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
@@ -272,7 +272,7 @@ def main(argv=None):
             repo = Path(a.repo).resolve(strict=True)
             if not repo.is_dir():
                 raise ValueError(f"{a.repo}: not a repository directory")
-            if out.resolve().is_relative_to(repo):
+            if out.resolve().is_relative_to(repo) or within(out.resolve(), repo):
                 raise ValueError("--out must be outside --repo; the reviewed repository is read-only")
         source = read_regular(a.findings)
         flows_path = Path(a.findings).with_name("flows.json")

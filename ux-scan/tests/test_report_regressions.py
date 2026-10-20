@@ -698,6 +698,16 @@ class ReportRegressions(unittest.TestCase):
         self.assertIn("outside --repo", error)
         self.assertFalse((self.repo / "report").exists())
 
+    def test_output_in_a_differently_cased_spelling_of_the_repository_is_refused(self):
+        alias = self.repo.resolve()
+        alias = alias.with_name(alias.name.swapcase())
+        if not alias.exists():
+            self.skipTest("case-sensitive filesystem: a differently cased name is another directory")
+        code, _, error = self.invoke(out=alias / "report")
+        self.assertEqual(code, 2, error)
+        self.assertIn("outside --repo", error)
+        self.assertFalse((self.repo / "report").exists())
+
     def test_findings_input_cannot_be_replaced_or_deleted_as_an_output(self):
         record = (self.out / "findings.json").read_bytes()
         outputs = (*render.OUTPUTS, render.OUTPUT_GENERATION)

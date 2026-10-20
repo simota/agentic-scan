@@ -12,7 +12,7 @@ from render import OUTPUT_GENERATION  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_outputs  # noqa: E402
 
 OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf",
-           OUTPUT_GENERATION)
+           "mockups.html", OUTPUT_GENERATION)
 
 
 def main(argv=None):

@@ -22,6 +22,7 @@ RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT
           │                                       │
    flows.json (primary tasks, screens,     findings.json ─→ dashboard.html
    token scales, viewports, locales)                     ─→ report.html / report.pdf
+                                                          ─→ mockups.html (before/after, when asked)
           │
    inventory.py --flows ─→ inventory.json (candidates, never findings)
 ```
@@ -35,7 +36,9 @@ make status
 ```
 
 Then ask the agent, e.g. "ux-scan this repository" or "review the sign-up and
-checkout UI for usability and accessibility problems".
+checkout UI for usability and accessibility problems". Add "with before/after
+mockups" to get `mockups.html`, which compares each mocked finding as it is and
+as its fix proposes.
 
 ## What it checks
 
@@ -57,7 +60,7 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 |---|---|
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
 | `scripts/findings.py flows|merge|check|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
-| `scripts/render.py findings.json --out DIR --lang ja|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
+| `scripts/render.py findings.json --out DIR --lang ja|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, plus `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
 | `scripts/contract_check.py OUT [--no-pdf] [--allow ja\|en]` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; an allowed language directory must be a current second-language render; detects concurrent renders |
 
 ## Develop

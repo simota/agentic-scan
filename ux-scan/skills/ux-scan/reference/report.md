@@ -15,7 +15,9 @@ from the reviewed repository (SKILL.md *Paths*).
 
 `render.py` maps `findings.json` into scan-report-kit's common format
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
-in the shared design. Each finding shows its flow (from `flows.json`), screen,
+in the shared design, plus `mockups.html` when an included finding carries a
+before/after mockup (`reference/mockups.md`); a render without one removes a
+previous `mockups.html`. Each finding shows its flow (from `flows.json`), screen,
 viewport and criterion, and both pages state the viewports and locales from
 `flows.json` that the review was judged against. With `--repo`, each finding's first `path:line` is
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
@@ -55,12 +57,12 @@ no-follow operations, so a directory replacement cannot redirect them outside
 that root. On platforms without these operations, excerpts are omitted;
 record that limitation if source excerpts were needed.
 
-Both HTML pages record the SHA-256 of the exact `findings.json` bytes and the
+Every HTML page (both, or all three with `mockups.html`) records the SHA-256 of the exact `findings.json` bytes and the
 canonical JSON contents of `flows.json`. They also share a render identity
 covering the language, rendered data including excerpts, and both generated
 HTML pages before stamps are added. Renderer or style changes therefore
 invalidate mixed pages even when the findings are unchanged. After PDF
-generation succeeds, both pages record the PDF's SHA-256. The PDF must have a
+generation succeeds, every page records the PDF's SHA-256. The PDF must have a
 PDF header and an end-of-file trailer; this catches empty or visibly truncated
 engine output, but does not validate the full PDF syntax or visual layout.
 Each page also fingerprints its complete UTF-8 HTML bytes, omitting only its

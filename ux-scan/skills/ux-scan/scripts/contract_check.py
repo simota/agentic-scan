@@ -4,13 +4,13 @@
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
 Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
-report.html and report.pdf, plus optional reserved .ux-scan-render-generation
-metadata (no PDF with --no-pdf, which then
+report.html and report.pdf (and mockups.html when a finding carries a mockup),
+plus optional reserved .ux-scan-render-generation metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
-left Unverified; and both complete pages match the current findings, flows and PDF.
+left Unverified; and every complete page matches the current findings, flows and PDF.
 An allowed en or ja directory is a second-language render: it must hold exactly
-both pages (and its report.pdf unless --no-pdf) in that language, rendered from
+its pages (and its report.pdf unless --no-pdf) in that language, rendered from
 the same findings and flows.
 Exit status: 0 ok, 1 contract not met (each problem on stderr), 2 bad arguments.
 """
@@ -23,11 +23,13 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import mockups  # noqa: E402
 from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from render import (FLOWS_STAMP, OUTPUT_GENERATION, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP,  # noqa: E402
                     PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp)
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
+PAGES = ("dashboard.html", "report.html", mockups.PAGE)
 NO_PDF = "report.pdf not produced"
 LANGUAGES = ("en", "ja")
 # "N/A" in its common spellings, in English and Japanese.
@@ -103,6 +105,41 @@ def problems(out, no_pdf=False, allow=()):
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(out))}"
                 f" --lang {rendered_lang(out)} --repo <repo>"
                 + (" --no-pdf" if no_pdf else ""))
+    sources = {}
+    read_errors = {}
+    for name in sorted(found & (expected | {mockups.PAGE})):
+        try:
+            sources[name] = read_regular(out / name)
+        except (OSError, ValueError) as e:
+            read_errors[name] = f"{name}: {e}"
+
+    flows = flows_digest = None
+    record_problems = []
+    if "flows.json" in sources:
+        try:
+            flows = check_flows(loads_json(sources["flows.json"].decode("utf-8"), "flows.json"))
+            flows_digest = canonical_digest(flows)
+            shared = sum(fl["priority"] == "shared" for fl in flows["flows"])
+            if shared != 1:
+                record_problems.append(
+                    f"flows.json: {shared} shared flows; record exactly one shared unit (app shell, navigation, "
+                    "global styles and shared components), added with findings.py flows")
+        except (ValueError, RecordError) as e:
+            flows = None
+            record_problems.append(f"flows.json: {e}")
+    data = None
+    if "findings.json" in sources:
+        try:
+            data = check_findings(loads_json(sources["findings.json"].decode("utf-8"), "findings.json"),
+                                  flow_ids(flows) if flows else None)
+        except (ValueError, RecordError) as e:
+            record_problems.append(f"record: {e}")
+    # The record decides whether the mockup page belongs; an invalid record leaves it unjudged.
+    unjudged = {mockups.PAGE} if data is None else set()
+    if data is not None and mockups.with_mockups(data):
+        expected.add(mockups.PAGE)
+    elif mockups.PAGE in sources:
+        del sources[mockups.PAGE]
     for name in sorted(expected - found):
         hint = {"findings.json": "merge fragments with findings.py merge",
                 "flows.json": "write the flows with findings.py flows",
@@ -111,37 +148,13 @@ def problems(out, no_pdf=False, allow=()):
                     name, f"run {rerender}")
         yield f"{name}: missing; {hint}"
     forbidden = {"report.pdf"} if no_pdf else set()
-    for name in sorted(found - expected - set(allow) - forbidden - {OUTPUT_GENERATION}):
+    for name in sorted(found - expected - set(allow) - forbidden - unjudged - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")
     if no_pdf and "report.pdf" in found:
         yield "report.pdf: must be absent with --no-pdf"
-    sources = {}
-    for name in sorted(found & expected):
-        try:
-            sources[name] = read_regular(out / name)
-        except (OSError, ValueError) as e:
-            yield f"{name}: {e}"
-
-    flows = flows_digest = None
-    if "flows.json" in sources:
-        try:
-            flows = check_flows(loads_json(sources["flows.json"].decode("utf-8"), "flows.json"))
-            flows_digest = canonical_digest(flows)
-            shared = sum(fl["priority"] == "shared" for fl in flows["flows"])
-            if shared != 1:
-                yield (f"flows.json: {shared} shared flows; record exactly one shared unit (app shell, navigation, "
-                       "global styles and shared components), added with findings.py flows")
-        except (ValueError, RecordError) as e:
-            flows = None
-            yield f"flows.json: {e}"
-    data = None
-    if "findings.json" in sources:
-        try:
-            data = check_findings(loads_json(sources["findings.json"].decode("utf-8"), "findings.json"),
-                                  flow_ids(flows) if flows else None)
-        except (ValueError, RecordError) as e:
-            yield f"record: {e}"
+    yield from (problem for name, problem in read_errors.items() if name in expected)
+    yield from record_problems
     if data is not None:
         recorded = set()
         for perspective in data.get("perspectives", []):
@@ -200,7 +213,7 @@ def problems(out, no_pdf=False, allow=()):
     if "findings.json" in sources:
         # A requested second language must exist; it is not merely tolerated.
         for name in sorted(set(allow) & set(LANGUAGES)):
-            yield from translation_problems(out, name, expected_stamps, no_pdf)
+            yield from translation_problems(out, name, expected_stamps, no_pdf, mockups.PAGE in expected)
     yield from render_race_problems(out, generation)
 
 
@@ -240,7 +253,7 @@ def render_race_problems(directory, generation, prefix=""):
                    "run contract_check.py again after rendering finishes")
 
 
-def translation_problems(out, lang, parent_stamps, no_pdf):
+def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups):
     """A second-language render in OUT/<lang> must come from the current record and flows."""
     directory = out / lang
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(directory))}"
@@ -261,7 +274,8 @@ def translation_problems(out, lang, parent_stamps, no_pdf):
     if rendered_lang(out) == lang:
         yield f"{lang}: the main pages are already in {lang}; a second-language render needs the other language"
         return
-    expected = {"dashboard.html", "report.html"} | (set() if no_pdf else {"report.pdf"})
+    expected = ({"dashboard.html", "report.html"} | (set() if no_pdf else {"report.pdf"})
+                | ({mockups.PAGE} if with_mockups else set()))
     for name in sorted(expected - found):
         yield f"{lang}/{name}: missing; run {rerender}"
     for name in sorted(found - expected - {OUTPUT_GENERATION}):
@@ -283,9 +297,9 @@ def translation_problems(out, lang, parent_stamps, no_pdf):
 
 
 def page_problems(sources, expected_stamps, no_pdf, rerender, prefix="", lang=None):
-    """Both pages are complete, current, of one render and (when given) in lang."""
+    """Every page is complete, current, of one render and (when given) in lang."""
     pages = {}
-    for name in ("dashboard.html", "report.html"):
+    for name in PAGES:
         if name not in sources:
             continue
         try:
@@ -312,10 +326,10 @@ def page_problems(sources, expected_stamps, no_pdf, rerender, prefix="", lang=No
             yield f"{prefix}{name}: missing or invalid report language; run {rerender}"
         if no_pdf and PDF_STAMP in page.stamps:
             yield f"{prefix}{name}: stale PDF metadata with --no-pdf; run {rerender}"
-    if len(pages) == 2:
-        dashboard, document = pages["dashboard.html"], pages["report.html"]
-        if (dashboard.stamps.get(RENDER_STAMP) != document.stamps.get(RENDER_STAMP)
-                or dashboard.languages != document.languages):
+    if len(pages) > 1:
+        first, *others = pages.values()
+        if any(page.stamps.get(RENDER_STAMP) != first.stamps.get(RENDER_STAMP)
+               or page.languages != first.languages for page in others):
             yield f"{prefix}pages: different render versions; run {rerender}"
 
 

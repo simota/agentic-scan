@@ -16,7 +16,8 @@ heuristic) and how sure the finding is — or, when only a plan is asked for, a
 checklist tailored to this app.
 
 It does not redesign screens or change code. Fixing is a separate, later
-request. It judges against a stated criterion, not taste: "the cards feel
+request. When asked, a finding can carry a before/after mockup of its fix
+(`reference/mockups.md`): an illustration kept in the record, not a redesign. It judges against a stated criterion, not taste: "the cards feel
 cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing scale
 is 4/8/12/16" is. Brand voice, palette canon and naming belong to brand-scan;
 speed and bundle size to performance-scan; vulnerabilities to security-scan.
@@ -46,14 +47,14 @@ Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Item | Fixed choice |
 |---|---|
 | Paths | Every `scripts/…` and `reference/…` path in this skill is relative to this skill's directory (the one holding this `SKILL.md`), not to the working directory. Run the scripts by absolute path (`python3 <skill-dir>/scripts/inventory.py …`); never run a same-named file from the reviewed repository |
-| Independence | Never read another review's outputs (an earlier `findings.json`, another host's report directory) unless asked to merge or compare them. A second language is a re-render of the same `findings.json`: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>`, then `contract_check.py <out> --allow <lang>`, which requires `<out>/<lang>` to hold exactly both pages (and `report.pdf` unless `--no-pdf`) rendered from the current `findings.json` and `flows.json`. Only the labels change language; the record's prose stays in the language it was written in. Re-render it after every change to the record; on the no-PDF path, pass `--no-pdf` to both commands |
+| Independence | Never read another review's outputs (an earlier `findings.json`, another host's report directory) unless asked to merge or compare them. A second language is a re-render of the same `findings.json`: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>`, then `contract_check.py <out> --allow <lang>`, which requires `<out>/<lang>` to hold exactly its pages (and `report.pdf` unless `--no-pdf`) rendered from the current `findings.json` and `flows.json`. Only the labels change language; the record's prose stays in the language it was written in. Re-render it after every change to the record; on the no-PDF path, pass `--no-pdf` to both commands |
 | Flows first | `flows.json` is written (fragment → `scripts/findings.py flows`) before any finding is merged; every finding cites the flow it affects (`flow_ref`). A defect on no recorded flow means a flow is missing: add it (with its `source` and evidence) or record the gap under `decisions` |
 | Inventory | RECON: `scripts/inventory.py <repo> --out <out>/inventory.json` to see routes, tokens and candidates as they are; after FLOWS and after every flow-map change, rerun with `--flows <out>/flows.json` so literals are measured against the current token scales and the smallest viewport. Inspect `parse_warnings` and `truncated`; record relevant skipped inputs and omitted candidates in `limitations`. The contract checker rejects inventories made without the current flows. Inventory rows are **candidates**, never findings: each becomes a finding only after REVIEW reads it in context |
 | Review units | One unit per flow in `flows.json` (primary flows first), each walking its screens in task order through every state (first visit, loading, empty, error, success, long content, smallest viewport, longest locale); plus the `shared` unit (app shell, navigation, global styles, shared components). Each unit sweeps every applicable perspective once (`reference/perspectives.md`) |
 | Granularity | One finding per root cause, usually one fix location; distinct defects on the same line stay separate findings, and an occurrence another finding's fix already removes is not listed again. A missing focus style in the shared button is one finding at the button, not one per screen; the same unlabeled pattern copied into 12 forms is one finding that lists them in `occurrences` |
 | IDs | `U-001`… numbered without gaps in severity order, then path and line; `FalsePositive`/`NotApplicable` follow the included findings. `findings.py merge` validates the ID form and accepts findings in any order: number new findings in merge order, then once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites finding-ID references in prose, preserving source locations and external URLs. A finding is never deleted; rule one out with `FalsePositive`/`NotApplicable` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
-| Outputs | `findings.json`, `flows.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language, rendered after the last merge. The renderer also keeps `.ux-scan-render-generation` for concurrency checks (`reference/report.md`); other extra files need `--allow`. `render.py --lang` takes `ja` or `en`; for any other language, write the record's prose (summary, titles, observed, expected, impact, fix, notes) in the requester's language, render with `--lang en` labels, and say so in `limitations`. If `render.py` exits 3, read its message: it covers no engine found, an engine that failed, a timeout, and engine output that is not a valid PDF. On a failure or timeout, retry once with a higher `UX_SCAN_PDF_TIMEOUT` (seconds), outside the host's sandbox if the browser cannot start inside it. Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: <reason from the message>", rerun `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
+| Outputs | `findings.json`, `flows.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf` (plus `mockups.html` when an included finding has a mockup), in the requester's language, rendered after the last merge. The renderer also keeps `.ux-scan-render-generation` for concurrency checks (`reference/report.md`); other extra files need `--allow`. `render.py --lang` takes `ja` or `en`; for any other language, write the record's prose (summary, titles, observed, expected, impact, fix, notes) in the requester's language, render with `--lang en` labels, and say so in `limitations`. If `render.py` exits 3, read its message: it covers no engine found, an engine that failed, a timeout, and engine output that is not a valid PDF. On a failure or timeout, retry once with a higher `UX_SCAN_PDF_TIMEOUT` (seconds), outside the host's sandbox if the browser cannot start inside it. Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: <reason from the message>", rerun `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | When short, close units in task order (primary flows, then shared, then secondary). `limitations` names every unit or perspective not reached |
 | Scratch | A new, empty directory outside both the repository and the output directory (Claude Code: the scratchpad directory). Name its path in the chat summary |
@@ -87,7 +88,7 @@ only where the app chose and configured them.
 | CHECKLIST | The perspectives that apply to these flows, as a coverage plan; attach early candidates from the inventory marked unverified | `reference/perspectives.md` |
 | REVIEW | One pass per review unit. Walk each flow as its actor would: entry, every step, every state (loading, empty, error, success), the smallest supported viewport, the longest locale, keyboard only, a screen reader's view of names and roles. Then sweep the inventory candidates for this unit and decide each in context | `reference/perspectives.md` |
 | VERIFY | For every finding: is the user reached by it (route linked, component rendered on the flow, viewport and locale supported)? Is it compensated elsewhere (a global focus style, a wrapper that adds the label, a parent error boundary)? Is it intentional and documented? Try to falsify it; record the verdict and its evidence | `reference/validation.md` |
-| REPORT | Merge findings with `path:line` locations, `flow_ref`, `screen` and `criterion`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
+| REPORT | Merge findings with `path:line` locations, `flow_ref`, `screen` and `criterion`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md`, `reference/mockups.md` |
 
 ## Outputs
 
@@ -99,6 +100,7 @@ only where the app chose and configured them.
 | `inventory.json` | `inventory.py` candidates (routes, scales, widths, states, inputs, images, focus, motion, truncation, locales) |
 | `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings |
+| `mockups.html` | Before/after mockups, side by side or under a slider, per viewport; only when asked (`reference/mockups.md`) |
 
 Skip the files when only a checklist was asked for.
 
@@ -109,7 +111,7 @@ Skip the files when only a checklist was asked for.
   reason, or `not checked`) and no finding left `Unverified`: every merged finding ends VERIFY
   with a settled verdict (`Valid`, `Likely`, `Unlikely`, `FalsePositive` or
   `NotApplicable`)
-- The inventory matches the current flows, both complete HTML pages come from
+- The inventory matches the current flows, all complete HTML pages come from
   the same render of the current findings and flows, and the PDF (when produced) matches
   the fingerprint in those pages. After upgrading from an older script version,
   regenerate the inventory and render the reports to add these fingerprints
@@ -127,5 +129,6 @@ Skip the files when only a checklist was asked for.
 | The requester supplies screenshots or a running local URL | Use them as evidence for rendering claims (overlap, truncation, contrast), cite them in `validation.evidence`; still change nothing |
 | The requester asks to run the app or open it in a browser | Allowed only as asked: start it from a copy or with the repository's own dev command, install dependencies only with their consent, write nothing inside the repository, and never touch shared or production backends. Cite each observation (screenshot path in scratch, URL, viewport) in `validation.evidence`; rendering claims seen this way can be `Confirmed`. Name in `limitations` what was run and what was not |
 | Native mobile (SwiftUI, Compose, Flutter) | Read screens by hand with the same perspectives; the inventory covers web markup and styles only — say so in `limitations` |
+| The requester asks for mockups or a before/after comparison | Attach a `mockup` to the findings asked for (`Valid` or `Likely`), built from the code read in REVIEW; `render.py` adds `mockups.html` (`reference/mockups.md`) |
 | Request is "redesign it" or "make it look better" | Out of scope: report the findings and leave the redesign to a later request |
 | Request is about brand voice, palette or naming | That is brand-scan; record only UI clarity (CP) here |

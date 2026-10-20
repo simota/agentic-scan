@@ -52,7 +52,9 @@ SCREEN_KEYS = ("name", "route", "location")
 META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales")
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
-                "validation", "references")
+                "validation", "references", "mockup")
+MOCKUP_KEYS = ("before", "after", "viewport", "note")
+MAX_MOCKUP_CHARS = 64 * 1024
 VALIDATION_KEYS = ("verdict", "evidence", "intent_checked")
 REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
@@ -137,6 +139,19 @@ def _viewports(value, where):
     for viewport in _strings(value, where):
         if not VIEWPORT.match(viewport):
             raise RecordError(f"{where}: {viewport!r} is not WIDTHxHEIGHT in CSS px (360x640)")
+
+
+def _mockup(mockup, where):
+    if not isinstance(mockup, dict):
+        raise RecordError(f"{where}: expected an object with before and after")
+    _known_keys(mockup, MOCKUP_KEYS, where)
+    for side in ("before", "after"):
+        if len(_str(mockup, side, where, required=True)) > MAX_MOCKUP_CHARS:
+            raise RecordError(f"{where}.{side}: longer than {MAX_MOCKUP_CHARS} characters; "
+                              "mock the affected region, not the whole page")
+    _str(mockup, "note", where)
+    if mockup.get("viewport"):
+        _viewports([_str(mockup, "viewport", where)], f"{where}.viewport")
 
 
 def _finite_number(value):
@@ -330,6 +345,8 @@ def check_findings(data, flow_ids=None, ordered=True):
             _http(ref_.get("url"), f"{where}.references[{j}].url")
             for key in ("type", "title"):
                 _str(ref_, key, f"{where}.references[{j}]")
+        if "mockup" in f:
+            _mockup(f["mockup"], f"{where}.mockup")
     if ordered:
         mapping = renumber_map(findings)
         if any(old != new for old, new in mapping.items()) or [f["id"] for f in findings] != list(mapping):
@@ -1096,7 +1113,8 @@ def renumber(data, mapping):
         if isinstance(value, str):
             return _rewrite_prose(value, mapping) if replace else value
         if isinstance(value, dict):
-            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url"))
+            # Mockup sides are markup shown to users, not prose that cites findings.
+            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url", "before", "after"))
                     for k, v in value.items()}
         if isinstance(value, list):
             return [rewrite(v, replace) for v in value]

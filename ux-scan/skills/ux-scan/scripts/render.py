@@ -5,7 +5,8 @@
 
 Maps the record into scan-report-kit's common format (scan-report/1) and writes
 DIR/dashboard.html, DIR/report.html and DIR/report.pdf (headless Chrome, else
-WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds). With
+WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds), plus
+DIR/mockups.html when a finding carries a before/after mockup. With
 --repo, each finding's location is embedded as a short excerpt; secret-looking
 files and symlinks are never read and secret-looking lines are masked. Every
 page fingerprints its findings, flows, render, complete HTML and (when produced) PDF.
@@ -28,8 +29,9 @@ from file_io import read_regular  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
+import mockups  # noqa: E402
 
-OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
+OUTPUTS = ("dashboard.html", "report.html", "report.pdf", mockups.PAGE)
 OUTPUT_LOCK = ".ux-scan-render.lock"
 OUTPUT_GENERATION = ".ux-scan-render-generation"
 STAMP = "ux-scan-source"
@@ -219,6 +221,8 @@ def to_common(data, lang, flows=None, repo=None):
                   (T["occurrences"], "\n".join(f.get("occurrences", []))),
                   (T["evidence"], f["validation"].get("evidence", "")),
                   (T["intent"], f["validation"].get("intent_checked", ""))]
+        if mockup_field := mockups.field(f, lang):
+            fields.append(mockup_field)
         fix_is_action = f["status"] == "Open" and verdict == "Valid" and bool(f.get("fix", "").strip())
         if fix_is_action:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["fix"]]
@@ -278,6 +282,9 @@ def main(argv=None):
         common = report.validate(to_common(data, a.lang, flows, repo))
         pages = {"dashboard.html": report.render_dashboard(common, a.lang),
                  "report.html": report.render_document(common, a.lang)}
+        if mockups.with_mockups(data):
+            pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang)
+            pages["dashboard.html"] = mockups.link_dashboard(pages["dashboard.html"], a.lang)
         stamps = {STAMP: source_stamp(source),
                   FLOWS_STAMP: canonical_digest(flows) if flows is not None else "absent",
                   RENDER_STAMP: canonical_digest({
@@ -310,8 +317,9 @@ def write_reports(out, pages, finding_count, no_pdf):
         output.write_output(out / OUTPUT_GENERATION, uuid.uuid4().hex)
         # Stage both pages before replacing either. A failed publication must
         # restore the old pair and PDF together, not leave mixed report versions.
+        # A render without mockups removes the previous render's mockup page.
         output.write_outputs(out, {name: seal_page(page) for name, page in pages.items()},
-                             remove=("report.pdf",))
+                             remove=("report.pdf", *((mockups.PAGE,) if mockups.PAGE not in pages else ())))
         for name in pages:
             print(f"wrote {out / name}")
         if no_pdf:

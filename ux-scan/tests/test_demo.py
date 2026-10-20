@@ -21,7 +21,7 @@ class SamplePreparationTests(unittest.TestCase):
     def test_sample_input_is_preserved_when_it_aliases_any_demo_output(self):
         record = (ROOT / "examples" / "findings.sample.json").read_bytes()
         outputs = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html",
-                   "report.pdf", OUTPUT_GENERATION)
+                   "report.pdf", "mockups.html", OUTPUT_GENERATION)
         for name in outputs:
             for alias_at in (None, "input", "output", "hardlink"):
                 with self.subTest(name=name, alias_at=alias_at), tempfile.TemporaryDirectory() as tmp:
@@ -117,7 +117,7 @@ class DemoTests(unittest.TestCase):
                 self.assertIn("contract ok:", result.stdout)
                 self.assertEqual({p.name for p in out.iterdir()},
                                  {"findings.json", "flows.json", "inventory.json",
-                                  "dashboard.html", "report.html", OUTPUT_GENERATION})
+                                  "dashboard.html", "report.html", "mockups.html", OUTPUT_GENERATION})
                 data = json.loads((out / "findings.json").read_text(encoding="utf-8"))
                 self.assertTrue(any(line.startswith("report.pdf not produced:")
                                     for line in data["limitations"]))

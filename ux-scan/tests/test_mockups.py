@@ -150,6 +150,10 @@ class MockupTests(unittest.TestCase):
                 ({**base, "after": "  "}, "mockup.after: required"),
                 ({**base, "image": "x.png"}, "unknown key 'image'"),
                 ({**base, "viewport": "wide"}, "WIDTHxHEIGHT"),
+                # Empty values of other types are not a missing viewport.
+                ({**base, "viewport": 0}, "viewport: expected a string"),
+                ({**base, "viewport": None}, "viewport: expected a string"),
+                ({**base, "viewport": []}, "viewport: expected a string"),
                 ({**base, "before": "x" * (findings.MAX_MOCKUP_BYTES + 1)}, "larger than"),
                 # The limit is documented in KiB: multibyte text counts by its UTF-8 size.
                 ({**base, "after": "あ" * (findings.MAX_MOCKUP_BYTES // 3 + 1)}, "larger than"),
@@ -195,7 +199,11 @@ class MockupTests(unittest.TestCase):
                 ([{**alt, "label": " Drawer "}], "already used"),
                 ([alt, {**alt, "after": "<p>d</p>"}], r"alternatives\[1\]\.label: 'Chips' is already used"),
                 ([{**alt, "after": "x" * (findings.MAX_MOCKUP_BYTES + 1)}], "larger than"),
-                ([{**alt, "after": '<link rel="prefetch" href="//x">'}], "<link>")):
+                ([{**alt, "after": '<link rel="prefetch" href="//x">'}], "<link>"),
+                # The page would show these states, so a mockup without states refuses them unchecked.
+                ([{**alt, "states": [{"label": "x", "after": '<link rel="preconnect" href="//x">'}]}],
+                 r"alternatives\[0\]\.states: the mockup has no states"),
+                ([{**alt, "states": "zz"}], r"alternatives\[0\]\.states: the mockup has no states")):
             with self.subTest(alternatives=alternatives if len(str(alternatives)) < 80 else "long"):
                 data = copy.deepcopy(SAMPLE)
                 data["findings"][0]["mockup"] = {**base, "alternatives": alternatives}
@@ -405,6 +413,33 @@ class MockupTests(unittest.TestCase):
         self.assertEqual(moved["mockup"][0]["before"], "<p>U-001</p>")
         self.assertEqual(moved["mockup"][1]["states"][0]["before"], "<p>U-001</p>")
         self.assertEqual(moved["mockup"][1]["states"][0]["note"], f"{mapping['U-001']} too.")
+
+    def test_renumber_reads_labels_and_titles_as_the_check_does_without_surrounding_space(self):
+        # Indented, the fence is code whose id stays; unindented, it is a fence whose id is
+        # rewritten. The check compares labels stripped, so renumber must read them stripped too.
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["severity"] = "Info"
+        mapping = findings.renumber_map(data["findings"])
+        moved_id = next(old for old, new in mapping.items() if old != new)
+        label = "```\n" + moved_id
+        target = finding(data, "U-014")
+        target["mockup"] = [
+            {"title": "    " + label, "label": "Fix",
+             "states": [{"label": label, "before": "a", "after": "b"}, {"label": moved_id, "before": "a", "after": "b"}],
+             "alternatives": [{"label": "Alt", "states": [{"label": "    " + label, "after": "c"},
+                                                          {"label": "    " + moved_id, "after": "c"}]}]},
+            {"title": "Other", "before": "a", "after": "b"}]
+        findings.check_findings(data, findings.flow_ids(FLOWS), ordered=False)
+        renumbered = findings.renumber(data, mapping)
+        findings.check_findings(renumbered, findings.flow_ids(FLOWS))
+        moved = next(f for f in renumbered["findings"] if f["title"] == target["title"])["mockup"][0]
+        # Stripped, the label is an open fence: its id is code, kept as written in every copy.
+        self.assertEqual(moved["states"][0]["label"], label)
+        self.assertEqual(moved["alternatives"][0]["states"][0]["label"], "    " + label)
+        self.assertEqual(moved["title"], "    " + label)
+        # Stripped, a bare id is prose: every copy is rewritten, the indented one included.
+        self.assertEqual(moved["states"][1]["label"], mapping[moved_id])
+        self.assertEqual(moved["alternatives"][0]["states"][1]["label"], "    " + mapping[moved_id])
 
     def test_viewport_falls_back_to_the_finding_then_the_flows(self):
         f = {"mockup": {"before": "a", "after": "b"}, "viewport": "768x1024"}

@@ -43,7 +43,8 @@ or another text line; a comparison's `>` is not a tag), and server-template comm
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
-review. In HTML, server templates (PHP, ERB, Twig, Jinja, Liquid, Handlebars,
+review, as do the first eight `{` in a file's markup tags that never close; after
+that the rest of the file is not read for tags. In HTML, server templates (PHP, ERB, Twig, Jinja, Liquid, Handlebars,
 EJS, Nunjucks, Mustache), Vue, Svelte and Astro files, CSS measurements use
 style blocks and literal style attributes; script style objects are measured
 once. CSS written in JavaScript template literals (styled-components, emotion)

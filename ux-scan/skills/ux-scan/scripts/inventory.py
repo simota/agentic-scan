@@ -903,15 +903,22 @@ def expression_tags(text, start, stop, *, html_names=False, vue=False):
                             bool(match.group(1)), spans)
 
 
+MAX_BRACE_RESUMES = 8
+
+
 def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
     """Walk HTML template boundaries while preserving existing JSX coverage."""
     if jsx:
         yield from expression_tags(text, 0, len(text), html_names=html_names, vue=vue)
         return
-    cursor = 0
+    cursor, resumes = 0, MAX_BRACE_RESUMES
     while m := TAG_TOKEN.search(text, cursor):
         parsed, cursor, spans = read_tag(text, m.end(), vue=vue)
         if parsed is None:
+            if spans is None and resumes:
+                # A brace that never closes is text to a browser: read on after the tag name. Each
+                # retry can scan to the end of the file, so a few keep stray braces from going quadratic.
+                cursor, resumes = m.end(), resumes - 1
             continue
         attrs, spread, end, self_closing = parsed
         name = m.group(2).lower() if html_names else m.group(2)

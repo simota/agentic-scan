@@ -955,6 +955,16 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_an_unclosed_brace_in_markup_does_not_hide_the_rest_of_the_file(self):
+        import time
+        data = self.scan({"index.html": '<p>a <b {x</p>\n<img src="a.png">\n<input name="email">\n',
+                          "a.vue": '<template>\n<b {x>\n<img src="b.png">\n</template>\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.vue:3", "index.html:2"])
+        self.assertEqual([r["location"] for r in data["inputs"]], ["index.html:3"])
+        started = time.monotonic()
+        self.scan({"many.html": "<b {x>\n" * 100000})
+        self.assertLess(time.monotonic() - started, 4)
+
     def test_sources_that_are_not_utf8_are_skipped_with_a_warning(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

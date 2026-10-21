@@ -65,11 +65,10 @@ ASSIGNMENT = re.compile(r"(?:[\"'`](?:\s*\])?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\
 # A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
 # attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
 FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*[\"']?[\w.\[\]-]{0,64}\Z")
-# An attribute between them: name, name=value (quoted, unquoted or a {…} expression one level deep), or a {...spread}.
-_EXPRESSION = r"\{(?:[^{}\n]|\{[^{}\n]*\})*\}"
-_ATTRIBUTE = (r"(?:" + _EXPRESSION + r"|[^\s\"'=<>/{}`]+(?:\s*=\s*(?:\"[^\"\n]*\"|'[^'\n]*'|" + _EXPRESSION
-              + r"|[^\s\"'=<>`{}]+))?)")
-FIELD_VALUE = re.compile(r"(?i)[\"']?(?:\s+" + _ATTRIBUTE + r"){0,16}?\s+(?:value|defaultValue)\s*=\s*")
+ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
+EQUALS = re.compile(r"\s*=\s*")
+UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
+FIELD_VALUE_NAMES = ("value", "defaultvalue")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
@@ -138,6 +137,72 @@ def _is_label(value, name):
             or (not re.search(r"[A-Za-z0-9]{2}", value) and re.search(r"[^\x00-\x7f]", value) is not None))
 
 
+def _braces_end(text, i):
+    """The offset after the {…} expression opening at i, nested braces and quoted strings included, or None."""
+    depth = 0
+    while i < len(text):
+        c = text[i]
+        if c in "\"'`":
+            close = text.find(c, i + 1)
+            if close < 0:
+                return None
+            i = close
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if not depth:
+                return i + 1
+        i += 1
+    return None
+
+
+def _field_value(text, i):
+    """Where the value or defaultValue of the tag continuing at i begins, past any attributes in between, or None.
+
+    i is just after the field's name, before its closing quote. One pass to the end of the tag.
+    """
+    if i < len(text) and text[i] in "\"'":
+        i += 1
+    while True:
+        start = i
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i == start or i >= len(text):
+            return None  # Attributes are separated by whitespace; the tag ends or the text does.
+        if text[i] == "{":  # A JSX spread.
+            i = _braces_end(text, i)
+            if i is None:
+                return None
+            continue
+        attribute = ATTRIBUTE_NAME.match(text, i)
+        if not attribute:
+            return None  # > or /> ends the tag.
+        equals = EQUALS.match(text, attribute.end())
+        if not equals:  # A boolean attribute: disabled, readonly.
+            i = attribute.end()
+            continue
+        if attribute.group(0).lower() in FIELD_VALUE_NAMES:
+            return equals.end()
+        i = equals.end()
+        if i >= len(text):
+            return None
+        if text[i] in "\"'":
+            close = text.find(text[i], i + 1)
+            if close < 0:
+                return None
+            i = close + 1
+        elif text[i] == "{":
+            i = _braces_end(text, i)
+            if i is None:
+                return None
+        else:
+            unquoted = UNQUOTED_VALUE.match(text, i)
+            if not unquoted:
+                return None
+            i = unquoted.end()
+
+
 def _value_starts(text):
     """(offset where an assigned value begins, the secret-like name) pairs."""
     for name in SECRET_NAME.finditer(text):
@@ -149,9 +214,10 @@ def _value_starts(text):
         if assignment:
             yield assignment.end(), name.group(0)
         # Also judged apart: name=password class=x value="…" reads as a typed declaration above.
-        field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start()) and FIELD_VALUE.match(text, name.end())
-        if field:
-            yield field.end(), name.group(0)
+        if FIELD_NAME.search(text, max(0, name.start() - 80), name.start()):
+            field = _field_value(text, name.end())
+            if field is not None:
+                yield field, name.group(0)
     for call in CALL_ARGUMENT.finditer(text):
         yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 

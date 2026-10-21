@@ -323,7 +323,11 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="password" onChange={(e) => set({ pw: e.target.value })} defaultValue="hunter2" />',
                  '<input name="password" @input="onInput" :class="{ bad: err }" value="hunter2">',
                  '<input name="password" [(ngModel)]="pw" #field value="hunter2">',
-                 '<input name="password" className={`f ${size}`} value="hunter2" />']
+                 '<input name="password" className={`f ${size}`} value="hunter2" />',
+                 # Any number of attributes, and expressions nested to any depth.
+                 '<input name="password"' + ''.join(f' data-a{i}="x"' for i in range(17)) + ' value="hunter2">',
+                 '<input name="password" onChange={() => setState(p => ({...p, state: {dirty: true}}))} value="hunter2" />',
+                 '<input name="password" title={"}"} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -363,7 +367,8 @@ class ReportRegressions(unittest.TestCase):
               '<SegmentedControl aria-label="Sign in with password" size="sm" value="email" />',
               '<input data-name="password" class="x" value="shown" />',
               '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">',
-              '<input name="password" {...props} value={password} />', '<input name="password" @input="x" :value="pw">']
+              '<input name="password" {...props} value={password} />', '<input name="password" @input="x" :value="pw">',
+              '<input name="password" /> <input name="note" value="shown" />', '<input name="password" class={x value="shown"']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

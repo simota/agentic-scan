@@ -160,7 +160,8 @@ def _braces_end(text, i):
 def _field_value(text, i):
     """Where the value or defaultValue of the tag continuing at i begins, past any attributes in between, or None.
 
-    i is just after the field's name, before its closing quote. One pass to the end of the tag.
+    i is just after the field's name, before its closing quote. One pass to the end of the tag; the end
+    of the text when the tag goes on past it (attributes on the following lines).
     """
     if i < len(text) and text[i] in "\"'":
         i += 1
@@ -168,8 +169,10 @@ def _field_value(text, i):
         start = i
         while i < len(text) and text[i].isspace():
             i += 1
-        if i == start or i >= len(text):
-            return None  # Attributes are separated by whitespace; the tag ends or the text does.
+        if i >= len(text):
+            return len(text)  # The tag continues on the next line.
+        if i == start:
+            return None  # Attributes are separated by whitespace.
         if text[i] == "{":  # A JSX spread.
             i = _braces_end(text, i)
             if i is None:
@@ -339,7 +342,20 @@ def _open_names(text):
         tail = text[name.start():]
         if any(rest >= len(tail) or OPEN_END.search(tail, rest) for rest, _ in _value_starts(tail)):
             starts.append(name.start())
+        elif field := _open_field(text, name):
+            starts.append(field)  # From name=, so the joined text still names the field.
     return starts
+
+
+def _open_field(text, name):
+    """Where name="…" starts when the field's tag goes on past the end of text, or None."""
+    field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+    return field.start() if field and _field_value(text, name.end()) == len(text) else None
+
+
+def _open_tag(text):
+    """Whether text ends inside the tag of a secret-named field, before its value."""
+    return any(_open_field(text, name) is not None for name in SECRET_NAME.finditer(text))
 
 
 def continued_secret_lines(lines, start, stop, config=False):
@@ -382,8 +398,8 @@ def continued_secret_lines(lines, start, stop, config=False):
             if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
                 joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
                 continue
-            if not OPEN_END.search(joined) and not _unclosed(joined):
-                break  # The expression ended without a credential.
+            if not OPEN_END.search(joined) and not _unclosed(joined) and not _open_tag(joined):
+                break  # The expression or the field's tag ended without a credential.
             # Still open (process.env.PW ||, or an unclosed "("): the value continues on the next line.
     return hidden
 

@@ -40,7 +40,7 @@ short values, passphrases with spaces, typed declarations
 of its tag (a `label`, `id` or `type="password"` does not count), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
 reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto a later line after
-`=` or an operator (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
+`=` or an operator (or a secret-named field's attributes continuing there) (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
 and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
 since forms and locale files are what UX findings cite. In configuration files

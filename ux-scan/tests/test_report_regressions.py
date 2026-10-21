@@ -267,6 +267,16 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
         self.assertEqual(shown[3], "w" * 240)
 
+    def test_a_secret_named_field_is_masked_when_its_attributes_span_lines(self):
+        lines = ["<input", '  name="password"', '  type="password"', "  {...register}",
+                 '  defaultValue="hunter2"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4])
+        for lines in (["<input", '  name="password"', '  value={password}', "/>"],
+                      ["<input", '  name="password"', "/>", '<p value="shown" />'],
+                      ['<input name="password"', '  placeholder="Password"', '  value="Password"', "/>"]):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+
     def test_secret_values_are_masked_by_format_or_assigned_value(self):
         leaks = ["const t = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig';",
                  "key: 'AIzaSyA1234567890abcdefghijklmnopqrstu'", "pk = 'pk_live_51Habc'",

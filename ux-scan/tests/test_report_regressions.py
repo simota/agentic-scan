@@ -337,7 +337,11 @@ class ReportRegressions(unittest.TestCase):
                  # Any number of attributes, and expressions nested to any depth.
                  '<input name="password"' + ''.join(f' data-a{i}="x"' for i in range(17)) + ' value="hunter2">',
                  '<input name="password" onChange={() => setState(p => ({...p, state: {dirty: true}}))} value="hunter2" />',
-                 '<input name="password" title={"}"} value="hunter2" />']
+                 '<input name="password" title={"}"} value="hunter2" />',
+                 # Attribute order is free, and a JS string in an expression may escape its quote.
+                 '<input value="hunter2" name="password">', '<input defaultValue="hunter2" type="password" name="db_password" />',
+                 "<input name=\"password\" title={'it\\'s ok'} value=\"hunter2\" />",
+                 '<input name="password" onChange={() => log("a \\" }")} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -378,7 +382,10 @@ class ReportRegressions(unittest.TestCase):
               '<input data-name="password" class="x" value="shown" />',
               '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">',
               '<input name="password" {...props} value={password} />', '<input name="password" @input="x" :value="pw">',
-              '<input name="password" /> <input name="note" value="shown" />', '<input name="password" class={x value="shown"']
+              '<input name="password" /> <input name="note" value="shown" />', '<input name="password" class={x value="shown"',
+              '<input value="Password" name="password">', '<input value={pw} name="password" />',
+              '<input value="shown" name="username" />', '<input :value="pw" name="password">',
+              'const value = "shown"; const name = "password";']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))

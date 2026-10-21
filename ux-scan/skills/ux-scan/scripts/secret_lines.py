@@ -69,6 +69,9 @@ ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
 EQUALS = re.compile(r"\s*=\s*")
 UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
 FIELD_VALUE_NAMES = ("value", "defaultvalue")
+# A value or defaultValue attribute that may come before the field's name (attribute order is free).
+VALUE_ATTRIBUTE = re.compile(r"(?i)(?<![\w:@.-])(?:value|defaultValue)\s*=\s*")
+FIELD_NAME_VALUE = re.compile(r"[\w.\[\]-]{1,64}")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
@@ -137,16 +140,28 @@ def _is_label(value, name):
             or (not re.search(r"[A-Za-z0-9]{2}", value) and re.search(r"[^\x00-\x7f]", value) is not None))
 
 
+def _string_end(text, i):
+    """The offset of the quote closing the string that opens at i, past backslash escapes, or None."""
+    quote, i = text[i], i + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == quote:
+            return i
+        i += 1
+    return None
+
+
 def _braces_end(text, i):
     """The offset after the {…} expression opening at i, nested braces and quoted strings included, or None."""
     depth = 0
     while i < len(text):
         c = text[i]
         if c in "\"'`":
-            close = text.find(c, i + 1)
-            if close < 0:
+            i = _string_end(text, i)
+            if i is None:
                 return None
-            i = close
         elif c == "{":
             depth += 1
         elif c == "}":
@@ -157,53 +172,77 @@ def _braces_end(text, i):
     return None
 
 
-def _field_value(text, i):
-    """Where the value or defaultValue of the tag continuing at i begins, past any attributes in between, or None.
+def _attributes(text, i, first=False):
+    """The attributes of the tag continuing at i, as [lower-case name, value start or None, value end or None],
+    and whether the text ends inside the tag (its attributes go on on the next line).
 
-    i is just after the field's name, before its closing quote. One pass to the end of the tag; the end
-    of the text when the tag goes on past it (attributes on the following lines).
+    One pass, which stops at > or />, or at text that is not an attribute. first: i is already at an attribute.
     """
-    if i < len(text) and text[i] in "\"'":
-        i += 1
+    attributes = []
     while True:
         start = i
         while i < len(text) and text[i].isspace():
             i += 1
         if i >= len(text):
-            return len(text)  # The tag continues on the next line.
-        if i == start:
-            return None  # Attributes are separated by whitespace.
+            return attributes, True
+        if i == start and not first:
+            return attributes, False  # Attributes are separated by whitespace.
+        first = False
         if text[i] == "{":  # A JSX spread.
             i = _braces_end(text, i)
             if i is None:
-                return None
+                return attributes, False
             continue
         attribute = ATTRIBUTE_NAME.match(text, i)
         if not attribute:
-            return None  # > or /> ends the tag.
+            return attributes, False  # > or /> ends the tag.
         equals = EQUALS.match(text, attribute.end())
         if not equals:  # A boolean attribute: disabled, readonly.
+            attributes.append([attribute.group(0).lower(), None, None])
             i = attribute.end()
             continue
-        if attribute.group(0).lower() in FIELD_VALUE_NAMES:
-            return equals.end()
+        entry = [attribute.group(0).lower(), equals.end(), None]
+        attributes.append(entry)  # Before its value, which may be cut off.
         i = equals.end()
         if i >= len(text):
-            return None
+            return attributes, False
         if text[i] in "\"'":
-            close = text.find(text[i], i + 1)
-            if close < 0:
-                return None
-            i = close + 1
+            close = text.find(text[i], i + 1)  # HTML values have no backslash escapes.
+            i = None if close < 0 else close + 1
         elif text[i] == "{":
             i = _braces_end(text, i)
-            if i is None:
-                return None
         else:
             unquoted = UNQUOTED_VALUE.match(text, i)
-            if not unquoted:
-                return None
-            i = unquoted.end()
+            i = unquoted.end() if unquoted else None
+        if i is None:
+            return attributes, False
+        entry[2] = i
+
+
+def _field_value(text, i):
+    """Where the value or defaultValue of the tag continuing at i begins, past any attributes in between, or None.
+
+    i is just after the field's name, before its closing quote. The end of the text when the tag goes on past it
+    without a value (attributes on the following lines).
+    """
+    if i < len(text) and text[i] in "\"'":
+        i += 1
+    attributes, open_ = _attributes(text, i)
+    starts = [start for name, start, _ in attributes if name in FIELD_VALUE_NAMES and start is not None]
+    return starts[0] if starts else len(text) if open_ else None
+
+
+def _values_before_names(text):
+    """(value start, secret-like name) for a value or defaultValue written before a secret-like name="…"."""
+    for value in VALUE_ATTRIBUTE.finditer(text):
+        attributes, _ = _attributes(text, value.start(), first=True)
+        for name, start, end in attributes[1:]:
+            if name == "name" and end is not None:
+                field = text[start:end].strip("\"'")
+                secret = SECRET_NAME.search(field) if FIELD_NAME_VALUE.fullmatch(field) else None
+                if secret:
+                    yield value.end(), secret.group(0)
+                    break
 
 
 def _value_starts(text):
@@ -221,6 +260,7 @@ def _value_starts(text):
             field = _field_value(text, name.end())
             if field is not None:
                 yield field, name.group(0)
+    yield from _values_before_names(text)
     for call in CALL_ARGUMENT.finditer(text):
         yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 

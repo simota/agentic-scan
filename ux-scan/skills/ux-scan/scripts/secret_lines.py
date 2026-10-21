@@ -467,6 +467,21 @@ def _open_tag(text):
             or _open_value(text) is not None)
 
 
+def _without_line_comment(line):
+    """line without a trailing // comment that starts outside its strings (https:// is not one)."""
+    i = 0
+    while i < len(line):
+        if line[i] in "\"'`":
+            close = _string_end(line, i)
+            if close is None:
+                return line
+            i = close
+        elif line.startswith("//", i) and (i == 0 or line[i - 1].isspace()):
+            return line[:i].rstrip()
+        i += 1
+    return line
+
+
 def continued_secret_lines(lines, start, stop, config=False):
     """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
     (export const clientToken =\n  "…";) or flag (--password \\\n  "…"), with the name's line.
@@ -499,7 +514,8 @@ def continued_secret_lines(lines, start, stop, config=False):
             if not value or COMMENT_LINE.match(value):
                 in_comment = _opens_comment(value)
                 continue  # A blank line or a comment between the name and its value.
-            joined = joined + " " + value[:SHOWN_CHARACTERS + LOOKAHEAD]
+            # Without its trailing // comment, which would otherwise run on over the lines joined after it.
+            joined = joined + " " + _without_line_comment(value[:SHOWN_CHARACTERS + LOOKAHEAD])
             used.append(following)
             if secret_line(joined, config):
                 hidden.update(used)

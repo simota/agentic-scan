@@ -271,6 +271,10 @@ class ReportRegressions(unittest.TestCase):
         lines = ["<input", '  name="password"', '  type="password"', "  {...register}",
                  '  defaultValue="hunter2"', "/>"]
         self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4])
+        # A trailing // comment in a handler ends with its line, not with the joined tag.
+        lines = ["<input", '  name="password"', "  onChange={(e) => { // keep in sync", "    setPw(e.target.value);",
+                 "  }}", '  defaultValue="hunter2"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4, 5])
         lines = ["<input", '  value="hunter2"', '  type="password"', '  name="password"', "/>"]
         self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3])
         for lines in (["<input", '  name="password"', '  value={password}', "/>"],

@@ -59,8 +59,8 @@ NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-
               r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
 # Closing quotes or brackets (also a subscript, ["password"]), an optional type (Go "Password string = …"), then an
-# assignment: = : := ?= =>, XML >value< or value="…"; == compares.
-ASSIGNMENT = re.compile(r"(?:[\"']\]?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
+# assignment: = : := ?= ||= &&= ??= =>, XML >value< or value="…"; == compares.
+ASSIGNMENT = re.compile(r"(?:[\"'`](?:\s*\])?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\|\|=|&&=|\?\?=|\?=|=>|[:=](?!=))\s*"
                         r"|\"?\s+value=|\"?>(?=[^<\s])")
 # A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
 # attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.

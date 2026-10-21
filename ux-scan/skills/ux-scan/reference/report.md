@@ -34,7 +34,8 @@ token, API key, credentials…, also after acronyms, inside upper-case names
 and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
 `SECRET_KEY_BASE`) assigned a literal that is not a label. That includes
 short values, passphrases with spaces, typed declarations
-(`password: string = "…"`), subscripts (`settings["password"] = "…"`), the `value` or
+(`password: string = "…"`), subscripts (`settings["password"] = "…"`), compound assignments (`||=`,
+`??=`, `&&=`), the `value` or
 `defaultValue` of a field whose `name` is secret-like, after other attributes
 of its tag (a `label`, `id` or `type="password"` does not count), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a

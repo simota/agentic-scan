@@ -304,7 +304,8 @@ class ReportRegressions(unittest.TestCase):
                  "spring.datasource.password=Sommer.x",
                  # Subscript assignments, form values after other attributes, curl's long user flag.
                  'settings["password"] = "hunter2";', 'os.environ["DB_PASSWORD"] = "hunter2"',
-                 "data['password'] = 'hunter2'", '<input name="password" placeholder="x" value="hunter2">',
+                 "data['password'] = 'hunter2'", 'settings["password" ] = "hunter2"', "data[ 'password'\t] = 'hunter2'", 'obj[`password`] = "hunter2"',
+                 'ENV["PASSWORD"] ||= "hunter2"', 'password ??= "hunter2"', 'password &&= "hunter2"', '<input name="password" placeholder="x" value="hunter2">',
                  '<input name="db_password" class="x" value="hunter2">',
                  '<input type="password" name="password" autoComplete="off" defaultValue="hunter2" />',
                  "curl --user admin:hunter2 https://x", "curl --user=admin:hunter2 https://x",
@@ -352,6 +353,7 @@ class ReportRegressions(unittest.TestCase):
               '<input name="password" placeholder="Password" value={password} />',
               '<input type="password" placeholder="Enter your password" defaultValue="" />',
               'if (data["password"] === "") return;',
+              'if (password && x == 1) {', 'password ||= props.password', 'valid = password || "";',
               # Only a field's name reaches past other attributes to its value; a label, id or type does not.
               '<Toggle label="Show password" size="sm" value="visible" />',
               '<input type="checkbox" id="remember-token" checked value="on" />',

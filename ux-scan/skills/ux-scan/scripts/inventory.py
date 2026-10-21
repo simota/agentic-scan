@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from file_io import read_regular  # noqa: E402
+from file_io import read_regular, within  # noqa: E402
 from findings import RecordError, canonical_digest, check_flows, load_json, loads_json  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -178,8 +178,9 @@ NAME_ATTRS = ("aria-label", "aria-labelledby", "title")
 LABEL_TAGS = {"label", "Label", "FormLabel", "InputLabel"}
 VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
-# Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false }.
-NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{([^{}]{0,1000})\}")
+# Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false },
+# also around one level of nested objects (themeColor: [{ media, color }]).
+NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
 # The whole value of maximumScale, when it is a lone numeric literal (not an expression).
 NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
 JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
@@ -233,10 +234,10 @@ def iter_files(root, onerror=None):
 
 
 def read_text(path, root=None):
-    """Text or None for binaries, minified bundles and invalid UTF-8.
+    """Text or None for binaries and minified bundles.
 
-    Unsafe, unreadable and oversized files raise so the caller can record why
-    they were skipped.
+    Unsafe, unreadable, oversized and invalid UTF-8 files raise so the caller
+    can record why they were skipped.
     """
     if re.search(r"\.min\.(?:js|css)$", path.name):
         return None
@@ -245,8 +246,8 @@ def read_text(path, root=None):
         return None
     try:
         return data.decode("utf-8")
-    except UnicodeDecodeError:
-        return None
+    except UnicodeDecodeError as e:
+        raise ValueError(f"not valid UTF-8 at byte {e.start}") from None
 
 
 LONE_CR = re.compile(r"\r(?!\n)")
@@ -902,15 +903,49 @@ def expression_tags(text, start, stop, *, html_names=False, vue=False):
                             bool(match.group(1)), spans)
 
 
+MAX_BRACE_RESUMES = 8
+
+
+def _after_equals(text, i):
+    """Whether only whitespace separates offset i from a preceding =."""
+    j = i - 1
+    while j >= 0 and text[j] in " \t\r\n\f":
+        j -= 1
+    return j >= 0 and text[j] == "="
+
+
+def tag_end(text, i):
+    """The offset after the > that ends the tag continuing at i, as a browser reads it: braces are plain
+    text and quoted attribute values may hold >. The end of the text when there is none."""
+    while i < len(text):
+        c = text[i]
+        if c in "\"'" and _after_equals(text, i):
+            close = text.find(c, i + 1)
+            i = len(text) if close < 0 else close
+        elif c == ">":
+            return i + 1
+        i += 1
+    return len(text)
+
+
 def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
     """Walk HTML template boundaries while preserving existing JSX coverage."""
     if jsx:
         yield from expression_tags(text, 0, len(text), html_names=html_names, vue=vue)
         return
-    cursor = 0
+    cursor, resumes = 0, MAX_BRACE_RESUMES
     while m := TAG_TOKEN.search(text, cursor):
         parsed, cursor, spans = read_tag(text, m.end(), vue=vue)
         if parsed is None:
+            if spans is None and resumes:
+                # A brace that never closes is text to a browser: read on after the tag's >. Each
+                # retry can scan to the end of the file, so a few keep stray braces from going quadratic.
+                cursor, resumes = tag_end(text, m.end()), resumes - 1
+                name = m.group(2).lower() if html_names else m.group(2)
+                if raw_text and not m.group(1) and name in RAW_TEXT_TAGS:
+                    # <script {x> still opens raw text: markup inside it is not markup.
+                    close = RAW_TEXT_CLOSE[name].search(text, cursor)
+                    cursor = close.end() if close else len(text)
             continue
         attrs, spread, end, self_closing = parsed
         name = m.group(2).lower() if html_names else m.group(2)
@@ -1213,7 +1248,9 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 acc["inputs"].append({"element": name, "type": kind, "name": ident, "missing": missing,
                                       "placeholder_only": not labelled and "placeholder" in attrs, "location": loc})
         named = has_name(attrs)
-        if name == "button" and not closing and not named and not has_name(attrs, TEXT_BINDINGS):
+        if name == "button" and closing and not html_names and not named and not has_name(attrs, TEXT_BINDINGS):
+            acc["icon_buttons"].append({"element": name, "location": loc})  # <button />: no content to name it.
+        elif name == "button" and not closing and not named and not has_name(attrs, TEXT_BINDINGS):
             # A following <button> ends the search: buttons do not nest, and it keeps unclosed ones cheap.
             following = (BUTTON_OPEN_I if html_names else BUTTON_OPEN).search(clean, end, end + 20000)
             close = (BUTTON_CLOSE_I if html_names else BUTTON_CLOSE).search(
@@ -1270,6 +1307,7 @@ def inventory(root, flows=None):
         bundle = locale_bundle(rel)
         if bundle:
             try:
+                text = text.removeprefix("\ufeff")  # Editors may save JSON with a byte order mark.
                 check_locale_depth(text, rel)
                 locales[bundle[0]][bundle[1]] = (rel, dict(flatten(loads_json(text, rel))))
             except (ValueError, RecordError, RecursionError) as e:
@@ -1501,7 +1539,7 @@ def main(argv=None):
     except (OSError, RuntimeError) as e:
         print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
         return 1
-    if out == root or root in out.parents:
+    if out == root or root in out.parents or within(out.parent, root):
         print(f"inventory.py: --out must be outside the reviewed repository: {a.out}", file=sys.stderr)
         return 2
     flows = None

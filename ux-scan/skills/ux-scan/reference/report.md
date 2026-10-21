@@ -27,16 +27,20 @@ lines that hold a secret are masked in full (`scripts/secret_lines.py`): known
 credential formats (provider token prefixes, JWTs, PEM and PGP private-key
 blocks found anywhere in the file, credentials in URLs including
 `redis://:password@host`, command lines including `--password value` (quoted
-too, or on the next line after `\`, but not `"$PASSWORD"`), bearer
+too, or on the next line after `\`, but not `"$PASSWORD"`) and `curl -u` or
+`--user user:password`, bearer
 and basic authorization values), and secret-like names (password, secret,
 token, API key, credentials…, also after acronyms, inside upper-case names
 and at the end of lower-case ones: `DBPassword`, `DBPASSWORD`, `mypassword`,
 `SECRET_KEY_BASE`) assigned a literal that is not a label. That includes
 short values, passphrases with spaces, typed declarations
-(`password: string = "…"`), literals passed to a call or wrapped in
+(`password: string = "…"`), subscripts (`settings["password"] = "…"`), compound assignments (`||=`,
+`??=`, `&&=`), the `value` or
+`defaultValue` of a field whose `name` is secret-like, before or after other
+attributes of its tag (a `label`, `id` or `type="password"` does not count), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
 reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), values wrapped onto a later line after
-`=` or an operator (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
+`=` or an operator (or a secret-named field's attributes continuing there) (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
 and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
 since forms and locale files are what UX findings cite. In configuration files

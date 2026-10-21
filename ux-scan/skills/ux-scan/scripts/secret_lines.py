@@ -35,7 +35,7 @@ KNOWN_SECRET = re.compile(
     r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%\\])[^\s\"'])"  # --password value
     r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
     r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
-    r"|(?i:\bcurl\b[^\n]*?\s-u\s*[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
+    r"|(?i:\bcurl\b[^\n]*?\s(?:-u\s*|--user(?:=|\s+))[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
 # The start of a known format at the very end of the shown text.
 CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]*:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
                         r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
@@ -58,10 +58,24 @@ _SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret)
 NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z]))"
               r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
 SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
-# Closing quotes or brackets, an optional type (Go "Password string = …"), then an
-# assignment: = : := ?= =>, XML >value< or value="…"; == compares.
-ASSIGNMENT = re.compile(r"(?:[\"'\]]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\?=|=>|[:=](?!=))\s*"
+# Closing quotes or brackets (also a subscript, ["password"]), an optional type (Go "Password string = …"), then an
+# assignment: = : := ?= ||= &&= ??= =>, XML >value< or value="…"; == compares.
+ASSIGNMENT = re.compile(r"(?:[\"'`](?:\s*\])?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\|\|=|&&=|\?\?=|\?=|=>|[:=](?!=))\s*"
                         r"|\"?\s+value=|\"?>(?=[^<\s])")
+# A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
+# attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
+FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*(?:\{\s*)?[\"'`]?[\w.\[\]-]{0,64}\Z")
+ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
+EQUALS = re.compile(r"\s*=\s*")
+UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
+FIELD_VALUE_NAMES = ("value", "defaultvalue")
+# Where a / starts a regular expression rather than dividing: after an operator, an opening delimiter, => or a
+# keyword that takes an operand (return, throw, yield, case…).
+REGEX_BEFORE = re.compile(r"(?:[(,=:\[!&|?{};]|=>|\b(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield"
+                          r"|await|instanceof))\s*\Z")
+# A value or defaultValue attribute that may come before the field's name (attribute order is free).
+VALUE_ATTRIBUTE = re.compile(r"(?i)(?<![\w:@.-])(?:value|defaultValue)\s*=\s*")
+FIELD_NAME_VALUE = re.compile(r"[\w.\[\]-]{1,64}")
 # A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
 ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
@@ -130,8 +144,161 @@ def _is_label(value, name):
             or (not re.search(r"[A-Za-z0-9]{2}", value) and re.search(r"[^\x00-\x7f]", value) is not None))
 
 
+def _string_end(text, i):
+    """The offset of the quote closing the string that opens at i, past backslash escapes, or None."""
+    quote, i = text[i], i + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == quote:
+            return i
+        i += 1
+    return None
+
+
+def _regex_end(text, i):
+    """The offset of the / closing the regular-expression literal that opens at i, or None."""
+    i, in_class = i + 1, False
+    while i < len(text) and text[i] != "\n":
+        c = text[i]
+        if c == "\\":
+            i += 1
+        elif c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            return i
+        i += 1
+    return None
+
+
+def _braces_end(text, i):
+    """The offset after the {…} expression opening at i, or None. Nested braces, strings, comments and
+    regular-expression literals are skipped. A / starts a regex where an operand cannot end: after the previous
+    token, comments aside, is ( , = : [ ! & | ? { } ; => or an operand-taking keyword such as return or throw."""
+    depth, token_end = 0, i
+    while i < len(text):
+        c = text[i]
+        if c in "\"'`":
+            i = _string_end(text, i)
+            if i is None:
+                return None
+        elif text.startswith("/*", i):
+            i = text.find("*/", i + 2)
+            if i < 0:
+                return None
+            i += 2
+            continue  # A comment is not a token: the one before it still decides what / means.
+        elif text.startswith("//", i):
+            return None  # A line comment runs past this line's expression.
+        elif c == "/" and REGEX_BEFORE.search(text, max(0, token_end - 16), token_end):
+            i = _regex_end(text, i)
+            if i is None:
+                return None
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if not depth:
+                return i + 1
+        elif c.isspace():
+            i += 1
+            continue
+        i += 1
+        token_end = i
+    return None
+
+
+def _attributes(text, i, first=False):
+    """The attributes of the tag continuing at i, as [lower-case name, value start or None, value end or None],
+    whether the text ends inside the tag (its attributes go on on the next line), and how far the text was read:
+    an unclosed quote or brace reads to its end, so callers need not read that text again.
+
+    One pass, which stops at > or />, or at text that is not an attribute. first: i is already at an attribute.
+    """
+    attributes = []
+    while True:
+        start = i
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            return attributes, True, len(text)
+        if i == start and not first:
+            return attributes, False, i  # Attributes are separated by whitespace.
+        first = False
+        if text[i] == "{":  # A JSX spread.
+            i = _braces_end(text, i)
+            if i is None:
+                return attributes, False, len(text)
+            continue
+        attribute = ATTRIBUTE_NAME.match(text, i)
+        if not attribute:
+            return attributes, False, i  # > or /> ends the tag.
+        equals = EQUALS.match(text, attribute.end())
+        if not equals:  # A boolean attribute: disabled, readonly.
+            attributes.append([attribute.group(0).lower(), None, None])
+            i = attribute.end()
+            continue
+        entry = [attribute.group(0).lower(), equals.end(), None]
+        attributes.append(entry)  # Before its value, which may be cut off.
+        i = equals.end()
+        if i >= len(text):
+            return attributes, False, len(text)
+        if text[i] in "\"'`":
+            close = text.find(text[i], i + 1)  # HTML values have no backslash escapes.
+            i = None if close < 0 else close + 1
+        elif text[i] == "{":
+            i = _braces_end(text, i)
+        else:
+            unquoted = UNQUOTED_VALUE.match(text, i)
+            i = unquoted.end() if unquoted else None
+        if i is None:
+            return attributes, False, len(text)
+        entry[2] = i
+
+
+def _field_value(text, i):
+    """Where the value or defaultValue after the name="…" attribute at i begins, past any attributes in between,
+    or None. The end of the text when the tag goes on past it without a value (attributes on the following lines).
+    Also how far the text was read.
+    """
+    attributes, open_, read = _attributes(text, i, first=True)
+    if not attributes or attributes[0][2] is None or not _secret_field_name(text[attributes[0][1]:attributes[0][2]]):
+        return None, read  # name=password-hint names a hint, not a secret.
+    starts = [start for name, start, _ in attributes[1:] if name in FIELD_VALUE_NAMES and start is not None]
+    return (starts[0] if starts else len(text) if open_ else None), read
+
+
+def _secret_field_name(value):
+    """The secret-like name a name attribute's value ends in (password, db_password, user[password]), or None."""
+    field = value.strip("{}\"'` \t")
+    if not FIELD_NAME_VALUE.fullmatch(field):
+        return None
+    secrets = [m for m in SECRET_NAME.finditer(field) if re.fullmatch(r"\]*", field[m.end():])]
+    return secrets[-1].group(0) if secrets else None
+
+
+def _values_before_names(text):
+    """(value start, secret-like name) for a value or defaultValue written before a secret-like name="…".
+
+    Each tag is walked once from its first value attribute; later value attributes inside the walk are its own."""
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, _, position = _attributes(text, value.start(), first=True)
+        position = max(position, value.end())
+        names = [i for i, (name, _, end) in enumerate(attributes) if name == "name" and end is not None]
+        secret = names and _secret_field_name(text[attributes[names[0]][1]:attributes[names[0]][2]])
+        if secret:
+            for name, start, _ in attributes[:names[0]]:
+                if name in FIELD_VALUE_NAMES and start is not None:
+                    yield start, secret
+
+
 def _value_starts(text):
     """(offset where an assigned value begins, the secret-like name) pairs."""
+    read = 0  # How far field tags have been read: a name inside that text was judged with its tag.
     for name in SECRET_NAME.finditer(text):
         if VARIABLE_PREFIX.search(text, max(0, name.start() - 64), name.start()):
             continue  # A CSS custom property such as --token-color.
@@ -140,6 +307,13 @@ def _value_starts(text):
         assignment = ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
         if assignment:
             yield assignment.end(), name.group(0)
+        # Also judged apart: name=password class=x value="…" reads as a typed declaration above.
+        field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+        if field and field.start() >= read:
+            start, read = _field_value(text, field.start())
+            if start is not None:
+                yield start, name.group(0)
+    yield from _values_before_names(text)
     for call in CALL_ARGUMENT.finditer(text):
         yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
 
@@ -261,7 +435,51 @@ def _open_names(text):
         tail = text[name.start():]
         if any(rest >= len(tail) or OPEN_END.search(tail, rest) for rest, _ in _value_starts(tail)):
             starts.append(name.start())
-    return starts
+        elif field := _open_field(text, name):
+            starts.append(field)  # From name=, so the joined text still names the field.
+    value = _open_value(text)
+    if value is not None:
+        starts.append(value)
+    return sorted(starts)
+
+
+def _open_field(text, name):
+    """Where name="…" starts when the field's tag goes on past the end of text, or None."""
+    field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+    return field.start() if field and _field_value(text, field.start())[0] == len(text) else None
+
+
+def _open_value(text):
+    """Where a value or defaultValue starts whose tag goes on past the end of text before naming the field
+    (value="…" on one line, name="password" on a later one), or None."""
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, open_, position = _attributes(text, value.start(), first=True)
+        if open_ and not any(name == "name" for name, _, _ in attributes):
+            return value.start()
+        position = max(position, value.end())
+    return None
+
+
+def _open_tag(text):
+    """Whether text ends inside the tag of a secret-named field before its value, or of a value before its name."""
+    return (any(_open_field(text, name) is not None for name in SECRET_NAME.finditer(text))
+            or _open_value(text) is not None)
+
+
+def _without_line_comment(line):
+    """line without a trailing // comment that starts outside its strings (https:// is not one)."""
+    i = 0
+    while i < len(line):
+        if line[i] in "\"'`":
+            close = _string_end(line, i)
+            if close is None:
+                return line
+            i = close
+        elif line.startswith("//", i) and (i == 0 or line[i - 1].isspace()):
+            return line[:i].rstrip()
+        i += 1
+    return line
 
 
 def continued_secret_lines(lines, start, stop, config=False):
@@ -296,7 +514,8 @@ def continued_secret_lines(lines, start, stop, config=False):
             if not value or COMMENT_LINE.match(value):
                 in_comment = _opens_comment(value)
                 continue  # A blank line or a comment between the name and its value.
-            joined = joined + " " + value[:SHOWN_CHARACTERS + LOOKAHEAD]
+            # Without its trailing // comment, which would otherwise run on over the lines joined after it.
+            joined = joined + " " + _without_line_comment(value[:SHOWN_CHARACTERS + LOOKAHEAD])
             used.append(following)
             if secret_line(joined, config):
                 hidden.update(used)
@@ -304,8 +523,8 @@ def continued_secret_lines(lines, start, stop, config=False):
             if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
                 joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
                 continue
-            if not OPEN_END.search(joined) and not _unclosed(joined):
-                break  # The expression ended without a credential.
+            if not OPEN_END.search(joined) and not _unclosed(joined) and not _open_tag(joined):
+                break  # The expression or the field's tag ended without a credential.
             # Still open (process.env.PW ||, or an unclosed "("): the value continues on the next line.
     return hidden
 

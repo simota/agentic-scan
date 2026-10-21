@@ -11,7 +11,8 @@ python3 <skill-dir>/scripts/inventory.py <repo> --out <out>/inventory.json [--fl
 *Paths*); route and folder patterns such as `app/**/page.*` describe the
 reviewed repository.
 The `--out` file must be outside the reviewed repository. The CLI rejects
-in-repository destinations, including parent-directory symlink aliases,
+in-repository destinations, including parent-directory symlink aliases and
+differently cased spellings on a case-insensitive filesystem,
 before writing anything. When `--flows` is supplied, its input must not alias
 `--out`, including through symlinks or hardlinks; collisions are rejected
 before scanning or replacing any file.
@@ -27,8 +28,8 @@ the selected repository. Replacing a checked directory with a symlink cannot
 redirect the read, and the byte limit also applies when a file grows during
 reading. This requires descriptor-relative no-follow reads (available on
 Linux and macOS); unsupported platforms refuse source reads and record
-`parse_warnings`. Refused reads and paths that cannot be represented in UTF-8
-are also counted as skipped with a warning.
+`parse_warnings`. Refused reads, files that are not valid UTF-8 and paths that
+cannot be represented in UTF-8 are also counted as skipped with a warning.
 Directory traversal errors also produce a warning, including a failure to
 scan the repository root. They do not increase `files_skipped`, because the
 number of files inside an unreadable directory is unknown.
@@ -42,7 +43,8 @@ or another text line; a comparison's `>` is not a tag), and server-template comm
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
 unclosed template comment markers leave the remaining source available for
-review. In HTML, server templates (PHP, ERB, Twig, Jinja, Liquid, Handlebars,
+review, as do the first eight `{` in a file's markup tags that never close; after
+that the rest of the file is not read for tags. In HTML, server templates (PHP, ERB, Twig, Jinja, Liquid, Handlebars,
 EJS, Nunjucks, Mustache), Vue, Svelte and Astro files, CSS measurements use
 style blocks and literal style attributes; script style objects are measured
 once. CSS written in JavaScript template literals (styled-components, emotion)
@@ -156,6 +158,7 @@ and blank names follow the
 Small declared dimensions alone do not establish a failure of
 [WCAG 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html),
 which includes spacing and other exceptions.
+A leading UTF-8 byte order mark on locale JSON is ignored.
 Invalid locale JSON, including duplicate keys, non-finite numbers and invalid
 Unicode strings, is skipped and included in `files_skipped`. `parse_warnings`
 records the file and reason. Locale JSON has an explicit limit of 256 nested

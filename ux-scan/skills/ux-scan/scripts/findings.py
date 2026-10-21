@@ -179,8 +179,8 @@ def _one_mockup(mockup, where):
     _str(mockup, "title", where)
     _str(mockup, "note", where)
     _str(mockup, "label", where)
-    if mockup.get("viewport"):
-        _viewports([_str(mockup, "viewport", where)], f"{where}.viewport")
+    if _str(mockup, "viewport", where):
+        _viewports([mockup["viewport"]], f"{where}.viewport")
     states = _states(mockup, where)
     sides = mockup["states"] if states else [mockup]
     size = sum(_fragment(side, key, f"{where}.states[{j}]" if states else where)
@@ -203,6 +203,8 @@ def _one_mockup(mockup, where):
             raise RecordError(f"{at}.label: {label!r} is already used by another proposal of this mockup")
         labels.append(label)
         _str(alternative, "note", at)
+        if not states and "states" in alternative:
+            raise RecordError(f"{at}.states: the mockup has no states; give this proposal's after side")
         size += _alternative_states(alternative, states, at) if states else _fragment(alternative, "after", at)
     return size
 
@@ -1217,15 +1219,23 @@ def renumber_map(findings):
 
 def renumber(data, mapping):
     """Rewrite finding references in prose and ids, preserving source locations and URLs."""
-    def rewrite(value, replace=True):
+    def rewrite(value, replace=True, mockup=False, key=None):
         if isinstance(value, str):
-            return _rewrite_prose(value, mapping) if replace else value
+            if not replace:
+                return value
+            if not (mockup and key in ("label", "title")):
+                return _rewrite_prose(value, mapping)
+            # Mockup labels and titles are compared stripped: read them so, and labels that matched still match.
+            start = len(value) - len(value.lstrip())
+            end = start + len(value.strip())
+            return value[:start] + _rewrite_prose(value[start:end], mapping) + value[end:]
         if isinstance(value, dict):
             # Mockup sides are markup shown to users, not prose that cites findings.
-            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url", "before", "after"))
+            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url", "before", "after"),
+                               mockup or k == "mockup", k)
                     for k, v in value.items()}
         if isinstance(value, list):
-            return [rewrite(v, replace) for v in value]
+            return [rewrite(v, replace, mockup, key) for v in value]
         return value
     data = rewrite(data)
     data["findings"].sort(key=lambda f: f["id"])

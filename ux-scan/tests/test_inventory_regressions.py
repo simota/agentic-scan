@@ -955,6 +955,55 @@ class InventoryRegressionTests(unittest.TestCase):
             self.assertTrue(link.is_symlink())
             self.assertFalse((repo / "inventory.json").exists())
 
+    def test_an_unclosed_brace_in_markup_does_not_hide_the_rest_of_the_file(self):
+        import time
+        data = self.scan({"index.html": '<p>a <b {x</p>\n<img src="a.png">\n<input name="email">\n',
+                          "a.vue": '<template>\n<b {x>\n<img src="b.png">\n</template>\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["a.vue:3", "index.html:2"])
+        self.assertEqual([r["location"] for r in data["inputs"]], ["index.html:3"])
+        # A quoted attribute value of the malformed tag is not markup either.
+        data = self.scan({"q.html": "<div data={x title=\"<img src='fake.png'>\">\n<img src=\"real.png\">\n"})
+        self.assertEqual([r["location"] for r in data["images"]], ["q.html:2"])
+        # A raw-text element opened by a malformed tag still hides the markup-like text inside it.
+        data = self.scan({"s.html": "<script {x>\nconst demo = '<img src=\"fake.png\">';\n</script>\n<img src=\"real.png\">\n"})
+        self.assertEqual([r["location"] for r in data["images"]], ["s.html:4"])
+        started = time.monotonic()
+        self.scan({"many.html": "<b {x>\n" * 100000})
+        self.assertLess(time.monotonic() - started, 4)
+
+    def test_sources_that_are_not_utf8_are_skipped_with_a_warning(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "a.css").write_bytes(b"/* caf\xe9 */\n.btn{width:20px;height:20px}\n")
+            (root / "b.js").write_bytes(b"\0\0")  # A binary is skipped silently.
+            data = inventory.inventory(root)
+        self.assertEqual(data["files_skipped"], 2)
+        self.assertEqual([w["location"] for w in data["parse_warnings"]], ["a.css:1"])
+        self.assertIn("not valid UTF-8", data["parse_warnings"][0]["reason"])
+
+    def test_locale_json_with_a_byte_order_mark_is_read(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "locales").mkdir()
+            (root / "locales" / "en.json").write_bytes(b'\xef\xbb\xbf{"hi": "Hello"}')
+            (root / "locales" / "de.json").write_bytes(b'\xef\xbb\xbf{"hi": "Hallo Hallo Hallo"}')
+            data = inventory.inventory(root)
+        self.assertEqual(data["parse_warnings"], [])
+        self.assertEqual([(r["base"], r["lang"]) for r in data["locale_expansion"]], [("en", "de")])
+
+    def test_out_in_a_differently_cased_spelling_of_the_repository_is_refused(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            repo = Path(tmp).resolve() / "repo"
+            repo.mkdir()
+            (repo / "app.css").write_text(".a{margin:8px}\n", encoding="utf-8")
+            alias = repo.with_name("REPO")
+            if not alias.exists():
+                self.skipTest("case-sensitive filesystem: a differently cased name is another directory")
+            result = self.run_cli(repo, alias / "inventory.json")
+            self.assertEqual(result.returncode, 2, result.stderr)
+            self.assertIn("outside the reviewed repository", result.stderr)
+            self.assertFalse((repo / "inventory.json").exists())
+
     def test_preprocessor_line_comments_do_not_hide_or_invent_candidates(self):
         data = self.scan({
             "a.scss": "// Don't change these without design review\n"
@@ -1250,7 +1299,14 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"b.vue": '<template>\n<button v-text=""></button>\n<button v-text="label"></button>\n</template>\n',
                           "c.jsx": 'export const C = () => <div><button children="" /><button children={label}></button>\n'
                                    '<button children=""></button></div>;\n'})
-        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:2"])
+        # A self-closing button has no content: <button children="" /> is as empty as <button children=""></button>.
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["b.vue:2", "c.jsx:1", "c.jsx:2"])
+        data = self.scan({"e.jsx": 'export const E = () => (<div>\n<button className="close" onClick={close} />\n'
+                                   '<button aria-label="Close" />\n<button children="Close" />\n</div>);\n',
+                          "f.vue": '<template>\n<button class="close" @click="close" />\n</template>\n',
+                          # In HTML a slash does not close a button: its content follows.
+                          "g.html": '<button class="close"/>Close</button>\n'})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["e.jsx:2", "f.vue:2"])
         data = self.scan({"d.jsx": 'const x=/* <img src="a" /> */1;\nconst r = /a/*2;\nconst y = a /* <img src="b" /> */ + 1;\n'})
         self.assertEqual(data["images"], [])
 
@@ -1267,6 +1323,12 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]],
                          [("s0.tsx:1", True), ("s1.tsx:1", False), ("s2.tsx:1", False), ("s3.tsx:1", False),
                           ("s4.tsx:1", False), ("s5.tsx:1", True)])
+        # themeColor holds objects, as in the Next.js documentation.
+        data = self.scan({"app/layout.tsx": "export const viewport = {\n"
+                                            "  themeColor: [{ media: '(prefers-color-scheme: dark)', color: 'black' },\n"
+                                            "               { media: '(prefers-color-scheme: light)', color: 'white' }],\n"
+                                            "  maximumScale: 1,\n  userScalable: false,\n}\n"})
+        self.assertEqual([(r["location"], r["blocks_zoom"]) for r in data["viewport_meta"]], [("app/layout.tsx:1", True)])
 
     def test_alpine_jinja2_and_whole_word_personal_fields(self):
         data = self.scan({"a.jinja2": '<div x-on:click="go" x-on:keydown.enter="go" role="button" tabindex="0">x</div>\n'

@@ -267,6 +267,24 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(shown[:3], [render.LABELS["en"]["masked"]] * 3)
         self.assertEqual(shown[3], "w" * 240)
 
+    def test_a_secret_named_field_is_masked_when_its_attributes_span_lines(self):
+        lines = ["<input", '  name="password"', '  type="password"', "  {...register}",
+                 '  defaultValue="hunter2"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4])
+        # A trailing // comment in a handler ends with its line, not with the joined tag.
+        lines = ["<input", '  name="password"', "  onChange={(e) => { // keep in sync", "    setPw(e.target.value);",
+                 "  }}", '  defaultValue="hunter2"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4, 5])
+        lines = ["<input", '  value="hunter2"', '  type="password"', '  name="password"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3])
+        for lines in (["<input", '  name="password"', '  value={password}', "/>"],
+                      ["<input", '  value="shown"', '  name="username"', "/>"],
+                      ["<input", '  value="Password"', '  name="password"', "/>"],
+                      ["<input", '  name="password"', "/>", '<p value="shown" />'],
+                      ['<input name="password"', '  placeholder="Password"', '  value="Password"', "/>"]):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+
     def test_secret_values_are_masked_by_format_or_assigned_value(self):
         leaks = ["const t = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig';",
                  "key: 'AIzaSyA1234567890abcdefghijklmnopqrstu'", "pk = 'pk_live_51Habc'",
@@ -301,7 +319,49 @@ class ReportRegressions(unittest.TestCase):
                  'const password = process.env.PASSWORD || ("hunter2")',
                  'password = process.env.PASSWORD || /* dev only */ "hunter2"', '/* password = "hunter2" */',
                  "password=${VALUE:-hunter2}", "password=${VALUE}hunter2", "password=$VALUE-hunter2", "password: ${VALUE} hunter2", 'password: ${VALUE} "hunter2"', "password: ${VALUE} 'hunter2'", 'PASSWORD=${VALUE}"hunter2"', "PASSWORD=$VALUE'hunter2'", "PASSWORD=${VALUE}#hunter2", "PASSWORD=$VALUE//hunter2", 'password: "${PW:-hunter2}"', 'password: "${PW}x9"', "cli --token=a", 'cli --password "x"', "DB_PASSWORD=Pa.word",
-                 "spring.datasource.password=Sommer.x"]
+                 "spring.datasource.password=Sommer.x",
+                 # Subscript assignments, form values after other attributes, curl's long user flag.
+                 'settings["password"] = "hunter2";', 'os.environ["DB_PASSWORD"] = "hunter2"',
+                 "data['password'] = 'hunter2'", 'settings["password" ] = "hunter2"', "data[ 'password'\t] = 'hunter2'", 'obj[`password`] = "hunter2"',
+                 'ENV["PASSWORD"] ||= "hunter2"', 'password ??= "hunter2"', 'password &&= "hunter2"', '<input name="password" placeholder="x" value="hunter2">',
+                 '<input name="db_password" class="x" value="hunter2">',
+                 '<input type="password" name="password" autoComplete="off" defaultValue="hunter2" />',
+                 "curl --user admin:hunter2 https://x", "curl --user=admin:hunter2 https://x",
+                 'curl -u "admin:hunter2" https://x', "curl --user 'admin:hunter2' https://x",
+                 # The shell joins separately quoted parts into one user:password argument.
+                 'curl -u admin:"hunter2" https://x', "curl -u 'admin':'hunter2' https://x",
+                 'curl --user admin:"hunter2" https://x',
+                 # HTML attribute names are case-insensitive and may have spaces around "=".
+                 '<input name="password" disabled value = "hunter2">', '<input NAME="password" VALUE="hunter2">',
+                 '<input NAME="password" class="x" VALUE="hunter2">',
+                 '<input name="password" class=form-control value="hunter2">',
+                 '<input name=password class=x value="hunter2">',
+                 # Any attribute syntax may sit between: JSX spreads and nested expressions, Vue and Angular bindings.
+                 '<input name="password" {...props} value="hunter2" />',
+                 '<input name="password" onChange={(e) => set({ pw: e.target.value })} defaultValue="hunter2" />',
+                 '<input name="password" @input="onInput" :class="{ bad: err }" value="hunter2">',
+                 '<input name="password" [(ngModel)]="pw" #field value="hunter2">',
+                 '<input name="password" className={`f ${size}`} value="hunter2" />',
+                 # Any number of attributes, and expressions nested to any depth.
+                 '<input name="password"' + ''.join(f' data-a{i}="x"' for i in range(17)) + ' value="hunter2">',
+                 '<input name="password" onChange={() => setState(p => ({...p, state: {dirty: true}}))} value="hunter2" />',
+                 '<input name="password" title={"}"} value="hunter2" />',
+                 # Attribute order is free, and a JS string in an expression may escape its quote.
+                 '<input value="hunter2" name="password">', '<input defaultValue="hunter2" type="password" name="db_password" />',
+                 "<input name=\"password\" title={'it\\'s ok'} value=\"hunter2\" />",
+                 '<input name="password" onChange={() => log("a \\" }")} value="hunter2" />',
+                 # The name may be a JSX expression or template literal, or carry brackets.
+                 '<input name="user[password]" class="x" value="hunter2">', '<input name={"password"} className="x" value="hunter2" />',
+                 '<input name=`password` value="hunter2" />', '<input value="hunter2" name={"password"} />',
+                 # Regular-expression literals and comments in an expression may hold braces.
+                 '<input name="password" onChange={() => /}/.test(x)} value="hunter2" />',
+                 '<input name="password" pattern={/[}]{2}\\//} value="hunter2" />',
+                 '<input name="password" onBlur={(e) => go(e /* } */)} value="hunter2" />',
+                 '<input name="password" width={a / 2 / b} value="hunter2" />',
+                 '<input name="password" onChange={() => { throw /}/; }} value="hunter2" />',
+                 '<input name="password" onChange={function* () { yield /}/; }} value="hunter2" />',
+                 '<input name="password" onChange={() => { return /* note */ /}/; }} value="hunter2" />',
+                 '<input name="password" width={a /* half */ / 2} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))
@@ -327,7 +387,25 @@ class ReportRegressions(unittest.TestCase):
               'token: isMobile ? "sm" : "md",', 'password: props.show ? "Hide" : "Show",',
               "password = auth.currentPassword", 'cli --password "$PASSWORD"', "password = /* note */ auth.pw",
               "password = currentPassword", "password=${PW:-}", "password=${PW:-$OTHER}", "password: ${PW:?required}", "password: ${DB_PASSWORD} # from the vault", 'password: "${DB_PASSWORD}"', "password: '$PW'", "PASSWORD='${PW}'", 'PASSWORD="$PW"',
-              'password: "Password" /* label */']
+              'password: "Password" /* label */',
+              '<input name="password" placeholder="Password" value={password} />',
+              '<input type="password" placeholder="Enter your password" defaultValue="" />',
+              'if (data["password"] === "") return;',
+              'if (password && x == 1) {', 'password ||= props.password', 'valid = password || "";',
+              # Only a field's name reaches past other attributes to its value; a label, id or type does not.
+              '<Toggle label="Show password" size="sm" value="visible" />',
+              '<input type="checkbox" id="remember-token" checked value="on" />',
+              '<input type="password" class="form-control" value="remember">',
+              '<input type="radio" name="login-method" id="use-password" className="peer" value="password" />',
+              '<input type="checkbox" id="show-password" className="toggle" value="show" />',
+              '<SegmentedControl aria-label="Sign in with password" size="sm" value="email" />',
+              '<input data-name="password" class="x" value="shown" />',
+              '<input name=password class=x value="Password">', '<input name=password-hint class=x value="shown">',
+              '<input name="password" {...props} value={password} />', '<input name="password" @input="x" :value="pw">',
+              '<input name="password" /> <input name="note" value="shown" />', '<input name="password" class={x value="shown"',
+              '<input value="Password" name="password">', '<input value={pw} name="password" />',
+              '<input value="shown" name="username" />', '<input :value="pw" name="password">',
+              'const value = "shown"; const name = "password";']
         for line in ux:
             with self.subTest(ux=line):
                 self.assertFalse(render.secret_line(line))
@@ -684,6 +762,16 @@ class ReportRegressions(unittest.TestCase):
 
     def test_output_inside_the_reviewed_repository_is_refused(self):
         code, _, error = self.invoke(out=self.repo / "report")
+        self.assertEqual(code, 2, error)
+        self.assertIn("outside --repo", error)
+        self.assertFalse((self.repo / "report").exists())
+
+    def test_output_in_a_differently_cased_spelling_of_the_repository_is_refused(self):
+        alias = self.repo.resolve()
+        alias = alias.with_name(alias.name.swapcase())
+        if not alias.exists():
+            self.skipTest("case-sensitive filesystem: a differently cased name is another directory")
+        code, _, error = self.invoke(out=alias / "report")
         self.assertEqual(code, 2, error)
         self.assertIn("outside --repo", error)
         self.assertFalse((self.repo / "report").exists())

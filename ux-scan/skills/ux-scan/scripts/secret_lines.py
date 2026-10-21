@@ -207,7 +207,8 @@ def _braces_end(text, i):
 
 def _attributes(text, i, first=False):
     """The attributes of the tag continuing at i, as [lower-case name, value start or None, value end or None],
-    and whether the text ends inside the tag (its attributes go on on the next line).
+    whether the text ends inside the tag (its attributes go on on the next line), and how far the text was read:
+    an unclosed quote or brace reads to its end, so callers need not read that text again.
 
     One pass, which stops at > or />, or at text that is not an attribute. first: i is already at an attribute.
     """
@@ -217,18 +218,18 @@ def _attributes(text, i, first=False):
         while i < len(text) and text[i].isspace():
             i += 1
         if i >= len(text):
-            return attributes, True
+            return attributes, True, len(text)
         if i == start and not first:
-            return attributes, False  # Attributes are separated by whitespace.
+            return attributes, False, i  # Attributes are separated by whitespace.
         first = False
         if text[i] == "{":  # A JSX spread.
             i = _braces_end(text, i)
             if i is None:
-                return attributes, False
+                return attributes, False, len(text)
             continue
         attribute = ATTRIBUTE_NAME.match(text, i)
         if not attribute:
-            return attributes, False  # > or /> ends the tag.
+            return attributes, False, i  # > or /> ends the tag.
         equals = EQUALS.match(text, attribute.end())
         if not equals:  # A boolean attribute: disabled, readonly.
             attributes.append([attribute.group(0).lower(), None, None])
@@ -238,7 +239,7 @@ def _attributes(text, i, first=False):
         attributes.append(entry)  # Before its value, which may be cut off.
         i = equals.end()
         if i >= len(text):
-            return attributes, False
+            return attributes, False, len(text)
         if text[i] in "\"'`":
             close = text.find(text[i], i + 1)  # HTML values have no backslash escapes.
             i = None if close < 0 else close + 1
@@ -248,19 +249,20 @@ def _attributes(text, i, first=False):
             unquoted = UNQUOTED_VALUE.match(text, i)
             i = unquoted.end() if unquoted else None
         if i is None:
-            return attributes, False
+            return attributes, False, len(text)
         entry[2] = i
 
 
 def _field_value(text, i):
     """Where the value or defaultValue after the name="…" attribute at i begins, past any attributes in between,
     or None. The end of the text when the tag goes on past it without a value (attributes on the following lines).
+    Also how far the text was read.
     """
-    attributes, open_ = _attributes(text, i, first=True)
+    attributes, open_, read = _attributes(text, i, first=True)
     if not attributes or attributes[0][2] is None or not _secret_field_name(text[attributes[0][1]:attributes[0][2]]):
-        return None  # name=password-hint names a hint, not a secret.
+        return None, read  # name=password-hint names a hint, not a secret.
     starts = [start for name, start, _ in attributes[1:] if name in FIELD_VALUE_NAMES and start is not None]
-    return starts[0] if starts else len(text) if open_ else None
+    return (starts[0] if starts else len(text) if open_ else None), read
 
 
 def _secret_field_name(value):
@@ -273,18 +275,24 @@ def _secret_field_name(value):
 
 
 def _values_before_names(text):
-    """(value start, secret-like name) for a value or defaultValue written before a secret-like name="…"."""
-    for value in VALUE_ATTRIBUTE.finditer(text):
-        attributes, _ = _attributes(text, value.start(), first=True)
-        for name, start, end in attributes[1:]:
-            secret = name == "name" and end is not None and _secret_field_name(text[start:end])
-            if secret:
-                yield value.end(), secret
-                break
+    """(value start, secret-like name) for a value or defaultValue written before a secret-like name="…".
+
+    Each tag is walked once from its first value attribute; later value attributes inside the walk are its own."""
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, _, position = _attributes(text, value.start(), first=True)
+        position = max(position, value.end())
+        names = [i for i, (name, _, end) in enumerate(attributes) if name == "name" and end is not None]
+        secret = names and _secret_field_name(text[attributes[names[0]][1]:attributes[names[0]][2]])
+        if secret:
+            for name, start, _ in attributes[:names[0]]:
+                if name in FIELD_VALUE_NAMES and start is not None:
+                    yield start, secret
 
 
 def _value_starts(text):
     """(offset where an assigned value begins, the secret-like name) pairs."""
+    read = 0  # How far field tags have been read: a name inside that text was judged with its tag.
     for name in SECRET_NAME.finditer(text):
         if VARIABLE_PREFIX.search(text, max(0, name.start() - 64), name.start()):
             continue  # A CSS custom property such as --token-color.
@@ -295,8 +303,8 @@ def _value_starts(text):
             yield assignment.end(), name.group(0)
         # Also judged apart: name=password class=x value="…" reads as a typed declaration above.
         field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
-        if field:
-            start = _field_value(text, field.start())
+        if field and field.start() >= read:
+            start, read = _field_value(text, field.start())
             if start is not None:
                 yield start, name.group(0)
     yield from _values_before_names(text)
@@ -432,16 +440,18 @@ def _open_names(text):
 def _open_field(text, name):
     """Where name="…" starts when the field's tag goes on past the end of text, or None."""
     field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
-    return field.start() if field and _field_value(text, field.start()) == len(text) else None
+    return field.start() if field and _field_value(text, field.start())[0] == len(text) else None
 
 
 def _open_value(text):
     """Where a value or defaultValue starts whose tag goes on past the end of text before naming the field
     (value="…" on one line, name="password" on a later one), or None."""
-    for value in VALUE_ATTRIBUTE.finditer(text):
-        attributes, open_ = _attributes(text, value.start(), first=True)
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, open_, position = _attributes(text, value.start(), first=True)
         if open_ and not any(name == "name" for name, _, _ in attributes):
             return value.start()
+        position = max(position, value.end())
     return None
 
 

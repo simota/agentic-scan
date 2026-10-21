@@ -176,8 +176,9 @@ def _regex_end(text, i):
 
 def _braces_end(text, i):
     """The offset after the {…} expression opening at i, or None. Nested braces, strings, comments and
-    regular-expression literals (a / where an operand cannot end: after ( , = : [ ! & | ? { } ; or =>) are skipped."""
-    depth = 0
+    regular-expression literals are skipped. A / starts a regex where an operand cannot end: after the previous
+    token, comments aside, is ( , = : [ ! & | ? { } ; => or an operand-taking keyword such as return or throw."""
+    depth, token_end = 0, i
     while i < len(text):
         c = text[i]
         if c in "\"'`":
@@ -188,10 +189,11 @@ def _braces_end(text, i):
             i = text.find("*/", i + 2)
             if i < 0:
                 return None
-            i += 1
+            i += 2
+            continue  # A comment is not a token: the one before it still decides what / means.
         elif text.startswith("//", i):
             return None  # A line comment runs past this line's expression.
-        elif c == "/" and REGEX_BEFORE.search(text, max(0, i - 16), i):
+        elif c == "/" and REGEX_BEFORE.search(text, max(0, token_end - 16), token_end):
             i = _regex_end(text, i)
             if i is None:
                 return None
@@ -201,7 +203,11 @@ def _braces_end(text, i):
             depth -= 1
             if not depth:
                 return i + 1
+        elif c.isspace():
+            i += 1
+            continue
         i += 1
+        token_end = i
     return None
 
 

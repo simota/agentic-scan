@@ -355,7 +355,9 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="password" onBlur={(e) => go(e /* } */)} value="hunter2" />',
                  '<input name="password" width={a / 2 / b} value="hunter2" />',
                  '<input name="password" onChange={() => { throw /}/; }} value="hunter2" />',
-                 '<input name="password" onChange={function* () { yield /}/; }} value="hunter2" />']
+                 '<input name="password" onChange={function* () { yield /}/; }} value="hunter2" />',
+                 '<input name="password" onChange={() => { return /* note */ /}/; }} value="hunter2" />',
+                 '<input name="password" width={a /* half */ / 2} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

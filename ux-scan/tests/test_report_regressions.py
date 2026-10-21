@@ -341,7 +341,10 @@ class ReportRegressions(unittest.TestCase):
                  # Attribute order is free, and a JS string in an expression may escape its quote.
                  '<input value="hunter2" name="password">', '<input defaultValue="hunter2" type="password" name="db_password" />',
                  "<input name=\"password\" title={'it\\'s ok'} value=\"hunter2\" />",
-                 '<input name="password" onChange={() => log("a \\" }")} value="hunter2" />']
+                 '<input name="password" onChange={() => log("a \\" }")} value="hunter2" />',
+                 # The name may be a JSX expression or template literal, or carry brackets.
+                 '<input name="user[password]" class="x" value="hunter2">', '<input name={"password"} className="x" value="hunter2" />',
+                 '<input name=`password` value="hunter2" />', '<input value="hunter2" name={"password"} />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

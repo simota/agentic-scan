@@ -906,6 +906,28 @@ def expression_tags(text, start, stop, *, html_names=False, vue=False):
 MAX_BRACE_RESUMES = 8
 
 
+def _after_equals(text, i):
+    """Whether only whitespace separates offset i from a preceding =."""
+    j = i - 1
+    while j >= 0 and text[j] in " \t\r\n\f":
+        j -= 1
+    return j >= 0 and text[j] == "="
+
+
+def tag_end(text, i):
+    """The offset after the > that ends the tag continuing at i, as a browser reads it: braces are plain
+    text and quoted attribute values may hold >. The end of the text when there is none."""
+    while i < len(text):
+        c = text[i]
+        if c in "\"'" and _after_equals(text, i):
+            close = text.find(c, i + 1)
+            i = len(text) if close < 0 else close
+        elif c == ">":
+            return i + 1
+        i += 1
+    return len(text)
+
+
 def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
     """Walk HTML template boundaries while preserving existing JSX coverage."""
     if jsx:
@@ -916,13 +938,13 @@ def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
         parsed, cursor, spans = read_tag(text, m.end(), vue=vue)
         if parsed is None:
             if spans is None and resumes:
-                # A brace that never closes is text to a browser: read on after the tag name. Each
+                # A brace that never closes is text to a browser: read on after the tag's >. Each
                 # retry can scan to the end of the file, so a few keep stray braces from going quadratic.
-                cursor, resumes = m.end(), resumes - 1
+                cursor, resumes = tag_end(text, m.end()), resumes - 1
                 name = m.group(2).lower() if html_names else m.group(2)
                 if raw_text and not m.group(1) and name in RAW_TEXT_TAGS:
                     # <script {x> still opens raw text: markup inside it is not markup.
-                    close = RAW_TEXT_CLOSE[name].search(text, m.end())
+                    close = RAW_TEXT_CLOSE[name].search(text, cursor)
                     cursor = close.end() if close else len(text)
             continue
         attrs, spread, end, self_closing = parsed

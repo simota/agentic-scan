@@ -271,7 +271,11 @@ class ReportRegressions(unittest.TestCase):
         lines = ["<input", '  name="password"', '  type="password"', "  {...register}",
                  '  defaultValue="hunter2"', "/>"]
         self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3, 4])
+        lines = ["<input", '  value="hunter2"', '  type="password"', '  name="password"', "/>"]
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [1, 2, 3])
         for lines in (["<input", '  name="password"', '  value={password}', "/>"],
+                      ["<input", '  value="shown"', '  name="username"', "/>"],
+                      ["<input", '  value="Password"', '  name="password"', "/>"],
                       ["<input", '  name="password"', "/>", '<p value="shown" />'],
                       ['<input name="password"', '  placeholder="Password"', '  value="Password"', "/>"]):
             with self.subTest(lines=lines):
@@ -349,7 +353,9 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="password" onChange={() => /}/.test(x)} value="hunter2" />',
                  '<input name="password" pattern={/[}]{2}\\//} value="hunter2" />',
                  '<input name="password" onBlur={(e) => go(e /* } */)} value="hunter2" />',
-                 '<input name="password" width={a / 2 / b} value="hunter2" />']
+                 '<input name="password" width={a / 2 / b} value="hunter2" />',
+                 '<input name="password" onChange={() => { throw /}/; }} value="hunter2" />',
+                 '<input name="password" onChange={function* () { yield /}/; }} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

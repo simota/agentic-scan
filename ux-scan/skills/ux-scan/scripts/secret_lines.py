@@ -69,8 +69,10 @@ ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
 EQUALS = re.compile(r"\s*=\s*")
 UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
 FIELD_VALUE_NAMES = ("value", "defaultvalue")
-# Where a / starts a regular expression rather than dividing: after an operator, an opening delimiter or =>.
-REGEX_BEFORE = re.compile(r"(?:[(,=:\[!&|?{};]|=>|\breturn)\s*\Z")
+# Where a / starts a regular expression rather than dividing: after an operator, an opening delimiter, => or a
+# keyword that takes an operand (return, throw, yield, case…).
+REGEX_BEFORE = re.compile(r"(?:[(,=:\[!&|?{};]|=>|\b(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield"
+                          r"|await|instanceof))\s*\Z")
 # A value or defaultValue attribute that may come before the field's name (attribute order is free).
 VALUE_ATTRIBUTE = re.compile(r"(?i)(?<![\w:@.-])(?:value|defaultValue)\s*=\s*")
 FIELD_NAME_VALUE = re.compile(r"[\w.\[\]-]{1,64}")
@@ -421,7 +423,10 @@ def _open_names(text):
             starts.append(name.start())
         elif field := _open_field(text, name):
             starts.append(field)  # From name=, so the joined text still names the field.
-    return starts
+    value = _open_value(text)
+    if value is not None:
+        starts.append(value)
+    return sorted(starts)
 
 
 def _open_field(text, name):
@@ -430,9 +435,20 @@ def _open_field(text, name):
     return field.start() if field and _field_value(text, field.start()) == len(text) else None
 
 
+def _open_value(text):
+    """Where a value or defaultValue starts whose tag goes on past the end of text before naming the field
+    (value="…" on one line, name="password" on a later one), or None."""
+    for value in VALUE_ATTRIBUTE.finditer(text):
+        attributes, open_ = _attributes(text, value.start(), first=True)
+        if open_ and not any(name == "name" for name, _, _ in attributes):
+            return value.start()
+    return None
+
+
 def _open_tag(text):
-    """Whether text ends inside the tag of a secret-named field, before its value."""
-    return any(_open_field(text, name) is not None for name in SECRET_NAME.finditer(text))
+    """Whether text ends inside the tag of a secret-named field before its value, or of a value before its name."""
+    return (any(_open_field(text, name) is not None for name in SECRET_NAME.finditer(text))
+            or _open_value(text) is not None)
 
 
 def continued_secret_lines(lines, start, stop, config=False):

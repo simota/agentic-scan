@@ -919,6 +919,11 @@ def tags(text, *, vue=False, html_names=False, raw_text=False, jsx=False):
                 # A brace that never closes is text to a browser: read on after the tag name. Each
                 # retry can scan to the end of the file, so a few keep stray braces from going quadratic.
                 cursor, resumes = m.end(), resumes - 1
+                name = m.group(2).lower() if html_names else m.group(2)
+                if raw_text and not m.group(1) and name in RAW_TEXT_TAGS:
+                    # <script {x> still opens raw text: markup inside it is not markup.
+                    close = RAW_TEXT_CLOSE[name].search(text, m.end())
+                    cursor = close.end() if close else len(text)
             continue
         attrs, spread, end, self_closing = parsed
         name = m.group(2).lower() if html_names else m.group(2)

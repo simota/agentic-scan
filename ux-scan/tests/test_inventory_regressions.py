@@ -961,6 +961,9 @@ class InventoryRegressionTests(unittest.TestCase):
                           "a.vue": '<template>\n<b {x>\n<img src="b.png">\n</template>\n'})
         self.assertEqual([r["location"] for r in data["images"]], ["a.vue:3", "index.html:2"])
         self.assertEqual([r["location"] for r in data["inputs"]], ["index.html:3"])
+        # A raw-text element opened by a malformed tag still hides the markup-like text inside it.
+        data = self.scan({"s.html": "<script {x>\nconst demo = '<img src=\"fake.png\">';\n</script>\n<img src=\"real.png\">\n"})
+        self.assertEqual([r["location"] for r in data["images"]], ["s.html:4"])
         started = time.monotonic()
         self.scan({"many.html": "<b {x>\n" * 100000})
         self.assertLess(time.monotonic() - started, 4)

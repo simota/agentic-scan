@@ -69,6 +69,8 @@ ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
 EQUALS = re.compile(r"\s*=\s*")
 UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
 FIELD_VALUE_NAMES = ("value", "defaultvalue")
+# Where a / starts a regular expression rather than dividing: after an operator, an opening delimiter or =>.
+REGEX_BEFORE = re.compile(r"(?:[(,=:\[!&|?{};]|=>|\breturn)\s*\Z")
 # A value or defaultValue attribute that may come before the field's name (attribute order is free).
 VALUE_ATTRIBUTE = re.compile(r"(?i)(?<![\w:@.-])(?:value|defaultValue)\s*=\s*")
 FIELD_NAME_VALUE = re.compile(r"[\w.\[\]-]{1,64}")
@@ -153,13 +155,42 @@ def _string_end(text, i):
     return None
 
 
+def _regex_end(text, i):
+    """The offset of the / closing the regular-expression literal that opens at i, or None."""
+    i, in_class = i + 1, False
+    while i < len(text) and text[i] != "\n":
+        c = text[i]
+        if c == "\\":
+            i += 1
+        elif c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            return i
+        i += 1
+    return None
+
+
 def _braces_end(text, i):
-    """The offset after the {…} expression opening at i, nested braces and quoted strings included, or None."""
+    """The offset after the {…} expression opening at i, or None. Nested braces, strings, comments and
+    regular-expression literals (a / where an operand cannot end: after ( , = : [ ! & | ? { } ; or =>) are skipped."""
     depth = 0
     while i < len(text):
         c = text[i]
         if c in "\"'`":
             i = _string_end(text, i)
+            if i is None:
+                return None
+        elif text.startswith("/*", i):
+            i = text.find("*/", i + 2)
+            if i < 0:
+                return None
+            i += 1
+        elif text.startswith("//", i):
+            return None  # A line comment runs past this line's expression.
+        elif c == "/" and REGEX_BEFORE.search(text, max(0, i - 16), i):
+            i = _regex_end(text, i)
             if i is None:
                 return None
         elif c == "{":

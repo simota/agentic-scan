@@ -344,7 +344,12 @@ class ReportRegressions(unittest.TestCase):
                  '<input name="password" onChange={() => log("a \\" }")} value="hunter2" />',
                  # The name may be a JSX expression or template literal, or carry brackets.
                  '<input name="user[password]" class="x" value="hunter2">', '<input name={"password"} className="x" value="hunter2" />',
-                 '<input name=`password` value="hunter2" />', '<input value="hunter2" name={"password"} />']
+                 '<input name=`password` value="hunter2" />', '<input value="hunter2" name={"password"} />',
+                 # Regular-expression literals and comments in an expression may hold braces.
+                 '<input name="password" onChange={() => /}/.test(x)} value="hunter2" />',
+                 '<input name="password" pattern={/[}]{2}\\//} value="hunter2" />',
+                 '<input name="password" onBlur={(e) => go(e /* } */)} value="hunter2" />',
+                 '<input name="password" width={a / 2 / b} value="hunter2" />']
         for line in leaks:
             with self.subTest(leak=line):
                 self.assertTrue(render.secret_line(line))

@@ -200,20 +200,22 @@ def variables(text):
     return found
 
 
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+# Any indentation: a fence nested in a list item is indented by the item, often four spaces or more.
+FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
 
 
 def fenced_lines(lines):
     """Line numbers (1-based) inside Markdown code fences, which hold examples rather than prompt markup.
 
     As in CommonMark, a fence closes only on a bare run of its own character at least as long as the
-    opener, so a ``` line inside a ```` fence stays inside.
+    opener, so a ``` line inside a ```` fence stays inside, and a backtick run followed by another
+    backtick on its line (```json``` is ...) is inline code, not an opener.
     """
     fence, result = None, set()
     for number, line in enumerate(lines, 1):
         m = FENCE.match(line)
         if fence is None:
-            if m:
+            if m and not (m.group(1)[0] == "`" and "`" in line[m.end():]):
                 fence = m.group(1)
                 result.add(number)
         else:

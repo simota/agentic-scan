@@ -211,6 +211,17 @@ class InventoryTest(unittest.TestCase):
         paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
         self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
 
+    def test_fences_follow_commonmark(self):
+        root = make_repo({
+            # A backtick line with backticks after the opener is inline code, not a fence.
+            "prompts/a.md": "```json``` blocks are the only accepted output.\n<instructions>\nTODO\n",
+            "prompts/b.md": "```json``` is inline.\n```\n<example>\n```\n",
+            # A fence nested in a list item is indented by the item, often four spaces or more.
+            "prompts/c.md": "1. Step\n   - Output:\n\n     ```xml\n     <verdict>ok\n     ```\n",
+        })
+        hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
+        self.assertEqual(hits, {("unclosed-tag", "prompts/a.md:2"), ("placeholder", "prompts/a.md:3")})
+
     def test_out_refuses_a_symlink_and_reports_write_errors(self):
         root = make_repo({"prompts/a.md": "hi\n", "victim.txt": "keep\n"})
         out = Path(tempfile.mkdtemp())

@@ -65,6 +65,25 @@ class RenderTest(unittest.TestCase):
         start, lines, _ = render.attach_sources(data, repo)[first["id"]]
         self.assertEqual((start, lines), (1, ["intro"] + ["[REDACTED]"] * 4))
 
+    def test_sensitive_files_get_no_excerpt_and_more_token_formats_are_masked(self):
+        repo = Path(tempfile.mkdtemp())
+        # Built at run time, so no credential-shaped literal sits in the repository.
+        tokens = ["github_pat_" + "A1" * 20, "glpat-" + "b2" * 10, "hf_" + "C3" * 17, "sk_" + "live_" + "D4" * 12,
+                  "rk_" + "test_" + "E5" * 12, "ASIA" + "F6" * 8]
+        (repo / ".env.local").write_text("SYSTEM_PROMPT=hello\nDB_PASSWORD=hunter2\n", encoding="utf-8")
+        (repo / "deploy.key").write_text("line\n", encoding="utf-8")
+        (repo / "p.md").write_text("".join(f"use {t}\n" for t in tokens), encoding="utf-8")
+        (repo / "link.md").symlink_to(repo / ".env.local")
+        data = sample()
+        base = data["findings"][0]
+        base.pop("prompt")
+        data["prompts"], data["findings"] = [], []
+        for n, location in enumerate([".env.local:1", "deploy.key:1", "link.md:1", "p.md:1-6"], 1):
+            data["findings"].append(dict(base, id=f"F-{n:03d}", location=location))
+        excerpts = render.attach_sources(data, repo)
+        self.assertEqual(sorted(excerpts), ["F-004"])
+        self.assertEqual(excerpts["F-004"][1], ["use [REDACTED]"] * len(tokens))
+
     def test_line_numbers_split_on_newlines_only(self):
         self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
 

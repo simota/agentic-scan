@@ -45,7 +45,6 @@ AGENT_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurf
                "copilot-instructions.md"}
 PROMPT_DIRS = {"prompts", "prompt", "system_prompts", "system-prompts", "instructions"}
 AGENT_DIRS = (".claude/agents", ".claude/commands", ".cursor/rules", ".github/prompts", ".codex/agents")
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 
 CALL_PATTERNS = [
     ("anthropic.messages", re.compile(r"\.messages\.(?:create|stream|count_tokens)\s*\(")),
@@ -148,8 +147,7 @@ def walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            if path.is_symlink() or not path.is_file() or name.startswith(".env") \
-                    or path.suffix.lower() in SENSITIVE_SUFFIXES:
+            if path.is_symlink() or not path.is_file() or render.sensitive(name):
                 continue
             yield path, path.relative_to(root).as_posix()
 

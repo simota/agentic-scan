@@ -553,6 +553,8 @@ def unquote(raw):
             return UNKNOWN
         elif raw[i] == "\\" and i + 1 < len(raw):
             if raw[i + 1] == "U" and re.fullmatch(r"[0-9A-Fa-f]{8}", raw[i + 2:i + 10]):
+                if int(raw[i + 2:i + 10], 16) > 0x10FFFF:
+                    return UNKNOWN  # no such code point: Terraform rejects the string
                 out.append(chr(int(raw[i + 2:i + 10], 16)))
                 i += 10
                 continue
@@ -2413,7 +2415,7 @@ def handle_plan(scan, rel, text, doc):
     def walk(module, check):
         if not isinstance(module, dict):
             return
-        for r in module.get("resources", []) or []:
+        for r in aslist(module.get("resources")):
             if not isinstance(r, dict) or r.get("mode") == "data":
                 continue
             address, type_ = r.get("address", ""), r.get("type", "")
@@ -2550,7 +2552,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     scan.cfn_checked_templates[rel] = {
         lid for lid, r in (doc.get("Resources") or {}).items()
         if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"
-        and isinstance((r.get("Properties") or {}).get("LaunchTemplateData"), dict)
+        and isinstance(r.get("Properties"), dict) and isinstance(r["Properties"].get("LaunchTemplateData"), dict)
     }
     cfn_parameter_defaults(scan, rel, text, doc)
     for lid, r in (doc.get("Resources") or {}).items():
@@ -3360,11 +3362,13 @@ def finish_k8s(scan):
     A role of that name only in a sibling tree (dev/ for a prod/ binding) may be
     another cluster's: recorded as unresolved instead."""
     for res, kind, namespace, role_kind, role_name, line in scan.k8s_bindings:
-        ns_key = (namespace or "default") if role_kind == "Role" else None
-        dirs = set(scan.k8s_wildcard_roles.get((role_kind, ns_key, role_name), set()))
-        if role_kind == "Role" and namespace in (None, "", "default"):
-            dirs |= scan.k8s_wildcard_roles.get((role_kind, None, role_name), set())
-            dirs |= scan.k8s_wildcard_roles.get((role_kind, "default", role_name), set())
+        # An omitted namespace (None) is the apply context's: it may be any
+        # namespace, so it pairs with an explicit one in either direction.
+        dirs = set()
+        for (kind_, ns, name_), where in scan.k8s_wildcard_roles.items():
+            if kind_ == role_kind and name_ == role_name and (
+                    role_kind == "ClusterRole" or not namespace or ns is None or ns == namespace):
+                dirs |= where
         here = posixpath.dirname(res.file)
         if any(same_tree(here, d) for d in dirs):
             severity = "Medium" if kind == "RoleBinding" else None
@@ -3374,8 +3378,9 @@ def finish_k8s(scan):
                                 f"another tree than the binding; check it is the same cluster: {res.file}:{line} "
                                 f"({res.address})")
     for res, namespace, sa_name, line in scan.k8s_pod_sa_refs:
-        sa_info = scan.k8s_sa_automount.get((namespace or "default", sa_name))
-        if sa_info and same_tree(posixpath.dirname(res.file), sa_info[0]):
+        if any(name == sa_name and (not namespace or ns is None or ns == namespace)
+               and same_tree(posixpath.dirname(res.file), info[0])
+               for (ns, name), info in scan.k8s_sa_automount.items()):
             scan.hit("K8S-001", res, line, f"serviceAccountName {sa_name} has automountServiceAccountToken: true", "Low")
 
 
@@ -3393,6 +3398,8 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
     name = meta.get("name")
     identity = name if isinstance(name, str) else "?"
     namespace = meta.get("namespace")
+    if namespace is not None and not isinstance(namespace, str):
+        namespace = UNKNOWN  # a list or map is no namespace: opaque, reviewed by hand
     if isinstance(namespace, str) and namespace:
         identity = f"{namespace}/{identity}"
     elif namespace is UNKNOWN:
@@ -3417,8 +3424,10 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         masters_only = bool(subjects) and all(s.get("kind") == "Group" and s.get("name") == "system:masters"
                                               for s in subjects)
         # kubeadm and EKS create these bindings themselves; matched on name, role and subjects.
-        platform = (kind, name, role.get("name"), tuple((s.get("kind"), s.get("name")) for s in subjects)) \
-            in PLATFORM_BINDINGS and (kind == "ClusterRoleBinding" or namespace == "kube-public")
+        # Compared, not hashed: a schema-invalid subject may hold a list or map.
+        binding = (kind, name, role.get("name"), tuple((s.get("kind"), s.get("name")) for s in subjects))
+        platform = any(binding == known for known in PLATFORM_BINDINGS) and (
+            kind == "ClusterRoleBinding" or namespace == "kube-public")
         if platform:
             scan.not_run.append(f"K8S-002: platform-managed binding {name} (kubeadm/EKS default); confirm it is "
                                 f"unmodified: {rel}:{res.line}")
@@ -3442,17 +3451,18 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         for rule in aslist(doc.get("rules")):
             if not isinstance(rule, dict):
                 continue
-            verbs = set(aslist(rule.get("verbs")))
-            resources = set(aslist(rule.get("resources")))
-            groups = set(aslist(rule.get("apiGroups")))
+            # Schema-invalid items (a nested list) match nothing instead of aborting the scan.
+            verbs = {v for v in aslist(rule.get("verbs")) if isinstance(v, str)}
+            resources = {v for v in aslist(rule.get("resources")) if isinstance(v, str)}
+            groups = {v for v in aslist(rule.get("apiGroups")) if isinstance(v, str)}
             if ("*" in resources and ("*" in groups or "" in groups) and "*" in verbs) or (
                     "*" in resources and "*" in groups and bool(verbs & {"*", "bind", "escalate", "impersonate"})):
-                ns_key = (namespace or "default") if kind == "Role" else None
+                ns_key = (namespace or None) if kind == "Role" else None
                 scan.k8s_wildcard_roles.setdefault((kind, ns_key, name), set()).add(posixpath.dirname(rel))
     if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
     if kind == "ServiceAccount" and isinstance(name, str) and doc.get("automountServiceAccountToken") is True:
-        scan.k8s_sa_automount[(namespace or "default", name)] = (
+        scan.k8s_sa_automount[(namespace or None, name)] = (
             posixpath.dirname(rel), doc.lines.get("automountServiceAccountToken", res.line))
     if kind == "Secret":
         for key in ("data", "stringData"):
@@ -3475,7 +3485,7 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
     sa_name = pod.get("serviceAccountName") or pod.get("serviceAccount")
     if kind in paths and isinstance(sa_name, str) and pod.get("automountServiceAccountToken") is not False:
         sa_key = "serviceAccountName" if "serviceAccountName" in pod.lines else "serviceAccount"
-        scan.k8s_pod_sa_refs.append((res, namespace or "default", sa_name, pod.lines.get(sa_key, res.line)))
+        scan.k8s_pod_sa_refs.append((res, namespace or None, sa_name, pod.lines.get(sa_key, res.line)))
     containers = [c for key in ("containers", "initContainers", "ephemeralContainers") for c in aslist(pod.get(key))]
     if kind in ("Workflow", "WorkflowTemplate", "ClusterWorkflowTemplate", "CronWorkflow") and \
             api.startswith("argoproj.io/"):

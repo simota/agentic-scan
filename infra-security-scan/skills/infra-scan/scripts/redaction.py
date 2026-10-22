@@ -466,8 +466,14 @@ def redact_lines(lines, *, syntax="hcl"):
                         # YAML instead follows its mapping/list indentation.
                         value = _Value()
                     break
-                # Inside a string, the value ends where that string does.
-                pending = _Value(_open_quote(line[:match.end()]))
+                # Inside a string closed later on this line with text after the
+                # key ("secretsmanager:GetSecretValue"]), the value ends with that
+                # string. Otherwise ("export DB_PASSWORD=", then the value as the
+                # next list item; an apostrophe in a comment) keep the tracker as
+                # it was: hiding the following lines is the safe reading.
+                quote = _open_quote(line[:match.end()])
+                inside = rest.split(quote, 1)[0] if quote and quote in rest else ""
+                pending = _Value(quote if re.search(r"[A-Za-z0-9]", inside) else None)
                 if pending.feed(rest):
                     value = pending
                     break
@@ -513,7 +519,7 @@ SAFE_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?(?:true|false|null|none|NONE|AWS_IAM|I
 ENTROPY = re.compile(r"[A-Za-z0-9+_-]{16,}")
 # A base64 key is one token: ENTROPY alone splits it at "/" and "=" into
 # pieces too short or too plain to judge, leaving long runs of the key.
-BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])")
+BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
 # Cloud resource IDs and ARNs are long and mixed but name no secret.
 RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
                          r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17}|[a-z0-9-]+_[a-z0-9_]+", re.IGNORECASE)
@@ -564,15 +570,17 @@ PUTTY = re.compile(r"PuTTY-User-Key-File-\d|^\s*Private-Lines:", re.IGNORECASE)
 def _base64_key(token):
     """Base64 rather than a path: "+" or padding, or slashes as rare as in
     random data (about 1 in 64; a path has one every few characters)."""
+    if len(token) < 24:  # a 16-byte key is 22 characters and "=="
+        return False
     shaped = "+" in token or token.endswith("=") or (
-        "/" in token and len(token) >= 32 and token.count("/") <= len(token) // 16)
+        "/" in token and len(token) >= 40 and token.count("/") <= len(token) // 16)
     letters = re.sub(r"[+/=]", "", token)
-    # Random characters switch between upper, lower and digit about every
-    # other character; CamelCase names (AWSElasticBeanstalkMulticontainerDocker)
-    # rarely. 32 random bytes carry no digit about once in a thousand keys.
+    # Random characters switch between upper, lower and digit about 63% of
+    # the time; CamelCase names (AmazonAPIGatewayPushToCloudWatchLogs) 20-30%.
+    # 32 random bytes carry no digit about once in a thousand keys.
     kinds = ["u" if c.isupper() else "l" if c.islower() else "d" for c in letters]
     switches = sum(a != b for a, b in zip(kinds, kinds[1:]))
-    return shaped and switches >= len(letters) * 0.35 and (_high_entropy(letters) or (
+    return shaped and switches >= len(letters) * 0.45 and (_high_entropy(letters) or (
         len(token) >= 40 and letters != letters.lower() and letters != letters.upper()))
 
 

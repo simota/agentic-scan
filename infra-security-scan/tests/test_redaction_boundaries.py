@@ -359,6 +359,40 @@ class RedactionBoundaryTest(unittest.TestCase):
                 self.assertNotIn(value, "\n".join(lines or []))
                 self.assertNotIn("4815" + "1623", "\n".join(lines or []))
 
+    def test_a_key_closing_its_string_still_hides_the_next_item(self):
+        # Fn::Join user data and exec-form commands put the value in the next
+        # list item, after the string holding the key has closed.
+        value = "plain" + "nextitem"
+        for name, text in {
+            "join.json": ('{"Resources": {"I": {"Type": "AWS::EC2::Instance", "Properties": {"UserData":\n'
+                          '  {"Fn::Join": ["", [\n    "export DB_PASSWORD=",\n    "' + value + '",\n'
+                          '    "\\n"]]}}}}}\n'),
+            "join.tf": ('resource "aws_instance" "i" {\n  user_data = join("", [\n'
+                        '    "export DB_PASSWORD=",\n    "' + value + '",\n  ])\n}\n'),
+            "cmd.tf": ('locals {\n  command = ["sh", "-c", "PASSWORD=",\n    "' + value + '"]\n}\n'),
+        }.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertNotIn(value, "\n".join(lines or []))
+
+    def test_an_apostrophe_in_a_comment_does_not_hide_the_file(self):
+        text = ('// don\'t hardcode password = "changeme" here\n'
+                'resource "aws_db_instance" "d" {\n  publicly_accessible = true\n}\n')
+        lines = render.source_lines(self.write("main.tf", text))
+        self.assertEqual(lines[1:], text.splitlines()[1:])
+
+    def test_16_byte_base64_keys_are_scrubbed(self):
+        import base64
+        import hashlib
+        import re
+        from redaction import scrub_line
+        leaks = 0
+        for seed in range(200):  # a 16-byte key is 22 characters and "=="
+            key = base64.b64encode(hashlib.sha256(b"k16-%d" % seed).digest()[:16]).decode()
+            shown = scrub_line(f'  k = "{key}"')
+            leaks += any(r in key for r in re.findall(r"[A-Za-z0-9+/=]{12,}", shown))
+        self.assertLess(leaks, 20)  # 41 of these 200 kept 12+ characters before
+
     def test_paths_arns_and_sources_are_not_base64_keys(self):
         from redaction import scrub_line
         for line in ('  crypto_key = "projects/prod1/locations/global/keyRings/Ring01/cryptoKeys/DiskKey01"',
@@ -368,7 +402,9 @@ class RedactionBoundaryTest(unittest.TestCase):
                      '  source = "github.com/Org1/TerraformModules/Vpc2"',
                      '  policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker"',
                      '  values = ["repo:ExampleOrganization/TerraformInfrastructure:*"]',
-                     '  x = "ExampleOrganizationName/InfrastructureAsCode+Extras"'):
+                     '  x = "ExampleOrganizationName/InfrastructureAsCode+Extras"',
+                     '  arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"',
+                     '  role = "AWSServiceRoleForAutoScaling/AWSServiceRoleForAutoScalingPlus"'):
             self.assertEqual(scrub_line(line), line)
 
     def test_iterator_values_do_not_pair_with_a_computed_name(self):

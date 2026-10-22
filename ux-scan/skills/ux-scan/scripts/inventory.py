@@ -85,7 +85,7 @@ JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
 CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)px[\"'])")
+JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)(px|rem|em)[\"'])")
 # Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
 # and bracketed regions are tracked by css_rules, including unquoted data URLs.
 # A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
@@ -109,7 +109,10 @@ JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
 REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|reducedMotion|ReducedMotion")
 TRUNCATION = re.compile(r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
                         r"textOverflow\s*:\s*[\"']ellipsis|WebkitLineClamp|whiteSpace\s*:\s*[\"']nowrap|"
-                        r"class(?:Name)?\s*=\s*(?:\{[^}]{0,200}?)?[\"'`][^\"'`]*\b(?:truncate|line-clamp-\d)\b")
+                        r"class(?:Name)?\s*=\s*(?:\{[^}]{0,200}?)?[\"'`][^\"'`]*\b(?:truncate|line-clamp-\d)\b|"
+                        # Vue :class="['truncate', …]" or "{ 'line-clamp-2': on }"; Svelte class:truncate={on}.
+                        r"(?<![\w-])(?:v-bind)?:class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b|"
+                        r"\bclass:(?:truncate|line-clamp-\d)\b")
 PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
                       r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w-])(?:left|right)(?=\s*:))|"
                       r"\b(marginLeft|marginRight|paddingLeft|paddingRight|borderLeft|borderRight)\s*:")
@@ -143,7 +146,8 @@ NOT_DESTRUCTIVE = re.compile(r"(?:^|\.)(?:classList|searchParams|params|headers|
 MAX_HANDLER_SCAN = 4000
 MAX_HANDLER_REFERENCE = 200
 CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
-ROUTE = re.compile(r"<Route\b[^<>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+# Attributes before path may hold an element (element={<Home />}) or an arrow function.
+ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
 LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
@@ -154,7 +158,7 @@ SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
 # Matched against a field name split into words (user_email, firstName, cc-number).
 # Distinctive stems match inside a word (useremail, telephone, billingaddress);
 # short ones must be whole words, so capacity, wildcard and microphone are not personal.
-PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)(?<!micro_)phone|tele?phone|(?<!auto)(?<!auto_)mobile|address|street|postal|post_?code|zip|"
+PERSONAL = re.compile(r"e_?mail|passw|(?<!micro)(?<!micro_)phone|tele?phone|(?<!auto)(?<!auto_)mobile|address|street|postal|post_?code|zip_?code|_zip_|"
                       r"country|(?:first|last|full|given|family|user)_?name|one_?time|"
                       r"_(?:tel|name|city|card|otp|cc_\w+)_")
 EMAIL_WORD = re.compile(r"e_?mail")
@@ -215,10 +219,15 @@ ENDCOMMENT = re.compile(r"\{%-?\s*endcomment\s*-?%\}")
 # JSX files: {/* */}, a // comment line (commented-out markup) and a /* */ comment, beside JS strings.
 JSX_TOKEN = re.compile(r"""\{/\*|^[ \t]*//[^\n]*|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""",
                        re.S | re.M)
+# Plain script: the JSX tokens without {/*, so "{/* note */ a: 1}" ends its comment at "*/".
+SCRIPT_TOKEN = re.compile(JSX_TOKEN.pattern.removeprefix(r"\{/\*|"), re.S | re.M)
 # A child that names an icon-only button: an image's alt text or a child's aria-label.
 # A blank value, quoted or as a {""} expression, names nothing.
 INNER_NAME = re.compile(r"""(?i)(?:<img\b[^<>]*?\salt|\saria-label(?:ledby)?)\s*=\s*"""
                         r"""(?:"\s*[^"\s]|'\s*[^'\s]|\{(?!\s*(["'`])\s*\1\s*\}))""")
+# A tag inside a button's content. A JSX {…} attribute may hold ">" (onMouseEnter={() => go()});
+# one holding "<" is left to the plain form, keeping the scan linear.
+MARKUP_TAG = re.compile(r"<(?:[^<>{}]|\{(?:[^{}<]|\{[^{}<]*\})*\})*>|<[^<>]*>")
 RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noembed", "noframes"}
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 
@@ -385,15 +394,19 @@ def _open_brace(text, k, floor):
     return -1
 
 
-def mask_markup_comments(text, *, jsx=False, template=False):
-    """Mask template comments, protecting quoted attributes and raw-text blocks."""
+def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
+    """Mask template comments, protecting quoted attributes and raw-text blocks.
+
+    With jsx, child_text=False reads every // line as a comment: plain script
+    (.ts, .cjs, <script> blocks) has no JSX child text.
+    """
     parts, end, cursor = [], 0, 0
-    token = JSX_TOKEN if jsx else TEMPLATE_TOKEN if template else MARKUP_TOKEN
+    token = (JSX_TOKEN if child_text else SCRIPT_TOKEN) if jsx else TEMPLATE_TOKEN if template else MARKUP_TOKEN
     budget = [JSX_TEXT_BUDGET[0] + JSX_TEXT_BUDGET[1] * len(text)]
     while match := token.search(text, cursor):
         found = match.group(0)
         if jsx and found.lstrip().startswith("//"):
-            if jsx_text_line(text, match.start(), budget):
+            if child_text and jsx_text_line(text, match.start(), budget):
                 cursor = match.end()  # "//" in JSX child text is visible text, not a comment.
                 continue
             parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
@@ -456,7 +469,8 @@ def embedded_regions(text, parsed):
         if tag.body is not None and tag.name in ("style", "script"):
             start, stop = tag.body
             target = css if tag.name == "style" else js
-            body = mask_css_comments(text[start:stop], style_line_comments(tag)) if target is css else text[start:stop]
+            body = (mask_css_comments(text[start:stop], style_line_comments(tag)) if target is css
+                    else mask_markup_comments(text[start:stop], jsx=True, child_text=False))
             target.append((start, stop, body))
         for name, (start, stop, expression) in tag.attribute_spans.items():
             if expression:
@@ -1260,7 +1274,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
                 inner = ICON_ELEMENT.sub("<i></i>", clean[end:close.start()])
                 # Content hidden from assistive technology (<span aria-hidden="true">×</span>) names nothing.
                 inner = strip_aria_hidden(inner)
-                if not re.sub(r"<[^<>]*>", "", inner).strip() and not INNER_NAME.search(inner):
+                if not MARKUP_TAG.sub("", inner).strip() and not INNER_NAME.search(inner):
                     acc["icon_buttons"].append({"element": name, "location": loc})
         elif re.fullmatch(r"(?:[A-Z]\w*)?IconButton", name) and not named and not has_name(attrs, ("label",)):
             acc["icon_buttons"].append({"element": name, "location": loc})
@@ -1323,6 +1337,8 @@ def inventory(root, flows=None):
         js = suffix in JS_EXT or suffix in EMBED_CSS_EXT
         if suffix in MARKUP_EXT:
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT, template=suffix in HTML_EXT)
+        elif suffix in JS_EXT:  # .ts and .cjs: script without markup.
+            text = mask_markup_comments(text, jsx=True, child_text=False)
         if suffix in CSS_EXT:
             text = mask_css_comments(text, suffix in LINE_COMMENT_EXT)
         parsed = (list(tags(text, vue=suffix == ".vue", html_names=suffix in HTML_EXT,
@@ -1342,7 +1358,9 @@ def inventory(root, flows=None):
             # strings and literal attributes retain their original contents.
             style_regions = [(*tag.body, mask_css_comments(text[slice(*tag.body)], style_line_comments(tag)))
                              for tag in parsed if tag.name == "style" and tag.body is not None]
-            text = replace_regions(text, style_regions)
+            script_regions = [(*tag.body, mask_markup_comments(text[slice(*tag.body)], jsx=True, child_text=False))
+                              for tag in parsed if tag.name == "script" and tag.body is not None]
+            text = replace_regions(text, style_regions + script_regions)
         source_lines = SourceLines(text)
         at = lambda i: f"{rel}:{source_lines(i)}"  # noqa: E731
         warn_at = lambda i: lambda reason: parse_warning(acc, at(i), reason)  # noqa: E731
@@ -1381,7 +1399,7 @@ def inventory(root, flows=None):
                 if value is not None:
                     z_index.add(value, at(m.start()))
             for m in JS_WIDTH.finditer(js_text):
-                v = px(m.group(2) or m.group(3), "px", warn_at(m.start()))
+                v = px(m.group(2) or m.group(3), m.group(4) or "px", warn_at(m.start()))
                 if v is not None and v >= 320:
                     widths.add(fmt(v), at(m.start()))
             for m in JS_MOTION.finditer(js_text):
@@ -1478,7 +1496,7 @@ def inventory(root, flows=None):
         "positive_tabindex": acc["positive_tabindex"], "state_branches": acc["state_branches"],
         "destructive_actions": acc["destructive_actions"],
         "motion": {"declarations": len(motion), "locations": motion[:MAX_LOCATIONS],
-                   "reduced_motion": reduced[:MAX_LOCATIONS]},
+                   "reduced_motion": reduced},
         "truncation": truncation.rows("pattern"),
         "locale_expansion": expansion,
     }

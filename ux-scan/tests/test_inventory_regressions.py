@@ -1448,6 +1448,43 @@ class InventoryRegressionTests(unittest.TestCase):
                           "d.jsx": 'const a = 1;\r// <img src="c" />\rexport const D = () => <img src="d" />;\r'})
         self.assertEqual([r["location"] for r in data["images"]], ["c.html:3", "d.jsx:3"])
 
+    def test_round_seven_documented_candidates(self):
+        # Quoted rem and em widths in style objects count at 16px, like spacing.
+        data = self.scan({"a.tsx": 'export const A = () => <div style={{ width: "30rem", minWidth: "25em" }} />;\n'})
+        self.assertEqual(sorted(r["value"] for r in data["fixed_widths"]), ["400px", "480px"])
+        # Comment lines in plain script and <script> blocks are masked, as in .js files.
+        comments = '// zIndex: 9999\n/* margin: "13px" */\nconst s = { zIndex: 7 };\n'
+        data = self.scan({"theme.ts": comments, "theme.cjs": comments,
+                          "A.vue": "<template><p>x</p></template>\n<script>\n" + comments + "</script>\n"})
+        self.assertEqual([(r["value"], sorted(r["locations"])) for r in data["z_index"]],
+                         [(7, ["A.vue:5", "theme.cjs:3", "theme.ts:3"])])
+        self.assertEqual(data["spacing"], [])
+        # "{/*" in plain script opens an ordinary comment, not a JSX one ending at "*/}".
+        data = self.scan({"t.ts": "const a = {/* note */ zIndex: 5 };\nconst b = { zIndex: 6 };\n"})
+        self.assertEqual([r["value"] for r in data["z_index"]], [5, 6])
+        # An element or arrow function before path does not hide a route.
+        data = self.scan({"App.tsx": '<Route element={<Settings />} path="/settings" />\n'
+                                     '<Route loader={() => load()} path="/admin" />\n<Route index element={<Home />} />\n'})
+        self.assertEqual([r["route"] for r in data["routes"]], ["/settings", "/admin"])
+        # Every reduced-motion query is listed, as documented.
+        data = self.scan({"m.css": "".join("@media (prefers-reduced-motion: reduce) { .a%d { transition: none; } }\n" % i
+                                          for i in range(7))})
+        self.assertEqual(len(data["motion"]["reduced_motion"]), 7)
+        # Vue class bindings and Svelte class directives that truncate.
+        data = self.scan({"T.vue": "<template><div :class=\"['truncate', size]\">a</div></template>\n",
+                          "S.svelte": "<p class:truncate={long}>x</p>\n<p :class=\"{ 'line-clamp-2': c }\">y</p>\n"})
+        self.assertEqual(sorted(loc for r in data["truncation"] for loc in r["locations"]),
+                         ["S.svelte:1", "S.svelte:2", "T.vue:1"])
+        # zip is a short stem: whole words and zipcode only.
+        data = self.scan({"F.tsx": 'export const F = () => <form><input aria-label="Level" name="gzipLevel" />'
+                                   '<input aria-label="ZIP" name="billingZip" /><input aria-label="ZIP" name="zipcode" /></form>;\n'})
+        self.assertEqual([r["name"] for r in data["inputs"] if "autocomplete" in r["missing"]], ["billingZip", "zipcode"])
+        # An arrow function in a child's prop is not button text.
+        data = self.scan({"B.tsx": "export const B = () => <button onClick={go}>"
+                                   "<TrashIcon onMouseEnter={() => setHover(true)} /></button>;\n"
+                                   "export const C = () => <button onClick={go}><Icon a={() => 1} />Delete</button>;\n"})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.tsx:1"])
+
 
 if __name__ == "__main__":
     unittest.main()

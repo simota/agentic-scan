@@ -74,18 +74,18 @@
     }
   ],
   "perspectives": [
-    {"name": "Data inventory and minimisation", "status": "applied", "note": "MN1-MN3 applied"},
+    {"name": "Data inventory and minimisation", "status": "applied", "note": "MN1-MN4 applied"},
     {"name": "Purpose and consent", "status": "applied", "note": "PC1 via C-03; PC2-PC4 applied"},
     {"name": "Retention and deletion", "status": "applied", "note": "RD2 via C-02; RD1, RD3 applied"},
     {"name": "Data subject rights", "status": "applied", "note": "DR1-DR4 applied"},
-    {"name": "Third-party sharing", "status": "applied", "note": "TP1-TP4 applied"},
+    {"name": "Third-party sharing", "status": "applied", "note": "TP1-TP6 applied"},
     {"name": "Logs, telemetry and errors", "status": "applied", "note": "LT2 via C-01; LT1, LT3, LT4 applied"},
-    {"name": "Exposure to other actors", "status": "applied", "note": "EX1-EX3 applied"},
+    {"name": "Exposure to other actors", "status": "applied", "note": "EX1-EX6 applied"},
     {"name": "Storage protection", "status": "applied", "note": "SP1-SP2 applied"},
     {"name": "Client-side tracking", "status": "applied", "note": "CT1 via C-03; CT2-CT3 applied"},
     {"name": "Identifiers and pseudonymisation", "status": "applied", "note": "ID1-ID2 applied"},
     {"name": "Non-production and derived copies", "status": "applied", "note": "NP1-NP3 applied; fixtures are synthetic"},
-    {"name": "Location and transfers", "status": "not checked", "note": "LO1 via C-04 not checked; regions set outside the repository"}
+    {"name": "Location and transfers", "status": "not checked", "note": "LO1 via C-04 not checked: regions are set outside the repository; LO2 not applicable: no per-tenant data residency feature"}
   ],
   "checked_ok": ["Account closure deletes orders, messages and uploaded files (api/accounts/close.py:31-45)", "Seeds and fixtures use synthetic data on example.com"],
   "decisions": ["Decide how to handle data already sent to the error tracking vendor before the fix"],

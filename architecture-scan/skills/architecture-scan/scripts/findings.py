@@ -15,7 +15,8 @@ are matched by `name` and replaced whole; the string lists (`checked_ok`,
 A `null` value removes an optional key from `meta`, a finding or a rule, and
 `remove` deletes list items (`{"next_steps": ["exact text"]}`) or ledger
 entries by id (`{"rules": ["R-05"]}`) before the fragment's own items are
-added; those items take the place of the first item removed from their list. A finding is never removed: a wrong one is marked `FalsePositive` or
+added; those items take the earliest place an item was removed from in their
+list. A finding is never removed: a wrong one is marked `FalsePositive` or
 `NotApplicable` with evidence, as SKILL.md requires.
 A complete finding whose ID already holds a finding with another title or
 location is refused as an ID collision; a correction sends only the fields
@@ -117,6 +118,8 @@ OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
 FINDING_ID = re.compile(r"A-[0-9]{3}")
+# renumber names findings A-001 to A-999.
+MAX_FINDINGS = 999
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
@@ -188,8 +191,6 @@ def read_json(path):
         raise SchemaError(f"{path}: {exc}") from exc
 
 
-# Characters that render as nothing: Hangul and Braille fillers, beside the
-# format, control, separator and unassigned categories `visible` skips.
 # Characters that render as nothing: Unicode's Default_Ignorable_Code_Point
 # set (soft hyphen, joiners, variation selectors, Hangul fillers, Khmer
 # inherent vowels, tags …) and the blank Braille pattern, beside the format,
@@ -426,6 +427,10 @@ def validate(doc, complete=False):
         # Extra run context is small; deep nesting would inflate the indented record.
         if _depth(value) > META_DEPTH:
             raise SchemaError(f"meta.{key}: nested more than {META_DEPTH} levels deep")
+    if len(_list(doc.get("findings", []), "findings")) > MAX_FINDINGS:
+        # Refused at merge, so no record is written that renumber cannot number.
+        raise SchemaError(f"findings: more than {MAX_FINDINGS} cannot be numbered A-001 to "
+                          f"A-{MAX_FINDINGS}")
     seen = set()
     for i, f in enumerate(_list(doc.get("findings", []), "findings")):
         try:
@@ -871,8 +876,6 @@ def _renumber_file(target):
     """Renumber target in place; return (ID mapping, whether the record changed)."""
     doc = read_json(target)
     validate(doc)
-    if len(doc.get("findings", [])) > 999:
-        raise SchemaError(f"{target}: more than 999 findings cannot be numbered A-NNN")
     renamed, changed = renumber(doc)
     validate(renamed)
     # IDs that already hold their final names can still sit in the wrong order

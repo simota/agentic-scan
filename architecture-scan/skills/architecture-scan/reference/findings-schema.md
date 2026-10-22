@@ -149,8 +149,8 @@ Never edit `findings.json` by hand; every correction is a fragment:
   `assessor` and `lang`, which merge otherwise lets a fragment omit) cannot be
   removed; replace its value instead
 - `remove` deletes exact items from the string lists before the fragment's own
-  items are added, and those items take the place of the first one removed
-  (these lists are ordered: `next_steps` is the order of work), so one
+  items are added, and those items take the earliest place an item was
+  removed from (these lists are ordered: `next_steps` is the order of work), so one
   fragment replaces an item in place: `{"remove":
   {"next_steps": ["Fix A-001 first"]}, "next_steps": ["Fix A-002 first"]}`.
   It also deletes a spurious ledger entry by id: `{"remove": {"rules":
@@ -163,7 +163,7 @@ Never edit `findings.json` by hand; every correction is a fragment:
   `analysis` objects are replaced whole
 
 When `check` fails: correct the record with a fragment, `renumber` if a
-finding was added, regraded or excluded, render, and check again.
+finding was added, regraded, relocated or excluded, render, and check again.
 
 ## Numbering
 
@@ -179,13 +179,13 @@ segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
 text (`A-001を`) or joined to another ID (`A-002/A-001`, `A-002-A-001`) is
 rewritten. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
-merge that adds, regrades or excludes a finding (excluded verdicts sort
-last), then render.
+merge that adds, regrades, relocates or excludes a finding (excluded verdicts
+sort last), then render.
 
 After a renumber, use only the new IDs it printed. Merge matches findings by
 ID alone, so a fragment written earlier that updates `A-002` would change
 whichever finding is `A-002` now; rewrite or discard unmerged fragments before
-merging them. If a finding is added, regraded or excluded later, merge it, renumber
+merging them. If a finding is added, regraded, relocated or excluded later, merge it, renumber
 again and re-render.
 
 ## Merge guarantees
@@ -279,7 +279,7 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime condition), `Suspected` |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`BL1`…) from the finding's own perspective: its two-letter prefix must be the one `reference/perspectives.md` gives `category`, and the step must exist there (`DM1`–`DM5`, not `DM9`) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. The path is relative to the repository root (the checkout given to `check --repo`), not to the review scope. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them. The path is relative to the repository root (the checkout given to `check --repo`), not to the review scope; an absolute path or a `..` segment is accepted only when it resolves inside that checkout, but a relative path keeps local directories out of the shared report. Lines are ASCII digits from 1, and a range does not descend. Paths may contain spaces and colons; the final colon separates the line number. CR and LF are not allowed. Each location is rendered as literal code in the Markdown report so filename punctuation is preserved |
 | `title`, `scenario`, `blast_radius`, `trace`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/rules.md` §5) |
 | `contrast`, `rule` | Optional strings: the module or path that keeps the rule; the ledger ID, or several separated by commas (`R-01, R-02`) |
 | `validation.verdict` | Required, also for an unexamined finding (`Unverified`): `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need `evidence`, and `check` requires it to cite a `path:line` |

@@ -382,6 +382,12 @@ class RedactionBoundaryTest(unittest.TestCase):
                     runs = re.findall(r"[A-Za-z0-9+/=]{12,}", shown)
                     self.assertEqual([r for r in runs if r in key], [], shown)
 
+    def test_location_past_the_end_of_the_file_gets_no_excerpt_heading(self):
+        self.write("a.tf", self.EBS)
+        record = render.empty_record()
+        record["findings"] = [{"id": "F-001", "location": "a.tf:50", "resources": ["x"]}]
+        self.assertEqual(render.attach_sources(record, self.repo), {})
+
 
 if __name__ == "__main__":
     unittest.main()

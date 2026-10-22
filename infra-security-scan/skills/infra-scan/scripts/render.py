@@ -901,7 +901,8 @@ def attach_sources(data, repo, context=3):
             continue
         end = min(end, start + 40)
         lo, hi = max(1, start - context), min(len(lines), end + context)
-        out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
+        if lo <= hi:  # a line past the end of the file (an edited file) has nothing to show
+            out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
     return out
 
 

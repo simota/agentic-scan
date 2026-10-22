@@ -87,7 +87,11 @@ class WorkflowTest(unittest.TestCase):
                    "pods.json": {"apiVersion": "v1", "kind": "List", "items": [],
                                  "metadata": {"resourceVersion": ""}},
                    "role.json": {"Role": {"RoleName": "r", "Arn": "arn:aws:iam::1:role/r"}},
-                   "disk.json": {"name": "d", "selfLink": "https://www.googleapis.com/compute/v1/x"}}
+                   "disk.json": {"name": "d", "selfLink": "https://www.googleapis.com/compute/v1/x"},
+                   # Shapes the scanner reads as exports (describe-trails, get-public-access-block).
+                   "trails.json": {"trailList": [{"Name": "t", "S3BucketName": "acme-trail-logs",
+                                                  "IsMultiRegionTrail": False}]},
+                   "pab.json": {"PublicAccessBlockConfiguration": {"BlockPublicAcls": False}}}
         for name, doc in exports.items():
             with self.subTest(name=name):
                 path = self.repo / name

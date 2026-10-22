@@ -2838,6 +2838,8 @@ AWS_EXPORT_KEYS = {
     "UserDetailList", "RoleDetailList", "GroupDetailList", "Policies", "Vpcs", "Subnets", "Clusters",
     "Snapshots", "Volumes", "LoadBalancers", "FunctionUrlConfigs", "Distributions", "DistributionList",
     "Users", "Roles", "Groups", "AccessKeyMetadata", "KeyMetadata", "SecretList", "NetworkAcls", "RouteTables",
+    # Every top-level shape aws_export reads (describe-trails, get-public-access-block).
+    "trailList", "PublicAccessBlockConfiguration",
 }
 
 

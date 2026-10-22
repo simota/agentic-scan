@@ -25,7 +25,8 @@ from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      file_mode, read_json, resolve_path, validate)
+                      escape_unencodable_console, file_mode, read_json, resolve_path,
+                      validate)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -721,6 +722,7 @@ def main(argv=None):
     parser.add_argument("--out", required=True)
     parser.add_argument("--lang", choices=("ja", "en"))
     args = parser.parse_args(argv)
+    escape_unencodable_console()
     if not args.out.strip():
         parser.error("--out must name a directory")  # Path("") would be the cwd
     try:

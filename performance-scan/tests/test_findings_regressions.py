@@ -340,6 +340,19 @@ class ReviewRoundEightTests(unittest.TestCase):
             self.assertIn("merged 1 fragment", result.stdout)
             self.assertTrue(target.is_file())
 
+    def test_render_succeeds_when_the_console_cannot_show_the_output_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            out = Path(directory) / "診断"
+            out.mkdir()
+            source = out / "findings.json"
+            source.write_text(json.dumps(complete_doc()), encoding="utf-8")
+            result = run_cli("render.py", source, "--out", out,
+                             env_updates={"PYTHONIOENCODING": "cp1252"})
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertNotIn("Traceback", result.stderr)
+            self.assertIn("wrote ", result.stdout)
+            self.assertTrue((out / "dashboard.html").is_file())
+
     def test_merge_creates_the_output_directory(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

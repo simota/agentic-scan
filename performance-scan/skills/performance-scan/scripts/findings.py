@@ -652,7 +652,12 @@ def _output_problems(out, present, allow):
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        if name.isprintable():
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        else:
+            # One line per problem: quote a name holding a line break or another
+            # unprintable character. Its escaped form is not a usable --allow value.
+            problems.append(f"unexpected output: {name!r} (rename or remove it)")
     readable = set()
     for name in sorted(OUTPUTS & present):
         path = out / name
@@ -774,6 +779,15 @@ def cmd_check(args):
     return 0
 
 
+def escape_unencodable_console():
+    """A path the console encoding cannot show must not turn a completed command
+    into a traceback and exit 1."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -786,12 +800,7 @@ def main(argv=None):
     c.add_argument("--allow", action="append", default=[])
     c.set_defaults(func=cmd_check)
     args = parser.parse_args(argv)
-    # A path the console encoding cannot show must not turn a completed command
-    # into a traceback and exit 1.
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(errors="backslashreplace")
+    escape_unencodable_console()
     return args.func(args)
 
 

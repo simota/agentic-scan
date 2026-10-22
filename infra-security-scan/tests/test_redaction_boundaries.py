@@ -304,6 +304,51 @@ class RedactionBoundaryTest(unittest.TestCase):
                     for page in self.assert_hidden(self.record("settings.yaml:1-10"), value):
                         self.assertIn("publicly_accessible: true", page)
 
+    def test_actions_image_tags_and_arns_are_not_secret_keys(self):
+        # "secretsmanager:" inside a value read as a key hid the rest of the
+        # line, and its unclosed quote hid every line after it.
+        cases = {
+            "iam.tf": ('data "aws_iam_policy_document" "task" {\n  statement {\n'
+                       '    actions   = ["secretsmanager:GetSecretValue"]\n'
+                       '    resources = ["arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/db"]\n'
+                       '  }\n}\n'),
+            "policy.json": ('{\n  "Statement": [{\n    "Effect": "Allow",\n'
+                            '    "Action": "secretsmanager:GetSecretValue",\n    "Resource": "*"\n  }]\n}\n'),
+            "pod.tf": ('resource "kubernetes_pod" "eso" {\n  spec {\n    container {\n'
+                       '      image = "external-secrets/external-secrets:v0.9.0"\n'
+                       '      security_context {\n        privileged = true\n      }\n    }\n  }\n}\n'),
+            "pod.yaml": ('apiVersion: v1\nkind: Pod\nmetadata:\n  name: app\nspec:\n  containers:\n'
+                         '    - name: app\n      image: ghcr.io/acme/token-service:1.4.2\n'
+                         '      securityContext:\n        privileged: true\n'),
+        }
+        # scrub_line may still trim a value naming a secret word on its own
+        # line (token-service:1.4.2); every other line must survive intact.
+        visible = {
+            "iam.tf": ('    actions   = ["secretsmanager:GetSecretValue"]', '  }'),
+            "policy.json": ('    "Action": "secretsmanager:GetSecretValue",', '    "Resource": "*"'),
+            "pod.tf": ('        privileged = true', '      security_context {'),
+            "pod.yaml": ('      securityContext:', '        privileged: true'),
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertEqual(len(lines), len(text.splitlines()))
+                self.assertNotIn("[redacted]", lines)
+                for line in visible[name]:
+                    self.assertIn(line, lines)
+
+    def test_secret_keys_beside_a_colon_stay_hidden(self):
+        value = "synthetic-" + "colon-value"
+        for name, text in {
+            "a.json": '{\n  "db_password":"' + value + '",\n  "x": 1\n}\n',
+            "b.yaml": 'db_password: ' + value + '\nx: 1\n',
+            "c.tf": 'locals {\n  cfg = { db_password: "' + value + '" }\n}\n',
+            "d.tf": 'locals {\n  run = "app DB_PASSWORD:' + value + '"\n}\n',
+        }.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertNotIn(value, "\n".join(lines or []))
+
 
 if __name__ == "__main__":
     unittest.main()

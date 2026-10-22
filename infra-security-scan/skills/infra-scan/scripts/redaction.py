@@ -72,8 +72,24 @@ def _secret_fields(line):
     urls = [match.span() for match in URL.finditer(line)]
     return (match for match in SECRET_FIELD.finditer(line)
             if not any(start <= match.start() < end for start, end in urls)
+            and not _joined_colon(line, match)
             # http_tokens = "optional" is IMDS evidence, not a token.
             and not PUBLIC_WORDS.fullmatch(match.group().rstrip(":= \t\"'").lstrip("\"'")))
+
+
+def _joined_colon(line, match):
+    """An unquoted name glued to a word by ":" is a value, not a key.
+
+    secretsmanager:GetSecretValue, external-secrets:v0.9.0 and the parts of
+    an ARN are IAM actions, image tags and identifiers. YAML needs a space
+    after a key's colon and JSON a quoted key; in HCL the word would be a
+    bare reference. Treating them as keys hid the rest of the line, and an
+    unclosed quote in that rest hid the lines after it. Free text such as
+    "DB_PASSWORD:x" in a script is still caught by scrub_line.
+    """
+    text = match.group()
+    return (text.endswith(":") and not text[:-1].rstrip().endswith(("\"", "'"))
+            and line[match.end():match.end() + 1].isalnum())
 
 
 def _secret_field(line):

@@ -117,7 +117,7 @@ class MarkdownRenderingTests(unittest.TestCase):
             ("javascript:alert(1)", "Reference — javascript:alert(1)"),
             ("java\nscript:alert(1)", "Reference — java<br>script:alert(1)"),
             ("data:text/html,<email>", "Reference — data:text/html,&lt;email&gt;"),
-            ("https://[broken", "Reference — https://\\[broken"),
+            ("https://[broken", "Reference — https\\://\\[broken"),
         )
         for url, expected in cases:
             with self.subTest(url=url):
@@ -137,6 +137,35 @@ class MarkdownRenderingTests(unittest.TestCase):
             with self.subTest(text=text):
                 self.assertIn(link, render.markdown_text(text))
         self.assertEqual(render.markdown_text("xhttps://example.com/a_b"), "xhttps://example.com/a\\_b")
+
+    def test_an_exclamation_mark_before_a_url_never_makes_an_image(self):
+        # `![label](target)` is image syntax: the text would vanish and the
+        # report would load a remote resource when it is viewed.
+        self.assertEqual(render.markdown_text("See!https://example.com/a now"),
+                         "See\\![https://example.com/a](<https://example.com/a>) now")
+        self.assertEqual(render.markdown_text("Wow!www.example.com"),
+                         "Wow\\![www.example.com](<http://www.example.com>)")
+
+    def test_unlinked_urls_cannot_be_autolinked_with_escapes(self):
+        # Text GFM would still autolink keeps its escapes in the target, so
+        # URLs that are not turned into explicit links stay literal text.
+        for text, expected in (
+                ("Requests go to www.<tracker>.com", "Requests go to www\\.&lt;tracker&gt;.com"),
+                ("Open http://localhost:3000/?debug_mode=1",
+                 "Open http\\://localhost:3000/?debug\\_mode=1"),
+                ("prefix_www.example.com/a_b", "prefix\\_www\\.example.com/a\\_b"),
+                ("See https://例え.jp/a_b", "See https\\://例え.jp/a\\_b")):
+            with self.subTest(text=text):
+                self.assertEqual(render.markdown_text(text), expected)
+        # Words that merely contain a scheme or `www.` are left alone.
+        self.assertEqual(render.markdown_text("awww.mp3 xhttps://a"), "awww.mp3 xhttps://a")
+
+    def test_unsupported_reference_text_links_urls_like_other_prose(self):
+        self.assertEqual(
+            render.markdown_reference({"title": "Policy at https://example.com/privacy_policy",
+                                       "url": "mailto:privacy@example.com"}),
+            "Policy at [https://example.com/privacy\\_policy](<https://example.com/privacy_policy>)"
+            " — mailto:privacy@example.com")
 
     def test_ftp_urls_stay_literal_text(self):
         self.assertEqual(render.markdown_text("毎晩 FTP://files.example.com/daily_users.csv へ"),

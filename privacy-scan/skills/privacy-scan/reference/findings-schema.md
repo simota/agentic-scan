@@ -150,7 +150,10 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
 `UNKNOWN`. HTTP(S) and `www.` URLs written in prose become explicit Markdown
 links (also directly after Japanese text, and with an upper-case scheme), so
 renderers that link bare URLs do not keep escape characters in the target;
-`ftp://` URLs stay literal text. Excluded findings (`FalsePositive`,
+`ftp://` URLs, and URLs not linked this way (a `www.<placeholder>`, a dotless or
+non-ASCII host), stay literal text rather than links that keep escapes. A `!`
+before a URL stays text and never makes the link an image. Prose in a reference
+whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard
 filter instead of appearing under their severity; a filter that matches nothing says so. Dashboard cells wrap
 long paths and keep line breaks.

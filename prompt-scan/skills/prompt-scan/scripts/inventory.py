@@ -294,7 +294,8 @@ def git_state(root, read=()):
     """HEAD, and whether what the scan read under root differs from it (None when Git cannot tell).
 
     Untracked files count, and so do ignored ones and files inside submodules among `read` (the paths
-    the inventory reports, as on disk): the scan read them, but HEAD does not hold them.
+    the inventory reports, as on disk): the scan read them, but HEAD does not hold them. A file read
+    under skip-worktree or assume-unchanged leaves the answer None: git status does not compare it.
     """
     def git(*args, ok=(0,), stdin=None):
         try:
@@ -325,13 +326,18 @@ def git_state(root, read=()):
         return commit, None
     if status or not read:
         return commit, bool(status)
-    # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files.
-    stage = git("ls-files", "-z", "--stage", "--", ".")
+    # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files. -v tags each entry: S marks
+    # skip-worktree and a lowercase tag assume-unchanged, flags under which git status hides edits.
+    stage = git("ls-files", "-z", "-v", "--stage", "--", ".")
     if stage is None:
         return commit, None
-    modules = [entry.split("\t", 1)[1] for entry in stage.split("\0") if entry.startswith("160000 ")]
+    entries = [(entry.split(" ", 2), entry.split("\t", 1)[1]) for entry in stage.split("\0") if "\t" in entry]
+    modules = [path for (_tag, mode, _rest), path in entries if mode == "160000"]
     if any(path.startswith(module + "/") for path in read for module in modules):
         return commit, True
+    read_set = set(read)
+    if any(path in read_set and (tag == "S" or tag.islower()) for (tag, _mode, _rest), path in entries):
+        return commit, None
     # check-ignore exits 0 when some path is ignored and 1 when none is.
     ignored = git("check-ignore", "--stdin", "-z", ok=(0, 1), stdin="\0".join(read) + "\0")
     return commit, None if ignored is None else bool(ignored)

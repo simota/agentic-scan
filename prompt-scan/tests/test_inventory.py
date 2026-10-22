@@ -154,6 +154,14 @@ class InventoryTest(unittest.TestCase):
         subprocess.run([*git, "commit", "-qm", "init"], check=True)
         return root
 
+    def test_index_flags_that_hide_edits_leave_dirty_undetermined(self):
+        for flag in ("--skip-worktree", "--assume-unchanged"):
+            root = self.git_repo({"prompts/a.md": "hi\n", "prompts/b.md": "hi\n"})
+            self.assertIs(inventory.scan(root)["dirty"], False)
+            subprocess.run(["git", "-C", str(root), "update-index", flag, "prompts/a.md"], check=True)
+            (root / "prompts" / "a.md").write_text("edited, but git status does not say so\n", encoding="utf-8")
+            self.assertIsNone(inventory.scan(root)["dirty"], flag)
+
     def test_no_filter_driver_from_the_repository_runs(self):
         root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n",
                               "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n"})

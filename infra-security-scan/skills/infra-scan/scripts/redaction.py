@@ -77,19 +77,27 @@ def _secret_fields(line):
             and not PUBLIC_WORDS.fullmatch(match.group().rstrip(":= \t\"'").lstrip("\"'")))
 
 
-def _joined_colon(line, match):
-    """An unquoted name glued to a word by ":" is a value, not a key.
+IMAGE_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?=[\"'\s,\]@]|$)")
 
-    secretsmanager:GetSecretValue, external-secrets:v0.9.0 and the parts of
-    an ARN are IAM actions, image tags and identifiers. YAML needs a space
-    after a key's colon and JSON a quoted key; in HCL the word would be a
-    bare reference. Treating them as keys hid the rest of the line, and an
-    unclosed quote in that rest hid the lines after it. Free text such as
-    "DB_PASSWORD:x" in a script is still caught by scrub_line.
+
+def _joined_colon(line, match):
+    """A segment of an ARN or an image reference, glued to its value by ":".
+
+    In arn:aws:secretsmanager:...:secret:prod/db and
+    external-secrets/external-secrets:v0.9.0 the word is an identifier, not
+    a key; read as a key it hid the rest of the line, and an unclosed quote
+    in that rest hid the lines after it. Only these shapes: githubtoken:x
+    or DB_PASSWORD:1234 in free text stay keys, since scrub_line misses
+    glued words and numeric values. (secretsmanager:Action is in PUBLIC_WORDS.)
     """
     text = match.group()
-    return (text.endswith(":") and not text[:-1].rstrip().endswith(("\"", "'"))
-            and line[match.end():match.end() + 1].isalnum())
+    if not text.endswith(":") or text[:-1].rstrip().endswith(("\"", "'")):
+        return False
+    if not line[match.end():match.end() + 1].isalnum():
+        return False
+    arn_segment = match.start() > 0 and line[match.start() - 1] == ":"
+    image = "/" in text and IMAGE_TAG.match(line, match.end()) is not None
+    return arn_segment or image
 
 
 def _secret_field(line):
@@ -486,7 +494,7 @@ SECRET_WORD = re.compile(
     r"credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|bearer|sk|"
     r"tls\.key|ssh[-_]?key)(?![a-z])")
 # Public spellings that contain a secret word but name no secret.
-PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|"
+PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|secretsmanager|"
                           r"block[-_]project[-_]ssh[-_]keys|authori[sz]ation[-_]scopes|"
                           r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
                           r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
@@ -552,6 +560,17 @@ PIPED_VALUE = re.compile(r"\b((?:echo|printf)\s+(?:-[a-zA-Z]+\s+)*)([^|\s][^|]*?
 # "/" split them into runs too short for the entropy check.
 CRYPT_HASH = re.compile(r"\$(?:1|2[abxy]?|5|6|y|apr1|argon2(?:id|i|d))\$[^\s:'\"]+")
 PUTTY = re.compile(r"PuTTY-User-Key-File-\d|^\s*Private-Lines:", re.IGNORECASE)
+
+
+def _base64_key(token):
+    """Base64 rather than a path: "+" or padding, or slashes as rare as in
+    random data (about 1 in 64; a path has one every few characters)."""
+    shaped = "+" in token or token.endswith("=") or (
+        "/" in token and len(token) >= 32 and token.count("/") <= len(token) // 16)
+    letters = re.sub(r"[+/=]", "", token)
+    # 32 random bytes carry no digit about once in a thousand keys.
+    return shaped and (_high_entropy(letters) or (
+        len(token) >= 40 and letters != letters.lower() and letters != letters.upper()))
 
 
 def _high_entropy(token):
@@ -694,8 +713,7 @@ def scrub_line(line, syntax="hcl"):
         if "redis-cli" in line:
             line = _redact_values(REDIS_AUTH, line, 3)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
-    line = BASE64_TOKEN.sub(lambda m: "[redacted]" if re.search(r"[+/=]", m.group()) and
-                            _high_entropy(re.sub(r"[+/=]", "", m.group())) else m.group(), line)
+    line = BASE64_TOKEN.sub(lambda m: "[redacted]" if _base64_key(m.group()) else m.group(), line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
     probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), decoded)

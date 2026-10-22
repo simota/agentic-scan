@@ -737,10 +737,21 @@ def hcl_has_paired_secret(text):
                 return True
         # As for blocks below: an object literal (jsonencode environment lists)
         # whose name is an expression and whose value beside it is not a reference.
-        if HCL_EXPR_NAME.search(line):
-            for near in lines[max(0, n - 3):n + 4]:
-                value = HCL_VALUE.search(near)
-                if value and not SAFE_VALUE.fullmatch(near[value.end():].strip()):
+        name = HCL_EXPR_NAME.search(line)
+        if name:
+            for k in range(max(0, n - 3), min(len(lines), n + 4)):
+                value = HCL_VALUE.search(lines[k])
+                if not value or SAFE_VALUE.fullmatch(lines[k][value.end():].strip()):
+                    continue
+                # The same object only: no brace between them (a resource's
+                # name and a nested setting { value = ... } are not a pair).
+                if k < n or (k == n and value.start() < name.start()):
+                    between = "\n".join(lines[k:n + 1])[value.end():len("\n".join(lines[k:n])) + name.start()
+                                                           + (1 if k < n else 0)]
+                else:
+                    between = "\n".join(lines[n:k + 1])[name.end():len("\n".join(lines[n:k])) + value.start()
+                                                           + (1 if k > n else 0)]
+                if "{" not in between and "}" not in between:
                     return True
     top = parse_hcl(text)
     pending = list(top)
@@ -901,7 +912,7 @@ def attach_sources(data, repo, context=3):
             continue
         end = min(end, start + 40)
         lo, hi = max(1, start - context), min(len(lines), end + context)
-        if lo <= hi:  # a line past the end of the file (an edited file) has nothing to show
+        if start <= len(lines):  # a line past the end of the file (an edited file) has nothing to show
             out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
     return out
 

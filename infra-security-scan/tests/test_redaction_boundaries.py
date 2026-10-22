@@ -344,10 +344,32 @@ class RedactionBoundaryTest(unittest.TestCase):
             "b.yaml": 'db_password: ' + value + '\nx: 1\n',
             "c.tf": 'locals {\n  cfg = { db_password: "' + value + '" }\n}\n',
             "d.tf": 'locals {\n  run = "app DB_PASSWORD:' + value + '"\n}\n',
+            # Glued names and numbers, which scrub_line does not catch on its own.
+            "e.yaml": 'spec:\n  cmd: login githubtoken:' + value + '\n',
+            "f.yaml": 'spec:\n  cmd: jwtsecret:' + value + '\n',
+            "g.yaml": 'spec:\n  pin: DB_PASSWORD:4815' + '1623\n',
         }.items():
             with self.subTest(name=name):
                 lines = render.source_lines(self.write(name, text))
                 self.assertNotIn(value, "\n".join(lines or []))
+                self.assertNotIn("4815" + "1623", "\n".join(lines or []))
+
+    def test_paths_arns_and_sources_are_not_base64_keys(self):
+        from redaction import scrub_line
+        for line in ('  crypto_key = "projects/prod1/locations/global/keyRings/Ring01/cryptoKeys/DiskKey01"',
+                     '  resources = ["arn:aws:s3:::logs/AWSLogs/123456789012/CloudTrail/*"]',
+                     '  image = "gcr.io/Prod1Project/backendApi/server:v2"',
+                     '  path = "/opt/App2/Config/ProdSettings1"',
+                     '  source = "github.com/Org1/TerraformModules/Vpc2"'):
+            self.assertEqual(scrub_line(line), line)
+
+    def test_a_resource_name_does_not_pair_with_a_nested_block_value(self):
+        for text in ('resource "aws_ecs_cluster" "c" {\n  name = var.cluster_name\n'
+                     '  setting {\n    name  = "containerInsights"\n    value = "enabled"\n  }\n}\n',
+                     'resource "aws_autoscaling_group" "g" {\n  name = local.name\n'
+                     '  tag {\n    key   = "Name"\n    value = "web"\n    propagate_at_launch = true\n  }\n}\n'):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
 
     def test_object_literal_with_a_computed_name_hides_its_value(self):
         value = "plain" + "objectvalue"
@@ -385,8 +407,10 @@ class RedactionBoundaryTest(unittest.TestCase):
     def test_location_past_the_end_of_the_file_gets_no_excerpt_heading(self):
         self.write("a.tf", self.EBS)
         record = render.empty_record()
-        record["findings"] = [{"id": "F-001", "location": "a.tf:50", "resources": ["x"]}]
-        self.assertEqual(render.attach_sources(record, self.repo), {})
+        for line in (5, 7, 50):  # the file has four lines; 5-7 would show context only
+            with self.subTest(line=line):
+                record["findings"] = [{"id": "F-001", "location": f"a.tf:{line}", "resources": ["x"]}]
+                self.assertEqual(render.attach_sources(record, self.repo), {})
 
 
 if __name__ == "__main__":

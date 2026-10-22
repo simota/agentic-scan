@@ -3,8 +3,10 @@
 **Read when:** REPORT — writing fragments for `scripts/findings.py merge`.
 
 `scripts/findings.py check <out>/findings.json` (path relative to the skill's
-directory, SKILL.md *Paths*) enforces this schema; `merge` checks every
-fragment before it changes anything. With `units.json` beside it, every
+directory, SKILL.md *Paths*) enforces this schema; `merge` applies the
+fragments in order and checks the merged result before it changes anything, so
+a field a later fragment of the same batch replaces is judged by its final
+value. With `units.json` beside it, every
 `unit_ref`, `entry_ref` and `purpose_ref` must exist there.
 
 With descriptor-relative file operations, `merge`, `units`, and `renumber`
@@ -67,7 +69,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `entry_ref` | Optional: the entry point id the element is, or hangs off; merge `""` to detach it |
 | `purpose_ref` | The purpose item id the finding is measured against; required for PX, OB and `Purpose-dependent` |
 | `element` | What is unneeded, named as a reader would find it ("Route GET /debug/dump", "Dependency moment") |
-| `location` | `path:line` or `path:line-line`, relative to the repository; where the subtraction starts (a definition, an entry point, a manifest line) |
+| `location` | `path:line` or `path:line-line`, relative to the repository; where the subtraction starts (a definition, an entry point, a manifest line). The path holds no control or line-break characters (tab, CR) and no whitespace right before `:line`; the same holds for `occurrences`, entry point locations and unit paths |
 | `occurrences` | Optional: every `path:line` the same subtraction touches |
 | `observed` | Optional: the code or configuration as found |
 | `basis` | Why it does not earn its place: the evidence of non-use (searches, inventory keys, reference counts) or of excess (the purpose item, scale, usage, number of implementations or configurations actually used) |
@@ -97,7 +99,8 @@ entry point and unit ids, and consumer names. A refused batch leaves the
 existing record unchanged, even if an earlier fragment in the batch was valid.
 
 The three-digit id format supports at most 999 findings in one record,
-including excluded findings. Text must be valid Unicode without NUL characters;
+including excluded findings. Text must be valid Unicode without NUL characters,
+in every field and key, including fields this schema does not name;
 finding titles must fit on one line. Reference `type` and `title`, when supplied,
 must be strings, and URLs must also pass the shared renderer's http(s) checks.
 

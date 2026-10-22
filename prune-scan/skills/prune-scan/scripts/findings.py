@@ -33,7 +33,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scan_report_kit.output import write_output  # noqa: E402
 from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
-from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
+from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
@@ -58,8 +58,12 @@ UNIT_ID = re.compile(r"^UN-[0-9]{2,3}\Z")
 ENTRY_ID = re.compile(r"^EP-[0-9]{2,3}\Z")
 PURPOSE_ID = re.compile(r"^PB-[0-9]{2,3}\Z")
 PERSPECTIVE = re.compile(r"^(?:%s)\Z" % "|".join(f"{family}[1-{steps}]" for family, steps in HUNT_STEPS.items()))
-LOCATION = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|:))[^\s:][^:\n]*:[1-9][0-9]*(?:-[1-9][0-9]*)?\Z")
-REPO_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|\Z))[^\s:][^:\n]*\Z")
+# A path starts and ends with a visible character and holds no control or line
+# break characters, so a stray tab, CR or space before :line is refused.
+PATH_CHARS = r"[^:\x00-\x1f\x7f-\x9f\u2028\u2029]"
+LOCATION = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|:))(?![^:]*\s:)(?!\s)%s+:[1-9][0-9]*(?:-[1-9][0-9]*)?\Z"
+                      % PATH_CHARS)
+REPO_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|\Z))(?!\s)%s+(?<!\s)\Z" % PATH_CHARS)
 TEXT_FIELDS = ("title", "category", "element", "observed", "basis", "impact", "risk")
 SUBTRACTION_FIELDS = ("what", "remains", "loses")
 INVALID_TEXT = re.compile(r"[\x00\ud800-\udfff]")
@@ -140,6 +144,23 @@ def _items(units, key, where, id_rx, id_hint, required=True):
     return items
 
 
+def _no_nul(record, where):
+    """Fields the schema does not name are kept as written, so NUL is refused in every string and key.
+
+    Runs after the named fields were checked, so those keep their own messages."""
+    pending = [(record, where)]
+    while pending:
+        value, at = pending.pop()
+        if isinstance(value, str):
+            if "\x00" in value:
+                raise RecordError(f"{at}: expected Unicode text without NUL characters")
+        elif isinstance(value, dict):
+            pending.extend((key, f"{at} key {ascii(key)}") for key in value)
+            pending.extend((item, f"{at}.{key}") for key, item in value.items())
+        elif isinstance(value, list):
+            pending.extend((item, f"{at}[{n}]") for n, item in enumerate(value))
+
+
 def check_units(units):
     """Raise RecordError unless units matches reference/units.md; return it."""
     if not isinstance(units, dict):
@@ -198,6 +219,7 @@ def check_units(units):
     uncovered = sorted(entry_ids - covered)
     if uncovered:
         raise RecordError(f"units.entry_points: {', '.join(uncovered)} belong to no unit; add each to the unit that reviews it")
+    _no_nul(units, "units")
     return units
 
 
@@ -317,6 +339,7 @@ def check_findings(data, units=None, ordered=True):
             _http(ref_.get("url"), f"{where}.references[{j}].url")
             for key in ("type", "title"):
                 _str(ref_, key, f"{where}.references[{j}]")
+    _no_nul(data, "findings")
     if ordered:
         mapping = renumber_map(findings)
         ids = [f["id"] for f in findings]
@@ -685,6 +708,21 @@ def renumber_map(findings):
     return {f["id"]: f"P-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
+def record_sources(data):
+    """The record's own source paths and citation URLs that contain a finding-shaped id."""
+    sources = {location.rpartition(":")[0] for finding in data["findings"]
+               for location in [finding["location"], *finding.get("occurrences", [])]}
+    sources.update(ref["url"] for finding in data["findings"] for ref in finding.get("references", []))
+    return SourceLiteralIndex(source for source in sources
+                              if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
+
+
+def finding_references(data, text):
+    """Finding ids text refers to, read as renumber reads prose: paths, filenames and URLs stay sources."""
+    marked = rewrite_prose(text, {f["id"]: f"\x00{f['id']}\x00" for f in data["findings"]}, record_sources(data))
+    return set(re.findall(r"\x00(P-[0-9]{3})\x00", marked))
+
+
 def renumber(data, mapping):
     """Rewrite finding ids and prose references, retaining the identities of the reviewed sources."""
     # These schema fields describe the review's provenance, actual source data,
@@ -696,11 +734,7 @@ def renumber(data, mapping):
         "perspective": ("name",),
     }
     sections = {"findings": "finding", "perspectives": "perspective"}
-    source_literals = {location.rpartition(":")[0] for finding in data["findings"]
-                       for location in [finding["location"], *finding.get("occurrences", [])]}
-    source_literals.update(ref["url"] for finding in data["findings"] for ref in finding.get("references", []))
-    source_literals = SourceLiteralIndex(source for source in source_literals
-                                         if FINDING_REF.search(source) and not FINDING_ID.fullmatch(source))
+    source_literals = record_sources(data)
 
     def rewrite(value, section=None, literal=False):
         if isinstance(value, str):
@@ -854,6 +888,7 @@ def dump(data):
 
 
 def main(argv=None):
+    tolerant_stdout()
     argv = sys.argv[1:] if argv is None else argv
     if (len(argv) < 2 or argv[0] not in ("check", "merge", "units", "renumber")
             or (argv[0] in ("merge", "units") and len(argv) < 3)

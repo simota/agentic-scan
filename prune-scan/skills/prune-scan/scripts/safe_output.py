@@ -10,11 +10,23 @@ import os
 import secrets
 import shutil
 import stat
+import sys
 from pathlib import Path
 
 SAFE_OUTPUT = (os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
                and all(fn in os.supports_dir_fd for fn in (os.stat, os.rename, os.unlink, os.mkdir, os.rmdir))
                and os.stat in os.supports_follow_symlinks and hasattr(os, "fchmod"))
+
+
+def tolerant_stdout():
+    """Escape what the terminal cannot encode (a non-UTF-8 directory name) in status lines.
+
+    The scripts print a path after their work is done; a strict stdout would
+    otherwise turn a completed write into a traceback and exit status 1.
+    """
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        reconfigure(errors="backslashreplace")
 
 
 def _basename(name):

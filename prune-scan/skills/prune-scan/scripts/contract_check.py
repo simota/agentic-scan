@@ -26,14 +26,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, FAMILIES, FINDING_REF, RecordError, check_findings,  # noqa: E402
-                      check_units, parse_json)
+from findings import (EXCLUDED, FAMILIES, RecordError, check_findings, check_units,  # noqa: E402
+                      finding_references, parse_json)
 from render import (NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
                     pdf_complete as stored_pdf_complete, pdf_envelope_complete)
+from safe_output import tolerant_stdout  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
+NOT_APPLICABLE = re.compile(r"\s*N/?A\b[\s:;,.()\-\u2013\u2014]*(.*)\Z", re.I | re.S)
 
 
 def read_json_source(path, *, directory=None, snapshots=None):
@@ -406,10 +408,18 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
     if unfinished:
         yield (f"perspectives: no result for {', '.join(unfinished)}; record applied, "
                "N/A with the reason, or not checked")
+    # "N/A with the reason": the reason may follow in result (N/A: no database) or sit in note.
+    unexplained = [p["name"] for p in data.get("perspectives", [])
+                   if (na := NOT_APPLICABLE.match(p.get("result", ""))) and not na.group(1).strip()
+                   and not p.get("note", "").strip()]
+    if unexplained:
+        yield (f"perspectives: {', '.join(unexplained)} N/A without a reason; give it in the result "
+               "(N/A: <reason>) or in note")
     unverified = [f["id"] for f in data["findings"] if f["validation"]["verdict"] == "Unverified"]
     if unverified:
         yield f"findings: {', '.join(unverified)} still Unverified; settle the verdict in VERIFY"
-    decisions = set(FINDING_REF.findall("\n".join(data.get("decisions", []))))
+    # A path such as docs/P-021.md is a source, not a finding, as renumber reads it.
+    decisions = finding_references(data, "\n".join(data.get("decisions", [])))
     undecided = [f["id"] for f in data["findings"] if f["confidence"] == "Purpose-dependent" and f["status"] == "Open"
                  and f["validation"]["verdict"] not in EXCLUDED and f["id"] not in decisions]
     if undecided:
@@ -520,6 +530,7 @@ def allowed_name(value):
 
 
 def main(argv=None):
+    tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("out")
     p.add_argument("--no-pdf", action="store_true")

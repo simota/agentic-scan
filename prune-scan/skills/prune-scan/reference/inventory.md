@@ -12,7 +12,9 @@ repository (SKILL.md *Paths*).
 
 Standard library only, read-only. It walks the files under `<repo>` (skipping
 VCS, dependency and build directories such as `node_modules`, `vendor`,
-`build`, `dist`, `.git`; symlinks; lockfiles; minified bundles; binaries other
+`build`, `dist`, `.git`, `venv` — `env` only when it holds a virtualenv or
+conda environment (`pyvenv.cfg`, `bin/activate`, `conda-meta/`), so a source
+directory such as `src/env/` is read; symlinks; lockfiles; minified bundles; binaries other
 than assets; files over 2 MB; and secret-looking files such as `.env` — only
 `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are read, and
 only their variable names are recorded) and lists **candidates** — never
@@ -121,7 +123,7 @@ not inherit its replacement suggestion.
 | `unimported_dependencies` | Declared packages no source file imports; `status` is `script_only` when a package script or tool file names it, else `unreferenced`; `implicit_tool` marks toolchain packages used without an import (typescript, eslint, `@types/*`, ruff…) | DP1 |
 | `duplicate_purpose` | Two or more packages from one purpose group in a manifest (date libraries, HTTP clients, utility belts, test runners, JSON libraries…) | DP2 |
 | `platform_replaceable` | Packages the platform or standard library now covers (`node-fetch`, `uuid`, `six`, `mock`, `simplejson`, `pytz`…), with the replacement | DP3 |
-| `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, os.environ/getenv, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
+| `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, including `const { PORT } = process.env`, os.environ/getenv, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
 | `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`) with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
 | `i18n_unreferenced`, `i18n_dynamic_prefixes` | Keys of JSON locale bundles that no string literal names (an i18next namespace prefix such as `common:` is ignored), except keys under a prefix built in a template literal (`` t(`status.${x}`) ``) | AS3 |
 | `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
@@ -130,13 +132,17 @@ not inherit its replacement suggestion.
 | `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile or the files it includes (or that include it) may come between; a target in another rule's prerequisite list in that set of files (`all: build`) counts as invoked; `-C dir` or `-f file` naming a known Makefile (from the repository root or the mentioning file's directory) limits a command to that project; a package manager command counts only the script it runs (after `run`/`run-script` or `workspace NAME`, past options such as `--prefix web`), not option values; each `make` or package manager invocation counts a name once and is read up to 64 tokens; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
 | `unreferenced_files` | Shell scripts, SQL files and docs under `scripts/`, `bin/`, `tools/`, `docs/`, `db/`, `seeds/`, `fixtures/` whose file name no other file mentions (migrations and root docs such as README are skipped) | TT4, DA3, AS4 |
 | `skipped_tests` | `@pytest.mark.skip`, `@unittest.skip`, `it.skip`, `xit`, `describe.skip`, `test.todo`, `#[ignore]`, `t.Skip`, `@Disabled` in test files | TT2 |
-| `commented_code` | Runs of four or more comment lines of which at least 60 % look like code | DC3 |
+| `commented_code` | Runs of four or more comment lines of which at least 60 % look like code, in each language's own line-comment syntax (`#` for Python, Ruby, shell, YAML and TOML; `//` for JS/TS, Go, Rust, JVM, Swift, C# and SCSS/Less; both for PHP; `--` and MySQL's `#` for SQL), so Rust attributes, JS private fields and CSS id selectors are not comments | DC3 |
 | `markers` | Lines with `deprecated`, `sunset` or `remove after/by/once/when/in`, and TODO/FIXME/HACK/`temporary`/`until`/`ended` lines that carry a date; `date` and `overdue` (the date is before `--today`, default today) | FF2, DU3, AP2 |
-| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names (SQL comments are ignored) | DA1 |
+| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names (SQL comments are ignored; a schema prefix such as `public.` is dropped, names compare case-insensitively, and a body ends at its balancing parenthesis, so table options such as MySQL's `ENGINE=InnoDB` and nested types or checks do not end it early; strings take `''` and backslash escapes and end at their line, and once a body never balances the rest of that file ends bodies at the first `)` followed by table options and `;`, so quoting the scan misreads costs at most one line or one table) | DA1 |
 
 With `--units`, every row with a path also gets `unit` (the unit whose paths
 cover it; the most specific prefix wins; env var and flag rows use their first
-definition or location), and `by_unit` counts the candidates per unit. Prefixes normalize `.` components and repeated separators before
+definition or location), and `by_unit` counts the candidates per unit. The
+complete listings `routes`, `scripts`, `env_read` and `dependencies_declared`
+are tagged but not counted; their candidates are counted in
+`unreferenced_routes`, `uninvoked_scripts`, the `env_*` lists and
+`unimported_dependencies`. Prefixes normalize `.` components and repeated separators before
 matching, so `./server/` and `server/` cover the same files.
 
 ## Caps

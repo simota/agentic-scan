@@ -30,7 +30,8 @@ import findings as merge_tool  # noqa: E402
 import render  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
-SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
+VCS_DIRS = {".git", ".hg", ".svn"}
+SKIP_DIRS = VCS_DIRS | {"node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
              ".next", ".nuxt", "vendor", "target", "coverage", ".tox", ".mypy_cache", ".pytest_cache",
              "site-packages", ".idea", ".vscode"}
 MAX_FILE_BYTES = 1024 * 1024
@@ -93,6 +94,9 @@ NOT_COVERED = [
     "prompts loaded from databases, prompt registries, feature flags or environment variables",
     "provider-side or framework-added system text",
 ]
+# Added to not_covered when a directory was pruned by name: a skill or prompt directory called build,
+# coverage, env or vendor is skipped too, so each pruned path is listed in skipped_dirs.
+SKIPPED_NOTE = "files under directories skipped by name (dependencies, environments, build output; see skipped_dirs)"
 
 # Text for each lint rule's L-* finding. Scanner-written text stays in English.
 RULES = {
@@ -142,8 +146,12 @@ RULES = {
 SEVERITY_RANK = {s: i for i, s in enumerate(render.SEVERITIES)}
 
 
-def walk(root):
+def walk(root, skipped=None):
+    """Files under root, sorted; each directory pruned by name (VCS metadata aside) is added to skipped."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        if skipped is not None:
+            skipped += [(Path(dirpath) / d).relative_to(root).as_posix() for d in sorted(dirnames)
+                        if d in SKIP_DIRS - VCS_DIRS]
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
@@ -347,8 +355,8 @@ def git_state(root, read=()):
 
 def scan(root):
     root = Path(root).resolve()
-    prompt_files, call_sites, models, lint, read = [], [], {}, [], set()
-    for path, on_disk in walk(root):
+    prompt_files, call_sites, models, lint, read, skipped = [], [], {}, [], set(), []
+    for path, on_disk in walk(root, skipped):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
         kind = prompt_kind(rel)
@@ -382,7 +390,8 @@ def scan(root):
         "tool": "inventory.py", "version": 1, "root": root.name, "commit": commit, "dirty": dirty,
         "prompt_files": prompt_files, "call_sites": call_sites,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
-        "lint": lint, "not_covered": NOT_COVERED,
+        "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
+        "not_covered": NOT_COVERED + ([SKIPPED_NOTE] if skipped else []),
     }
 
 

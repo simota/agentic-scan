@@ -211,6 +211,16 @@ class InventoryTest(unittest.TestCase):
         paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
         self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
 
+    def test_skipped_directories_are_named(self):
+        root = make_repo({".claude/skills/build/SKILL.md": "Build.\n", ".claude/skills/review/SKILL.md": "Review.\n",
+                          "node_modules/x/prompts/a.md": "hi\n", "prompts/a.md": "hi\n"})
+        result = inventory.scan(root)
+        self.assertEqual([f["path"] for f in result["prompt_files"]], [".claude/skills/review/SKILL.md", "prompts/a.md"])
+        self.assertEqual(result["skipped_dirs"], [".claude/skills/build", "node_modules"])
+        self.assertIn(inventory.SKIPPED_NOTE, result["not_covered"])
+        clean = inventory.scan(make_repo({"prompts/a.md": "hi\n"}))
+        self.assertEqual((clean["skipped_dirs"], inventory.SKIPPED_NOTE in clean["not_covered"]), ([], False))
+
     def test_fences_follow_commonmark(self):
         root = make_repo({
             # A backtick line with backticks after the opener is inline code, not a fence.

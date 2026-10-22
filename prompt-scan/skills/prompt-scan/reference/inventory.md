@@ -15,7 +15,7 @@ commands switched off, without entering submodules and without refreshing the
 index. A file whose name is not UTF-8 is listed with the bytes escaped
 (`\xff`); Git still sees its real name, but `render.py` cannot reopen the
 escaped one, so its findings carry no excerpt. Directories such as `.git`, `node_modules`, virtual
-environments and build output are skipped, as are `.env*` files, key files,
+environments and build output are skipped (listed in `skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
 symlinks, binary files and files over 1 MiB.
 
 ## What it lists
@@ -26,6 +26,7 @@ symlinks, binary files and files over 1 MiB.
 | `call_sites` | Lines in code that call a model API or build a prompt object: Anthropic `messages.create`, OpenAI `chat.completions.create` / `responses.create`, Gemini `generate_content`, the AI SDK `generateText` family, LangChain prompt and message classes, `role: "system"` literals and `SYSTEM_PROMPT`-style assignments |
 | `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location, including the cloud forms `us.anthropic.claude-…-v1:0` (Bedrock), `claude-…@YYYYMMDD` (Vertex) and `models/gemini-…`. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
+| `skipped_dirs` | Each directory pruned by name, at any depth: a skill or prompt directory named `build`, `coverage`, `env`, `vendor`… is pruned too. Read the prompt files in any that hold some, or name them in `limitations` |
 | `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
 
 `est_tokens` is a rough estimate (about four ASCII characters per token, one

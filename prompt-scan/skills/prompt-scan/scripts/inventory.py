@@ -14,7 +14,7 @@ are set from the repository's Git state. A reviewer's latest verdict on the
 same rule and location is kept as `previous_validation`, across rescans until a
 new review replaces it; the new hit starts `Unverified`.
 
-Exit codes: 0 written, 2 unreadable input or schema error.
+Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
 """
 import argparse
 import copy
@@ -28,6 +28,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as merge_tool  # noqa: E402
 import render  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
              ".next", ".nuxt", "vendor", "target", "coverage", ".tox", ".mypy_cache", ".pytest_cache",
@@ -438,8 +439,16 @@ def main(argv=None):
     inventory = scan(a.repo)
     text = json.dumps(inventory, ensure_ascii=False, indent=2) + "\n"
     if a.out:
-        a.out.parent.mkdir(parents=True, exist_ok=True)
-        a.out.write_text(text, encoding="utf-8")
+        try:
+            a.out.parent.mkdir(parents=True, exist_ok=True)
+            # As render.py does: a planted link must not redirect the write, e.g. into the reviewed repository.
+            unsafe = unsafe_target(a.out.parent, [a.out.name])
+            if unsafe:
+                raise OSError(f"refusing to write {unsafe}: it exists as a symlink or non-regular file")
+            write_output(a.out, text)
+        except OSError as e:
+            print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
+            return 2
         print(f"wrote {a.out}: {len(inventory['prompt_files'])} prompt file(s), "
               f"{len(inventory['call_sites'])} call site(s), {len(inventory['lint'])} lint hit(s)")
     else:

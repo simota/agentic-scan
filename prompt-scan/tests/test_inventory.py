@@ -203,6 +203,18 @@ class InventoryTest(unittest.TestCase):
         paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
         self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
 
+    def test_out_refuses_a_symlink_and_reports_write_errors(self):
+        root = make_repo({"prompts/a.md": "hi\n", "victim.txt": "keep\n"})
+        out = Path(tempfile.mkdtemp())
+        (out / "inventory.json").symlink_to(root / "victim.txt")
+        code, _, err = run(inventory.main, root, "--out", out / "inventory.json")
+        self.assertEqual(code, 2)
+        self.assertIn("symlink", err)
+        self.assertEqual((root / "victim.txt").read_text(encoding="utf-8"), "keep\n")
+        (out / "dir.json").mkdir()
+        code, _, err = run(inventory.main, root, "--out", out / "dir.json")
+        self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
+
     def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
         root = self.git_repo({"prompts/ok.md": "hi\n"})
         (root / ".gitignore").write_bytes(b"prompts/\xff.md\n")

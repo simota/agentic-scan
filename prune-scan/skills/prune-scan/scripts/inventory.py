@@ -48,7 +48,7 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "
 # `env` is a common virtualenv name and an equally common source directory
 # (src/env/schema.mjs); it is skipped only when it holds a virtualenv.
 VENV_DIRS = {"env"}
-VENV_MARKERS = ("pyvenv.cfg", "bin/activate", "Scripts/activate")
+VENV_MARKERS = ("pyvenv.cfg", "bin/activate", "Scripts/activate", "conda-meta")
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
               "npm-shrinkwrap.json", "Pipfile.lock"}
@@ -179,7 +179,7 @@ COMMENT_LINE = {
     **dict.fromkeys(JS_EXT | GO_EXT | RS_EXT | {".java", ".kt", ".swift", ".cs", ".scala", ".scss", ".sass",
                                                  ".less", ".styl"}, SLASH_COMMENT),
     ".php": re.compile(r"^\s*(?:#(?!\[)|//)\s?(.*)$"),  # #[...] is a PHP 8 attribute.
-    ".sql": re.compile(r"^\s*--\s?(.*)$"),
+    ".sql": re.compile(r"^\s*(?:--|#)\s?(.*)$"),  # # is MySQL's line comment.
 }
 CODE_LIKE = re.compile(r"[;{}()=\[\]]|^\s*(?:def|return|import|from|if|elif|else|for|while|class|const|let|var|"
                        r"function|await|async|try|except|raise|throw|SELECT|INSERT|UPDATE)\b")
@@ -189,10 +189,15 @@ ALWAYS_MARKERS = {"deprecated", "sunset"}
 DATE = re.compile(r"\b(20[0-9]{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12][0-9]|3[01]))?)\b")
 CREATE_TABLE_START = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`\"\[]?\w+[`\"\]]?\.)?"
                                 r"[`\"\[]?(\w+)[`\"\]]?\s*\(", re.I)
+# Fallback end of a body: ")" then table options without parentheses or quotes, then ";".
+CREATE_TABLE_END = re.compile(r"\)[^;()'\"]*;")
 # Inside a table body: quoted text, comments and the parentheses that nest or end it.
-# An unfinished string or comment runs to the end, so no suffix is searched twice.
-SQL_BODY_TOKEN = re.compile(r"'(?:[^']|'')*(?:'|\Z)|\"[^\"]*(?:\"|\Z)|`[^`]*(?:`|\Z)|--[^\n]*|"
-                            r"/\*[\s\S]*?(?:\*/|\Z)|[()]")
+# Strings take MySQL's backslash escapes (DEFAULT 'can\'t)') as well as '', and
+# end at their line: where a backslash is literal (PostgreSQL's 'C:\'), a misread
+# string costs the rest of one line, not every table after it. An unfinished
+# block comment runs to the end, so no suffix is searched twice.
+SQL_BODY_TOKEN = re.compile(r"'(?:[^'\\\n]|\\.?|'')*(?:'|$)|\"[^\"\n]*(?:\"|$)|`[^`\n]*(?:`|$)|(?:--|#)[^\n]*|"
+                            r"/\*[\s\S]*?(?:\*/|\Z)|[()]", re.M)
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
@@ -1058,7 +1063,7 @@ def parse_go_mod(rel, text):
 
 def sql_table_specs(text):
     """Find table bodies once; repeated starts cannot rescan a missing terminator."""
-    position = 0
+    position, balanced = 0, True
     while True:
         opening = CREATE_TABLE_START.search(text, position)
         if opening is None:
@@ -1066,11 +1071,17 @@ def sql_table_specs(text):
         # The body ends at the parenthesis balancing the opening one, so table
         # options (MySQL's ENGINE=...) and nested types or checks cannot end it early.
         depth, closing = 1, None
-        for token in SQL_BODY_TOKEN.finditer(text, opening.end()):
+        for token in SQL_BODY_TOKEN.finditer(text, opening.end()) if balanced else ():
             depth += {"(": 1, ")": -1}.get(token.group(0), 0)
             if depth == 0:
                 closing = token
                 break
+        if closing is None:
+            # Unbalanced (quoting this scan misreads): the rest of the file ends
+            # bodies at the first ")...;" as before, so one odd body cannot drop every
+            # table after it, and no later table rescans the same unbalanced tail.
+            balanced = False
+            closing = CREATE_TABLE_END.search(text, opening.end())
         if closing is None:
             return
         yield opening.group(1), opening.start(), opening.end(), text[opening.end():closing.start()]
@@ -1855,7 +1866,7 @@ def inventory(root, units=None, today=None):
                 tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
             # Blank comments in place, so a comma inside one cannot start a column.
-            body = re.sub(r"--[^\n]*|/\*[\s\S]*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
+            body = re.sub(r"(?:--|#)[^\n]*|/\*[\s\S]*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
             for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
                 if col_name.lower() in SQL_CONSTRAINT or folded[col_name.lower()]:

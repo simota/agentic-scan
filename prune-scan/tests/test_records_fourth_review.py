@@ -22,7 +22,8 @@ from test_findings_regressions import record, units_record  # noqa: E402
 
 class LocationPathTests(unittest.TestCase):
     def test_control_characters_and_whitespace_before_the_line_are_refused(self):
-        for location in ("app.py\t:10", "app.py\r:10", "app.py :10", "app .py:10", "app\x85.py:10"):
+        for location in ("app.py\t:10", "app.py\r:10", "app.py :10", "app\u2028.py:10", "app\x85.py:10",
+                         "\x01app.py:10", "\x1bapp.py:10", "\x7fapp.py:10"):
             with self.subTest(location=ascii(location)):
                 data = record()
                 data["findings"][0]["location"] = location
@@ -37,7 +38,7 @@ class LocationPathTests(unittest.TestCase):
                 findings.check_findings(data, ordered=False)
 
     def test_unit_paths_refuse_control_characters_and_trailing_whitespace(self):
-        for path in ("app.py ", "app\t.py", "app\r"):
+        for path in ("app.py ", "app\t.py", "app\r", "\x01app.py", "\x7fapp.py"):
             with self.subTest(path=ascii(path)):
                 units = units_record()
                 units["units"][0]["paths"] = [path]

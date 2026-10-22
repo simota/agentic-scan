@@ -12,9 +12,9 @@ repository (SKILL.md *Paths*).
 
 Standard library only, read-only. It walks the files under `<repo>` (skipping
 VCS, dependency and build directories such as `node_modules`, `vendor`,
-`build`, `dist`, `.git`, `venv` — `env` only when it holds a virtualenv
-(`pyvenv.cfg`, `bin/activate`), so a source directory such as `src/env/` is
-read; symlinks; lockfiles; minified bundles; binaries other
+`build`, `dist`, `.git`, `venv` — `env` only when it holds a virtualenv or
+conda environment (`pyvenv.cfg`, `bin/activate`, `conda-meta/`), so a source
+directory such as `src/env/` is read; symlinks; lockfiles; minified bundles; binaries other
 than assets; files over 2 MB; and secret-looking files such as `.env` — only
 `.env.example`, `.env.sample`, `.env.template` and `.env.dist` are read, and
 only their variable names are recorded) and lists **candidates** — never
@@ -132,9 +132,9 @@ not inherit its replacement suggestion.
 | `scripts`, `uninvoked_scripts` | Makefile targets and `package.json` scripts with how often `make <target>` or `npm\|pnpm\|yarn\|bun [run] <script>` appears anywhere (CI, docs, other targets), on one command line where only options and their values (`-C dir`, `--prefix web`), variables and other targets of the same Makefile or the files it includes (or that include it) may come between; a target in another rule's prerequisite list in that set of files (`all: build`) counts as invoked; `-C dir` or `-f file` naming a known Makefile (from the repository root or the mentioning file's directory) limits a command to that project; a package manager command counts only the script it runs (after `run`/`run-script` or `workspace NAME`, past options such as `--prefix web`), not option values; each `make` or package manager invocation counts a name once and is read up to 64 tokens; the first Make target and npm lifecycle scripts are marked `default` and not listed as uninvoked | TT3, TT4 |
 | `unreferenced_files` | Shell scripts, SQL files and docs under `scripts/`, `bin/`, `tools/`, `docs/`, `db/`, `seeds/`, `fixtures/` whose file name no other file mentions (migrations and root docs such as README are skipped) | TT4, DA3, AS4 |
 | `skipped_tests` | `@pytest.mark.skip`, `@unittest.skip`, `it.skip`, `xit`, `describe.skip`, `test.todo`, `#[ignore]`, `t.Skip`, `@Disabled` in test files | TT2 |
-| `commented_code` | Runs of four or more comment lines of which at least 60 % look like code, in each language's own line-comment syntax (`#` for Python, Ruby, shell, YAML and TOML; `//` for JS/TS, Go, Rust, JVM, Swift, C# and SCSS/Less; both for PHP; `--` for SQL), so Rust attributes, JS private fields and CSS id selectors are not comments | DC3 |
+| `commented_code` | Runs of four or more comment lines of which at least 60 % look like code, in each language's own line-comment syntax (`#` for Python, Ruby, shell, YAML and TOML; `//` for JS/TS, Go, Rust, JVM, Swift, C# and SCSS/Less; both for PHP; `--` and MySQL's `#` for SQL), so Rust attributes, JS private fields and CSS id selectors are not comments | DC3 |
 | `markers` | Lines with `deprecated`, `sunset` or `remove after/by/once/when/in`, and TODO/FIXME/HACK/`temporary`/`until`/`ended` lines that carry a date; `date` and `overdue` (the date is before `--today`, default today) | FF2, DU3, AP2 |
-| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names (SQL comments are ignored; a schema prefix such as `public.` is dropped, names compare case-insensitively, and a body ends at its balancing parenthesis, so table options such as MySQL's `ENGINE=InnoDB` and nested types or checks do not end it early) | DA1 |
+| `sql_tables_unreferenced`, `sql_columns_unreferenced` | Tables in `CREATE TABLE` statements that no non-SQL file names, and columns of the other tables that no non-SQL file names (SQL comments are ignored; a schema prefix such as `public.` is dropped, names compare case-insensitively, and a body ends at its balancing parenthesis, so table options such as MySQL's `ENGINE=InnoDB` and nested types or checks do not end it early; strings take `''` and backslash escapes and end at their line, and once a body never balances the rest of that file ends bodies at the first `)` followed by table options and `;`, so quoting the scan misreads costs at most one line or one table) | DA1 |
 
 With `--units`, every row with a path also gets `unit` (the unit whose paths
 cover it; the most specific prefix wins; env var and flag rows use their first

@@ -61,9 +61,9 @@ PERSPECTIVE = re.compile(r"^(?:%s)\Z" % "|".join(f"{family}[1-{steps}]" for fami
 # A path starts and ends with a visible character and holds no control or line
 # break characters, so a stray tab, CR or space before :line is refused.
 PATH_CHARS = r"[^:\x00-\x1f\x7f-\x9f\u2028\u2029]"
-LOCATION = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|:))(?![^:]*\s:)[^\s:]%s*:[1-9][0-9]*(?:-[1-9][0-9]*)?\Z"
+LOCATION = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|:))(?![^:]*\s:)(?!\s)%s+:[1-9][0-9]*(?:-[1-9][0-9]*)?\Z"
                       % PATH_CHARS)
-REPO_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|\Z))[^\s:]%s*(?<!\s)\Z" % PATH_CHARS)
+REPO_PATH = re.compile(r"^(?!/)(?!.*(?:^|/)\.\.(?:/|\Z))(?!\s)%s+(?<!\s)\Z" % PATH_CHARS)
 TEXT_FIELDS = ("title", "category", "element", "observed", "basis", "impact", "risk")
 SUBTRACTION_FIELDS = ("what", "remains", "loses")
 INVALID_TEXT = re.compile(r"[\x00\ud800-\udfff]")

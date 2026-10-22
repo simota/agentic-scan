@@ -34,6 +34,27 @@ class SqlDumpTests(unittest.TestCase):
         self.assertEqual(result["sql_columns_unreferenced"],
                          [{"table": "items", "column": "legacy_code", "location": "db/schema.sql:5"}])
 
+    def test_backslash_escapes_and_literal_backslashes_keep_the_body(self):
+        app = {"app/q.py": 'SQL = "select id, note from a"\n'}
+        for dialect, value in (("mysql", "'can\\'t)'"), ("postgres", "'C:\\'")):
+            with self.subTest(dialect=dialect):
+                result = scan({**app, "db/s.sql": ("CREATE TABLE a (\n  id int,\n  note text DEFAULT %s,\n"
+                                                   "  legacy text\n);\nCREATE TABLE b (\n  id int\n);\n" % value)})
+                self.assertEqual(result["sql_tables_unreferenced"], [{"table": "b", "location": "db/s.sql:6"}])
+                self.assertEqual(result["sql_columns_unreferenced"],
+                                 [{"table": "a", "column": "legacy", "location": "db/s.sql:4"}])
+
+    def test_misread_quoting_never_drops_the_tables_after_it(self):
+        app = {"app/q.py": 'SQL = "select id, name, body, x"\n'}
+        for case, body in (("hash comment", "  id INT, # the user's id, legacy flag\n  name TEXT\n"),
+                           ("dollar quote", "  body text DEFAULT $$it's$$,\n  x int\n"),
+                           ("unbalanced", "  x int CHECK ((x > 0)\n")):
+            with self.subTest(case=case):
+                result = scan({**app, "db/s.sql": "CREATE TABLE users (\n%s) ENGINE=InnoDB;\n\nCREATE TABLE audit_log (\n"
+                                                  "  id int\n);\n" % body})
+                self.assertEqual([row["table"] for row in result["sql_tables_unreferenced"]], ["users", "audit_log"])
+                self.assertEqual(result["sql_columns_unreferenced"], [])
+
     def test_schema_qualified_and_differently_cased_names(self):
         result = scan({
             "db/pg.sql": ("CREATE TABLE public.users (\n    id integer,\n    email text,\n    fax_number text\n);\n"
@@ -92,9 +113,10 @@ class CommentSyntaxTests(unittest.TestCase):
             "b.js": "let x;\n// x = f();\n// if (x) {\n//   g(x);\n// }\n",
             "c.sql": "-- SELECT a FROM t;\n-- SELECT b FROM t;\n-- UPDATE t SET a = (1);\n-- INSERT INTO t (a);\n",
             "d.rs": "fn main() {}\n// let a = f();\n// let b = g(a);\n// if a { h(); }\n// return (b);\n",
+            "e.sql": "# SELECT a FROM t;\n# SELECT b FROM t;\n# UPDATE t SET a = (1);\n# INSERT INTO t (a);\n",
         })
         self.assertEqual([row["location"] for row in result["commented_code"]],
-                         ["a.py:2-5", "b.js:2-5", "c.sql:1-4", "d.rs:2-5"])
+                         ["a.py:2-5", "b.js:2-5", "c.sql:1-4", "d.rs:2-5", "e.sql:1-4"])
 
 
 class EnvReadTests(unittest.TestCase):
@@ -119,10 +141,14 @@ class SkipDirectoryTests(unittest.TestCase):
             "src/index.mjs": 'import { url } from "./env/schema.mjs";\nconsole.log(url);\n',
             "env/pyvenv.cfg": "home = /usr/bin\n",
             "env/lib/site.py": "def unused_in_venv(): pass\n",
+            "tools/env/conda-meta/history": "==> 2026-10-01 <==\n",
+            "tools/env/lib/python3.11/textwrap.py": "def unused_in_conda(): pass\n",
         })
         self.assertEqual(result["orphan_files"], [])
         self.assertEqual([row["name"] for row in result["env_read"]], ["DATABASE_URL"])
-        self.assertNotIn("unused_in_venv", [row["name"] for row in result["unreferenced_symbols"]])
+        names = [row["name"] for row in result["unreferenced_symbols"]]
+        self.assertNotIn("unused_in_venv", names)
+        self.assertNotIn("unused_in_conda", names)
 
 
 if __name__ == "__main__":

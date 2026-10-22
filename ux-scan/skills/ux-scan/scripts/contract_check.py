@@ -4,7 +4,7 @@
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
 Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
-report.html and report.pdf (and mockups.html when an included finding carries a mockup),
+report.html and report.pdf (and mockups.html exactly when an included finding carries a mockup),
 plus optional reserved .ux-scan-render-generation metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
@@ -148,6 +148,12 @@ def problems(out, no_pdf=False, allow=()):
                     name, f"run {rerender}")
         yield f"{name}: missing; {hint}"
     forbidden = {"report.pdf"} if no_pdf else set()
+    # A mockup page the judged record does not call for is stale, possibly holding a mockup removed
+    # for its content; --allow cannot admit it.
+    if data is not None and mockups.PAGE not in expected:
+        forbidden.add(mockups.PAGE)
+        if mockups.PAGE in found:
+            yield f"{mockups.PAGE}: no included finding has a mockup; run {rerender}, which removes it"
     for name in sorted(found - expected - set(allow) - forbidden - unjudged - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")

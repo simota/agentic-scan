@@ -62,8 +62,8 @@ most 1 MiB as UTF-8, since they are published in one page:
   `flows.json` viewport, so write responsive CSS when the defect depends on
   width
 - `note` is optional prose shown above the comparison: what to look at.
-  `renumber` rewrites finding ids in `note` and `label` (the alternatives'
-  too), never in `before` or `after`
+  `renumber` rewrites finding ids in `title`, `note` and `label` (the states'
+  and alternatives' too), never in `before` or `after`
 - To take a mockup off a finding (not wanted, or holding something it should
   not), merge a fragment with `{"id": "U-006", "mockup": null}`
 
@@ -149,5 +149,5 @@ size changes. The
 dashboard's header links to it, and each finding in the dashboard and the
 report names its anchor (`mockups.html#U-006`). It carries the same
 fingerprints as the other pages: `contract_check.py` requires it exactly when
-an included finding has a mockup, and a second-language render
+an included finding has a mockup and otherwise rejects it, even with `--allow`, and a second-language render
 (`--allow ja|en`) needs its own copy.

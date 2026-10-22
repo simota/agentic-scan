@@ -4,7 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
-    python3 findings.py check OUT_DIR [--allow NAME ...]
+    python3 findings.py check OUT_DIR [--allow NAME]...   (one --allow per name)
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
@@ -13,8 +13,9 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 Nested `validation` and `analysis` objects of a known finding also merge key by
-key. FINDINGS is created when absent. The merged record must pass the schema check
-(`reference/findings-schema.md`) before anything is written.
+key. FINDINGS is created when absent (its directory must exist). The record merged
+from all the fragments must pass the schema check (`reference/findings-schema.md`)
+before anything is written.
 
 `renumber` numbers findings PV-001… in severity order, then path (excluded
 findings last), and rewrites `PV-NNN` references in IDs and prose (never in
@@ -25,7 +26,7 @@ change, so read them back before writing another fragment.
 `reference/findings-schema.md`.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
-contract failed (reasons on stderr).
+contract failed (reasons on stderr), 2 the command line is invalid.
 
 Findings describe where personal data goes, never the data itself: public
 prose or evidence containing an e-mail address (other than the reserved

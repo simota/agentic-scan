@@ -9,7 +9,7 @@ Render with (paths relative to this skill's directory):
 ```
 python3 scripts/findings.py renumber <out>/findings.json   # after the last merge
 python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en>   # --lang defaults to meta.lang
-python3 scripts/findings.py check <out> [--allow NAME]
+python3 scripts/findings.py check <out> [--allow NAME]...   # one --allow per name
 ```
 
 The scripts use only the standard library and also run under `python3 -I`.
@@ -17,8 +17,8 @@ The scripts use only the standard library and also run under `python3 -I`.
 filter by severity, styled by the vendored scan-report-kit in
 `scripts/scan_report_kit/`) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
-is named). `render.py` still renders a draft that `check` would refuse, and
-prints each such problem on stderr as a warning. `findings.py check` exits `1`
+is named) or the command line is invalid. `render.py` still renders a draft
+that `check` would refuse, and prints each such problem on stderr as a warning. `findings.py check` exits `1`
 and lists every contract violation, except that when `findings.json` fails the
 schema it reports only the first schema error and skips the record checks, so
 fix it and run `check` again. This is the complete list; other documents
@@ -94,7 +94,9 @@ Merge semantics:
   duplicates
 
 Every merge validates the combined record; a refused merge writes nothing.
-Each finding must be complete in the fragment that first adds it. Strings must
+Validation runs once per `merge` command, after all of its fragments are
+applied, so a new finding must be complete by the end of the command that first
+adds it; write each new finding whole in one fragment. Strings must
 be valid UTF-8 text; unpaired Unicode surrogates are refused before saving. Report
 prose (every text field, including analysis results, commitments, perspective
 notes, top-level lists, location paths and reference URLs) is refused when it

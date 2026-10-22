@@ -10,7 +10,7 @@ limitations, decisions and next steps; the chat summary in `reference/report.md`
 is written by the agent, not rendered.
 
 Exit codes: 0 written, 1 an output could not be saved, 2 the record does not
-match the schema (the field is named on stderr).
+match the schema (the field is named on stderr) or the command line is invalid.
 """
 import argparse
 from html import escape

@@ -243,6 +243,19 @@ class CodexThirdReviewTest(unittest.TestCase):
         parent = scan({"terragrunt.hcl": backend, "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
         self.assertNotIn("PS-002", [h["rule"] for h in parent.hits])
 
+    def test_intrinsic_bucket_and_cluster_blocks_are_unresolved(self):
+        closed = {"BlockPublicAcls": True, "BlockPublicPolicy": True, "IgnorePublicAcls": True,
+                  "RestrictPublicBuckets": True}
+        template = {"Resources": {
+            "Bucket": {"Type": "AWS::S3::Bucket", "Properties": {"PublicAccessBlockConfiguration": {
+                "Fn::If": ["IsProd", closed, {"Ref": "AWS::NoValue"}]}}},
+            "Cluster": {"Type": "AWS::EKS::Cluster", "Properties": {"ResourcesVpcConfig": {
+                "Fn::If": ["IsProd", {"EndpointPublicAccess": False}, {"EndpointPublicAccess": False}]}}}}}
+        result = scan({"t.json": template})
+        self.assertEqual(result.hits, [])
+        for check in ("PublicAccessBlockConfiguration is not a literal", "ResourcesVpcConfig is not a literal"):
+            self.assertTrue([n for n in result.not_run if check in n], result.not_run)
+
     def test_intrinsic_metadata_options_are_unresolved(self):
         template = {"Resources": {"Vm": {"Type": "AWS::EC2::Instance", "Properties": {"MetadataOptions": {
             "Fn::If": ["Strict", {"HttpTokens": "required"}, {"HttpEndpoint": "disabled"}]}}}}}

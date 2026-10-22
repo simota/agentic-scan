@@ -904,6 +904,7 @@ class Scan:
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
         self.gcp_policy_data = {}
+        self.vpc_domains = set()  # (dir, address) of OpenSearch/Elasticsearch domains with vpc_options
         self.admin_policy_data = set()  # (dir, name) of data "aws_iam_policy" naming AdministratorAccess
         self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
@@ -1410,6 +1411,11 @@ def check_tf_shared(scan, res):
     # A VPC-only OpenSearch/Elasticsearch domain is reached through its security
     # groups; Principal * in its access policy is the documented pattern there.
     vpc_domain = t.endswith(("_domain", "_domain_policy")) and bool(v.blocks("vpc_options"))
+    if t.endswith("_domain_policy") and hasattr(v, "raw"):
+        # The split form: aws_opensearch_domain_policy names its domain by reference.
+        domain = re.fullmatch(r"\s*(aws_(?:opensearch|elasticsearch)_domain\.[\w-]+)\.domain_name\s*",
+                              v.raw("domain_name") or "")
+        vpc_domain = vpc_domain or bool(domain and (res.dir, domain.group(1)) in scan.vpc_domains)
     if attr and v.get(attr) is not None and not vpc_domain:
         scan.resource_policy(res, scan.statements(res, attr), v.line(attr))
     if t in PUBLIC_DATA_SERVICES and tf_bool(v.get("publicly_accessible")) is True:
@@ -2071,6 +2077,9 @@ def handle_terraform(scan, parsed):
                     collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
+                    if b.labels[0] in ("aws_opensearch_domain", "aws_elasticsearch_domain") and \
+                            b_view.blocks("vpc_options"):
+                        scan.vpc_domains.add((str(Path(rel).parent), ".".join(b.labels)))
                 collect_policy_references(scan, str(Path(rel).parent), b)
             except RecursionError:
                 pass  # reported once by the checks below
@@ -2598,7 +2607,11 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
             if props.get("AccessControl") in ("PublicRead", "PublicReadWrite", "AuthenticatedRead"):
                 scan.hit("AWS-S3-001", res, line, f"AccessControl = {props['AccessControl']}")
             pab = props.get("PublicAccessBlockConfiguration")
-            if isinstance(pab, dict):
+            if is_intrinsic(pab):
+                # The whole block comes from Fn::If or a Ref: its flags are not in the template.
+                scan.not_run.append(f"AWS-S3-002: PublicAccessBlockConfiguration is not a literal; check not run: "
+                                    f"{res.file}:{line} ({res.address})")
+            elif isinstance(pab, dict):
                 # Omitted flags default to false, as in Terraform.
                 off = [k for k in ("BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls",
                                    "RestrictPublicBuckets") if pab.get(k) in (False, "false", None)]
@@ -2639,6 +2652,10 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 scan.hit("AWS-EBS-001", res, line, "Encrypted not true")
         elif type_ == "AWS::EKS::Cluster":
             cfg = props.get("ResourcesVpcConfig") if isinstance(props.get("ResourcesVpcConfig"), dict) else {}
+            if is_intrinsic(cfg):
+                scan.not_run.append(f"AWS-EKS-001: ResourcesVpcConfig is not a literal; check not run: "
+                                    f"{res.file}:{line} ({res.address})")
+                cfg = {"EndpointPublicAccess": False}
             public = cfg.get("EndpointPublicAccess", True)
             cidrs = cfg.get("PublicAccessCidrs")
             open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)

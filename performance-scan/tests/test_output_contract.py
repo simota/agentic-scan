@@ -164,5 +164,16 @@ class OutputContractTests(unittest.TestCase):
                 self.check(out, *allowed, "--allow", "report.md"), "report.md", "empty output")
 
 
+    def test_an_entry_name_with_a_line_break_stays_on_one_problem_line(self):
+        with tempfile.TemporaryDirectory() as d:
+            out = self.prepare(Path(d))
+            (out / "notes\nfindings.json: ok").touch()
+            code, _, errors = self.check(out)
+            self.assertEqual(code, 1)
+            self.assertEqual(errors.splitlines(),
+                             ["unexpected output: 'notes\\nfindings.json: ok' "
+                              "(pass --allow 'notes\\nfindings.json: ok' if requested)"])
+
+
 if __name__ == "__main__":
     unittest.main()

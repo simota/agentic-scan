@@ -646,13 +646,20 @@ def cmd_merge(args):
     return 0
 
 
+def _entry(name):
+    """A directory entry's name for a problem line: one line per problem, so a
+    name holding a line break or another unprintable character is quoted."""
+    return name if name.isprintable() else repr(name)
+
+
 def _output_problems(out, present, allow):
     """Return the problems with the directory's entries and the readable outputs."""
     problems = []
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
     for name in sorted(present - OUTPUTS - set(allow)):
-        problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+        problems.append(f"unexpected output: {_entry(name)} "
+                        f"(pass --allow {_entry(name)} if requested)")
     readable = set()
     for name in sorted(OUTPUTS & present):
         path = out / name
@@ -774,6 +781,15 @@ def cmd_check(args):
     return 0
 
 
+def escape_unencodable_console():
+    """A path the console encoding cannot show must not turn a completed command
+    into a traceback and exit 1."""
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if reconfigure is not None:
+            reconfigure(errors="backslashreplace")
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -786,12 +802,7 @@ def main(argv=None):
     c.add_argument("--allow", action="append", default=[])
     c.set_defaults(func=cmd_check)
     args = parser.parse_args(argv)
-    # A path the console encoding cannot show must not turn a completed command
-    # into a traceback and exit 1.
-    for stream in (sys.stdout, sys.stderr):
-        reconfigure = getattr(stream, "reconfigure", None)
-        if reconfigure is not None:
-            reconfigure(errors="backslashreplace")
+    escape_unencodable_console()
     return args.func(args)
 
 

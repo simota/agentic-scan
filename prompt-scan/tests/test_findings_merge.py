@@ -5,7 +5,7 @@ import stat
 import tempfile
 import unittest
 
-from helpers import findings, run, write_json
+from helpers import SAMPLE_APP, findings, inventory, run, write_json
 
 META = {"target": "t", "date": "2026-10-11", "assessor": "test", "lang": "en"}
 
@@ -155,6 +155,16 @@ class MergeTest(unittest.TestCase):
         code, out, _ = run(findings.main, "renumber", self.out)
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)
+
+    def test_a_malformed_record_is_a_schema_error(self):
+        fragment = self.dir / "meta.json"
+        write_json(fragment, {"meta": META})
+        for base in ({"meta": None}, {"findings": None}, {"meta": "x"}):
+            write_json(self.out, base)
+            code, _, err = run(findings.main, "merge", self.out, fragment)
+            self.assertEqual((code, err.startswith("error: ")), (2, True), err)
+            code, _, err = run(inventory.main, SAMPLE_APP, "--into", self.out)
+            self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
 
     def test_renumber_leaves_paths_and_scanner_fields_alone(self):
         # Feature ids such as F-002 name directories and prompts; only references to findings move.

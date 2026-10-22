@@ -301,8 +301,11 @@ def main(argv=None):
     try:
         original = read_regular(a.findings) if os.path.lexists(a.findings) else None
         base = read_json(a.findings, original) if original is not None else {}
-        if not isinstance(base, dict):
-            raise render.SchemaError(f"{a.findings}: report must be an object")
+        if original is not None:
+            try:
+                render.validate_data(base)
+            except render.SchemaError as e:
+                raise render.SchemaError(f"{a.findings}: {e}") from None
         fragments = [(str(path), read_json(path)) for path in a.fragments]
     except (render.SchemaError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)

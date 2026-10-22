@@ -420,8 +420,10 @@ def hit_key(rule, location, text):
 def merge_into(findings_path, inventory):
     original = merge_tool.read_regular(findings_path)
     data = merge_tool.read_json(findings_path, original)
-    if not isinstance(data, dict):
-        raise render.SchemaError(f"{findings_path}: report must be an object")
+    try:
+        render.validate_data(data)
+    except render.SchemaError as e:
+        raise render.SchemaError(f"{findings_path}: {e}") from None
     old = {hit_key(f.get("rule"), f.get("location"), f.get("cause")): f for f in data.get("findings", [])
            if isinstance(f, dict) and str(f.get("id", "")).startswith("L-")}
     new = lint_findings(inventory["lint"])

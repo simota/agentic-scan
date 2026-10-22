@@ -38,7 +38,8 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   non-production copies, location and transfers) with about 40 hunt steps and
   a table of sound vs look-alike constructs
 - **Validation** — every finding gets a verdict (`Valid`, `Likely`,
-  `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence,
+  `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`), with evidence
+  for `Valid`, the exclusions and every reported High or Medium finding,
   checked against four claims: reach, the data that actually arrives,
   controls, and whether the commitment is the app's own
 - **No values** — `findings.py merge` refuses e-mail addresses (outside the
@@ -80,10 +81,11 @@ Every output is rendered from one record, `findings.json`, which the agent
 builds from JSON fragments rather than heredocs:
 
 ```sh
-python3 skills/privacy-scan/scripts/findings.py merge out/findings.json frag-001.json
-python3 skills/privacy-scan/scripts/findings.py renumber out/findings.json   # after the last merge
-python3 skills/privacy-scan/scripts/render.py out/findings.json --out out --lang ja
-python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each violation
+out=$(mktemp -d)          # a new, empty output directory outside the audited repository
+python3 skills/privacy-scan/scripts/findings.py merge "$out/findings.json" frag-001.json
+python3 skills/privacy-scan/scripts/findings.py renumber "$out/findings.json"   # after the last merge
+python3 skills/privacy-scan/scripts/render.py "$out/findings.json" --out "$out" --lang ja
+python3 skills/privacy-scan/scripts/findings.py check "$out"   # exit 1 lists each violation
 ```
 
 | Output | What it is |

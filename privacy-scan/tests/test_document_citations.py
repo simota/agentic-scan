@@ -97,3 +97,22 @@ class TemplateCountTests(unittest.TestCase):
         result = findings.counts(doc)
         self.assertEqual((result["n_high"], result["n_high_valid"], result["n_low"],
                           result["n_excluded"], result["n_likely"]), (1, 0, 0, 1, 1))
+
+
+class SampleCoverageTests(unittest.TestCase):
+    def test_sample_perspective_notes_account_for_every_hunt_step(self):
+        # The sample is the record agents imitate; its notes must follow
+        # perspectives.md ("the note lists the hunt step IDs applied and each one
+        # left out"), including steps added to the hunt tables later.
+        import json
+        from test_privacy_scan import findings
+        sample = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+        for record in sample["perspectives"]:
+            if record["status"] == "N/A":
+                continue
+            prefix = findings.STEP_PREFIXES[record["name"]]
+            named = set()
+            for first, last in re.findall(rf"{prefix}(\d+)(?:-{prefix}(\d+))?", record["note"]):
+                named.update(range(int(first), int(last or first) + 1))
+            with self.subTest(perspective=record["name"]):
+                self.assertEqual(named, set(range(1, findings.STEP_COUNTS[record["name"]] + 1)))

@@ -10,7 +10,7 @@ limitations, decisions and next steps; the chat summary in `reference/report.md`
 is written by the agent, not rendered.
 
 Exit codes: 0 written, 1 an output could not be saved, 2 the record does not
-match the schema (the field is named on stderr).
+match the schema (the field is named on stderr) or the command line is invalid.
 """
 import argparse
 from html import escape
@@ -161,14 +161,17 @@ MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
 URL_TOKEN = re.compile(r"(?:(?<![A-Za-z])(?i:https?)://|(?<![\w.@/])www\.)"
                        r"[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]+")
 URL_TRAILING = ".,;:!?'\"*_~"
-# GFM also links `ftp://`; an escaped colon keeps such URLs literal text, as
-# other unsupported schemes are.
-FTP_SCHEME = re.compile(r"(?<![A-Za-z])(ftp):(?=//)", re.IGNORECASE)
+# What GFM would still autolink in text that is not an explicit link: `ftp://`
+# and the URLs `_prose_url` declines (a `www.<placeholder>`, a dotless or
+# non-ASCII host, `www.` after `_`). An escaped colon or dot keeps them literal
+# text, as other unsupported schemes are.
+AUTOLINK_START = re.compile(r"(?<![A-Za-z])(?i:ftp|https?)(?=://)|(?<![A-Za-z0-9])www(?=\.)")
 
 
-def _literal(text):
+def _literal(text, in_link=False):
     text = escape(text, quote=False).translate(MARKDOWN_ESCAPES)
-    return FTP_SCHEME.sub(r"\1\\:", text)
+    # Link text is never autolinked, so it keeps its spelling.
+    return text if in_link else AUTOLINK_START.sub(lambda m: m.group() + "\\", text)
 
 
 def _prose_url(url):
@@ -191,13 +194,15 @@ def markdown_text(value, links=True):
         url = _prose_url(match.group())
         if not url:
             continue
-        parts.append(_literal(text[pos:match.start()]))
+        before = _literal(text[pos:match.start()])
+        # `!` directly before the link would make it an image.
+        parts.append(before[:-1] + "\\!" if before.endswith("!") else before)
         # A bracketed link, not an autolink: CommonMark renderers differ on
         # decoding `&amp;` inside autolinks, but agree inside link destinations.
         target = escape(("http://" if url.startswith("www.") else "") + url, quote=False)
-        parts.append(f"[{_literal(url)}](<{target}>)")
+        parts.append(f"[{_literal(url, in_link=True)}](<{target}>)")
         pos = match.start() + len(url)
-    parts.append(_literal(text[pos:]))
+    parts.append(_literal(text[pos:], in_link=not links))
     # Add our own breaks only after escaping the supplied HTML and Markdown.
     return "".join(parts).replace("\n", "<br>")
 
@@ -252,11 +257,12 @@ def reference_destination(url):
 def markdown_reference(ref):
     url = ref["url"]
     title = reference_title(ref)
-    label = markdown_text(title, links=False)
     destination = reference_destination(url)
     if destination is None:
-        return label if title == url else f"{label} — {markdown_text(url, links=False)}"
-    return f"[{label}](<{escape(destination, quote=False)}>)"
+        # Plain text, not a link label: URLs in it are linked like other prose.
+        text = markdown_text(title)
+        return text if title == url else f"{text} — {markdown_text(url)}"
+    return f"[{markdown_text(title, links=False)}](<{escape(destination, quote=False)}>)"
 
 
 def html_reference(ref):

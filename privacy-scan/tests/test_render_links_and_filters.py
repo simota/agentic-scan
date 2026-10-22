@@ -14,7 +14,7 @@ class ProseUrlTests(unittest.TestCase):
                 "([https://example.com/a?b=1&amp;c=2\\#d\\_e](<https://example.com/a?b=1&amp;c=2#d_e>))",
             "www.example.com/a_b, ok": "[www.example.com/a\\_b](<http://www.example.com/a_b>), ok",
             "go https://e.com/a|b": "go [https://e.com/a](<https://e.com/a>)\\|b",
-            "http:// alone": "http:// alone",
+            "http:// alone": "http\\:// alone",  # displays as typed, never autolinked
             "javascript:alert(1)": "javascript:alert(1)",
         }
         for text, expected in cases.items():

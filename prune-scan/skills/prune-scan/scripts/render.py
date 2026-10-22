@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
                       record_exists)
 from safe_paths import open_directory  # noqa: E402
-from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at  # noqa: E402
+from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
 from safe_source import PRIVATE_KEY, SECRET_NAME, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 from scan_report_kit.report import LINE_BREAKS  # noqa: E402
@@ -485,6 +485,7 @@ def render_outputs(a, resources):
 
 
 def main(argv=None):
+    tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("findings")
     p.add_argument("--out", required=True)

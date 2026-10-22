@@ -36,15 +36,19 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
-from safe_output import SAFE_OUTPUT, write_output_at  # noqa: E402
+from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
-             ".svelte-kit", "coverage", ".venv", "venv", "env", "__pycache__", "Pods", ".gradle", "target",
+             ".svelte-kit", "coverage", ".venv", "venv", "__pycache__", "Pods", ".gradle", "target",
              ".turbo", ".cache", "bower_components", ".idea", ".vscode", "DerivedData", ".dart_tool",
              "storybook-static", ".output", ".tox", ".mypy_cache", ".pytest_cache", "site-packages"}
+# `env` is a common virtualenv name and an equally common source directory
+# (src/env/schema.mjs); it is skipped only when it holds a virtualenv.
+VENV_DIRS = {"env"}
+VENV_MARKERS = ("pyvenv.cfg", "bin/activate", "Scripts/activate")
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
               "npm-shrinkwrap.json", "Pipfile.lock"}
@@ -136,6 +140,9 @@ ENV_READ = re.compile(
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
+# const { PORT = 3000, DATABASE_URL: url } = process.env reads each key it names.
+ENV_DESTRUCTURE = re.compile(r"\{([^{}]*)\}\s*=\s*(?:process|import\.meta)\.env\b(?!\s*[.\[])")
+ENV_DESTRUCTURED_KEY = re.compile(r"(?:^|,)\s*([A-Z_][A-Z0-9_]*)\s*(?=[=:,]|\Z)")
 ENV_DECL = re.compile(r"^[^\S\r\n]*(?:export\s+)?([A-Z_][A-Z0-9_]*)\s*=", re.M)
 FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_enabled|featureEnabled|"
                         r"feature_enabled|flag_enabled|useFlag|useFeature|useFeatureFlag|useFeatureIsOn|getFlag|"
@@ -163,15 +170,29 @@ NPM_LIFECYCLES = {"preinstall", "install", "postinstall", "prepublish", "preprep
 SKIPPED_TEST = re.compile(r"@pytest\.mark\.skip(?:if)?\b|@unittest\.skip\w*|\bpytest\.skip\(|"
                           r"\b(?:it|test|describe|context)\.(?:skip|todo)\(|\bx(?:it|describe|test)\(|#\[ignore\]|"
                           r"\bt\.Skip(?:f|Now)?\(|@Disabled\b|@Ignore\b|\bskip\(\s*[\"']")
-COMMENT_LINE = re.compile(r"^\s*(?:#|//|--)\s?(.*)$")
+# Line comments per language: `#` starts a Rust attribute, a JS private field
+# or a CSS id selector, so each extension only gets its own comment syntax.
+HASH_COMMENT = re.compile(r"^\s*#\s?(.*)$")
+SLASH_COMMENT = re.compile(r"^\s*//\s?(.*)$")
+COMMENT_LINE = {
+    **dict.fromkeys((".py", ".rb", ".sh", ".yml", ".yaml", ".toml"), HASH_COMMENT),
+    **dict.fromkeys(JS_EXT | GO_EXT | RS_EXT | {".java", ".kt", ".swift", ".cs", ".scala", ".scss", ".sass",
+                                                 ".less", ".styl"}, SLASH_COMMENT),
+    ".php": re.compile(r"^\s*(?:#(?!\[)|//)\s?(.*)$"),  # #[...] is a PHP 8 attribute.
+    ".sql": re.compile(r"^\s*--\s?(.*)$"),
+}
 CODE_LIKE = re.compile(r"[;{}()=\[\]]|^\s*(?:def|return|import|from|if|elif|else|for|while|class|const|let|var|"
                        r"function|await|async|try|except|raise|throw|SELECT|INSERT|UPDATE)\b")
 MARKER = re.compile(r"(?i)\b(TODO|FIXME|HACK|XXX|deprecated|remove (?:after|by|once|when|in)|temporary|sunset|ended|"
                     r"until)\b")
 ALWAYS_MARKERS = {"deprecated", "sunset"}
 DATE = re.compile(r"\b(20[0-9]{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12][0-9]|3[01]))?)\b")
-CREATE_TABLE_START = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(\w+)[`\"\]]?\s*\(", re.I)
-CREATE_TABLE_END = re.compile(r"\)\s*;")
+CREATE_TABLE_START = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`\"\[]?\w+[`\"\]]?\.)?"
+                                r"[`\"\[]?(\w+)[`\"\]]?\s*\(", re.I)
+# Inside a table body: quoted text, comments and the parentheses that nest or end it.
+# An unfinished string or comment runs to the end, so no suffix is searched twice.
+SQL_BODY_TOKEN = re.compile(r"'(?:[^']|'')*(?:'|\Z)|\"[^\"]*(?:\"|\Z)|`[^`]*(?:`|\Z)|--[^\n]*|"
+                            r"/\*[\s\S]*?(?:\*/|\Z)|[()]")
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
@@ -221,11 +242,21 @@ TOOL_FILES = re.compile(r"(?i)(?:^|/)(?:Makefile|Dockerfile[\w.-]*|Procfile|just
                         r"[\w.-]+\.ya?ml|[\w.-]+\.sh|noxfile\.py|conftest\.py|setup\.py)$")
 
 
+def is_virtualenv(name, exists):
+    return name in VENV_DIRS and any(exists(f"{name}/{marker}") for marker in VENV_MARKERS)
+
+
 def iter_files(root, *, directory=None):
     if directory is not None:
         # Walk the same pinned repository used by open_source, even if its pathname is replaced.
         for dirpath, dirnames, filenames, dir_fd in os.fwalk(".", dir_fd=directory, follow_symlinks=False):
-            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
+            def exists(rel):
+                try:
+                    os.stat(rel, dir_fd=dir_fd, follow_symlinks=False)
+                except OSError:
+                    return False
+                return True
+            dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not is_virtualenv(d, exists))
             for name in sorted(filenames):
                 if name in SKIP_FILES:
                     continue
@@ -237,7 +268,8 @@ def iter_files(root, *, directory=None):
                     yield root / dirpath / name
         return
     for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
+        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d))
+                             and not is_virtualenv(d, lambda rel: os.path.lexists(os.path.join(dirpath, rel))))
         for name in sorted(filenames):
             path = Path(dirpath) / name
             if name in SKIP_FILES or path.is_symlink() or not path.is_file():
@@ -500,6 +532,32 @@ def json_key_lines(text):
         if end < len(text) and text[end] == ":":
             key = json.loads(token.group())
             lines.setdefault(key, line_of(text, token.start()))
+    return lines
+
+
+def section_key_lines(text):
+    """Line of each key directly inside a top-level object, by (section, key), in a validated JSON file.
+
+    A dependency named like a script or a top-level setting (storybook, jest)
+    then points at its own section, not at the first key spelled the same."""
+    lines, stack, key = {}, [], None
+    for token in re.finditer(r'"(?:[^"\\]|\\.)*"|[{}\[\]]', text):
+        value = token.group()
+        if value in "{[":
+            stack.append(key)
+            key = None
+        elif value in "}]":
+            if stack:
+                stack.pop()
+            key = None
+        else:
+            end = token.end()
+            while end < len(text) and text[end] in " \t\r\n":
+                end += 1
+            if end < len(text) and text[end] == ":":
+                key = json.loads(value)
+                if len(stack) == 2:
+                    lines.setdefault((stack[1], key), line_of(text, token.start()))
     return lines
 
 
@@ -1005,7 +1063,14 @@ def sql_table_specs(text):
         opening = CREATE_TABLE_START.search(text, position)
         if opening is None:
             return
-        closing = CREATE_TABLE_END.search(text, opening.end())
+        # The body ends at the parenthesis balancing the opening one, so table
+        # options (MySQL's ENGINE=...) and nested types or checks cannot end it early.
+        depth, closing = 1, None
+        for token in SQL_BODY_TOKEN.finditer(text, opening.end()):
+            depth += {"(": 1, ")": -1}.get(token.group(0), 0)
+            if depth == 0:
+                closing = token
+                break
         if closing is None:
             return
         yield opening.group(1), opening.start(), opening.end(), text[opening.end():closing.start()]
@@ -1418,11 +1483,11 @@ def inventory(root, units=None, today=None):
         if name == "package.json":
             ecosystem = "javascript"
             pkg = package_sections(text)
+            key_lines = section_key_lines(text) if pkg else {}
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
-                    m = re.search(r"\"%s\"\s*:" % re.escape(dep), text)
-                    loc = f"{rel}:{line_of(text, m.start()) if m else 1}"
+                    loc = f"{rel}:{key_lines.get((section, dep), 1)}"
                     deps.append((dep, section, loc, js_packages[dep],
                                  len(re.findall(r"(?<![\w@/-])%s(?![\w-])" % re.escape(dep.split("/")[-1]),
                                                 scripts + "\n" + tool_text.replace(text, "")))))
@@ -1474,8 +1539,12 @@ def inventory(root, units=None, today=None):
                 decl.setdefault(m.group(1), f"{rel}:{line_of(text, m.start(1))}")
             continue
         if rel in code_files:
-            for m in ENV_READ.finditer(text):
-                reads[next(g for g in m.groups() if g)].append(f"{rel}:{line_of(text, m.start())}")
+            found = [(next(g for g in m.groups() if g), m.start()) for m in ENV_READ.finditer(text)]
+            if suffix(rel) in JS_EXT:
+                found.extend((key.group(1), m.start(1) + key.start(1)) for m in ENV_DESTRUCTURE.finditer(text)
+                             for key in ENV_DESTRUCTURED_KEY.finditer(m.group(1)))
+            for name, start in sorted(found, key=lambda item: item[1]):
+                reads[name].append(f"{rel}:{line_of(text, start)}")
     rows["env_read"] = [{"name": n, "count": len(locs), "locations": locs[:MAX_LOCATIONS]} for n, locs in sorted(reads.items())]
     rows["env_declared_not_read"] = [{"name": n, "location": loc} for n, loc in sorted(decl.items()) if n not in reads]
     rows["env_read_not_declared"] = ([{"name": n, "locations": reads[n][:MAX_LOCATIONS]}
@@ -1703,14 +1772,15 @@ def inventory(root, units=None, today=None):
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
+            key_lines = section_key_lines(text) if scripts else {}
             implicit_start = (Path(rel).parent / "server.js").as_posix() in files
             for script in scripts:
                 hits = npm_calls[script]
                 hook = re.match(r"^(?:pre|post)(.+)$", script)
                 lifecycle = bool(script in NPM_LIFECYCLES or hook and (
                     hook.group(1) in scripts or hook.group(1) == "start" and implicit_start))
-                m = re.search(r"\"%s\"\s*:" % re.escape(script), text)
-                script_rows.append({"source": rel, "name": script, "location": f"{rel}:{line_of(text, m.start()) if m else 1}",
+                script_rows.append({"source": rel, "name": script,
+                                    "location": f"{rel}:{key_lines.get(('scripts', script), 1)}",
                                     "invocations": hits, "default": lifecycle})
     rows["scripts"] = script_rows
     rows["uninvoked_scripts"] = [r for r in script_rows if r["invocations"] == 0 and not r["default"]]
@@ -1739,10 +1809,11 @@ def inventory(root, units=None, today=None):
             for m in SKIPPED_TEST.finditer(text):
                 line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
                 skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": omitted_text or line[:120]})
-        if ext in SOURCE_EXT | {".sql", ".sh", ".yml", ".yaml", ".toml"} | CSS_EXT:
+        comment_line = COMMENT_LINE.get(ext)
+        if comment_line:
             run = []
             for n, line in enumerate(physical_lines(text) + [""], 1):
-                m = COMMENT_LINE.match(line)
+                m = comment_line.match(line)
                 if m and not line.lstrip().startswith(("#!", "# -*-")):
                     run.append((n, m.group(1)))
                     continue
@@ -1771,18 +1842,23 @@ def inventory(root, units=None, today=None):
     rows["markers"] = markers
 
     # SQL schema: tables and columns no non-SQL code names.
+    # Unquoted SQL identifiers are case-insensitive, so names are compared folded.
     tables, columns = [], []
-    for rel in sorted(r for r in texts if suffix(r) == ".sql"):
+    sql_files = sorted(r for r in texts if suffix(r) == ".sql")
+    folded = Counter()
+    for name, count in (idents.items() if sql_files else ()):
+        folded[name.lower()] += count
+    for rel in sql_files:
         text = texts[rel]
         for table, start, body_start, body in sql_table_specs(text):
-            if idents[table] == 0:
+            if folded[table.lower()] == 0:
                 tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
             # Blank comments in place, so a comma inside one cannot start a column.
             body = re.sub(r"--[^\n]*|/\*[\s\S]*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
             for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
-                if col_name.lower() in SQL_CONSTRAINT or idents[col_name]:
+                if col_name.lower() in SQL_CONSTRAINT or folded[col_name.lower()]:
                     continue
                 columns.append({"table": table, "column": col_name,
                                 "location": f"{rel}:{line_of(text, body_start + c.start(1))}"})
@@ -1810,8 +1886,13 @@ def inventory(root, units=None, today=None):
     }
 
 
+# Complete listings, not candidates: their candidates are listed again
+# (unreferenced_routes, uninvoked_scripts, env_*_not_*, unimported_dependencies).
+INVENTORY_ONLY = ("routes", "scripts", "env_read", "dependencies_declared")
+
+
 def tag_units(rows, units):
-    """Tag every row that has a path with the most specific unit whose paths cover it; add per-unit counts."""
+    """Tag every row that has a path with the most specific unit whose paths cover it; count candidates per unit."""
     prefixes = []
     for unit in units["units"]:
         for path in unit["paths"]:
@@ -1825,7 +1906,7 @@ def tag_units(rows, units):
                 return uid
         return None
     counts = Counter()
-    for value in rows.values():
+    for name, value in rows.items():
         if not isinstance(value, list):
             continue
         for row in value:
@@ -1837,7 +1918,8 @@ def tag_units(rows, units):
             where = row.get("path") or location.rsplit(":", 1)[0] or row.get("manifest")
             if where:
                 row["unit"] = unit_of(where)
-                counts[row["unit"] or "none"] += 1
+                if name not in INVENTORY_ONLY:
+                    counts[row["unit"] or "none"] += 1
     rows["by_unit"] = dict(sorted(counts.items()))
 
 
@@ -1866,6 +1948,7 @@ def output_is_source(directory, name, source):
 
 
 def main(argv=None):
+    tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("repo")
     p.add_argument("--out", required=True)

@@ -42,6 +42,7 @@ named in `decisions` so a human makes the keep or remove call.
 | `entry_points[].name`, `location` | The entry as a reader would name it, and its `path:line` |
 | `consumers[]` | `name` (unique), `kind` (`web`, `mobile`, `service`, `partner`, `ops`, `library-user`, `other`), `in_repo` (true when its code is in this repository), `evidence` |
 | `units[].id` | `UN-` and two or three digits, unique |
+| `units[].name` | The area as a reader would name it ("Server API"); required |
 | `units[].kind` | `area` (a part of the product reviewed from its entry points) or `shared` (dependencies, configuration, data and schema, tooling, docs) |
 | `units[].paths` | Repository-relative path prefixes; the most specific prefix owns a file |
 | `units[].entry_points` | Entry point ids reviewed in this unit; every entry point belongs to at least one unit |

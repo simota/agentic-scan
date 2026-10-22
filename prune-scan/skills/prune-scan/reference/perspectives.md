@@ -7,7 +7,9 @@ Each family has an id and hunt steps. A step is done when every entry point and
 path of the unit has been read for it. Record the result per family in
 `perspectives` (`name`, `result`, `note`), the `name` starting with the family
 id (`DC Dead code`), for all thirteen families — one with nothing to check as
-`N/A` with the reason, one not reached as `not checked`. Inventory keys that
+`N/A` with the reason (`N/A: no database` in `result`, or the reason in
+`note`; `scripts/contract_check.py` refuses a bare `N/A`), one not reached as
+`not checked`. Inventory keys that
 feed a step are named in brackets.
 
 The minus-design question applies to every step, not only PX and OB: for each

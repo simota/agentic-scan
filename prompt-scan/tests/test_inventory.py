@@ -231,6 +231,14 @@ class InventoryTest(unittest.TestCase):
         })
         hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
         self.assertEqual(hits, {("unclosed-tag", "prompts/a.md:2"), ("placeholder", "prompts/a.md:3")})
+        root = make_repo({
+            # An indented ``` inside a fence is content: it closes nothing.
+            "prompts/d.md": "```python\nEXAMPLE = '''\n    ```json\n    {}\n    ```\n'''\n```\n<rules>\n",
+            # Outside a list item, a line indented four spaces is an indented code block, not a fence.
+            "prompts/e.md": "Start like this:\n\n    ```json\n\n<rules>\n",
+        })
+        hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
+        self.assertEqual(hits, {("unclosed-tag", "prompts/d.md:8"), ("unclosed-tag", "prompts/e.md:5")})
 
     def test_out_refuses_a_symlink_and_reports_write_errors(self):
         root = make_repo({"prompts/a.md": "hi\n", "victim.txt": "keep\n"})

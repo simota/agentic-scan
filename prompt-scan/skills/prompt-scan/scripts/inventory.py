@@ -208,28 +208,41 @@ def variables(text):
     return found
 
 
-# Any indentation: a fence nested in a list item is indented by the item, often four spaces or more.
-FENCE = re.compile(r"^[ \t]*(`{3,}|~{3,})")
+FENCE = re.compile(r"^([ \t]*)(`{3,}|~{3,})")
+LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
+
+
+def width(indent):
+    return len(indent.expandtabs(4))
 
 
 def fenced_lines(lines):
     """Line numbers (1-based) inside Markdown code fences, which hold examples rather than prompt markup.
 
-    As in CommonMark, a fence closes only on a bare run of its own character at least as long as the
-    opener, so a ``` line inside a ```` fence stays inside, and a backtick run followed by another
-    backtick on its line (```json``` is ...) is inline code, not an opener.
+    As in CommonMark, a fence opens with at most three spaces of indentation (more inside a list item,
+    relative to the item's text), so a line indented four spaces outside a list is an indented code
+    block; it closes only on a bare run of its own character at least as long as the opener and
+    indented at most three spaces more than it, so a ``` line inside a ```` fence, or an indented ```
+    in the fenced code, stays inside; and a backtick run followed by another backtick on its line
+    (```json``` is ...) is inline code, not an opener.
     """
-    fence, result = None, set()
+    fence, indent, item, result = None, 0, None, set()
     for number, line in enumerate(lines, 1):
         m = FENCE.match(line)
         if fence is None:
-            if m and not (m.group(1)[0] == "`" and "`" in line[m.end():]):
-                fence = m.group(1)
+            listed = LIST_ITEM.match(line)
+            if listed:
+                item = width(listed.group(0))
+            elif line.strip() and item is not None and width(line[:len(line) - len(line.lstrip())]) < item:
+                item = None  # A line left of the item's text ends the list.
+            if m and width(m.group(1)) <= (item or 0) + 3 \
+                    and not (m.group(2)[0] == "`" and "`" in line[m.end():]):
+                fence, indent = m.group(2), width(m.group(1))
                 result.add(number)
         else:
             result.add(number)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
-                    and not line[m.end():].strip():
+            if m and m.group(2)[0] == fence[0] and len(m.group(2)) >= len(fence) \
+                    and not line[m.end():].strip() and width(m.group(1)) <= indent + 3:
                 fence = None
     return result
 

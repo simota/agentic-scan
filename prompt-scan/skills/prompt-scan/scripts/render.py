@@ -27,8 +27,10 @@ import re
 import subprocess
 import sys
 
-from scan_report_kit import pdf as kit_pdf, style as kit_style
-from scan_report_kit.output import unsafe_target, write_output
+# The kit sits next to this script; -I and PYTHONSAFEPATH leave the script's directory off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scan_report_kit import pdf as kit_pdf, style as kit_style  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 SEVERITIES = ["High", "Medium", "Low", "Info"]
 CONFIDENCES = ["Confirmed", "Model-dependent", "Suspected"]

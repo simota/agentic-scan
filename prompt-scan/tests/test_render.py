@@ -3,11 +3,12 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import sys
 import tempfile
 import unittest
 from unittest import mock
 
-from helpers import SAMPLE_APP, clone, render, run, sample, write_json
+from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, render, run, sample, write_json
 
 
 class RenderTest(unittest.TestCase):
@@ -83,6 +84,13 @@ class RenderTest(unittest.TestCase):
         excerpts = render.attach_sources(data, repo)
         self.assertEqual(sorted(excerpts), ["F-004"])
         self.assertEqual(excerpts["F-004"][1], ["use [REDACTED]"] * len(tokens))
+
+    def test_runs_in_isolated_mode(self):
+        # -I leaves the script's directory off sys.path, as PYTHONSAFEPATH does.
+        out = Path(tempfile.mkdtemp())
+        r = subprocess.run([sys.executable, "-I", str(SCRIPTS / "render.py"), str(EXAMPLES / "findings.sample.json"),
+                            "--out", str(out), "--no-pdf"], capture_output=True, text=True, timeout=60)
+        self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_line_numbers_split_on_newlines_only(self):
         self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])

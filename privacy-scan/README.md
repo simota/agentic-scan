@@ -81,11 +81,11 @@ Every output is rendered from one record, `findings.json`, which the agent
 builds from JSON fragments rather than heredocs:
 
 ```sh
-mkdir out                 # a new, empty output directory outside the audited repository
-python3 skills/privacy-scan/scripts/findings.py merge out/findings.json frag-001.json
-python3 skills/privacy-scan/scripts/findings.py renumber out/findings.json   # after the last merge
-python3 skills/privacy-scan/scripts/render.py out/findings.json --out out --lang ja
-python3 skills/privacy-scan/scripts/findings.py check out   # exit 1 lists each violation
+out=$(mktemp -d)          # a new, empty output directory outside the audited repository
+python3 skills/privacy-scan/scripts/findings.py merge "$out/findings.json" frag-001.json
+python3 skills/privacy-scan/scripts/findings.py renumber "$out/findings.json"   # after the last merge
+python3 skills/privacy-scan/scripts/render.py "$out/findings.json" --out "$out" --lang ja
+python3 skills/privacy-scan/scripts/findings.py check "$out"   # exit 1 lists each violation
 ```
 
 | Output | What it is |

@@ -172,7 +172,7 @@ class OutputContractTests(unittest.TestCase):
             self.assertEqual(code, 1)
             self.assertEqual(errors.splitlines(),
                              ["unexpected output: 'notes\\nfindings.json: ok' "
-                              "(pass --allow 'notes\\nfindings.json: ok' if requested)"])
+                              "(rename or remove it)"])
 
 
 if __name__ == "__main__":

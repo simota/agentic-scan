@@ -99,6 +99,14 @@ class ScanTest(unittest.TestCase):
                 self.write("bucket.tf", BUCKET)
                 self.assertIn(("AWS-S3-001", "bucket.tf", 2), self.rules(self.scan()))
 
+    def test_upper_case_extensions_are_read_or_named(self):
+        self.write("pod.YAML", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  hostPID: true\n")
+        self.write("sg.JSON", json.dumps(SG))
+        self.write("main.TF", BUCKET)
+        result = self.scan()
+        self.assertEqual([r[:2] for r in self.rules(result)], [("AWS-NET-001", "sg.JSON"), ("K8S-001", "pod.YAML")])
+        self.assertTrue([n for n in result["not_run"] if "main.TF" in n], result["not_run"])
+
     def test_terraform_json_is_listed(self):
         self.write("main.tf.json", json.dumps({"resource": {}}))
         self.assertIn("Terraform JSON syntax not evaluated; review by hand: main.tf.json",

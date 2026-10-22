@@ -983,6 +983,13 @@ class Scan:
             try:
                 value = json.loads(value, object_pairs_hook=unique_object)
             except ValueError:
+                # A heredoc with ${jsonencode(...)} outside a JSON string, or a
+                # malformed document: the statements were never read.
+                if value.strip():
+                    line = view.line(attr)
+                    self.not_run.append(f"policy document is not JSON as written (template or syntax error); "
+                                        f"{attr} checks not run: {getattr(line, 'file', res.file)}:{line} "
+                                        f"({res.address})")
                 return None
         if isinstance(value, dict):
             return norm_statements(value, raw=raw)
@@ -4150,6 +4157,11 @@ def run(root, snapshots=()):
             note = None
         if note:
             scan.not_run.append(f"{note}; review by hand: {rel}")
+        # kubectl -f and CloudFormation take any spelling (pod.YAML); Terraform
+        # loads only lower-case .tf/.tofu, so a main.TF is named, not parsed.
+        lname = name.lower()
+        if lname.endswith((".tf", ".tofu")) and not name.endswith((".tf", ".tofu")):
+            scan.not_run.append(f"Terraform ignores a file whose extension is not lower case; not parsed: {rel}")
         if name.endswith((".tf", ".tofu")):
             kind = "terraform"
             try:
@@ -4161,7 +4173,7 @@ def run(root, snapshots=()):
         elif terragrunt:
             kind = "terragrunt"
             handle_terragrunt(scan, rel, text)
-        elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
+        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")):
             try:
                 doc = json.loads(text, object_pairs_hook=unique_object)
             except RecursionError:
@@ -4174,7 +4186,7 @@ def run(root, snapshots=()):
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             try:
-                if name.endswith(".tfvars.json"):
+                if lname.endswith(".tfvars.json"):
                     kind = "tfvars"
                 elif kind == "plan":
                     handle_plan(scan, rel, text, doc)
@@ -4189,11 +4201,11 @@ def run(root, snapshots=()):
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
                 scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
-        elif name.endswith((".yaml", ".yml", ".template")):
+        elif lname.endswith((".yaml", ".yml", ".template")):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
-        elif snapshot and not name.endswith(".json") and not note:
+        elif snapshot and not lname.endswith(".json") and not note:
             scan.not_run.append(f"export not read (rules cover JSON exports); review by hand: {rel}")
         scan_secrets(scan, rel, text, kind)
     if terragrunt_files:

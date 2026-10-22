@@ -35,6 +35,14 @@ class PolicyUncertaintyTest(unittest.TestCase):
                             "data.aws_iam_policy_document.composed at main.tf:1" in note
                             for note in scan.not_run), scan.not_run)
 
+    def test_heredoc_policy_that_is_not_json_is_named(self):
+        result = self.scan('resource "aws_iam_policy" "p" {\n  policy = <<EOT\n'
+                           '{"Statement": [{"Effect": "Allow", "Action": "*", "Resource": ${jsonencode(var.arns)}}]}\n'
+                           'EOT\n}\n')
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "is not JSON as written" in n and "main.tf:2" in n],
+                        result.not_run)
+
     def test_source_composition_is_not_reported_as_an_empty_policy(self):
         source = json.dumps({"Version": "2012-10-17", "Statement": [{
             "Effect": "Allow", "Action": "*", "Resource": "*",

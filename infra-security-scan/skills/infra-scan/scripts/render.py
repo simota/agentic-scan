@@ -741,7 +741,9 @@ def hcl_has_paired_secret(text):
         if name:
             for k in range(max(0, n - 3), min(len(lines), n + 4)):
                 value = HCL_VALUE.search(lines[k])
-                if not value or SAFE_VALUE.fullmatch(lines[k][value.end():].strip()):
+                # Only a literal can leak: a string, heredoc or number, not an
+                # iterator (for k, v in ...: { name = k, value = v }) or each.value.
+                if not value or not re.match(r'\s*(?:"|<<|[0-9])', lines[k][value.end():]):
                     continue
                 # The same object only: no brace between them (a resource's
                 # name and a nested setting { value = ... } are not a pair).

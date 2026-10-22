@@ -72,32 +72,8 @@ def _secret_fields(line):
     urls = [match.span() for match in URL.finditer(line)]
     return (match for match in SECRET_FIELD.finditer(line)
             if not any(start <= match.start() < end for start, end in urls)
-            and not _joined_colon(line, match)
             # http_tokens = "optional" is IMDS evidence, not a token.
             and not PUBLIC_WORDS.fullmatch(match.group().rstrip(":= \t\"'").lstrip("\"'")))
-
-
-IMAGE_TAG = re.compile(r"[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}(?=[\"'\s,\]@]|$)")
-
-
-def _joined_colon(line, match):
-    """A segment of an ARN or an image reference, glued to its value by ":".
-
-    In arn:aws:secretsmanager:...:secret:prod/db and
-    external-secrets/external-secrets:v0.9.0 the word is an identifier, not
-    a key; read as a key it hid the rest of the line, and an unclosed quote
-    in that rest hid the lines after it. Only these shapes: githubtoken:x
-    or DB_PASSWORD:1234 in free text stay keys, since scrub_line misses
-    glued words and numeric values. (secretsmanager:Action is in PUBLIC_WORDS.)
-    """
-    text = match.group()
-    if not text.endswith(":") or text[:-1].rstrip().endswith(("\"", "'")):
-        return False
-    if not line[match.end():match.end() + 1].isalnum():
-        return False
-    arn_segment = match.start() > 0 and line[match.start() - 1] == ":"
-    image = "/" in text and IMAGE_TAG.match(line, match.end()) is not None
-    return arn_segment or image
 
 
 def _secret_field(line):
@@ -357,11 +333,33 @@ def redact(line, *, syntax="hcl"):
     return SECRET_SHAPE.sub("[redacted]", line)
 
 
+def _open_quote(text):
+    """The quote still open at the end of text, or None.
+
+    A key-like match inside a string ("secretsmanager:GetSecretValue") is
+    followed by that string's closing quote; read as an opening quote, it
+    carried the value on to every following line.
+    """
+    quote, escaped = None, False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif quote and char == "\\":
+            escaped = True
+        elif quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == "#":
+            break
+    return quote
+
+
 class _Value:
     """Track quoted/composite values that continue after a sensitive key."""
-    def __init__(self):
+    def __init__(self, quote=None):
         self.stack = []
-        self.quote = None
+        self.quote = quote
         self.escaped = False
         self.started = False
         self.trailing_op = False
@@ -468,7 +466,8 @@ def redact_lines(lines, *, syntax="hcl"):
                         # YAML instead follows its mapping/list indentation.
                         value = _Value()
                     break
-                pending = _Value()
+                # Inside a string, the value ends where that string does.
+                pending = _Value(_open_quote(line[:match.end()]))
                 if pending.feed(rest):
                     value = pending
                     break
@@ -568,8 +567,12 @@ def _base64_key(token):
     shaped = "+" in token or token.endswith("=") or (
         "/" in token and len(token) >= 32 and token.count("/") <= len(token) // 16)
     letters = re.sub(r"[+/=]", "", token)
-    # 32 random bytes carry no digit about once in a thousand keys.
-    return shaped and (_high_entropy(letters) or (
+    # Random characters switch between upper, lower and digit about every
+    # other character; CamelCase names (AWSElasticBeanstalkMulticontainerDocker)
+    # rarely. 32 random bytes carry no digit about once in a thousand keys.
+    kinds = ["u" if c.isupper() else "l" if c.islower() else "d" for c in letters]
+    switches = sum(a != b for a, b in zip(kinds, kinds[1:]))
+    return shaped and switches >= len(letters) * 0.35 and (_high_entropy(letters) or (
         len(token) >= 40 and letters != letters.lower() and letters != letters.upper()))
 
 

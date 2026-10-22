@@ -348,6 +348,11 @@ class RedactionBoundaryTest(unittest.TestCase):
             "e.yaml": 'spec:\n  cmd: login githubtoken:' + value + '\n',
             "f.yaml": 'spec:\n  cmd: jwtsecret:' + value + '\n',
             "g.yaml": 'spec:\n  pin: DB_PASSWORD:4815' + '1623\n',
+            # After an ARN-like ":" or inside a path, a secret name is still a key.
+            "h.tf": 'locals {\n  x = "svc:githubtoken:' + value + '"\n}\n',
+            "i.yaml": 'spec:\n  args: ["--x", "kv/app/npmtoken:' + value + '"]\n',
+            "j.yaml": 'spec:\n  conf: svc:password:4815' + '1623\n',
+            "k.tf": 'locals {\n  x = "app/dbpassword:4815' + '1623"\n}\n',
         }.items():
             with self.subTest(name=name):
                 lines = render.source_lines(self.write(name, text))
@@ -360,8 +365,18 @@ class RedactionBoundaryTest(unittest.TestCase):
                      '  resources = ["arn:aws:s3:::logs/AWSLogs/123456789012/CloudTrail/*"]',
                      '  image = "gcr.io/Prod1Project/backendApi/server:v2"',
                      '  path = "/opt/App2/Config/ProdSettings1"',
-                     '  source = "github.com/Org1/TerraformModules/Vpc2"'):
+                     '  source = "github.com/Org1/TerraformModules/Vpc2"',
+                     '  policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker"',
+                     '  values = ["repo:ExampleOrganization/TerraformInfrastructure:*"]',
+                     '  x = "ExampleOrganizationName/InfrastructureAsCode+Extras"'):
             self.assertEqual(scrub_line(line), line)
+
+    def test_iterator_values_do_not_pair_with_a_computed_name(self):
+        for text in ('locals {\n  c = jsonencode([{\n'
+                     '    environment = [for k, v in var.environment : { name = k, value = v }]\n  }])\n}\n',
+                     'locals {\n  tags = [for k, v in var.tags : { key = k, value = v }]\n}\n'):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
 
     def test_a_resource_name_does_not_pair_with_a_nested_block_value(self):
         for text in ('resource "aws_ecs_cluster" "c" {\n  name = var.cluster_name\n'

@@ -38,7 +38,8 @@ CSS block comments, `//` line comments in Sass, Less and Stylus (files and
 as a URL), closed HTML / JSX comments, JSX `/* */` comments (after any token, but not inside a regular
 expression such as `/[/*]/`) and `//` comment
 lines (not JSX child text: a line after a tag's `>`, an `{expression}` child
-or another text line; a comparison's `>` is not a tag), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
+or another text line; a comparison's `>` is not a tag), the same `/* */` comments and `//` comment lines in
+`.ts` and `.cjs` files and in `<script>` blocks (where every such line is a comment), and server-template comments (`{# #}`, `{% comment %}`, `{{!-- --}}`,
 `{{! }}`, `<%# %>`) are masked without changing source locations. A CSS string ends at a raw newline, so a stray quote cannot hide
 later rules. JSX comment masking preserves JS strings; HTML comment
 masking preserves tag attributes and raw script / style content. Ambiguous,
@@ -83,7 +84,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 
 | Key | What it collects | Perspective |
 |---|---|---|
-| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array) or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
+| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, also after an `element={<… />}` attribute, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array) or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
 | `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` and `font-size` literals (CSS and JS style objects), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment | LG2, VH2 |
 | `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings; `@container` conditions are not viewport breakpoints and are left out | RS1 |
@@ -100,7 +101,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1, ST3 |
 | `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called (also `onDelete?.()`, `deleteMutation.mutate(id)`; other methods after the name, such as `deleteModal.onOpen`, do not count) or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), but not DOM or URL housekeeping such as `classList.remove` or `params.delete`, in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers, Svelte event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
-| `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes (also inside `cn(…)` / template-literal class expressions) | IN1, IN2 |
+| `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes (also inside `cn(…)` / template-literal class expressions, Vue `:class` bindings and Svelte `class:truncate`) | IN1, IN2 |
 | `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present, else the first English region such as `en-US`, else the first tag) and 5 columns wider; East Asian wide characters count as two. Bundles are one file per language (`locales/de.json`) or one directory per language (`locales/de/app.json`); when both the file and its folder look like tags, an ISO 639-1 code (or a common three-letter code such as `fil`) wins, so `app.json` or `nav.json` namespaces are not read as languages; numeric regions such as `es-419` are tags | IN1 |
 
 With `--flows`, also:
@@ -173,6 +174,8 @@ limit) and lengths outside the finite numeric range are skipped individually
 with a warning; the rest of the file is still scanned. Mention relevant parse
 warnings in the report's `limitations`, as well as any `truncated` lists.
 Limits, to state in `limitations` when they matter:
+indented Sass and brace-less Stylus rules (their literals are measured, but
+`focus_outline` and `tap_targets` read only rules in braces),
 styles computed at run time, Tailwind utility classes other than `truncate`,
 native mobile UI code (SwiftUI, Compose, Flutter), components from a library
 whose source is not in the repository, and rendering itself (contrast,

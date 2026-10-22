@@ -846,6 +846,13 @@ def doc_statements(view):
     return out
 
 
+def each_values(for_each, raw):
+    """What each.value (or each.key) takes: a set's items, or a map's values (keys)."""
+    if isinstance(for_each, dict):
+        return list(for_each.keys() if raw.strip() == "each.key" else for_each.values())
+    return aslist(for_each)
+
+
 def lower_strs(values):
     return {v.lower() for v in values if isinstance(v, str)}
 
@@ -1051,7 +1058,8 @@ class Scan:
             # GCP: an ingress rule with no source applies to every source; an
             # empty list is not sent to the API, so it means the same.
             ranges = ["0.0.0.0/0"]
-        if ranges is UNKNOWN or (isinstance(ranges, list) and UNKNOWN in ranges):
+        # A known world range is open whatever its unresolved siblings hold.
+        if ranges is UNKNOWN or (isinstance(ranges, list) and UNKNOWN in ranges and not world_cidrs(ranges)):
             if any(proto is not None for proto, _ in allows):
                 self.not_run.append(f"GCP-NET-001: source ranges unresolved; check not run: "
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
@@ -1511,8 +1519,11 @@ def check_tf(scan, res):
         scan.trust_policy(res, scan.statements(res, "assume_role_policy"), v.line("assume_role_policy"))
         for inline in v.blocks("inline_policy"):
             scan.identity_policy(res, scan.statements(res, "policy", inline), inline.line())
+        managed = text_of(v, "managed_policy_arns")
         if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("managed_policy_arns"))) or \
-                ADMIN_ARN_RAW.search(text_of(v, "managed_policy_arns")):
+                ADMIN_ARN_RAW.search(managed) or any(
+                    (res.dir, name) in scan.admin_policy_data
+                    for name in re.findall(r"data\.aws_iam_policy\.([\w-]+)\.arn", managed)):
             scan.hit("AWS-IAM-001", res, v.line("managed_policy_arns"), "AdministratorAccess attached")
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
                "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
@@ -1521,7 +1532,7 @@ def check_tf(scan, res):
         data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
         # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
         each = raw in ("each.value", "each.key") and any(
-            isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("for_each")))
+            isinstance(a, str) and ADMIN_ARN.search(a) for a in each_values(v.get("for_each"), raw))
         if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
                 (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
             scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
@@ -1623,11 +1634,8 @@ def check_tf(scan, res):
         raw = (v.raw("member") or "") if hasattr(v, "raw") and v.get("member") is not None else ""
         if members == [UNKNOWN] and raw.strip() in ("each.value", "each.key"):
             fe = v.get("for_each")
-            if isinstance(fe, list):
-                members = [m if isinstance(m, str) else UNKNOWN for m in fe] or members
-            elif isinstance(fe, dict):
-                vals = list(fe.keys()) if raw.strip() == "each.key" else list(fe.values())
-                members = [m if isinstance(m, str) else UNKNOWN for m in vals] or members
+            if isinstance(fe, (list, dict)):
+                members = [m if isinstance(m, str) else UNKNOWN for m in each_values(fe, raw)] or members
         raw_single_template = (
             bool(raw) and not any(c in raw for c in "?,[") and " for " not in raw and raw.count('"') <= 2
             and bool(SERVICE_AGENT.search(raw))
@@ -1636,8 +1644,9 @@ def check_tf(scan, res):
             (isinstance(m, str) and SERVICE_AGENT.search(m)) or (m is UNKNOWN and raw_single_template)
             for m in members)
         role = v.get("role")
-        each = role is UNKNOWN and (v.raw("role") or "").strip() in ("each.value", "each.key")
-        roles = [r for r in aslist(v.get("for_each")) if isinstance(r, str)] if each else []
+        role_raw = (v.raw("role") or "").strip()
+        each = role is UNKNOWN and role_raw in ("each.value", "each.key")
+        roles = [r for r in each_values(v.get("for_each"), role_raw) if isinstance(r, str)] if each else []
         # for_each = toset(["roles/owner", ...]) with role = each.value, as the iam modules write it.
         for role in roles or [role]:
             scan.gcp_iam(res, role, members, v.line("role"), service_agent=agents, raw=raw)

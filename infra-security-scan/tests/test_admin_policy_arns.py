@@ -52,5 +52,27 @@ class AdministratorPolicyArnTest(unittest.TestCase):
                     self.assertEqual([h["rule"] for h in scan.hits], ["AWS-IAM-001"])
 
 
+class AdministratorPolicyReferenceTest(unittest.TestCase):
+    def hits(self, text):
+        with tempfile.TemporaryDirectory(prefix="iac-admin-ref-") as tmp:
+            (Path(tmp) / "main.tf").write_text(text, encoding="utf-8")
+            return sorted(r for h in iac_scan.run(tmp).hits if h["rule"] == "AWS-IAM-001" for r in [h["address"]])
+
+    def test_managed_policy_arns_follow_an_admin_data_source(self):
+        self.assertEqual(self.hits(
+            'data "aws_iam_policy" "admin" {\n  name = "AdministratorAccess"\n}\n'
+            'resource "aws_iam_role" "r" {\n  assume_role_policy = "{}"\n'
+            '  managed_policy_arns = [data.aws_iam_policy.admin.arn]\n}\n'), ["aws_iam_role.r"])
+
+    def test_map_for_each_feeds_each_value(self):
+        self.assertEqual(self.hits(
+            'resource "aws_iam_role_policy_attachment" "a" {\n'
+            '  for_each   = { admin = "arn:aws:iam::aws:policy/AdministratorAccess" }\n'
+            '  role       = "app"\n  policy_arn = each.value\n}\n'
+            'resource "aws_iam_role_policy_attachment" "keys" {\n'
+            '  for_each   = { admin = "arn:aws:iam::aws:policy/AdministratorAccess" }\n'
+            '  role       = "app"\n  policy_arn = each.key\n}\n'), ["aws_iam_role_policy_attachment.a"])
+
+
 if __name__ == "__main__":
     unittest.main()

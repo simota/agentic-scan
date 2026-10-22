@@ -12,10 +12,13 @@ class ContractTest(unittest.TestCase):
         out = Path(tempfile.mkdtemp())
         data = sample(lang)
         data["limitations"].append(contract_check.NO_PDF)
+        scanned = inventory.scan(SAMPLE_APP)
+        # As inventory.py --into leaves it: the record's Git state is the scan's.
+        data["meta"].update(commit=scanned["commit"], dirty=scanned["dirty"])
         if mutate:
             mutate(data)
         write_json(out / "findings.json", data)
-        write_json(out / "inventory.json", inventory.scan(SAMPLE_APP))
+        write_json(out / "inventory.json", scanned)
         code, _, err = run(render.main, out / "findings.json", "--out", out, "--no-pdf", "--lang", lang)
         self.assertEqual(code, 0, err)
         return out
@@ -82,6 +85,19 @@ class ContractTest(unittest.TestCase):
         code, err = self.problems(out)
         self.assertEqual(code, 1)
         self.assertIn("inventory.json was not written by inventory.py", err)
+
+    def test_inventory_and_lint_findings_come_from_one_scan(self):
+        out = self.build()
+        scanned = json.loads((out / "inventory.json").read_text(encoding="utf-8"))
+        later = dict(scanned, lint=scanned["lint"][:1])
+        write_json(out / "inventory.json", later)
+        code, err = self.problems(out)
+        self.assertEqual(code, 1)
+        self.assertIn("L-* findings do not match inventory.json", err)
+        write_json(out / "inventory.json", dict(scanned, commit="f" * 40, dirty=True))
+        code, err = self.problems(out)
+        self.assertEqual(code, 1)
+        self.assertIn("inventory.json and findings.json record different Git states", err)
 
     def test_pdf_limitation_rules(self):
         out = self.build()

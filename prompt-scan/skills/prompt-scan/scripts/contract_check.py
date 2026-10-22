@@ -4,9 +4,10 @@
     python3 contract_check.py OUT_DIR [--no-pdf] [--allow NAME ...]
 
 OUT_DIR holds findings.json and the rendered outputs. Checks the output file
-set, ID scheme, where L-* findings come from, the fields every F-* finding
-carries, perspective coverage, the limitations the contract requires, and that
-each rendered page was rendered from the current findings.json. It checks shape
+set, ID scheme, that L-* findings and inventory.json come from one scan, the
+fields every F-* finding carries, perspective coverage, the limitations the
+contract requires, and that each rendered page was rendered from the current
+findings.json. It checks shape
 and provenance markers only; it cannot tell whether a finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
@@ -62,6 +63,22 @@ def stamp_problems(directory, digest, label):
     return problems
 
 
+def scan_problems(inventory, data):
+    """inventory.json and the L-* findings must come from the one `inventory.py --out … --into …` run."""
+    rerun = "re-run inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json"
+    problems = []
+    meta = data.get("meta", {})
+    if "commit" in meta and (inventory.get("commit"), inventory.get("dirty")) != (meta["commit"], meta.get("dirty")):
+        problems.append(f"inventory.json and findings.json record different Git states: {rerun}")
+    lint = inventory.get("lint")
+    hits = sorted((str(h.get("rule")), str(h.get("location"))) for h in lint if isinstance(h, dict)) \
+        if isinstance(lint, list) else None
+    recorded = sorted((str(f.get("rule")), f["location"]) for f in data.get("findings", []) if f["id"].startswith("L-"))
+    if hits != recorded:
+        problems.append(f"L-* findings do not match inventory.json lint: {rerun}")
+    return problems
+
+
 def check(out, no_pdf=False, allow=()):
     problems = []
     raw = (out / "findings.json").read_bytes()
@@ -89,8 +106,10 @@ def check(out, no_pdf=False, allow=()):
             inventory = {}
         if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
             problems.append("inventory.json was not written by inventory.py")
-        elif inventory.get("prompt_files") and not data.get("prompts"):
-            problems.append("inventory.json lists prompt files but findings.json records no prompts")
+        else:
+            if inventory.get("prompt_files") and not data.get("prompts"):
+                problems.append("inventory.json lists prompt files but findings.json records no prompts")
+            problems += scan_problems(inventory, data)
 
     meta = data.get("meta", {})
     for key in ("target", "date", "assessor"):

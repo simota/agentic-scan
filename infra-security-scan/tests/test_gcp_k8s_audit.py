@@ -280,6 +280,25 @@ class KubernetesTest(unittest.TestCase):
                           ("k8s:RoleBinding/team-a/team", "Medium")])
         self.assertTrue([n for n in result.not_run if "kubeadm:cluster-admins" in n])
 
+    def test_omitted_namespace_pairs_with_an_explicit_one_both_ways(self):
+        # An omitted namespace is the apply context's; it was taken as
+        # "default" on the role/account side only, so the pair was dropped.
+        role = ("apiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata:\n  name: all{ns}\n"
+                "rules:\n  - apiGroups: ['*']\n    resources: ['*']\n    verbs: ['*']\n")
+        binding = ("apiVersion: rbac.authorization.k8s.io/v1\nkind: RoleBinding\nmetadata:\n  name: b{ns}\n"
+                   "roleRef:\n  kind: Role\n  name: all\nsubjects:\n  - kind: User\n    name: bob\n")
+        sa = "apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: app{ns}\nautomountServiceAccountToken: true\n"
+        pod = ("apiVersion: v1\nkind: Pod\nmetadata:\n  name: p{ns}\nspec:\n  serviceAccountName: app\n"
+               "  containers:\n    - name: c\n      image: x\n")
+        prod, none, other = "\n  namespace: prod", "", "\n  namespace: dev"
+        for first, second, expected in ((none, prod, True), (prod, none, True), (prod, prod, True),
+                                        (other, prod, False)):
+            with self.subTest(first=first, second=second):
+                rbac = scan({"rbac.yaml": role.format(ns=first) + "---\n" + binding.format(ns=second)})
+                self.assertEqual(any(h["rule"] == "K8S-002" for h in rbac.hits), expected, rbac.hits)
+                pods = scan({"pod.yaml": sa.format(ns=first) + "---\n" + pod.format(ns=second)})
+                self.assertEqual(any(h["rule"] == "K8S-001" for h in pods.hits), expected, pods.hits)
+
     def test_empty_secrets_and_export_shapes(self):
         pod = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p"}, "spec": {"hostPID": True}}
         result = scan({

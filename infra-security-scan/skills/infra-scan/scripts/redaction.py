@@ -333,11 +333,33 @@ def redact(line, *, syntax="hcl"):
     return SECRET_SHAPE.sub("[redacted]", line)
 
 
+def _open_quote(text):
+    """The quote still open at the end of text, or None.
+
+    A key-like match inside a string ("secretsmanager:GetSecretValue") is
+    followed by that string's closing quote; read as an opening quote, it
+    carried the value on to every following line.
+    """
+    quote, escaped = None, False
+    for char in text:
+        if escaped:
+            escaped = False
+        elif quote and char == "\\":
+            escaped = True
+        elif quote:
+            quote = None if char == quote else quote
+        elif char in "\"'":
+            quote = char
+        elif char == "#":
+            break
+    return quote
+
+
 class _Value:
     """Track quoted/composite values that continue after a sensitive key."""
-    def __init__(self):
+    def __init__(self, quote=None):
         self.stack = []
-        self.quote = None
+        self.quote = quote
         self.escaped = False
         self.started = False
         self.trailing_op = False
@@ -444,7 +466,14 @@ def redact_lines(lines, *, syntax="hcl"):
                         # YAML instead follows its mapping/list indentation.
                         value = _Value()
                     break
-                pending = _Value()
+                # Inside a string closed later on this line with text after the
+                # key ("secretsmanager:GetSecretValue"]), the value ends with that
+                # string. Otherwise ("export DB_PASSWORD=", then the value as the
+                # next list item; an apostrophe in a comment) keep the tracker as
+                # it was: hiding the following lines is the safe reading.
+                quote = _open_quote(line[:match.end()])
+                inside = rest.split(quote, 1)[0] if quote and quote in rest else ""
+                pending = _Value(quote if re.search(r"[A-Za-z0-9]", inside) else None)
                 if pending.feed(rest):
                     value = pending
                     break
@@ -470,7 +499,7 @@ SECRET_WORD = re.compile(
     r"credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|bearer|sk|"
     r"tls\.key|ssh[-_]?key)(?![a-z])")
 # Public spellings that contain a secret word but name no secret.
-PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|"
+PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|secretsmanager|"
                           r"block[-_]project[-_]ssh[-_]keys|authori[sz]ation[-_]scopes|"
                           r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
                           r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
@@ -488,6 +517,9 @@ STRUCTURE = re.compile(r'^\s*(?:resource|data|module|variable|output|provider|dy
 SAFE_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?(?:true|false|null|none|NONE|AWS_IAM|IAM|CUSTOM|JWT|'
                        r'COGNITO_USER_POOLS|[0-9]+)"?\s*,?\s*$')
 ENTROPY = re.compile(r"[A-Za-z0-9+_-]{16,}")
+# A base64 key is one token: ENTROPY alone splits it at "/" and "=" into
+# pieces too short or too plain to judge, leaving long runs of the key.
+BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
 # Cloud resource IDs and ARNs are long and mixed but name no secret.
 RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
                          r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17}|[a-z0-9-]+_[a-z0-9_]+", re.IGNORECASE)
@@ -533,6 +565,23 @@ PIPED_VALUE = re.compile(r"\b((?:echo|printf)\s+(?:-[a-zA-Z]+\s+)*)([^|\s][^|]*?
 # "/" split them into runs too short for the entropy check.
 CRYPT_HASH = re.compile(r"\$(?:1|2[abxy]?|5|6|y|apr1|argon2(?:id|i|d))\$[^\s:'\"]+")
 PUTTY = re.compile(r"PuTTY-User-Key-File-\d|^\s*Private-Lines:", re.IGNORECASE)
+
+
+def _base64_key(token):
+    """Base64 rather than a path: "+" or padding, or slashes as rare as in
+    random data (about 1 in 64; a path has one every few characters)."""
+    if len(token) < 24:  # a 16-byte key is 22 characters and "=="
+        return False
+    shaped = "+" in token or token.endswith("=") or (
+        "/" in token and len(token) >= 40 and token.count("/") <= len(token) // 16)
+    letters = re.sub(r"[+/=]", "", token)
+    # Random characters switch between upper, lower and digit about 63% of
+    # the time; CamelCase names (AmazonAPIGatewayPushToCloudWatchLogs) 20-30%.
+    # 32 random bytes carry no digit about once in a thousand keys.
+    kinds = ["u" if c.isupper() else "l" if c.islower() else "d" for c in letters]
+    switches = sum(a != b for a, b in zip(kinds, kinds[1:]))
+    return shaped and switches >= len(letters) * 0.45 and (_high_entropy(letters) or (
+        len(token) >= 40 and letters != letters.lower() and letters != letters.upper()))
 
 
 def _high_entropy(token):
@@ -675,6 +724,7 @@ def scrub_line(line, syntax="hcl"):
         if "redis-cli" in line:
             line = _redact_values(REDIS_AUTH, line, 3)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
+    line = BASE64_TOKEN.sub(lambda m: "[redacted]" if _base64_key(m.group()) else m.group(), line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
     probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), decoded)

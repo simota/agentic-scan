@@ -553,6 +553,8 @@ def unquote(raw):
             return UNKNOWN
         elif raw[i] == "\\" and i + 1 < len(raw):
             if raw[i + 1] == "U" and re.fullmatch(r"[0-9A-Fa-f]{8}", raw[i + 2:i + 10]):
+                if int(raw[i + 2:i + 10], 16) > 0x10FFFF:
+                    return UNKNOWN  # no such code point: Terraform rejects the string
                 out.append(chr(int(raw[i + 2:i + 10], 16)))
                 i += 10
                 continue
@@ -844,6 +846,13 @@ def doc_statements(view):
     return out
 
 
+def each_values(for_each, raw):
+    """What each.value (or each.key) takes: a set's items, or a map's values (keys)."""
+    if isinstance(for_each, dict):
+        return list(for_each.keys() if raw.strip() == "each.key" else for_each.values())
+    return aslist(for_each)
+
+
 def lower_strs(values):
     return {v.lower() for v in values if isinstance(v, str)}
 
@@ -895,6 +904,7 @@ class Scan:
         # (dir, name) of data "google_iam_policy": [(role, members, line)] for the
         # project/folder/organization policy that applies it.
         self.gcp_policy_data = {}
+        self.vpc_domains = set()  # (dir, address) of OpenSearch/Elasticsearch domains with vpc_options
         self.admin_policy_data = set()  # (dir, name) of data "aws_iam_policy" naming AdministratorAccess
         self.boundary_policies, self.attached_policies = set(), set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
@@ -981,6 +991,13 @@ class Scan:
             try:
                 value = json.loads(value, object_pairs_hook=unique_object)
             except ValueError:
+                # A heredoc with ${jsonencode(...)} outside a JSON string, or a
+                # malformed document: the statements were never read.
+                if value.strip():
+                    line = view.line(attr)
+                    self.not_run.append(f"policy document is not JSON as written (template or syntax error); "
+                                        f"{attr} checks not run: {getattr(line, 'file', res.file)}:{line} "
+                                        f"({res.address})")
                 return None
         if isinstance(value, dict):
             return norm_statements(value, raw=raw)
@@ -1042,7 +1059,8 @@ class Scan:
             # GCP: an ingress rule with no source applies to every source; an
             # empty list is not sent to the API, so it means the same.
             ranges = ["0.0.0.0/0"]
-        if ranges is UNKNOWN or (isinstance(ranges, list) and UNKNOWN in ranges):
+        # A known world range is open whatever its unresolved siblings hold.
+        if ranges is UNKNOWN or (isinstance(ranges, list) and UNKNOWN in ranges and not world_cidrs(ranges)):
             if any(proto is not None for proto, _ in allows):
                 self.not_run.append(f"GCP-NET-001: source ranges unresolved; check not run: "
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
@@ -1393,6 +1411,11 @@ def check_tf_shared(scan, res):
     # A VPC-only OpenSearch/Elasticsearch domain is reached through its security
     # groups; Principal * in its access policy is the documented pattern there.
     vpc_domain = t.endswith(("_domain", "_domain_policy")) and bool(v.blocks("vpc_options"))
+    if t.endswith("_domain_policy") and hasattr(v, "raw"):
+        # The split form: aws_opensearch_domain_policy names its domain by reference.
+        domain = re.fullmatch(r"\s*(aws_(?:opensearch|elasticsearch)_domain\.[\w-]+)\.domain_name\s*",
+                              v.raw("domain_name") or "")
+        vpc_domain = vpc_domain or bool(domain and (res.dir, domain.group(1)) in scan.vpc_domains)
     if attr and v.get(attr) is not None and not vpc_domain:
         scan.resource_policy(res, scan.statements(res, attr), v.line(attr))
     if t in PUBLIC_DATA_SERVICES and tf_bool(v.get("publicly_accessible")) is True:
@@ -1502,8 +1525,11 @@ def check_tf(scan, res):
         scan.trust_policy(res, scan.statements(res, "assume_role_policy"), v.line("assume_role_policy"))
         for inline in v.blocks("inline_policy"):
             scan.identity_policy(res, scan.statements(res, "policy", inline), inline.line())
+        managed = text_of(v, "managed_policy_arns")
         if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("managed_policy_arns"))) or \
-                ADMIN_ARN_RAW.search(text_of(v, "managed_policy_arns")):
+                ADMIN_ARN_RAW.search(managed) or any(
+                    (res.dir, name) in scan.admin_policy_data
+                    for name in re.findall(r"data\.aws_iam_policy\.([\w-]+)\.arn", managed)):
             scan.hit("AWS-IAM-001", res, v.line("managed_policy_arns"), "AdministratorAccess attached")
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
                "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
@@ -1512,7 +1538,7 @@ def check_tf(scan, res):
         data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
         # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
         each = raw in ("each.value", "each.key") and any(
-            isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("for_each")))
+            isinstance(a, str) and ADMIN_ARN.search(a) for a in each_values(v.get("for_each"), raw))
         if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
                 (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
             scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
@@ -1614,11 +1640,8 @@ def check_tf(scan, res):
         raw = (v.raw("member") or "") if hasattr(v, "raw") and v.get("member") is not None else ""
         if members == [UNKNOWN] and raw.strip() in ("each.value", "each.key"):
             fe = v.get("for_each")
-            if isinstance(fe, list):
-                members = [m if isinstance(m, str) else UNKNOWN for m in fe] or members
-            elif isinstance(fe, dict):
-                vals = list(fe.keys()) if raw.strip() == "each.key" else list(fe.values())
-                members = [m if isinstance(m, str) else UNKNOWN for m in vals] or members
+            if isinstance(fe, (list, dict)):
+                members = [m if isinstance(m, str) else UNKNOWN for m in each_values(fe, raw)] or members
         raw_single_template = (
             bool(raw) and not any(c in raw for c in "?,[") and " for " not in raw and raw.count('"') <= 2
             and bool(SERVICE_AGENT.search(raw))
@@ -1627,8 +1650,9 @@ def check_tf(scan, res):
             (isinstance(m, str) and SERVICE_AGENT.search(m)) or (m is UNKNOWN and raw_single_template)
             for m in members)
         role = v.get("role")
-        each = role is UNKNOWN and (v.raw("role") or "").strip() in ("each.value", "each.key")
-        roles = [r for r in aslist(v.get("for_each")) if isinstance(r, str)] if each else []
+        role_raw = (v.raw("role") or "").strip()
+        each = role is UNKNOWN and role_raw in ("each.value", "each.key")
+        roles = [r for r in each_values(v.get("for_each"), role_raw) if isinstance(r, str)] if each else []
         # for_each = toset(["roles/owner", ...]) with role = each.value, as the iam modules write it.
         for role in roles or [role]:
             scan.gcp_iam(res, role, members, v.line("role"), service_agent=agents, raw=raw)
@@ -2053,6 +2077,9 @@ def handle_terraform(scan, parsed):
                     collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
+                    if b.labels[0] in ("aws_opensearch_domain", "aws_elasticsearch_domain") and \
+                            b_view.blocks("vpc_options"):
+                        scan.vpc_domains.add((str(Path(rel).parent), ".".join(b.labels)))
                 collect_policy_references(scan, str(Path(rel).parent), b)
             except RecursionError:
                 pass  # reported once by the checks below
@@ -2413,7 +2440,7 @@ def handle_plan(scan, rel, text, doc):
     def walk(module, check):
         if not isinstance(module, dict):
             return
-        for r in module.get("resources", []) or []:
+        for r in aslist(module.get("resources")):
             if not isinstance(r, dict) or r.get("mode") == "data":
                 continue
             address, type_ = r.get("address", ""), r.get("type", "")
@@ -2550,7 +2577,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
     scan.cfn_checked_templates[rel] = {
         lid for lid, r in (doc.get("Resources") or {}).items()
         if isinstance(r, dict) and r.get("Type") == "AWS::EC2::LaunchTemplate"
-        and isinstance((r.get("Properties") or {}).get("LaunchTemplateData"), dict)
+        and isinstance(r.get("Properties"), dict) and isinstance(r["Properties"].get("LaunchTemplateData"), dict)
     }
     cfn_parameter_defaults(scan, rel, text, doc)
     for lid, r in (doc.get("Resources") or {}).items():
@@ -2580,7 +2607,11 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
             if props.get("AccessControl") in ("PublicRead", "PublicReadWrite", "AuthenticatedRead"):
                 scan.hit("AWS-S3-001", res, line, f"AccessControl = {props['AccessControl']}")
             pab = props.get("PublicAccessBlockConfiguration")
-            if isinstance(pab, dict):
+            if is_intrinsic(pab):
+                # The whole block comes from Fn::If or a Ref: its flags are not in the template.
+                scan.not_run.append(f"AWS-S3-002: PublicAccessBlockConfiguration is not a literal; check not run: "
+                                    f"{res.file}:{line} ({res.address})")
+            elif isinstance(pab, dict):
                 # Omitted flags default to false, as in Terraform.
                 off = [k for k in ("BlockPublicAcls", "BlockPublicPolicy", "IgnorePublicAcls",
                                    "RestrictPublicBuckets") if pab.get(k) in (False, "false", None)]
@@ -2621,6 +2652,10 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 scan.hit("AWS-EBS-001", res, line, "Encrypted not true")
         elif type_ == "AWS::EKS::Cluster":
             cfg = props.get("ResourcesVpcConfig") if isinstance(props.get("ResourcesVpcConfig"), dict) else {}
+            if is_intrinsic(cfg):
+                scan.not_run.append(f"AWS-EKS-001: ResourcesVpcConfig is not a literal; check not run: "
+                                    f"{res.file}:{line} ({res.address})")
+                cfg = {"EndpointPublicAccess": False}
             public = cfg.get("EndpointPublicAccess", True)
             cidrs = cfg.get("PublicAccessCidrs")
             open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
@@ -2775,8 +2810,9 @@ def cfn_parameter_defaults(scan, rel, text, doc):
             if isinstance(getattr(params, "lines", None), dict):
                 line = params.lines.get(name, 1)  # parsed YAML carries its lines; text is None
             else:
-                m = re.search(rf'^\s*"?{re.escape(name)}"?\s*:', text or "", re.M)
-                line = text.count("\n", 0, m.start()) + 1 if m else 1
+                # The key under Parameters, not the same name earlier in the text
+                # (Metadata ParameterLabels) or the first line of minified JSON.
+                line = json_key_lines(text or "").get((("Parameters",), name), 1)
             scan.hit("SEC-001", Res("file", rel, rel, 1), line, f"literal default for parameter {name}")
 
 
@@ -2836,6 +2872,8 @@ AWS_EXPORT_KEYS = {
     "UserDetailList", "RoleDetailList", "GroupDetailList", "Policies", "Vpcs", "Subnets", "Clusters",
     "Snapshots", "Volumes", "LoadBalancers", "FunctionUrlConfigs", "Distributions", "DistributionList",
     "Users", "Roles", "Groups", "AccessKeyMetadata", "KeyMetadata", "SecretList", "NetworkAcls", "RouteTables",
+    # Every top-level shape aws_export reads (describe-trails, get-public-access-block).
+    "trailList", "PublicAccessBlockConfiguration",
 }
 
 
@@ -3360,11 +3398,13 @@ def finish_k8s(scan):
     A role of that name only in a sibling tree (dev/ for a prod/ binding) may be
     another cluster's: recorded as unresolved instead."""
     for res, kind, namespace, role_kind, role_name, line in scan.k8s_bindings:
-        ns_key = (namespace or "default") if role_kind == "Role" else None
-        dirs = set(scan.k8s_wildcard_roles.get((role_kind, ns_key, role_name), set()))
-        if role_kind == "Role" and namespace in (None, "", "default"):
-            dirs |= scan.k8s_wildcard_roles.get((role_kind, None, role_name), set())
-            dirs |= scan.k8s_wildcard_roles.get((role_kind, "default", role_name), set())
+        # An omitted namespace (None) is the apply context's: it may be any
+        # namespace, so it pairs with an explicit one in either direction.
+        dirs = set()
+        for (kind_, ns, name_), where in scan.k8s_wildcard_roles.items():
+            if kind_ == role_kind and name_ == role_name and (
+                    role_kind == "ClusterRole" or not namespace or ns is None or ns == namespace):
+                dirs |= where
         here = posixpath.dirname(res.file)
         if any(same_tree(here, d) for d in dirs):
             severity = "Medium" if kind == "RoleBinding" else None
@@ -3374,8 +3414,9 @@ def finish_k8s(scan):
                                 f"another tree than the binding; check it is the same cluster: {res.file}:{line} "
                                 f"({res.address})")
     for res, namespace, sa_name, line in scan.k8s_pod_sa_refs:
-        sa_info = scan.k8s_sa_automount.get((namespace or "default", sa_name))
-        if sa_info and same_tree(posixpath.dirname(res.file), sa_info[0]):
+        if any(name == sa_name and (not namespace or ns is None or ns == namespace)
+               and same_tree(posixpath.dirname(res.file), info[0])
+               for (ns, name), info in scan.k8s_sa_automount.items()):
             scan.hit("K8S-001", res, line, f"serviceAccountName {sa_name} has automountServiceAccountToken: true", "Low")
 
 
@@ -3393,6 +3434,8 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
     name = meta.get("name")
     identity = name if isinstance(name, str) else "?"
     namespace = meta.get("namespace")
+    if namespace is not None and not isinstance(namespace, str):
+        namespace = UNKNOWN  # a list or map is no namespace: opaque, reviewed by hand
     if isinstance(namespace, str) and namespace:
         identity = f"{namespace}/{identity}"
     elif namespace is UNKNOWN:
@@ -3417,8 +3460,10 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         masters_only = bool(subjects) and all(s.get("kind") == "Group" and s.get("name") == "system:masters"
                                               for s in subjects)
         # kubeadm and EKS create these bindings themselves; matched on name, role and subjects.
-        platform = (kind, name, role.get("name"), tuple((s.get("kind"), s.get("name")) for s in subjects)) \
-            in PLATFORM_BINDINGS and (kind == "ClusterRoleBinding" or namespace == "kube-public")
+        # Compared, not hashed: a schema-invalid subject may hold a list or map.
+        binding = (kind, name, role.get("name"), tuple((s.get("kind"), s.get("name")) for s in subjects))
+        platform = any(binding == known for known in PLATFORM_BINDINGS) and (
+            kind == "ClusterRoleBinding" or namespace == "kube-public")
         if platform:
             scan.not_run.append(f"K8S-002: platform-managed binding {name} (kubeadm/EKS default); confirm it is "
                                 f"unmodified: {rel}:{res.line}")
@@ -3442,17 +3487,18 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         for rule in aslist(doc.get("rules")):
             if not isinstance(rule, dict):
                 continue
-            verbs = set(aslist(rule.get("verbs")))
-            resources = set(aslist(rule.get("resources")))
-            groups = set(aslist(rule.get("apiGroups")))
+            # Schema-invalid items (a nested list) match nothing instead of aborting the scan.
+            verbs = {v for v in aslist(rule.get("verbs")) if isinstance(v, str)}
+            resources = {v for v in aslist(rule.get("resources")) if isinstance(v, str)}
+            groups = {v for v in aslist(rule.get("apiGroups")) if isinstance(v, str)}
             if ("*" in resources and ("*" in groups or "" in groups) and "*" in verbs) or (
                     "*" in resources and "*" in groups and bool(verbs & {"*", "bind", "escalate", "impersonate"})):
-                ns_key = (namespace or "default") if kind == "Role" else None
+                ns_key = (namespace or None) if kind == "Role" else None
                 scan.k8s_wildcard_roles.setdefault((kind, ns_key, name), set()).add(posixpath.dirname(rel))
     if namespace is UNKNOWN or any(m.get(k) is UNKNOWN for m in relevant for k in ("kind", "name")):
         scan.not_run.append(f"kubernetes opaque identity needs manual review: {rel}:{res.line}")
     if kind == "ServiceAccount" and isinstance(name, str) and doc.get("automountServiceAccountToken") is True:
-        scan.k8s_sa_automount[(namespace or "default", name)] = (
+        scan.k8s_sa_automount[(namespace or None, name)] = (
             posixpath.dirname(rel), doc.lines.get("automountServiceAccountToken", res.line))
     if kind == "Secret":
         for key in ("data", "stringData"):
@@ -3475,7 +3521,7 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
     sa_name = pod.get("serviceAccountName") or pod.get("serviceAccount")
     if kind in paths and isinstance(sa_name, str) and pod.get("automountServiceAccountToken") is not False:
         sa_key = "serviceAccountName" if "serviceAccountName" in pod.lines else "serviceAccount"
-        scan.k8s_pod_sa_refs.append((res, namespace or "default", sa_name, pod.lines.get(sa_key, res.line)))
+        scan.k8s_pod_sa_refs.append((res, namespace or None, sa_name, pod.lines.get(sa_key, res.line)))
     containers = [c for key in ("containers", "initContainers", "ephemeralContainers") for c in aslist(pod.get(key))]
     if kind in ("Workflow", "WorkflowTemplate", "ClusterWorkflowTemplate", "CronWorkflow") and \
             api.startswith("argoproj.io/"):
@@ -4138,6 +4184,11 @@ def run(root, snapshots=()):
             note = None
         if note:
             scan.not_run.append(f"{note}; review by hand: {rel}")
+        # kubectl -f and CloudFormation take any spelling (pod.YAML); Terraform
+        # loads only lower-case .tf/.tofu, so a main.TF is named, not parsed.
+        lname = name.lower()
+        if lname.endswith((".tf", ".tofu")) and not name.endswith((".tf", ".tofu")):
+            scan.not_run.append(f"Terraform ignores a file whose extension is not lower case; not parsed: {rel}")
         if name.endswith((".tf", ".tofu")):
             kind = "terraform"
             try:
@@ -4149,7 +4200,7 @@ def run(root, snapshots=()):
         elif terragrunt:
             kind = "terragrunt"
             handle_terragrunt(scan, rel, text)
-        elif name.endswith(".json") or (name.endswith(".template") and text.lstrip().startswith("{")):
+        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")):
             try:
                 doc = json.loads(text, object_pairs_hook=unique_object)
             except RecursionError:
@@ -4162,7 +4213,7 @@ def run(root, snapshots=()):
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             try:
-                if name.endswith(".tfvars.json"):
+                if lname.endswith(".tfvars.json"):
                     kind = "tfvars"
                 elif kind == "plan":
                     handle_plan(scan, rel, text, doc)
@@ -4177,11 +4228,11 @@ def run(root, snapshots=()):
             except RecursionError:
                 # json.loads accepts deeper nesting than the recursive rules.
                 scan.not_run.append(f"JSON nested too deeply for the rules, skipped: {rel}")
-        elif name.endswith((".yaml", ".yml", ".template")):
+        elif lname.endswith((".yaml", ".yml", ".template")):
             kind = handle_yaml(scan, rel, split_lines(text))
         if kind:
             scan.files.append({"path": rel, "kind": kind})
-        elif snapshot and not name.endswith(".json") and not note:
+        elif snapshot and not lname.endswith(".json") and not note:
             scan.not_run.append(f"export not read (rules cover JSON exports); review by hand: {rel}")
         scan_secrets(scan, rel, text, kind)
     if terragrunt_files:
@@ -4504,6 +4555,11 @@ def main(argv=None):
         target_resolved = target.resolve()
         if target_resolved == resolved or resolved in target_resolved.parents:
             print(f"iac_scan: {option} {target} is inside the scanned repository; write it elsewhere",
+                  file=sys.stderr)
+            return 2
+        # The same holds for an export directory: the next run would read it as an export.
+        if any(Path(d).resolve() in target_resolved.parents for d in args.snapshots):
+            print(f"iac_scan: {option} {target} is inside a --snapshots directory; write it elsewhere",
                   file=sys.stderr)
             return 2
     scan = run(root, args.snapshots)

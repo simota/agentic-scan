@@ -257,6 +257,17 @@ class ReviewRegressionTest(unittest.TestCase):
                 '    Action = "es:*", Resource = "*"}]})\n}\n')
         self.assertEqual(rules({"main.tf": text}), [])
 
+    def test_split_domain_policy_follows_its_vpc_domain(self):
+        policy = ('resource "aws_opensearch_domain_policy" "p" {\n  domain_name = aws_opensearch_domain.d.domain_name\n'
+                  '  access_policies = jsonencode({Statement = [{Effect = "Allow", Principal = {AWS = "*"},\n'
+                  '    Action = "es:*", Resource = "*"}]})\n}\n')
+        vpc = 'resource "aws_opensearch_domain" "d" {\n  vpc_options {\n    subnet_ids = ["s"]\n  }\n}\n'
+        public = 'resource "aws_opensearch_domain" "d" {\n  domain_name = "d"\n}\n'
+        self.assertEqual(rules({"main.tf": vpc + policy}), [])
+        self.assertEqual(rules({"main.tf": public + policy}), ["AWS-S3-003"])
+        # A VPC domain in another module is another domain of that name.
+        self.assertEqual(rules({"a/main.tf": vpc, "b/main.tf": policy}), ["AWS-S3-003"])
+
     def test_project_level_prevention_covers_only_its_module(self):
         files = {"project-a/main.tf": ('resource "google_project_organization_policy" "p" {\n  project = "a"\n'
                                        '  constraint = "storage.publicAccessPrevention"\n'

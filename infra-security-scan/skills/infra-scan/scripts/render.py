@@ -315,7 +315,7 @@ def validate(data, partial=False):
             if key in inv and (type(inv[key]) is not int or inv[key] < 0):
                 add(f"inventory.{key}: must be a count")
         if "by_provider" in inv and not (isinstance(inv["by_provider"], dict) and all(
-                type(v) is int for v in inv["by_provider"].values())):
+                type(v) is int and v >= 0 for v in inv["by_provider"].values())):
             add("inventory.by_provider: must map providers to counts")
         if "not_run" in inv and not (isinstance(inv["not_run"], list) and all(
                 isinstance(x, str) for x in inv["not_run"])):
@@ -716,6 +716,8 @@ HCL_MARKED_SECRET = re.compile(
     r'google_secret_manager_secret_version)"')
 HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*"([^"\n]*)"')
 HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?(?:value|parameter_?value)"?\s*[=:]')
+# A name computed by an expression (var.db_password_env_name): it may name a secret.
+HCL_EXPR_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*[^"\s]')
 
 
 def hcl_has_paired_secret(text):
@@ -733,6 +735,26 @@ def hcl_has_paired_secret(text):
             if is_secret_name(match.group(1)) and any(
                     HCL_VALUE.search(near) for near in lines[max(0, n - 15):n + 16]):
                 return True
+        # As for blocks below: an object literal (jsonencode environment lists)
+        # whose name is an expression and whose value beside it is not a reference.
+        name = HCL_EXPR_NAME.search(line)
+        if name:
+            for k in range(max(0, n - 3), min(len(lines), n + 4)):
+                value = HCL_VALUE.search(lines[k])
+                # Only a literal can leak: a string, heredoc or number, not an
+                # iterator (for k, v in ...: { name = k, value = v }) or each.value.
+                if not value or not re.match(r'\s*(?:"|<<|[0-9])', lines[k][value.end():]):
+                    continue
+                # The same object only: no brace between them (a resource's
+                # name and a nested setting { value = ... } are not a pair).
+                if k < n or (k == n and value.start() < name.start()):
+                    between = "\n".join(lines[k:n + 1])[value.end():len("\n".join(lines[k:n])) + name.start()
+                                                           + (1 if k < n else 0)]
+                else:
+                    between = "\n".join(lines[n:k + 1])[name.end():len("\n".join(lines[n:k])) + value.start()
+                                                           + (1 if k > n else 0)]
+                if "{" not in between and "}" not in between:
+                    return True
     top = parse_hcl(text)
     pending = list(top)
     while pending:
@@ -892,7 +914,8 @@ def attach_sources(data, repo, context=3):
             continue
         end = min(end, start + 40)
         lo, hi = max(1, start - context), min(len(lines), end + context)
-        out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
+        if start <= len(lines):  # a line past the end of the file (an edited file) has nothing to show
+            out[f["id"]] = [(i, lines[i - 1], start <= i <= end) for i in range(lo, hi + 1)]
     return out
 
 

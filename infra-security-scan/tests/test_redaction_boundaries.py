@@ -304,6 +304,165 @@ class RedactionBoundaryTest(unittest.TestCase):
                     for page in self.assert_hidden(self.record("settings.yaml:1-10"), value):
                         self.assertIn("publicly_accessible: true", page)
 
+    def test_actions_image_tags_and_arns_are_not_secret_keys(self):
+        # "secretsmanager:" inside a value read as a key hid the rest of the
+        # line, and its unclosed quote hid every line after it.
+        cases = {
+            "iam.tf": ('data "aws_iam_policy_document" "task" {\n  statement {\n'
+                       '    actions   = ["secretsmanager:GetSecretValue"]\n'
+                       '    resources = ["arn:aws:secretsmanager:us-east-1:111122223333:secret:prod/db"]\n'
+                       '  }\n}\n'),
+            "policy.json": ('{\n  "Statement": [{\n    "Effect": "Allow",\n'
+                            '    "Action": "secretsmanager:GetSecretValue",\n    "Resource": "*"\n  }]\n}\n'),
+            "pod.tf": ('resource "kubernetes_pod" "eso" {\n  spec {\n    container {\n'
+                       '      image = "external-secrets/external-secrets:v0.9.0"\n'
+                       '      security_context {\n        privileged = true\n      }\n    }\n  }\n}\n'),
+            "pod.yaml": ('apiVersion: v1\nkind: Pod\nmetadata:\n  name: app\nspec:\n  containers:\n'
+                         '    - name: app\n      image: ghcr.io/acme/token-service:1.4.2\n'
+                         '      securityContext:\n        privileged: true\n'),
+        }
+        # scrub_line may still trim a value naming a secret word on its own
+        # line (token-service:1.4.2); every other line must survive intact.
+        visible = {
+            "iam.tf": ('    actions   = ["secretsmanager:GetSecretValue"]', '  }'),
+            "policy.json": ('    "Action": "secretsmanager:GetSecretValue",', '    "Resource": "*"'),
+            "pod.tf": ('        privileged = true', '      security_context {'),
+            "pod.yaml": ('      securityContext:', '        privileged: true'),
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertEqual(len(lines), len(text.splitlines()))
+                self.assertNotIn("[redacted]", lines)
+                for line in visible[name]:
+                    self.assertIn(line, lines)
+
+    def test_secret_keys_beside_a_colon_stay_hidden(self):
+        value = "synthetic-" + "colon-value"
+        for name, text in {
+            "a.json": '{\n  "db_password":"' + value + '",\n  "x": 1\n}\n',
+            "b.yaml": 'db_password: ' + value + '\nx: 1\n',
+            "c.tf": 'locals {\n  cfg = { db_password: "' + value + '" }\n}\n',
+            "d.tf": 'locals {\n  run = "app DB_PASSWORD:' + value + '"\n}\n',
+            # Glued names and numbers, which scrub_line does not catch on its own.
+            "e.yaml": 'spec:\n  cmd: login githubtoken:' + value + '\n',
+            "f.yaml": 'spec:\n  cmd: jwtsecret:' + value + '\n',
+            "g.yaml": 'spec:\n  pin: DB_PASSWORD:4815' + '1623\n',
+            # After an ARN-like ":" or inside a path, a secret name is still a key.
+            "h.tf": 'locals {\n  x = "svc:githubtoken:' + value + '"\n}\n',
+            "i.yaml": 'spec:\n  args: ["--x", "kv/app/npmtoken:' + value + '"]\n',
+            "j.yaml": 'spec:\n  conf: svc:password:4815' + '1623\n',
+            "k.tf": 'locals {\n  x = "app/dbpassword:4815' + '1623"\n}\n',
+        }.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertNotIn(value, "\n".join(lines or []))
+                self.assertNotIn("4815" + "1623", "\n".join(lines or []))
+
+    def test_a_key_closing_its_string_still_hides_the_next_item(self):
+        # Fn::Join user data and exec-form commands put the value in the next
+        # list item, after the string holding the key has closed.
+        value = "plain" + "nextitem"
+        for name, text in {
+            "join.json": ('{"Resources": {"I": {"Type": "AWS::EC2::Instance", "Properties": {"UserData":\n'
+                          '  {"Fn::Join": ["", [\n    "export DB_PASSWORD=",\n    "' + value + '",\n'
+                          '    "\\n"]]}}}}}\n'),
+            "join.tf": ('resource "aws_instance" "i" {\n  user_data = join("", [\n'
+                        '    "export DB_PASSWORD=",\n    "' + value + '",\n  ])\n}\n'),
+            "cmd.tf": ('locals {\n  command = ["sh", "-c", "PASSWORD=",\n    "' + value + '"]\n}\n'),
+        }.items():
+            with self.subTest(name=name):
+                lines = render.source_lines(self.write(name, text))
+                self.assertNotIn(value, "\n".join(lines or []))
+
+    def test_an_apostrophe_in_a_comment_does_not_hide_the_file(self):
+        text = ('// don\'t hardcode password = "changeme" here\n'
+                'resource "aws_db_instance" "d" {\n  publicly_accessible = true\n}\n')
+        lines = render.source_lines(self.write("main.tf", text))
+        self.assertEqual(lines[1:], text.splitlines()[1:])
+
+    def test_16_byte_base64_keys_are_scrubbed(self):
+        import base64
+        import hashlib
+        import re
+        from redaction import scrub_line
+        leaks = 0
+        for seed in range(200):  # a 16-byte key is 22 characters and "=="
+            key = base64.b64encode(hashlib.sha256(b"k16-%d" % seed).digest()[:16]).decode()
+            shown = scrub_line(f'  k = "{key}"')
+            leaks += any(r in key for r in re.findall(r"[A-Za-z0-9+/=]{12,}", shown))
+        self.assertLess(leaks, 20)  # 41 of these 200 kept 12+ characters before
+
+    def test_paths_arns_and_sources_are_not_base64_keys(self):
+        from redaction import scrub_line
+        for line in ('  crypto_key = "projects/prod1/locations/global/keyRings/Ring01/cryptoKeys/DiskKey01"',
+                     '  resources = ["arn:aws:s3:::logs/AWSLogs/123456789012/CloudTrail/*"]',
+                     '  image = "gcr.io/Prod1Project/backendApi/server:v2"',
+                     '  path = "/opt/App2/Config/ProdSettings1"',
+                     '  source = "github.com/Org1/TerraformModules/Vpc2"',
+                     '  policy_arn = "arn:aws:iam::aws:policy/AWSElasticBeanstalkMulticontainerDocker"',
+                     '  values = ["repo:ExampleOrganization/TerraformInfrastructure:*"]',
+                     '  x = "ExampleOrganizationName/InfrastructureAsCode+Extras"',
+                     '  arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"',
+                     '  role = "AWSServiceRoleForAutoScaling/AWSServiceRoleForAutoScalingPlus"'):
+            self.assertEqual(scrub_line(line), line)
+
+    def test_iterator_values_do_not_pair_with_a_computed_name(self):
+        for text in ('locals {\n  c = jsonencode([{\n'
+                     '    environment = [for k, v in var.environment : { name = k, value = v }]\n  }])\n}\n',
+                     'locals {\n  tags = [for k, v in var.tags : { key = k, value = v }]\n}\n'):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
+
+    def test_a_resource_name_does_not_pair_with_a_nested_block_value(self):
+        for text in ('resource "aws_ecs_cluster" "c" {\n  name = var.cluster_name\n'
+                     '  setting {\n    name  = "containerInsights"\n    value = "enabled"\n  }\n}\n',
+                     'resource "aws_autoscaling_group" "g" {\n  name = local.name\n'
+                     '  tag {\n    key   = "Name"\n    value = "web"\n    propagate_at_launch = true\n  }\n}\n'):
+            with self.subTest(text=text[:30]):
+                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
+
+    def test_object_literal_with_a_computed_name_hides_its_value(self):
+        value = "plain" + "objectvalue"
+        for name_expr in ("local.pw_name", "var.db_password_env_name", "upper(local.n)"):
+            with self.subTest(name=name_expr):
+                text = ('resource "aws_ecs_task_definition" "d" {\n'
+                        '  container_definitions = jsonencode([{\n    environment = [{\n'
+                        f'      name  = {name_expr}\n      value = "{value}"\n'
+                        '    }]\n  }])\n}\n')
+                lines = render.source_lines(self.write("task.tf", text))
+                self.assertNotIn(value, "\n".join(lines or []))
+
+    def test_object_literal_with_a_computed_name_and_reference_value_keeps_excerpts(self):
+        text = ('resource "aws_ecs_task_definition" "d" {\n'
+                '  container_definitions = jsonencode([{\n    environment = [{\n'
+                '      name  = local.region_name\n      value = var.region\n'
+                '    }]\n  }])\n}\n')
+        self.assertEqual(render.source_lines(self.write("task.tf", text)), text.splitlines())
+
+    def test_base64_keys_under_unlisted_names_are_scrubbed_whole(self):
+        # ENTROPY split a base64 key at "/" and "=", and pieces without a
+        # digit or an upper-case letter stayed visible.
+        import base64
+        import hashlib
+        import re
+        from redaction import scrub_line
+        for seed in range(40):
+            key = base64.b64encode(hashlib.sha256(b"fixture-%d" % seed).digest()).decode()
+            for line in (f'  JWT_SIGNING_KEY = "{key}"', f"  ENCRYPTION_KEY: {key}", f'"hmac": "{key}",'):
+                with self.subTest(seed=seed, line=line[:20]):
+                    shown = scrub_line(line)
+                    runs = re.findall(r"[A-Za-z0-9+/=]{12,}", shown)
+                    self.assertEqual([r for r in runs if r in key], [], shown)
+
+    def test_location_past_the_end_of_the_file_gets_no_excerpt_heading(self):
+        self.write("a.tf", self.EBS)
+        record = render.empty_record()
+        for line in (5, 7, 50):  # the file has four lines; 5-7 would show context only
+            with self.subTest(line=line):
+                record["findings"] = [{"id": "F-001", "location": f"a.tf:{line}", "resources": ["x"]}]
+                self.assertEqual(render.attach_sources(record, self.repo), {})
+
 
 if __name__ == "__main__":
     unittest.main()

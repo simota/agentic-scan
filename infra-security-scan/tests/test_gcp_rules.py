@@ -171,5 +171,26 @@ class FirewallSnapshotTest(ScanCase):
                 self.assertEqual(scan.hits, [])
 
 
+class UnresolvedSiblingTest(ScanCase):
+    def test_known_world_range_survives_an_unknown_sibling(self):
+        result = self.scan('resource "google_compute_firewall" "f" {\n  network = "default"\n'
+                           '  source_ranges = ["0.0.0.0/0", var.office_cidr]\n'
+                           '  allow {\n    protocol = "tcp"\n    ports = ["22"]\n  }\n}\n')
+        self.assertEqual([h["rule"] for h in result.hits], ["GCP-NET-001"])
+
+    def test_unknown_ranges_alone_stay_unresolved(self):
+        result = self.scan('resource "google_compute_firewall" "f" {\n  network = "default"\n'
+                           '  source_ranges = ["10.0.0.0/8", var.office_cidr]\n'
+                           '  allow {\n    protocol = "tcp"\n    ports = ["22"]\n  }\n}\n')
+        self.assertEqual(result.hits, [])
+        self.assertTrue([n for n in result.not_run if "source ranges unresolved" in n])
+
+    def test_map_for_each_roles(self):
+        result = self.scan('resource "google_project_iam_member" "m" {\n  project = "p"\n'
+                           '  for_each = { owner = "roles/owner" }\n  role = each.value\n'
+                           '  member = "user:alice@example.com"\n}\n')
+        self.assertEqual([h["rule"] for h in result.hits], ["GCP-IAM-002"])
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -77,6 +77,36 @@ class ScanTest(unittest.TestCase):
         self.write("deep.json", "[" * 100000 + "]" * 100000)
         self.assertIn("JSON nested too deeply, skipped: deep.json", self.scan()["not_run"])
 
+    def test_schema_invalid_values_are_not_a_crash(self):
+        # Each aborted the whole scan with a traceback and no iac.json.
+        cases = {
+            "role.yaml": ("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRole\nmetadata:\n  name: r\n"
+                          "rules:\n- apiGroups: ['*']\n  resources: ['*']\n  verbs: [[get]]\n"),
+            "sa.yaml": ("apiVersion: v1\nkind: ServiceAccount\nmetadata:\n  name: app\n  namespace: [prod]\n"
+                        "automountServiceAccountToken: true\n"),
+            "binding.yaml": ("apiVersion: rbac.authorization.k8s.io/v1\nkind: ClusterRoleBinding\nmetadata:\n"
+                             "  name: b\nroleRef:\n  kind: ClusterRole\n  name: view\nsubjects:\n"
+                             "- kind: User\n  name: [bob]\n"),
+            "lt.json": json.dumps({"Resources": {"LT": {"Type": "AWS::EC2::LaunchTemplate", "Properties": "x"}}}),
+            "plan.json": json.dumps({"format_version": "1.2", "planned_values": {"root_module": {"resources": 7}}}),
+            "uni.tf": 'resource "aws_s3_bucket" "b" {\n  bucket = "x\\UFFFFFFFF"\n}\n',
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                for old in self.repo.iterdir():
+                    old.unlink()
+                self.write(name, text)
+                self.write("bucket.tf", BUCKET)
+                self.assertIn(("AWS-S3-001", "bucket.tf", 2), self.rules(self.scan()))
+
+    def test_upper_case_extensions_are_read_or_named(self):
+        self.write("pod.YAML", "apiVersion: v1\nkind: Pod\nmetadata:\n  name: p\nspec:\n  hostPID: true\n")
+        self.write("sg.JSON", json.dumps(SG))
+        self.write("main.TF", BUCKET)
+        result = self.scan()
+        self.assertEqual([r[:2] for r in self.rules(result)], [("AWS-NET-001", "sg.JSON"), ("K8S-001", "pod.YAML")])
+        self.assertTrue([n for n in result["not_run"] if "main.TF" in n], result["not_run"])
+
     def test_terraform_json_is_listed(self):
         self.write("main.tf.json", json.dumps({"resource": {}}))
         self.assertIn("Terraform JSON syntax not evaluated; review by hand: main.tf.json",

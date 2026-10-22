@@ -243,6 +243,19 @@ class CodexThirdReviewTest(unittest.TestCase):
         parent = scan({"terragrunt.hcl": backend, "prod/app/terragrunt.hcl": unit, "prod/app/main.tf": app})
         self.assertNotIn("PS-002", [h["rule"] for h in parent.hits])
 
+    def test_intrinsic_bucket_and_cluster_blocks_are_unresolved(self):
+        closed = {"BlockPublicAcls": True, "BlockPublicPolicy": True, "IgnorePublicAcls": True,
+                  "RestrictPublicBuckets": True}
+        template = {"Resources": {
+            "Bucket": {"Type": "AWS::S3::Bucket", "Properties": {"PublicAccessBlockConfiguration": {
+                "Fn::If": ["IsProd", closed, {"Ref": "AWS::NoValue"}]}}},
+            "Cluster": {"Type": "AWS::EKS::Cluster", "Properties": {"ResourcesVpcConfig": {
+                "Fn::If": ["IsProd", {"EndpointPublicAccess": False}, {"EndpointPublicAccess": False}]}}}}}
+        result = scan({"t.json": template})
+        self.assertEqual(result.hits, [])
+        for check in ("PublicAccessBlockConfiguration is not a literal", "ResourcesVpcConfig is not a literal"):
+            self.assertTrue([n for n in result.not_run if check in n], result.not_run)
+
     def test_intrinsic_metadata_options_are_unresolved(self):
         template = {"Resources": {"Vm": {"Type": "AWS::EC2::Instance", "Properties": {"MetadataOptions": {
             "Fn::If": ["Strict", {"HttpTokens": "required"}, {"HttpEndpoint": "disabled"}]}}}}}
@@ -556,6 +569,20 @@ class CodexThirteenthReviewTest(unittest.TestCase):
         result = scan({"template.yaml": template})
         self.assertEqual([(h["detail"], h["line"]) for h in result.hits],
                          [("literal default for parameter DbPassword", 5)])
+
+    def test_json_parameter_default_is_anchored_under_parameters(self):
+        template = {"AWSTemplateFormatVersion": "2010-09-09",
+                    "Metadata": {"AWS::CloudFormation::Interface": {"ParameterLabels": {
+                        "DbPassword": {"default": "Database password"}}}},
+                    "Parameters": {"DbPassword": {"Type": "String", "NoEcho": True, "Default": SECRET}},
+                    "Resources": {"Topic": {"Type": "AWS::SNS::Topic"}}}
+        text = json.dumps(template, indent=1)
+        line = text.split("\n").index('  "DbPassword": {') + 1  # under Parameters, not ParameterLabels
+        for name, body in (("pretty.json", text), ("min.json", json.dumps(template))):
+            with self.subTest(name=name):
+                hits = scan({name: body}).hits
+                self.assertEqual([(h["detail"], h["line"]) for h in hits],
+                                 [("literal default for parameter DbPassword", line if name == "pretty.json" else 1)])
 
 
 class CodexFourteenthReviewTest(unittest.TestCase):

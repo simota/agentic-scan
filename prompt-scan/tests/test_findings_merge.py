@@ -190,6 +190,21 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(data["prompts"][0]["name"], "Feature F-002 summariser")
         self.assertEqual(data["meta"]["scope"], "prompts/F-002")
 
+    def test_renumber_tells_lists_from_paths(self):
+        mapping = {"F-001": "F-009", "F-002": "F-008", "F-003": "F-007", "F-004": "F-006"}
+        cases = {
+            "F-001/F-002/F-003/F-004": "F-009/F-008/F-007/F-006",
+            "(F-001/F-002), see F-003. F-001とF-002": "(F-009/F-008), see F-007. F-009とF-008",
+            "F-001-F-003": "F-009-F-007",
+            "prompts/F-002/F-002.md:3": "prompts/F-002/F-002.md:3",
+            "prompts/F-002/F-002-system.md": "prompts/F-002/F-002-system.md",
+            "prompts\\F-002\\a.md and F-002.md": "prompts\\F-002\\a.md and F-002.md",
+            "https://example.com/F-002": "https://example.com/F-002",
+        }
+        for before, after in cases.items():
+            data = {"findings": [{"id": "F-005", "cause": before}]}
+            self.assertEqual(findings.renumber(data, mapping)["findings"][0]["cause"], after, before)
+
 
 if __name__ == "__main__":
     unittest.main()

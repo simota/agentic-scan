@@ -29,7 +29,7 @@ severities are final: F-001.. by severity, then path and line, with
 FalsePositive / NotApplicable findings after the rest. Every F-* reference in
 the record (ids, eval_runs, prose, reference titles) follows the new numbers;
 quoted `proposal` text, reference URLs, locations, an F-NNN that is part of a
-path, `meta`, the prompt records and the scanner fields of `L-*` findings are
+path or file name, `meta`, the prompt records and the scanner fields of `L-*` findings are
 left as written.
 
 FINDINGS is created when absent and replaced atomically, only if no other
@@ -200,7 +200,8 @@ def merge(base, fragment):
     return base
 
 
-CODE_REF = re.compile(r"\bF-[0-9]{3,}\b")
+# ASCII boundaries: \b would count the kana in "F-001とF-002" as part of the word and skip both ids.
+CODE_REF = re.compile(r"(?<![A-Za-z0-9_])F-[0-9]{3,}(?![A-Za-z0-9_])")
 # Quoted prompt text, link targets and locations are not references to findings, even when they contain
 # an F-NNN (a feature id naming a directory, say). Neither are meta, the prompt records and the scanner
 # fields of L-* findings; an L-* finding's own review may cite findings.
@@ -224,11 +225,24 @@ def renumber_map(findings):
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
+LIST_OF_REFS = re.compile(r"F-[0-9]{3,}(?:/F-[0-9]{3,})+")
+
+
 def in_path(text, start, end):
-    """Whether the F-NNN at text[start:end] is a path component (prompts/F-002/a.md), not a list F-001/F-002."""
-    if text[:start].endswith("/") and not re.search(r"(?<![\w-])F-[0-9]{3,}/$", text[:start]):
+    """Whether the F-NNN at text[start:end] belongs to a path or file name, not to the prose around it.
+
+    A word holding a slash or backslash is a path (prompts/F-002/a.md, a URL) unless it is only finding
+    ids joined by slashes (F-001/F-002/F-003); F-002.md and F-002-system.md are file names.
+    """
+    if re.match(r"[.-][A-Za-z0-9_]", text[end:]) and not re.match(r"-F-[0-9]{3,}(?![A-Za-z0-9_])", text[end:]):
         return True
-    return text[end:].startswith("/") and not re.match(r"/F-[0-9]{3,}\b(?!/)", text[end:])
+    first, last = start, end
+    while first > 0 and not text[first - 1].isspace() and text[first - 1] not in "([{<\"'`":
+        first -= 1
+    while last < len(text) and not text[last].isspace() and text[last] not in ")]}>\"'`":
+        last += 1
+    word = text[first:last].rstrip(".,;:!?")
+    return ("/" in word or "\\" in word) and not LIST_OF_REFS.fullmatch(word)
 
 
 def renumber(data, mapping):

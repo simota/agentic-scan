@@ -94,8 +94,8 @@ evidence.
 - New `F-*` ids follow merge order; after VERIFY, `scripts/findings.py renumber
   <out>/findings.json` puts them in severity order (then path and line,
   excluded findings last) and rewrites every `F-*` reference in the record,
-  except quoted `proposal` text, reference URLs, locations and paths (a
-  feature id such as `prompts/F-002/`), `meta`, prompt records and the
+  except quoted `proposal` text, reference URLs, locations, paths and file
+  names (a feature id such as `prompts/F-002/` or `F-002.md`), `meta`, prompt records and the
   scanner fields of `L-*` findings
 - `remove` deletes exact entries from `checked_ok`, `decisions`,
   `limitations` or `next_steps`

@@ -28,7 +28,9 @@ strings and credential-shaped values in report prose are refused.
 severities are final: F-001.. by severity, then path and line, with
 FalsePositive / NotApplicable findings after the rest. Every F-* reference in
 the record (ids, eval_runs, prose, reference titles) follows the new numbers;
-quoted `proposal` text and reference URLs are left as written.
+quoted `proposal` text, reference URLs, locations, an F-NNN that is part of a
+path or file name, `meta`, the prompt records and the scanner fields of `L-*` findings are
+left as written.
 
 FINDINGS is created when absent and replaced atomically, only if no other
 writer changed it meanwhile. The merged report must pass render.py's schema.
@@ -198,9 +200,14 @@ def merge(base, fragment):
     return base
 
 
-CODE_REF = re.compile(r"\bF-[0-9]{3,}\b")
-# Quoted prompt text and link targets are not references to findings, even when they contain an F-NNN.
-VERBATIM = {"proposal", "url"}
+# ASCII boundaries: \b would count the kana in "F-001とF-002" as part of the word and skip both ids.
+CODE_REF = re.compile(r"(?<![A-Za-z0-9_])F-[0-9]{3,}(?![A-Za-z0-9_])")
+# Quoted prompt text, link targets and locations are not references to findings, even when they contain
+# an F-NNN (a feature id naming a directory, say). Neither are meta, the prompt records and the scanner
+# fields of L-* findings; an L-* finding's own review may cite findings.
+VERBATIM = {"proposal", "url", "location"}
+UNTOUCHED = {"meta", "prompts"}
+LINT_REVIEWED = {"validation", "previous_validation"}
 
 
 def order_key(f):
@@ -218,17 +225,43 @@ def renumber_map(findings):
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
+LIST_OF_REFS = re.compile(r"F-[0-9]{3,}(?:/F-[0-9]{3,})+")
+
+
+def in_path(text, start, end):
+    """Whether the F-NNN at text[start:end] belongs to a path or file name, not to the prose around it.
+
+    A word holding a slash or backslash is a path (prompts/F-002/a.md, a URL) unless it is only finding
+    ids joined by slashes (F-001/F-002/F-003); F-002.md and F-002-system.md are file names.
+    """
+    if re.match(r"[.-][A-Za-z0-9_]", text[end:]) and not re.match(r"-F-[0-9]{3,}(?![A-Za-z0-9_])", text[end:]):
+        return True
+    first, last = start, end
+    while first > 0 and not text[first - 1].isspace() and text[first - 1] not in "([{<\"'`":
+        first -= 1
+    while last < len(text) and not text[last].isspace() and text[last] not in ")]}>\"'`":
+        last += 1
+    word = text[first:last].rstrip(".,;:!?")
+    return ("/" in word or "\\" in word) and not LIST_OF_REFS.fullmatch(word)
+
+
 def renumber(data, mapping):
     """Rewrite every F-* reference in data's strings at once, then order the F-* records by id."""
+    def ref(m):
+        return m.group(0) if in_path(m.string, m.start(), m.end()) else mapping.get(m.group(0), m.group(0))
+
     def rewrite(value):
         if isinstance(value, str):
-            return CODE_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return CODE_REF.sub(ref, value)
         if isinstance(value, dict):
             return {k: v if k in VERBATIM else rewrite(v) for k, v in value.items()}
         if isinstance(value, list):
             return [rewrite(v) for v in value]
         return value
-    data = rewrite(data)
+    findings = [rewrite(f) if f["id"].startswith("F-") else
+                {k: rewrite(v) if k in LINT_REVIEWED else v for k, v in f.items()} for f in data["findings"]]
+    data = {k: v if k in UNTOUCHED else rewrite(v) for k, v in data.items() if k != "findings"}
+    data["findings"] = findings
     code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: render.id_key(f["id"]))
     data["findings"] = code + [f for f in data["findings"] if not f["id"].startswith("F-")]
     return data
@@ -282,8 +315,11 @@ def main(argv=None):
     try:
         original = read_regular(a.findings) if os.path.lexists(a.findings) else None
         base = read_json(a.findings, original) if original is not None else {}
-        if not isinstance(base, dict):
-            raise render.SchemaError(f"{a.findings}: report must be an object")
+        if original is not None:
+            try:
+                render.validate_data(base)
+            except render.SchemaError as e:
+                raise render.SchemaError(f"{a.findings}: {e}") from None
         fragments = [(str(path), read_json(path)) for path in a.fragments]
     except (render.SchemaError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)

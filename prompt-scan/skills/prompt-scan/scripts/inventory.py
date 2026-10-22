@@ -14,7 +14,7 @@ are set from the repository's Git state. A reviewer's latest verdict on the
 same rule and location is kept as `previous_validation`, across rescans until a
 new review replaces it; the new hit starts `Unverified`.
 
-Exit codes: 0 written, 2 unreadable input or schema error.
+Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
 """
 import argparse
 import copy
@@ -28,8 +28,10 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as merge_tool  # noqa: E402
 import render  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
-SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
+VCS_DIRS = {".git", ".hg", ".svn"}
+SKIP_DIRS = VCS_DIRS | {"node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",
              ".next", ".nuxt", "vendor", "target", "coverage", ".tox", ".mypy_cache", ".pytest_cache",
              "site-packages", ".idea", ".vscode"}
 MAX_FILE_BYTES = 1024 * 1024
@@ -44,7 +46,6 @@ AGENT_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurf
                "copilot-instructions.md"}
 PROMPT_DIRS = {"prompts", "prompt", "system_prompts", "system-prompts", "instructions"}
 AGENT_DIRS = (".claude/agents", ".claude/commands", ".cursor/rules", ".github/prompts", ".codex/agents")
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 
 CALL_PATTERNS = [
     ("anthropic.messages", re.compile(r"\.messages\.(?:create|stream|count_tokens)\s*\(")),
@@ -93,6 +94,9 @@ NOT_COVERED = [
     "prompts loaded from databases, prompt registries, feature flags or environment variables",
     "provider-side or framework-added system text",
 ]
+# Added to not_covered when a directory was pruned by name: a skill or prompt directory called build,
+# coverage, env or vendor is skipped too, so each pruned path is listed in skipped_dirs.
+SKIPPED_NOTE = "files under directories skipped by name (dependencies, environments, build output; see skipped_dirs)"
 
 # Text for each lint rule's L-* finding. Scanner-written text stays in English.
 RULES = {
@@ -142,13 +146,16 @@ RULES = {
 SEVERITY_RANK = {s: i for i, s in enumerate(render.SEVERITIES)}
 
 
-def walk(root):
+def walk(root, skipped=None):
+    """Files under root, sorted; each directory pruned by name (VCS metadata aside) is added to skipped."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        if skipped is not None:
+            skipped += [(Path(dirpath) / d).relative_to(root).as_posix() for d in sorted(dirnames)
+                        if d in SKIP_DIRS - VCS_DIRS]
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            if path.is_symlink() or not path.is_file() or name.startswith(".env") \
-                    or path.suffix.lower() in SENSITIVE_SUFFIXES:
+            if path.is_symlink() or not path.is_file() or render.sensitive(name):
                 continue
             yield path, path.relative_to(root).as_posix()
 
@@ -201,26 +208,41 @@ def variables(text):
     return found
 
 
-FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})")
+FENCE = re.compile(r"^([ \t]*)(`{3,}|~{3,})")
+LIST_ITEM = re.compile(r"^[ \t]*(?:[-*+]|[0-9]{1,9}[.)])[ \t]+")
+
+
+def width(indent):
+    return len(indent.expandtabs(4))
 
 
 def fenced_lines(lines):
     """Line numbers (1-based) inside Markdown code fences, which hold examples rather than prompt markup.
 
-    As in CommonMark, a fence closes only on a bare run of its own character at least as long as the
-    opener, so a ``` line inside a ```` fence stays inside.
+    As in CommonMark, a fence opens with at most three spaces of indentation (more inside a list item,
+    relative to the item's text), so a line indented four spaces outside a list is an indented code
+    block; it closes only on a bare run of its own character at least as long as the opener and
+    indented at most three spaces more than it, so a ``` line inside a ```` fence, or an indented ```
+    in the fenced code, stays inside; and a backtick run followed by another backtick on its line
+    (```json``` is ...) is inline code, not an opener.
     """
-    fence, result = None, set()
+    fence, indent, item, result = None, 0, None, set()
     for number, line in enumerate(lines, 1):
         m = FENCE.match(line)
         if fence is None:
-            if m:
-                fence = m.group(1)
+            listed = LIST_ITEM.match(line)
+            if listed:
+                item = width(listed.group(0))
+            elif line.strip() and item is not None and width(line[:len(line) - len(line.lstrip())]) < item:
+                item = None  # A line left of the item's text ends the list.
+            if m and width(m.group(1)) <= (item or 0) + 3 \
+                    and not (m.group(2)[0] == "`" and "`" in line[m.end():]):
+                fence, indent = m.group(2), width(m.group(1))
                 result.add(number)
         else:
             result.add(number)
-            if m and m.group(1)[0] == fence[0] and len(m.group(1)) >= len(fence) \
-                    and not line[m.end():].strip():
+            if m and m.group(2)[0] == fence[0] and len(m.group(2)) >= len(fence) \
+                    and not line[m.end():].strip() and width(m.group(1)) <= indent + 3:
                 fence = None
     return result
 
@@ -295,7 +317,8 @@ def git_state(root, read=()):
     """HEAD, and whether what the scan read under root differs from it (None when Git cannot tell).
 
     Untracked files count, and so do ignored ones and files inside submodules among `read` (the paths
-    the inventory reports, as on disk): the scan read them, but HEAD does not hold them.
+    the inventory reports, as on disk): the scan read them, but HEAD does not hold them. A file read
+    under skip-worktree or assume-unchanged leaves the answer None: git status does not compare it.
     """
     def git(*args, ok=(0,), stdin=None):
         try:
@@ -326,13 +349,18 @@ def git_state(root, read=()):
         return commit, None
     if status or not read:
         return commit, bool(status)
-    # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files.
-    stage = git("ls-files", "-z", "--stage", "--", ".")
+    # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files. -v tags each entry: S marks
+    # skip-worktree and a lowercase tag assume-unchanged, flags under which git status hides edits.
+    stage = git("ls-files", "-z", "-v", "--stage", "--", ".")
     if stage is None:
         return commit, None
-    modules = [entry.split("\t", 1)[1] for entry in stage.split("\0") if entry.startswith("160000 ")]
+    entries = [(entry.split(" ", 2), entry.split("\t", 1)[1]) for entry in stage.split("\0") if "\t" in entry]
+    modules = [path for (_tag, mode, _rest), path in entries if mode == "160000"]
     if any(path.startswith(module + "/") for path in read for module in modules):
         return commit, True
+    read_set = set(read)
+    if any(path in read_set and (tag == "S" or tag.islower()) for (tag, _mode, _rest), path in entries):
+        return commit, None
     # check-ignore exits 0 when some path is ignored and 1 when none is.
     ignored = git("check-ignore", "--stdin", "-z", ok=(0, 1), stdin="\0".join(read) + "\0")
     return commit, None if ignored is None else bool(ignored)
@@ -340,8 +368,8 @@ def git_state(root, read=()):
 
 def scan(root):
     root = Path(root).resolve()
-    prompt_files, call_sites, models, lint, read = [], [], {}, [], set()
-    for path, on_disk in walk(root):
+    prompt_files, call_sites, models, lint, read, skipped = [], [], {}, [], set(), []
+    for path, on_disk in walk(root, skipped):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
         kind = prompt_kind(rel)
@@ -375,7 +403,8 @@ def scan(root):
         "tool": "inventory.py", "version": 1, "root": root.name, "commit": commit, "dirty": dirty,
         "prompt_files": prompt_files, "call_sites": call_sites,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
-        "lint": lint, "not_covered": NOT_COVERED,
+        "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
+        "not_covered": NOT_COVERED + ([SKIPPED_NOTE] if skipped else []),
     }
 
 
@@ -404,8 +433,10 @@ def hit_key(rule, location, text):
 def merge_into(findings_path, inventory):
     original = merge_tool.read_regular(findings_path)
     data = merge_tool.read_json(findings_path, original)
-    if not isinstance(data, dict):
-        raise render.SchemaError(f"{findings_path}: report must be an object")
+    try:
+        render.validate_data(data)
+    except render.SchemaError as e:
+        raise render.SchemaError(f"{findings_path}: {e}") from None
     old = {hit_key(f.get("rule"), f.get("location"), f.get("cause")): f for f in data.get("findings", [])
            if isinstance(f, dict) and str(f.get("id", "")).startswith("L-")}
     new = lint_findings(inventory["lint"])
@@ -438,8 +469,16 @@ def main(argv=None):
     inventory = scan(a.repo)
     text = json.dumps(inventory, ensure_ascii=False, indent=2) + "\n"
     if a.out:
-        a.out.parent.mkdir(parents=True, exist_ok=True)
-        a.out.write_text(text, encoding="utf-8")
+        try:
+            a.out.parent.mkdir(parents=True, exist_ok=True)
+            # As render.py does: a planted link must not redirect the write, e.g. into the reviewed repository.
+            unsafe = unsafe_target(a.out.parent, [a.out.name])
+            if unsafe:
+                raise OSError(f"refusing to write {unsafe}: it exists as a symlink or non-regular file")
+            write_output(a.out, text)
+        except OSError as e:
+            print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)
+            return 2
         print(f"wrote {a.out}: {len(inventory['prompt_files'])} prompt file(s), "
               f"{len(inventory['call_sites'])} call site(s), {len(inventory['lint'])} lint hit(s)")
     else:

@@ -154,6 +154,14 @@ class InventoryTest(unittest.TestCase):
         subprocess.run([*git, "commit", "-qm", "init"], check=True)
         return root
 
+    def test_index_flags_that_hide_edits_leave_dirty_undetermined(self):
+        for flag in ("--skip-worktree", "--assume-unchanged"):
+            root = self.git_repo({"prompts/a.md": "hi\n", "prompts/b.md": "hi\n"})
+            self.assertIs(inventory.scan(root)["dirty"], False)
+            subprocess.run(["git", "-C", str(root), "update-index", flag, "prompts/a.md"], check=True)
+            (root / "prompts" / "a.md").write_text("edited, but git status does not say so\n", encoding="utf-8")
+            self.assertIsNone(inventory.scan(root)["dirty"], flag)
+
     def test_no_filter_driver_from_the_repository_runs(self):
         root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n",
                               "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n"})
@@ -202,6 +210,47 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         paths = [f["path"] for f in json.loads(out.read_text(encoding="utf-8"))["prompt_files"]]
         self.assertEqual(paths, ["prompts/ok.md", "prompts/\\xff.md"])
+
+    def test_skipped_directories_are_named(self):
+        root = make_repo({".claude/skills/build/SKILL.md": "Build.\n", ".claude/skills/review/SKILL.md": "Review.\n",
+                          "node_modules/x/prompts/a.md": "hi\n", "prompts/a.md": "hi\n"})
+        result = inventory.scan(root)
+        self.assertEqual([f["path"] for f in result["prompt_files"]], [".claude/skills/review/SKILL.md", "prompts/a.md"])
+        self.assertEqual(result["skipped_dirs"], [".claude/skills/build", "node_modules"])
+        self.assertIn(inventory.SKIPPED_NOTE, result["not_covered"])
+        clean = inventory.scan(make_repo({"prompts/a.md": "hi\n"}))
+        self.assertEqual((clean["skipped_dirs"], inventory.SKIPPED_NOTE in clean["not_covered"]), ([], False))
+
+    def test_fences_follow_commonmark(self):
+        root = make_repo({
+            # A backtick line with backticks after the opener is inline code, not a fence.
+            "prompts/a.md": "```json``` blocks are the only accepted output.\n<instructions>\nTODO\n",
+            "prompts/b.md": "```json``` is inline.\n```\n<example>\n```\n",
+            # A fence nested in a list item is indented by the item, often four spaces or more.
+            "prompts/c.md": "1. Step\n   - Output:\n\n     ```xml\n     <verdict>ok\n     ```\n",
+        })
+        hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
+        self.assertEqual(hits, {("unclosed-tag", "prompts/a.md:2"), ("placeholder", "prompts/a.md:3")})
+        root = make_repo({
+            # An indented ``` inside a fence is content: it closes nothing.
+            "prompts/d.md": "```python\nEXAMPLE = '''\n    ```json\n    {}\n    ```\n'''\n```\n<rules>\n",
+            # Outside a list item, a line indented four spaces is an indented code block, not a fence.
+            "prompts/e.md": "Start like this:\n\n    ```json\n\n<rules>\n",
+        })
+        hits = {(h["rule"], h["location"]) for h in inventory.scan(root)["lint"]}
+        self.assertEqual(hits, {("unclosed-tag", "prompts/d.md:8"), ("unclosed-tag", "prompts/e.md:5")})
+
+    def test_out_refuses_a_symlink_and_reports_write_errors(self):
+        root = make_repo({"prompts/a.md": "hi\n", "victim.txt": "keep\n"})
+        out = Path(tempfile.mkdtemp())
+        (out / "inventory.json").symlink_to(root / "victim.txt")
+        code, _, err = run(inventory.main, root, "--out", out / "inventory.json")
+        self.assertEqual(code, 2)
+        self.assertIn("symlink", err)
+        self.assertEqual((root / "victim.txt").read_text(encoding="utf-8"), "keep\n")
+        (out / "dir.json").mkdir()
+        code, _, err = run(inventory.main, root, "--out", out / "dir.json")
+        self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
 
     def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
         root = self.git_repo({"prompts/ok.md": "hi\n"})

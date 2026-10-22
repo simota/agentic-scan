@@ -9,13 +9,14 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/find
 ```
 
 It reads files only. It never executes code from the repository and sends
-nothing over the network; the Git state it records comes from `git status`
-and `git check-ignore`, with the repository's fsmonitor and filter-driver
-commands switched off, without entering submodules and without refreshing the
-index. A file whose name is not UTF-8 is listed with the bytes escaped
-(`\xff`); Git still sees its real name, but `render.py` cannot reopen the
-escaped one, so its findings carry no excerpt. Directories such as `.git`, `node_modules`, virtual
-environments and build output are skipped, as are `.env*` files, key files,
+nothing over the network; the Git state it records comes from `git status`,
+`git ls-files` and `git check-ignore`, with the repository's fsmonitor and
+filter-driver commands switched off, without entering submodules and without
+refreshing the index. A file whose name is not UTF-8 is listed with the bytes
+escaped (`\xff`); Git still sees its real name, but `render.py` cannot reopen
+the escaped one, so its findings carry no excerpt. Directories such as `.git`,
+`node_modules`, virtual environments and build output are skipped (listed in
+`skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
 symlinks, binary files and files over 1 MiB.
 
 ## What it lists
@@ -26,6 +27,7 @@ symlinks, binary files and files over 1 MiB.
 | `call_sites` | Lines in code that call a model API or build a prompt object: Anthropic `messages.create`, OpenAI `chat.completions.create` / `responses.create`, Gemini `generate_content`, the AI SDK `generateText` family, LangChain prompt and message classes, `role: "system"` literals and `SYSTEM_PROMPT`-style assignments |
 | `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location, including the cloud forms `us.anthropic.claude-…-v1:0` (Bedrock), `claude-…@YYYYMMDD` (Vertex) and `models/gemini-…`. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
+| `skipped_dirs` | Each directory pruned by name, at any depth: a skill or prompt directory named `build`, `coverage`, `env`, `vendor`… is pruned too. Read the prompt files in any that hold some, or name them in `limitations` |
 | `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
 
 `est_tokens` is a rough estimate (about four ASCII characters per token, one
@@ -35,7 +37,7 @@ per other character). Use it to rank prompts by size, not as a provider count.
 
 | Rule | Kind / severity / confidence | Hit when |
 |---|---|---|
-| `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access key, GitHub and Slack tokens, private-key block). Location and kind only; the value is never copied |
+| `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access keys, GitHub, GitLab, Hugging Face, Stripe and Slack tokens, private-key block). Location and kind only; the value is never copied |
 | `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in an engine template file (`.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs`, `.tmpl`, `.tpl`) or a file that opens `{{` or `{%` somewhere: elsewhere `}}` is JSON or literal text |
 | `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
 | `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX` (not inside a format mask such as `XXX-XXX-XXXX`), lorem ipsum or `[INSERT …]` outside code |
@@ -49,9 +51,12 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 ## Reviewing `L-*` findings
 
 `--into` replaces every `L-*` in `findings.json`, so review them only after the
-last `--into`. For each one, read the location and merge a `validation` with a
-verdict and evidence — for example `FalsePositive` for a literal brace that the
-template engine never sees, or `Valid` for a `TODO` that reaches the model.
+last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
+`contract_check.py` fails when its lint hits or Git state differ from the
+`L-*` findings and `meta`. For each one, read the location and merge a
+`validation` with a verdict and evidence — for example `FalsePositive` for a
+literal brace that the template engine never sees, or `Valid` for a `TODO`
+that reaches the model.
 A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
 larger defect the agent found, keep the `L-*` and cite it from the `F-*`
 finding's `cause` by rule and location (`unclosed-tag at prompts/a.md:3`), not by

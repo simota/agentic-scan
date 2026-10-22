@@ -6,7 +6,8 @@
 With --repo, each finding's `location` excerpt is embedded: read from the blob
 at `meta.commit` when the record names one and the tree was known clean at scan time
 (never from later working-tree edits), otherwise from the working tree.
-Credential-shaped values in excerpts are masked, private-key blocks whole.
+Credential-shaped values in excerpts are masked, private-key blocks whole; `.env*`
+and key files (.pem, .key, .p12, .pfx) get no excerpt.
 --lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
@@ -26,8 +27,10 @@ import re
 import subprocess
 import sys
 
-from scan_report_kit import pdf as kit_pdf, style as kit_style
-from scan_report_kit.output import unsafe_target, write_output
+# The kit sits next to this script; -I and PYTHONSAFEPATH leave the script's directory off sys.path.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from scan_report_kit import pdf as kit_pdf, style as kit_style  # noqa: E402
+from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 SEVERITIES = ["High", "Medium", "Low", "Info"]
 CONFIDENCES = ["Confirmed", "Model-dependent", "Suspected"]
@@ -44,9 +47,13 @@ FINDING_ID = re.compile(r"[FL]-[0-9]{3,}")
 PROMPT_ID = re.compile(r"P-[0-9]{2,3}")
 EVAL_ID = re.compile(r"E-[0-9]{3}")
 LOC_RE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
-SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\bAKIA[0-9A-Z]{16}\b|"
-                       r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
+SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{20,}|\b(?:AKIA|ASIA)[0-9A-Z]{16}\b|"
+                       r"\bgh[pousr]_[A-Za-z0-9]{36,}|\bgithub_pat_[A-Za-z0-9_]{22,}|\bglpat-[A-Za-z0-9_-]{20,}|"
+                       r"\bhf_[A-Za-z0-9]{30,}|\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|"
+                       r"\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
+SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
 # A whole private-key block, so masking it also hides the key body lines (an unterminated block runs to the end).
 KEY_BLOCK_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)",
                           re.S)
@@ -312,8 +319,13 @@ def source_lines(text):
     return [line[:-1] if line.endswith("\r") else line for line in lines]
 
 
+def sensitive(name):
+    """Whether a file name is one that holds credentials by convention (.env*, key files)."""
+    return name.startswith(".env") or Path(name).suffix.lower() in SENSITIVE_SUFFIXES
+
+
 def _source(repo, commit, rel):
-    if Path(rel).is_absolute() or ".." in Path(rel).parts:
+    if Path(rel).is_absolute() or ".." in Path(rel).parts or sensitive(Path(rel).name):
         return None
     if commit:
         try:
@@ -324,7 +336,7 @@ def _source(repo, commit, rel):
         return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
     root = Path(repo).resolve()
     path = (root / rel).resolve()
-    if root not in path.parents or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
+    if root not in path.parents or sensitive(path.name) or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:
         return None
     return path.read_text(encoding="utf-8", errors="replace")
 

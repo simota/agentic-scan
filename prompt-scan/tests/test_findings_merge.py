@@ -5,7 +5,7 @@ import stat
 import tempfile
 import unittest
 
-from helpers import findings, run, write_json
+from helpers import SAMPLE_APP, findings, inventory, run, write_json
 
 META = {"target": "t", "date": "2026-10-11", "assessor": "test", "lang": "en"}
 
@@ -155,6 +155,55 @@ class MergeTest(unittest.TestCase):
         code, out, _ = run(findings.main, "renumber", self.out)
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)
+
+    def test_a_malformed_record_is_a_schema_error(self):
+        fragment = self.dir / "meta.json"
+        write_json(fragment, {"meta": META})
+        for base in ({"meta": None}, {"findings": None}, {"meta": "x"}):
+            write_json(self.out, base)
+            code, _, err = run(findings.main, "merge", self.out, fragment)
+            self.assertEqual((code, err.startswith("error: ")), (2, True), err)
+            code, _, err = run(inventory.main, SAMPLE_APP, "--into", self.out)
+            self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
+
+    def test_renumber_leaves_paths_and_scanner_fields_alone(self):
+        # Feature ids such as F-002 name directories and prompts; only references to findings move.
+        lint = {"id": "L-001", "source": "inventory.py", "rule": "placeholder", "kind": "defect",
+                "severity": "Low", "confidence": "Suspected", "category": "Maintainability", "title": "Placeholder",
+                "location": "prompts/F-002/system.md:2", "cause": "inventory.py placeholder: 1 line(s).",
+                "validation": {"verdict": "Valid", "evidence": "same root as F-002", "method": "read"}}
+        write_json(self.out, {"meta": dict(META, scope="prompts/F-002"), "prompts": [
+            {"id": "P-01", "name": "Feature F-002 summariser", "kind": "system", "location": "prompts/F-002/system.md:1"}],
+            "findings": [finding(1, location="prompts/F-002/system.md:9", prompt="P-01",
+                                 cause="see prompts/F-002/system.md:3 and F-002"),
+                         finding(2, severity="High", location="prompts/F-002/system.md:3", prompt="P-01"), lint]})
+        code, _, err = run(findings.main, "renumber", self.out)
+        self.assertEqual(code, 0, err)
+        data = self.data()
+        self.assertEqual([(f["id"], f["location"]) for f in data["findings"]],
+                         [("F-001", "prompts/F-002/system.md:3"), ("F-002", "prompts/F-002/system.md:9"),
+                          ("L-001", "prompts/F-002/system.md:2")])
+        self.assertEqual(data["findings"][1]["cause"], "see prompts/F-002/system.md:3 and F-001")
+        self.assertEqual(data["findings"][2]["validation"]["evidence"], "same root as F-001")
+        self.assertEqual({k: v for k, v in data["findings"][2].items() if k != "validation"},
+                         {k: v for k, v in lint.items() if k != "validation"})
+        self.assertEqual(data["prompts"][0]["name"], "Feature F-002 summariser")
+        self.assertEqual(data["meta"]["scope"], "prompts/F-002")
+
+    def test_renumber_tells_lists_from_paths(self):
+        mapping = {"F-001": "F-009", "F-002": "F-008", "F-003": "F-007", "F-004": "F-006"}
+        cases = {
+            "F-001/F-002/F-003/F-004": "F-009/F-008/F-007/F-006",
+            "(F-001/F-002), see F-003. F-001とF-002": "(F-009/F-008), see F-007. F-009とF-008",
+            "F-001-F-003": "F-009-F-007",
+            "prompts/F-002/F-002.md:3": "prompts/F-002/F-002.md:3",
+            "prompts/F-002/F-002-system.md": "prompts/F-002/F-002-system.md",
+            "prompts\\F-002\\a.md and F-002.md": "prompts\\F-002\\a.md and F-002.md",
+            "https://example.com/F-002": "https://example.com/F-002",
+        }
+        for before, after in cases.items():
+            data = {"findings": [{"id": "F-005", "cause": before}]}
+            self.assertEqual(findings.renumber(data, mapping)["findings"][0]["cause"], after, before)
 
 
 if __name__ == "__main__":

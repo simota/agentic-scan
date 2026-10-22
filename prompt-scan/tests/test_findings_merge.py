@@ -156,6 +156,30 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertIn("already in order", out)
 
+    def test_renumber_leaves_paths_and_scanner_fields_alone(self):
+        # Feature ids such as F-002 name directories and prompts; only references to findings move.
+        lint = {"id": "L-001", "source": "inventory.py", "rule": "placeholder", "kind": "defect",
+                "severity": "Low", "confidence": "Suspected", "category": "Maintainability", "title": "Placeholder",
+                "location": "prompts/F-002/system.md:2", "cause": "inventory.py placeholder: 1 line(s).",
+                "validation": {"verdict": "Valid", "evidence": "same root as F-002", "method": "read"}}
+        write_json(self.out, {"meta": dict(META, scope="prompts/F-002"), "prompts": [
+            {"id": "P-01", "name": "Feature F-002 summariser", "kind": "system", "location": "prompts/F-002/system.md:1"}],
+            "findings": [finding(1, location="prompts/F-002/system.md:9", prompt="P-01",
+                                 cause="see prompts/F-002/system.md:3 and F-002"),
+                         finding(2, severity="High", location="prompts/F-002/system.md:3", prompt="P-01"), lint]})
+        code, _, err = run(findings.main, "renumber", self.out)
+        self.assertEqual(code, 0, err)
+        data = self.data()
+        self.assertEqual([(f["id"], f["location"]) for f in data["findings"]],
+                         [("F-001", "prompts/F-002/system.md:3"), ("F-002", "prompts/F-002/system.md:9"),
+                          ("L-001", "prompts/F-002/system.md:2")])
+        self.assertEqual(data["findings"][1]["cause"], "see prompts/F-002/system.md:3 and F-001")
+        self.assertEqual(data["findings"][2]["validation"]["evidence"], "same root as F-001")
+        self.assertEqual({k: v for k, v in data["findings"][2].items() if k != "validation"},
+                         {k: v for k, v in lint.items() if k != "validation"})
+        self.assertEqual(data["prompts"][0]["name"], "Feature F-002 summariser")
+        self.assertEqual(data["meta"]["scope"], "prompts/F-002")
+
 
 if __name__ == "__main__":
     unittest.main()

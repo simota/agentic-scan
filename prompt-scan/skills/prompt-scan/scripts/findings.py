@@ -28,7 +28,9 @@ strings and credential-shaped values in report prose are refused.
 severities are final: F-001.. by severity, then path and line, with
 FalsePositive / NotApplicable findings after the rest. Every F-* reference in
 the record (ids, eval_runs, prose, reference titles) follows the new numbers;
-quoted `proposal` text and reference URLs are left as written.
+quoted `proposal` text, reference URLs, locations, an F-NNN that is part of a
+path, `meta`, the prompt records and the scanner fields of `L-*` findings are
+left as written.
 
 FINDINGS is created when absent and replaced atomically, only if no other
 writer changed it meanwhile. The merged report must pass render.py's schema.
@@ -199,8 +201,12 @@ def merge(base, fragment):
 
 
 CODE_REF = re.compile(r"\bF-[0-9]{3,}\b")
-# Quoted prompt text and link targets are not references to findings, even when they contain an F-NNN.
-VERBATIM = {"proposal", "url"}
+# Quoted prompt text, link targets and locations are not references to findings, even when they contain
+# an F-NNN (a feature id naming a directory, say). Neither are meta, the prompt records and the scanner
+# fields of L-* findings; an L-* finding's own review may cite findings.
+VERBATIM = {"proposal", "url", "location"}
+UNTOUCHED = {"meta", "prompts"}
+LINT_REVIEWED = {"validation", "previous_validation"}
 
 
 def order_key(f):
@@ -218,17 +224,30 @@ def renumber_map(findings):
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
+def in_path(text, start, end):
+    """Whether the F-NNN at text[start:end] is a path component (prompts/F-002/a.md), not a list F-001/F-002."""
+    if text[:start].endswith("/") and not re.search(r"(?<![\w-])F-[0-9]{3,}/$", text[:start]):
+        return True
+    return text[end:].startswith("/") and not re.match(r"/F-[0-9]{3,}\b(?!/)", text[end:])
+
+
 def renumber(data, mapping):
     """Rewrite every F-* reference in data's strings at once, then order the F-* records by id."""
+    def ref(m):
+        return m.group(0) if in_path(m.string, m.start(), m.end()) else mapping.get(m.group(0), m.group(0))
+
     def rewrite(value):
         if isinstance(value, str):
-            return CODE_REF.sub(lambda m: mapping.get(m.group(0), m.group(0)), value)
+            return CODE_REF.sub(ref, value)
         if isinstance(value, dict):
             return {k: v if k in VERBATIM else rewrite(v) for k, v in value.items()}
         if isinstance(value, list):
             return [rewrite(v) for v in value]
         return value
-    data = rewrite(data)
+    findings = [rewrite(f) if f["id"].startswith("F-") else
+                {k: rewrite(v) if k in LINT_REVIEWED else v for k, v in f.items()} for f in data["findings"]]
+    data = {k: v if k in UNTOUCHED else rewrite(v) for k, v in data.items() if k != "findings"}
+    data["findings"] = findings
     code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: render.id_key(f["id"]))
     data["findings"] = code + [f for f in data["findings"] if not f["id"].startswith("F-")]
     return data

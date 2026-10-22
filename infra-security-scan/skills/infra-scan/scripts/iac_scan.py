@@ -2810,8 +2810,9 @@ def cfn_parameter_defaults(scan, rel, text, doc):
             if isinstance(getattr(params, "lines", None), dict):
                 line = params.lines.get(name, 1)  # parsed YAML carries its lines; text is None
             else:
-                m = re.search(rf'^\s*"?{re.escape(name)}"?\s*:', text or "", re.M)
-                line = text.count("\n", 0, m.start()) + 1 if m else 1
+                # The key under Parameters, not the same name earlier in the text
+                # (Metadata ParameterLabels) or the first line of minified JSON.
+                line = json_key_lines(text or "").get((("Parameters",), name), 1)
             scan.hit("SEC-001", Res("file", rel, rel, 1), line, f"literal default for parameter {name}")
 
 

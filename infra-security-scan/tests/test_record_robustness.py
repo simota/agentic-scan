@@ -82,6 +82,7 @@ class RecordRobustnessTest(unittest.TestCase):
                        {"checked_ok": ["ok \ud800"]},
                        {"inventory": {"not_run": 5}},
                        {"inventory": {"resources": "many"}},
+                       {"inventory": {"by_provider": {"aws": -5}}},
                        {"meta": {**META, "inputs": [{"kind": "iac", "path": "x", "note": {"a": 1}}]}},
                        {"findings": [finding("F-000")]}):
             with self.subTest(change=str(change)[:80]):

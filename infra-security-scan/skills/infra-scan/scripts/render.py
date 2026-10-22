@@ -315,7 +315,7 @@ def validate(data, partial=False):
             if key in inv and (type(inv[key]) is not int or inv[key] < 0):
                 add(f"inventory.{key}: must be a count")
         if "by_provider" in inv and not (isinstance(inv["by_provider"], dict) and all(
-                type(v) is int for v in inv["by_provider"].values())):
+                type(v) is int and v >= 0 for v in inv["by_provider"].values())):
             add("inventory.by_provider: must map providers to counts")
         if "not_run" in inv and not (isinstance(inv["not_run"], list) and all(
                 isinstance(x, str) for x in inv["not_run"])):

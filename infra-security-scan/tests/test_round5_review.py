@@ -570,6 +570,20 @@ class CodexThirteenthReviewTest(unittest.TestCase):
         self.assertEqual([(h["detail"], h["line"]) for h in result.hits],
                          [("literal default for parameter DbPassword", 5)])
 
+    def test_json_parameter_default_is_anchored_under_parameters(self):
+        template = {"AWSTemplateFormatVersion": "2010-09-09",
+                    "Metadata": {"AWS::CloudFormation::Interface": {"ParameterLabels": {
+                        "DbPassword": {"default": "Database password"}}}},
+                    "Parameters": {"DbPassword": {"Type": "String", "NoEcho": True, "Default": SECRET}},
+                    "Resources": {"Topic": {"Type": "AWS::SNS::Topic"}}}
+        text = json.dumps(template, indent=1)
+        line = text.split("\n").index('  "DbPassword": {') + 1  # under Parameters, not ParameterLabels
+        for name, body in (("pretty.json", text), ("min.json", json.dumps(template))):
+            with self.subTest(name=name):
+                hits = scan({name: body}).hits
+                self.assertEqual([(h["detail"], h["line"]) for h in hits],
+                                 [("literal default for parameter DbPassword", line if name == "pretty.json" else 1)])
+
 
 class CodexFourteenthReviewTest(unittest.TestCase):
     def test_password_quoted_apart_from_the_user(self):

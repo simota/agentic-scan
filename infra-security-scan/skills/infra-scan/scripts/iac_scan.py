@@ -4557,6 +4557,11 @@ def main(argv=None):
             print(f"iac_scan: {option} {target} is inside the scanned repository; write it elsewhere",
                   file=sys.stderr)
             return 2
+        # The same holds for an export directory: the next run would read it as an export.
+        if any(Path(d).resolve() in target_resolved.parents for d in args.snapshots):
+            print(f"iac_scan: {option} {target} is inside a --snapshots directory; write it elsewhere",
+                  file=sys.stderr)
+            return 2
     scan = run(root, args.snapshots)
     commit = git_commit(root)
     findings = printable(build_findings(scan.hits))

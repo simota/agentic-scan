@@ -128,6 +128,17 @@ class OutputPathTest(unittest.TestCase):
                 self.assertIn("inside the scanned repository", err)
                 self.assertFalse(target.exists())
 
+    def test_scan_refuses_output_inside_a_snapshots_directory(self):
+        exports = self.root / "exports"
+        exports.mkdir()
+        for option in ("--out", "--into"):
+            with self.subTest(option=option):
+                target = exports / "run" / "iac.json"
+                code, _, err = quiet(iac_scan.main, [str(self.repo), "--snapshots", str(exports), option, str(target)])
+                self.assertEqual(code, 2)
+                self.assertIn("inside a --snapshots directory", err)
+                self.assertFalse(target.exists())
+
     def test_merge_keeps_the_record_mode(self):
         record = self.root / "findings.json"
         record.write_text(json.dumps(render.empty_record()), encoding="utf-8")

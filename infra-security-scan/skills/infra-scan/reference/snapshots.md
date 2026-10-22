@@ -77,7 +77,9 @@ Do not export `secrets`.
   `scripts/iac_scan.py <repo> --snapshots <exports> --out <out>/iac.json --into <out>/findings.json`.
   Each run replaces the whole `I-*` baseline, so a separate run on the exports
   alone would drop the repository's hits. Snapshot files are reported as
-  `@snapshots/<dir>/<file>` and never excerpted in the reports
+  `@snapshots/<dir>/<file>` and never excerpted in the reports. `<out>` lies
+  outside `<exports>` as it does outside the repository; the scan refuses
+  otherwise, since the next run would read its outputs as exports
 - `iac_scan.py` applies its rules to snapshot shapes it recognises
   (`SecurityGroups`, IAM policy `bindings`, firewall lists, bucket policy
   `Statement`, and Kubernetes objects or `List`s from `kubectl … -o json`);

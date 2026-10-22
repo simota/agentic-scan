@@ -10,12 +10,13 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/find
 
 It reads files only. It never executes code from the repository and sends
 nothing over the network; the Git state it records comes from `git status`,
-`git ls-files` and `git check-ignore`, with the repository's fsmonitor and filter-driver
-commands switched off, without entering submodules and without refreshing the
-index. A file whose name is not UTF-8 is listed with the bytes escaped
-(`\xff`); Git still sees its real name, but `render.py` cannot reopen the
-escaped one, so its findings carry no excerpt. Directories such as `.git`, `node_modules`, virtual
-environments and build output are skipped (listed in `skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
+`git ls-files` and `git check-ignore`, with the repository's fsmonitor and
+filter-driver commands switched off, without entering submodules and without
+refreshing the index. A file whose name is not UTF-8 is listed with the bytes
+escaped (`\xff`); Git still sees its real name, but `render.py` cannot reopen
+the escaped one, so its findings carry no excerpt. Directories such as `.git`,
+`node_modules`, virtual environments and build output are skipped (listed in
+`skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
 symlinks, binary files and files over 1 MiB.
 
 ## What it lists
@@ -52,9 +53,10 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 `--into` replaces every `L-*` in `findings.json`, so review them only after the
 last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `contract_check.py` fails when its lint hits or Git state differ from the
-`L-*` findings and `meta`. For each one, read the location and merge a `validation` with a
-verdict and evidence — for example `FalsePositive` for a literal brace that the
-template engine never sees, or `Valid` for a `TODO` that reaches the model.
+`L-*` findings and `meta`. For each one, read the location and merge a
+`validation` with a verdict and evidence — for example `FalsePositive` for a
+literal brace that the template engine never sees, or `Valid` for a `TODO`
+that reaches the model.
 A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
 larger defect the agent found, keep the `L-*` and cite it from the `F-*`
 finding's `cause` by rule and location (`unclosed-tag at prompts/a.md:3`), not by

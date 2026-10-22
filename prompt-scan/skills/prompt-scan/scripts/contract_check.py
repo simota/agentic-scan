@@ -7,8 +7,8 @@ OUT_DIR holds findings.json and the rendered outputs. Checks the output file
 set, ID scheme, that L-* findings and inventory.json come from one scan, the
 fields every F-* finding carries, perspective coverage, the limitations the
 contract requires, and that each rendered page was rendered from the current
-findings.json. It checks shape
-and provenance markers only; it cannot tell whether a finding is true.
+findings.json. It checks shape and provenance markers only; it cannot tell
+whether a finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """

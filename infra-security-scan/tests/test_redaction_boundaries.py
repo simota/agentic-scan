@@ -349,6 +349,39 @@ class RedactionBoundaryTest(unittest.TestCase):
                 lines = render.source_lines(self.write(name, text))
                 self.assertNotIn(value, "\n".join(lines or []))
 
+    def test_object_literal_with_a_computed_name_hides_its_value(self):
+        value = "plain" + "objectvalue"
+        for name_expr in ("local.pw_name", "var.db_password_env_name", "upper(local.n)"):
+            with self.subTest(name=name_expr):
+                text = ('resource "aws_ecs_task_definition" "d" {\n'
+                        '  container_definitions = jsonencode([{\n    environment = [{\n'
+                        f'      name  = {name_expr}\n      value = "{value}"\n'
+                        '    }]\n  }])\n}\n')
+                lines = render.source_lines(self.write("task.tf", text))
+                self.assertNotIn(value, "\n".join(lines or []))
+
+    def test_object_literal_with_a_computed_name_and_reference_value_keeps_excerpts(self):
+        text = ('resource "aws_ecs_task_definition" "d" {\n'
+                '  container_definitions = jsonencode([{\n    environment = [{\n'
+                '      name  = local.region_name\n      value = var.region\n'
+                '    }]\n  }])\n}\n')
+        self.assertEqual(render.source_lines(self.write("task.tf", text)), text.splitlines())
+
+    def test_base64_keys_under_unlisted_names_are_scrubbed_whole(self):
+        # ENTROPY split a base64 key at "/" and "=", and pieces without a
+        # digit or an upper-case letter stayed visible.
+        import base64
+        import hashlib
+        import re
+        from redaction import scrub_line
+        for seed in range(40):
+            key = base64.b64encode(hashlib.sha256(b"fixture-%d" % seed).digest()).decode()
+            for line in (f'  JWT_SIGNING_KEY = "{key}"', f"  ENCRYPTION_KEY: {key}", f'"hmac": "{key}",'):
+                with self.subTest(seed=seed, line=line[:20]):
+                    shown = scrub_line(line)
+                    runs = re.findall(r"[A-Za-z0-9+/=]{12,}", shown)
+                    self.assertEqual([r for r in runs if r in key], [], shown)
+
 
 if __name__ == "__main__":
     unittest.main()

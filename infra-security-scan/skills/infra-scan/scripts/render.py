@@ -716,6 +716,8 @@ HCL_MARKED_SECRET = re.compile(
     r'google_secret_manager_secret_version)"')
 HCL_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*"([^"\n]*)"')
 HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?(?:value|parameter_?value)"?\s*[=:]')
+# A name computed by an expression (var.db_password_env_name): it may name a secret.
+HCL_EXPR_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*[^"\s]')
 
 
 def hcl_has_paired_secret(text):
@@ -733,6 +735,13 @@ def hcl_has_paired_secret(text):
             if is_secret_name(match.group(1)) and any(
                     HCL_VALUE.search(near) for near in lines[max(0, n - 15):n + 16]):
                 return True
+        # As for blocks below: an object literal (jsonencode environment lists)
+        # whose name is an expression and whose value beside it is not a reference.
+        if HCL_EXPR_NAME.search(line):
+            for near in lines[max(0, n - 3):n + 4]:
+                value = HCL_VALUE.search(near)
+                if value and not SAFE_VALUE.fullmatch(near[value.end():].strip()):
+                    return True
     top = parse_hcl(text)
     pending = list(top)
     while pending:

@@ -504,6 +504,9 @@ STRUCTURE = re.compile(r'^\s*(?:resource|data|module|variable|output|provider|dy
 SAFE_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?(?:true|false|null|none|NONE|AWS_IAM|IAM|CUSTOM|JWT|'
                        r'COGNITO_USER_POOLS|[0-9]+)"?\s*,?\s*$')
 ENTROPY = re.compile(r"[A-Za-z0-9+_-]{16,}")
+# A base64 key is one token: ENTROPY alone splits it at "/" and "=" into
+# pieces too short or too plain to judge, leaving long runs of the key.
+BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{24,}={0,2}(?![A-Za-z0-9+/=])")
 # Cloud resource IDs and ARNs are long and mixed but name no secret.
 RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
                          r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17}|[a-z0-9-]+_[a-z0-9_]+", re.IGNORECASE)
@@ -691,6 +694,8 @@ def scrub_line(line, syntax="hcl"):
         if "redis-cli" in line:
             line = _redact_values(REDIS_AUTH, line, 3)
     line = SCP_USER.sub(lambda m: m.group(1) + ("git" if m.group(2) == "git" else "[redacted]") + "@", line)
+    line = BASE64_TOKEN.sub(lambda m: "[redacted]" if re.search(r"[+/=]", m.group()) and
+                            _high_entropy(re.sub(r"[+/=]", "", m.group())) else m.group(), line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
     probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), decoded)

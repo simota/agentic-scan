@@ -4,6 +4,10 @@ import re
 
 SECRET_NAME = re.compile(r"(?:secret(?:[_-]?(?:access[_-]?)?key)?|token|passw(?:or)?d|"
                          r"api[_-]?key|private[_-]?key|client[_-]?(?:secret|key)|key[_-]data)", re.I)
+# Names the pattern above misses: DB_PASS / db-pwd, upper-case *_KEY constants
+# (SIGNING_KEY, MAILCHIMP_KEY) and a password inside a URL (postgres://u:pw@host).
+SECRET_EXTRA = re.compile(r"(?i:(?<=[A-Za-z0-9])[_-](?:pass|pwd)(?![A-Za-z]))|[A-Z0-9]_KEY(?![A-Za-z])|"
+                          r"(?i:(?<![a-z0-9+.-])[a-z][a-z0-9+.-]*://[^/\s:@\x22\x27]+:[^/\s@\x22\x27]+@)")
 PRIVATE_KEY = re.compile(r"(?i)-----BEGIN (?:[A-Z0-9]+ )*(?:PRIVATE KEY|PGP PRIVATE KEY BLOCK)-----")
 
 
@@ -26,4 +30,4 @@ def sensitive_source(text):
     languages. Inspect the whole bounded source instead of guessing where a
     sensitive expression ends; candidate names and locations remain useful.
     """
-    return bool(PRIVATE_KEY.search(text) or SECRET_NAME.search(text))
+    return bool(PRIVATE_KEY.search(text) or SECRET_NAME.search(text) or SECRET_EXTRA.search(text))

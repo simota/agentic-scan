@@ -36,6 +36,8 @@ from safe_paths import open_directory  # noqa: E402
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
 NOT_APPLICABLE = re.compile(r"\s*N/?A\b[\s:;,.()\-\u2013\u2014]*(.*)\Z", re.I | re.S)
+# A reason holds a word: punctuation alone (N/A：, N/A。, N/A ->) is none.
+REASON = re.compile(r"[^\W_]")
 
 
 def read_json_source(path, *, directory=None, snapshots=None):
@@ -410,7 +412,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
                "N/A with the reason, or not checked")
     # "N/A with the reason": the reason may follow in result (N/A: no database) or sit in note.
     unexplained = [p["name"] for p in data.get("perspectives", [])
-                   if (na := NOT_APPLICABLE.match(p.get("result", ""))) and not na.group(1).strip()
+                   if (na := NOT_APPLICABLE.match(p.get("result", ""))) and not REASON.search(na.group(1))
                    and not p.get("note", "").strip()]
     if unexplained:
         yield (f"perspectives: {', '.join(unexplained)} N/A without a reason; give it in the result "
@@ -473,8 +475,9 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
 def allowed_page_problems(out, names, digests, *, directory=None):
     """An allowed directory holding rendered pages (a second language) must show the current record.
 
-    Its pages are not part of the contract, so a missing page is not a
-    problem; a page that is there must be complete and carry the same stamps.
+    Its pages are not part of the contract, so a directory without pages is
+    not a problem; once it holds one page it needs both, each complete and
+    carrying the same stamps.
     """
     for name in names:
         try:
@@ -499,12 +502,14 @@ def allowed_page_problems(out, names, digests, *, directory=None):
         except OSError:
             continue  # Not a directory: an allowed extra file is outside these checks.
         try:
+            missing, rerender = [], None
             for page in ("dashboard.html", "report.html"):
                 path = out / name / page
                 try:
                     with open_artifact(path, directory=fd) as handle:
                         text = handle.read().decode("utf-8")
                 except FileNotFoundError:
+                    missing.append(page)
                     continue
                 except (OSError, UnicodeError) as e:
                     yield f"{name}/{page}: cannot read file: {e}"
@@ -516,6 +521,9 @@ def allowed_page_problems(out, names, digests, *, directory=None):
                     yield f"{name}/{page}: invalid or incomplete HTML; re-render the page ({rerender})"
                 elif any(metadata.stamps.get(stamp) != [digest] for stamp, digest in digests.items()):
                     yield f"{name}/{page}: stale; re-render after the last findings or units change ({rerender})"
+            if len(missing) == 1:
+                rerender = rerender or f"render.py {out}/findings.json --out {out / name} --lang <ja|en> --repo <repo>"
+                yield f"{name}/{missing[0]}: missing beside its other page; re-render the second language ({rerender})"
         finally:
             if fd is not None:
                 os.close(fd)

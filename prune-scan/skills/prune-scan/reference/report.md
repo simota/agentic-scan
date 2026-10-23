@@ -15,10 +15,13 @@ from the reviewed repository (SKILL.md *Paths*).
 in the shared design. Each finding shows its element, the basis, the purpose
 item (from `units.json`), the cost of keeping, the subtraction (what, what
 remains, what is lost), the risk, and its unit and entry point. An open `Valid`
-finding's next action is the subtraction itself; any other open finding's is
-"Verify first". With `--repo`, each finding's first `path:line` can be embedded
-as a short excerpt. Secret-looking files and directories are excluded. If a
-secret-looking name or a private key block appears anywhere in the bounded
+finding's next action is the subtraction itself; any other open, counted
+finding's is "Verify first", except an `Unlikely` one, which is kept and has no
+next action. With `--repo`, each finding's first `path:line` can be embedded
+as a short excerpt. Secret-looking files and directories, and files named for
+a secret (`passwords.txt`, `.vault-token`), are excluded. If a
+secret-looking name (including `DB_PASS`, upper-case `*_KEY` constants and a
+password inside a URL) or a private key block appears anywhere in the bounded
 source, its entire optional excerpt is omitted, including apparently
 single-line assignments. Expression continuation and comment boundaries
 differ across languages, so a quoted value does not prove that the next line
@@ -82,8 +85,8 @@ and content, then checks every artifact pathname again after all content
 reads. The directory's artifact names are also rechecked. Replacements,
 removals, writes during inspection, and newly appearing unapproved artifacts
 require another check. Explicitly allowed extras remain outside these checks,
-except that an allowed directory's `dashboard.html` and `report.html` (a second
-language) must be complete and stamped with the current `findings.json` and
+except that an allowed directory holding either `dashboard.html` or
+`report.html` (a second language) must hold both, complete and stamped with the current `findings.json` and
 `units.json`, and an allowed symbolic link to a directory is refused; `--allow` never exempts a required artifact. These checks detect observed
 changes without locking writers or providing an atomic snapshot of the entire
 report set.

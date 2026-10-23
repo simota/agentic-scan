@@ -160,7 +160,8 @@ ROUTE_DEFS = (
     ("client", re.compile(r"\b(path)\s*:\s*[\"'](/[^\"']*)[\"']")),
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
-MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*)\s*:(?!=)", re.M)
+# A rule may name several targets (clean distclean:); each is a target.
+MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*(?:[^\S\n]+[\w.-]+)*)[^\S\n]*:(?!=)", re.M)
 # Targets end on a non-space character, so trailing blanks are matched once.
 MAKE_INCLUDE = re.compile(r"^[^\S\n]*-?s?include[^\S\n]+([^#\n]+)", re.M)
 MAKE_RULE = re.compile(r"^([^\s#:=](?:[^:=\n]*[^\s:=])?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
@@ -198,6 +199,7 @@ CREATE_TABLE_END = re.compile(r"\)[^;()'\"]*;")
 # block comment runs to the end, so no suffix is searched twice.
 SQL_BODY_TOKEN = re.compile(r"'(?:[^'\\\n]|\\.?|'')*(?:'|$)|\"[^\"\n]*(?:\"|$)|`[^`\n]*(?:`|$)|(?:--|#)[^\n]*|"
                             r"/\*[\s\S]*?(?:\*/|\Z)|[()]", re.M)
+SQL_BODY_BLANK = re.compile(r"'(?:[^'\\\n]|\\[^\n]|'')*'|'(?:[^'\n]|'')*'|(?:--|#)[^\n]*|/\*[\s\S]*?(?:\*/|\Z)")
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
@@ -985,6 +987,10 @@ def parse_requirements(rel, text):
             yield m.group(1), "requirements", f"{rel}:{i}"
 
 
+CARGO_DEPENDENCY_TABLE = re.compile(
+    r"^((?:target\..+\.|workspace\.)?(?:dev-|build-)?dependencies)\.([A-Za-z0-9][A-Za-z0-9_-]*)$")
+
+
 def parse_toml_lists(rel, text):
     """pyproject.toml dependencies (PEP 621 and Poetry) and Cargo.toml dependency tables, by regex."""
     section = None
@@ -999,6 +1005,9 @@ def parse_toml_lists(rel, text):
             header = re.match(r"^\[+([^\]]+)\]+$", stripped)
             if header:
                 section = header.group(1).strip()
+                table = CARGO_DEPENDENCY_TABLE.match(section)
+                if table:  # [dependencies.serde] declares one dependency.
+                    yield table.group(2), table.group(1), f"{rel}:{i}"
                 continue
             m = re.match(r"^([\w-]+)\s*=\s*\[(.*)$", stripped)
             if m and ((section == "project" and m.group(1) == "dependencies") or section in (
@@ -1091,6 +1100,13 @@ def sql_table_specs(text):
 MAKE_CALL = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?=[^\S\n])")
 NPM_CALL = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?=[^\S\n])")
 MAKE_VALUE_OPTIONS = {"-C", "-f", "-I", "-o", "-W"}
+# Long spellings of the options above, whose value is the next word.
+MAKE_LONG_OPTIONS = {"--directory": "-C", "--file": "-f", "--makefile": "-f", "--include-dir": "-I",
+                     "--old-file": "-o", "--assume-old": "-o", "--new-file": "-W", "--assume-new": "-W",
+                     "--what-if": "-W"}
+# -j and -l take an optional value: a number or a variable (make -j 4, make -j $(nproc)).
+MAKE_OPTIONAL_VALUE_OPTIONS = {"-j", "-l", "--jobs", "--load-average", "--max-load"}
+MAKE_OPTIONAL_VALUE = re.compile(r"[\"']?(?:[0-9][0-9.]*|\$)\S*")
 MAKE_VARIABLE = re.compile(r"[\w.][\w.-]*=\S*")
 NPM_OPTION = re.compile(r"--?\w[\w-]*(?:=\S*)?")
 # Package manager options whose value is the next word.
@@ -1144,12 +1160,25 @@ def npm_script(tokens):
         if token.startswith("-"):
             return None
         if token in ("run", "run-script"):
-            return next((t for t in tokens if not NPM_OPTION.fullmatch(t)), None)
+            for token in tokens:
+                if token in NPM_VALUE_OPTIONS:
+                    next(tokens, None)
+                elif not NPM_OPTION.fullmatch(token):
+                    return token
+            return None
         if token == "workspace":
             next(tokens, None)
             return next(tokens, None)
         return token
     return None
+
+
+def make_targets(text):
+    """(target, rule start) for every target a Makefile's rules name, in order; .PHONY-style names are skipped."""
+    for m in MAKE_TARGET.finditer(text):
+        for target in m.group(1).split():
+            if not target.startswith("."):
+                yield target, m.start()
 
 
 def make_command(tokens, known):
@@ -1161,6 +1190,13 @@ def make_command(tokens, known):
     tokens = iter(tokens)
     sequence, directories, files = [], [], []
     for token in tokens:
+        if token in MAKE_OPTIONAL_VALUE_OPTIONS:
+            token = next(tokens, None)
+            if token is None:
+                break
+            if MAKE_OPTIONAL_VALUE.fullmatch(token):
+                continue
+        token = MAKE_LONG_OPTIONS.get(token, token)
         if token in MAKE_VALUE_OPTIONS:
             value = next(tokens, None)
             if value is None or value.startswith("-"):
@@ -1451,7 +1487,8 @@ def inventory(root, units=None, today=None):
             imports = python_imports[rel] if rel in python_imports else py_import_specs(text)
             for dots, module, names in imports:
                 if not dots and module:
-                    py_modules[module.split(".")[0]] += 1
+                    # Distribution names compare case-insensitively (PyQt5, MySQLdb).
+                    py_modules[module.split(".")[0].lower()] += 1
                     # Namespace distributions (azure-storage-blob, ruamel.yaml)
                     # are imported by their dotted path, not one top-level name.
                     parts = module.lower().split(".")
@@ -1506,7 +1543,7 @@ def inventory(root, units=None, today=None):
             ecosystem = "python"
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
             for dep, section, loc in parsed:
-                modules = {py_dist_module(dep), re.sub(r"[-.]", "_", dep.lower())}
+                modules = {py_dist_module(dep).lower(), re.sub(r"[-.]", "_", dep.lower())}
                 if re.search(r"[-.]", dep):
                     modules.add(re.sub(r"[-.]", ".", dep.lower()))
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
@@ -1682,7 +1719,11 @@ def inventory(root, units=None, today=None):
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
     for row in route_rows:
-        route = row["route"] if row["route"].startswith("/") or row["kind"] == "client" else "/" + row["route"]
+        # Strip Django's regex anchors (^api/items/$) here, before escaping: the
+        # joiner below holds a literal \$ for ${...} that must stay intact.
+        route = row["route"].removeprefix("^")
+        route = route[:-1] if route.endswith("$") and not route.endswith("\\$") else route
+        route = route if route.startswith("/") or row["kind"] == "client" else "/" + route
         parts = [re.escape(p) for p in PARAM.split(route)]
         pattern = r"(?:\$\{[^}]*\}|[^/\"'`\s?#]+)".join(parts)
         static = PARAM.sub("", route).strip("/^$")
@@ -1698,8 +1739,11 @@ def inventory(root, units=None, today=None):
         # excluded before the match, so a match starts once per path;
         # @/pages/users is an import, not a URL.
         mount = r"(?:/[\w.$-]+)*?" if row["kind"] == "server" else ""
-        route_pattern = pattern.rstrip("/").rstrip("\\/").replace(r"\^", "").replace(r"\$", "")
-        rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s(?![\w/-])" % (mount, route_pattern))
+        # A trailing slash is optional on either side (/api/items/ names /api/items),
+        # but only where the path ends there: /api/items/${id} is another route.
+        route_pattern = pattern.rstrip("/").rstrip("\\/")
+        rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
+                        r"(?:/(?=[\s\x22\x27`?#)\]}>,;<]|\Z)|(?![\w/-]))" % (mount, route_pattern))
         where = []
         for rel, text in texts.items():
             hits = [m for m in rx.finditer(text)]
@@ -1739,8 +1783,7 @@ def inventory(root, units=None, today=None):
     project_targets, project_prerequisites = defaultdict(set), defaultdict(Counter)
     for rel in make_files:
         text = texts[rel]
-        project_targets[project_of(rel)].update(
-            m.group(1) for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith("."))
+        project_targets[project_of(rel)].update(name for name, _ in make_targets(text))
         # Another rule's prerequisite list runs the target too (all: build).
         for rule in MAKE_RULE.finditer(text):
             owners = set(rule.group(1).split())
@@ -1774,12 +1817,11 @@ def inventory(root, units=None, today=None):
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         if name in ("Makefile", "makefile", "GNUmakefile") or rel.endswith(".mk"):
-            targets = [m for m in MAKE_TARGET.finditer(text) if not m.group(1).startswith(".")]
             prerequisites = project_prerequisites[project_of(rel)]
             calls = make_calls[project_of(rel)]
-            for n, m in enumerate(targets):
-                hits = calls[m.group(1)] + prerequisites[m.group(1)]
-                script_rows.append({"source": rel, "name": m.group(1), "location": f"{rel}:{line_of(text, m.start())}",
+            for n, (target, start) in enumerate(make_targets(text)):
+                hits = calls[target] + prerequisites[target]
+                script_rows.append({"source": rel, "name": target, "location": f"{rel}:{line_of(text, start)}",
                                     "invocations": hits, "default": n == 0})
         elif name == "package.json":
             scripts = package_sections(text).get("scripts", {})
@@ -1865,8 +1907,11 @@ def inventory(root, units=None, today=None):
             if folded[table.lower()] == 0:
                 tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
-            # Blank comments in place, so a comma inside one cannot start a column.
-            body = re.sub(r"(?:--|#)[^\n]*|/\*[\s\S]*?(?:\*/|\Z)", lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
+            # Blank strings closed on their line and comments in place, so a comma inside
+            # one cannot start a column. A string read with backslash escapes (can\'t)
+            # is tried before one where a backslash is literal (C:\), so a misread
+            # string never swallows the comma that ends its line.
+            body = SQL_BODY_BLANK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
             for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
                 if col_name.lower() in SQL_CONSTRAINT or folded[col_name.lower()]:

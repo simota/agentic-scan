@@ -39,10 +39,10 @@ from scan_report_kit.report import LINE_BREAKS  # noqa: E402
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
 UNITS_STAMP = "prune-scan-units"
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore)|"
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore|ppk|p8|gpg|asc|ovpn)|"
                        r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
                        r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc|"
-                       r"\.htpasswd|\.pgpass|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
+                       r"\.?htpasswd|\.?pgpass[^/]*|auth\.json|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
                        r"[^/]*\.tfstate(?:\.[^/]*)?|[^/]*\.kdbx)(?:/|$)")
 SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
@@ -131,10 +131,15 @@ def read_source(root, relative, *, expected_stat, directory=None):
     return source if len(source) <= MAX_SOURCE_BYTES and b"\0" not in source else None
 
 
+def secret_path(path):
+    """A secret-looking file or directory, or a file named for a secret (passwords.txt, .vault-token)."""
+    return bool(SENSITIVE.search(path) or SECRET_NAME.search(path.rpartition("/")[2]))
+
+
 def snippet(repo, location, *, selected=None):
     """Lines around location from repo, or None when unreadable, outside repo or secret-looking."""
     m = LOC.fullmatch(location)
-    if not repo or not m or SENSITIVE.search(m["path"]):
+    if not repo or not m or secret_path(m["path"]):
         return None
     try:
         start, end = int(m["start"]), int(m["end"] or m["start"])
@@ -157,7 +162,7 @@ def snippet(repo, location, *, selected=None):
         if not os.path.samestat(identity, root.stat()):
             return None
         relative = path.relative_to(root)
-        if SENSITIVE.search(relative.as_posix()):
+        if secret_path(relative.as_posix()):
             return None
         source = read_source(root, relative, expected_stat=selected_info, directory=directory)
         if source is None:
@@ -329,7 +334,7 @@ def _to_common(data, lang, units, repo, selected):
                 "location": f["location"], "excluded": verdict in EXCLUDED,
                 "fields": [{"label": k, "text": v} for k, v in fields if v],
                 "references": f.get("references", [])}
-        if f["status"] == "Open" and verdict not in EXCLUDED:
+        if f["status"] == "Open" and verdict not in (*EXCLUDED, "Unlikely"):  # Unlikely: evidence of use; kept.
             item["action"] = ({"label": T["subtract"], "text": subtract_text} if ready
                               else {"label": T["verify"], "text": T["verify_text"]})
         excerpt = snippet(repo, f["location"], selected=selected)

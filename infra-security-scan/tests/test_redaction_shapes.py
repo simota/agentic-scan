@@ -79,6 +79,14 @@ class ExcerptShapeTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertIn(kept, self.excerpt(name, text, line))
 
+    def test_only_the_secrets_manager_prefix_of_an_arn_is_public(self):
+        for line in ("DB: arn:aws:rds:us-east-1:111122223333:db:prod;password=%s",
+                     'x = "arn:aws:secretsmanager:us-east-1:1:secret:db?token=%s"',
+                     '"arn:aws:s3:::b/password=%s"', "arn:aws:s3:::bkt/token:%s"):
+            with self.subTest(line=line):
+                shown = redaction.scrub_line(redaction.redact(line % SECRET, syntax="yaml"), "yaml")
+                self.assertNotIn(SECRET, shown)
+
     def test_a_number_under_a_plain_secret_key_stays_hidden(self):
         self.assertNotIn("1234", redaction.redact("  password = 1234"))
         self.assertNotIn("8", redaction.redact("  password_length = 8 # note"))
@@ -93,6 +101,7 @@ class ModuleSourceTest(unittest.TestCase):
 
     def test_host_port_and_path_at_sign_are_not_userinfo(self):
         self.assertEqual(redaction.module_source("https://h.example:443/a@b"), "https://h.example:443/a@b")
+        self.assertEqual(redaction.module_source("http://[::1]:8080/a@b"), "http://[::1]:8080/a@b")
         self.assertEqual(redaction.module_source("https://u:1234@h/x"), "https://[redacted]@h/x")
 
 

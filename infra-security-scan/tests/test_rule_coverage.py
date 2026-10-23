@@ -35,6 +35,18 @@ class ConditionTest(unittest.TestCase):
         text += trust("pinned", {"ArnEquals": {"aws:PrincipalArn": "arn:aws:iam::111122223333:role/deployer"}})
         self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.equals", "High")])
 
+    def test_interpolated_source_arn_narrows(self):
+        policy = ('{"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Principal": "*", '
+                  '"Action": "sqs:SendMessage", "Resource": "*", '
+                  '"Condition": {"%s": {"aws:SourceArn": "%s"}}}]}')
+        text = ""
+        for name, op, arn in (("topic", "ArnEquals", "${aws_sns_topic.t.arn}"),
+                              ("like", "ArnLike", "${aws_sns_topic.t.arn}"),
+                              ("anyone", "ArnEquals", "arn:aws:sns:us-east-1:*:${var.topic}")):
+            text += (f'resource "aws_sqs_queue_policy" "{name}" {{\n  queue_url = "q"\n  policy = <<EOF\n'
+                     f'{policy % (op, arn)}\nEOF\n}}\n')
+        self.assertEqual(hits({"main.tf": text}), [("AWS-S3-003", "aws_sqs_queue_policy.anyone", "High")])
+
     def test_caller_set_keys_do_not_narrow(self):
         text = trust("tag", {"StringEquals": {"aws:PrincipalTag/team": "platform"}})
         text += trust("session", {"StringEquals": {"sts:RoleSessionName": "deploy"}})
@@ -113,6 +125,22 @@ class UnresolvedIngressTest(unittest.TestCase):
         self.assertEqual(len(notes), 2, result.not_run)
         self.assertTrue(any("aws_security_group.ssh" in n for n in notes))
         self.assertTrue(any("cfn:Sg" in n for n in notes))
+
+    def test_vpc_and_subnet_cidrs_are_not_inputs(self):
+        sources = ("module.vpc.vpc_cidr_block", "data.aws_vpc.x.cidr_block", "aws_vpc.main.cidr_block",
+                   "aws_subnet.p[0].cidr_block")
+        tf = 'resource "aws_security_group" "db" {\n' + "".join(
+            f'  ingress {{\n    from_port = 5432\n    to_port = 5432\n    protocol = "tcp"\n'
+            f'    cidr_blocks = [{src}]\n  }}\n' for src in sources) + "}\n"
+        tf += ('resource "aws_security_group_rule" "all" {\n  type = "ingress"\n  security_group_id = "sg"\n'
+               '  from_port = 0\n  to_port = 65535\n  protocol = "tcp"\n'
+               '  cidr_blocks = module.vpc.private_subnets_cidr_blocks\n}\n')
+        cfn = ('AWSTemplateFormatVersion: "2010-09-09"\nResources:\n  Sg:\n    Type: AWS::EC2::SecurityGroup\n'
+               '    Properties:\n      GroupDescription: db\n      SecurityGroupIngress:\n'
+               '        - IpProtocol: tcp\n          FromPort: 5432\n          ToPort: 5432\n'
+               '          CidrIp: !GetAtt Vpc.CidrBlock\n')
+        result = scan({"main.tf": tf, "sg.yaml": cfn})
+        self.assertEqual([n for n in result.not_run if n.startswith("AWS-NET-001")], [])
 
 
 if __name__ == "__main__":

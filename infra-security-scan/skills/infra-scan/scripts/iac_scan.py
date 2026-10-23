@@ -1009,12 +1009,15 @@ class Scan:
                 else:
                     self.hit("AWS-S3-003", res, line, detail)
 
-    def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001"):
+    def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001", raw=""):
         open_from = world_cidrs(cidrs)
         if not open_from:
-            # A variable or parameter (CIDR = var.ssh_cidr, !Ref SSHLocation) may
-            # be the world: say so, as GCP-NET-001 does for source ranges.
-            if any(c is UNKNOWN or isinstance(c, dict) for c in aslist(cidrs)) and sensitive_ports(proto, lo, hi):
+            # An input (var.ssh_cidr, !Ref SSHLocation) may be the world: say so,
+            # as GCP-NET-001 does for source ranges. A VPC or subnet attribute
+            # (aws_vpc.main.cidr_block, module.vpc.*, !GetAtt Vpc.CidrBlock) never is.
+            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local)\.", raw)) or any(
+                isinstance(c, dict) and "Fn::GetAtt" not in c for c in aslist(cidrs))
+            if supplied and sensitive_ports(proto, lo, hi):
                 self.not_run.append(f"{rule}: source CIDR unresolved; check not run: "
                                     f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
             return
@@ -1212,7 +1215,8 @@ def any_owner(key, value):
     if key in OWNER_ARN_KEYS:
         parts = value.split(":", 5)
         if len(parts) < 6:
-            return True
+            # An interpolated ARN (${aws_sns_topic.t.arn}) names one resource.
+            return "${" not in value
         account, wildcard = parts[4], (lambda text: any(c in text for c in "*?"))
         if parts[2] == "s3":
             if account and not wildcard(account):
@@ -1401,6 +1405,11 @@ def bucket_key(view, address=None):
     return value if isinstance(value, str) else None
 
 
+def raw_of(view, *attrs):
+    """The expressions written for attrs, as one string ("" in plans and exports)."""
+    return " ".join(view.raw(attr) or "" for attr in attrs)
+
+
 def admin_arn_list(scan, res, attr):
     """A list of managed policy ARNs holding AdministratorAccess, written out or through data.aws_iam_policy."""
     v = res.view
@@ -1581,18 +1590,19 @@ def check_tf(scan, res):
         for rule in v.blocks("ingress"):
             scan.ingress(res, rule.line(), aslist(rule.get("cidr_blocks")) +
                          aslist(rule.get("ipv6_cidr_blocks")), rule.get("protocol"),
-                         rule.get("from_port"), rule.get("to_port"))
+                         rule.get("from_port"), rule.get("to_port"), raw=raw_of(rule, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
             line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
             for lo, hi in each_ports(v):
                 scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
-                             v.get("protocol"), lo, hi)
+                             v.get("protocol"), lo, hi, raw=raw_of(v, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_vpc_security_group_ingress_rule":
         line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
         for lo, hi in each_ports(v):
-            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi)
+            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi,
+                         raw=raw_of(v, "cidr_ipv4", "cidr_ipv6"))
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl", "aws_s3_object", "aws_s3_bucket_object"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.

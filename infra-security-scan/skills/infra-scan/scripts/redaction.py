@@ -59,8 +59,9 @@ HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 # surrounding string's quote cannot cut off credentials before module_source.
 URL = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*::)?"
                  r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^/\s\"<>]*@)?[^\s\"'<>]+")
-# An ARN names a resource: its ":secret:" (Secrets Manager) is no key.
-ARN = re.compile(r"\barn:aws[\w-]*:[^\s\"',\]}]*")
+# A Secrets Manager ARN names a secret, not its value: its ":secret:" segment
+# is no key. Only that prefix is exempt; anything after it is read as usual.
+SECRET_ARN = re.compile(r"\barn:aws[\w-]*:secretsmanager:[\w-]*:[0-9]*:secret:")
 QUOTED_KEY = re.compile(r'("(?:\\.|[^"\\])*")\s*:')
 JSON_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 # These getter options identify a revision or limit its history. Other query
@@ -87,7 +88,7 @@ def split_lines(text, keepends=False):
 def _secret_fields(line):
     # Qualified YAML/JSON keys can contain slashes. A URL path or query is
     # handled by module_source instead of being mistaken for such a key.
-    urls = [match.span() for pattern in (URL, ARN) for match in pattern.finditer(line)]
+    urls = [match.span() for pattern in (URL, SECRET_ARN) for match in pattern.finditer(line)]
     return (match for match in SECRET_FIELD.finditer(line)
             if not any(start <= match.start() < end for start, end in urls)
             # http_tokens = "optional" is IMDS evidence, not a token.
@@ -306,7 +307,7 @@ def module_source(source):
     # Userinfo is everything to the last "@" when a ":" comes before any of
     # them and is not a port (host:5432/path@x keeps its host).
     userinfo = re.match(r"([A-Za-z][A-Za-z0-9+.-]*://)([^\s\"'<>]*)@", raw)
-    if userinfo and re.match(r"[^/?#:]*:(?!\d*(?:[/?#]|$))", userinfo.group(2)):
+    if userinfo and re.match(r"[^/?#:\[]*:(?!\d*(?:[/?#]|$))", userinfo.group(2)):  # not [::1]:8080
         # The authority branch below replaces this placeholder with [redacted].
         raw = userinfo.group(1) + "redacted@" + raw[userinfo.end():]
     try:
@@ -760,7 +761,7 @@ def scrub_line(line, syntax="hcl"):
     line = BASE64_TOKEN.sub(lambda m: "[redacted]" if _base64_key(m.group()) else m.group(), line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
-    probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), ARN.sub(lambda m: "_" * len(m.group()), decoded))
+    probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), SECRET_ARN.sub(lambda m: "_" * len(m.group()), decoded))
     match = SECRET_WORD.search(probe)
     if match and not STRUCTURE.match(line):
         if decoded != line:

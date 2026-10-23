@@ -70,6 +70,20 @@ class ConditionTest(unittest.TestCase):
                                                    ("AWS-IAM-003", "aws_iam_role.tagging", "High")])
 
 
+    def test_tag_session_granted_in_its_own_statement_opens_request_tags(self):
+        def policy(name, tag_condition):
+            tagging = {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:TagSession"}
+            if tag_condition:
+                tagging["Condition"] = tag_condition
+            doc = {"Version": "2012-10-17", "Statement": [
+                {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole",
+                 "Condition": {"StringEquals": {"aws:RequestTag/team": "platform"}}}, tagging]}
+            return f'resource "aws_iam_role" "{name}" {{\n  assume_role_policy = <<EOF\n{json.dumps(doc)}\nEOF\n}}\n'
+        text = policy("split", None)
+        text += policy("org_only", {"StringEquals": {"aws:PrincipalOrgID": "o-abc123def4"}})
+        self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.split", "High")])
+
+
 class ResourceTypeTest(unittest.TestCase):
     def test_public_object_acl(self):
         text = ('resource "aws_s3_object" "index" {\n  bucket = "site"\n  key = "index.html"\n'

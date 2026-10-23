@@ -981,11 +981,12 @@ class Scan:
 
     def trust_policy(self, res, stmts, line):
         source = getattr(line, "file", res.file)
+        caller_set = caller_set_keys(stmts)
         for st in stmts or []:
             if st["effect"] != "Allow":
                 continue
             # aws:SecureTransport or MFA presence do not narrow who may assume.
-            if not narrowing(st["conditions"], caller_set_keys(st)) and \
+            if not narrowing(st["conditions"], caller_set) and \
                     any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
@@ -1156,8 +1157,8 @@ class Scan:
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
 # The caller's own principal tags and session name need no further grant
 # (any account can tag its own role team=platform); request tags and a
-# source identity are the caller's only where the same trust statement
-# allows sts:TagSession / sts:SetSourceIdentity (caller_set_keys). Unknown
+# source identity are the caller's only where the trust policy grants
+# sts:TagSession / sts:SetSourceIdentity to anyone (caller_set_keys). Unknown
 # keys count as narrowing: precision over completeness.
 OPEN_CONDITION_KEYS = {
     "aws:securetransport", "aws:currenttime", "aws:epochtime", "aws:requestedregion",
@@ -1243,14 +1244,21 @@ def narrowing(conditions, caller_set=()):
                if not (isinstance(key, str) and key.lower().startswith(caller_set)))
 
 
-def caller_set_keys(st):
-    """Condition keys a trust statement lets the caller set: session tags with
-    sts:TagSession, a source identity with sts:SetSourceIdentity."""
+CALLER_GRANTS = (("sts:TagSession", ("aws:requesttag/", "aws:tagkeys")),
+                 ("sts:SetSourceIdentity", ("sts:sourceidentity",)))
+
+
+def caller_set_keys(stmts):
+    """Condition keys a trust policy lets any caller set: session tags where a
+    statement grants sts:TagSession to "*", a source identity where one grants
+    sts:SetSourceIdentity (AWS's own example puts these in a statement of their
+    own). Only a grant no condition narrows counts."""
     keys = ()
-    if matches_action(st, "sts:TagSession") is True:
-        keys += ("aws:requesttag/", "aws:tagkeys")
-    if matches_action(st, "sts:SetSourceIdentity") is True:
-        keys += ("sts:sourceidentity",)
+    for action, opened in CALLER_GRANTS:
+        if any(st["effect"] == "Allow" and matches_action(st, action) is True
+               and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
+               and not narrowing(st["conditions"], opened) for st in stmts or []):
+            keys += opened
     return keys
 
 

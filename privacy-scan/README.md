@@ -149,7 +149,8 @@ make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, sample renders in ja/en and passes the run contract
 make demo    # render the sample into $TMPDIR/privacy-scan-demo (LANG_OUT=en for English);
-             # refused when DEMO_OUT, or the link naming it, is owned by another user
+             # refused when DEMO_OUT, the link naming it or an output in it is owned by
+             # another user, or when other users can write to DEMO_OUT
 ```
 
 Requirements: Python 3.9+. No third-party packages.

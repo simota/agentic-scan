@@ -107,6 +107,19 @@ class DemoTests(unittest.TestCase):
                 result = make(REPO, f"DEMO_OUT={out}", "demo")
                 self.assertNotEqual(result.returncode, 0, out)
                 self.assertIn("is not owned by you", result.stderr)
+            # Our own directory is still unsafe when others can write to it or
+            # have already put an output there.
+            shared = root / "shared"
+            shared.mkdir()
+            shared.chmod(0o777)
+            (shared / "report.md").symlink_to(victim)
+            os.lchown(shared / "report.md", 65534, 65534)
+            result = make(REPO, f"DEMO_OUT={shared}", "demo")
+            self.assertIn("is writable by other users", result.stderr)
+            shared.chmod(0o755)
+            result = make(REPO, f"DEMO_OUT={shared}", "demo")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("report.md is owned by another user", result.stderr)
             self.assertEqual(victim.read_text(encoding="utf-8"), "kept\n")
             self.assertFalse((mine / "report.md").exists())
             own_link = root / "own-link"

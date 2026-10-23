@@ -55,12 +55,14 @@ class RenumberTests(unittest.TestCase):
         # commitment sources were rewritten and pointed somewhere else.
         doc = self.doc()
         doc["next_steps"] = ["Fix PV-003-PV-001, then the PV-003-related notes; keep ACME-PV-003",
-                             "Ticket https://tracker.example.com/browse/PV-003 tracks PV-003"]
+                             "Ticket https://tracker.example.com/browse/PV-003 tracks PV-003",
+                             "https://例.example/PV-003 と https://example.com/課題/PV-003 を参照、PV-003"]
         doc["commitments"][0]["source"] = "docs/PV-001.md:3"
         findings.renumber(doc)
         self.assertEqual(doc["next_steps"],
                          ["Fix PV-001-PV-002, then the PV-001-related notes; keep ACME-PV-003",
-                          "Ticket https://tracker.example.com/browse/PV-003 tracks PV-001"])
+                          "Ticket https://tracker.example.com/browse/PV-003 tracks PV-001",
+                          "https://例.example/PV-003 と https://example.com/課題/PV-003 を参照、PV-001"])
         self.assertEqual(doc["commitments"][0]["source"], "docs/PV-001.md:3")
 
     def test_ledger_ids_flush_against_japanese_text_are_checked(self):

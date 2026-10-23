@@ -220,7 +220,17 @@ check: test ## verify the skill is self-contained and internally consistent
 	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
 	exit $$fail
 
+# The default DEMO_OUT under a shared /tmp can be created first by another user,
+# and render.py writes through links it finds there. Write only into a directory
+# that is ours, as a link (checked without following it) and as a target.
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)
-	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py \
+	@out=$(call shell_quote,$(call path_value,DEMO_OUT)); \
+	case "$$out" in (-*) out="./$$out";; esac; \
+	while case "$$out" in (*?/) true;; (*) false;; esac; do out="$${out%/}"; done; \
+	mkdir -p -- "$$out" || exit 1; \
+	if [ -z "$$(find "$$out" -maxdepth 0 -user "$$(id -u)")" ] || [ ! -O "$$out" ]; then \
+	  printf '%s\n' "refusing $$out is not owned by you - set DEMO_OUT to a directory of your own" >&2; exit 1; \
+	fi; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py \
 	  --out=$(call shell_quote,$(call path_value,DEMO_OUT)) --lang=$(call shell_quote,$(LANG_OUT)) \
 	  -- $(call shell_quote,$(call path_value,DEMO_INPUT))

@@ -1168,6 +1168,27 @@ class ReportRegressions(unittest.TestCase):
         self.assertIn("masked", error)
         self.assertNotIn("DO_NOT_LEAK_VALUE", error)
 
+    def test_pdf_failure_message_names_the_failure_and_offers_the_retry_first(self):
+        self.ready_for_pdf()
+
+        def failed_engine(html_path, pdf_path, failures, timeout, redact):
+            failures.append(("chrome", "timed out after 10 s", ""))
+            failures.append(("chrome", "exited with status 1", ""))
+            return None
+
+        with mock.patch.object(render.pdf, "to_pdf", side_effect=failed_engine):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 3, error)
+        self.assertLess(error.index("UX_SCAN_PDF_TIMEOUT"), error.index("--no-pdf"))
+        self.assertIn("'report.pdf not produced: PDF engine failed (chrome)'", error)
+        self.assertNotIn("no PDF engine", error)
+
+        with mock.patch.object(render.pdf, "to_pdf", return_value=None):
+            code, _, error = self.invoke(no_pdf=False)
+        self.assertEqual(code, 3, error)
+        self.assertIn("'report.pdf not produced: no PDF engine found'", error)
+        self.assertNotIn("UX_SCAN_PDF_TIMEOUT", error)
+
     def test_pdf_diagnostic_callback_withholds_truncated_secret_values(self):
         secret = "DO_NOT_LEAK_VALUE_" + "x" * 400
         for text in ("api_key=" + secret, secret[-300:], "engine echoed report text"):

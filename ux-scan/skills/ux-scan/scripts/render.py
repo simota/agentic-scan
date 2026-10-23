@@ -361,9 +361,16 @@ def write_reports(out, pages, finding_count, no_pdf):
         # Also cover engine-start failures that bypass the upstream callback.
         detail = "; ".join(f"{n} {why}" + (f" {redact_diagnostic(tail)}" if tail else "")
                            for n, why, tail in failures)
+        # The limitation names what happened: a failed engine is not a missing one.
+        if failures:
+            reason = f"PDF engine failed ({', '.join(dict.fromkeys(n for n, _, _ in failures))})"
+            retry = (" Retry once with a higher UX_SCAN_PDF_TIMEOUT (seconds), outside the sandbox"
+                     " if the browser cannot start inside it. If it still fails:")
+        else:
+            reason, retry = "no PDF engine found", " If no engine can be run:"
         print("render.py: " + (f"PDF engine failed: {detail}" if failures else "no PDF engine found (Chrome/Chromium or weasyprint)")
-              + ". report.html is ready to print. If no engine can run: merge the limitation "
-              "'report.pdf not produced: no PDF engine', re-run with --no-pdf, then contract_check.py <out> --no-pdf",
+              + f". report.html is ready to print.{retry} merge the limitation "
+              f"'report.pdf not produced: {reason}', re-run with --no-pdf, then contract_check.py <out> --no-pdf",
               file=sys.stderr)
         return 3
     print(f"wrote {out / 'report.pdf'} ({engine})")

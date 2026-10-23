@@ -37,6 +37,12 @@ SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "
              ".svelte-kit", "coverage", ".venv", "venv", "__pycache__", "Pods", ".gradle", "target",
              ".turbo", ".cache", "bower_components", ".idea", ".vscode", "DerivedData", ".dart_tool",
              "storybook-static", ".output"}
+# Inside a file-route tree these names can be URL segments (app/coverage/page.tsx is /coverage).
+# A package named app still keeps its build output there, so only a subtree holding page sources counts.
+ROUTE_SEGMENT_DIRS = {"vendor", "dist", "build", "out", "coverage", "target"}
+ROUTE_TREES = {"app", "pages", "routes"}
+PAGE_SOURCE = re.compile(r"(?i)\.(?:tsx|jsx|vue|svelte|astro|mdx)$")
+MAX_SEGMENT_PROBE = 2000
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "uv.lock"}
 MAX_BYTES = 2 * 1024 * 1024
@@ -167,13 +173,18 @@ NOT_DESTRUCTIVE = re.compile(r"(?:^|\.)(?:classList|searchParams|params|headers|
                              r"removeClass|removeListener)\b")
 MAX_HANDLER_SCAN = 4000
 MAX_HANDLER_REFERENCE = 200
-CONFIRM = re.compile(r"(?i)\bconfirm\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
+# A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
+CONFIRM = re.compile(r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
 ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
+# A location object ({ path: "/x" }) passed to to= or push() is a link, not a route.
 LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
-                  r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)")
+                  r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)|"
+                  r"(?:(?<![\w-]):?(?i:to)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
+                  r"[^{}]{0,200}?\bpath(?:name)?\s*:\s*[\"'`](/[^\"'`?#]*)")
+FRONTMATTER = re.compile(r"---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", re.S)
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
@@ -254,9 +265,27 @@ RAW_TEXT_TAGS = {"script", "style", "textarea", "title", "xmp", "iframe", "noemb
 RAW_TEXT_CLOSE = {name: re.compile(r"</" + name + r"\s*>", re.I) for name in RAW_TEXT_TAGS}
 
 
+def holds_page_sources(directory):
+    """Whether a bounded, no-follow walk below directory finds a page source file."""
+    seen = 0
+    for dirpath, dirnames, filenames in os.walk(directory):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d))]
+        if any(PAGE_SOURCE.search(name) for name in filenames):
+            return True
+        seen += len(dirnames) + len(filenames)
+        if seen > MAX_SEGMENT_PROBE:
+            return False
+    return False
+
+
 def iter_files(root, onerror=None):
     for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
-        dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d)))
+        in_routes = not ROUTE_TREES.isdisjoint(Path(dirpath).relative_to(root).parts)
+        dirnames[:] = sorted(d for d in dirnames
+                             if not os.path.islink(os.path.join(dirpath, d))
+                             and (d not in SKIP_DIRS
+                                  or (in_routes and d in ROUTE_SEGMENT_DIRS
+                                      and holds_page_sources(os.path.join(dirpath, d)))))
         for name in sorted(filenames):
             path = Path(dirpath) / name
             if name in SKIP_FILES or path.is_symlink() or not path.is_file():
@@ -270,9 +299,12 @@ def read_text(path, root=None):
     Unsafe, unreadable, oversized and invalid UTF-8 files raise so the caller
     can record why they were skipped.
     """
-    if re.search(r"\.min\.(?:js|css)$", path.name):
+    if re.search(r"(?i)\.min\.(?:[cm]?js|css)$", path.name):
         return None
     data = read_regular(path, max_bytes=MAX_BYTES, root=root)
+    # UTF-16 and UTF-32 text holds NUL bytes too, but it is text that is not UTF-8.
+    if data.startswith((b"\xff\xfe", b"\xfe\xff", b"\x00\x00\xfe\xff")):
+        raise ValueError("UTF-16 or UTF-32 text, not UTF-8")
     if b"\0" in data:
         return None
     try:
@@ -1432,7 +1464,10 @@ def inventory(root, flows=None):
         try:
             text = read_text(path, root=root)
         except (OSError, ValueError) as e:
-            parse_warning(acc, f"{rel}:1", f"file could not be read; file skipped: {str(e)[:200]}")
+            # The warning names rel already; the reader's absolute path would leak the
+            # reviewer's directories and crowd the reason out of the 200 characters.
+            reason = str(e).replace(f"{path.absolute()}: ", "").replace(f"{path}: ", "")
+            parse_warning(acc, f"{rel}:1", f"file could not be read; file skipped: {reason[:200]}")
             text = None
         if text is None:
             skipped += 1
@@ -1441,10 +1476,14 @@ def inventory(root, flows=None):
         # A lone CR ends a line, as in the report excerpts; turning it into LF keeps
         # every offset while line counting and line-based patterns see the break.
         text = LONE_CR.sub("\n", text)
+        # Editors may save any text file with a byte order mark; a space keeps every
+        # offset while selectors, at-rules and tags in the first line still match.
+        bom = text.startswith("\ufeff")
+        if bom:
+            text = " " + text[1:]
         bundle = locale_bundle(rel)
         if bundle:
             try:
-                text = text.removeprefix("\ufeff")  # Editors may save JSON with a byte order mark.
                 check_locale_depth(text, rel)
                 locales[bundle[0]][bundle[1]] = (rel, dict(flatten(loads_json(text, rel))))
             except (ValueError, RecordError, RecursionError) as e:
@@ -1473,7 +1512,7 @@ def inventory(root, flows=None):
             css_text = keep_regions(text, css_regions)
             # Astro frontmatter is JavaScript outside any script tag.
             if suffix == ".astro":
-                frontmatter = re.match(r"\A(?:\ufeff)?---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", text, re.S)
+                frontmatter = FRONTMATTER.match(text, 1 if bom else 0)
                 if frontmatter:
                     js_regions.append((frontmatter.start(1), frontmatter.end(1), frontmatter.group(1)))
             js_text = keep_regions(text, js_regions)
@@ -1584,10 +1623,13 @@ def inventory(root, flows=None):
             truncation.add(re.sub(r"\s+", " ", m.group(0))[:40], at(m.start()))
         for m in PHYSICAL.finditer(text):
             physical.add(re.sub(r"\s+", " ", (m.group(1) or m.group(2)))[:30], at(m.start()))
-        for m in ROUTE.finditer(text):
-            routes.append({"route": m.group(1) or m.group(2), "location": at(m.start())})
+        link_spans = []
         for m in LINK.finditer(text):
-            links.add((m.group(1) or m.group(2)).rstrip("/") or "/")
+            links.add((m.group(1) or m.group(2) or m.group(3)).rstrip("/") or "/")
+            link_spans.append(m.span())
+        for m in ROUTE.finditer(text):
+            if not any(start <= m.start() < end for start, end in link_spans):
+                routes.append({"route": m.group(1) or m.group(2), "location": at(m.start())})
         fr = FILE_ROUTE.search(rel)
         if fr:
             next_app = fr.group(1) is not None

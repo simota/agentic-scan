@@ -19,17 +19,24 @@ before scanning or replacing any file.
 
 Standard library only, read-only. It walks style, script, template (including
 MDX), JSON token and JSON locale files under `<repo>` (skipping VCS and
-dependency/build directories, symlinks, lockfiles, minified bundles, binaries
-and files over 2 MB) and records
+dependency/build directories, symlinks, lockfiles, minified bundles
+(`*.min.js`, `.mjs`, `.cjs`, `.css`), binaries and files over 2 MB) and records
 **candidates** — never findings. Every row carries `path:line` locations; LF, CRLF and a lone CR each
-end a line, as in the report excerpts.
+end a line, as in the report excerpts. Below an `app/`, `pages/` or `routes/`
+directory, `build`, `dist`, `out`, `coverage`, `target` and `vendor` can be route
+segments (`app/coverage/page.tsx` is `/coverage`): such a directory is scanned
+when its subtree holds a `.tsx`, `.jsx`, `.vue`, `.svelte`, `.astro` or `.mdx`
+file, which build and coverage output do not. A leading
+UTF-8 byte order mark in any file is ignored.
 Source reads use `scripts/file_io.py` to open each path component relative to
 the selected repository. Replacing a checked directory with a symlink cannot
 redirect the read, and the byte limit also applies when a file grows during
 reading. This requires descriptor-relative no-follow reads (available on
 Linux and macOS); unsupported platforms refuse source reads and record
-`parse_warnings`. Refused reads, files that are not valid UTF-8 and paths that
-cannot be represented in UTF-8 are also counted as skipped with a warning.
+`parse_warnings`. Refused reads, files that are not valid UTF-8 (UTF-16 and
+UTF-32 text with a byte order mark among them) and paths that cannot be
+represented in UTF-8 are also counted as skipped with a warning; the reason
+names no path outside the repository.
 Directory traversal errors also produce a warning, including a failure to
 scan the repository root. They do not increase `files_skipped`, because the
 number of files inside an unreadable directory is unknown.
@@ -84,7 +91,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 
 | Key | What it collects | Perspective |
 |---|---|---|
-| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, also after an `element={<… />}` attribute, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array) or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
+| `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, also after an `element={<… />}` attribute, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array), `navigate()` / `push()` or location object passed to either (`push({ path: "/x" })`, `:to="{ path: '/x' }"`, `to={{ pathname: "/x" }}`, whose `path:` is not a route) reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
 | `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files) or, anywhere below a `theme/`, `tokens/`, `design-tokens/` or `design-system/` folder, style and JSON files and `index` modules (below `theme/`, `design-tokens/` and `design-system/` also non-JSX script modules such as `palette.ts`), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` (also `grid-gap`) and `font-size` literals (CSS, including values wrapped onto whole later lines — in indented Sass and Stylus, also in `<style lang="sass">` blocks, a line ends the declaration — and JS style objects, including quoted and kebab-case keys such as Vue's `'margin-top'`), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment. Terms inside `calc()` and the preferred (middle) term of `clamp()` are not sizes on their own and are left out; the bounds of `clamp()` and the arguments of `min()` / `max()` are measured. A bare number in an MUI `sx` prop is a theme spacing multiple, not px, and is left out | LG2, VH2 |
 | `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings; `@container` conditions are not viewport breakpoints and are left out | RS1 |
@@ -99,7 +106,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | `icon_buttons` | `<button>` that is empty or whose content is only elements (an icon, including icon-font ligatures such as `<mat-icon>delete</mat-icon>` and glyphs hidden with `aria-hidden="true"`, nested content included; a hidden void element such as `<img>` hides only itself), has no nonblank text binding (`v-text`, `[innerText]`…) and has no nonblank `aria-label`, `aria-labelledby` or `title`, nor a child `<img>` with nonblank `alt` or a child `aria-label`; `IconButton` and `*IconButton` components without such a name or a nonblank label prop | AX4 |
 | `positive_tabindex` | `tabindex` greater than 0, using HTML integer parsing for literal values (including leading zeros, a plus sign and numeric prefixes); unresolved template expressions remain unknown | AX3 |
 | `state_branches` | Template or component files that fetch data (`fetch`, `axios`, `useQuery`, `useSWR`…) but never mention a loading state, an error path, or — when they render a list — an empty state | FB1, PP1, ST3 |
-| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called (also `onDelete?.()`, `deleteMutation.mutate(id)`; other methods after the name, such as `deleteModal.onOpen`, do not count) or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), but not DOM or URL housekeeping such as `classList.remove` or `params.delete`, in a file with no confirm, dialog or undo; includes block-bodied JSX handlers, Vue event modifiers, Svelte event modifiers and HTML `onclick` | FB4 |
+| `destructive_actions` | Parsed click / press / tap handler attributes calling delete / remove / destroy / discard… (also after a camelCase prefix: `handleDelete`, `onRemove`, `props.onDiscard`), called (also `onDelete?.()`, `deleteMutation.mutate(id)`; other methods after the name, such as `deleteModal.onOpen`, do not count) or passed by name (`onClick={handleDelete}`, `@click="deleteTask"`), but not DOM or URL housekeeping such as `classList.remove` or `params.delete`, in a file with no confirm, dialog or undo (a field that confirms an entry, such as `confirmPassword` or "Confirm new password", is not one); includes block-bodied JSX handlers, Vue event modifiers, Svelte event modifiers and HTML `onclick` | FB4 |
 | `motion` | Count and first locations of transitions and animations, and every `prefers-reduced-motion` / `useReducedMotion` | MO1, MO2 |
 | `truncation` | `text-overflow: ellipsis`, `line-clamp`, `white-space: nowrap`, `truncate` classes (also inside `cn(…)` / template-literal class expressions, Vue `:class` bindings and Svelte `class:truncate`) | IN1, IN2 |
 | `locale_expansion` | For JSON locale bundles: keys whose text in another locale is at least 1.4 × as wide as the source locale (`en` when present, else the first English region such as `en-US`, else the first tag) and 5 columns wider; East Asian wide characters count as two. Bundles are one file per language (`locales/de.json`) or one directory per language (`locales/de/app.json`); when both the file and its folder look like tags, an ISO 639-1 code (or a common three-letter code such as `fil`) wins, so `app.json` or `nav.json` namespaces are not read as languages; numeric regions such as `es-419` are tags | IN1 |
@@ -159,7 +166,6 @@ and blank names follow the
 Small declared dimensions alone do not establish a failure of
 [WCAG 2.5.8](https://www.w3.org/WAI/WCAG22/Understanding/target-size-minimum.html),
 which includes spacing and other exceptions.
-A leading UTF-8 byte order mark on locale JSON is ignored.
 Invalid locale JSON, including duplicate keys, non-finite numbers and invalid
 Unicode strings, is skipped and included in `files_skipped`. `parse_warnings`
 records the file and reason. Locale JSON has an explicit limit of 256 nested

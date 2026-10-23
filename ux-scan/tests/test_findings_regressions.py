@@ -534,6 +534,21 @@ class TransactionRegressions(unittest.TestCase):
         findings.check_findings(changed)
         self.assertEqual(findings.renumber(changed, findings.renumber_map(changed["findings"])), changed)
 
+    def test_renumber_refuses_a_still_range_whose_missing_id_another_finding_moves_onto(self):
+        data = copy.deepcopy(SAMPLE)
+        kept = [item for item in data["findings"] if item["id"] in ("U-001", "U-003")]
+        data["findings"] = kept
+        mapping = findings.renumber_map(data["findings"])
+        self.assertEqual(mapping, {"U-001": "U-001", "U-003": "U-002"})
+        for prose in ("Fix U-001 to U-002 first.", "Fix U-002 to U-001 first.", "Then U-002."):
+            with self.subTest(prose=prose):
+                data["next_steps"] = [prose]
+                with self.assertRaisesRegex(findings.RecordError, "U-002.*names no finding"):
+                    findings.renumber(data, mapping)
+        # A missing id nothing moves onto still stays as written.
+        data["next_steps"] = ["Fix U-001 to U-001; U-004 is gone."]
+        self.assertEqual(findings.renumber(data, mapping)["next_steps"], data["next_steps"])
+
     def test_renumber_treats_comparisons_as_prose_and_bullets_as_separate_ids(self):
         data = copy.deepcopy(SAMPLE)
         data["findings"] = data["findings"][:4]

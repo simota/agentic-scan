@@ -24,9 +24,10 @@ schema it reports only the first schema error and skips the record checks, so
 fix it and run `check` again. This is the complete list; other documents
 point here. `check` refuses an output directory unless:
 
-- it holds exactly `findings.json`, `dashboard.html` and `report.md` (plus
-  `--allow` names), each a readable, nonempty file (directories and broken
-  links do not qualify), and no staging file left by an interrupted write
+- it holds exactly `findings.json`, `dashboard.html` and `report.md`, each a
+  readable, nonempty file (directories and broken links do not qualify), and no
+  staging file left by an interrupted write; an `--allow` name may also be
+  present and is not inspected
 - `findings.json` passes the schema below with every required `meta` field
   (`project`, `scope`, `date`, `assessor`, `lang`)
 - IDs are `PV-001`… without gaps; reported findings (not `FalsePositive` or

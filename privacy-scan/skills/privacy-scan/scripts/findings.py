@@ -776,10 +776,11 @@ NOT_REFERENCES = {"location", "url", "command", "commit", "source"}
 # (`PV-001-PV-003`) or a word (`PV-002-related`), but another prefix
 # (`ACME-PV-001`) is a different identifier.
 PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])(?:(?<=PV-\d{3}-)|(?<!-))PV-\d{3}(?![A-Za-z0-9_])")
-# URLs written in prose are technical values too: `…/browse/PV-002` keeps its target.
+# URLs of any scheme written in prose are technical values too: `…/browse/PV-002`
+# and `ftp://…/PV-002.pdf` keep their targets.
 # Non-ASCII text belongs to the URL when a `/` or `.` follows it (`https://例.example/`,
 # `/課題/`); otherwise it is prose run straight on after the URL (`…/aを参照、PV-002`).
-PROSE_URL = re.compile(r"(?i:https?://|www\.)"
+PROSE_URL = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:www\.))"
                        r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]|[^\x00-\x7f\s]+(?=[/.]))+")
 PV_OR_URL = re.compile(f"(?P<url>{PROSE_URL.pattern})|{PV_REFERENCE.pattern}")
 

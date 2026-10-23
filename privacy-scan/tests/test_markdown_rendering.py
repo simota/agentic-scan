@@ -207,3 +207,13 @@ class ProseUrlHostTests(unittest.TestCase):
                     "https://user@host.example/x", "https://user:pw@host.example", "http://192.0.2.1:8080/x", "www.example.com/a"):
             with self.subTest(url=url):
                 self.assertTrue(render.markdown_text(f"see {url} now").startswith("see ["))
+
+
+class DollarSignTests(unittest.TestCase):
+    def test_dollar_signs_never_start_math(self):
+        # GitHub renders $…$ as inline math; escaped dollars stay literal.
+        self.assertEqual(render.markdown_text("Logs $PATH:$HOME at startup"),
+                         "Logs \\$PATH:\\$HOME at startup")
+        self.assertEqual(render.markdown_text("see https://example.com/a?b=$x"),
+                         "see [https://example.com/a?b=\\$x](<https://example.com/a?b=$x>)")
+        self.assertEqual(render.markdown_code("echo $HOME"), "`echo $HOME`")

@@ -156,7 +156,8 @@ def reference_title(ref):
     return title if title.strip() else ref["url"]
 
 
-MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
+# `$` too: GitHub renders `$…$` as math, as in `$PATH:$HOME`.
+MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#$"})
 
 
 # URLs written in prose. GFM links them automatically but keeps our escape

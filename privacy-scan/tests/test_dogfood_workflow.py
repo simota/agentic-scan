@@ -122,6 +122,16 @@ class RenumberTests(unittest.TestCase):
         self.assertEqual(moved["analysis"]["result"], "PV-002 cited twice")
         self.assertEqual(doc["meta"]["commit"], "PV-001")
 
+    def test_urls_of_any_scheme_in_prose_keep_their_targets(self):
+        doc = complete_doc()
+        doc["findings"] = [finding("PV-001", "Low", location="z.py:1"), finding("PV-002", "High")]
+        doc["next_steps"] = ["Read ftp://files.example/specs/PV-001.pdf, file:///srv/PV-001.txt, "
+                             "sftp://h.example/PV-001 and svn+ssh://h.example/PV-001, then fix PV-001"]
+        findings.renumber(doc)
+        self.assertEqual(doc["next_steps"], [
+            "Read ftp://files.example/specs/PV-001.pdf, file:///srv/PV-001.txt, "
+            "sftp://h.example/PV-001 and svn+ssh://h.example/PV-001, then fix PV-002"])
+
 
 class MergeAndSchemaTests(unittest.TestCase):
     def test_nested_validation_merges_key_by_key(self):

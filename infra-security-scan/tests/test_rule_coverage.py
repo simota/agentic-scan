@@ -89,6 +89,16 @@ class ConditionTest(unittest.TestCase):
                                                    ("AWS-IAM-003", "aws_iam_role.split", "High")])
 
 
+    def test_tag_session_denied_to_everyone_opens_nothing(self):
+        doc = {"Version": "2012-10-17", "Statement": [
+            {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole",
+             "Condition": {"StringEquals": {"aws:RequestTag/team": "platform"}}},
+            {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:TagSession"},
+            {"Effect": "Deny", "Principal": {"AWS": "*"}, "Action": "sts:TagSession"}]}
+        text = f'resource "aws_iam_role" "denied" {{\n  assume_role_policy = <<EOF\n{json.dumps(doc)}\nEOF\n}}\n'
+        self.assertEqual(hits({"main.tf": text}), [])
+
+
 class ResourceTypeTest(unittest.TestCase):
     def test_public_object_acl(self):
         text = ('resource "aws_s3_object" "index" {\n  bucket = "site"\n  key = "index.html"\n'
@@ -107,6 +117,18 @@ class ResourceTypeTest(unittest.TestCase):
                 'resource "aws_s3_object" "index" {\n  bucket = aws_s3_bucket.site.id\n  key = "i"\n'
                 '  acl = "public-read"\n}\n')
         self.assertEqual(hits({"main.tf": text}), [("AWS-S3-001", "aws_s3_object.index", "Low")])
+
+    def test_object_acl_named_by_literal_bucket_meets_the_block(self):
+        block = ('resource "aws_s3_bucket_public_access_block" "site" {\n  bucket = %s\n'
+                 '  block_public_acls = true\n  block_public_policy = true\n  ignore_public_acls = true\n'
+                 '  restrict_public_buckets = true\n}\n')
+        bucket = 'resource "aws_s3_bucket" "site" {\n  bucket = "site-assets"\n}\n'
+        obj = 'resource "aws_s3_object" "index" {\n  bucket = %s\n  key = "i"\n  acl = "public-read"\n}\n'
+        for block_ref, obj_ref in (("aws_s3_bucket.site.id", '"site-assets"'),
+                                   ('"site-assets"', "aws_s3_bucket.site.id")):
+            with self.subTest(block=block_ref, obj=obj_ref):
+                text = bucket + block % block_ref + obj % obj_ref
+                self.assertEqual(hits({"main.tf": text}), [("AWS-S3-001", "aws_s3_object.index", "Low")])
 
     def test_separate_kms_key_policy(self):
         policy = json.dumps({"Version": "2012-10-17", "Statement": [{

@@ -930,6 +930,9 @@ class Scan:
         self.project_orgs = {}  # project ID: organization number, likewise
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
+        # (dir, literal bucket name) <-> (dir, aws_s3_bucket address), so a block
+        # and an ACL that name one bucket differently still meet.
+        self.bucket_aliases = {}
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
         self.k8s_bindings, self.k8s_wildcard_roles = [], {}  # role key: directories defining it
         self.k8s_sa_automount, self.k8s_pod_sa_refs = {}, []
@@ -1254,13 +1257,17 @@ def caller_set_keys(stmts, assume):
     statement of their own). The grant's conditions must all hold for the
     caller already: either they narrow nothing, or the assume statement makes
     the very same demand (aws:RequestTag/team = platform in both). A grant for
-    other values (team = security) opens nothing; values are not compared."""
+    other values (team = security) opens nothing; values are not compared.
+    An explicit Deny of the action to "*" that may apply overrides any grant."""
+    def to_anyone(st):
+        return any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
     keys = ()
     for action, opened in CALLER_GRANTS:
-        if any(st["effect"] == "Allow" and matches_action(st, action) is True
-               and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
+        if any(st["effect"] == "Allow" and matches_action(st, action) is True and to_anyone(st)
                and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
-               for st in stmts or []):
+               for st in stmts or []) and not any(
+                st["effect"] == "Deny" and matches_action(st, action) is not False and to_anyone(st)
+                and not narrowing(st["conditions"]) for st in stmts or []):
             keys += opened
     return keys
 
@@ -1454,6 +1461,7 @@ def s3_block(scan, res, flag):
     keys = {bucket_key(res.view, res.address if res.type == "aws_s3_bucket" else None)}
     if res.type == "aws_s3_bucket" and isinstance(res.view.get("bucket"), str):
         keys.add(res.view.get("bucket"))
+    keys |= {scan.bucket_aliases.get((res.dir, key)) for key in keys}
     for key in keys - {None}:
         if flag in scan.s3_blocks.get((res.dir, key), ()):
             return f"neutralised by {flag} in the bucket's public access block"
@@ -2251,6 +2259,10 @@ def handle_terraform(scan, parsed):
                 if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
                     b_view = HclView(b)
                     collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
+                    if b.labels[0] == "aws_s3_bucket" and isinstance(b_view.get("bucket"), str):
+                        d, address = str(Path(rel).parent), f"aws_s3_bucket.{b.labels[1]}"
+                        scan.bucket_aliases[(d, b_view.get("bucket"))] = address
+                        scan.bucket_aliases[(d, address)] = b_view.get("bucket")
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
                     if b.labels[0] in ("aws_opensearch_domain", "aws_elasticsearch_domain") and \

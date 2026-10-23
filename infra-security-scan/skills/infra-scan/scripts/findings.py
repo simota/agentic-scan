@@ -324,7 +324,7 @@ def remove(findings_path, ids):
     # call no longer count, so the order of the IDs does not matter.
     pattern = re.compile(ID_BEFORE + "(?:" + "|".join(map(re.escape, removed)) + ")" + ID_AFTER)
     mentions = {}
-    for where, text in record_strings(record):
+    for where, text in record_strings(record) if removed else ():
         for m in find_references(pattern, text):
             mentions.setdefault(m.group(), set()).add(where)
     if mentions:

@@ -159,8 +159,8 @@ def fragment_problems(fragment, name, base):
 def repairable(base):
     """base as checked before a merge: a meta.lang recorded before render.py checked it is left for this merge
     to set, and the merged report is validated in full."""
-    meta = base.get("meta")
-    if isinstance(meta, dict) and meta.get("lang") is not None and meta["lang"] not in render.LABELS:
+    meta = base.get("meta") if isinstance(base, dict) else None
+    if isinstance(meta, dict) and isinstance(meta.get("lang"), str) and meta["lang"] not in render.LABELS:
         return dict(base, meta={k: v for k, v in meta.items() if k != "lang"})
     return base
 

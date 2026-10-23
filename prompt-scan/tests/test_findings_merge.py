@@ -58,6 +58,12 @@ class MergeTest(unittest.TestCase):
         code, _, err = self.merge({"meta": {"lang": "en"}})
         self.assertEqual(code, 0, err)
         self.assertEqual(self.data()["meta"]["lang"], "en")
+        # Only a string language is set aside: anything else is still the schema error it was.
+        for base, message in (([], "report must be a JSON object"), ({"meta": {"lang": ["en"]}}, "meta.lang must be")):
+            write_json(self.out, base)
+            code, _, err = self.merge({"meta": {"lang": "en"}})
+            self.assertEqual(code, 2, err)
+            self.assertIn(message, err)
 
     def test_refuses_more_than_five_new_findings(self):
         code, _, err = self.merge({"meta": META, "findings": [finding(n) for n in range(1, 7)]})

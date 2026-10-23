@@ -1597,5 +1597,88 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"a.scss": ".a { margin: 8px\n    16px #{$x};\n  padding: $a\n    20px#{$b}; }\n"})
         self.assertEqual(sorted(r["value"] for r in data["spacing"]), ["16px", "20px", "8px"])
 
+    def scan_bytes(self, files):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, contents in files.items():
+                path = root / name
+                path.parent.mkdir(parents=True, exist_ok=True)
+                path.write_bytes(contents)
+            return inventory.inventory(root)
+
+    def test_utf16_text_is_skipped_with_a_warning_not_as_a_binary(self):
+        data = self.scan_bytes({"src/app.css": ".a { padding: 13px; }\n".encode("utf-16"),
+                                "src/locales/de.json": '{"a": "b"}'.encode("utf-16"),
+                                "src/blob.js": b"var a = 1;\0\0"})
+        self.assertEqual(data["files_skipped"], 3)  # The NUL-holding blob stays a silent binary skip.
+        self.assertEqual(data["parse_warnings"], [
+            {"location": "src/app.css:1", "reason": "file could not be read; file skipped: UTF-16 or UTF-32 text, not UTF-8"},
+            {"location": "src/locales/de.json:1",
+             "reason": "file could not be read; file skipped: UTF-16 or UTF-32 text, not UTF-8"}])
+
+    def test_read_warnings_keep_the_reason_and_omit_the_reviewers_absolute_path(self):
+        deep = "packages/customer-portal-web/src/features/order-management/components/__fixtures__/generated/"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / deep).mkdir(parents=True)
+            (root / deep / "snapshot.js").write_bytes(b"x" * (inventory.MAX_BYTES + 1))
+            data = inventory.inventory(root)
+        self.assertEqual(data["parse_warnings"], [{
+            "location": deep + "snapshot.js:1",
+            "reason": f"file could not be read; file skipped: exceeds {inventory.MAX_BYTES} bytes"}])
+        self.assertNotIn(tmp, json.dumps(data))
+
+    def test_byte_order_mark_does_not_hide_the_first_rule_or_frontmatter(self):
+        flows = {"viewports": ["360x640", "1280x800"], "flows": []}
+        css = b"@media (min-width: 1024px) { .x { width: 480px; } }\na { width: 20px; height: 20px; }\n"
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "bom.css").write_bytes(b"\xef\xbb\xbf" + css)
+            (root / "plain.css").write_bytes(css)
+            (root / "Page.astro").write_bytes(b"\xef\xbb\xbf---\nconst gap = { zIndex: 9999 };\n---\n<p>x</p>\n")
+            data = inventory.inventory(root, flows)
+        self.assertEqual([(r["locations"], r["wider_than_smallest_viewport"]) for r in data["fixed_widths"]],
+                         [(["bom.css:1", "plain.css:1"], False)])
+        self.assertEqual([r["location"] for r in data["tap_targets"]], ["bom.css:2", "plain.css:2"])
+        self.assertEqual([loc for r in data["z_index"] for loc in r["locations"]], ["Page.astro:2"])
+
+    def test_location_objects_are_links_not_routes(self):
+        router = 'export default [\n  { path: "/" },\n  { path: "/settings" },\n  { path: "/billing" },\n  { path: "/plans" },\n]\n'
+        data = self.scan({"src/router/index.js": router,
+                          "src/components/Nav.vue": '<template>\n<router-link :to="{ path: \'/settings\' }">S</router-link>\n'
+                                                    '</template>\n<script>\nexport default { methods: {\n'
+                                                    '  go() { this.$router.push({ path: "/billing", query: {} }) } } }\n</script>\n',
+                          "src/Link.jsx": 'export const L = () => <Link to={{ pathname: "/plans" }}>P</Link>;\n'})
+        self.assertEqual(sorted(r["location"] for r in data["routes"]), [
+            "src/router/index.js:2", "src/router/index.js:3", "src/router/index.js:4", "src/router/index.js:5"])
+        self.assertEqual(data["orphan_routes"], [])
+
+    def test_minified_module_bundles_are_skipped(self):
+        data = self.scan({"public/pdf.worker.min.mjs": "var a={padding:'13px',zIndex:9999};\n",
+                          "public/lib.MIN.CJS": "var a={zIndex:9998};\n"})
+        self.assertEqual((data["files_scanned"], data["files_skipped"]), (0, 2))
+        self.assertEqual((data["spacing"], data["z_index"]), ([], []))
+
+    def test_route_segments_named_like_build_directories_are_scanned(self):
+        page = "export default () => <div onClick={go}>x</div>;\n"
+        data = self.scan({"app/coverage/page.tsx": page, "app/vendor/[id]/page.tsx": page,
+                          "src/pages/build/index.tsx": page,
+                          "build/app/page.tsx": page, "coverage/lcov.js": page, "vendor/lib.js": page,
+                          # A package named app keeps its build and test output beside its sources.
+                          "packages/app/dist/index.js": page, "packages/app/coverage/lcov-report/a.js": page,
+                          "packages/app/src/Home.tsx": "export const H = () => <p>h</p>;\n"})
+        self.assertEqual(sorted(r["route"] for r in data["routes"]), ["/coverage", "/vendor/[id]"])
+        self.assertEqual(sorted(r["location"] for r in data["click_handlers"]), [
+            "app/coverage/page.tsx:1", "app/vendor/[id]/page.tsx:1", "src/pages/build/index.tsx:1"])
+
+    def test_a_confirm_password_field_is_not_a_confirmation_step(self):
+        account = ('export const A = () => (<form>\n<label htmlFor="c">Confirm new password</label>\n'
+                   '<input id="c" name="confirmPassword" type="password" />\n'
+                   '<button onClick={deleteAccount}>Delete account</button>\n</form>);\n')
+        data = self.scan({"Account.jsx": account,
+                          "Guarded.jsx": account.replace("</form>", "<ConfirmDialog /></form>")})
+        self.assertEqual([r["location"] for r in data["destructive_actions"]], ["Account.jsx:4"])
+
+
 if __name__ == "__main__":
     unittest.main()

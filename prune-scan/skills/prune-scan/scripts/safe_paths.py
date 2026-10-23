@@ -42,3 +42,56 @@ def open_directory(path, *, readable=True, expected_stat=None):
     except BaseException:
         os.close(descriptor)
         raise
+
+
+def within(path, root):
+    """True when path is root or lies below it, matching directories by identity.
+
+    Comparing stat identities instead of spellings also catches symlinked,
+    bind-mounted and case-insensitive aliases of root. Components that do not
+    exist yet are skipped, so a directory that would be created counts too.
+    Links are resolved first, so '..' after a link names the link target's parent.
+    """
+    try:
+        root_stat = os.stat(root)
+    except OSError:
+        return False
+    current = Path(os.path.realpath(path))
+    for candidate in (current, *current.parents):
+        try:
+            if os.path.samestat(os.stat(candidate), root_stat):
+                return True
+        except OSError:
+            continue
+    return False
+
+
+def descriptor_within(descriptor, root):
+    """True when the pinned directory is root or lies below it, walking '..' from the descriptor.
+
+    A pathname check alone leaves a window: a symlinked output parent retargeted
+    into root after the check but before pinning would pass. The descriptor
+    names the directory that receives the writes, so its ancestry is what counts.
+    An ancestor that cannot be opened ends the walk; callers keep the pathname check.
+    """
+    try:
+        root_stat = os.stat(root)
+        current = os.open(".", getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY,
+                          dir_fd=descriptor)
+    except OSError:
+        return False
+    search = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY
+    try:
+        while True:
+            info = os.fstat(current)
+            if os.path.samestat(info, root_stat):
+                return True
+            parent = os.open("..", search, dir_fd=current)
+            os.close(current)
+            current = parent
+            if os.path.samestat(os.fstat(current), info):
+                return False  # The filesystem root is its own parent.
+    except OSError:
+        return False
+    finally:
+        os.close(current)

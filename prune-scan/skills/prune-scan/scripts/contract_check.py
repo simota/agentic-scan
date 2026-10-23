@@ -413,7 +413,7 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
     # "N/A with the reason": the reason may follow in result (N/A: no database) or sit in note.
     unexplained = [p["name"] for p in data.get("perspectives", [])
                    if (na := NOT_APPLICABLE.match(p.get("result", ""))) and not REASON.search(na.group(1))
-                   and not p.get("note", "").strip()]
+                   and not REASON.search(p.get("note", ""))]
     if unexplained:
         yield (f"perspectives: {', '.join(unexplained)} N/A without a reason; give it in the result "
                "(N/A: <reason>) or in note")
@@ -465,7 +465,8 @@ def directory_problems(out, no_pdf=False, allow=(), *, directory=None, snapshots
         if not complete:
             yield "report.pdf: empty, invalid or incomplete; re-render the PDF"
     pdf_limitations = [line for line in data.get("limitations", []) if line.startswith(NO_PDF)]
-    limited = any(re.match(re.escape(NO_PDF) + r":\s*\S", line) for line in pdf_limitations)
+    limited = any((m := re.match(re.escape(NO_PDF) + r":(.*)\Z", line, re.S)) and REASON.search(m.group(1))
+                  for line in pdf_limitations)
     if no_pdf and not limited:
         yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"
     if not no_pdf and pdf_limitations:

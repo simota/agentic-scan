@@ -15,7 +15,8 @@ skipped tests, commented-out code blocks, deprecation and removal markers with
 dates, and SQL tables and columns no code names. With --units, every row is
 tagged with the review unit whose path covers it. Never prints the value of an
 environment variable. Read-only, standard library only (reference/inventory.md).
-Exit status: 0 written, 2 bad arguments or unreadable repository/units, 1 output not written.
+Exit status: 0 written, 2 bad arguments (including --out inside the repository) or unreadable
+repository/units, 1 output not written.
 """
 
 import argparse
@@ -37,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
-from safe_paths import open_directory  # noqa: E402
+from safe_paths import descriptor_within, open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -105,6 +106,18 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 # namespaced lookups ("common:save") are locale keys too.
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
 PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
+# Dotted module paths loaded by name: "mysite.urls" (ROOT_URLCONF), "polls.apps.PollsConfig"
+# (INSTALLED_APPS), "pkg.mod:app" and an unquoted gunicorn/uvicorn pkg.mod:app. A logger
+# name (getLogger("app.billing")) is not a module load.
+PYTHON_MODULE_STRING = re.compile(r"(?<!getLogger\()[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?[\"']|"
+                                  r"(?<![\w.:/-])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+):[A-Za-z_]\w*(?![\w.:/-])")
+# "config.json" and "logo.png" name files, not modules (named_in covers those).
+NOT_MODULE_SUFFIX = {"json", "yaml", "yml", "toml", "ini", "cfg", "conf", "txt", "md", "rst", "html", "htm", "css",
+                     "scss", "less", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "py", "pyi", "sh", "sql", "csv",
+                     "xml", "lock", "log", "env", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2",
+                     "ttf", "pdf", "zip", "gz", "tar", "example", "sample", "local"}
+# Python sources, settings and server command files; a JS i18n key ("auth.login") names no module.
+MODULE_STRING_FILE = re.compile(r"(?i)(?:\.(?:py|toml|cfg|ini|ya?ml|sh|conf)|(?:^|/)(?:Procfile|Dockerfile)[^/]*)$")
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
@@ -115,7 +128,8 @@ PY_DEF = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_]\w*)|^class\s+([A-Za-z_]\w*)
 JS_DEF = re.compile(r"^export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|type|interface|enum|"
                     r"abstract\s+class)\s+([A-Za-z_$][\w$]*)|^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)|"
                     r"^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=", re.M)
-GO_DEF = re.compile(r"^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
+# Methods (func (h *handler) ServeHTTP) satisfy interfaces and are called through them, not by name.
+GO_DEF = re.compile(r"^func\s+([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
 RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)", re.M)
 MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
@@ -136,10 +150,16 @@ RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)
 ENV_READ = re.compile(
     r"process\.env\.([A-Z_][A-Z0-9_]*)|process\.env\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
     r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|os\.environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
-    r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"(?:os\.|(?<![\w.]))getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
+# A bare environ is os.environ only where the file imports it: a WSGI app's own
+# environ argument holds request keys (environ["PATH_INFO"]), not env vars.
+OS_IMPORT = re.compile(r"^[^\S\r\n]*from\s+os\s+import\s+(\([^)]*\)|[^\n]*)", re.M)
+BARE_ENVIRON = re.compile(r"(?<![\w.])environ(?:\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+                          r"\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"'])")
 # const { PORT = 3000, DATABASE_URL: url } = process.env reads each key it names.
 ENV_DESTRUCTURE = re.compile(r"\{([^{}]*)\}\s*=\s*(?:process|import\.meta)\.env\b(?!\s*[.\[])")
 ENV_DESTRUCTURED_KEY = re.compile(r"(?:^|,)\s*([A-Z_][A-Z0-9_]*)\s*(?=[=:,]|\Z)")
@@ -149,7 +169,9 @@ FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_
                         r"get_flag|variation|boolVariation|isOn|is_on|active\?)\(\s*[\"'`:]([\w.-]+)[\"'`]?")
 FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|experiments)\.(?:py|ts|tsx|js|mjs|"
                        r"json|ya?ml|toml)$")
-FLAG_DEF = re.compile(r"^[^\S\r\n]*[\"']?([A-Za-z][\w.-]*)[\"']?\s*[:=]\s*(true|false|True|False|on|off)\b", re.M)
+# A declaration counts at the top level only, so a local (let result = false) is no flag.
+FLAG_DEF = re.compile(r"^(?:(?:export\s+)?(?:const|let|var)\s+|[^\S\r\n]*)[\"']?([A-Za-z][\w.-]*)[\"']?"
+                      r"\s*(?::\s*boolean\s*)?[:=]\s*(true|false|True|False|on|off)\b", re.M)
 ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
@@ -374,7 +396,8 @@ def read_file(path, root, *, root_fd=None, root_stat=None):
     if b"\0" in data:
         return None, size
     try:
-        text = data.decode("utf-8")
+        # A byte order mark (Windows editors) would hide a JSON or env file's first key.
+        text = data.decode("utf-8").removeprefix("\ufeff")
     except UnicodeDecodeError:
         return None, size
     return (env_names_only(text) if ENV_DECL_FILE.match(path.name) else text), size
@@ -1379,6 +1402,20 @@ def inventory(root, units=None, today=None):
             stem = module.replace(".", "/")
             for path in (stem + ".py", stem + "/__main__.py"):
                 module_runs[path].add(rel)
+        # A dotted name loads every package on its path and the module inside one; a trailing
+        # attribute (a class) names no file. A lone first part names only a package, so a host
+        # such as "api.example.com" leaves api.py a candidate.
+        # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
+        scanned = MODULE_STRING_FILE.search(rel) and not is_test(rel)
+        for quoted, served in set(PYTHON_MODULE_STRING.findall(text)) if scanned else ():
+            parts = (quoted or served).split(".")
+            if parts[-1].lower() in NOT_MODULE_SUFFIX:
+                continue
+            for end in range(1, len(parts) + 1):
+                stem = "/".join(parts[:end])
+                module_runs[stem + "/__init__.py"].add(rel)
+                if end > 1:
+                    module_runs[stem + ".py"].add(rel)
 
     def named_elsewhere(rel):
         parts = rel.split("/")
@@ -1628,6 +1665,9 @@ def inventory(root, units=None, today=None):
             continue
         if rel in code_files:
             found = [(next(g for g in m.groups() if g), m.start()) for m in ENV_READ.finditer(text)]
+            if suffix(rel) in PY_EXT and any(re.search(r"\benviron\b(?!\s+as\b)", m.group(1))
+                                             for m in OS_IMPORT.finditer(text)):
+                found.extend((next(g for g in m.groups() if g), m.start()) for m in BARE_ENVIRON.finditer(text))
             if suffix(rel) in JS_EXT:
                 found.extend((key.group(1), m.start(1) + key.start(1)) for m in ENV_DESTRUCTURE.finditer(text)
                              for key in ENV_DESTRUCTURED_KEY.finditer(m.group(1)))
@@ -1784,10 +1824,14 @@ def inventory(root, units=None, today=None):
         # but only where the path ends there: /api/items/${id} and "/api/items/" + id
         # are another route.
         route_pattern = pattern.rstrip("/").rstrip("\\/")
+        # Every match holds the route's longest literal piece; skip files without it.
+        needle = max((piece.strip("/") for piece in PARAM.split(route)), key=len)
         rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
                         r"(?:/(?=[\s?#)\]}>,;<]|\Z|[\x22\x27`](?!\s*\+))|(?![\w/-]))" % (mount, route_pattern))
         where = []
         for rel, text in texts.items():
+            if needle not in text:
+                continue
             hits = [m for m in rx.finditer(text)]
             # A route's own path literal, or another route's (/api/items holds
             # /items), is not a mention; a redirect on a definition line is.
@@ -2065,6 +2109,11 @@ def main(argv=None):
               file=sys.stderr)
         return 2
     output, directory, units, source = Path(a.out), None, None, None
+    if within(output.parent, a.repo):
+        # SKILL.md: nothing is written inside the reviewed repository.
+        print(f"inventory.py: --out must be outside the reviewed repository; {a.out} is inside {a.repo}",
+              file=sys.stderr)
+        return 2
     with ExitStack() as resources:
         if SAFE_OUTPUT:
             try:
@@ -2074,6 +2123,11 @@ def main(argv=None):
             except (OSError, ValueError, RuntimeError) as e:
                 print(f"inventory.py: --out: {e}", file=sys.stderr)
                 return 2 if a.units else 1
+            if descriptor_within(directory, a.repo):
+                # The pinned directory receives the write; a link retargeted after the check above is refused here.
+                print(f"inventory.py: --out must be outside the reviewed repository; {a.out} is inside {a.repo}",
+                      file=sys.stderr)
+                return 2
         if a.units:
             try:
                 units, source = resources.enter_context(selected_units(a.units))

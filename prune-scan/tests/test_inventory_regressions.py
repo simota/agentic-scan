@@ -149,9 +149,10 @@ class InventoryInputTests(unittest.TestCase):
 
     def test_today_accepts_a_real_leap_day(self):
         with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "inventory.json"
+            out, repo = Path(tmp) / "inventory.json", Path(tmp) / "repo"
+            repo.mkdir()
             with contextlib.redirect_stdout(io.StringIO()):
-                result = inventory.main([tmp, "--out", str(out), "--today", "2024-02-29"])
+                result = inventory.main([str(repo), "--out", str(out), "--today", "2024-02-29"])
             self.assertEqual(result, 0)
             self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["today"], "2024-02-29")
 
@@ -171,10 +172,11 @@ class InventoryInputTests(unittest.TestCase):
     def test_units_named_pipe_is_refused_without_waiting_for_a_writer(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            units, out = root / "units.json", root / "inventory.json"
+            units, out, repo = root / "units.json", root / "inventory.json", root / "repo"
+            repo.mkdir()
             os.mkfifo(units)
             result = subprocess.run(
-                [sys.executable, str(SCRIPTS / "inventory.py"), tmp, "--out", str(out), "--units", str(units)],
+                [sys.executable, str(SCRIPTS / "inventory.py"), str(repo), "--out", str(out), "--units", str(units)],
                 capture_output=True, text=True, timeout=5)
             self.assertEqual(result.returncode, 2, result.stdout + result.stderr)
             self.assertIn("regular JSON file", result.stderr)

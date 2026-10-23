@@ -18,8 +18,9 @@ remains, what is lost), the risk, and its unit and entry point. An open `Valid`
 finding's next action is the subtraction itself; any other open, counted
 finding's is "Verify first", except an `Unlikely` one, which is kept and has no
 next action. With `--repo`, each finding's first `path:line` can be embedded
-as a short excerpt. Secret-looking files and directories, and files named for
-a secret (`passwords.txt`, `.vault-token`), are excluded. If a
+as a short excerpt. Secret-looking files and directories (env files such as
+`.env.local`, `.envrc` and `production.env` included), and files named for a
+secret (`passwords.txt`, `.vault-token`), are excluded. If a
 secret-looking name (including `DB_PASS`, upper-case `*_KEY` constants and a
 password inside a URL) or a private key block appears anywhere in the bounded
 source, its entire optional excerpt is omitted, including apparently
@@ -35,8 +36,10 @@ cannot switch later excerpts to another repository. An unavailable initial
 selection omits excerpts for the entire conversion. Other runtimes retain the
 original canonical path and identity for the per-read fallback checks.
 
-Rendering keeps the actual input files open and pins the selected output
-directory before building the pages. HTML and PDF engines write into a private
+With `--repo`, an `--out` that is the repository or lies inside it (through
+any alias) exits with status 2 before anything is written. Rendering keeps the
+actual input files open and pins the selected output directory before building
+the pages. HTML and PDF engines write into a private
 temporary directory; publication, stale-PDF removal, and any rollback use the
 pinned output directory. Replacing its pathname cannot redirect those writes
 or delete an input. Existing output symlinks and non-regular files are refused,

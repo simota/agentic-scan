@@ -42,3 +42,25 @@ def open_directory(path, *, readable=True, expected_stat=None):
     except BaseException:
         os.close(descriptor)
         raise
+
+
+def within(path, root):
+    """True when path is root or lies below it, matching directories by identity.
+
+    Comparing stat identities instead of spellings also catches symlinked,
+    bind-mounted and case-insensitive aliases of root. Components that do not
+    exist yet are skipped, so a directory that would be created counts too.
+    Links are resolved first, so '..' after a link names the link target's parent.
+    """
+    try:
+        root_stat = os.stat(root)
+    except OSError:
+        return False
+    current = Path(os.path.realpath(path))
+    for candidate in (current, *current.parents):
+        try:
+            if os.path.samestat(os.stat(candidate), root_stat):
+                return True
+        except OSError:
+            continue
+    return False

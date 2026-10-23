@@ -15,7 +15,8 @@ skipped tests, commented-out code blocks, deprecation and removal markers with
 dates, and SQL tables and columns no code names. With --units, every row is
 tagged with the review unit whose path covers it. Never prints the value of an
 environment variable. Read-only, standard library only (reference/inventory.md).
-Exit status: 0 written, 2 bad arguments or unreadable repository/units, 1 output not written.
+Exit status: 0 written, 2 bad arguments (including --out inside the repository) or unreadable
+repository/units, 1 output not written.
 """
 
 import argparse
@@ -37,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
-from safe_paths import open_directory  # noqa: E402
+from safe_paths import open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -2065,6 +2066,11 @@ def main(argv=None):
               file=sys.stderr)
         return 2
     output, directory, units, source = Path(a.out), None, None, None
+    if within(output.parent, a.repo):
+        # SKILL.md: nothing is written inside the reviewed repository.
+        print(f"inventory.py: --out must be outside the reviewed repository; {a.out} is inside {a.repo}",
+              file=sys.stderr)
+        return 2
     with ExitStack() as resources:
         if SAFE_OUTPUT:
             try:

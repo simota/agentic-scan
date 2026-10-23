@@ -38,7 +38,9 @@ directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
 Files whose names cannot be represented as UTF-8 are skipped and counted in
 `files_skipped`, so an unusual filesystem name cannot break the JSON output.
-`--out` cannot overwrite the source supplied through `--units`. On runtimes
+`--out` must lie outside the scanned repository (an alias counts as inside;
+exit status 2, nothing written) and cannot overwrite the source supplied
+through `--units`. On runtimes
 with descriptor-relative output operations, the selected output directory stays
 pinned from the input check through temporary-file creation and replacement;
 renaming it or replacing its path cannot redirect the write. Existing output

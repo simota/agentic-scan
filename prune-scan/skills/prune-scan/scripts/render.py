@@ -13,7 +13,8 @@ are never read, and sources containing secret-looking names or private key
 blocks are omitted. Every page carries the SHA-256 of the findings.json and,
 when supplied, units.json it shows.
 Standard library only.
-Exit status: 0 written, 2 invalid record, PRUNE_SCAN_PDF_TIMEOUT or unwritable output, 3 no PDF produced.
+Exit status: 0 written, 2 invalid record, PRUNE_SCAN_PDF_TIMEOUT, --out inside --repo or unwritable output,
+3 no PDF produced.
 """
 
 import argparse
@@ -30,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
                       record_exists)
-from safe_paths import open_directory  # noqa: E402
+from safe_paths import open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
 from safe_source import PRIVATE_KEY, SECRET_NAME, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
@@ -39,10 +40,10 @@ from scan_report_kit.report import LINE_BREAKS  # noqa: E402
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 STAMP = "prune-scan-source"
 UNITS_STAMP = "prune-scan-units"
-SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|pfx|jks|keystore|ppk|p8|gpg|asc|ovpn)|"
+SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:rc|[._-][^/]*)?|[^/]*\.env|[^/]*\.(?:pem|key|p12|pfx|jks|keystore|ppk|p8|gpg|asc|ovpn)|"
                        r"id_(?:[rd]sa|ecdsa|ed25519|xmss)[^/]*|\.netrc|"
                        r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc|"
-                       r"\.?htpasswd|\.?pgpass[^/]*|auth\.json|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
+                       r"[^/]*htpasswd[^/]*|\.?pgpass[^/]*|auth\.json|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
                        r"[^/]*\.tfstate(?:\.[^/]*)?|[^/]*\.kdbx)(?:/|$)")
 # A name part that is a secret word on its own (.vault-token, passwords.txt, api_key.json),
 # not a word that only contains one (tokens.css, tokenizer.py, ForgotPassword.vue).
@@ -427,6 +428,10 @@ def render_outputs(a, resources):
         print(f"render.py: {e}", file=sys.stderr)
         return 2
     out = Path(a.out)
+    if a.repo and within(out, a.repo):
+        # SKILL.md: nothing is written inside the reviewed repository.
+        print(f"render.py: --out must be outside --repo; {out} is inside {a.repo}", file=sys.stderr)
+        return 2
     try:
         out.mkdir(parents=True, exist_ok=True)
         selected = out.stat()

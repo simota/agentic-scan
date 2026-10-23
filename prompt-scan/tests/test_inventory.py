@@ -176,6 +176,47 @@ class InventoryTest(unittest.TestCase):
         inventory.scan(root)
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
 
+    def test_a_required_transforming_filter_leaves_dirty_undetermined(self):
+        # As git lfs install sets it up: HEAD holds what the clean command makes of the file (a pointer). Without
+        # running that command, git cannot compare a stat-dirty file, so the answer is unknown, never "changed".
+        root = make_repo({".gitattributes": "*.md filter=x\n", "prompts/a.md": "expanded\n"})
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "config", "filter.x.clean", f"sh -c 'touch {marker}; sed s/expanded/pointer/'"], check=True)
+        subprocess.run([*git, "config", "filter.x.required", "true"], check=True)
+        # An mtime older than the index keeps the file out of git's racy-clean re-hash right after the commit.
+        os.utime(root / "prompts" / "a.md", (1_000_000_000, 1_000_000_000))
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        marker.unlink()
+        self.assertIs(inventory.scan(root)["dirty"], False)
+        os.utime(root / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
+        self.assertIsNone(inventory.scan(root)["dirty"])
+        self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
+
+    def test_a_transforming_filter_leaves_an_unstaged_edit_undetermined(self):
+        # nbstripout-style: not required, but HEAD holds the cleaned text, so a stat-dirty file may be no change.
+        root = make_repo({".gitattributes": "*.md filter=x\n", "svc/prompts/a.md": "expanded\n",
+                          "svc/prompts/b.txt": "plain\n"})
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "config", "filter.x.clean", "sed s/expanded/pointer/"], check=True)
+        for name in ("a.md", "b.txt"):
+            os.utime(root / "svc" / "prompts" / name, (1_000_000_000, 1_000_000_000))
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        os.utime(root / "svc" / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
+        for scanned in (root, root / "svc"):  # Status paths are relative to the top of the work tree.
+            self.assertIsNone(inventory.git_state(scanned, ["prompts/a.md"])[1], scanned)
+        # An edit to an unfiltered file, or a staged one, is a change whatever the filtered file holds.
+        (root / "svc" / "prompts" / "b.txt").write_text("edited\n", encoding="utf-8")
+        self.assertIs(inventory.git_state(root / "svc", ["prompts/a.md"])[1], True)
+        subprocess.run([*git, "checkout", "-q", "--", "svc/prompts/b.txt"], check=True)
+        (root / "svc" / "prompts" / "a.md").write_text("edited\n", encoding="utf-8")
+        subprocess.run([*git, "-c", "filter.x.clean=cat", "add", "svc/prompts/a.md"], check=True)
+        self.assertIs(inventory.git_state(root / "svc", ["prompts/a.md"])[1], True)
+
     def test_no_filter_driver_from_a_submodule_runs(self):
         sub = self.git_repo({".gitattributes": "*.md filter=x\n", "p.md": "hi\n"})
         top = self.git_repo({"a.md": "x\n"})
@@ -251,6 +292,33 @@ class InventoryTest(unittest.TestCase):
         (out / "dir.json").mkdir()
         code, _, err = run(inventory.main, root, "--out", out / "dir.json")
         self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
+
+    def test_out_never_replaces_findings_json(self):
+        out = Path(tempfile.mkdtemp())
+        write_json(out / "findings.json", sample())
+        before = (out / "findings.json").read_bytes()
+        for args in (("--out", out / "findings.json", "--into", out / "findings.json"),
+                     ("--out", out / "findings.json")):
+            code, _, err = run(inventory.main, SAMPLE_APP, *args)
+            self.assertEqual(code, 2, args)
+            self.assertIn("not an inventory.json", err)
+            self.assertEqual((out / "findings.json").read_bytes(), before)
+        # A previous run's inventory.json is replaced as before.
+        for _ in range(2):
+            self.assertEqual(run(inventory.main, SAMPLE_APP, "--out", out / "inventory.json")[0], 0)
+
+    def test_non_utf8_root_name_is_reported_escaped(self):
+        parent = Path(tempfile.mkdtemp())
+        try:
+            root = parent / os.fsdecode(b"repo-\xff")
+            (root / "prompts").mkdir(parents=True)
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        (root / "prompts" / "a.md").write_text("hi\n", encoding="utf-8")
+        out = parent / "inventory.json"
+        code, _, err = run(inventory.main, root, "--out", out)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["root"], "repo-\\xff")
 
     def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
         root = self.git_repo({"prompts/ok.md": "hi\n"})

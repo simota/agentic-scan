@@ -79,6 +79,16 @@ class ContractTest(unittest.TestCase):
         (out / "inventory.json").unlink()
         self.assertIn("missing output inventory.json", self.problems(out, "--allow", "notes.md")[1])
 
+    def test_outputs_must_be_regular_files(self):
+        out = self.build()
+        for name in ("report.html", "inventory.json"):
+            (out / name).unlink()
+            (out / name).mkdir()
+        code, err = self.problems(out)
+        self.assertEqual(code, 1)
+        self.assertIn("report.html is not a regular file", err)
+        self.assertIn("inventory.json is not a regular file", err)
+
     def test_inventory_must_be_the_scanner_object(self):
         out = self.build()
         write_json(out / "inventory.json", [])

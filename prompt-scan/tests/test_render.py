@@ -201,6 +201,12 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("F-001", excerpts)
         self.assertIn("F-002", excerpts)
 
+    def test_non_standard_json_is_a_schema_error(self):
+        for raw in (b'{"findings": [], "perspectives": [{"name": "a", "result": "applied", "x": NaN}]}',
+                    b'{"findings": [], "findings": []}'):
+            with self.assertRaises(render.SchemaError):
+                render.load("findings.json", raw)
+
     def test_schema_errors(self):
         cases = [
             (lambda d: d["findings"][0].update(id="X-001"), "F-NNN or L-NNN"),
@@ -218,6 +224,7 @@ class RenderTest(unittest.TestCase):
                                             "cases": 1, "passed": 1, "failed": 0}]), "must be an F-* id"),
             (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": "F-001", "model": "m", "date": "d",
                                             "cases": 1, "passed": 1, "failed": 1}]), "exceeds cases"),
+            (lambda d: d["findings"][0].update(location="app/llm/answer.py\x00:17"), "location must not contain"),
         ]
         for mutate, message in cases:
             data = clone(sample())

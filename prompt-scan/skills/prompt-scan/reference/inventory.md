@@ -53,10 +53,12 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 `--into` replaces every `L-*` in `findings.json`, so review them only after the
 last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `contract_check.py` fails when its lint hits or Git state differ from the
-`L-*` findings and `meta`. For each one, read the location and merge a
-`validation` with a verdict and evidence — for example `FalsePositive` for a
-literal brace that the template engine never sees, or `Valid` for a `TODO`
-that reaches the model.
+`L-*` findings and `meta`. `--out` replaces only an earlier `inventory.json`,
+so swapping it with `--into` is refused rather than overwriting
+`findings.json`. For each one, read the location and merge a `validation`
+with a verdict and evidence — for example `FalsePositive` for a literal brace
+that the template engine never sees, or `Valid` for a `TODO` that reaches the
+model.
 A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
 larger defect the agent found, keep the `L-*` and cite it from the `F-*`
 finding's `cause` by rule and location (`unclosed-tag at prompts/a.md:3`), not by

@@ -203,6 +203,8 @@ def validate_data(data):
         _enum(f, "status", STATUSES, where, required=False)
         for key in ("title", "location", "category"):
             _str(f, key, where, True)
+        if "\x00" in f["location"]:
+            raise SchemaError(f"{where}.location must not contain a NUL character")
         for key in ("symptom", "cause", "impact", "fix", "source", "rule"):
             _str(f, key, where)
         test = f.get("test")
@@ -267,15 +269,33 @@ def validate_data(data):
     return data
 
 
+def parse_json(raw, path):
+    """Strict JSON: a duplicate key would silently drop a value, and NaN or Infinity is not JSON a browser parses."""
+    def unique(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate JSON key {key!r}")
+            result[key] = value
+        return result
+
+    def constant(name):
+        raise ValueError(f"{name} is not a JSON value")
+    try:
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique, parse_constant=constant)
+    except (UnicodeError, ValueError, RecursionError) as e:
+        raise SchemaError(f"{path}: {e}") from None
+    if json_depth(value) > MAX_JSON_DEPTH:
+        raise SchemaError(f"{path}: JSON nesting deeper than {MAX_JSON_DEPTH} levels")
+    return value
+
+
 def load(path, raw=None):
     try:
         raw = Path(path).read_bytes() if raw is None else raw
-        data = json.loads(raw.decode("utf-8"))
-    except (OSError, UnicodeError, ValueError, RecursionError) as e:
+    except OSError as e:
         raise SchemaError(f"{path}: {e}") from None
-    if json_depth(data) > MAX_JSON_DEPTH:
-        raise SchemaError(f"{path}: JSON nesting deeper than {MAX_JSON_DEPTH} levels")
-    return validate_data(data)
+    return validate_data(parse_json(raw, path))
 
 
 def id_key(ident):

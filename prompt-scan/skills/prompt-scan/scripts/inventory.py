@@ -14,6 +14,9 @@ are set from the repository's Git state. A reviewer's latest verdict on the
 same rule and location is kept as `previous_validation`, across rescans until a
 new review replaces it; the new hit starts `Unverified`.
 
+--out replaces only an earlier inventory.json: an existing file of any other
+kind (findings.json, with --out and --into swapped) is refused.
+
 Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
 """
 import argparse
@@ -318,17 +321,18 @@ def git_state(root, read=()):
 
     Untracked files count, and so do ignored ones and files inside submodules among `read` (the paths
     the inventory reports, as on disk): the scan read them, but HEAD does not hold them. A file read
-    under skip-worktree or assume-unchanged leaves the answer None: git status does not compare it.
+    under skip-worktree or assume-unchanged leaves the answer None: git status does not compare it. So does
+    an unstaged edit that only a filter driver's clean command could confirm (an LFS pointer, say).
     """
-    def git(*args, ok=(0,), stdin=None):
+    def git(*args, ok=(0,), stdin=None, where=root, strip=True):
         try:
             # A repository's core.fsmonitor names a command that `git status` would run.
             # --no-optional-locks: status must not refresh .git/index, a write inside the reviewed repository.
-            r = subprocess.run(["git", "--no-optional-locks", "-C", str(root), "-c", "core.fsmonitor=false", *args],
+            r = subprocess.run(["git", "--no-optional-locks", "-C", str(where), "-c", "core.fsmonitor=false", *args],
                                capture_output=True, text=True, timeout=20, input=stdin, errors="surrogateescape")
         except (OSError, subprocess.TimeoutExpired):
             return None
-        return r.stdout.strip() if r.returncode in ok else None
+        return (r.stdout.strip() if strip else r.stdout) if r.returncode in ok else None
 
     commit = git("rev-parse", "HEAD")
     if not commit:
@@ -339,16 +343,41 @@ def git_state(root, read=()):
     drivers = git("config", "-z", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$", ok=(0, 1))
     if drivers is None:
         return commit, None
-    no_filters = [arg for key in drivers.split("\0") if key for arg in ("-c", f"{key}=")]
+    keys = [key for key in drivers.split("\0") if key]
+    no_filters = [arg for key in keys for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
     # --ignore-submodules=all keeps status out of submodules, whose own config may name filter commands too.
-    status = git(*no_filters, "status", "--porcelain", "--untracked-files=normal", "--ignore-submodules=all",
-                 "--", ".")
+    # -z keeps each entry's leading status column; porcelain paths are relative to the top of the work tree.
+    status = git(*no_filters, "status", "--porcelain", "-z", "--untracked-files=normal", "--ignore-submodules=all",
+                 "--", ".", strip=False)
     if status is None:
         return commit, None
-    if status or not read:
-        return commit, bool(status)
+    changed, tokens = [], iter(status.split("\0"))
+    for entry in tokens:
+        if entry:
+            changed.append((entry[:2], entry[3:]))
+            if entry[0] in "RC":
+                next(tokens, None)  # A rename or copy also names its source.
+    # With its clean command blanked, a filtered file that is only stat-dirty compares its working-tree
+    # content with what that command stored in HEAD (an LFS pointer, a stripped notebook): changed or not,
+    # Git cannot tell without running the command. Any other entry is a change.
+    unsure = [path for xy, path in changed if xy == " M"]
+    unknown = False  # Set when only such files differ; a later check may still prove a change.
+    if unsure and len(unsure) == len(changed) and keys:
+        top = git("rev-parse", "--show-toplevel")
+        attrs = git("check-attr", "-z", "--stdin", "filter", stdin="\0".join(unsure) + "\0", where=top,
+                    strip=False) if top else None
+        if attrs is None:
+            return commit, None
+        names = {key[len("filter."):].rpartition(".")[0] for key in keys}
+        fields = attrs.split("\0")
+        if {path for path, value in zip(fields[0::3], fields[2::3]) if value in names} >= set(unsure):
+            unknown, changed = True, []
+    if changed:
+        return commit, True
+    if not read:
+        return commit, None if unknown else False
     # A submodule is a gitlink (mode 160000) in HEAD's tree, not its files. -v tags each entry: S marks
     # skip-worktree and a lowercase tag assume-unchanged, flags under which git status hides edits.
     stage = git("ls-files", "-z", "-v", "--stage", "--", ".")
@@ -363,7 +392,7 @@ def git_state(root, read=()):
         return commit, None
     # check-ignore exits 0 when some path is ignored and 1 when none is.
     ignored = git("check-ignore", "--stdin", "-z", ok=(0, 1), stdin="\0".join(read) + "\0")
-    return commit, None if ignored is None else bool(ignored)
+    return commit, True if ignored else None if ignored is None or unknown else False
 
 
 def scan(root):
@@ -400,7 +429,7 @@ def scan(root):
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
-        "tool": "inventory.py", "version": 1, "root": root.name, "commit": commit, "dirty": dirty,
+        "tool": "inventory.py", "version": 1, "root": shown(root.name), "commit": commit, "dirty": dirty,
         "prompt_files": prompt_files, "call_sites": call_sites,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
@@ -457,6 +486,14 @@ def merge_into(findings_path, inventory):
     return len(new)
 
 
+def is_inventory(path):
+    try:
+        value = json.loads(merge_tool.read_regular(path).decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return False
+    return isinstance(value, dict) and value.get("tool") == "inventory.py"
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("repo", type=Path)
@@ -475,6 +512,9 @@ def main(argv=None):
             unsafe = unsafe_target(a.out.parent, [a.out.name])
             if unsafe:
                 raise OSError(f"refusing to write {unsafe}: it exists as a symlink or non-regular file")
+            if a.out.exists() and not is_inventory(a.out):
+                # A swapped --out/--into would otherwise replace findings.json, the record of the whole review.
+                raise OSError("it exists and is not an inventory.json (check --out against --into)")
             write_output(a.out, text)
         except OSError as e:
             print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)

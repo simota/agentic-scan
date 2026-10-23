@@ -81,7 +81,7 @@ def scan_problems(inventory, data):
 
 def check(out, no_pdf=False, allow=()):
     problems = []
-    raw = (out / "findings.json").read_bytes()
+    raw = merge_tool.read_regular(out / "findings.json")
     data = render.load(out / "findings.json", raw)
     digest = hashlib.sha256(raw).hexdigest()
 
@@ -89,6 +89,10 @@ def check(out, no_pdf=False, allow=()):
     expected = OUTPUTS - ({"report.pdf"} if no_pdf else set())
     for name in sorted(expected - present):
         problems.append(f"missing output {name}")
+    for name in sorted(expected & present):
+        # A directory or FIFO under an output's name would skip the stamp and inventory checks below.
+        if (out / name).is_symlink() or not (out / name).is_file():
+            problems.append(f"{name} is not a regular file")
     for name in sorted(present - OUTPUTS - set(allow)):
         problems.append(f"unexpected file {name} in the output directory (contract_check.py --allow {name} if asked for)")
     if no_pdf and "report.pdf" in present:

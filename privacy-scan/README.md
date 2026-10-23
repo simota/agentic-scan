@@ -119,7 +119,8 @@ against its MANIFEST).
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
 cause per issue) or `templates/report.{ja,en}.md` (one report for an owner or
-DPO). An unfixed High (status `Open` or `Accepted`) goes to a private tracker. Filing or sending stays with you.
+DPO). An unfixed High (status `Open` or `Accepted`) goes to a private tracker.
+Filing or sending stays with you.
 
 ## Layout
 

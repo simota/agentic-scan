@@ -189,9 +189,10 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
 # they are masked before counting digits so they are not mistaken for personal
 # numbers. Dates are judged per run of digits joined by the separators
-# LONG_NUMBER accepts, outside UUIDs and hex digests: a run is masked only when it consists entirely of ISO
-# dates (a range) and six-digit times of day after a date; any other digit in
-# the run keeps the whole run counted, so masking cannot split a longer number.
+# LONG_NUMBER accepts, outside UUIDs and hex digests: a run is masked only when
+# it consists entirely of ISO dates (a range) and six-digit times of day after a
+# date; any other digit in the run keeps the whole run counted, so masking
+# cannot split a longer number.
 # A UUID or hex digest is masked, but where a free-standing number sits next to
 # it across those separators, its digits on that edge are kept so they still
 # count; digits attached to a letter belong to a word (`sha256`), and a masked

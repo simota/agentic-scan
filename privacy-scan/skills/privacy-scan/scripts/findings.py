@@ -59,8 +59,10 @@ use placeholders.
 
 All checked prose is also inspected after percent-decoding and HTML-entity
 decoding (`%40`, `&#64;`), repeated up to three times so double-encoded values
-are caught, and with invisible format characters (zero-width spaces, word
-joiners, soft hyphens) removed. Hex digests and dashless UUIDs (whole tokens of
+are caught, and with invisible characters removed: format characters
+(zero-width spaces, word joiners, soft hyphens) and the other default-ignorable
+code points (variation selectors, the combining grapheme joiner, Hangul
+fillers). Hex digests and dashless UUIDs (whole tokens of
 32 or more hex digits containing a letter) are not counted as digit runs.
 
 Reference URLs are checked both as supplied and after percent-decoding their
@@ -155,6 +157,12 @@ EMAIL_LITERAL_DOMAIN = re.compile(r"\[(?:[^\[\]\r\n]|(?:\r\n|\n)[ \t])+\]")
 EMAIL_FWS = re.compile(r"[ \t]+|(?:\r\n|\n)[ \t]+")
 EMAIL_COMMENT_MARKERS = re.compile(r"[()\\\r\n]")
 IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
+# Default-ignorable code points (Unicode DerivedCoreProperties) display as
+# nothing, like format characters, but are combining marks, fillers or
+# unassigned: the grapheme joiner, Khmer inherent vowels, Mongolian and other
+# variation selectors, Hangul fillers and reserved ranges.
+INVISIBLE = re.compile("[\u034f\u115f\u1160\u17b4\u17b5\u180b-\u180f\u2065\u3164\ufe00-\ufe0f"
+                       "\uffa0\ufff0-\ufff8\U000e0000-\U000e0fff]")
 # IDNA exceptions and join controls (RFC 5892, sections 2.6 and 2.8) can
 # occur in labels too. Candidate detection need not validate their context.
 IDNA_LABEL_EXTRAS = frozenset("\u00b7\u0375\u05f3\u05f4\u06fd\u06fe\u0f0b\u200c\u200d\u30fb")
@@ -178,12 +186,13 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # at least one letter: SHA-1/256 values, dashless UUIDs) are technical values;
 # they are masked before counting digits so they are not mistaken for personal
 # numbers. Dates are judged per run of digits joined by the separators
-# LONG_NUMBER accepts: a run is masked only when it consists entirely of ISO
+# LONG_NUMBER accepts, outside UUIDs and hex digests: a run is masked only when it consists entirely of ISO
 # dates (a range) and six-digit times of day after a date; any other digit in
 # the run keeps the whole run counted, so masking cannot split a longer number.
 # A UUID or hex digest is masked, but where a free-standing number sits next to
 # it across those separators, its digits on that edge are kept so they still
-# count; digits attached to a letter belong to a word (`sha256`).
+# count; digits attached to a letter belong to a word (`sha256`), and a masked
+# date or another UUID or digest beside it is not a free-standing number.
 # The hour of a clock time after a date (`2024-03-15 10:22`) and the seconds
 # before a date that follows (`10:22:33 - 2024-03-15`) belong to the date-time.
 SEPARATOR_CLASS = r"(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])"
@@ -234,38 +243,51 @@ def _only_dates_and_times(run, after_colon=False, before_colon=False):
 
 def _mask_technical_numbers(value):
     spans = []
-    runs = list(DIGIT_RUN.finditer(value))
+    tokens = sorted((m for pattern in (UUID, HEX_DIGEST) for m in pattern.finditer(value)),
+                    key=lambda m: m.start())
+    # Digit runs are judged with the tokens blanked out, so a UUID's digits never
+    # join the date or number beside it. Tokens never touch a digit directly.
+    outside = list(value)
+    for m in tokens:
+        outside[m.start():m.end()] = "\0" * (m.end() - m.start())
+    outside = "".join(outside)
+    runs = list(DIGIT_RUN.finditer(outside))
     run_starts = [m.start() for m in runs]
+    dates = set()
 
     def free_digit_at(pos, outward):
         """Whether the digit at pos belongs to a free-standing number.
 
+        Digits of a masked date run or of another token are technical too.
         Digits attached to a letter on the outward side belong to a word
-        (`sha256`, `utf8`); the run may reach into the token on the other side.
-        Runs are found once and looked up by bisection, so chains stay linear.
+        (`sha256`, `utf8`). Runs are found once and looked up by bisection, so
+        chains stay linear.
         """
-        run = runs[bisect.bisect_right(run_starts, pos) - 1]
+        index = bisect.bisect_right(run_starts, pos) - 1
+        run = runs[index] if index >= 0 else None
+        if run is None or run.end() <= pos or index in dates:
+            return False
         if outward < 0:
             return not (run.start() > 0 and value[run.start() - 1].isalpha())
         return not (run.end() < len(value) and value[run.end()].isalpha())
 
-    for m in runs:
+    for index, m in enumerate(runs):
         after_colon = m.start() > 0 and value[m.start() - 1] == ":"
         before_colon = value[m.end():m.end() + 1] == ":"
         if _only_dates_and_times(m.group(), after_colon, before_colon) and DATE_TOKEN.search(m.group()):
             spans.append((m.start(), m.end(), "#"))
-    for pattern in (UUID, HEX_DIGEST):
-        for m in pattern.finditer(value):
-            token = m.group()
-            left = _past_separators(value, m.start(), -1)
-            right = _past_separators(value, m.end(), 1)
-            lead = EDGE_DIGITS_START.match(token)
-            tail = EDGE_DIGITS_END.search(token)
-            keep_left = (lead.group() if lead and left > 0 and value[left - 1].isdecimal()
-                         and free_digit_at(left - 1, -1) else "")
-            keep_right = (tail.group() if tail and right < len(value) and value[right].isdecimal()
-                          and free_digit_at(right, 1) else "")
-            spans.append((m.start(), m.end(), keep_left + "#" + keep_right))
+            dates.add(index)
+    for m in tokens:
+        token = m.group()
+        left = _past_separators(value, m.start(), -1)
+        right = _past_separators(value, m.end(), 1)
+        lead = EDGE_DIGITS_START.match(token)
+        tail = EDGE_DIGITS_END.search(token)
+        keep_left = (lead.group() if lead and left > 0 and value[left - 1].isdecimal()
+                     and free_digit_at(left - 1, -1) else "")
+        keep_right = (tail.group() if tail and right < len(value) and value[right].isdecimal()
+                      and free_digit_at(right, 1) else "")
+        spans.append((m.start(), m.end(), keep_left + "#" + keep_right))
     masked, pos = [], 0
     for start, end, replacement in sorted(spans):
         if start >= pos:
@@ -531,10 +553,11 @@ def _no_personal_values(value, where):
 def _scan_personal_values(value, where):
     # Inspect a normalised copy: non-breaking spaces and width variants must
     # not evade the guard, and accepted text must keep its original spelling.
-    # Invisible format characters (zero-width spaces, word joiners, soft
-    # hyphens) are dropped so they cannot split an address or a number.
+    # Invisible characters (format characters such as zero-width spaces, word
+    # joiners and soft hyphens, and the other default-ignorable code points)
+    # are dropped so they cannot split an address or a number.
     value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
-    value = "".join(c for c in value if unicodedata.category(c) != "Cf")
+    value = INVISIBLE.sub("", "".join(c for c in value if unicodedata.category(c) != "Cf"))
     for domain in _email_domains(value):
         # `react@18.2.0` and `sdk@1.2.3-beta` name package versions, not mail
         # domains. Bracketed literals and four-part numeric hosts still count.

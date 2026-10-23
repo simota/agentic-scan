@@ -73,7 +73,8 @@ LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
 # A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
 # or a line with a colon, which starts another declaration (also across masked
 # regions). Indented Sass and Stylus end a declaration at the line break.
-_CSS_VALUE = r"([^;{}\n]+(?:\n(?=[^;{}:\n]*(?:[\n;}]|\Z))[^;{}:\n]*)*)"
+_CSS_CONTINUATION = r"(?:[^;{}:\n]|#\{[^{}\n]*\})*"  # Sass #{…} interpolation is part of a value.
+_CSS_VALUE = r"([^;{}\n]+(?:\n(?=" + _CSS_CONTINUATION + r"(?:[\n;}]|\Z))" + _CSS_CONTINUATION + r")*)"
 _CSS_LINE_VALUE = r"([^;{}\n]+)"
 INDENTED_CSS_EXT = {".sass", ".styl"}
 INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
@@ -133,9 +134,12 @@ PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding
 CUSTOM_PROPERTY = re.compile(r"(?<![\w-])--[\w-]+\s*:")
 # A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
 TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
-                        # In such a folder, its style and data files and its index module.
-                        r"/(?:tokens|design-tokens|theme|design-system)/"
-                        r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$")
+                        # Below such a folder, style and data files and index modules; below a
+                        # theme or design-system folder also script modules (palette.ts), not
+                        # components (.tsx) and not auth/tokens/*.ts.
+                        r"/(?:tokens|design-tokens|theme|design-system)/(?:[^/]+/)*"
+                        r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$|"
+                        r"/(?:design-tokens|theme|design-system)/(?:[^/]+/)*[^/]+\.[cm]?[jt]s$")
 FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
 LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"

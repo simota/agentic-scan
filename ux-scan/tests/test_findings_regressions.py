@@ -1027,6 +1027,12 @@ class TransactionRegressions(unittest.TestCase):
             ("U-001/ and /U-001/", "U-001/ and /U-001/"),
             ("U-001/* and U-001/**", "U-001/* and U-001/**"),
             ("`U-001`/U-002/x", "`U-003`/U-002/x"),
+            ("`U-001`/U-002.", "`U-003`/U-004."),
+            ("`U-001`/U-002/U-003", "`U-003`/U-004/U-001"),
+            ("`U-001`/U-002/`U-003`", "`U-003`/U-004/`U-001`"),
+            ("**`U-001`**/U-002", "**`U-003`**/U-004"),
+            ("U-001/ `U-002`", "U-003/ `U-004`"),
+            ("`U-001` /U-002", "`U-003` /U-004"),
             # Hyphen, dash and space variants connect a range like their ASCII forms.
             ("U-001\u2010U-003", "U-003, U-004, U-001"),
             ("U-001\u2011U-003", "U-003, U-004, U-001"),
@@ -1087,7 +1093,11 @@ class TransactionRegressions(unittest.TestCase):
             with self.subTest(url=url):
                 with self.assertRaises(findings.RecordError):
                     findings._http(url, "references[0].url")
-        # Join controls are part of words in Persian and Indic scripts.
+        # Join controls are part of words in Persian and Indic scripts, but never of a host.
+        for url in ("https://goo\u200dgle.com/", "https://\u200c.com/"):
+            with self.subTest(url=url):
+                with self.assertRaises(findings.RecordError):
+                    findings._http(url, "url")
         findings._http("https://fa.wikipedia.org/wiki/\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "url")
 
     def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):

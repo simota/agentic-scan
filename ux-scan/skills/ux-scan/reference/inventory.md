@@ -85,7 +85,7 @@ These Next.js exclusions do not apply to Svelte route segments.
 | Key | What it collects | Perspective |
 |---|---|---|
 | `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, also after an `element={<… />}` attribute, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array) or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
-| `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files) or, inside a `theme/`, `tokens/`, `design-tokens/` or `design-system/` folder, its style and JSON files and its `index` module, or defining three or more CSS custom properties | LG2, CC2 |
+| `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files) or, anywhere below a `theme/`, `tokens/`, `design-tokens/` or `design-system/` folder, style and JSON files and `index` modules (below `theme/`, `design-tokens/` and `design-system/` also non-JSX script modules such as `palette.ts`), or defining three or more CSS custom properties | LG2, CC2 |
 | `spacing`, `font_sizes` | `margin` / `padding` / `gap` (also `grid-gap`) and `font-size` literals (CSS, including values wrapped onto whole later lines — in indented Sass and Stylus, also in `<style lang="sass">` blocks, a line ends the declaration — and JS style objects, including quoted and kebab-case keys such as Vue's `'margin-top'`), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment. Terms inside `calc()` and the preferred (middle) term of `clamp()` are not sizes on their own and are left out; the bounds of `clamp()` and the arguments of `min()` / `max()` are measured. A bare number in an MUI `sx` prop is a theme spacing multiple, not px, and is left out | LG2, VH2 |
 | `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings; `@container` conditions are not viewport breakpoints and are left out | RS1 |
 | `z_index` | `z-index` / `zIndex` values (style-object keys may be quoted) | LG3 |
@@ -174,8 +174,10 @@ limit) and lengths outside the finite numeric range are skipped individually
 with a warning; the rest of the file is still scanned. Mention relevant parse
 warnings in the report's `limitations`, as well as any `truncated` lists.
 Limits, to state in `limitations` when they matter:
-indented Sass and brace-less Stylus rules (their literals are measured, but
-`focus_outline` and `tap_targets` read only rules in braces),
+indented Sass and brace-less Stylus rules (their literals are measured one
+line at a time, so a value wrapped onto a later line and Sass nested properties
+such as `margin:` / `top: 4px` are not; `focus_outline` and `tap_targets` read
+only rules in braces),
 styles computed at run time, Tailwind utility classes other than `truncate`,
 native mobile UI code (SwiftUI, Compose, Flutter), components from a library
 whose source is not in the repository, and rendering itself (contrast,

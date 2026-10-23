@@ -1584,10 +1584,18 @@ class InventoryRegressionTests(unittest.TestCase):
             ("6px", ["b.styl:2", "c.css:4"]), ("8px", ["btn.sass:2"])]))
         # Folder-named token sources are style or data files, or the folder's index module.
         data = self.scan({"src/theme/index.ts": "export const t = {};\n",
+                          "src/theme/palette.ts": "export const p = {};\n",
                           "src/tokens/colors.json": "{}\n",
+                          "tokens/color/base.json": "{}\n",
+                          "design-tokens/base/size.json": "{}\n",
                           "src/auth/tokens/refresh.ts": "export const r = 1;\n",
                           "src/components/theme/ThemeToggle.tsx": "export const T = () => <b />;\n"})
-        self.assertEqual(sorted(t["path"] for t in data["token_sources"]), ["src/theme/index.ts", "src/tokens/colors.json"])
+        self.assertEqual(sorted(t["path"] for t in data["token_sources"]), [
+            "design-tokens/base/size.json", "src/theme/index.ts", "src/theme/palette.ts", "src/tokens/colors.json",
+            "tokens/color/base.json"])
+        # Sass interpolation on a continued line stays part of the value.
+        data = self.scan({"a.scss": ".a { margin: 8px\n    16px #{$x};\n  padding: $a\n    20px#{$b}; }\n"})
+        self.assertEqual(sorted(r["value"] for r in data["spacing"]), ["16px", "20px", "8px"])
 
 if __name__ == "__main__":
     unittest.main()

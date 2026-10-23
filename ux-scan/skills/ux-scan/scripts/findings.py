@@ -137,8 +137,10 @@ def _http(url, where):
         http_url(url, where)
         if any(c in '<>"' for c in url):
             raise ValueError("unescaped URL delimiter")
-        # Join controls (ZWNJ, ZWJ) are part of words in Persian and Indic text.
-        if any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") and c not in "\u200c\u200d" for c in url):
+        # Join controls (ZWNJ, ZWJ) are part of words in Persian and Indic text, never of a host.
+        host = urlsplit(url).netloc
+        if any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") for c in host) or any(
+                unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") and c not in "\u200c\u200d" for c in url):
             raise ValueError("invisible or control character")
         # Python versions differ in whether urlsplit rejects text after an IPv6 host.
         authority = urlsplit(url).netloc.rsplit("@", 1)[-1]
@@ -509,9 +511,11 @@ OTHER_IDENTIFIER_CHARACTERS = frozenset(
     "\u19da\u200c\u200d\u30fb\uff65"
 )
 STYLED_ID = re.compile(r"(?:\*{1,3}|~~|_{1,3}|`+)(U-[0-9]{3})(?:\*{1,3}|~~|_{1,3}|`+)|`+(U-[0-9]{3})`+")
-# A lone id and slash beside an id code span, as in `U-001`/U-002, continue that list.
-ID_CODE_BEFORE = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+\Z")
-ID_CODE_AFTER = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+")
+# Ids and a slash beside an id code span, as in `U-001`/U-002 or **`U-001`**/U-002/U-003,
+# continue that list; a lone /U-001 or U-001/ elsewhere is a path.
+ID_CODE_BEFORE = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+[*_~]*[ \t]*\Z")
+ID_CODE_AFTER = re.compile(r"[ \t]*[*_~]*`+[ \t]*U-[0-9]{3}[ \t]*`+")
+SLASHED_IDS = re.compile(r"/?U-[0-9]{3}(?:/U-[0-9]{3})*/?")
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
@@ -1203,9 +1207,12 @@ def _rewrite_prose(value, mapping):
             literal_spans.append((match.start(), match.end()))
         elif ((match["path"] is not None and _source_token(match["path"]))
               or (match["token"] is not None and _source_token(match["token"]))):
-            token, (left, right) = match["path"] or match["token"], match.span()
-            if not ((re.fullmatch(r"/U-[0-9]{3}", token) and ID_CODE_BEFORE.search(value, max(0, left - 40), left))
-                    or (re.fullmatch(r"U-[0-9]{3}/", token) and ID_CODE_AFTER.match(value, right))):
+            left, right = match.span()
+            ids = STYLED_ID.sub(lambda m: m[1] or m[2], (match["path"] or match["token"]).rstrip(".!?:,;"))
+            ids = ids.strip("*_~")
+            if not (SLASHED_IDS.fullmatch(ids)
+                    and ((ids.startswith("/") and ID_CODE_BEFORE.search(value, max(0, left - 40), left))
+                         or (ids.endswith("/") and ID_CODE_AFTER.match(value, right)))):
                 source_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)

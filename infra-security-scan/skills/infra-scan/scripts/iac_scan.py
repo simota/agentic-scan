@@ -2692,7 +2692,11 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         cfn_secrets(scan, res, props, line)
         if type_ == "AWS::EC2::SecurityGroup":
             for rule in aslist(props.get("SecurityGroupIngress")):
-                if isinstance(rule, dict):
+                if is_intrinsic(rule) or rule is UNKNOWN:
+                    # - !If [IsDev, {...0.0.0.0/0...}, !Ref AWS::NoValue]: a rule in some deployments.
+                    scan.not_run.append(f"AWS-NET-001: ingress rule is not a literal; check not run: "
+                                        f"{res.file}:{line} ({res.address})")
+                elif isinstance(rule, dict):
                     cfn_ingress(scan, res, rule)
         elif type_ == "AWS::EC2::SecurityGroupIngress":
             cfn_ingress(scan, res, props)
@@ -2711,20 +2715,20 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 if off:
                     scan.hit("AWS-S3-002", res, line, "off: " + ", ".join(off))
         elif type_ == "AWS::S3::BucketPolicy":
-            scan.resource_policy(res, norm_statements(props.get("PolicyDocument")), line)
+            scan.resource_policy(res, cfn_statements(scan, res, props.get("PolicyDocument"), line), line)
         elif type_ in ("AWS::IAM::Policy", "AWS::IAM::ManagedPolicy", "AWS::IAM::RolePolicy",
                        "AWS::IAM::UserPolicy", "AWS::IAM::GroupPolicy"):
-            scan.identity_policy(res, norm_statements(props.get("PolicyDocument")), line)
+            scan.identity_policy(res, cfn_statements(scan, res, props.get("PolicyDocument"), line), line)
         elif type_ == "AWS::IAM::Role":
-            scan.trust_policy(res, norm_statements(props.get("AssumeRolePolicyDocument")), line)
+            scan.trust_policy(res, cfn_statements(scan, res, props.get("AssumeRolePolicyDocument"), line), line)
             for p in aslist(props.get("Policies")):
                 if isinstance(p, dict):
-                    scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
+                    scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
         elif type_ in ("AWS::IAM::User", "AWS::IAM::Group"):
             for p in aslist(props.get("Policies")):
                 if isinstance(p, dict):
-                    scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
+                    scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
         elif type_ == "AWS::IAM::AccessKey":
             scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
@@ -2775,7 +2779,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 policies = aslist(props.get("Policies"))
                 for p in policies:
                     if isinstance(p, dict) and "Statement" in p:
-                        scan.identity_policy(res, norm_statements(p), line)
+                        scan.identity_policy(res, cfn_statements(scan, res, p, line), line)
                 # A bare name is a managed policy in the aws partition.
                 if any(p == "AdministratorAccess" or (isinstance(cfn_string(p), str) and ADMIN_ARN.search(cfn_string(p)))
                        for p in policies):
@@ -2794,8 +2798,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
 def cfn_shared(scan, res, type_, props, line):
     """CloudFormation counterparts of check_tf_shared."""
     key = CFN_RESOURCE_POLICIES.get(type_)
-    if key and isinstance(props.get(key), dict) and not (type_.endswith("::Domain") and props.get("VPCOptions")):
-        scan.resource_policy(res, norm_statements(props[key]), line)
+    if key and props.get(key) is not None and not (type_.endswith("::Domain") and props.get("VPCOptions")):
+        scan.resource_policy(res, cfn_statements(scan, res, props[key], line), line)
     if type_ in CFN_PUBLIC_DATA and props.get("PubliclyAccessible") in (True, "true"):
         scan.hit("AWS-RDS-001", res, line, "PubliclyAccessible = true")
     if type_ == "AWS::CloudFront::Distribution":
@@ -2851,7 +2855,8 @@ def cfn_instance(scan, res, type_, props, line):
         # Without its own MetadataOptions an instance takes them from a launch template.
         template = props.get("LaunchTemplate")
         ref = template.get("LaunchTemplateId") if isinstance(template, dict) else None
-        if isinstance(ref, dict) and ref.get("Ref") in scan.cfn_checked_templates.get(res.file, ()):
+        if isinstance(ref, dict) and isinstance(ref.get("Ref"), str) and \
+                ref["Ref"] in scan.cfn_checked_templates.get(res.file, ()):
             pass  # a launch template in this template, checked on its own
         elif "LaunchTemplate" in props:
             scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
@@ -2940,6 +2945,24 @@ def cfn_admin(scan, res, props, line):
     if any(isinstance(cfn_string(a), str) and ADMIN_ARN.search(cfn_string(a))
            for a in aslist(props.get("ManagedPolicyArns"))):
         scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
+
+
+def cfn_statements(scan, res, document, line):
+    """Statements of a CloudFormation policy document: an object, or a JSON string
+    (Json-typed properties accept both). A document or statement computed by an
+    intrinsic (Fn::If, Fn::Sub, a block scalar) is named in not_run, not skipped."""
+    if isinstance(document, str):
+        try:
+            document = json.loads(document, object_pairs_hook=unique_object)
+        except ValueError:
+            document = UNKNOWN
+    listed = document.get("Statement") if isinstance(document, dict) and not is_intrinsic(document) else UNKNOWN
+    if isinstance(listed, dict):
+        listed = [listed]
+    if not isinstance(listed, list) or any(is_intrinsic(st) or not isinstance(st, dict) for st in listed):
+        scan.not_run.append(f"policy document or statement is not a literal; policy checks not run on it: "
+                            f"{res.file}:{line} ({res.address})")
+    return norm_statements(document) if isinstance(document, dict) else None
 
 
 def cfn_ingress(scan, res, rule):
@@ -3191,6 +3214,9 @@ class _YamlMap(dict):
         self[key], self.lines[key] = value, line
 
 
+YAML_TAGGED = re.compile(r"(?:^|[ \t\[{,])![A-Za-z][A-Za-z0-9]*[ \t]+\Z")
+
+
 def _yaml_marks(text):
     """Unquoted characters with their flow nesting depth."""
     quote, depth, previous, i = None, 0, "", 0
@@ -3205,9 +3231,9 @@ def _yaml_marks(text):
                     i += 2
                     continue
                 quote = None
-        elif c in "\"'" and previous in ("", ":", "[", "{", ",", "-") and (
-                i == 0 or text[i - 1] in " \t[{,"):  # a quote opens only at a token start
-            quote = c
+        elif c in "\"'" and (i == 0 or text[i - 1] in " \t[{,") and (
+                previous in ("", ":", "[", "{", ",", "-") or YAML_TAGGED.search(text, max(0, i - 64), i)):
+            quote = c  # a quote opens only at a token start, or after a tag (!Sub "...")
         else:
             yield i, c, depth
             depth += (c in "[{") - (c in "]}")
@@ -3317,8 +3343,10 @@ class _YamlFlow:
                 if not self.take(","):
                     raise ValueError("multiline or malformed flow collection")
             return result
+        # A plain key ends at ": " (or ":" before a flow indicator); Fn::ImportValue is one key.
         while self.i < len(self.text) and not (
-                (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":")):
+                (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":" and (
+                    self.i + 1 == len(self.text) or self.text[self.i + 1] in " \t,]}"))):
             self.i += 1
         word = self.text[start:self.i].strip(" \t")
         if not word or word[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", word) or (flow and word.endswith(":")):
@@ -3900,6 +3928,10 @@ NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|
                 # Neither Password=... nor URI userinfo (postgres://user:pass@host).
                 ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)(?!.*://[^/@\s]*:[^/@\s]*@)",
                                                    re.IGNORECASE)}
+# AWS API output fields named *Token that are idempotency or pagination
+# cursors (describe-instances ClientToken, --max-items NextToken), not secrets.
+API_CURSOR_FIELDS = {"clienttoken", "nexttoken", "continuationtoken", "nextcontinuationtoken", "paginationtoken",
+                     "idempotencytoken", "startingtoken"}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
@@ -4080,6 +4112,8 @@ def scan_secrets(scan, rel, text, kind):
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
                 continue
+            if kind == "snapshot" and m.group(1).lower() in API_CURSOR_FIELDS:
+                continue
             exempt = next((p for keys, p in NOT_A_SECRET.items() if m.group(1).lower().endswith(keys)), None)
             if exempt and exempt.search(m.group(2)):
                 continue
@@ -4094,6 +4128,14 @@ def scan_secrets(scan, rel, text, kind):
 
 
 # ---------------------------------------------------------------- walking
+
+def is_json(text):
+    try:
+        json.loads(text)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
 
 def classify_json(doc):
     if isinstance(doc, dict) and "planned_values" in doc:
@@ -4293,7 +4335,9 @@ def run(root, snapshots=()):
         elif terragrunt:
             kind = "terragrunt"
             handle_terragrunt(scan, rel, text)
-        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")):
+        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")) or (
+                lname.endswith((".yaml", ".yml")) and text.lstrip().startswith("{") and is_json(text)):
+            # JSON is YAML: a JSON template saved as .yaml is read as JSON.
             try:
                 doc = json.loads(text, object_pairs_hook=unique_object)
             except RecursionError:

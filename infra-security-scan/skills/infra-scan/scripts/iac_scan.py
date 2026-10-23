@@ -1059,10 +1059,10 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
-                # Only when raw is the document itself (jsonencode or a heredoc): templatefile(),
-                # replace(local.tpl, ...) and the like keep their conditions elsewhere.
+                # Only when the document itself is written in raw (its Statement is there):
+                # templatefile(), replace(local.tpl, ...) and the like keep their conditions elsewhere.
                 if attr == "assume_role_policy" and github_federation(raw, providers) and \
-                        "condition" not in raw.lower() and raw.lstrip().startswith(("jsonencode(", "<<")):
+                        "condition" not in raw.lower() and re.search(r"\bStatement\b", raw):
                     return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
                              "not_action": False, "resources": ["*"], "not_resource": False,
                              "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
@@ -1186,6 +1186,8 @@ def _condition_narrows(op, key, vals):
 OWNER_KEYS = {"aws:principalorgid", "aws:principalaccount", "aws:sourceaccount", "aws:sourceowner",
               "aws:sourceorgid"}
 OWNER_ARN_KEYS = {"aws:principalarn", "aws:sourcearn"}
+# S3 resource types whose ARN names an account (arn:aws:s3:region:account:accesspoint/name).
+S3_ACCOUNT_RESOURCES = {"accesspoint", "job", "storage-lens", "storage-lens-group", "access-grants"}
 
 
 def any_owner(key, value):
@@ -1198,12 +1200,18 @@ def any_owner(key, value):
         parts = value.split(":", 5)
         if len(parts) < 6:
             return True
-        if parts[2] == "s3" and (not parts[4] or "/" not in parts[5]):
-            # A bucket (arn:aws:s3:::bucket/key, or arn:aws:s3:*:*:bucket): bucket names are
-            # global, so only a wildcard in the name lets another account match.
+        account, wildcard = parts[4], (lambda text: any(c in text for c in "*?"))
+        if parts[2] == "s3":
+            if account and not wildcard(account):
+                return False  # that account's access points and jobs
+            # Buckets carry no account (arn:aws:s3:::bucket/key; a * account matches that empty
+            # one) and their names are global: only a wildcard in the name lets another account
+            # match. Access points and jobs take a wildcard account from anyone.
             bucket = parts[5].split("/", 1)[0]
-            return not bucket or any(c in bucket for c in "*?")
-        return any(c in parts[4] for c in "*?")  # access points and jobs carry their account
+            if account and bucket in S3_ACCOUNT_RESOURCES:
+                return True
+            return not bucket or wildcard(bucket)
+        return wildcard(account)
     return False
 
 

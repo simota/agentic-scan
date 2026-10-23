@@ -109,6 +109,14 @@ resource "aws_iam_role" "ci" {
                 role = f'resource "aws_iam_role" "ci" {{\n  assume_role_policy = {expression}\n}}\n'
                 self.assertEqual(scan({"main.tf": GITHUB_PROVIDER + role}).hits, [])
 
+    def test_an_unconditioned_document_inside_a_wrapper(self):
+        document = ('jsonencode({ Statement = [{ Effect = "Allow", Action = "sts:AssumeRoleWithWebIdentity", '
+                    'Principal = { Federated = aws_iam_openid_connect_provider.this.arn } }] })')
+        for expression in (f"({document})", f"tostring({document})", f"var.strict ? {document} : {document}"):
+            with self.subTest(expression=expression):
+                role = f'resource "aws_iam_role" "ci" {{\n  assume_role_policy = {expression}\n}}\n'
+                self.assertEqual(hits(GITHUB_PROVIDER + role), [("AWS-IAM-004", "aws_iam_role.ci")])
+
     def test_another_oidc_provider_is_not_github(self):
         eks = '''resource "aws_iam_openid_connect_provider" "this" {
   url            = "https://oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE"
@@ -155,8 +163,11 @@ class OpenConditionTest(unittest.TestCase):
             with self.subTest(arn=arn):
                 cond = f'{{ ArnLike = {{ "aws:SourceArn" = "{arn}" }} }}'
                 self.assertEqual(hits(public(cond, "bucket")), [("AWS-S3-003", "aws_s3_bucket_policy.b")])
-        cond = '{ ArnLike = { "aws:SourceArn" = "arn:aws:s3:::uploads/incoming/*" } }'
-        self.assertEqual(hits(public(cond, "bucket")), [])
+        for arn in ("arn:aws:s3:::uploads/incoming/*", "arn:aws:s3:*:*:uploads/*",
+                    "arn:aws:s3:us-east-1:111111111111:*"):
+            with self.subTest(arn=arn):
+                cond = f'{{ ArnLike = {{ "aws:SourceArn" = "{arn}" }} }}'
+                self.assertEqual(hits(public(cond, "bucket")), [])
 
 
 class IngressTest(unittest.TestCase):

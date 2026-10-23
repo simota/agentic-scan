@@ -118,7 +118,8 @@ concurrent updates.
 nonempty regular files (symbolic links allowed; more only with `--allow NAME`);
 a complete, schema-valid record whose text encodes as UTF-8; gapless `P-NNN`
 IDs in severity order with `FalsePositive`/`NotApplicable` last;
-`Valid`/`FalsePositive`/`NotApplicable` evidence citing a `path:line`; no
+`Valid`/`FalsePositive`/`NotApplicable` evidence citing a `path:line`; evidence
+for every High and Medium finding; each `step` a hunt step ID; no
 `Suspected` finding marked `Valid`; every perspective recorded; each finding's
 `budget` naming a ledger entry, and no `holds` budget with a `Valid`, unfixed
 finding against it; a reason for every `not checked` budget; nonempty

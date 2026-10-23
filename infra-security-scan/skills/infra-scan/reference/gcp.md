@@ -54,7 +54,8 @@ edition the requester uses.
 
 - `google_iam_workload_identity_pool_provider`: `attribute_condition` must pin
   the repository / organization (e.g. `assertion.repository_owner`); a
-  provider for GitHub with no condition accepts any repository
+  provider for GitHub with no condition accepts any repository; an `aws` provider
+  with none accepts every role in its AWS account (Medium: it needs a workload there)
 - `principalSet://…/attribute.repository/…` bindings on service accounts —
   check the attribute matched is the one intended
 - Members outside the organization's domain; `domain:` bindings for partner

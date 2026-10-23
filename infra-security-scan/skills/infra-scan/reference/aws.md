@@ -46,17 +46,17 @@ uses, never from memory.
 
 | Look at | Unsound |
 |---|---|
-| `aws_iam_role.assume_role_policy` | `Principal: "*"` or `{"AWS": "*"}`; another account's root without `sts:ExternalId` for a third party; no `aws:PrincipalOrgID` where org-only is meant; a condition every caller meets (`ForAllValues:` or `…IfExists` on a key the request can lack, an `aws:PrincipalArn` pattern with a wildcard account, `aws:PrincipalOrgID` like `o-*`) |
+| `aws_iam_role.assume_role_policy` | `Principal: "*"` or `{"AWS": "*"}`; another account's root without `sts:ExternalId` for a third party; no `aws:PrincipalOrgID` where org-only is meant; a condition every caller meets (`ForAllValues:` or `…IfExists` on a key the request can lack, an `aws:PrincipalArn` pattern with a wildcard account under `ArnLike` or `ArnEquals`, which expands wildcards too, `aws:PrincipalOrgID` like `o-*`, a key the caller sets itself such as `aws:PrincipalTag/*`, `aws:RequestTag/*` or `sts:RoleSessionName`) |
 | GitHub OIDC (`aws_iam_openid_connect_provider` for `token.actions.githubusercontent.com`, referenced by any name, or a GitHub Enterprise issuer `…/<enterprise>`) | Trust without `token.actions.githubusercontent.com:sub`, or `StringLike` with `repo:*`, `repo:org/*` when one repo is meant; `aud` not `sts.amazonaws.com` |
 | EKS IRSA / Pod Identity | Trust without `oidc…:sub` = `system:serviceaccount:<ns>:<sa>` |
-| Resource policies (`aws_s3_bucket_policy`, `aws_kms_key.policy`, `aws_sqs_queue_policy`, `aws_sns_topic_policy`, `aws_ecr_repository_policy`, `aws_secretsmanager_secret_policy`, `aws_lambda_permission`) | `Principal: "*"` without a narrowing condition; external accounts not in `decisions` |
+| Resource policies (`aws_s3_bucket_policy`, `aws_kms_key.policy`, `aws_kms_key_policy`, `aws_sqs_queue_policy`, `aws_sns_topic_policy`, `aws_ecr_repository_policy`, `aws_secretsmanager_secret_policy`, `aws_lambda_permission`) | `Principal: "*"` without a narrowing condition; external accounts not in `decisions` |
 
 ## Data protection
 
 - S3: `aws_s3_bucket_public_access_block` and
   `aws_s3_account_public_access_block` (all four flags `true`),
   `aws_s3_bucket_acl` (`public-read`, `public-read-write`,
-  `authenticated-read`), `aws_s3_bucket_ownership_controls`
+  `authenticated-read`; also `acl` on `aws_s3_object`), `aws_s3_bucket_ownership_controls`
   (`BucketOwnerEnforced` disables ACLs), bucket policies, `aws:SecureTransport`
   deny, `aws_s3_bucket_server_side_encryption_configuration`
 - Snapshots and images: `aws_ebs_snapshot` / `aws_db_snapshot` sharing,

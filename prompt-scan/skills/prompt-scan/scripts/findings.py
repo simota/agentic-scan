@@ -79,28 +79,20 @@ def read_regular(path):
 
 
 def read_json(path, raw=None):
-    def unique(pairs):
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate JSON key {key!r}")
-            result[key] = value
-        return result
     try:
         raw = read_regular(path) if raw is None else raw
-        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique)
-    except (OSError, UnicodeError, ValueError, RecursionError) as e:
+    except OSError as e:
         raise render.SchemaError(f"{path}: {e}") from None
-    if render.json_depth(value) > render.MAX_JSON_DEPTH:
-        raise render.SchemaError(f"{path}: JSON nesting deeper than {render.MAX_JSON_DEPTH} levels")
-    return value
+    return render.parse_json(raw, path)
 
 
 def strings(value, path):
+    """Every string in value, object keys included: a key is written to findings.json like any value."""
     if isinstance(value, str):
         yield path, value
     elif isinstance(value, dict):
         for key, item in value.items():
+            yield f"{path} (key)", key
             yield from strings(item, f"{path}.{key}")
     elif isinstance(value, list):
         for index, item in enumerate(value):
@@ -236,10 +228,13 @@ def in_path(text, start, end):
     """
     if re.match(r"[.-][A-Za-z0-9_]", text[end:]) and not re.match(r"-F-[0-9]{3,}(?![A-Za-z0-9_])", text[end:]):
         return True
+    # A path is a run of ASCII characters: Japanese prose has no spaces, so "answer.pyの12行目でF-001" must
+    # stop at the kana rather than make the whole sentence one word.
     first, last = start, end
-    while first > 0 and not text[first - 1].isspace() and text[first - 1] not in "([{<\"'`":
+    while first > 0 and text[first - 1].isascii() and not text[first - 1].isspace() \
+            and text[first - 1] not in "([{<\"'`":
         first -= 1
-    while last < len(text) and not text[last].isspace() and text[last] not in ")]}>\"'`":
+    while last < len(text) and text[last].isascii() and not text[last].isspace() and text[last] not in ")]}>\"'`":
         last += 1
     word = text[first:last].rstrip(".,;:!?")
     return ("/" in word or "\\" in word) and not LIST_OF_REFS.fullmatch(word)

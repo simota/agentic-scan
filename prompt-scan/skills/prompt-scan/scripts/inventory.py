@@ -14,6 +14,9 @@ are set from the repository's Git state. A reviewer's latest verdict on the
 same rule and location is kept as `previous_validation`, across rescans until a
 new review replaces it; the new hit starts `Unverified`.
 
+--out replaces only an earlier inventory.json: an existing file of any other
+kind (findings.json, with --out and --into swapped) is refused.
+
 Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
 """
 import argparse
@@ -339,7 +342,9 @@ def git_state(root, read=()):
     drivers = git("config", "-z", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$", ok=(0, 1))
     if drivers is None:
         return commit, None
-    no_filters = [arg for key in drivers.split("\0") if key for arg in ("-c", f"{key}=")]
+    # A driver marked required (git lfs install sets filter.lfs.required) fails status once blanked; clear that too.
+    no_filters = [arg for key in drivers.split("\0") if key
+                  for arg in ("-c", f"{key}=", "-c", f"{key.rpartition('.')[0]}.required=false")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
     # --ignore-submodules=all keeps status out of submodules, whose own config may name filter commands too.
@@ -400,7 +405,7 @@ def scan(root):
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
-        "tool": "inventory.py", "version": 1, "root": root.name, "commit": commit, "dirty": dirty,
+        "tool": "inventory.py", "version": 1, "root": shown(root.name), "commit": commit, "dirty": dirty,
         "prompt_files": prompt_files, "call_sites": call_sites,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
@@ -457,6 +462,14 @@ def merge_into(findings_path, inventory):
     return len(new)
 
 
+def is_inventory(path):
+    try:
+        value = json.loads(merge_tool.read_regular(path).decode("utf-8"))
+    except (OSError, UnicodeError, ValueError, RecursionError):
+        return False
+    return isinstance(value, dict) and value.get("tool") == "inventory.py"
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     p.add_argument("repo", type=Path)
@@ -475,6 +488,9 @@ def main(argv=None):
             unsafe = unsafe_target(a.out.parent, [a.out.name])
             if unsafe:
                 raise OSError(f"refusing to write {unsafe}: it exists as a symlink or non-regular file")
+            if a.out.exists() and not is_inventory(a.out):
+                # A swapped --out/--into would otherwise replace findings.json, the record of the whole review.
+                raise OSError("it exists and is not an inventory.json (check --out against --into)")
             write_output(a.out, text)
         except OSError as e:
             print(f"inventory.py: cannot write {a.out}: {e}", file=sys.stderr)

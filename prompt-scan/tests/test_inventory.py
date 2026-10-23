@@ -176,6 +176,16 @@ class InventoryTest(unittest.TestCase):
         inventory.scan(root)
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
 
+    def test_a_required_filter_does_not_hide_a_clean_tree(self):
+        # git lfs install sets filter.lfs.required: with the clean command blanked, status must still succeed.
+        root = self.git_repo({".gitattributes": "*.md filter=x\n", "prompts/a.md": "hi\n"})
+        marker = Path(tempfile.mkdtemp()) / "ran"
+        subprocess.run(["git", "-C", str(root), "config", "filter.x.clean", f"sh -c 'touch {marker}; cat'"], check=True)
+        subprocess.run(["git", "-C", str(root), "config", "filter.x.required", "true"], check=True)
+        os.utime(root / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
+        self.assertIs(inventory.scan(root)["dirty"], False)
+        self.assertFalse(marker.exists())
+
     def test_no_filter_driver_from_a_submodule_runs(self):
         sub = self.git_repo({".gitattributes": "*.md filter=x\n", "p.md": "hi\n"})
         top = self.git_repo({"a.md": "x\n"})
@@ -251,6 +261,33 @@ class InventoryTest(unittest.TestCase):
         (out / "dir.json").mkdir()
         code, _, err = run(inventory.main, root, "--out", out / "dir.json")
         self.assertEqual((code, err.startswith("inventory.py: ")), (2, True), err)
+
+    def test_out_never_replaces_findings_json(self):
+        out = Path(tempfile.mkdtemp())
+        write_json(out / "findings.json", sample())
+        before = (out / "findings.json").read_bytes()
+        for args in (("--out", out / "findings.json", "--into", out / "findings.json"),
+                     ("--out", out / "findings.json")):
+            code, _, err = run(inventory.main, SAMPLE_APP, *args)
+            self.assertEqual(code, 2, args)
+            self.assertIn("not an inventory.json", err)
+            self.assertEqual((out / "findings.json").read_bytes(), before)
+        # A previous run's inventory.json is replaced as before.
+        for _ in range(2):
+            self.assertEqual(run(inventory.main, SAMPLE_APP, "--out", out / "inventory.json")[0], 0)
+
+    def test_non_utf8_root_name_is_reported_escaped(self):
+        parent = Path(tempfile.mkdtemp())
+        try:
+            root = parent / os.fsdecode(b"repo-\xff")
+            (root / "prompts").mkdir(parents=True)
+        except (OSError, UnicodeError):
+            self.skipTest("this file system refuses non-UTF-8 names")
+        (root / "prompts" / "a.md").write_text("hi\n", encoding="utf-8")
+        out = parent / "inventory.json"
+        code, _, err = run(inventory.main, root, "--out", out)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(json.loads(out.read_text(encoding="utf-8"))["root"], "repo-\\xff")
 
     def test_git_sees_a_non_utf8_name_as_it_is_on_disk(self):
         root = self.git_repo({"prompts/ok.md": "hi\n"})

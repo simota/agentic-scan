@@ -152,6 +152,16 @@ class MergeAndSchemaTests(unittest.TestCase):
             self.assertIn("**conditions:** LOG\\_LEVEL is debug in production",
                           (out / "report.md").read_text(encoding="utf-8"))
 
+    def test_colons_in_paths_are_refused_and_the_documented_placeholder_is_accepted(self):
+        # findings-schema.md: a column suffix is dropped and a colon in a file
+        # name is written as a placeholder, so `path:line` stays unambiguous.
+        for location in ("api/app.py:22:5", "app/routes/users:edit.tsx:12"):
+            with self.subTest(location=location), self.assertRaises(findings.SchemaError):
+                findings.validate({"findings": [finding(location=location)]})
+        findings.validate({"findings": [finding(location="app/routes/<colon-name>.tsx:12")]})
+        schema = (Path(findings.__file__).parent.parent / "reference" / "findings-schema.md")
+        self.assertIn("`app/routes/<colon-name>.tsx:12`", schema.read_text(encoding="utf-8"))
+
     def test_timestamped_migration_paths_are_accepted(self):
         for location in ("db/migrations/20261009123045_create_users.py:12",
                          "prisma/migrations/20240101000000_init/migration.sql:3",

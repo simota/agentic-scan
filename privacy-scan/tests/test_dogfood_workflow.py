@@ -50,6 +50,19 @@ class RenumberTests(unittest.TestCase):
         findings.renumber(doc)
         self.assertEqual(doc["next_steps"], ["PV-001の修正を最初に行う", "PV-001とPV-002は同じ担当者"])
 
+    def test_hyphen_joined_references_are_rewritten_but_urls_and_sources_are_not(self):
+        # Hyphens hid `PV-003-PV-001` and `PV-003-related`; URLs in prose and
+        # commitment sources were rewritten and pointed somewhere else.
+        doc = self.doc()
+        doc["next_steps"] = ["Fix PV-003-PV-001, then the PV-003-related notes; keep ACME-PV-003",
+                             "Ticket https://tracker.example.com/browse/PV-003 tracks PV-003"]
+        doc["commitments"][0]["source"] = "docs/PV-001.md:3"
+        findings.renumber(doc)
+        self.assertEqual(doc["next_steps"],
+                         ["Fix PV-001-PV-002, then the PV-001-related notes; keep ACME-PV-003",
+                          "Ticket https://tracker.example.com/browse/PV-003 tracks PV-001"])
+        self.assertEqual(doc["commitments"][0]["source"], "docs/PV-001.md:3")
+
     def test_ledger_ids_flush_against_japanese_text_are_checked(self):
         doc = complete_doc()
         doc["findings"][0]["commitment"] = "C-09の約束"

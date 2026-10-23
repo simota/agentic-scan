@@ -53,6 +53,10 @@ PERSPECTIVES = (
     "Background work", "Startup and configuration", "Dependencies and platform",
     "Observability",
 )
+# The hunt-step IDs of reference/perspectives.md, per perspective in its order.
+HUNT_STEPS = frozenset(f"{prefix}{n}" for prefix, count in (
+    ("DB", 6), ("AL", 4), ("ME", 4), ("IO", 6), ("CA", 4), ("CC", 5), ("PA", 4),
+    ("FE", 5), ("BG", 3), ("SC", 3), ("DP", 2), ("OB", 1)) for n in range(1, count + 1))
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "budgets", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -713,6 +717,14 @@ def _record_problems(doc):
                                  in citation_rejections(v["evidence"])[:3])
             problems.append(f"{f['id']}.validation.evidence: {v['verdict']} evidence must "
                             "cite a path:line" + (f" ({rejected})" if rejected else ""))
+        # A Likely High or Medium names its unconfirmed link here (SKILL.md "Done when").
+        elif f["severity"] in ("High", "Medium") and not v.get("evidence", "").strip():
+            problems.append(f"{f['id']}.validation.evidence: a {f['severity']} finding needs "
+                            f"evidence, even when {v['verdict']}")
+        step = f.get("step", "")
+        if step.strip() and step not in HUNT_STEPS:
+            problems.append(f"{f['id']}.step: {_show(step)} is not a hunt step in "
+                            "reference/perspectives.md")
         if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
             problems.append(f"{f['id']}: a Suspected finding cannot be Valid; confirm the "
                             "code link (Confirmed or Environment-dependent) or record Likely")

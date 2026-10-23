@@ -40,6 +40,36 @@ class CheckRuleTests(unittest.TestCase):
         doc["findings"][1]["validation"]["verdict"] = "Likely"
         self.assertEqual(contract_problems(doc), [])
 
+    def test_high_and_medium_findings_need_evidence_whatever_the_verdict(self):
+        # SKILL.md "Done when": every High and Medium finding has evidence; a
+        # Likely one names its unconfirmed link there.
+        doc = complete_doc()
+        doc["findings"].insert(1, finding("P-002", "Medium"))
+        doc["findings"][2]["id"] = "P-003"
+        doc["findings"][0]["validation"] = {"verdict": "Likely", "method": "static"}
+        doc["findings"][1]["validation"] = {"verdict": "Unverified", "method": "static",
+                                            "evidence": " "}
+        doc["findings"][2]["validation"] = {"verdict": "Unverified", "method": "static"}
+        self.assertEqual(contract_problems(doc), [
+            "P-001.validation.evidence: a High finding needs evidence, even when Likely",
+            "P-002.validation.evidence: a Medium finding needs evidence, even when Unverified"])
+        doc["findings"][0]["validation"]["evidence"] = "unconfirmed: whether the route uses the serializer"
+        doc["findings"][1]["validation"]["evidence"] = "not yet traced past app/jobs.py:3"
+        self.assertEqual(contract_problems(doc), [])
+
+    def test_a_step_must_be_a_hunt_step_of_perspectives_md(self):
+        doc = complete_doc()
+        doc["findings"][0]["step"] = "DB9"
+        doc["findings"][1]["step"] = "db1"
+        self.assertEqual(contract_problems(doc), [
+            "P-001.step: 'DB9' is not a hunt step in reference/perspectives.md",
+            "P-002.step: 'db1' is not a hunt step in reference/perspectives.md"])
+        doc["findings"][0]["step"] = "OB1"
+        doc["findings"][1]["step"] = ""
+        self.assertEqual(contract_problems(doc), [])
+        del doc["findings"][1]["step"]
+        self.assertEqual(contract_problems(doc), [])
+
     def test_required_lists_and_unique_ids(self):
         doc = complete_doc()
         doc["limitations"], doc["checked_ok"] = [], []

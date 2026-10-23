@@ -20,7 +20,9 @@ finding judged false stays in the record with its exclusion and evidence.
 | `NotApplicable` | The assessed workload does not use the path, or evidence shows that its caps and other mitigations keep the claimed cost within the relevant budget | Agent or person, with evidence |
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
-`validation.evidence` citing `path:line`.
+`validation.evidence` citing `path:line`. Every `High` and `Medium` finding
+needs nonblank evidence whatever its verdict: for `Likely`, the link that is
+not yet confirmed.
 
 A cap alone does not rule out a finding. For example, a hot endpoint capped at
 100 items can still exceed its outbound-call budget by making 100 sequential

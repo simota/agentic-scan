@@ -133,6 +133,12 @@ class DocumentTests(unittest.TestCase):
         readme = (SKILL.parents[1] / "README.md").read_text(encoding="utf-8")
         self.assertIn(f"with {len(steps)} hunt steps", " ".join(readme.split()))
 
+    def test_hunt_step_ids_match_script(self):
+        text = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        hunts = text.split("## Sound constructs", 1)[0]
+        steps = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \|", hunts, re.MULTILINE))
+        self.assertEqual(steps, findings.HUNT_STEPS)
+
     def test_chat_block_follows_the_rendered_field_order(self):
         text = (SKILL / "reference" / "report.md").read_text(encoding="utf-8")
         block = text.split("```", 2)[1]

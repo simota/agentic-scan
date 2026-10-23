@@ -298,8 +298,9 @@ class OptionalFieldRegressionTests(unittest.TestCase):
         doc = complete_doc()
         doc["meta"]["commit"] = ""
         doc["budgets"][0]["reason"] = ""
+        # Low: check requires evidence for every High and Medium finding.
         doc["findings"][0].update({
-            "contrast": "", "budget": "",
+            "severity": "Low", "contrast": "", "budget": "",
             "validation": {"verdict": "Likely", "method": "static", "evidence": ""},
             "references": [
                 {"title": "", "url": "https://example.test/empty-title"},

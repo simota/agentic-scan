@@ -138,6 +138,18 @@ class MockupTests(unittest.TestCase):
         self.assertFalse((self.out / "mockups.html").exists())
         self.assertEqual(self.problems(), "")
 
+    def test_unlikely_findings_publish_no_mockup(self):
+        for f in self.data["findings"]:
+            f.pop("mockup", None)
+        unlikely = next(f for f in self.data["findings"] if f["validation"]["verdict"] not in findings.EXCLUDED)
+        unlikely["validation"]["verdict"] = "Unlikely"
+        unlikely["mockup"] = {"before": "<p>a</p>", "after": "<p>b</p>"}
+        self.save()
+        self.render()
+        self.assertFalse((self.out / "mockups.html").exists())
+        self.assertEqual(self.problems(), "")
+        self.assertNotIn("mockups.html", (self.out / "dashboard.html").read_text(encoding="utf-8"))
+
     def test_stale_or_foreign_mockup_page_is_rejected(self):
         self.render()
         finding(self.data, "U-014")["mockup"]["after"] = "<p>changed</p>"

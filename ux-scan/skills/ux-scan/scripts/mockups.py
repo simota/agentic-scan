@@ -12,11 +12,12 @@ Standard library only.
 
 import html
 
-from findings import EXCLUDED
 from scan_report_kit import style
 
 PAGE = "mockups.html"
 DEFAULT_VIEWPORT = "360x640"
+# Mockups illustrate settled defects; on any other verdict they stay in the record unpublished.
+PUBLISHED = ("Valid", "Likely")
 # Applies inside every frame; the page's own policy is inherited as well.
 FRAME_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"
 PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
@@ -177,8 +178,8 @@ def esc(text):
 
 
 def with_mockups(data):
-    """Included findings that carry a mockup, in record order."""
-    return [f for f in data["findings"] if f.get("mockup") and f["validation"]["verdict"] not in EXCLUDED]
+    """Valid and Likely findings that carry a mockup, in record order."""
+    return [f for f in data["findings"] if f.get("mockup") and f["validation"]["verdict"] in PUBLISHED]
 
 
 def frame_document(fragment, lang):
@@ -332,6 +333,6 @@ def link_dashboard(page, lang):
 
 def field(finding, lang):
     """The finding field that points at its mockup, or None."""
-    if not finding.get("mockup") or finding["validation"]["verdict"] in EXCLUDED:
+    if not finding.get("mockup") or finding["validation"]["verdict"] not in PUBLISHED:
         return None
     return LABELS[lang]["field"], f"{PAGE}#{finding['id']}"

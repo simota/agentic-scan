@@ -13,8 +13,8 @@ dashboard. The PDF does not include it.
 ## When to attach one
 
 - Only when asked, and only to findings whose verdict is `Valid` or `Likely`.
-  Mockups on `FalsePositive` or `NotApplicable` findings are kept in the record
-  but not published
+  Mockups on findings with any other verdict (`Unverified`, `Unlikely`,
+  `FalsePositive`, `NotApplicable`) are kept in the record but not published
 - Prefer findings a picture explains better than prose: layout and responsive
   defects, hierarchy, states, forms, feedback. A missing `alt` or an ARIA
   attribute shows nothing; leave those without one
@@ -149,5 +149,5 @@ size changes. The
 dashboard's header links to it, and each finding in the dashboard and the
 report names its anchor (`mockups.html#U-006`). It carries the same
 fingerprints as the other pages: `contract_check.py` requires it exactly when
-an included finding has a mockup and otherwise rejects it, even with `--allow`, and a second-language render
+a `Valid` or `Likely` finding has a mockup and otherwise rejects it, even with `--allow`, and a second-language render
 (`--allow ja|en`) needs its own copy.

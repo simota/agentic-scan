@@ -931,11 +931,15 @@ def render_html(doc, lang):
         # Shown by the filter when it leaves no finding visible.
         out.append(f"<p class='empty' data-empty hidden>{e(d['no_matches'])}</p>")
 
+    # Excluded findings come last in either order, as in their IDs: a ruled-out
+    # High is nothing to act on before an open Medium.
     def priority(f):
-        return (status[f["id"]] != "Open", rank[f["severity"]], action(f) != "fix_now", f["id"])
+        return (is_excluded(f), status[f["id"]] != "Open", rank[f["severity"]],
+                action(f) != "fix_now", f["id"])
 
     p_order = {f["id"]: i for i, f in enumerate(sorted(findings, key=priority))}
-    s_order = {f["id"]: i for i, f in enumerate(sorted(findings, key=lambda f: (rank[f["severity"]], f["id"])))}
+    s_order = {f["id"]: i for i, f in enumerate(sorted(
+        findings, key=lambda f: (is_excluded(f), rank[f["severity"]], f["id"])))}
     copy = {}
     for f in findings:
         v = f["validation"]

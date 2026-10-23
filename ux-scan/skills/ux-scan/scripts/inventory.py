@@ -70,17 +70,24 @@ ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br 
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
-# A declaration's value may wrap onto later lines; it ends at ";", a brace, or a
-# line with a colon, which starts another declaration (also across masked regions).
-_CSS_VALUE = r"([^;{}\n]+(?:\n[^;{}:\n]*)*)"
-CSS_SPACING = re.compile(r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
-                         r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*" + _CSS_VALUE)
+# A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
+# or a line with a colon, which starts another declaration (also across masked
+# regions). Indented Sass and Stylus end a declaration at the line break.
+_CSS_VALUE = r"([^;{}\n]+(?:\n(?=[^;{}:\n]*(?:[\n;}]|\Z))[^;{}:\n]*)*)"
+_CSS_LINE_VALUE = r"([^;{}\n]+)"
+INDENTED_CSS_EXT = {".sass", ".styl"}
+INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
+_CSS_SPACING_NAME = (r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
+                     r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
+CSS_SPACING = re.compile(_CSS_SPACING_NAME + _CSS_VALUE)
+CSS_SPACING_LINE = re.compile(_CSS_SPACING_NAME.replace(r"\s*:\s*", r"[^\S\n]*:[^\S\n]*") + _CSS_LINE_VALUE)
 # Style-object keys may be quoted, and Vue style bindings use kebab-case names.
 JS_SPACING = re.compile(r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
                         r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
                         r"(?:Start|End|-start|-end)?[\"']?\s*:\s*"
                         r"(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
 CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
+CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
 JS_FONT_SIZE = re.compile(r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
                           r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
@@ -126,7 +133,9 @@ PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding
 CUSTOM_PROPERTY = re.compile(r"(?<![\w-])--[\w-]+\s*:")
 # A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
 TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
-                        r"/(?:tokens|design-tokens|theme|design-system)/")
+                        # In such a folder, its style and data files and its index module.
+                        r"/(?:tokens|design-tokens|theme|design-system)/"
+                        r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$")
 FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
 LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
@@ -1478,13 +1487,25 @@ def inventory(root, flows=None):
         if TOKEN_FILE.search("/" + rel) or props >= 3:
             tokens.append({"path": rel, "custom_properties": props})
         if css:
-            for m in CSS_SPACING.finditer(css_text):
-                for v in lengths(m.group(1), warn_at(m.start())):
-                    if abs(v) > 2:
-                        spacing.add(fmt(v), at(m.start()))
-            for m in CSS_FONT_SIZE.finditer(css_text):
-                for v in lengths(m.group(1), warn_at(m.start())):
-                    font_sizes.add(fmt(v), at(m.start()))
+            # Indented Sass and Stylus, as files or <style lang="sass|stylus"> blocks, are read by line.
+            if suffix in INDENTED_CSS_EXT:
+                by_syntax = [(css_text, True)]
+            else:
+                blocks = [(start, stop, css_text[start:stop]) for tag in parsed or ()
+                          if tag.name == "style" and tag.body is not None
+                          and (literal(tag.attrs.get("lang")) or "").lower() in INDENTED_STYLE_LANGS
+                          for start, stop in [tag.body]]
+                by_syntax = [(replace_regions(css_text, [(a, b, re.sub(r"[^\n]", " ", t)) for a, b, t in blocks]), False)]
+                if blocks:
+                    by_syntax.append((keep_regions(css_text, blocks), True))
+            for measured, indented in by_syntax:
+                for m in (CSS_SPACING_LINE if indented else CSS_SPACING).finditer(measured):
+                    for v in lengths(m.group(1), warn_at(m.start())):
+                        if abs(v) > 2:
+                            spacing.add(fmt(v), at(m.start()))
+                for m in (CSS_FONT_SIZE_LINE if indented else CSS_FONT_SIZE).finditer(measured):
+                    for v in lengths(m.group(1), warn_at(m.start())):
+                        font_sizes.add(fmt(v), at(m.start()))
             for m in CSS_Z.finditer(css_text):
                 value = integer(m.group(1), warn_at(m.start()))
                 if value is not None:

@@ -73,7 +73,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
 | `mockup` | Optional before/after illustration of the fix, published in `mockups.html` (`reference/mockups.md`): one object, or a list of 2 to 4 objects that each need a `title` unique within the finding. An object has `before` and `after`, required HTML fragments of at most 64 KiB each, measured as UTF-8, with no `<link` tag text (`reference/mockups.md`), or instead `states` (2 to 4 objects of `label`, `before` and `after`, all required, and optional `note`; labels unique); optional `title`, `viewport` (`WIDTHxHEIGHT`), `note` (prose), `label` (names the `after` design; required with `alternatives`) and `alternatives` (1 to 5 objects of `label` and `after`, both required, and optional `note`; labels unique within the mockup, each `after` under the same fragment rules; with `states`, `states` of `label` and `after` per state of the mockup, in its order, instead of `after`). A finding's fragments total at most 1 MiB as UTF-8. No other keys. `"mockup": null` in a fragment removes it |
-| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control or invisible format characters (such as zero-width spaces and bidirectional overrides), backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
+| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control or invisible format characters (such as zero-width spaces and bidirectional overrides; the joiners U+200C and U+200D that Persian and Indic words use are allowed), backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
 as `occurrences` replaces whole; `"mockup": null` removes the mockup) and adds
@@ -114,7 +114,8 @@ their ids are not mistaken for references. Separate prose references from
 source paths with whitespace, punctuation or code spans; unseparated text that
 looks like one path is preserved as a source token. Ids joined only by slashes
 (`U-001/U-002`), each optionally in emphasis or a code span, are a list of
-references, not a path.
+references, not a path; a lone id with a slash (`/U-001`, `U-001/`) stays a
+path unless the slash joins it to an id code span (`` `U-001`/U-002 ``).
 
 When ids move, explicit finding ranges written on one line using `to`,
 `through`, Japanese `から` (optionally followed by `まで`), `..`, or a hyphen or dash

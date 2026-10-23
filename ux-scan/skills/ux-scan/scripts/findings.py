@@ -137,7 +137,8 @@ def _http(url, where):
         http_url(url, where)
         if any(c in '<>"' for c in url):
             raise ValueError("unescaped URL delimiter")
-        if any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") for c in url):
+        # Join controls (ZWNJ, ZWJ) are part of words in Persian and Indic text.
+        if any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") and c not in "\u200c\u200d" for c in url):
             raise ValueError("invisible or control character")
         # Python versions differ in whether urlsplit rejects text after an IPv6 host.
         authority = urlsplit(url).netloc.rsplit("@", 1)[-1]
@@ -508,7 +509,9 @@ OTHER_IDENTIFIER_CHARACTERS = frozenset(
     "\u19da\u200c\u200d\u30fb\uff65"
 )
 STYLED_ID = re.compile(r"(?:\*{1,3}|~~|_{1,3}|`+)(U-[0-9]{3})(?:\*{1,3}|~~|_{1,3}|`+)|`+(U-[0-9]{3})`+")
-SLASHED_IDS = re.compile(r"/?U-[0-9]{3}(?:/U-[0-9]{3})*/?")
+# A lone id and slash beside an id code span, as in `U-001`/U-002, continue that list.
+ID_CODE_BEFORE = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+\Z")
+ID_CODE_AFTER = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+")
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
@@ -783,12 +786,9 @@ def _markdown_destinations(value, literal_spans):
 
 def _source_token(token):
     """Recognize paths/routes and source locations, without treating an ID list as a path."""
-    # Emphasis or code-span delimiters around ids in U-001/**U-002** are formatting,
-    # and ids joined by slashes alone (U-001/, /U-002 beside a code span) are a list.
+    # Emphasis or code-span delimiters around ids in U-001/**U-002** are formatting.
     token = STYLED_ID.sub(lambda m: m[1] or m[2], token.rstrip(".!?:")).strip("[]{}*_~")
     token = re.sub(r"(U-[0-9]{3})\.(?=[A-Z][a-z])", r"\1 ", token)  # U-001.Then is a sentence; U-001.md a file.
-    if SLASHED_IDS.fullmatch(token):
-        return False
     token = FINDING_LIST.sub("", token)
     return ("/" in token or "\\" in token
             # A dot after a dot is a range (U-001..U-003), not an extension.
@@ -1203,7 +1203,10 @@ def _rewrite_prose(value, mapping):
             literal_spans.append((match.start(), match.end()))
         elif ((match["path"] is not None and _source_token(match["path"]))
               or (match["token"] is not None and _source_token(match["token"]))):
-            source_spans.append(match.span())
+            token, (left, right) = match["path"] or match["token"], match.span()
+            if not ((re.fullmatch(r"/U-[0-9]{3}", token) and ID_CODE_BEFORE.search(value, max(0, left - 40), left))
+                    or (re.fullmatch(r"U-[0-9]{3}/", token) and ID_CODE_AFTER.match(value, right))):
+                source_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)
     emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)

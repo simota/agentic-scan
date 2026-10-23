@@ -1570,5 +1570,24 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual(data["physical_properties"], [{"property": "left", "count": 1, "locations": ["d.css:3"]}])
 
 
+    def test_indented_syntax_and_token_folders_after_round_eight(self):
+        # In indented Sass and Stylus a line ends its declaration; colonless lines are not values.
+        data = self.scan({"btn.sass": ".btn\n  padding: 4px 8px\n  margin: 12px\n  +size(40px)\n  font-size: 14px\n",
+                          "b.styl": ".b\n  margin: 6px\n  font-size 30px\n  line-height 22px\n",
+                          # CSS still joins a value wrapped onto whole later lines, never part of one.
+                          "c.css": ".c { margin:\n  10px\n  20px;\n  padding: 4px\n  6px; gap: 30px }\n",
+                          "V.vue": "<template><p>x</p></template>\n<style lang=\"sass\">\n.v\n  padding: 5px\n"
+                                   "  margin: 14px\n</style>\n<style>\n.w { margin:\n  16px; }\n</style>\n"})
+        self.assertEqual(sorted((r["value"], sorted(r["locations"])) for r in data["spacing"]), sorted([
+            ("10px", ["c.css:1"]), ("12px", ["btn.sass:3"]), ("20px", ["c.css:1"]), ("30px", ["c.css:5"]),
+            ("14px", ["V.vue:5"]), ("16px", ["V.vue:8"]), ("4px", ["btn.sass:2", "c.css:4"]), ("5px", ["V.vue:4"]),
+            ("6px", ["b.styl:2", "c.css:4"]), ("8px", ["btn.sass:2"])]))
+        # Folder-named token sources are style or data files, or the folder's index module.
+        data = self.scan({"src/theme/index.ts": "export const t = {};\n",
+                          "src/tokens/colors.json": "{}\n",
+                          "src/auth/tokens/refresh.ts": "export const r = 1;\n",
+                          "src/components/theme/ThemeToggle.tsx": "export const T = () => <b />;\n"})
+        self.assertEqual(sorted(t["path"] for t in data["token_sources"]), ["src/theme/index.ts", "src/tokens/colors.json"])
+
 if __name__ == "__main__":
     unittest.main()

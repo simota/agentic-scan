@@ -143,7 +143,9 @@ still follow that Python version's Unicode database.
 For example, if `U-001` becomes `U-003` and `U-002` becomes `U-001`,
 `Fix U-001 to U-002` becomes `Fix U-003, U-001`. A range containing a missing id
 is refused when any id in that range moves; replace it with an explicit list
-of existing finding ids and retry. Ranges whose ids do not move stay unchanged.
+of existing finding ids and retry. Ranges whose ids do not move stay unchanged,
+unless one of their missing ids is another finding's new id, which is refused
+for the same reason as the single reference below.
 A single reference to an id no finding holds is likewise refused when another
 finding moves to that id, since it would silently come to name that finding;
 one nothing moves to stays as written.

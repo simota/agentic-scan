@@ -470,7 +470,6 @@ def check_findings(data, flow_ids=None, ordered=True):
     return data
 
 
-FINDING_REF = re.compile(r"(?<![A-Za-z0-9_])U-[0-9]{3}(?![A-Za-z0-9_])")
 FINDING_RANGE = re.compile(
     r"(?<![A-Za-z0-9_])(?P<range_style>\*{1,3}|_{1,3}|~~|)"
     r"(?P<first_style>\*{1,3}|_{1,3}|~~|)(?P<first_ticks>`+)?"
@@ -1043,6 +1042,12 @@ def _rewrite_prose(value, mapping):
         step = 1 if first <= last else -1
         old_ids = [f"U-{n:03d}" for n in range(first, last + step, step)]
         if not any(mapping.get(fid, fid) != fid for fid in old_ids):
+            # As for a single reference: a missing id another finding moves onto would come to name it.
+            stale = next((fid for fid in old_ids if fid not in mapping and fid in targets), None)
+            if stale:
+                raise RecordError(f"finding range {source!r} includes {stale}, which names no finding, and "
+                                  f"renumbering moves another finding to {stale}; replace the range with an "
+                                  "explicit list of existing finding ids before renumbering")
             return None
         missing = next((fid for fid in old_ids if fid not in mapping), None)
         if missing:

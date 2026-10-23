@@ -50,11 +50,15 @@ from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, fin
                     sub_references, write_json_atomic)
 from redaction import CREDENTIAL  # noqa: E402
 
+# The line iac_scan.py adds to limitations when a rescan reopens a record.
+RESCAN_NOTE = re.compile(r"(?:F-[0-9]{3,}|AP-[0-9]{2,}): Baseline references removed by rescan: ")
+
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
 OWNED = {"schema_version", "inventory"}
-FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition")
+FINDING_PROSE = ("title", "actor", "path", "contrast", "impact", "fix", "regression", "detail", "condition",
+                 "rule")
 PAYLOAD = re.compile(
     # Narrow shapes only: relative module paths (../../modules/app) and
     # quoted names joined by "and"/"or" are ordinary infrastructure prose.
@@ -216,7 +220,12 @@ def payload_problems(record, name):
 
 def apply(record, fragment):
     if "meta" in fragment:
-        record.setdefault("meta", {}).update(copy.deepcopy(fragment["meta"]))
+        meta = record.setdefault("meta", {})
+        for field, value in fragment["meta"].items():
+            if value is None:
+                meta.pop(field, None)  # null removes a stale key
+            else:
+                meta[field] = copy.deepcopy(value)
     for key in RECORDS:
         current = record.setdefault(key, [])
         index = {r.get("id"): r for r in current if isinstance(r, dict)}
@@ -292,6 +301,7 @@ def record_strings(record):
 def remove(findings_path, ids):
     path = Path(findings_path)
     record = render.load_record(path)
+    removed = []
     for rid in ids:
         if not (render.F_ID.match(rid) or render.AP_ID.match(rid)):
             raise Refused(f"{rid}: only F-* findings and AP-* attack paths can be removed; "
@@ -305,13 +315,30 @@ def remove(findings_path, ids):
         for other in record.get(owner, []):
             if isinstance(other, dict) and isinstance(other.get(link), list) and rid in other[link]:
                 other[link] = [x for x in other[link] if x != rid]
-        # Prose mentioning the removed ID would later name whichever record
-        # takes its number; make the author reword it first.
-        pattern = re.compile(ID_BEFORE + re.escape(rid) + ID_AFTER)
-        mentions = sorted({where for where, text in record_strings(record) if find_references(pattern, text)})
-        if mentions:
-            raise Refused(f"{rid} is still mentioned in {', '.join(mentions)}; reword those fields "
-                          "(merge a fragment) before removing it")
+        removed.append(rid)
+    # The rescan note iac_scan.py wrote about a removed record goes with it;
+    # no command could reword it, and it describes nothing that remains.
+    # Another record's rescan note that names a removed one as its reason
+    # ("supporting evidence for F-001") is reworded here, since only tools write it.
+    pattern = re.compile(ID_BEFORE + "(?:" + "|".join(map(re.escape, removed)) + ")" + ID_AFTER)
+    if isinstance(record.get("limitations"), list):
+        notes = tuple(f"{rid}: Baseline references removed by rescan: " for rid in removed)
+        record["limitations"] = [
+            sub_references(pattern, line, lambda m: "a removed finding" if m.group().startswith("F-")
+                           else "a removed attack path") if isinstance(line, str) and RESCAN_NOTE.match(line)
+            else line
+            for line in record["limitations"] if not (isinstance(line, str) and line.startswith(notes))]
+    # Prose mentioning a removed ID would later name whichever record takes
+    # its number; make the author reword it first. Records removed in the same
+    # call no longer count, so the order of the IDs does not matter.
+    mentions = {}
+    for where, text in record_strings(record) if removed else ():
+        for m in find_references(pattern, text):
+            mentions.setdefault(m.group(), set()).add(where)
+    if mentions:
+        raise Refused("; ".join(f"{rid} is still mentioned in {', '.join(sorted(mentions[rid]))}"
+                                for rid in removed if rid in mentions)
+                      + "; reword those fields (merge a fragment) before removing it")
     render.validate(record, partial=True)
     write_json_atomic(path, record)
     return record

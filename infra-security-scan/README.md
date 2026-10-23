@@ -56,8 +56,11 @@ baseline                perspectives         └─ chat summary
   — CloudFormation YAML inventories resource definitions under `Resources`,
   excluding parameter types and embedded template text; the JSON baseline
   rules also apply when the template parses within the YAML subset
-  (long-form intrinsics such as `{"Ref": X}`). Templates using short-form tags
-  (`!Ref`, `!Sub`) are inventoried and listed in `not_run`
+  (long-form intrinsics such as `{"Ref": X}`, and short-form tags such as `!Ref` and
+  `!Sub` read as those long forms); a template outside the subset is inventoried
+  and listed in `not_run`. A JSON template saved
+  as `.yaml` is read as JSON; a policy document given as a JSON string is read,
+  and one computed by an intrinsic (`Fn::If`, a block scalar) is listed in `not_run`
   — Terraform JSON (`*.tf.json`), unreadable, binary and deeply nested inputs
   are listed in `not_run`; UTF-16/32 exports with a BOM are read
   — on rescan, an `I-*` verdict follows its finding when the rule, file and

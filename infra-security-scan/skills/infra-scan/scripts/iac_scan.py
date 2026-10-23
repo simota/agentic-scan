@@ -54,8 +54,8 @@ from urllib.parse import unquote as url_unquote
 
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BASELINE_REFERENCE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE, has_symlink_parent,
-                    json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
+from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
+                    has_symlink_parent, json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
                     write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
@@ -757,7 +757,28 @@ def _norm_principal(kind, raw_val):
     return (norm_kind, val)
 
 
-def norm_statements(doc, raw=""):
+def github_federation(raw, providers=frozenset()):
+    """Whether the source text of an unresolved Federated principal names GitHub's
+    OIDC provider: the issuer in an interpolated ARN, or a reference to an
+    aws_iam_openid_connect_provider whose url is GitHub's (providers) or whose
+    name says so."""
+    if ":oidc-provider/" + GITHUB_ISSUER in raw:
+        return True
+    refs = re.findall(r"(?:data\.)?aws_iam_openid_connect_provider\.[\w-]+", raw)
+    return bool(refs) and ("github" in raw.lower() or GITHUB_ISSUER in raw or any(r in providers for r in refs))
+
+
+def github_claim(key):
+    """'sub' or 'aud' for a GitHub (or GitHub Enterprise issuer) token claim key, else None."""
+    if not isinstance(key, str):
+        return None
+    issuer, _, claim = key.lower().removeprefix("https://").rpartition(":")
+    if issuer == GITHUB_ISSUER or issuer.startswith(GITHUB_ISSUER + "/"):
+        return claim
+    return None
+
+
+def norm_statements(doc, raw="", github_providers=frozenset()):
     if not isinstance(doc, dict):
         return None
     sts = doc.get("Statement")
@@ -777,8 +798,7 @@ def norm_statements(doc, raw=""):
             for kind, ids in p.items():
                 for x in aslist(ids):
                     nk, nv = _norm_principal(kind, x)
-                    if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw and (
-                            "github" in raw.lower() or GITHUB_ISSUER in raw):
+                    if nk == "Federated" and nv is UNKNOWN and github_federation(raw, github_providers):
                         nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
                     principals.append((nk, nv))
         elif p is not None:
@@ -808,7 +828,7 @@ def norm_statements(doc, raw=""):
     return out
 
 
-def doc_statements(view):
+def doc_statements(view, github_providers=frozenset()):
     """Statements of a data "aws_iam_policy_document" block."""
     # Composition can introduce statements or replace local ones by Sid. Until
     # that merge is evaluated, even literal local statements are not final.
@@ -828,8 +848,7 @@ def doc_statements(view):
             ptype = p.get("type")
             for x in aslist(p.get("identifiers")):
                 nk, nv = _norm_principal(ptype, x)
-                if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw_ids and (
-                        "github" in raw_ids.lower() or GITHUB_ISSUER in raw_ids):
+                if nk == "Federated" and nv is UNKNOWN and github_federation(raw_ids, github_providers):
                     nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
                 principals.append((nk, nv))
         if st.blocks("not_principals"):
@@ -851,6 +870,18 @@ def each_values(for_each, raw):
     if isinstance(for_each, dict):
         return list(for_each.keys() if raw.strip() == "each.key" else for_each.values())
     return aslist(for_each)
+
+
+def each_ports(view):
+    """[(from_port, to_port)]: the rule's own pair, or one per for_each element
+    when both ports are each.value (or each.key) over a literal collection."""
+    lo, hi = view.get("from_port"), view.get("to_port")
+    raw = (view.raw("from_port") or "").strip()
+    for_each = view.get("for_each")
+    if lo is UNKNOWN and raw in ("each.value", "each.key") and (view.raw("to_port") or "").strip() == raw \
+            and isinstance(for_each, (list, dict)):
+        return [(port, port) for port in each_values(for_each, raw)] or [(lo, hi)]
+    return [(lo, hi)]
 
 
 def lower_strs(values):
@@ -910,6 +941,8 @@ class Scan:
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
         self.tf_dirs = {}
+        # dir: addresses of aws_iam_openid_connect_provider resources and data sources for GitHub's issuer
+        self.github_providers = {}
 
     def hit(self, rule, res, line, detail, severity=None, strong=False):
         line = line or res.line
@@ -982,6 +1015,10 @@ class Scan:
         ports = sensitive_ports(proto, lo, hi)
         if ports:
             self.hit(rule, res, line, f"ingress from {open_from[0]} to {', '.join(ports[:5])}")
+        elif proto is UNKNOWN or (str(to_int(proto) if to_int(proto) is not None else proto).lower() in ("tcp", "6")
+                                  and UNKNOWN in (lo, hi)):
+            self.not_run.append(f"{rule}: ingress from {open_from[0]} with unresolved protocol or ports; check not "
+                                f"run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
 
     def statements(self, res, attr, view=None):
         view = view or res.view
@@ -999,8 +1036,17 @@ class Scan:
                                         f"{attr} checks not run: {getattr(line, 'file', res.file)}:{line} "
                                         f"({res.address})")
                 return None
+        providers = self.github_providers.get(res.dir, frozenset())
         if isinstance(value, dict):
-            return norm_statements(value, raw=raw)
+            statements = norm_statements(value, raw=raw, github_providers=providers)
+            listed = value.get("Statement")
+            # Statement = concat(local.base, [...]) or [local.admin]: what was not read was not checked.
+            if "Statement" in value and (statements is None or (
+                    isinstance(listed, list) and not all(isinstance(st, dict) for st in listed))):
+                line = view.line(attr)
+                self.not_run.append(f"policy statements not resolved from the inputs; {attr} checks not run "
+                                    f"on them: {getattr(line, 'file', res.file)}:{line} ({res.address})")
+            return statements
         if raw:
             m = DOC_REF.match(raw.strip())
             if m:
@@ -1013,8 +1059,10 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
-                if attr == "assume_role_policy" and "aws_iam_openid_connect_provider" in raw and (
-                        "github" in raw.lower() or GITHUB_ISSUER in raw) and "condition" not in raw.lower():
+                # Only when the document itself is written in raw (its Statement is there):
+                # templatefile(), replace(local.tpl, ...) and the like keep their conditions elsewhere.
+                if attr == "assume_role_policy" and github_federation(raw, providers) and \
+                        "condition" not in raw.lower() and re.search(r"\bStatement\b", raw):
                     return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
                              "not_action": False, "resources": ["*"], "not_resource": False,
                              "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
@@ -1068,6 +1116,7 @@ class Scan:
         open_from = world_cidrs(ranges)
         if not open_from:
             return
+        unresolved = False
         for proto, ports in allows:
             if isinstance(proto, (str, int)) and not isinstance(proto, bool):
                 proto = str(proto).lower()
@@ -1088,6 +1137,10 @@ class Scan:
                 ordered = sorted(set(found), key=lambda p: int(p.split("/")[0]) if p.split("/")[0].isdigit() else 0)
                 self.hit("GCP-NET-001", res, line, f"ingress from {open_from[0]} to {', '.join(ordered[:5])}")
                 return
+            unresolved = unresolved or contains_unknown(ports)
+        if unresolved or any(proto is UNKNOWN for proto, _ in allows):
+            self.not_run.append(f"GCP-NET-001: ingress from {open_from[0]} with unresolved protocol or ports; check "
+                                f"not run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
 
 
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
@@ -1109,11 +1162,11 @@ def _condition_narrows(op, key, vals):
     if not isinstance(op, str):
         return True
     op_base = op.lower()
-    for prefix in ("forallvalues:", "foranyvalue:"):
-        if op_base.startswith(prefix):
-            op_base = op_base[len(prefix):]
-    if op_base.endswith("ifexists"):
+    # ForAllValues is true when the request lacks the key (aws:PrincipalOrgID
+    # for a caller outside any organization, or an anonymous one), like IfExists.
+    if op_base.startswith("forallvalues:") or op_base.endswith("ifexists"):
         return False
+    op_base = op_base.removeprefix("foranyvalue:")
     if not vals or all(v == "" or v == [] for v in vals):
         return False
     if op_base in ("stringnotequals", "stringnotequalsignorecase", "stringnotlike",
@@ -1124,9 +1177,42 @@ def _condition_narrows(op, key, vals):
     if op_base == "null" and any(v is True or (isinstance(v, str) and v.lower() == "true") for v in vals):
         return False
     if op_base in ("stringlike", "stringlikeignorecase", "arnlike") and vals and all(
-            isinstance(v, str) and v.strip("*") in ("", "arn:", "arn:aws:") for v in vals):
+            isinstance(v, str) and (v.strip("*") in ("", "arn:", "arn:aws:") or any_owner(key, v)) for v in vals):
         return False
     return True
+
+
+# Keys naming the caller's or the source's account or organization, and their ARNs.
+OWNER_KEYS = {"aws:principalorgid", "aws:principalaccount", "aws:sourceaccount", "aws:sourceowner",
+              "aws:sourceorgid"}
+OWNER_ARN_KEYS = {"aws:principalarn", "aws:sourcearn"}
+# S3 resource types whose ARN names an account (arn:aws:s3:region:account:accesspoint/name).
+S3_ACCOUNT_RESOURCES = {"accesspoint", "job", "storage-lens", "storage-lens-group", "access-grants"}
+
+
+def any_owner(key, value):
+    """A like-pattern any account or organization can satisfy: o-*, or an ARN
+    whose account is a wildcard (anyone can create role/deployer in their own)."""
+    key = key.lower()
+    if key in OWNER_KEYS:
+        return value.strip("*?") in ("", "o-")
+    if key in OWNER_ARN_KEYS:
+        parts = value.split(":", 5)
+        if len(parts) < 6:
+            return True
+        account, wildcard = parts[4], (lambda text: any(c in text for c in "*?"))
+        if parts[2] == "s3":
+            if account and not wildcard(account):
+                return False  # that account's access points and jobs
+            # Buckets carry no account (arn:aws:s3:::bucket/key; a * account matches that empty
+            # one) and their names are global: only a wildcard in the name lets another account
+            # match. Access points and jobs take a wildcard account from anyone.
+            bucket = parts[5].split("/", 1)[0]
+            if account and bucket in S3_ACCOUNT_RESOURCES:
+                return True
+            return not bucket or wildcard(bucket)
+        return wildcard(account)
+    return False
 
 
 def narrowing(conditions):
@@ -1199,13 +1285,13 @@ def github_trust_gap(st):
     allows_assume = matches_action(st, "sts:AssumeRoleWithWebIdentity")
     if allows_assume is False:
         return None
+    # GitHub Enterprise Cloud issuers append the enterprise: <issuer>/<slug>.
     fed = any(k == "Federated" and isinstance(x, str) and (
-              x.removeprefix("https://").rstrip("/") == GITHUB_ISSUER or
-              x.rstrip("/").endswith(":oidc-provider/" + GITHUB_ISSUER) or
+              github_claim(x.removeprefix("https://").rstrip("/") + ":") == "" or
+              github_claim(x.rstrip("/").rpartition(":oidc-provider/")[2] + ":") == "" or
               ("aws_iam_openid_connect_provider" in x and ("github" in x.lower() or GITHUB_ISSUER in x)))
               for k, x in st["principals"])
-    keyed = any(isinstance(key, str) and key.lower().removeprefix("https://").startswith(GITHUB_ISSUER + ":")
-                for _, key, _ in st["conditions"])
+    keyed = any(github_claim(key) is not None for _, key, _ in st["conditions"])
     if not fed and keyed and any((k == "Federated" and not isinstance(x, str)) or k is UNKNOWN
                                  for k, x in st["principals"]):
         # Federated = aws_iam_openid_connect_provider.github.arn: the provider is
@@ -1217,9 +1303,9 @@ def github_trust_gap(st):
     for op, key, vals in st["conditions"]:
         if not isinstance(key, str):
             unsupported = True
-        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":sub":
+        elif github_claim(key) == "sub":
             subs.append((op, vals))
-        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":aud":
+        elif github_claim(key) == "aud":
             if isinstance(op, str) and (op.lower() in GITHUB_WEAK_OPS or op.lower().endswith("ifexists")):
                 weak_aud = True
         else:
@@ -1477,12 +1563,13 @@ def check_tf(scan, res):
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
             line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
-            scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
-                         v.get("protocol"), v.get("from_port"), v.get("to_port"))
+            for lo, hi in each_ports(v):
+                scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
+                             v.get("protocol"), lo, hi)
     elif t == "aws_vpc_security_group_ingress_rule":
         line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
-        scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
-                     v.get("from_port"), v.get("to_port"))
+        for lo, hi in each_ports(v):
+            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi)
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.
@@ -1615,11 +1702,19 @@ def check_tf(scan, res):
         for cfg in v.blocks("vpc_config"):
             public = tf_bool(cfg.get("endpoint_public_access"))
             cidrs = cfg.get("public_access_cidrs")
-            open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
+            # The provider sends public_access_cidrs only when non-empty; the API default is 0.0.0.0/0.
+            open_from = world_cidrs(["0.0.0.0/0"] if cidrs in (None, []) else cidrs)
             if public in (True, None) and open_from:
                 scan.hit("AWS-EKS-001", res, cfg.line(), f"public endpoint open to {open_from[0]}")
     elif t == "google_compute_firewall":
-        allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
+        allows = []
+        for a in v.blocks("allow"):
+            # for_each = toset(["22", "3389"]) with ports = [each.value]: one rule per element.
+            raw = (a.raw("ports") or "").replace(" ", "")
+            if raw in ("[each.value]", "[each.key]") and isinstance(v.get("for_each"), (list, dict)):
+                allows.append((a.get("protocol"), each_values(v.get("for_each"), raw.strip("[]"))))
+            else:
+                allows.append((a.get("protocol"), a.get("ports")))
         scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
                       v.get("source_ranges"), allows, (v.get("source_tags"), v.get("source_service_accounts")))
     elif t in ("google_compute_firewall_policy_rule", "google_compute_network_firewall_policy_rule",
@@ -1638,6 +1733,10 @@ def check_tf(scan, res):
         # (service-${number}@gcp-sa-...) is judged on its raw text, unless the
         # raw expression branches or combines multiple values.
         raw = (v.raw("member") or "") if hasattr(v, "raw") and v.get("member") is not None else ""
+        if not raw and hasattr(v, "raw"):
+            # members = ["serviceAccount:service-${...}@gcp-sa-...."]: one templated member, read the same way.
+            one = re.fullmatch(r'\s*\[\s*("[^"]*")\s*,?\s*\]\s*', v.raw("members") or "")
+            raw = one.group(1) if one else ""
         if members == [UNKNOWN] and raw.strip() in ("each.value", "each.key"):
             fe = v.get("for_each")
             if isinstance(fe, (list, dict)):
@@ -2034,6 +2133,17 @@ def handle_terraform(scan, parsed):
         return DictView(UNKNOWN, block.line) if block in uncertain else HclView(block, unknown_key)
 
     for rel, blocks in parsed:
+        for b in blocks:
+            if b.type in ("resource", "data") and len(b.labels) == 2 and \
+                    b.labels[0] == "aws_iam_openid_connect_provider":
+                try:
+                    url = HclView(b).get("url")
+                except RecursionError:
+                    continue
+                if isinstance(url, str) and github_claim(url.rstrip("/") + ":") == "":
+                    address = ("data." if b.type == "data" else "") + ".".join(b.labels)
+                    scan.github_providers.setdefault(str(Path(rel).parent), set()).add(address)
+    for rel, blocks in parsed:
         d = str(Path(rel).parent)
         pending = list(reversed(blocks))
         while pending:
@@ -2062,7 +2172,7 @@ def handle_terraform(scan, parsed):
                                         f"{getattr(b.line, 'file', rel)}:{b.line}")
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
                 try:
-                    statements = doc_statements(view_of(b, rel))
+                    statements = doc_statements(view_of(b, rel), scan.github_providers.get(d, frozenset()))
                 except RecursionError:
                     statements = UNKNOWN
                 scan.policy_docs[(d, b.labels[1])] = statements
@@ -2599,7 +2709,11 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         cfn_secrets(scan, res, props, line)
         if type_ == "AWS::EC2::SecurityGroup":
             for rule in aslist(props.get("SecurityGroupIngress")):
-                if isinstance(rule, dict):
+                if intrinsic_only(rule) or rule is UNKNOWN:
+                    # - !If [IsDev, {...0.0.0.0/0...}, !Ref AWS::NoValue]: a rule in some deployments.
+                    scan.not_run.append(f"AWS-NET-001: ingress rule is not a literal; check not run: "
+                                        f"{res.file}:{line} ({res.address})")
+                elif isinstance(rule, dict):
                     cfn_ingress(scan, res, rule)
         elif type_ == "AWS::EC2::SecurityGroupIngress":
             cfn_ingress(scan, res, props)
@@ -2618,20 +2732,20 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 if off:
                     scan.hit("AWS-S3-002", res, line, "off: " + ", ".join(off))
         elif type_ == "AWS::S3::BucketPolicy":
-            scan.resource_policy(res, norm_statements(props.get("PolicyDocument")), line)
+            scan.resource_policy(res, cfn_statements(scan, res, props.get("PolicyDocument"), line), line)
         elif type_ in ("AWS::IAM::Policy", "AWS::IAM::ManagedPolicy", "AWS::IAM::RolePolicy",
                        "AWS::IAM::UserPolicy", "AWS::IAM::GroupPolicy"):
-            scan.identity_policy(res, norm_statements(props.get("PolicyDocument")), line)
+            scan.identity_policy(res, cfn_statements(scan, res, props.get("PolicyDocument"), line), line)
         elif type_ == "AWS::IAM::Role":
-            scan.trust_policy(res, norm_statements(props.get("AssumeRolePolicyDocument")), line)
+            scan.trust_policy(res, cfn_statements(scan, res, props.get("AssumeRolePolicyDocument"), line), line)
             for p in aslist(props.get("Policies")):
                 if isinstance(p, dict):
-                    scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
+                    scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
         elif type_ in ("AWS::IAM::User", "AWS::IAM::Group"):
             for p in aslist(props.get("Policies")):
                 if isinstance(p, dict):
-                    scan.identity_policy(res, norm_statements(p.get("PolicyDocument")), line)
+                    scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
         elif type_ == "AWS::IAM::AccessKey":
             scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
@@ -2682,7 +2796,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 policies = aslist(props.get("Policies"))
                 for p in policies:
                     if isinstance(p, dict) and "Statement" in p:
-                        scan.identity_policy(res, norm_statements(p), line)
+                        scan.identity_policy(res, cfn_statements(scan, res, p, line), line)
                 # A bare name is a managed policy in the aws partition.
                 if any(p == "AdministratorAccess" or (isinstance(cfn_string(p), str) and ADMIN_ARN.search(cfn_string(p)))
                        for p in policies):
@@ -2701,8 +2815,8 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
 def cfn_shared(scan, res, type_, props, line):
     """CloudFormation counterparts of check_tf_shared."""
     key = CFN_RESOURCE_POLICIES.get(type_)
-    if key and isinstance(props.get(key), dict) and not (type_.endswith("::Domain") and props.get("VPCOptions")):
-        scan.resource_policy(res, norm_statements(props[key]), line)
+    if key and props.get(key) is not None and not (type_.endswith("::Domain") and props.get("VPCOptions")):
+        scan.resource_policy(res, cfn_statements(scan, res, props[key], line), line)
     if type_ in CFN_PUBLIC_DATA and props.get("PubliclyAccessible") in (True, "true"):
         scan.hit("AWS-RDS-001", res, line, "PubliclyAccessible = true")
     if type_ == "AWS::CloudFront::Distribution":
@@ -2713,6 +2827,12 @@ def cfn_shared(scan, res, type_, props, line):
         cert = config.get("ViewerCertificate") if isinstance(config.get("ViewerCertificate"), dict) else {}
         if cert.get("MinimumProtocolVersion") in OLD_TLS and cert.get("CloudFrontDefaultCertificate") not in (True, "true"):
             scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
+
+
+def intrinsic_only(value):
+    """A value that is wholly an intrinsic call: a one-key object such as {"Fn::If": ...}.
+    A policy statement's "Condition" key does not make the statement one."""
+    return isinstance(value, dict) and len(value) == 1 and is_intrinsic(value)
 
 
 def is_intrinsic(value):
@@ -2758,7 +2878,8 @@ def cfn_instance(scan, res, type_, props, line):
         # Without its own MetadataOptions an instance takes them from a launch template.
         template = props.get("LaunchTemplate")
         ref = template.get("LaunchTemplateId") if isinstance(template, dict) else None
-        if isinstance(ref, dict) and ref.get("Ref") in scan.cfn_checked_templates.get(res.file, ()):
+        if isinstance(ref, dict) and isinstance(ref.get("Ref"), str) and \
+                ref["Ref"] in scan.cfn_checked_templates.get(res.file, ()):
             pass  # a launch template in this template, checked on its own
         elif "LaunchTemplate" in props:
             scan.not_run.append("AWS-EC2-001: metadata options come from a launch template; check the "
@@ -2849,9 +2970,29 @@ def cfn_admin(scan, res, props, line):
         scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
 
 
+def cfn_statements(scan, res, document, line):
+    """Statements of a CloudFormation policy document: an object, or a JSON string
+    (Json-typed properties accept both). A document or statement computed by an
+    intrinsic (Fn::If, Fn::Sub, a block scalar) is named in not_run, not skipped."""
+    if isinstance(document, str):
+        try:
+            document = json.loads(document, object_pairs_hook=unique_object)
+        except ValueError:
+            document = UNKNOWN
+    listed = document.get("Statement") if isinstance(document, dict) and not intrinsic_only(document) else UNKNOWN
+    if isinstance(listed, dict):
+        listed = [listed]
+    if not isinstance(listed, list) or any(intrinsic_only(st) or not isinstance(st, dict) for st in listed):
+        scan.not_run.append(f"policy document or statement is not a literal; policy checks not run on it: "
+                            f"{res.file}:{line} ({res.address})")
+    return norm_statements(document) if isinstance(document, dict) else None
+
+
 def cfn_ingress(scan, res, rule):
-    scan.ingress(res, res.line, [rule.get("CidrIp"), rule.get("CidrIpv6")], rule.get("IpProtocol"),
-                 rule.get("FromPort"), rule.get("ToPort"))
+    def value(key):  # FromPort: !Ref Port is unresolved, as a Terraform unknown is
+        return UNKNOWN if is_intrinsic(rule.get(key)) else rule.get(key)
+    scan.ingress(res, res.line, [rule.get("CidrIp"), rule.get("CidrIpv6")], value("IpProtocol"),
+                 value("FromPort"), value("ToPort"))
 
 
 def is_gcp_firewall_snapshot(value):
@@ -3098,6 +3239,9 @@ class _YamlMap(dict):
         self[key], self.lines[key] = value, line
 
 
+YAML_TAGGED = re.compile(r"(?:^|[ \t\[{,])![A-Za-z][A-Za-z0-9]*[ \t]+\Z")
+
+
 def _yaml_marks(text):
     """Unquoted characters with their flow nesting depth."""
     quote, depth, previous, i = None, 0, "", 0
@@ -3112,9 +3256,9 @@ def _yaml_marks(text):
                     i += 2
                     continue
                 quote = None
-        elif c in "\"'" and previous in ("", ":", "[", "{", ",", "-") and (
-                i == 0 or text[i - 1] in " \t[{,"):  # a quote opens only at a token start
-            quote = c
+        elif c in "\"'" and (i == 0 or text[i - 1] in " \t[{,") and (
+                previous in ("", ":", "[", "{", ",", "-") or YAML_TAGGED.search(text, max(0, i - 64), i)):
+            quote = c  # a quote opens only at a token start, or after a tag (!Sub "...")
         else:
             yield i, c, depth
             depth += (c in "[{") - (c in "]}")
@@ -3224,8 +3368,10 @@ class _YamlFlow:
                 if not self.take(","):
                     raise ValueError("multiline or malformed flow collection")
             return result
+        # A plain key ends at ": " (or ":" before a flow indicator); Fn::ImportValue is one key.
         while self.i < len(self.text) and not (
-                (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":")):
+                (flow and self.text[self.i] in ",]}") or (key and self.text[self.i] == ":" and (
+                    self.i + 1 == len(self.text) or self.text[self.i + 1] in " \t,]}"))):
             self.i += 1
         word = self.text[start:self.i].strip(" \t")
         if not word or word[0] in "&*!%@?|>" + chr(96) or re.search(r":\s", word) or (flow and word.endswith(":")):
@@ -3807,6 +3953,10 @@ NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|
                 # Neither Password=... nor URI userinfo (postgres://user:pass@host).
                 ("connection_string",): re.compile(r"^(?!.*\b(?:password|pwd)\s*=)(?!.*://[^/@\s]*:[^/@\s]*@)",
                                                    re.IGNORECASE)}
+# AWS API output fields named *Token that are idempotency or pagination
+# cursors (describe-instances ClientToken, --max-items NextToken), not secrets.
+API_CURSOR_FIELDS = {"clienttoken", "nexttoken", "continuationtoken", "nextcontinuationtoken", "paginationtoken",
+                     "idempotencytoken", "startingtoken"}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
@@ -3987,6 +4137,8 @@ def scan_secrets(scan, rel, text, kind):
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
                 continue
+            if kind == "snapshot" and m.group(1).lower() in API_CURSOR_FIELDS:
+                continue
             exempt = next((p for keys, p in NOT_A_SECRET.items() if m.group(1).lower().endswith(keys)), None)
             if exempt and exempt.search(m.group(2)):
                 continue
@@ -4001,6 +4153,14 @@ def scan_secrets(scan, rel, text, kind):
 
 
 # ---------------------------------------------------------------- walking
+
+def is_json(text):
+    try:
+        json.loads(text)
+    except (ValueError, RecursionError):
+        return False
+    return True
+
 
 def classify_json(doc):
     if isinstance(doc, dict) and "planned_values" in doc:
@@ -4200,7 +4360,9 @@ def run(root, snapshots=()):
         elif terragrunt:
             kind = "terragrunt"
             handle_terragrunt(scan, rel, text)
-        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")):
+        elif lname.endswith(".json") or (lname.endswith(".template") and text.lstrip().startswith("{")) or (
+                lname.endswith((".yaml", ".yml")) and text.lstrip().startswith("{") and is_json(text)):
+            # JSON is YAML: a JSON template saved as .yaml is read as JSON.
             try:
                 doc = json.loads(text, object_pairs_hook=unique_object)
             except RecursionError:
@@ -4363,7 +4525,7 @@ def remap_baseline_references(data, old, new):
 
     # Every other mention of a baseline ID follows it too. F-* evidence is
     # handled below, where a lost reference also reopens the finding; the
-    # limitations iac_scan.py writes name earlier IDs on purpose.
+    # carry-over notes iac_scan.py writes name earlier IDs on purpose.
     for finding in data.get("findings", []):
         if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
             for key, value in list(finding.items()):
@@ -4373,6 +4535,9 @@ def remap_baseline_references(data, old, new):
     for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
         if isinstance(data.get(key), list):
             data[key] = rewrite_prose(data[key])
+    if isinstance(data.get("limitations"), list):
+        data["limitations"] = [line if isinstance(line, str) and CARRY_NOTE.fullmatch(line) else rewrite_prose(line)
+                               for line in data["limitations"]]
 
     invalidated = set()
     invalidated_paths = {}

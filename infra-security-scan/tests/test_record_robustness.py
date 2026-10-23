@@ -170,8 +170,12 @@ class RecordRobustnessTest(unittest.TestCase):
     def test_dangling_baseline_references(self):
         data = self.record_with(findings=[finding("F-001", fix="root cause of I-999")],
                                 decisions=["I-077の判定は保留"],
-                                limitations=["I-004 (was I-003): triage not carried over"])
-        self.assertEqual(sorted(render.dangling_references(data)), [("F-001.fix", "I-999"), ("decisions", "I-077")])
+                                limitations=["I-004 (was I-003): Valid triage not carried over; affected "
+                                             "resources changed. Recheck this baseline finding.",
+                                             "I-005 is only reachable from the VPN"])
+        # Only the carry-over note iac_scan.py writes may name an earlier scan's IDs.
+        self.assertEqual(sorted(render.dangling_references(data)),
+                         [("F-001.fix", "I-999"), ("decisions", "I-077"), ("limitations", "I-005")])
 
     def test_bidi_controls_are_shown_not_applied(self):
         self.assertEqual(render.esc("a‮b"), "a[U+202E]b")

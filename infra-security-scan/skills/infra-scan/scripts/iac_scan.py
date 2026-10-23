@@ -757,7 +757,28 @@ def _norm_principal(kind, raw_val):
     return (norm_kind, val)
 
 
-def norm_statements(doc, raw=""):
+def github_federation(raw, providers=frozenset()):
+    """Whether the source text of an unresolved Federated principal names GitHub's
+    OIDC provider: the issuer in an interpolated ARN, or a reference to an
+    aws_iam_openid_connect_provider whose url is GitHub's (providers) or whose
+    name says so."""
+    if ":oidc-provider/" + GITHUB_ISSUER in raw:
+        return True
+    refs = re.findall(r"(?:data\.)?aws_iam_openid_connect_provider\.[\w-]+", raw)
+    return bool(refs) and ("github" in raw.lower() or GITHUB_ISSUER in raw or any(r in providers for r in refs))
+
+
+def github_claim(key):
+    """'sub' or 'aud' for a GitHub (or GitHub Enterprise issuer) token claim key, else None."""
+    if not isinstance(key, str):
+        return None
+    issuer, _, claim = key.lower().removeprefix("https://").rpartition(":")
+    if issuer == GITHUB_ISSUER or issuer.startswith(GITHUB_ISSUER + "/"):
+        return claim
+    return None
+
+
+def norm_statements(doc, raw="", github_providers=frozenset()):
     if not isinstance(doc, dict):
         return None
     sts = doc.get("Statement")
@@ -777,8 +798,7 @@ def norm_statements(doc, raw=""):
             for kind, ids in p.items():
                 for x in aslist(ids):
                     nk, nv = _norm_principal(kind, x)
-                    if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw and (
-                            "github" in raw.lower() or GITHUB_ISSUER in raw):
+                    if nk == "Federated" and nv is UNKNOWN and github_federation(raw, github_providers):
                         nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
                     principals.append((nk, nv))
         elif p is not None:
@@ -808,7 +828,7 @@ def norm_statements(doc, raw=""):
     return out
 
 
-def doc_statements(view):
+def doc_statements(view, github_providers=frozenset()):
     """Statements of a data "aws_iam_policy_document" block."""
     # Composition can introduce statements or replace local ones by Sid. Until
     # that merge is evaluated, even literal local statements are not final.
@@ -828,8 +848,7 @@ def doc_statements(view):
             ptype = p.get("type")
             for x in aslist(p.get("identifiers")):
                 nk, nv = _norm_principal(ptype, x)
-                if nk == "Federated" and nv is UNKNOWN and "aws_iam_openid_connect_provider" in raw_ids and (
-                        "github" in raw_ids.lower() or GITHUB_ISSUER in raw_ids):
+                if nk == "Federated" and nv is UNKNOWN and github_federation(raw_ids, github_providers):
                     nv = "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER
                 principals.append((nk, nv))
         if st.blocks("not_principals"):
@@ -851,6 +870,18 @@ def each_values(for_each, raw):
     if isinstance(for_each, dict):
         return list(for_each.keys() if raw.strip() == "each.key" else for_each.values())
     return aslist(for_each)
+
+
+def each_ports(view):
+    """[(from_port, to_port)]: the rule's own pair, or one per for_each element
+    when both ports are each.value (or each.key) over a literal collection."""
+    lo, hi = view.get("from_port"), view.get("to_port")
+    raw = (view.raw("from_port") or "").strip()
+    for_each = view.get("for_each")
+    if lo is UNKNOWN and raw in ("each.value", "each.key") and (view.raw("to_port") or "").strip() == raw \
+            and isinstance(for_each, (list, dict)):
+        return [(port, port) for port in each_values(for_each, raw)] or [(lo, hi)]
+    return [(lo, hi)]
 
 
 def lower_strs(values):
@@ -910,6 +941,8 @@ class Scan:
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
         self.tf_dirs = {}
+        # dir: addresses of aws_iam_openid_connect_provider resources and data sources for GitHub's issuer
+        self.github_providers = {}
 
     def hit(self, rule, res, line, detail, severity=None, strong=False):
         line = line or res.line
@@ -982,6 +1015,10 @@ class Scan:
         ports = sensitive_ports(proto, lo, hi)
         if ports:
             self.hit(rule, res, line, f"ingress from {open_from[0]} to {', '.join(ports[:5])}")
+        elif proto is UNKNOWN or (str(to_int(proto) if to_int(proto) is not None else proto).lower() in ("tcp", "6")
+                                  and UNKNOWN in (lo, hi)):
+            self.not_run.append(f"{rule}: ingress from {open_from[0]} with unresolved protocol or ports; check not "
+                                f"run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
 
     def statements(self, res, attr, view=None):
         view = view or res.view
@@ -999,8 +1036,17 @@ class Scan:
                                         f"{attr} checks not run: {getattr(line, 'file', res.file)}:{line} "
                                         f"({res.address})")
                 return None
+        providers = self.github_providers.get(res.dir, frozenset())
         if isinstance(value, dict):
-            return norm_statements(value, raw=raw)
+            statements = norm_statements(value, raw=raw, github_providers=providers)
+            listed = value.get("Statement")
+            # Statement = concat(local.base, [...]) or [local.admin]: what was not read was not checked.
+            if "Statement" in value and (statements is None or (
+                    isinstance(listed, list) and not all(isinstance(st, dict) for st in listed))):
+                line = view.line(attr)
+                self.not_run.append(f"policy statements not resolved from the inputs; {attr} checks not run "
+                                    f"on them: {getattr(line, 'file', res.file)}:{line} ({res.address})")
+            return statements
         if raw:
             m = DOC_REF.match(raw.strip())
             if m:
@@ -1013,8 +1059,8 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
-                if attr == "assume_role_policy" and "aws_iam_openid_connect_provider" in raw and (
-                        "github" in raw.lower() or GITHUB_ISSUER in raw) and "condition" not in raw.lower():
+                if attr == "assume_role_policy" and github_federation(raw, providers) and \
+                        "condition" not in raw.lower():
                     return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
                              "not_action": False, "resources": ["*"], "not_resource": False,
                              "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
@@ -1068,6 +1114,7 @@ class Scan:
         open_from = world_cidrs(ranges)
         if not open_from:
             return
+        unresolved = False
         for proto, ports in allows:
             if isinstance(proto, (str, int)) and not isinstance(proto, bool):
                 proto = str(proto).lower()
@@ -1088,6 +1135,10 @@ class Scan:
                 ordered = sorted(set(found), key=lambda p: int(p.split("/")[0]) if p.split("/")[0].isdigit() else 0)
                 self.hit("GCP-NET-001", res, line, f"ingress from {open_from[0]} to {', '.join(ordered[:5])}")
                 return
+            unresolved = unresolved or contains_unknown(ports)
+        if unresolved or any(proto is UNKNOWN for proto, _ in allows):
+            self.not_run.append(f"GCP-NET-001: ingress from {open_from[0]} with unresolved protocol or ports; check "
+                                f"not run: {getattr(line, 'file', res.file)}:{line} ({res.address})")
 
 
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
@@ -1109,11 +1160,11 @@ def _condition_narrows(op, key, vals):
     if not isinstance(op, str):
         return True
     op_base = op.lower()
-    for prefix in ("forallvalues:", "foranyvalue:"):
-        if op_base.startswith(prefix):
-            op_base = op_base[len(prefix):]
-    if op_base.endswith("ifexists"):
+    # ForAllValues is true when the request lacks the key (aws:PrincipalOrgID
+    # for a caller outside any organization, or an anonymous one), like IfExists.
+    if op_base.startswith("forallvalues:") or op_base.endswith("ifexists"):
         return False
+    op_base = op_base.removeprefix("foranyvalue:")
     if not vals or all(v == "" or v == [] for v in vals):
         return False
     if op_base in ("stringnotequals", "stringnotequalsignorecase", "stringnotlike",
@@ -1124,9 +1175,27 @@ def _condition_narrows(op, key, vals):
     if op_base == "null" and any(v is True or (isinstance(v, str) and v.lower() == "true") for v in vals):
         return False
     if op_base in ("stringlike", "stringlikeignorecase", "arnlike") and vals and all(
-            isinstance(v, str) and v.strip("*") in ("", "arn:", "arn:aws:") for v in vals):
+            isinstance(v, str) and (v.strip("*") in ("", "arn:", "arn:aws:") or any_owner(key, v)) for v in vals):
         return False
     return True
+
+
+# Keys naming the caller's or the source's account or organization, and their ARNs.
+OWNER_KEYS = {"aws:principalorgid", "aws:principalaccount", "aws:sourceaccount", "aws:sourceowner",
+              "aws:sourceorgid"}
+OWNER_ARN_KEYS = {"aws:principalarn", "aws:sourcearn"}
+
+
+def any_owner(key, value):
+    """A like-pattern any account or organization can satisfy: o-*, or an ARN
+    whose account is a wildcard (anyone can create role/deployer in their own)."""
+    key = key.lower()
+    if key in OWNER_KEYS:
+        return value.strip("*?") in ("", "o-")
+    if key in OWNER_ARN_KEYS:
+        parts = value.split(":")
+        return len(parts) < 6 or any(c in parts[4] for c in "*?") or not parts[4]
+    return False
 
 
 def narrowing(conditions):
@@ -1199,13 +1268,13 @@ def github_trust_gap(st):
     allows_assume = matches_action(st, "sts:AssumeRoleWithWebIdentity")
     if allows_assume is False:
         return None
+    # GitHub Enterprise Cloud issuers append the enterprise: <issuer>/<slug>.
     fed = any(k == "Federated" and isinstance(x, str) and (
-              x.removeprefix("https://").rstrip("/") == GITHUB_ISSUER or
-              x.rstrip("/").endswith(":oidc-provider/" + GITHUB_ISSUER) or
+              github_claim(x.removeprefix("https://").rstrip("/") + ":") == "" or
+              github_claim(x.rstrip("/").rpartition(":oidc-provider/")[2] + ":") == "" or
               ("aws_iam_openid_connect_provider" in x and ("github" in x.lower() or GITHUB_ISSUER in x)))
               for k, x in st["principals"])
-    keyed = any(isinstance(key, str) and key.lower().removeprefix("https://").startswith(GITHUB_ISSUER + ":")
-                for _, key, _ in st["conditions"])
+    keyed = any(github_claim(key) is not None for _, key, _ in st["conditions"])
     if not fed and keyed and any((k == "Federated" and not isinstance(x, str)) or k is UNKNOWN
                                  for k, x in st["principals"]):
         # Federated = aws_iam_openid_connect_provider.github.arn: the provider is
@@ -1217,9 +1286,9 @@ def github_trust_gap(st):
     for op, key, vals in st["conditions"]:
         if not isinstance(key, str):
             unsupported = True
-        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":sub":
+        elif github_claim(key) == "sub":
             subs.append((op, vals))
-        elif key.lower().removeprefix("https://") == GITHUB_ISSUER + ":aud":
+        elif github_claim(key) == "aud":
             if isinstance(op, str) and (op.lower() in GITHUB_WEAK_OPS or op.lower().endswith("ifexists")):
                 weak_aud = True
         else:
@@ -1477,12 +1546,13 @@ def check_tf(scan, res):
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
             line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
-            scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
-                         v.get("protocol"), v.get("from_port"), v.get("to_port"))
+            for lo, hi in each_ports(v):
+                scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
+                             v.get("protocol"), lo, hi)
     elif t == "aws_vpc_security_group_ingress_rule":
         line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
-        scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"),
-                     v.get("from_port"), v.get("to_port"))
+        for lo, hi in each_ports(v):
+            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi)
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.
@@ -1615,11 +1685,19 @@ def check_tf(scan, res):
         for cfg in v.blocks("vpc_config"):
             public = tf_bool(cfg.get("endpoint_public_access"))
             cidrs = cfg.get("public_access_cidrs")
-            open_from = world_cidrs(["0.0.0.0/0"] if cidrs is None else cidrs)
+            # The provider sends public_access_cidrs only when non-empty; the API default is 0.0.0.0/0.
+            open_from = world_cidrs(["0.0.0.0/0"] if cidrs in (None, []) else cidrs)
             if public in (True, None) and open_from:
                 scan.hit("AWS-EKS-001", res, cfg.line(), f"public endpoint open to {open_from[0]}")
     elif t == "google_compute_firewall":
-        allows = [(a.get("protocol"), a.get("ports")) for a in v.blocks("allow")]
+        allows = []
+        for a in v.blocks("allow"):
+            # for_each = toset(["22", "3389"]) with ports = [each.value]: one rule per element.
+            raw = (a.raw("ports") or "").replace(" ", "")
+            if raw in ("[each.value]", "[each.key]") and isinstance(v.get("for_each"), (list, dict)):
+                allows.append((a.get("protocol"), each_values(v.get("for_each"), raw.strip("[]"))))
+            else:
+                allows.append((a.get("protocol"), a.get("ports")))
         scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
                       v.get("source_ranges"), allows, (v.get("source_tags"), v.get("source_service_accounts")))
     elif t in ("google_compute_firewall_policy_rule", "google_compute_network_firewall_policy_rule",
@@ -2034,6 +2112,17 @@ def handle_terraform(scan, parsed):
         return DictView(UNKNOWN, block.line) if block in uncertain else HclView(block, unknown_key)
 
     for rel, blocks in parsed:
+        for b in blocks:
+            if b.type in ("resource", "data") and len(b.labels) == 2 and \
+                    b.labels[0] == "aws_iam_openid_connect_provider":
+                try:
+                    url = HclView(b).get("url")
+                except RecursionError:
+                    continue
+                if isinstance(url, str) and github_claim(url.rstrip("/") + ":") == "":
+                    address = ("data." if b.type == "data" else "") + ".".join(b.labels)
+                    scan.github_providers.setdefault(str(Path(rel).parent), set()).add(address)
+    for rel, blocks in parsed:
         d = str(Path(rel).parent)
         pending = list(reversed(blocks))
         while pending:
@@ -2062,7 +2151,7 @@ def handle_terraform(scan, parsed):
                                         f"{getattr(b.line, 'file', rel)}:{b.line}")
             if b.type == "data" and len(b.labels) == 2 and b.labels[0] == "aws_iam_policy_document":
                 try:
-                    statements = doc_statements(view_of(b, rel))
+                    statements = doc_statements(view_of(b, rel), scan.github_providers.get(d, frozenset()))
                 except RecursionError:
                     statements = UNKNOWN
                 scan.policy_docs[(d, b.labels[1])] = statements

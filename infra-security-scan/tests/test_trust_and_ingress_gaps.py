@@ -215,6 +215,21 @@ resource "aws_security_group_rule" "internal" {
         self.assertEqual(hits(text), [("AWS-EKS-001", "aws_eks_cluster.c")])
 
 
+class ServiceAgentTest(unittest.TestCase):
+    def test_a_templated_agent_in_members_reads_like_member(self):
+        agent = '"serviceAccount:service-${data.google_project.p.number}@gcp-sa-pubsub.iam.gserviceaccount.com"'
+        binding = '''resource "google_project_iam_binding" "b" {{
+  project = "p"
+  role    = "roles/iam.serviceAccountTokenCreator"
+  members = [{members}]
+}}
+'''
+        result = scan({"main.tf": binding.format(members=agent)})
+        self.assertEqual((result.hits, result.not_run), ([], []))
+        mixed = binding.format(members=agent + ', "user:dev@example.com"')
+        self.assertEqual(hits(mixed), [("GCP-IAM-004", "google_project_iam_binding.b")])
+
+
 class PolicyStatementTest(unittest.TestCase):
     def test_statements_not_written_as_literals_are_named(self):
         text = '''resource "aws_s3_bucket_policy" "p" {

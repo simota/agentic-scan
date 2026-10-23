@@ -1716,6 +1716,10 @@ def check_tf(scan, res):
         # (service-${number}@gcp-sa-...) is judged on its raw text, unless the
         # raw expression branches or combines multiple values.
         raw = (v.raw("member") or "") if hasattr(v, "raw") and v.get("member") is not None else ""
+        if not raw and hasattr(v, "raw"):
+            # members = ["serviceAccount:service-${...}@gcp-sa-...."]: one templated member, read the same way.
+            one = re.fullmatch(r'\s*\[\s*("[^"]*")\s*,?\s*\]\s*', v.raw("members") or "")
+            raw = one.group(1) if one else ""
         if members == [UNKNOWN] and raw.strip() in ("each.value", "each.key"):
             fe = v.get("for_each")
             if isinstance(fe, (list, dict)):

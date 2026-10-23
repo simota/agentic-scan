@@ -50,8 +50,8 @@ optional field (including a rule's `reason`) gets no row in either output. The
 dashboard keeps excluded findings in their own record set, apart from the severities, matching
 the counts, lists them after the rest in either register order, says so when a
 filter leaves nothing to show, and opens every finding when printed.
-Bidirectional control characters (U+202A–202E, U+2066–2069) in recorded text are shown as `[U+202E]` in both outputs, so no
-value can display reversed.
+Bidirectional control characters (U+202A–202E, U+2066–2069) in recorded text
+are shown as `[U+202E]` in both outputs, so no value can display reversed.
 Both outputs are written to temporary files first; only when both are written
 are they moved into place, one after the other. A write error therefore keeps
 the previous pair; after any exit `1`, render again before `check`.

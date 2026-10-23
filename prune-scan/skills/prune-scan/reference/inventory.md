@@ -36,6 +36,7 @@ On POSIX, files are opened
 relative to pinned directory descriptors without following symlinks; a file or
 directory replaced during the scan cannot redirect a read through a link.
 The 2 MB limit is enforced on the opened file and on the read itself.
+A leading UTF-8 byte order mark is dropped before parsing.
 Files whose names cannot be represented as UTF-8 are skipped and counted in
 `files_skipped`, so an unusual filesystem name cannot break the JSON output.
 `--out` must lie outside the scanned repository (an alias counts as inside;
@@ -94,7 +95,14 @@ enclosing directory and its `src/`, up to the governing config's directory. CSS 
 imports resolve against the repository root, `src/` and every directory that
 encloses the importing file, so `backend/app/main.py` importing `app.models`
 reaches `backend/app/models.py`; `python -m server.jobs.nightly` names
-`server/jobs/nightly.py` (or a package's `__main__.py`). Dotted imports also match namespace
+`server/jobs/nightly.py` (or a package's `__main__.py`). A quoted dotted module path
+(`"mysite.urls"`, `"polls.apps.PollsConfig"`, `"pkg.mod:app"`) and an unquoted
+`pkg.mod:app` (gunicorn, uvicorn) name each package on that path and each module
+inside a package (a lone first part such as `api` in `"api.example.com"` names
+only a package), so
+modules Django or a server loads by name are not orphans (a test that patches
+`"pkg.mod.fn"` keeps nothing in use); a name ending in a
+file extension (`"config.json"`) is a file name, not a module. Dotted imports also match namespace
 distributions such as `azure-storage-blob` and `ruamel.yaml`; `// indirect`
 requirements in `go.mod` are not listed.
 
@@ -119,14 +127,14 @@ not inherit its replacement suggestion.
 
 | Key | What it collects | Perspective |
 |---|---|---|
-| `unreferenced_symbols` | Top-level functions, classes and module constants (Python), named exports, top-level functions and top-level `const`/`let` (JS/TS, with `exported`; default exports are judged by file, in `orphan_files`), functions and types (Go), items (Rust) whose name appears nowhere but their definition; decorated definitions (route handlers, registered hooks) are skipped and counted in `decorated_symbols_skipped`; test files are skipped | DC1 |
+| `unreferenced_symbols` | Top-level functions, classes and module constants (Python), named exports, top-level functions and top-level `const`/`let` (JS/TS, with `exported`; default exports are judged by file, in `orphan_files`), top-level functions and types (Go; methods satisfy interfaces and are not listed), items (Rust) whose name appears nowhere but their definition; decorated definitions (route handlers, registered hooks) are skipped and counted in `decorated_symbols_skipped`; test files are skipped | DC1 |
 | `orphan_files` | Python and JS/TS source files that no other non-test file imports and whose file name no other file mentions; `test_importers` lists tests that still import them; entry-like names (`main`, `index`, `app`, `__init__`, `setup`, `manage`, `cli`…) `*.config.*` and `*.d.ts` are skipped | DC2, TT1 |
 | `dependencies_declared` | Declared dependency count per manifest (`package.json`, `requirements*.txt`, `pyproject.toml`, `go.mod`, `Cargo.toml`, including `[dependencies.NAME]` tables); Python import names compare case-insensitively (`PyQt5`) | DP1 |
 | `unimported_dependencies` | Declared packages no source file imports; `status` is `script_only` when a package script or tool file names it, else `unreferenced`; `implicit_tool` marks toolchain packages used without an import (typescript, eslint, `@types/*`, ruff…) | DP1 |
 | `duplicate_purpose` | Two or more packages from one purpose group in a manifest (date libraries, HTTP clients, utility belts, test runners, JSON libraries…) | DP2 |
 | `platform_replaceable` | Packages the platform or standard library now covers (`node-fetch`, `uuid`, `six`, `mock`, `simplejson`, `pytz`…), with the replacement | DP3 |
-| `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, including `const { PORT } = process.env`, os.environ/getenv, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
-| `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`) with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
+| `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, including `const { PORT } = process.env`, os.environ/getenv, including `from os import getenv, environ`, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
+| `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`), as keys or as `export const NAME = true` constants, with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
 | `i18n_unreferenced`, `i18n_dynamic_prefixes` | Keys of JSON locale bundles that no string literal names (an i18next namespace prefix such as `common:` is ignored), except keys under a prefix built in a template literal (`` t(`status.${x}`) ``) | AS3 |
 | `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
 | `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less (outside attribute selectors and strings) that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |

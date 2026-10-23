@@ -106,6 +106,15 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 # namespaced lookups ("common:save") are locale keys too.
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
 PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
+# Dotted module paths loaded by name: "mysite.urls" (ROOT_URLCONF), "polls.apps.PollsConfig"
+# (INSTALLED_APPS), "pkg.mod:app" and an unquoted gunicorn/uvicorn pkg.mod:app.
+PYTHON_MODULE_STRING = re.compile(r"[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?[\"']|"
+                                  r"(?<![\w.:/-])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+):[A-Za-z_]\w*(?![\w.:/-])")
+# "config.json" and "logo.png" name files, not modules (named_in covers those).
+NOT_MODULE_SUFFIX = {"json", "yaml", "yml", "toml", "ini", "cfg", "conf", "txt", "md", "rst", "html", "htm", "css",
+                     "scss", "less", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "py", "pyi", "sh", "sql", "csv",
+                     "xml", "lock", "log", "env", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2",
+                     "ttf", "pdf", "zip", "gz", "tar", "example", "sample", "local"}
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
@@ -116,7 +125,8 @@ PY_DEF = re.compile(r"^(?:async\s+)?def\s+([A-Za-z_]\w*)|^class\s+([A-Za-z_]\w*)
 JS_DEF = re.compile(r"^export\s+(?:declare\s+)?(?:async\s+)?(?:function\*?|class|const|let|var|type|interface|enum|"
                     r"abstract\s+class)\s+([A-Za-z_$][\w$]*)|^(?:async\s+)?function\*?\s+([A-Za-z_$][\w$]*)|"
                     r"^(?:const|let)\s+([A-Za-z_$][\w$]*)\s*=", re.M)
-GO_DEF = re.compile(r"^func\s+(?:\([^)]*\)\s*)?([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
+# Methods (func (h *handler) ServeHTTP) satisfy interfaces and are called through them, not by name.
+GO_DEF = re.compile(r"^func\s+([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
 RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)", re.M)
 MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
@@ -136,8 +146,9 @@ RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)
 
 ENV_READ = re.compile(
     r"process\.env\.([A-Z_][A-Z0-9_]*)|process\.env\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
-    r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|os\.environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
-    r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|(?:\bos\.|(?<![\w.]))environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+    r"(?:\bos\.|(?<![\w.]))environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"(?:\bos\.|(?<![\w.]))getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
@@ -150,7 +161,8 @@ FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_
                         r"get_flag|variation|boolVariation|isOn|is_on|active\?)\(\s*[\"'`:]([\w.-]+)[\"'`]?")
 FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|experiments)\.(?:py|ts|tsx|js|mjs|"
                        r"json|ya?ml|toml)$")
-FLAG_DEF = re.compile(r"^[^\S\r\n]*[\"']?([A-Za-z][\w.-]*)[\"']?\s*[:=]\s*(true|false|True|False|on|off)\b", re.M)
+FLAG_DEF = re.compile(r"^[^\S\r\n]*(?:(?:export\s+)?(?:const|let|var)\s+)?[\"']?([A-Za-z][\w.-]*)[\"']?"
+                      r"\s*(?::\s*boolean\s*)?[:=]\s*(true|false|True|False|on|off)\b", re.M)
 ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
@@ -375,7 +387,8 @@ def read_file(path, root, *, root_fd=None, root_stat=None):
     if b"\0" in data:
         return None, size
     try:
-        text = data.decode("utf-8")
+        # A byte order mark (Windows editors) would hide a JSON or env file's first key.
+        text = data.decode("utf-8").removeprefix("\ufeff")
     except UnicodeDecodeError:
         return None, size
     return (env_names_only(text) if ENV_DECL_FILE.match(path.name) else text), size
@@ -1380,6 +1393,19 @@ def inventory(root, units=None, today=None):
             stem = module.replace(".", "/")
             for path in (stem + ".py", stem + "/__main__.py"):
                 module_runs[path].add(rel)
+        # A dotted name loads every package on its path and the module inside one; a trailing
+        # attribute (a class) names no file. A lone first part names only a package, so a host
+        # such as "api.example.com" leaves api.py a candidate.
+        # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
+        for quoted, served in set() if is_test(rel) else set(PYTHON_MODULE_STRING.findall(text)):
+            parts = (quoted or served).split(".")
+            if parts[-1].lower() in NOT_MODULE_SUFFIX:
+                continue
+            for end in range(1, len(parts) + 1):
+                stem = "/".join(parts[:end])
+                module_runs[stem + "/__init__.py"].add(rel)
+                if end > 1:
+                    module_runs[stem + ".py"].add(rel)
 
     def named_elsewhere(rel):
         parts = rel.split("/")
@@ -1785,10 +1811,14 @@ def inventory(root, units=None, today=None):
         # but only where the path ends there: /api/items/${id} and "/api/items/" + id
         # are another route.
         route_pattern = pattern.rstrip("/").rstrip("\\/")
+        # Every match holds the route's longest literal piece; skip files without it.
+        needle = max((piece.strip("/") for piece in PARAM.split(route)), key=len)
         rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
                         r"(?:/(?=[\s?#)\]}>,;<]|\Z|[\x22\x27`](?!\s*\+))|(?![\w/-]))" % (mount, route_pattern))
         where = []
         for rel, text in texts.items():
+            if needle not in text:
+                continue
             hits = [m for m in rx.finditer(text)]
             # A route's own path literal, or another route's (/api/items holds
             # /items), is not a mention; a redirect on a definition line is.

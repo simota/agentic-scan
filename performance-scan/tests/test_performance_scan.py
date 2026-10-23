@@ -150,6 +150,31 @@ class DocumentTests(unittest.TestCase):
         # Hunt tables have no sound-constructs rows hiding among them.
         self.assertNotIn("| Synchronised retries", hunts)
 
+    def test_note_examples_credit_a_query_count_budget_with_db1_only(self):
+        # perspectives.md: a QRY query-count row covers DB1 but never DB2-DB5,
+        # and B-01 is the QRY baseline in every example.
+        sources = [SKILL / "reference" / "perspectives.md", SKILL / "reference" / "findings-schema.md",
+                   REPO / "examples" / "findings.sample.json"]
+        credited = []
+        for path in sources:
+            text = path.read_text(encoding="utf-8")
+            # Only notes that credit B-01 alone: "DB1-DB2 via B-01, B-02" also names SIZE budgets.
+            for first, last in re.findall(r"DB([0-9])(?:[–-]DB([0-9]))? via B-01(?![0-9]|, B-)", text):
+                steps = range(int(first), int(last or first) + 1)
+                credited.append((path.name, [f"DB{n}" for n in steps]))
+        self.assertTrue(credited)
+        for name, steps in credited:
+            self.assertEqual(steps, ["DB1"], name)
+
+    def test_no_verdict_is_documented_as_a_default(self):
+        # validate_finding requires validation.verdict; a missing one is refused.
+        bad = finding(validation={"method": "static"})
+        with self.assertRaises(findings.SchemaError):
+            findings.validate_finding(bad, "f")
+        text = (SKILL / "reference" / "validation.md").read_text(encoding="utf-8")
+        row = re.search(r"^\| `Unverified` \|.*$", text, re.MULTILINE).group()
+        self.assertNotIn("Default", row)
+
     def test_frontmatter(self):
         head = (SKILL / "SKILL.md").read_text(encoding="utf-8").split("---")[1]
         self.assertIn("name: performance-scan", head)

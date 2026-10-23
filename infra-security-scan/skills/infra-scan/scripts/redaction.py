@@ -305,9 +305,11 @@ def module_source(source):
     # urlsplit ends the authority at the first "/", "?" or "#", so a password
     # holding one (postgres://app:a#b@db) would land in the path or fragment.
     # Userinfo is everything to the last "@" when a ":" comes before any of
-    # them and is not a port (host:5432/path@x keeps its host).
+    # them. A numeric password (deploy:1234/x@host) cannot be told from a port,
+    # so host:5432/path@x loses its host too: hiding beats leaking. An IPv6
+    # literal ([::1]:8080) is no userinfo.
     userinfo = re.match(r"([A-Za-z][A-Za-z0-9+.-]*://)([^\s\"'<>]*)@", raw)
-    if userinfo and re.match(r"[^/?#:\[]*:(?!\d*(?:[/?#]|$))", userinfo.group(2)):  # not [::1]:8080
+    if userinfo and re.match(r"[^/?#:\[]*:", userinfo.group(2)):
         # The authority branch below replaces this placeholder with [redacted].
         raw = userinfo.group(1) + "redacted@" + raw[userinfo.end():]
     try:

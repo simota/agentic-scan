@@ -1206,6 +1206,9 @@ OWNER_ARN_KEYS = {"aws:principalarn", "aws:sourcearn"}
 S3_ACCOUNT_RESOURCES = {"accesspoint", "job", "storage-lens", "storage-lens-group", "access-grants"}
 
 
+RESOURCE_ARN_REF = re.compile(r"\$\{(?:data\.)?(?:aws|google)_[\w-]+\.[\w-]+(?:\[[^\]]*\])?\.arn\}")
+
+
 def any_owner(key, value):
     """A like-pattern any account or organization can satisfy: o-*, or an ARN
     whose account is a wildcard (anyone can create role/deployer in their own)."""
@@ -1215,8 +1218,9 @@ def any_owner(key, value):
     if key in OWNER_ARN_KEYS:
         parts = value.split(":", 5)
         if len(parts) < 6:
-            # An interpolated ARN (${aws_sns_topic.t.arn}) names one resource.
-            return "${" not in value
+            # A resource's own ARN (${aws_sns_topic.t.arn}) names that resource;
+            # a variable or local may hold any pattern.
+            return RESOURCE_ARN_REF.fullmatch(value) is None
         account, wildcard = parts[4], (lambda text: any(c in text for c in "*?"))
         if parts[2] == "s3":
             if account and not wildcard(account):

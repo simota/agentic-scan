@@ -42,10 +42,13 @@ class ConditionTest(unittest.TestCase):
         text = ""
         for name, op, arn in (("topic", "ArnEquals", "${aws_sns_topic.t.arn}"),
                               ("like", "ArnLike", "${aws_sns_topic.t.arn}"),
-                              ("anyone", "ArnEquals", "arn:aws:sns:us-east-1:*:${var.topic}")):
+                              ("data", "ArnEquals", "${data.aws_sns_topic.t.arn}"),
+                              ("anyone", "ArnEquals", "arn:aws:sns:us-east-1:*:${var.topic}"),
+                              ("input", "ArnLike", "${var.source_arn}")):
             text += (f'resource "aws_sqs_queue_policy" "{name}" {{\n  queue_url = "q"\n  policy = <<EOF\n'
                      f'{policy % (op, arn)}\nEOF\n}}\n')
-        self.assertEqual(hits({"main.tf": text}), [("AWS-S3-003", "aws_sqs_queue_policy.anyone", "High")])
+        self.assertEqual(hits({"main.tf": text}), [("AWS-S3-003", "aws_sqs_queue_policy.anyone", "High"),
+                                                   ("AWS-S3-003", "aws_sqs_queue_policy.input", "High")])
 
     def test_caller_set_keys_do_not_narrow(self):
         text = trust("tag", {"StringEquals": {"aws:PrincipalTag/team": "platform"}})

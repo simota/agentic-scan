@@ -94,13 +94,15 @@ class ExcerptShapeTest(unittest.TestCase):
 
 class ModuleSourceTest(unittest.TestCase):
     def test_password_with_url_delimiters_never_reaches_the_record(self):
-        for value in (SECRET + "#x", SECRET + "?x", SECRET + "/x"):
+        for value in (SECRET + "#x", SECRET + "?x", SECRET + "/x", "1234/x", "1234#x"):
             with self.subTest(value=value):
                 safe = redaction.module_source("git::https://deploy:%s@gitlab.example.com/g/m.git?ref=v1" % value)
                 self.assertEqual(safe, "git::https://[redacted]@gitlab.example.com/g/m.git?ref=v1")
 
-    def test_host_port_and_path_at_sign_are_not_userinfo(self):
-        self.assertEqual(redaction.module_source("https://h.example:443/a@b"), "https://h.example:443/a@b")
+    def test_userinfo_boundaries(self):
+        # A port cannot be told from a numeric password: the host is hidden too.
+        self.assertEqual(redaction.module_source("https://h.example:443/a@b"), "https://[redacted]@b")
+        self.assertEqual(redaction.module_source("https://h.example:443/a"), "https://h.example:443/a")
         self.assertEqual(redaction.module_source("http://[::1]:8080/a@b"), "http://[::1]:8080/a@b")
         self.assertEqual(redaction.module_source("https://u:1234@h/x"), "https://[redacted]@h/x")
 

@@ -393,6 +393,7 @@ details[data-sev] summary .muted{font-family:var(--sans);font-size:12px;font-wei
 details[data-sev] dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:14px 0 4px}
 details[data-sev] dt{font-family:var(--sans);font-size:12px;color:var(--muted)}
 dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+details[data-sev] summary,.hero h1,.hero .meta,.footer{white-space:pre-line}
 li{white-space:pre-line}
 td{white-space:pre-line}
 details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -434,7 +435,8 @@ def render_html(doc, lang):
                         if shown(meta.get(k, "")))
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}: {e(meta.get('project', ''))}</title>"
+           # A document title cannot show a break, so its lines are joined visibly.
+           f"<title>{e(t['title'])}: {e(as_text(meta.get('project', '')).replace(chr(10), ' · '))}</title>"
            f"<style>{CSS}</style></head><body><main>",
            f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
            f"<div class='tools'><button id='theme' type='button'>{e(t['theme'])}</button></div></header>",

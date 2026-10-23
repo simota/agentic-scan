@@ -350,8 +350,12 @@ def render_markdown(doc, lang):
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
-    if doc.get("commitments"):
-        lines += [f"## {t['commitments']}", "", markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
+    # An empty ledger is shown as such, never left out silently.
+    lines += [f"## {t['commitments']}", ""]
+    if not doc.get("commitments"):
+        lines += [t["none"], ""]
+    else:
+        lines += [markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r.get("family", ""), r["source"], status)
@@ -489,7 +493,10 @@ def render_html(doc, lang):
                              for ref in f.get("references", []))
                    + "</dl></details>")
     out.append("</div></section>")
-    if doc.get("commitments"):
+    if not doc.get("commitments"):
+        out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
+                   f"<p class='muted'>{e(t['none'])}</p></section>")
+    else:
         out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
                    f"<div class='tablewrap'><table class='ledger commitments'>"
                    f"{html_head(t['commitment_columns'])}")

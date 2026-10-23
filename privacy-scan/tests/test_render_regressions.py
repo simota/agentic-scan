@@ -313,3 +313,19 @@ class LineBreakRenderingTests(unittest.TestCase):
         doc["findings"][0]["analysis"] = {"tool": "rg", "command": "rg a rg b", "result": "none"}
         self.assertIn("`rg a`<br>`rg b`", render.render_markdown(doc, "en"))
         self.assertIn("<code>rg a\nrg b</code>", render.render_html(doc, "en"))
+
+
+class EmptyLedgerTests(unittest.TestCase):
+    def test_an_empty_commitments_ledger_is_shown_as_none(self):
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                doc = complete_doc()
+                doc["commitments"] = []
+                for f in doc["findings"]:
+                    f.pop("commitment", None)
+                labels = render.LABELS[lang]
+                markdown = render.render_markdown(doc, lang)
+                self.assertIn(f"## {labels['commitments']}\n\n{labels['none']}\n", markdown)
+                html = render.render_html(doc, lang)
+                self.assertIn(f"<h2>{escape(labels['commitments'])}</h2>", html)
+                self.assertIn(f"<p class='muted'>{escape(labels['none'])}</p></section>", html)

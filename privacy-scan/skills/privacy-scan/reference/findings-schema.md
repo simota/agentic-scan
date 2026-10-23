@@ -157,7 +157,8 @@ non-ASCII host), stay literal text rather than links that keep escapes. A `!`
 before a URL stays text and never makes the link an image. Prose in a reference
 whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard
-filter instead of appearing under their severity; a filter that matches nothing says so. Dashboard cells wrap
+filter instead of appearing under their severity; a filter that matches nothing says so. An
+empty commitments ledger is shown as `None.` in both reports rather than omitted. Dashboard cells wrap
 long paths and keep line breaks.
 
 ## Shape

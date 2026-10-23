@@ -7,14 +7,17 @@ OUT_DIR holds findings.json and the rendered outputs. Checks the output file
 set, ID scheme, that L-* findings and inventory.json come from one scan, the
 fields every F-* finding carries, perspective coverage, the limitations the
 contract requires, and that each rendered page was rendered from the current
-findings.json. It checks shape and provenance markers only; it cannot tell
-whether a finding is true.
+findings.json. --allow ja or --allow en names a second-language copy, which
+must then be a complete re-render in OUT_DIR/<lang>/ (its own report.pdf
+unless --no-pdf); any other allowed name may be absent. It checks shape and
+provenance markers only; it cannot tell whether a finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import sys
@@ -63,6 +66,31 @@ def stamp_problems(directory, digest, label):
     return problems
 
 
+HTML_LANG = re.compile(rb'<html lang="([^"]*)"')
+
+
+def copy_problems(out, lang, digest, no_pdf):
+    """An allowed language, <out>/<lang>/, must hold a complete re-render of the current findings.json in it."""
+    directory, label = out / lang, f"{lang}/"
+    rerender = f"render.py <out>/findings.json --out <out>/{lang} --lang {lang} --repo <repo>"
+    if directory.is_symlink() or not directory.is_dir():
+        return [f"{label} is not a directory: re-render the second-language copy with {rerender}"]
+    problems = []
+    for name in RENDERED + (() if no_pdf else ("report.pdf",)):
+        if (directory / name).is_symlink() or not (directory / name).is_file():
+            problems.append(f"{label}{name} is missing or not a regular file: re-render with {rerender}")
+    if no_pdf and os.path.lexists(directory / "report.pdf"):
+        problems.append(f"--no-pdf given but {label}report.pdf exists")
+    problems += stamp_problems(directory, digest, label)
+    for name in RENDERED:
+        page = directory / name
+        m = HTML_LANG.search(page.read_bytes()[:4096]) if page.is_file() and not page.is_symlink() else None
+        if m and m.group(1).decode("ascii", "replace") != lang:
+            problems.append(f"{label}{name} is rendered in {m.group(1).decode('ascii', 'replace')!r}: "
+                            f"re-render with {rerender}")
+    return problems
+
+
 def scan_problems(inventory, data):
     """inventory.json and the L-* findings must come from the one `inventory.py --out … --into …` run."""
     rerun = "re-run inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json"
@@ -99,7 +127,9 @@ def check(out, no_pdf=False, allow=()):
         problems.append("--no-pdf given but report.pdf exists")
     problems += stamp_problems(out, digest, "")
     for name in allow:
-        if (out / name).is_dir():
+        if name in render.LABELS:
+            problems += copy_problems(out, name, digest, no_pdf)
+        elif (out / name).is_dir():
             problems += stamp_problems(out / name, digest, f"{name}/")
 
     if (out / "inventory.json").is_file():

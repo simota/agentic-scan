@@ -124,6 +124,43 @@ class ContractTest(unittest.TestCase):
         (out / "ja" / "report.html").write_text("<html><head></head></html>", encoding="utf-8")
         self.assertIn("ja/report.html has no prompt-scan source stamp", self.problems(out, "--allow", "ja")[1])
 
+    def test_second_language_copy_must_be_complete(self):
+        out = self.build()
+        # Allowing a language asserts its copy exists: a re-render that never ran must not pass.
+        code, err = self.problems(out, "--allow", "ja")
+        self.assertEqual(code, 1)
+        self.assertIn("ja/ is not a directory", err)
+        (out / "ja").mkdir()
+        code, err = self.problems(out, "--allow", "ja")
+        self.assertEqual(code, 1)
+        self.assertIn("ja/dashboard.html is missing", err)
+        self.assertIn("ja/report.html is missing", err)
+        code, _, err = run(render.main, out / "findings.json", "--out", out / "ja", "--no-pdf", "--lang", "ja")
+        self.assertEqual(code, 0, err)
+        (out / "ja" / "dashboard.html").unlink()
+        code, err = self.problems(out, "--allow", "ja")
+        self.assertEqual(code, 1)
+        self.assertIn("ja/dashboard.html is missing", err)
+        # A copy rendered in the wrong language is not the copy asked for.
+        code, _, err = run(render.main, out / "findings.json", "--out", out / "ja", "--no-pdf", "--lang", "en")
+        self.assertEqual(code, 0, err)
+        code, err = self.problems(out, "--allow", "ja")
+        self.assertEqual(code, 1)
+        self.assertIn("ja/report.html is rendered in 'en'", err)
+        # With a PDF expected, the copy needs its own; with --no-pdf, it must not have one.
+        code, _, err = run(render.main, out / "findings.json", "--out", out / "ja", "--no-pdf", "--lang", "ja")
+        self.assertEqual(code, 0, err)
+        code, _, err = run(contract_check.main, out, "--allow", "ja")
+        self.assertIn("ja/report.pdf is missing", err)
+        (out / "ja" / "report.pdf").write_bytes(b"%PDF-1.4\n")
+        code, err = self.problems(out, "--allow", "ja")
+        self.assertEqual(code, 1)
+        self.assertIn("--no-pdf given but ja/report.pdf exists", err)
+
+    def test_other_allowed_names_need_not_exist(self):
+        out = self.build()
+        self.assertEqual(self.problems(out, "--allow", "notes.md")[0], 0)
+
 
 if __name__ == "__main__":
     unittest.main()

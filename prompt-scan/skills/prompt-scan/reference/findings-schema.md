@@ -27,7 +27,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `date` | Review date, `YYYY-MM-DD` |
 | `assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | `scope` | What was reviewed, in one line |
-| `lang` | Report language (`ja` or `en`) |
+| `lang` | Report language, `ja` or `en` (anything else is a schema error; `render.py --lang` defaults to it) |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
 | `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell (also when a file read is marked skip-worktree or assume-unchanged, or when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm). Excerpts come from `commit` only when `dirty` is `false`, otherwise from the working tree |
 

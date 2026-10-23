@@ -44,6 +44,12 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(record["title"], "finding 1")
         self.assertEqual(self.data()["schema_version"], 1)
 
+    def test_refuses_a_report_language_render_py_has_no_labels_for(self):
+        code, _, err = self.merge({"meta": dict(META, lang="english")})
+        self.assertEqual(code, 2)
+        self.assertIn("meta.lang must be one of", err)
+        self.assertFalse(self.out.exists())
+
     def test_refuses_more_than_five_new_findings(self):
         code, _, err = self.merge({"meta": META, "findings": [finding(n) for n in range(1, 7)]})
         self.assertEqual(code, 1)

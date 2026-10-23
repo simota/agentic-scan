@@ -225,6 +225,8 @@ class RenderTest(unittest.TestCase):
             (lambda d: d.update(eval_runs=[{"id": "E-001", "finding": "F-001", "model": "m", "date": "d",
                                             "cases": 1, "passed": 1, "failed": 1}]), "exceeds cases"),
             (lambda d: d["findings"][0].update(location="app/llm/answer.py\x00:17"), "location must not contain"),
+            # Any other value rendered in Japanese without a word: an English record tagged en-US, say.
+            (lambda d: d["meta"].update(lang="en-US"), "meta.lang must be one of"),
         ]
         for mutate, message in cases:
             data = clone(sample())

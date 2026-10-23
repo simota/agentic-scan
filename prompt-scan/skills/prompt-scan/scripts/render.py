@@ -165,6 +165,10 @@ def validate_data(data):
         raise SchemaError("meta must be an object")
     for key in ("target", "date", "assessor", "scope", "lang"):
         _str(meta, key, "meta")
+    # Any other value would silently fall back to a Japanese report.
+    if meta.get("lang") is not None and meta["lang"] not in LABELS:
+        raise SchemaError(f"meta.lang must be one of {', '.join(sorted(LABELS))} "
+                          '(findings.py merge a fragment {"meta": {"lang": ...}} to set it)')
     if meta.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(meta["commit"])):
         raise SchemaError("meta.commit must be a full Git object id or null")
     if meta.get("dirty") is not None and not isinstance(meta["dirty"], bool):
@@ -973,7 +977,7 @@ def main(argv=None):
         source = Path(a.findings).read_bytes()
         data = load(a.findings, source)
         excerpts = attach_sources(data, a.repo)
-        lang = a.lang or (data.get("meta", {}).get("lang") if data.get("meta", {}).get("lang") in LABELS else "ja")
+        lang = a.lang or data.get("meta", {}).get("lang") or "ja"
         L = LABELS[lang]
         stamp = STAMP.format(hashlib.sha256(source).hexdigest())
         pages = {"dashboard.html": render_dashboard(data, L, lang, excerpts),

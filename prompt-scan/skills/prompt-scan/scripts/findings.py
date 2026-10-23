@@ -156,6 +156,15 @@ def fragment_problems(fragment, name, base):
     return problems
 
 
+def repairable(base):
+    """base as checked before a merge: a meta.lang recorded before render.py checked it is left for this merge
+    to set, and the merged report is validated in full."""
+    meta = base.get("meta") if isinstance(base, dict) else None
+    if isinstance(meta, dict) and isinstance(meta.get("lang"), str) and meta["lang"] not in render.LABELS:
+        return dict(base, meta={k: v for k, v in meta.items() if k != "lang"})
+    return base
+
+
 def upsert(items, updates):
     by_id = {r.get("id"): r for r in items if isinstance(r, dict)}
     for r in updates:
@@ -312,7 +321,7 @@ def main(argv=None):
         base = read_json(a.findings, original) if original is not None else {}
         if original is not None:
             try:
-                render.validate_data(base)
+                render.validate_data(repairable(base))
             except render.SchemaError as e:
                 raise render.SchemaError(f"{a.findings}: {e}") from None
         fragments = [(str(path), read_json(path)) for path in a.fragments]

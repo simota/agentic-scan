@@ -9,7 +9,10 @@ python3 scripts/contract_check.py <out>
 ```
 
 A second-language copy is a re-render into `<out>/<lang>/` checked with
-`contract_check.py <out> --allow <lang>`, never a new review.
+`contract_check.py <out> --allow <lang>`, never a new review. The check fails
+unless that directory holds both pages rendered from the current
+`findings.json` in that language, and its own `report.pdf` unless the run is
+`--no-pdf`.
 
 ## Checklist deliverable
 

@@ -52,7 +52,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Item | Fixed choice |
 |---|---|
-| Independence | Never read another review's outputs (an earlier `findings.json`, other report directories) unless the request is to merge or compare them. A second language is a re-render: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo> [--no-pdf]`, then `contract_check.py <out> --allow <lang>` |
+| Independence | Never read another review's outputs (an earlier `findings.json`, other report directories) unless the request is to merge or compare them. A second language is a re-render: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>` (with `--no-pdf` only when the main run has no PDF), then `contract_check.py <out> --allow <lang>` (plus `--no-pdf` in that case), which fails unless `<out>/<lang>/` holds the complete copy |
 | Review units | One unit per prompt family from the inventory (prompts that share a consumer or template), plus one cross-cutting unit for assembly code (message building, truncation, retries, parsing). Each unit sweeps every applicable perspective once |
 | Granularity | One finding per root cause, i.e. per fix location. The same flaw copied into several prompts is one finding listing every location in `cause`; flaws needing different fixes are separate findings |
 | IDs | `F-001`… for agent findings, numbered without gaps in severity order (then path and line; `FalsePositive`/`NotApplicable` are exempt from the order). Number new findings in merge order while reviewing; once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every reference. `L-*` only from `inventory.py --into`. No other prefixes |

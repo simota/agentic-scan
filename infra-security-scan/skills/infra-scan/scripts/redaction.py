@@ -29,9 +29,20 @@ SECRET_SHAPE = re.compile("|".join(pattern for _, pattern in CREDENTIAL_SHAPES))
 KEY_MARKER = re.compile(r"-{4,5} ?(BEGIN|END) (?:[A-Z0-9]+ )*PRIVATE KEY(?: BLOCK)? ?-{4,5}")
 # Anything credential-shaped in text saved to the record. Token prefixes are
 # case-sensitive: "asiaPacific..." is a name, not a key.
+# A PuTTY key file opens with its format header (PuTTY-User-Key-File-3: ssh-ed25519).
+PUTTY_HEADER = r"PuTTY-User-Key-File-[0-9]+:"
 CREDENTIAL = re.compile(
-    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, r'(?i:"private_key"\s*:)', r"xox[abeoprs]-")))
+    "|".join((SECRET_SHAPE.pattern, KEY_MARKER.pattern, PUTTY_HEADER, r'(?i:"private_key"\s*:)',
+              r"xox[abeoprs]-")))
 KEY_BEGIN = re.compile(KEY_MARKER.pattern.replace("(BEGIN|END)", "BEGIN"))
+# A key block from its opening marker through its closing one, or to the end
+# of the text when it has none: the body is the secret, not the marker.
+KEY_BLOCK = re.compile(rf"(?:{KEY_BEGIN.pattern}|{PUTTY_HEADER})(?:.*?{KEY_MARKER.pattern}|.*)", re.DOTALL)
+
+
+def hide_credentials(text):
+    """text with every credential shape, and any private key's body, replaced."""
+    return CREDENTIAL.sub("[REDACTED]", KEY_BLOCK.sub("[REDACTED]", text))
 SAFE_VALUE = re.compile(
     r'(?:(?:(?:var|local|data|module)\.|(?:aws_|google_))[\w.\[\]-]+|null|true|false|'
     r'"?(?:none|NONE|AWS_IAM|IAM|CUSTOM|JWT|COGNITO_USER_POOLS)"?)'

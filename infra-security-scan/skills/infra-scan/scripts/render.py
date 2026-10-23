@@ -32,12 +32,12 @@ import sys
 from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
-from common import (BASELINE_REFERENCE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK, SEVERITIES,
-                    STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth, shape_problems,
+from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK,
+                    SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth, shape_problems,
                     split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
-from redaction import (CREDENTIAL, SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, is_secret_name,
-                       redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
+from redaction import (SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
+                       is_secret_name, redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
 
@@ -84,7 +84,7 @@ BASE_FIELDS = ("title", "location")
 class SchemaError(Exception):
     def __init__(self, problems):
         items = [problems] if isinstance(problems, str) else list(problems)
-        self.problems = [CREDENTIAL.sub("[REDACTED]", str(item)) for item in items]
+        self.problems = [hide_credentials(str(item)) for item in items]
         super().__init__("; ".join(self.problems))
 
 
@@ -212,8 +212,8 @@ def dangling_references(data):
 
     An ID that no record has was renumbered, removed or dropped by a rescan
     without its mention being updated. URLs and external references are not
-    prose. The limitations iac_scan.py writes name baseline IDs from earlier
-    scans on purpose.
+    prose. The carry-over notes iac_scan.py writes in limitations name
+    baseline IDs from earlier scans on purpose.
     """
     known = {f.get("id") for f in data.get("findings", []) if isinstance(f, dict)}
     known |= {a.get("id") for a in data.get("attack_paths", []) if isinstance(a, dict)}
@@ -235,7 +235,10 @@ def dangling_references(data):
             if isinstance(item, dict):
                 walk(item, str(item.get("id") or item.get("name") or key))
     for key in STRING_LISTS:
-        walk(data.get(key, []), key, baseline=key != "limitations")
+        lines = data.get(key, [])
+        for line in lines if isinstance(lines, list) else [lines]:
+            walk(line, key, baseline=not (key == "limitations" and isinstance(line, str)
+                                          and CARRY_NOTE.fullmatch(line)))
     return out
 
 

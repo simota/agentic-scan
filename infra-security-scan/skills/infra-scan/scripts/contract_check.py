@@ -99,7 +99,7 @@ def check(data, out_dir, pdf=True, allow=()):
     if numbers != list(range(1, len(fs) + 1)):
         add(f"F-*: IDs must run F-001..F-{len(fs):03d} without gaps; found {[f['id'] for f in by_id]}")
     # Ties keep ID order: two findings at one location may take either ID.
-    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(f.get("severity"), 9),
+    expected = sorted(fs, key=lambda f: (render.SEV_RANK.get(str(f.get("severity")), 9),
                                          render.location_key(f.get("location")), render.id_key(f["id"])))
     if [f["id"] for f in expected] != [f["id"] for f in by_id]:
         add("F-*: IDs must follow severity order (High, Medium, Low, Info), then location; expected "

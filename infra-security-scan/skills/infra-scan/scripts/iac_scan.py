@@ -54,8 +54,8 @@ from urllib.parse import unquote as url_unquote
 
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from common import (BASELINE_REFERENCE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE, has_symlink_parent,
-                    json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
+from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
+                    has_symlink_parent, json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
                     write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
@@ -4363,7 +4363,7 @@ def remap_baseline_references(data, old, new):
 
     # Every other mention of a baseline ID follows it too. F-* evidence is
     # handled below, where a lost reference also reopens the finding; the
-    # limitations iac_scan.py writes name earlier IDs on purpose.
+    # carry-over notes iac_scan.py writes name earlier IDs on purpose.
     for finding in data.get("findings", []):
         if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
             for key, value in list(finding.items()):
@@ -4373,6 +4373,9 @@ def remap_baseline_references(data, old, new):
     for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
         if isinstance(data.get(key), list):
             data[key] = rewrite_prose(data[key])
+    if isinstance(data.get("limitations"), list):
+        data["limitations"] = [line if isinstance(line, str) and CARRY_NOTE.fullmatch(line) else rewrite_prose(line)
+                               for line in data["limitations"]]
 
     invalidated = set()
     invalidated_paths = {}

@@ -8,18 +8,22 @@ renderer. `scripts/render.py` (`validate`) is the executable form of this file.
 chat summary. It is written only through `scripts/findings.py` (`merge` for
 fragments, `remove` and `renumber` for review IDs) and `scripts/iac_scan.py
 --into`. A rescan replaces the `I-*` findings, `meta.commit` and `inventory`,
-keeps the triage of unchanged `I-*`, rewrites `I-*` IDs in `F-*` evidence, and
+keeps the triage of unchanged `I-*`, rewrites `I-*` IDs in `F-*` evidence and
+every prose line (its own carry-over notes in `limitations` excepted), and
 when a cited baseline finding is gone marks the `F-*` `Unverified`, sets its
 attack paths to `unknown` with a `note`, and adds a line to `limitations`.
 
-- A fragment updates a known record key by key; a key set to `null` is removed
+- A fragment updates a known record (and `meta`) key by key; a key set to `null` is removed
   (e.g. `"condition": null` after a finding becomes `Confirmed`)
 - A `perspectives` entry replaces the recorded entry with the same `name` whole,
   so send its `status` and `note` together. Lines in `checked_ok`, `decisions`,
   `limitations` and `next_steps` are appended without duplicates and no command
-  removes them: merge a line once it is final
+  removes them (except the rescan note `remove` takes with its record): merge a
+  line once it is final
 - `findings.py remove <out>/findings.json F-007 AP-03` deletes review findings or
-  attack paths and the ID lists that point at them
+  attack paths, the ID lists that point at them and the `limitations` line a
+  rescan wrote about them (`F-007: Baseline references removed by rescan: …`); it
+  refuses while other prose still names one of them
 - `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
   severity order, then location, rewriting attack-path links and F-IDs in text;
   run it once every review finding is merged
@@ -30,7 +34,9 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
   references to IDs that do not exist; `contract_check.py` fails on the latter (a
   standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
   another tracker's keys in a URL, in `references`, or as `#AP-123`; an ID used as
-  a path component, as in `docs/F-001/`, is not a reference)
+  a path component, as in `docs/F-001/`, or after a `.` in a resource address, as
+  in `aws_s3_bucket.F-001`, is not a reference; a URL ends at whitespace or the
+  first non-ASCII character)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once: name in that evidence only the `I-*`
   the finding is the root cause of

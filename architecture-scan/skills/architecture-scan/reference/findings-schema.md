@@ -90,6 +90,11 @@ be byte-identical to what `render.py` produces from the current
   `Makefile.local` count as files). A duplicate's `NotApplicable` evidence
   may instead be only the name of the reported finding it repeats, with
   nothing else (`Duplicate of A-004`, `重複: A-004`)
+- every finding ID that prose mentions to name a recorded finding, read as
+  renumber reads mentions (not in `meta`, a `location`, a URL, a command or a
+  rule `source`): a fragment merged after renumber that still names an old
+  block ID (`Fix A-101 first`) or a mistyped ID is named with its field
+  (`next_steps[0]`, `A-002.trace`, `R-01.statement`)
 
 With `--repo <checkout>` (a checkout of the assessed revision), `check` also
 refuses a `location` whose file is missing (including a path spelled in
@@ -177,7 +182,10 @@ same pass. Literal values keep theirs: `meta`, every `location`, reference
 ticket or an argument). In prose, a token such as `JIRA-A-001` and a path
 segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
 text (`A-001を`) or joined to another ID (`A-002/A-001`, `A-002-A-001`) is
-rewritten. It prints each rename, leaves an ordered
+rewritten. A mention of an ID that no finding holds is left as written, and
+`check` names it; when renumber would give that ID to a finding, so the
+mention would silently name it, renumber exits `1` and writes nothing until a
+fragment corrects the mention. It prints each rename, leaves an ordered
 record untouched, and writes the same way merge does. Renumber after the last
 merge that adds, regrades, relocates or excludes a finding (excluded verdicts
 sort last), then render.

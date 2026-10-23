@@ -28,7 +28,8 @@ FINDINGS is created when absent. The merged record must pass the schema check
 location, excluded verdicts last, and renames them `A-001`… without gaps. Every whole-word mention of
 an old ID in the record's prose is rewritten in the same pass, so `next_steps`
 and traces keep pointing at the same finding; `meta`, locations, URLs,
-commands and rule sources keep theirs.
+commands and rule sources keep theirs. A mention of an ID no finding holds is
+refused when renumber would give that ID to a finding.
 
 `counts` prints the `n_*` values the report templates use, one `name=value`
 per line, counted as report.md counts them (excluded verdicts apart).
@@ -44,7 +45,8 @@ stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
 evidence cites a `path:line` (a duplicate may name the finding it repeats),
-and both rendered files match what `render.py` produces from the current record
+every finding ID mentioned in prose names a recorded finding, and both
+rendered files match what `render.py` produces from the current record
 in `meta.lang`. With `--repo`, each location's file must exist in that
 checkout and its line must be within the file.
 
@@ -91,8 +93,9 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # Evidence that is the duplicate statement and nothing else: `Duplicate of
 # A-004`, `Duplicates A-004.`, `重複: A-004。`. Any other text, which could
 # qualify or contradict it, needs a `path:line` like any other evidence; the
-# reasons live in the finding it repeats.
-DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*[.。]?\s*",
+# reasons live in the finding it repeats. The ID stands apart from an English
+# label (`ofA-004` is no mention, so renumber would not rewrite it).
+DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?\s+|重複[:：]\s*)(A-[0-9]{3})\s*[.。]?\s*",
                           re.ASCII)
 # `findings[].rule` names one rule or several (`R-01, R-02`) when one root
 # cause breaks more than one.
@@ -797,6 +800,43 @@ def _rewrite_ids(value, mapping, key=None):
     return value
 
 
+def _mentions(value, where, key=None):
+    """Yield (where, ID) for each finding ID the prose of value mentions, as renumber reads it."""
+    if key in LITERAL_KEYS:
+        return
+    if isinstance(value, str):
+        for part in _url_spans(value)[::2]:
+            for run in ID_RUN.finditer(part):
+                for fid in re.findall(r"A-[0-9]{3}", run[0]):
+                    yield where, fid
+    elif isinstance(value, list):
+        for i, v in enumerate(value):
+            yield from _mentions(v, f"{where}[{i}]", key)
+    elif isinstance(value, dict):
+        for k, v in value.items():
+            yield from _mentions(v, f"{where}.{k}", k)
+
+
+def unknown_mentions(doc):
+    """Each (field, ID) where prose names a finding ID that no finding holds, once.
+
+    A field is named by its record (`A-002.trace`, `R-01.statement`,
+    `next_steps[0]`); `meta` describes the run and may name an earlier one's IDs.
+    """
+    ids = {f["id"] for f in doc.get("findings", [])}
+    found = {}
+    for key, value in doc.items():
+        if key == "meta":
+            continue
+        if key in ("findings", "rules", "perspectives"):
+            pairs = (pair for r in value for k, v in r.items() if k not in ("id", "name")
+                     for pair in _mentions(v, f"{r.get('id', r.get('name'))}.{k}", k))
+        else:
+            pairs = _mentions(value, key)
+        found.update((pair, None) for pair in pairs if pair[1] not in ids)
+    return list(found)
+
+
 def renumber(doc):
     """Return (doc, mapping): findings in severity then path order, IDs gapless.
 
@@ -877,6 +917,16 @@ def _renumber_file(target):
     doc = read_json(target)
     validate(doc)
     renamed, changed = renumber(doc)
+    # A mention of an ID no finding holds is left as written; once that ID is
+    # given to a finding, the mention would name it and check could not tell.
+    new_ids = set(changed.values())
+    taken = [(where, fid) for where, fid in (unknown_mentions(doc) if new_ids else [])
+             if fid in new_ids]
+    if taken:
+        raise SchemaError("; ".join(f"{where} mentions {fid}, which no finding holds"
+                                    for where, fid in taken)
+                          + " - renumber would give that ID to another finding; correct the "
+                          "mention with a fragment first")
     validate(renamed)
     # IDs that already hold their final names can still sit in the wrong order
     # (fragments merged A-004 before A-001), so compare the whole record.
@@ -1085,6 +1135,9 @@ def contract_problems(out, allow=()):
             reason = r.get("reason")
             if not isinstance(reason, str) or not visible(reason):
                 problems.append(f"{r['id']}: a not-checked rule needs a nonblank string reason")
+    for where, fid in unknown_mentions(doc):
+        problems.append(f"{where}: mentions {fid}, which no finding holds; name a recorded "
+                        "finding (after renumber, only the new IDs)")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

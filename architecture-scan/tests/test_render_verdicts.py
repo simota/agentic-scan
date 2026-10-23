@@ -92,5 +92,24 @@ class RenderVerdictTests(unittest.TestCase):
         self.assert_overview_counts(doc, expected, high=0, excluded=2)
 
 
+class RegisterOrderTests(unittest.TestCase):
+    def test_excluded_findings_sort_after_the_rest_in_both_orders(self):
+        # A ruled-out High never sorts between the findings to act on, as in
+        # renumber's IDs and report.md, whichever order the register uses.
+        doc = complete_doc()
+        doc["findings"] = [
+            finding("A-001", "Medium"), finding("A-002", "Low", status="Fixed"),
+            finding("A-003", "High", validation={"verdict": "FalsePositive", "method": "static",
+                                                 "evidence": "job.py:58 is guarded"})]
+        findings.validate(doc, complete=True)
+        dashboard = render.render_html(doc, "en")
+        for key, expected in (("p", ["a-001", "a-002", "a-003"]),
+                              ("s", ["a-001", "a-002", "a-003"])):
+            with self.subTest(order=key):
+                ranks = dict(re.findall(rf"id='finding-(a-[0-9]{{3}})'[^>]* data-{key}='([0-9]+)'",
+                                        dashboard))
+                self.assertEqual(sorted(ranks, key=lambda fid: int(ranks[fid])), expected)
+
+
 if __name__ == "__main__":
     unittest.main()

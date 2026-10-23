@@ -23,9 +23,9 @@ def hits(files):
     return sorted((h["rule"], h["address"], h["severity"]) for h in scan(files).hits)
 
 
-def trust(name, condition):
+def trust(name, condition, action="sts:AssumeRole"):
     policy = {"Version": "2012-10-17", "Statement": [{
-        "Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole", "Condition": condition}]}
+        "Effect": "Allow", "Principal": {"AWS": "*"}, "Action": action, "Condition": condition}]}
     return f'resource "aws_iam_role" "{name}" {{\n  assume_role_policy = <<EOF\n{json.dumps(policy)}\nEOF\n}}\n'
 
 
@@ -57,10 +57,17 @@ class ConditionTest(unittest.TestCase):
         # sts:SetSourceIdentity, which this statement does not allow.
         text += trust("request", {"StringEquals": {"aws:RequestTag/team": "platform"}})
         text += trust("source", {"StringEquals": {"sts:SourceIdentity": "deployer"}})
+        # With those grants in the same statement, the caller picks the value.
+        text += trust("tagging", {"StringEquals": {"aws:RequestTag/team": "platform"}},
+                      ["sts:AssumeRole", "sts:TagSession"])
+        text += trust("identity", {"StringEquals": {"sts:SourceIdentity": "deployer"}},
+                      ["sts:AssumeRole", "sts:SetSourceIdentity"])
         text += trust("org", {"StringEquals": {"aws:PrincipalTag/team": "platform",
                                                 "aws:PrincipalOrgID": "o-abc123def4"}})
-        self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.session", "High"),
-                                                   ("AWS-IAM-003", "aws_iam_role.tag", "High")])
+        self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.identity", "High"),
+                                                   ("AWS-IAM-003", "aws_iam_role.session", "High"),
+                                                   ("AWS-IAM-003", "aws_iam_role.tag", "High"),
+                                                   ("AWS-IAM-003", "aws_iam_role.tagging", "High")])
 
 
 class ResourceTypeTest(unittest.TestCase):

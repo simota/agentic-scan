@@ -985,7 +985,8 @@ class Scan:
             if st["effect"] != "Allow":
                 continue
             # aws:SecureTransport or MFA presence do not narrow who may assume.
-            if not narrowing(st["conditions"]) and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
+            if not narrowing(st["conditions"], caller_set_keys(st)) and \
+                    any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
                     self.not_run.append("AWS-IAM-003: unknown or unsupported trust policy actions; "
@@ -1155,9 +1156,9 @@ class Scan:
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
 # The caller's own principal tags and session name need no further grant
 # (any account can tag its own role team=platform); request tags and a
-# source identity also need sts:TagSession / sts:SetSourceIdentity in the
-# same policy, so they stay narrowing. Unknown keys count as narrowing:
-# precision over completeness.
+# source identity are the caller's only where the same trust statement
+# allows sts:TagSession / sts:SetSourceIdentity (caller_set_keys). Unknown
+# keys count as narrowing: precision over completeness.
 OPEN_CONDITION_KEYS = {
     "aws:securetransport", "aws:currenttime", "aws:epochtime", "aws:requestedregion",
     "aws:referer", "aws:useragent", "aws:multifactorauthpresent", "s3:tlsversion",
@@ -1236,8 +1237,21 @@ def any_owner(key, value):
     return False
 
 
-def narrowing(conditions):
-    return any(_condition_narrows(op, key, vals) for op, key, vals in conditions)
+def narrowing(conditions, caller_set=()):
+    """Some condition limits who matches; keys starting with caller_set are the caller's to choose."""
+    return any(_condition_narrows(op, key, vals) for op, key, vals in conditions
+               if not (isinstance(key, str) and key.lower().startswith(caller_set)))
+
+
+def caller_set_keys(st):
+    """Condition keys a trust statement lets the caller set: session tags with
+    sts:TagSession, a source identity with sts:SetSourceIdentity."""
+    keys = ()
+    if matches_action(st, "sts:TagSession") is True:
+        keys += ("aws:requesttag/", "aws:tagkeys")
+    if matches_action(st, "sts:SetSourceIdentity") is True:
+        keys += ("sts:sourceidentity",)
+    return keys
 
 
 def world_cidrs(values):

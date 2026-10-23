@@ -36,7 +36,7 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
   standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
   another tracker's keys in a URL, in `references`, or as `#AP-123`; an ID used as
   a path component, as in `docs/F-001/`, or after a name and a `.` in a resource
-  address, as in `aws_s3_bucket.F-001`, is not a reference (`F-001...F-003` is two); a URL ends at whitespace or the
+  address, as in `aws_s3_bucket.F-001` or the instance key `aws_s3_bucket.logs["F-001"]`, is not a reference (`F-001...F-003` is two); a URL ends at whitespace or the
   first non-ASCII character)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once: name in that evidence only the `I-*`
@@ -122,8 +122,8 @@ digits; the sequence continues through `AP-100` and beyond.
 | Field | Required | Content |
 |---|---|---|
 | `id` | yes | `AP-01`… |
-| `entry` | yes | The entry actor (`reference/attack-paths.md` §1) |
-| `target` | yes | The crown jewel, with its resource address |
+| `entry` | yes | The entry actor (`reference/attack-paths.md` §1), one line |
+| `target` | yes | The crown jewel, with its resource address, one line |
 | `status` | yes | `open`, `blocked`, `unknown` |
 | `edges` | yes | Non-empty list of edges, each with `path:line` |
 | `findings` | no | `F-*` / `I-*` IDs on this path |

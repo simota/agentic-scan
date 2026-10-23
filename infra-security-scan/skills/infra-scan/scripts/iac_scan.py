@@ -167,7 +167,8 @@ RULES = {
 RESOURCE_POLICY_ATTRS = {
     "aws_sqs_queue_policy": "policy", "aws_sqs_queue": "policy", "aws_sns_topic_policy": "policy",
     "aws_sns_topic": "policy", "aws_ecr_repository_policy": "policy", "aws_secretsmanager_secret_policy": "policy",
-    "aws_secretsmanager_secret": "policy", "aws_kms_key": "policy", "aws_opensearch_domain_policy": "access_policies",
+    "aws_secretsmanager_secret": "policy", "aws_kms_key": "policy", "aws_kms_key_policy": "policy",
+    "aws_opensearch_domain_policy": "access_policies",
     "aws_elasticsearch_domain_policy": "access_policies", "aws_opensearch_domain": "access_policies",
     "aws_elasticsearch_domain": "access_policies", "aws_glacier_vault": "access_policy",
 }
@@ -929,6 +930,9 @@ class Scan:
         self.project_orgs = {}  # project ID: organization number, likewise
         self.launch_templates = set()  # (dir, name) checked under AWS-EC2-001 themselves
         self.s3_blocks = {}  # (dir, bucket key or ("*", provider) for the account): flags turned on
+        # (dir, literal bucket name) <-> (dir, aws_s3_bucket address), so a block
+        # and an ACL that name one bucket differently still meet.
+        self.bucket_aliases = {}
         self.cfn_checked_templates = {}  # template file: logical IDs of its launch templates
         self.k8s_bindings, self.k8s_wildcard_roles = [], {}  # role key: directories defining it
         self.k8s_sa_automount, self.k8s_pod_sa_refs = {}, []
@@ -984,7 +988,8 @@ class Scan:
             if st["effect"] != "Allow":
                 continue
             # aws:SecureTransport or MFA presence do not narrow who may assume.
-            if not narrowing(st["conditions"]) and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
+            if not narrowing(st["conditions"], caller_set_keys(stmts, st)) and \
+                    any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
                     self.not_run.append("AWS-IAM-003: unknown or unsupported trust policy actions; "
@@ -1008,9 +1013,17 @@ class Scan:
                 else:
                     self.hit("AWS-S3-003", res, line, detail)
 
-    def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001"):
+    def ingress(self, res, line, cidrs, proto, lo, hi, rule="AWS-NET-001", raw=""):
         open_from = world_cidrs(cidrs)
         if not open_from:
+            # An input (var.ssh_cidr, !Ref SSHLocation) may be the world: say so,
+            # as GCP-NET-001 does for source ranges. A VPC or subnet attribute
+            # (aws_vpc.main.cidr_block, module.vpc.*, !GetAtt Vpc.CidrBlock) never is.
+            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local)\.", raw)) or any(
+                isinstance(c, dict) and "Fn::GetAtt" not in c for c in aslist(cidrs))
+            if supplied and sensitive_ports(proto, lo, hi):
+                self.not_run.append(f"{rule}: source CIDR unresolved; check not run: "
+                                    f"{getattr(line, 'file', res.file)}:{line} ({res.address})")
             return
         ports = sensitive_ports(proto, lo, hi)
         if ports:
@@ -1144,20 +1157,26 @@ class Scan:
 
 
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
-# Unknown keys count as narrowing: precision over completeness.
+# The caller's own principal tags and session name need no further grant
+# (any account can tag its own role team=platform); request tags and a
+# source identity are the caller's only where the trust policy grants
+# sts:TagSession / sts:SetSourceIdentity to anyone (caller_set_keys). Unknown
+# keys count as narrowing: precision over completeness.
 OPEN_CONDITION_KEYS = {
     "aws:securetransport", "aws:currenttime", "aws:epochtime", "aws:requestedregion",
     "aws:referer", "aws:useragent", "aws:multifactorauthpresent", "s3:tlsversion",
     "s3:signatureversion", "s3:signatureage", "s3:authtype", "s3:x-amz-content-sha256",
     "s3:x-amz-server-side-encryption", "s3:x-amz-server-side-encryption-aws-kms-key-id",
     "s3:x-amz-acl", "s3:prefix", "s3:delimiter", "s3:max-keys",
+    "aws:multifactorauthage", "sts:rolesessionname",
 }
+OPEN_CONDITION_PREFIXES = ("aws:principaltag/",)
 
 
 def _condition_narrows(op, key, vals):
     if not isinstance(key, str):
         return True
-    if key.lower() in OPEN_CONDITION_KEYS:
+    if key.lower() in OPEN_CONDITION_KEYS or key.lower().startswith(OPEN_CONDITION_PREFIXES):
         return False
     if not isinstance(op, str):
         return True
@@ -1176,7 +1195,8 @@ def _condition_narrows(op, key, vals):
         return False
     if op_base == "null" and any(v is True or (isinstance(v, str) and v.lower() == "true") for v in vals):
         return False
-    if op_base in ("stringlike", "stringlikeignorecase", "arnlike") and vals and all(
+    # ArnEquals expands * and ? per ARN component exactly as ArnLike does.
+    if op_base in ("stringlike", "stringlikeignorecase", "arnlike", "arnequals") and vals and all(
             isinstance(v, str) and (v.strip("*") in ("", "arn:", "arn:aws:") or any_owner(key, v)) for v in vals):
         return False
     return True
@@ -1190,6 +1210,9 @@ OWNER_ARN_KEYS = {"aws:principalarn", "aws:sourcearn"}
 S3_ACCOUNT_RESOURCES = {"accesspoint", "job", "storage-lens", "storage-lens-group", "access-grants"}
 
 
+RESOURCE_ARN_REF = re.compile(r"\$\{(?:data\.)?(?:aws|google)_[\w-]+\.[\w-]+(?:\[[^\]]*\])?\.arn\}")
+
+
 def any_owner(key, value):
     """A like-pattern any account or organization can satisfy: o-*, or an ARN
     whose account is a wildcard (anyone can create role/deployer in their own)."""
@@ -1199,7 +1222,9 @@ def any_owner(key, value):
     if key in OWNER_ARN_KEYS:
         parts = value.split(":", 5)
         if len(parts) < 6:
-            return True
+            # A resource's own ARN (${aws_sns_topic.t.arn}) names that resource;
+            # a variable or local may hold any pattern.
+            return RESOURCE_ARN_REF.fullmatch(value) is None
         account, wildcard = parts[4], (lambda text: any(c in text for c in "*?"))
         if parts[2] == "s3":
             if account and not wildcard(account):
@@ -1215,8 +1240,38 @@ def any_owner(key, value):
     return False
 
 
-def narrowing(conditions):
-    return any(_condition_narrows(op, key, vals) for op, key, vals in conditions)
+def narrowing(conditions, caller_set=()):
+    """Some condition limits who matches; keys starting with caller_set are the caller's to choose."""
+    return any(_condition_narrows(op, key, vals) for op, key, vals in conditions
+               if not (isinstance(key, str) and key.lower().startswith(caller_set)))
+
+
+CALLER_GRANTS = (("sts:TagSession", ("aws:requesttag/", "aws:tagkeys")),
+                 ("sts:SetSourceIdentity", ("sts:sourceidentity",)))
+
+
+def caller_set_keys(stmts, assume):
+    """Condition keys of the assume statement that any caller can set: session
+    tags where some statement grants sts:TagSession to "*", a source identity
+    where one grants sts:SetSourceIdentity (AWS's own example puts these in a
+    statement of their own). The grant's conditions must all hold for the
+    caller already: either they narrow nothing, or the assume statement makes
+    the very same demand (aws:RequestTag/team = platform in both). A grant for
+    other values (team = security) opens nothing; values are not compared.
+    An explicit Deny of the action to "*" overrides any grant when it holds for
+    every request the assume statement admits, by the same exact matching."""
+    def to_anyone(st):
+        return any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
+    keys = ()
+    for action, opened in CALLER_GRANTS:
+        if any(st["effect"] == "Allow" and matches_action(st, action) is True and to_anyone(st)
+               and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
+               for st in stmts or []) and not any(
+                st["effect"] == "Deny" and matches_action(st, action) is not False and to_anyone(st)
+                and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
+                for st in stmts or []):
+            keys += opened
+    return keys
 
 
 def world_cidrs(values):
@@ -1388,14 +1443,31 @@ def bucket_key(view, address=None):
     return value if isinstance(value, str) else None
 
 
+def raw_of(view, *attrs):
+    """The expressions written for attrs, as one string ("" in plans and exports)."""
+    return " ".join(view.raw(attr) or "" for attr in attrs)
+
+
+def admin_arn_list(scan, res, attr):
+    """A list of managed policy ARNs holding AdministratorAccess, written out or through data.aws_iam_policy."""
+    v = res.view
+    text = text_of(v, attr)
+    return any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get(attr))) or \
+        ADMIN_ARN_RAW.search(text) is not None or any(
+            (res.dir, name) in scan.admin_policy_data
+            for name in re.findall(r"data\.aws_iam_policy\.([\w-]+)\.arn", text))
+
+
 def s3_block(scan, res, flag):
     """A note when a public access block in the module turns flag on for this bucket."""
     keys = {bucket_key(res.view, res.address if res.type == "aws_s3_bucket" else None)}
     if res.type == "aws_s3_bucket" and isinstance(res.view.get("bucket"), str):
         keys.add(res.view.get("bucket"))
+    keys |= {scan.bucket_aliases.get((res.dir, key)) for key in keys}
     for key in keys - {None}:
         if flag in scan.s3_blocks.get((res.dir, key), ()):
-            return f"neutralised by {flag} in the bucket's public access block"
+            where = "ownership controls" if flag == "BucketOwnerEnforced" else "public access block"
+            return f"neutralised by {flag} in the bucket's {where}"
     if flag in scan.s3_blocks.get((res.dir, ("*", provider_key(res.view))), ()):
         return f"neutralised by {flag} in the account public access block"
     return None
@@ -1558,29 +1630,30 @@ def check_tf(scan, res):
         for rule in v.blocks("ingress"):
             scan.ingress(res, rule.line(), aslist(rule.get("cidr_blocks")) +
                          aslist(rule.get("ipv6_cidr_blocks")), rule.get("protocol"),
-                         rule.get("from_port"), rule.get("to_port"))
+                         rule.get("from_port"), rule.get("to_port"), raw=raw_of(rule, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
             line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
             for lo, hi in each_ports(v):
                 scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
-                             v.get("protocol"), lo, hi)
+                             v.get("protocol"), lo, hi, raw=raw_of(v, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_vpc_security_group_ingress_rule":
         line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
         for lo, hi in each_ports(v):
-            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi)
-    elif t in ("aws_s3_bucket", "aws_s3_bucket_acl"):
+            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi,
+                         raw=raw_of(v, "cidr_ipv4", "cidr_ipv6"))
+    elif t in ("aws_s3_bucket", "aws_s3_bucket_acl", "aws_s3_object", "aws_s3_bucket_object"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.
-        blocked = s3_block(scan, res, "ignore_public_acls")
+        blocked = s3_block(scan, res, "ignore_public_acls") or s3_block(scan, res, "BucketOwnerEnforced")
         def acl_hit(line, detail):
             if blocked:
                 scan.hit("AWS-S3-001", res, line, f"{detail}; {blocked}", "Low")
             else:
                 scan.hit("AWS-S3-001", res, line, detail)
         if v.get("acl") in ("public-read", "public-read-write", "authenticated-read"):
-            acl_hit(v.line("acl"), f"acl = {v.get('acl')}")
+            acl_hit(v.line("acl"), f"{'object ' if 'object' in t else ''}acl = {v.get('acl')}")
         grants = v.blocks("grant") + [g for policy in v.blocks("access_control_policy") for g in policy.blocks("grant")]
         for grant in grants:
             uris = [grant.get("uri")] + [grantee.get("uri") for grantee in grant.blocks("grantee")]
@@ -1612,12 +1685,12 @@ def check_tf(scan, res):
         scan.trust_policy(res, scan.statements(res, "assume_role_policy"), v.line("assume_role_policy"))
         for inline in v.blocks("inline_policy"):
             scan.identity_policy(res, scan.statements(res, "policy", inline), inline.line())
-        managed = text_of(v, "managed_policy_arns")
-        if any(isinstance(a, str) and ADMIN_ARN.search(a) for a in aslist(v.get("managed_policy_arns"))) or \
-                ADMIN_ARN_RAW.search(managed) or any(
-                    (res.dir, name) in scan.admin_policy_data
-                    for name in re.findall(r"data\.aws_iam_policy\.([\w-]+)\.arn", managed)):
+        if admin_arn_list(scan, res, "managed_policy_arns"):
             scan.hit("AWS-IAM-001", res, v.line("managed_policy_arns"), "AdministratorAccess attached")
+    elif t in ("aws_iam_role_policy_attachments_exclusive", "aws_iam_user_policy_attachments_exclusive",
+               "aws_iam_group_policy_attachments_exclusive"):
+        if admin_arn_list(scan, res, "policy_arns"):
+            scan.hit("AWS-IAM-001", res, v.line("policy_arns"), "AdministratorAccess attached")
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
                "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
         arn = v.get("policy_arn")
@@ -1881,8 +1954,12 @@ def check_tf(scan, res):
         cond = v.get("attribute_condition")
         vacuous = cond is None or (
             isinstance(cond, str) and re.sub(r"\s+", " ", cond.strip().lower()) in ("", "true", "1 == 1", "true == true"))
-        if any(p.known_present for k in ("oidc", "aws") for p in v.blocks(k)) and vacuous:
+        if vacuous and any(p.known_present for p in v.blocks("oidc")):
             scan.hit("GCP-WIF-001", res, res.line, "OIDC provider without attribute_condition")
+        elif vacuous and any(p.known_present for p in v.blocks("aws")):
+            # Bound to one AWS account: reaching it needs a workload in that account.
+            scan.hit("GCP-WIF-001", res, res.line,
+                     "AWS provider without attribute_condition: every role in the account is accepted", "Medium")
 
 
 # ---------------------------------------------------------------- file handlers
@@ -2060,6 +2137,12 @@ def collect_context(scan, d, type_, view, text, defaults=True):
         on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
         if key and on and (defaults or not account):
             scan.s3_blocks.setdefault((d, key), set()).update(on)
+    if type_ == "aws_s3_bucket_ownership_controls" and surely_created(view) and any(
+            rule.get("object_ownership") == "BucketOwnerEnforced" for rule in view.blocks("rule")):
+        # ACLs are disabled: a public ACL is refused (AccessControlListNotSupported).
+        key = bucket_key(view)
+        if key:
+            scan.s3_blocks.setdefault((d, key), set()).add("BucketOwnerEnforced")
     if type_ == "aws_ec2_instance_metadata_defaults" and surely_created(view) and \
             view.get("http_tokens") == "required" and defaults:
         scan.imds_required_dirs.add((d, provider_key(view)))
@@ -2185,6 +2268,10 @@ def handle_terraform(scan, parsed):
                 if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
                     b_view = HclView(b)
                     collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
+                    if b.labels[0] == "aws_s3_bucket" and isinstance(b_view.get("bucket"), str):
+                        d, address = str(Path(rel).parent), f"aws_s3_bucket.{b.labels[1]}"
+                        scan.bucket_aliases[(d, b_view.get("bucket"))] = address
+                        scan.bucket_aliases[(d, address)] = b_view.get("bucket")
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
                     if b.labels[0] in ("aws_opensearch_domain", "aws_elasticsearch_domain") and \

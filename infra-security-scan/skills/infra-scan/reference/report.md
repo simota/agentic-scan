@@ -52,6 +52,8 @@ Keep the chat, dashboard and PDF consistent: all are views of `findings.json`.
 Re-rendering invalidates the previous `assessment.pdf`, including with
 `--no-pdf`. If PDF generation is skipped or fails, no old PDF is retained beside
 the updated HTML reports; only a newly generated PDF belongs to that run.
+Both HTML reports carry a digest of the record they show; `contract_check.py`
+refuses one rendered before the last merge, so re-render after every merge.
 
 ## Limitations to state
 

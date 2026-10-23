@@ -14,7 +14,8 @@ from common import unique_object  # noqa: E402
 # only as whole words, so bypass_mode or upwards are not keys of a secret.
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])(?:[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
-    r"client[-_]?key|tls\.key|ssh[-_]?key|client[-_]?secret|connection[-_]?string|credentials?)[\w/.-]*|"
+    r"client[-_]?key|tls\.key|ssh[-_]?key|client[-_]?secret|connection[-_]?string|credentials?|"
+    r"(?:signing|hmac|jwt|session|app)[-_]?key)[\w/.-]*|"
     r"(?:[\w/.-]*[^a-zA-Z\s\"'=:])?(pass(?:phrase)?|pwd|pw|authorization|bearer)"
     r"(?:[^a-zA-Z\s\"'=:][\w/.-]*)?)[\"']?\s*[:=]")
 # Known credential formats, labelled for the scanner's SEC-001 detail. The
@@ -49,11 +50,18 @@ SAFE_VALUE = re.compile(
     r"\s*[,}]?\s*$")
 SAFE_SCALAR = re.compile(
     r'(?:null|true|false|"?(?:none|NONE|AWS_IAM|IAM|CUSTOM|JWT|COGNITO_USER_POOLS)"?)\s*[,}]?\s*$')
+# A count or duration about a secret is policy evidence (minimum_password_length
+# = 14, RefreshTokenValidity: 30); only a bare integer under such a key is kept.
+SETTING_KEY = re.compile(r"(?i)(?:length|age|prevention|validity|days|hours|minutes|seconds|ttl|period)[\"']?\s*[:=]")
+SETTING_VALUE = re.compile(r'"?[0-9]+"?\s*,?\s*$')
 HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 # Apostrophes are valid in URL userinfo. Keep it through the last @ so a
 # surrounding string's quote cannot cut off credentials before module_source.
 URL = re.compile(r"(?<![A-Za-z0-9+.-])(?:[A-Za-z][A-Za-z0-9+.-]*::)?"
                  r"[A-Za-z][A-Za-z0-9+.-]*://(?:[^/\s\"<>]*@)?[^\s\"'<>]+")
+# A Secrets Manager ARN names a secret, not its value: its ":secret:" segment
+# is no key. Only that prefix is exempt; anything after it is read as usual.
+SECRET_ARN = re.compile(r"\barn:aws[\w-]*:secretsmanager:[\w-]*:[0-9]*:secret:")
 QUOTED_KEY = re.compile(r'("(?:\\.|[^"\\])*")\s*:')
 JSON_STRING = re.compile(r'"(?:\\.|[^"\\])*"')
 # These getter options identify a revision or limit its history. Other query
@@ -80,7 +88,7 @@ def split_lines(text, keepends=False):
 def _secret_fields(line):
     # Qualified YAML/JSON keys can contain slashes. A URL path or query is
     # handled by module_source instead of being mistaken for such a key.
-    urls = [match.span() for match in URL.finditer(line)]
+    urls = [match.span() for pattern in (URL, SECRET_ARN) for match in pattern.finditer(line)]
     return (match for match in SECRET_FIELD.finditer(line)
             if not any(start <= match.start() < end for start, end in urls)
             # http_tokens = "optional" is IMDS evidence, not a token.
@@ -294,6 +302,16 @@ def module_source(source):
     prefix = re.match(r"^[A-Za-z][A-Za-z0-9+.-]*::", source)
     getter = prefix.group(0) if prefix else ""
     raw = source[len(getter):]
+    # urlsplit ends the authority at the first "/", "?" or "#", so a password
+    # holding one (postgres://app:a#b@db) would land in the path or fragment.
+    # Userinfo is everything to the last "@" when a ":" comes before any of
+    # them. A numeric password (deploy:1234/x@host) cannot be told from a port,
+    # so host:5432/path@x loses its host too: hiding beats leaking. An IPv6
+    # literal ([::1]:8080) is no userinfo.
+    userinfo = re.match(r"([A-Za-z][A-Za-z0-9+.-]*://)([^\s\"'<>]*)@", raw)
+    if userinfo and re.match(r"[^/?#:\[]*:", userinfo.group(2)):
+        # The authority branch below replaces this placeholder with [redacted].
+        raw = userinfo.group(1) + "redacted@" + raw[userinfo.end():]
     try:
         url = urlsplit(raw)
     except ValueError:
@@ -329,6 +347,8 @@ def redact(line, *, syntax="hcl"):
     for i, match in enumerate(matches):
         rest_to_end = line[match.end():].strip()
         if not rest_to_end or safe.fullmatch(rest_to_end):
+            continue
+        if SETTING_KEY.search(match.group()) and SETTING_VALUE.fullmatch(rest_to_end):
             continue
         if i + 1 < len(matches):
             rest_to_next = line[match.end():matches[i + 1].start()].strip()
@@ -508,9 +528,9 @@ SECRET_WORD = re.compile(
     r"(?i)(?<![a-z])((?:pg|db|my|admin|root|user|app|master)?pass(?:word|wd|phrase)?|pwd|pw|"
     r"secrets?|tokens?|auth(?:orization)?|user[-_]?data(?:[-_]base64)?|startup[-_]?script|custom[-_]?data|"
     r"credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|bearer|sk|"
-    r"tls\.key|ssh[-_]?key)(?![a-z])")
+    r"tls\.key|ssh[-_]?key|(?:signing|hmac|jwt|session|app)[-_]?key)(?![a-z])")
 # Public spellings that contain a secret word but name no secret.
-PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]tokens|secretsmanager|"
+PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]?tokens|secretsmanager|"
                           r"block[-_]project[-_]ssh[-_]keys|authori[sz]ation[-_]scopes|"
                           r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
                           r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
@@ -521,7 +541,7 @@ PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?k
 CREDENTIAL_WORD = re.compile(
     r"(?i)(?<![a-z])((?:pg|db|my|admin|root|user|app|master)?pass(?:word|wd|phrase)?|pwd|pw|"
     r"secrets?|tokens?|credentials?|private[-_]?key|api[-_]?key|access[-_]?key|client[-_]?key|"
-    r"bearer|sk|tls\.key|ssh[-_]?key)(?![a-z])")
+    r"bearer|sk|tls\.key|ssh[-_]?key|(?:signing|hmac|jwt|session|app)[-_]?key)(?![a-z])")
 MAX_SCRUB = 2000  # longer lines (minified JSON) are hidden whole: linear time, nothing to read
 STRUCTURE = re.compile(r'^\s*(?:resource|data|module|variable|output|provider|dynamic)\b[^=]*\{\s*$|'
                        r'^\s*(?:kind|type|Type)\s*:\s*"?[\w:.-]+"?\s*,?\s*$')
@@ -537,14 +557,18 @@ RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|p
 # Linear alternatives: userinfo without a slash, possibly with an escaped
 # quote or a space inside (postgres://app:a\"b@db, postgres://app:a b@db).
 URL_USERINFO = re.compile(r"://[^/\s\"'@]*(?:\\\"[^/\s\"'@]*)*@|://[^/\"'@]*\s[^/\"'@]*@")
-BARE_USERINFO = re.compile(r'(?<=["\'\s=])([\w.%+-]+):([^"\'\s@/]+)@(?=[\w.-]+[:/"\'\s]|[\w.-]+$)')
+# Go's DSN names its transport after the @: app:pw@tcp(db:3306)/name.
+BARE_USERINFO = re.compile(r'(?<=["\'\s=])([\w.%+-]+):([^"\'\s@/]+)@(?=[\w.-]+[:/"\'\s(]|[\w.-]+$)')
+# Oracle EZConnect and JDBC thin: scott/pw@db:1521/ORCL. Not an image digest
+# (library/nginx@sha256:...).
+SLASH_USERINFO = re.compile(r'(?<=["\'\s:=])([\w.$-]+)/([^"\'\s@/]+)@(?!sha\d+:)(?=[\w.-]+[:/])')
 SHELL_PASSWORD = re.compile(r"(?<!\S)(--password[= ]|--pass[= ]|--token[= ])(?=\S)(\S+)")
 DB_CLIENT = re.compile(r"\b(?:mysql|mysqldump|mariadb|psql|mongo|mongosh|redis-cli)\b")
 CLIENT_PASSWORD = re.compile(r"(?<!\S)(-p|-P|-a)(?=\S)(\S+)")
 # redis-cli -a takes the password as the next argument, also in a JSON or
 # YAML flow list: ["redis-cli", "-a", "x"].
 REDIS_AUTH = re.compile(r"""(?<![\w-])(-a|--pass|--askpass)(["']?\s*,?\s*["']?)([^"'\s,\]]+)""")
-SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?=[\w.-]+:)')
+SCP_USER = re.compile(r'((?:^|["\s=(])(?:[A-Za-z][A-Za-z0-9+.-]*::)?)([^\s"\'@/:]+)@(?!sha\d+:)(?=[\w.-]+:)')
 WEBHOOK = re.compile(r"hooks\.slack\.com/services/\S+|discord(?:app)?\.com/api/webhooks/\S+", re.IGNORECASE)
 UNICODE_ESCAPE = re.compile(r"(?<!\\)\\u([0-9A-Fa-f]{4})")
 # curl -u user:password, --user user:password, wget --http-user ... style pairs.
@@ -717,6 +741,7 @@ def scrub_line(line, syntax="hcl"):
     line = URL_USERINFO.sub("://[redacted]@", line)
     line = BARE_USERINFO.sub(lambda m: m.group() if m.group(1).lower() in MEMBER_PREFIX
                              else m.group(1) + ":[redacted]@", line)
+    line = SLASH_USERINFO.sub(lambda m: m.group(1) + "/[redacted]@", line)
     line = _redact_values(SHELL_PASSWORD, line, 2)
     # A numeric uid:gid only where -u/--user selects a process user (docker run -u 1000:1000);
     # curl -u 123:456 is a password all the same.
@@ -738,7 +763,7 @@ def scrub_line(line, syntax="hcl"):
     line = BASE64_TOKEN.sub(lambda m: "[redacted]" if _base64_key(m.group()) else m.group(), line)
     line = ENTROPY.sub(_entropy, line)
     decoded = UNICODE_ESCAPE.sub(lambda m: chr(int(m.group(1), 16)), line)
-    probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), decoded)
+    probe = PUBLIC_WORDS.sub(lambda m: "_" * len(m.group()), SECRET_ARN.sub(lambda m: "_" * len(m.group()), decoded))
     match = SECRET_WORD.search(probe)
     if match and not STRUCTURE.match(line):
         if decoded != line:

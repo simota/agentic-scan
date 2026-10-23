@@ -53,6 +53,12 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(contract_problems(doc), [
             "P-001.validation.evidence: a High finding needs evidence, even when Likely",
             "P-002.validation.evidence: a Medium finding needs evidence, even when Unverified"])
+        # A definitive verdict with uncited evidence gets only its own message.
+        doc["findings"][0]["validation"] = {"verdict": "Valid", "method": "static",
+                                            "evidence": "looks fine"}
+        self.assertEqual(contract_problems(doc)[0],
+                         "P-001.validation.evidence: Valid evidence must cite a path:line")
+        doc["findings"][0]["validation"] = {"verdict": "Likely", "method": "static"}
         doc["findings"][0]["validation"]["evidence"] = "unconfirmed: whether the route uses the serializer"
         doc["findings"][1]["validation"]["evidence"] = "not yet traced past app/jobs.py:3"
         self.assertEqual(contract_problems(doc), [])
@@ -64,6 +70,9 @@ class CheckRuleTests(unittest.TestCase):
         self.assertEqual(contract_problems(doc), [
             "P-001.step: 'DB9' is not a hunt step in reference/perspectives.md",
             "P-002.step: 'db1' is not a hunt step in reference/perspectives.md"])
+        doc["findings"][0]["step"] = " DB1"
+        self.assertEqual(contract_problems(doc)[0],
+                         "P-001.step: ' DB1' is not a hunt step in reference/perspectives.md")
         doc["findings"][0]["step"] = "OB1"
         doc["findings"][1]["step"] = ""
         self.assertEqual(contract_problems(doc), [])

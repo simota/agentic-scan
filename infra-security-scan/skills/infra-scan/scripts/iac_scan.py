@@ -981,12 +981,11 @@ class Scan:
 
     def trust_policy(self, res, stmts, line):
         source = getattr(line, "file", res.file)
-        caller_set = caller_set_keys(stmts)
         for st in stmts or []:
             if st["effect"] != "Allow":
                 continue
             # aws:SecureTransport or MFA presence do not narrow who may assume.
-            if not narrowing(st["conditions"], caller_set) and \
+            if not narrowing(st["conditions"], caller_set_keys(stmts, st)) and \
                     any(k in ("*", "AWS") and x == "*" for k, x in st["principals"]):
                 allows_assume = matches_action(st, "sts:AssumeRole")
                 if allows_assume is UNKNOWN:
@@ -1248,16 +1247,20 @@ CALLER_GRANTS = (("sts:TagSession", ("aws:requesttag/", "aws:tagkeys")),
                  ("sts:SetSourceIdentity", ("sts:sourceidentity",)))
 
 
-def caller_set_keys(stmts):
-    """Condition keys a trust policy lets any caller set: session tags where a
-    statement grants sts:TagSession to "*", a source identity where one grants
-    sts:SetSourceIdentity (AWS's own example puts these in a statement of their
-    own). Only a grant no condition narrows counts."""
+def caller_set_keys(stmts, assume):
+    """Condition keys of the assume statement that any caller can set: session
+    tags where some statement grants sts:TagSession to "*", a source identity
+    where one grants sts:SetSourceIdentity (AWS's own example puts these in a
+    statement of their own). The grant's conditions must all hold for the
+    caller already: either they narrow nothing, or the assume statement makes
+    the very same demand (aws:RequestTag/team = platform in both). A grant for
+    other values (team = security) opens nothing; values are not compared."""
     keys = ()
     for action, opened in CALLER_GRANTS:
         if any(st["effect"] == "Allow" and matches_action(st, action) is True
                and any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
-               and not narrowing(st["conditions"], opened) for st in stmts or []):
+               and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
+               for st in stmts or []):
             keys += opened
     return keys
 

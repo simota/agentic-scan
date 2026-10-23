@@ -81,7 +81,12 @@ class ConditionTest(unittest.TestCase):
             return f'resource "aws_iam_role" "{name}" {{\n  assume_role_policy = <<EOF\n{json.dumps(doc)}\nEOF\n}}\n'
         text = policy("split", None)
         text += policy("org_only", {"StringEquals": {"aws:PrincipalOrgID": "o-abc123def4"}})
-        self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.split", "High")])
+        # A grant that only allows other tag values cannot satisfy team = platform.
+        text += policy("other_tag", {"StringEquals": {"aws:RequestTag/team": "security"}})
+        # One that allows exactly the tag the assume statement demands opens it.
+        text += policy("same_tag", {"StringEquals": {"aws:RequestTag/team": "platform"}})
+        self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.same_tag", "High"),
+                                                   ("AWS-IAM-003", "aws_iam_role.split", "High")])
 
 
 class ResourceTypeTest(unittest.TestCase):

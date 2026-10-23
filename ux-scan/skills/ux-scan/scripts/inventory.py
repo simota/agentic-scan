@@ -1195,7 +1195,10 @@ def css_rules(text):
 MEDIA_FLOOR = re.compile(r"(?i)\(\s*min-width\s*:\s*" + _MQ + r"\s*\)|\bwidth\s*>=?\s*" + _MQ
                          + r"|" + _MQ + r"\s*<=?\s*width\b")
 # A width capped by its container or the viewport cannot overflow it (min-width can).
-WIDTH_CAP = re.compile(r"(?i)(?<![\w-])max-width\s*:\s*(?:calc\(\s*)?(\d+(?:\.\d+)?)(?:%|[sdl]?vw)(?![\w.])")
+# Only a whole value counts: N% or Nvw, or calc() of one less a length (calc(100% - 2rem)).
+WIDTH_CAP = re.compile(r"(?i)(?<![\w-])max-width\s*:\s*(?:(\d+(?:\.\d+)?)(?:%|[sdl]?vw)|"
+                       r"calc\(\s*(\d+(?:\.\d+)?)(?:%|[sdl]?vw)\s+-\s+\d*\.?\d+(?:px|r?em|%|[sdl]?vw)\s*\))"
+                       r"\s*(?:!\s*important\s*)?(?=;|$)")
 
 
 def own_media_floor(selector):
@@ -1235,7 +1238,8 @@ def width_conditions(text, offsets):
             floors.pop()
         inner = stack[-1] if stack else None
         if inner is not None and id(inner) not in caps:
-            caps[id(inner)] = any(float(m.group(1)) <= 100 for m in WIDTH_CAP.finditer("".join(inner.declarations)))
+            caps[id(inner)] = any(float(m.group(1) or m.group(2)) <= 100
+                                  for d in inner.declarations if (m := WIDTH_CAP.search(d.strip().rstrip(";"))))
         result[offset] = (floors[-1] if floors else 0, inner is not None and caps[id(inner)])
     return result
 
@@ -1389,6 +1393,7 @@ def inventory(root, flows=None):
     spacing, font_sizes, breakpoints, z_index = Tally(), Tally(), Tally(), Tally()
     widths, truncation, physical = Tally(), Tally(), Tally()
     width_conditions_by_value = defaultdict(list)  # value -> (media floor, capped) per declaration
+    lower_breakpoints = set()  # breakpoint values used at least once as a lower bound
     acc = defaultdict(list)
     routes, links, screens, tokens, motion, reduced, locales = [], set(), [], [], [], [], defaultdict(dict)
     scanned = skipped = 0
@@ -1535,10 +1540,19 @@ def inventory(root, flows=None):
             rule_start = max(window, *(text.rfind(c, window, m.start()) + 1 for c in "{};"))
             if "@container" in text[rule_start:m.start()]:
                 continue  # A container query tests a component's width, not the viewport.
-            for number, unit in zip(m.groups()[::2], m.groups()[1::2]):
-                value = px(number, unit, warn_at(m.start())) if number else None
+            # Which end each width bounds: max-width, width < N and N > width are upper bounds.
+            if m.group(1):
+                uppers = [bool(re.search(r"(?i)max-width|width\s*<", m.group(0)))]
+            else:
+                ops = re.findall(r"[<>]", m.group(0))
+                uppers = [ops[0] == ">"] + ([ops[1] == "<"] if len(ops) > 1 else [])
+            numbers = [(n, u) for n, u in zip(m.groups()[::2], m.groups()[1::2]) if n]
+            for (number, unit), upper in zip(numbers, uppers):
+                value = px(number, unit, warn_at(m.start()))
                 if value is not None:
                     breakpoints.add(fmt(value), at(m.start()))
+                    if not upper:
+                        lower_breakpoints.add(fmt(value))
         for m in REDUCED_MOTION.finditer(text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
@@ -1623,9 +1637,13 @@ def inventory(root, flows=None):
                            ("breakpoints", result["breakpoints"])):
             if key in scales:
                 allowed = {float(x) for x in scales[key]}
-                # A max-width query written just below a breakpoint (767.98px, 767px) is that breakpoint.
-                near = (lambda v: any(0 < t - v <= 1 for t in allowed)) if key == "breakpoints" else (lambda v: False)
-                off[key] = [row for row in tally if (v := abs(float(row["value"][:-2]))) not in allowed and not near(v)]
+                # An upper bound written just below a breakpoint (max-width: 767.98px or 767px) is
+                # that breakpoint; a value also used as a lower bound gets no tolerance.
+                def near(row):
+                    v = float(row["value"][:-2])
+                    return (key == "breakpoints" and row["value"] not in lower_breakpoints
+                            and any(0 < t - v <= 1 for t in allowed))
+                off[key] = [row for row in tally if abs(float(row["value"][:-2])) not in allowed and not near(row)]
         if "z_index" in scales:
             allowed = set(scales["z_index"]) | {0, -1, 1}
             off["z_index"] = [row for row in result["z_index"] if row["value"] not in allowed]

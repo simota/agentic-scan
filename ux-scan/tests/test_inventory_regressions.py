@@ -1503,7 +1503,11 @@ class InventoryRegressionTests(unittest.TestCase):
             "@media screen and (width >= 48em), print { .wide { width: 700px; } }\n"
             ".grid { min-width: 500px; max-width: 100%; }\n"
             "@media (max-width: 1023px) { .rail { width: 380px; } }\n"
-            "@media (min-width: 320px) { .card { width: 360.5px; } }\n",
+            "@media (min-width: 320px) { .card { width: 360.5px; } }\n"
+            ".p { width: 610px; max-width: calc(100% - 2rem); }\n"
+            ".q { width: 620px; max-width: calc(100% + 20px); }\n"
+            ".r { width: 630px; max-width: 100% !important; }\n"
+            ".s { width: 640px; max-width: 100%, 1px; }\n",
             "b.scss": ".panel {\n  @media (min-width: 900px) { width: 720px; }\n}\n"})
         wide = {r["value"]: r["wider_than_smallest_viewport"] for r in data["fixed_widths"]}
         # Capped by max-width, or only inside a min-width media query above 360px: cannot overflow there.
@@ -1515,6 +1519,11 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertTrue(wide["500px"])
         self.assertTrue(wide["380px"])
         self.assertTrue(wide["360.5px"])
+        # Only a cap that cannot exceed its container counts: 100% less a length, not 100% plus one.
+        self.assertFalse(wide["610px"])
+        self.assertTrue(wide["620px"])
+        self.assertFalse(wide["630px"])
+        self.assertTrue(wide["640px"])
         # The same value is wider when any one of its declarations applies at the smallest viewport.
         data = self.scan_with_flows({"a.css": "@media (min-width: 1024px) { .a { width: 400px; } }\n.b { width: 400px; }\n"})
         self.assertTrue(data["fixed_widths"][0]["wider_than_smallest_viewport"])
@@ -1524,14 +1533,18 @@ class InventoryRegressionTests(unittest.TestCase):
             "@media (max-width: 767.98px) { .a { color: red; } }\n"
             "@media (max-width: 1023px) { .b { color: red; } }\n"
             "@media (min-width: 700px) { .c { color: red; } }\n"
+            "@media (min-width: 1023px) { .d { color: red; } }\n"
+            "@media (width < 767.5px), (1023.9px >= width) { .e { color: red; } }\n"
+            "@media (766.5px < width) { .f { color: red; } }\n"
             "h1 { font-size: clamp(1.5rem, 1.2rem + 1.5vw, 2rem); }\n"
             ".stack { padding-bottom: calc(1rem + 3px); margin: max(13px, 1rem) 0; }\n"
             ".g { grid-gap: 14px; grid-row-gap: 8px; }\n"
             ".w { margin:\n  16px\n  20px; }\n"})
-        self.assertEqual([r["value"] for r in data["off_scale"]["breakpoints"]], ["700px"])
+        # The tolerance is for upper bounds; a min-width 1 px below a breakpoint is off the scale.
+        self.assertEqual(sorted(r["value"] for r in data["off_scale"]["breakpoints"]), ["1023px", "700px", "766.5px"])
         self.assertEqual(sorted(r["value"] for r in data["font_sizes"]), ["24px", "32px"])
         self.assertEqual(sorted(r["value"] for r in data["off_scale"]["spacing"]), ["13px", "14px", "20px"])
-        self.assertIn({"value": "20px", "count": 1, "locations": ["a.css:7"]}, data["spacing"])
+        self.assertIn({"value": "20px", "count": 1, "locations": ["a.css:10"]}, data["spacing"])
 
     def test_style_object_keys_theme_units_theme_folders_and_selectors(self):
         data = self.scan({

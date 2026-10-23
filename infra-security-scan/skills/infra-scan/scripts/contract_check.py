@@ -9,8 +9,8 @@ carries, a verdict other than `Unverified` on every finding, every perspective
 recorded once, references that name existing records, the merge gate's
 credential and exploit-string checks over the whole record, I-* findings and
 meta.commit identical to iac.json, and the exact output file set, each output
-nonempty and of its kind (HTML, iac_scan JSON, %PDF). It cannot tell whether a
-finding is true.
+nonempty and of its kind (HTML, iac_scan JSON, %PDF), with both HTML reports
+rendered from this findings.json. It cannot tell whether a finding is true.
 
 Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
 """
@@ -139,10 +139,15 @@ def check(data, out_dir, pdf=True, allow=()):
     present = {p.name for p in out.iterdir()}
     for name in sorted(required - present):
         add(f"outputs: {name} missing")
+    digest = render.record_digest(data)
     for name in sorted(required & present):
         problem = output_problem(out / name)
         if problem:
             add(f"outputs: {name} {problem}")
+        elif name.endswith(".html"):
+            stamp = render.RECORD_STAMP.search((out / name).read_text(encoding="utf-8", errors="replace"))
+            if not stamp or stamp.group(1) != digest:
+                add(f"outputs: {name} was not rendered from this findings.json; re-render with render.py")
     for name in sorted(present - OUTPUTS - set(allow)):
         add(f"outputs: unexpected {name} (pass --allow {name} if the requester asked for it)")
     for p in out.rglob("*"):

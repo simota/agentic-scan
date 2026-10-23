@@ -18,13 +18,14 @@ STATE_FILE = re.compile(r"\.tfstate(\.[^/]*)?$")
 STATE_OR_VARS = re.compile(STATE_FILE.pattern + r"|\.tfvars(\.json)?$")
 
 # A record ID in prose or a Markdown label, not inside a word, filename or
-# resource address (aws_security_group.I-900 names a resource, not I-900;
-# "F-001...F-003" and "I-002..I-004" are references).
+# resource address (aws_security_group.I-900 and the instance key in
+# aws_security_group.db["AP-07"] name a resource; "F-001...F-003" and
+# "I-002..I-004" are references).
 # ASCII classes: Japanese text often joins an ID directly (F-009は). "#F-123"
 # is another tracker's key. URLs are skipped by span (url_spans), including
 # their queries and fragments, so every tool reads references the same way.
-ID_BEFORE = r"(?<![A-Za-z0-9_#-])(?<![A-Za-z0-9_\]\"]\.)"
-ID_AFTER = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9])"
+ID_BEFORE = r"(?<![A-Za-z0-9_#-])(?<![A-Za-z0-9_\]\"]\.)(?<!\[\")"
+ID_AFTER = r"(?![A-Za-z0-9_-]|\.[A-Za-z0-9]|\"\])"
 BASELINE_REFERENCE = re.compile(ID_BEFORE + r"I-[0-9]{3,}" + ID_AFTER)
 F_REFERENCE = re.compile(ID_BEFORE + r"F-[0-9]{3,}" + ID_AFTER)
 RECORD_REFERENCE = re.compile(ID_BEFORE + r"(?:F-[0-9]{3,}|AP-[0-9]{2,}|I-[0-9]{3,})" + ID_AFTER)

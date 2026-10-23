@@ -21,6 +21,7 @@ schema error, refused or unwritable output directory (every problem on stderr).
 import argparse
 import datetime
 import functools
+import hashlib
 import html
 import json
 import os
@@ -60,11 +61,12 @@ AP_ID = re.compile(r"^AP-(?!0+\Z)([0-9]{2,9})\Z")
 # Repository paths may contain spaces and colons ("env prod/main.tf"); only
 # the trailing :line or :line-line is structure.
 LOCATION = re.compile(r"^(\S(?:.*\S)?):([0-9]{1,9})(?:-([0-9]{1,9}))?\Z")
-# A cited edge names a file: a path with an extension, or a known
-# extensionless file such as CODEOWNERS, Makefile or Dockerfile.
+# A cited edge names a file: a path with an extension (a dotfile such as
+# .env or .terraform-version too), or a known extensionless file such as
+# CODEOWNERS, Makefile or Dockerfile.
 # The lookbehind starts a match only at a path's first character: searching
 # from every offset of a long dotted word was quadratic.
-CITED = re.compile(r"(?<![\w./@-])(?:[\w./@-]+\.[A-Za-z]\w*|(?:[\w.@-]+/)*(?:CODEOWNERS|[A-Z][A-Za-z]*file)):[0-9]+")
+CITED = re.compile(r"(?<![\w./@-])(?:[\w./@-]*\.[A-Za-z][\w-]*|(?:[\w.@-]+/)*(?:CODEOWNERS|[A-Z][A-Za-z]*file)):[0-9]+")
 DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
 # Keys outside these sets are typos or fields no output shows; refuse them
@@ -128,6 +130,22 @@ def load(path):
     if depth(data) > MAX_DEPTH:
         raise SchemaError(f"{path}: nested deeper than {MAX_DEPTH} levels")
     return data
+
+
+# Both HTML reports carry the digest of the record they show, so
+# contract_check.py can tell a report rendered before the last merge.
+RECORD_STAMP = re.compile(r'<meta name="infra-scan-record" content="sha256:([0-9a-f]{64})">')
+
+
+def record_digest(data):
+    """sha256 of the record's content, independent of its file's formatting."""
+    text = json.dumps(data, sort_keys=True, ensure_ascii=False, separators=(",", ":"))
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def stamp(page, digest):
+    return page.replace('<meta charset="utf-8">',
+                        f'<meta charset="utf-8"><meta name="infra-scan-record" content="sha256:{digest}">', 1)
 
 
 def load_record(path):
@@ -452,8 +470,10 @@ def validate(data, partial=False):
         if unknown:
             add(f"{where}: unknown keys {unknown}")
         for key in ("entry", "target"):
-            if blank(a.get(key)) or LINE_BREAK.search(a[key].strip()):
+            if blank(a.get(key)):
                 add(f"{where}: {key} required")
+            elif LINE_BREAK.search(a[key].strip()):
+                add(f"{where}: {key} must be one line")
         if a.get("status") not in AP_STATUSES:
             add(f"{where}: status must be one of {', '.join(AP_STATUSES)}")
         elif a["status"] != "open" and blank(a.get("note")):
@@ -689,7 +709,8 @@ def counts(data):
     c = {s: sum(1 for f in active if f.get("severity") == s) for s in SEVERITIES}
     c["excluded"] = sum(1 for f in findings if is_excluded(f))
     c["covered"] = sum(1 for f in findings if not is_excluded(f) and f.get("id") in covered)
-    c["unverified"] = sum(1 for f in active if f.get("validation", {}).get("verdict") == "Unverified")
+    # Every finding status and contract_check.py still wait on, covered I-* included.
+    c["unverified"] = len(untriaged(data))
     return c
 
 
@@ -1442,6 +1463,7 @@ def main(argv=None):
         for problem in e.problems:
             print(f"schema: {problem}", file=sys.stderr)
         return 2
+    digest = record_digest(data)  # before anything below can touch data
     L = LABELS[a.lang]
     out = Path(a.out)
     if a.repo and not Path(a.repo).is_dir():
@@ -1455,8 +1477,8 @@ def main(argv=None):
     pdf, assessment = out / "assessment.pdf", out / "assessment.html"
     # Build both pages before touching the output directory, so a failure
     # leaves the previous outputs as they were.
-    dashboard = render_dashboard(data, L, a.lang, sources)
-    page = render_assessment(data, L, a.lang, sources)
+    dashboard = stamp(render_dashboard(data, L, a.lang, sources), digest)
+    page = stamp(render_assessment(data, L, a.lang, sources), digest)
     try:
         out.mkdir(parents=True, exist_ok=True)
         pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.

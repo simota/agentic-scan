@@ -19,7 +19,8 @@ before anything is written.
 
 `renumber` numbers findings PV-001… in severity order, then path (excluded
 findings last), and rewrites `PV-NNN` references in IDs and prose (never in
-locations, URLs, commands or revisions). Run it after the last merge; IDs
+locations, commitment sources, URLs, also those written in prose, commands or
+revisions). Run it after the last merge; IDs
 change, so read them back before writing another fragment.
 
 `check` is the run contract; its complete rule list is in
@@ -744,8 +745,17 @@ def merge(doc, fragment, where):
     return doc
 
 
-NOT_REFERENCES = {"location", "url", "command", "commit"}
-PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_-])PV-\d{3}(?![A-Za-z0-9_-])")  # ASCII, as COMMITMENT_REF
+NOT_REFERENCES = {"location", "url", "command", "commit", "source"}
+# ASCII boundaries, as COMMITMENT_REF. A hyphen may join references
+# (`PV-001-PV-003`) or a word (`PV-002-related`), but another prefix
+# (`ACME-PV-001`) is a different identifier.
+PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])(?:(?<=PV-\d{3}-)|(?<!-))PV-\d{3}(?![A-Za-z0-9_])")
+# URLs written in prose are technical values too: `…/browse/PV-002` keeps its target.
+# Non-ASCII text belongs to the URL when a `/` or `.` follows it (`https://例.example/`,
+# `/課題/`); otherwise it is prose run straight on after the URL (`…/aを参照、PV-002`).
+PROSE_URL = re.compile(r"(?i:https?://|www\.)"
+                       r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]|[^\x00-\x7f\s]+(?=[/.]))+")
+PV_OR_URL = re.compile(f"(?P<url>{PROSE_URL.pattern})|{PV_REFERENCE.pattern}")
 
 
 def renumber(doc):
@@ -763,7 +773,8 @@ def renumber(doc):
         if key in NOT_REFERENCES:
             return value
         if isinstance(value, str):
-            return PV_REFERENCE.sub(lambda m: mapping.get(m.group(), m.group()), value)
+            return PV_OR_URL.sub(lambda m: m.group() if m.group("url")
+                                 else mapping.get(m.group(), m.group()), value)
         if isinstance(value, list):
             return [rewrite(item) for item in value]
         if isinstance(value, dict):

@@ -81,6 +81,53 @@ class DemoTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((tmp / "privacy-scan-demo" / "dashboard.html").is_file())
 
+    def test_output_directory_of_another_user_is_refused(self):
+        # A shared /tmp lets another user create the default DEMO_OUT first and
+        # plant links there; render.py would write through them.
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d).resolve()
+            if os.geteuid() != 0:
+                result = make(REPO, f"DEMO_OUT={root.anchor}", "demo")
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn("is not owned by you", result.stderr)
+                self.skipTest("planting another user's files needs root")
+            victim = root / "victim"
+            victim.write_text("kept\n", encoding="utf-8")
+            planted = root / "planted"
+            planted.mkdir()
+            (planted / "report.md").symlink_to(victim)
+            os.lchown(planted / "report.md", 65534, 65534)
+            os.chown(planted, 65534, 65534)
+            mine = root / "mine"
+            mine.mkdir()
+            foreign_link = root / "foreign-link"
+            foreign_link.symlink_to(mine, target_is_directory=True)
+            os.lchown(foreign_link, 65534, 65534)
+            for out in (planted, f"{planted}/", foreign_link):
+                result = make(REPO, f"DEMO_OUT={out}", "demo")
+                self.assertNotEqual(result.returncode, 0, out)
+                self.assertIn("is not owned by you", result.stderr)
+            # Our own directory is still unsafe when others can write to it or
+            # have already put an output there.
+            shared = root / "shared"
+            shared.mkdir()
+            shared.chmod(0o777)
+            (shared / "report.md").symlink_to(victim)
+            os.lchown(shared / "report.md", 65534, 65534)
+            result = make(REPO, f"DEMO_OUT={shared}", "demo")
+            self.assertIn("is writable by other users", result.stderr)
+            shared.chmod(0o755)
+            result = make(REPO, f"DEMO_OUT={shared}", "demo")
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("report.md is owned by another user", result.stderr)
+            self.assertEqual(victim.read_text(encoding="utf-8"), "kept\n")
+            self.assertFalse((mine / "report.md").exists())
+            own_link = root / "own-link"
+            own_link.symlink_to(mine, target_is_directory=True)
+            result = make(REPO, f"DEMO_OUT={own_link}/", "demo")
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((mine / "report.md").is_file())
+
     def test_leading_hyphen_paths_are_not_options(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d).resolve()

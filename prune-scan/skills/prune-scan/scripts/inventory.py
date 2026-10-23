@@ -161,7 +161,11 @@ ROUTE_DEFS = (
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 # A rule may name several targets (clean distclean:); each is a target.
-MAKE_TARGET = re.compile(r"^([A-Za-z0-9][\w.-]*(?:[^\S\n]+[\w.-]+)*)[^\S\n]*:(?!=)", re.M)
+# Directive lines (export CC ::= gcc, override X: y) and ::= assignments are not rules.
+MAKE_TARGET = re.compile(r"^(?!(?:export|unexport|override|private|undefine|vpath)[^\S\n])"
+                         r"([A-Za-z0-9][\w.-]*(?:[^\S\n]+[\w.-]+)*)[^\S\n]*:(?!:*=)", re.M)
+# A define ... endef body is a variable's text, not rules.
+MAKE_DEFINE = re.compile(r"^[^\S\n]*(?:override[^\S\n]+)?define\b[\s\S]*?(?:^[^\S\n]*endef\b|\Z)", re.M)
 # Targets end on a non-space character, so trailing blanks are matched once.
 MAKE_INCLUDE = re.compile(r"^[^\S\n]*-?s?include[^\S\n]+([^#\n]+)", re.M)
 MAKE_RULE = re.compile(r"^([^\s#:=](?:[^:=\n]*[^\s:=])?)[^\S\n]*::?(?!=)[^\S\n]*([^;#\n]*)", re.M)
@@ -199,7 +203,10 @@ CREATE_TABLE_END = re.compile(r"\)[^;()'\"]*;")
 # block comment runs to the end, so no suffix is searched twice.
 SQL_BODY_TOKEN = re.compile(r"'(?:[^'\\\n]|\\.?|'')*(?:'|$)|\"[^\"\n]*(?:\"|$)|`[^`\n]*(?:`|$)|(?:--|#)[^\n]*|"
                             r"/\*[\s\S]*?(?:\*/|\Z)|[()]", re.M)
-SQL_BODY_BLANK = re.compile(r"'(?:[^'\\\n]|\\[^\n]|'')*'|'(?:[^'\n]|'')*'|(?:--|#)[^\n]*|/\*[\s\S]*?(?:\*/|\Z)")
+# Quoted identifiers ("it's", `o'clock`) are passed over; strings and comments are blanked.
+SQL_BLANK_TOKEN = re.compile(r"\"[^\"\n]*\"|`[^`\n]*`|'|(?:--|#)[^\n]*|/\*[\s\S]*?(?:\*/|\Z)")
+SQL_ESCAPED_STRING = re.compile(r"'(?:[^'\\\n]|\\[^\n]|'')*'")
+SQL_LITERAL_STRING = re.compile(r"'(?:[^'\n]|'')*'")
 SQL_CONSTRAINT = {"primary", "foreign", "unique", "constraint", "check", "key", "index"}
 
 DUPLICATE_GROUPS = {
@@ -977,6 +984,38 @@ def py_import_specs(text, *, tree=None):
         yield match.group(1), match.group(2), [name for name in names if name and name != "*"]
 
 
+def blank_sql_body(body):
+    """body with strings closed on their line and comments blanked in place.
+
+    A comma inside one then cannot start a column. A string read with
+    backslash escapes (can\\'t) is tried before one where a backslash is
+    literal (C:\\), so a misread string never swallows the comma
+    that ends its line. Once the escaped reading fails, the rest of that line
+    uses the literal reading only, so no line is rescanned per quote.
+    """
+    out, position, written, literal_until = [], 0, 0, -1
+    while match := SQL_BLANK_TOKEN.search(body, position):
+        start, end, token = match.start(), match.end(), match.group()
+        if token[0] in "\"`":
+            position = end
+            continue
+        if token == "'":
+            string = SQL_ESCAPED_STRING.match(body, start) if start >= literal_until else None
+            if string is None and start >= literal_until:
+                line_end = body.find("\n", start)
+                literal_until = len(body) if line_end < 0 else line_end
+            string = string or SQL_LITERAL_STRING.match(body, start)
+            if string is None:
+                position = start + 1
+                continue
+            end = string.end()
+        out.append(body[written:start])
+        out.append(re.sub(r"[^\n]", " ", body[start:end]))
+        position = written = end
+    out.append(body[written:])
+    return "".join(out)
+
+
 def parse_requirements(rel, text):
     for i, line in enumerate(physical_lines(text), 1):
         line = line.split("#", 1)[0].strip()
@@ -1175,6 +1214,7 @@ def npm_script(tokens):
 
 def make_targets(text):
     """(target, rule start) for every target a Makefile's rules name, in order; .PHONY-style names are skipped."""
+    text = MAKE_DEFINE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
     for m in MAKE_TARGET.finditer(text):
         for target in m.group(1).split():
             if not target.startswith("."):
@@ -1725,7 +1765,8 @@ def inventory(root, units=None, today=None):
         route = route[:-1] if route.endswith("$") and not route.endswith("\\$") else route
         route = route if route.startswith("/") or row["kind"] == "client" else "/" + route
         parts = [re.escape(p) for p in PARAM.split(route)]
-        pattern = r"(?:\$\{[^}]*\}|[^/\"'`\s?#]+)".join(parts)
+        # A bounded ${...} on one line keeps an unclosed one from rescanning the file.
+        pattern = r"(?:\$\{[^}\n]{0,200}\}|[^/\"'`\s?#]+)".join(parts)
         static = PARAM.sub("", route).strip("/^$")
         row["dynamic"] = bool(PARAM.search(route))
         if not static:
@@ -1740,10 +1781,11 @@ def inventory(root, units=None, today=None):
         # @/pages/users is an import, not a URL.
         mount = r"(?:/[\w.$-]+)*?" if row["kind"] == "server" else ""
         # A trailing slash is optional on either side (/api/items/ names /api/items),
-        # but only where the path ends there: /api/items/${id} is another route.
+        # but only where the path ends there: /api/items/${id} and "/api/items/" + id
+        # are another route.
         route_pattern = pattern.rstrip("/").rstrip("\\/")
         rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
-                        r"(?:/(?=[\s\x22\x27`?#)\]}>,;<]|\Z)|(?![\w/-]))" % (mount, route_pattern))
+                        r"(?:/(?=[\s?#)\]}>,;<]|\Z|[\x22\x27`](?!\s*\+))|(?![\w/-]))" % (mount, route_pattern))
         where = []
         for rel, text in texts.items():
             hits = [m for m in rx.finditer(text)]
@@ -1907,11 +1949,7 @@ def inventory(root, units=None, today=None):
             if folded[table.lower()] == 0:
                 tables.append({"table": table, "location": f"{rel}:{line_of(text, start)}"})
                 continue
-            # Blank strings closed on their line and comments in place, so a comma inside
-            # one cannot start a column. A string read with backslash escapes (can\'t)
-            # is tried before one where a backslash is literal (C:\), so a misread
-            # string never swallows the comma that ends its line.
-            body = SQL_BODY_BLANK.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), body)
+            body = blank_sql_body(body)
             for c in re.finditer(r"(?:^|,)\s*[`\"\[]?(\w+)[`\"\]]?\s+\w", body):
                 col_name = c.group(1)
                 if col_name.lower() in SQL_CONSTRAINT or folded[col_name.lower()]:

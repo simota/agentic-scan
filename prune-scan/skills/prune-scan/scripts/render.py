@@ -44,6 +44,10 @@ SENSITIVE = re.compile(r"(?i)(?:^|/)(?:\.env(?:\.[^/]*)?|[^/]*\.(?:pem|key|p12|p
                        r"[^/]*credentials[^/]*|[^/]*secrets?(?:[._-][^/]*)?|\.npmrc|\.pypirc|"
                        r"\.?htpasswd|\.?pgpass[^/]*|auth\.json|\.dockercfg|\.docker|\.kube|kubeconfig[^/]*|"
                        r"[^/]*\.tfstate(?:\.[^/]*)?|[^/]*\.kdbx)(?:/|$)")
+# A name part that is a secret word on its own (.vault-token, passwords.txt, api_key.json),
+# not a word that only contains one (tokens.css, tokenizer.py, ForgotPassword.vue).
+SECRET_FILE = re.compile(r"(?i)(?:^|[._-])(?:passw(?:or)?ds?|tokens?|api[_-]?keys?|secrets?|credentials?)"
+                         r"(?:\.(?:txt|json|ya?ml|ini|conf|cfg|env|key))?$")
 SECRET_LINE = re.compile(SECRET_NAME.pattern + r"[\s\"'\]]*[:=]", re.I)
 LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
@@ -133,7 +137,7 @@ def read_source(root, relative, *, expected_stat, directory=None):
 
 def secret_path(path):
     """A secret-looking file or directory, or a file named for a secret (passwords.txt, .vault-token)."""
-    return bool(SENSITIVE.search(path) or SECRET_NAME.search(path.rpartition("/")[2]))
+    return bool(SENSITIVE.search(path) or SECRET_FILE.search(path.rpartition("/")[2]))
 
 
 def snippet(repo, location, *, selected=None):

@@ -8,6 +8,7 @@ import io
 import json
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -44,6 +45,21 @@ class RouteMatchingTests(unittest.TestCase):
         # /api/users/${id} and /api/users/42 are another route, not /api/users/.
         self.assertEqual(mentions(result), {"^api/items/$": 1, "api/orders/": 1, "api/tags/": 1,
                                             "api/users/": 0})
+
+    def test_a_concatenated_parameter_url_does_not_name_the_collection(self):
+        result = scan({
+            "server/a.js": 'app.get("/api/items", h);\napp.get("/api/items/:id", h);\n',
+            "web/a.js": 'fetch("/api/items/" + id);\nfetch(`/api/items/`+id);\n',
+        })
+        self.assertEqual(mentions(result)["/api/items"], 0)
+
+    def test_an_unclosed_template_parameter_stays_linear(self):
+        def elapsed(n):
+            start = time.perf_counter()
+            scan({"server/a.js": 'app.get("/api/items/:id", h);\n', "web/c.js": "/api/items/${\n" * n})
+            return time.perf_counter() - start
+        small, large = elapsed(4000), elapsed(16000)
+        self.assertLess(large, max(small, 0.05) * 10)
 
 
 class DependencyTests(unittest.TestCase):
@@ -88,6 +104,14 @@ class CommandTests(unittest.TestCase):
                                 "build": (1, False, "Makefile:3"), "clean": (0, False, "Makefile:5"),
                                 "distclean": (1, False, "Makefile:5")})
 
+    def test_define_blocks_directives_and_assignments_are_not_targets(self):
+        rows = self.scripts({
+            "Makefile": ("define HELP\nAvailable targets are:\nendef\nbuild:\n\techo\nhelp:\n\techo\n"
+                         "export CC ::= gcc\noverride X: y\nexport:\n\techo\n"),
+        })
+        self.assertEqual({name: row[1] for name, row in rows.items()},
+                         {"build": True, "help": False, "export": False})
+
     def test_options_with_values_after_run_are_not_the_script(self):
         rows = self.scripts({
             "package.json": '{"private": true}',
@@ -110,6 +134,26 @@ class SqlStringTests(unittest.TestCase):
                          [{"table": "customers", "column": "legacy", "location": "db/schema.sql:5"}])
 
 
+    def test_quoted_identifiers_holding_a_quote_keep_the_columns_after_them(self):
+        result = scan({
+            "db/s.sql": ("CREATE TABLE t (\n  id INT,\n  note TEXT DEFAULT \"it's\", spare TEXT, flag TEXT DEFAULT 'n',\n"
+                         "  `o'clock` TEXT, legacy TEXT, kind TEXT DEFAULT 'a',\n"
+                         "  color TEXT DEFAULT '#fff', size INT\n);\n"),
+            "app.py": 'q = "select id, note, flag, kind, color from t"\n',
+        })
+        self.assertEqual([row["column"] for row in result["sql_columns_unreferenced"]],
+                         ["spare", "legacy", "size"])
+
+    def test_unclosed_escaped_strings_stay_linear(self):
+        def elapsed(n):
+            start = time.perf_counter()
+            scan({"db/s.sql": "CREATE TABLE t (\n  id INT,\n  x TEXT DEFAULT " + "'\\" * n + ",\n  note TEXT\n);\n",
+                  "a.py": "q = 'select id, x from t'\n"})
+            return time.perf_counter() - start
+        small, large = elapsed(4000), elapsed(16000)
+        self.assertLess(large, max(small, 0.05) * 10)
+
+
 class SecretExcerptTests(unittest.TestCase):
     def test_secret_named_files_and_secret_bearing_sources_are_not_excerpted(self):
         files = {
@@ -127,6 +171,14 @@ class SecretExcerptTests(unittest.TestCase):
             write_tree(Path(tmp), files)
             shown = {path for path in files if render.snippet(tmp, f"{path}:2")}
         self.assertEqual(shown, {"server/plain.py"})
+
+    def test_names_that_only_contain_a_secret_word_keep_their_excerpt(self):
+        files = {name: "a\nb\n" for name in ("styles/tokens.css", "src/tokenizer.py", "web/ForgotPassword.vue",
+                                               "deploy/api_key.json", "config/secrets.yaml")}
+        with tempfile.TemporaryDirectory() as tmp:
+            write_tree(Path(tmp), files)
+            shown = {path for path in files if render.snippet(tmp, f"{path}:2")}
+        self.assertEqual(shown, {"styles/tokens.css", "src/tokenizer.py", "web/ForgotPassword.vue"})
 
 
 class NotApplicableReasonTests(unittest.TestCase):

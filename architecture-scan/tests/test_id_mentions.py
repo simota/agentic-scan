@@ -104,6 +104,18 @@ class MentionTests(unittest.TestCase):
         self.assertTrue(any(p.startswith("next_steps[0]: mentions A-150,") for p in problems),
                         problems)
 
+    def test_duplicate_evidence_names_its_finding_as_a_mention(self):
+        # renumber rewrites only a whole-word ID, so evidence joining the ID to
+        # its label (`ofA-001`) would keep the old ID after a renumber.
+        for evidence, accepted in (("Duplicate of A-001", True), ("Duplicates A-001.", True),
+                                   ("重複:A-001", True), ("重複: A-001。", True),
+                                   ("Duplicate ofA-001", False), ("DuplicatesA-001", False)):
+            match = findings.DUPLICATE_OF.fullmatch(evidence)
+            self.assertEqual(bool(match), accepted, evidence)
+            if match:
+                self.assertEqual(findings._rewrite_ids(evidence, {"A-001": "A-002"}),
+                                 evidence.replace("A-001", "A-002"))
+
 
 if __name__ == "__main__":
     unittest.main()

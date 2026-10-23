@@ -93,8 +93,9 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # Evidence that is the duplicate statement and nothing else: `Duplicate of
 # A-004`, `Duplicates A-004.`, `重複: A-004。`. Any other text, which could
 # qualify or contradict it, needs a `path:line` like any other evidence; the
-# reasons live in the finding it repeats.
-DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?|重複[:：])\s*(A-[0-9]{3})\s*[.。]?\s*",
+# reasons live in the finding it repeats. The ID stands apart from an English
+# label (`ofA-004` is no mention, so renumber would not rewrite it).
+DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?\s+|重複[:：]\s*)(A-[0-9]{3})\s*[.。]?\s*",
                           re.ASCII)
 # `findings[].rule` names one rule or several (`R-01, R-02`) when one root
 # cause breaks more than one.

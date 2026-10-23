@@ -179,7 +179,10 @@ def _prose_url(url):
     while url and (url[-1] in URL_TRAILING
                    or (url[-1] == ")" and url.count(")") > url.count("("))):
         url = url[:-1]
-    return url if re.search(r"[/.][A-Za-z0-9]", url.split("//", 1)[-1][1:] or "") else ""
+    # GFM links only a host with a dot; a dotless one stays literal whatever follows.
+    authority = re.split(r"[/?#]", url.split("//", 1)[-1], maxsplit=1)[0]
+    host = authority.rpartition("@")[2].partition(":")[0]
+    return url if re.search(r"[A-Za-z0-9]\.[A-Za-z0-9]", host) else ""
 
 
 def markdown_text(value, links=True):

@@ -154,7 +154,10 @@ class MarkdownRenderingTests(unittest.TestCase):
                 ("Open http://localhost:3000/?debug_mode=1",
                  "Open http\\://localhost:3000/?debug\\_mode=1"),
                 ("prefix_www.example.com/a_b", "prefix\\_www\\.example.com/a\\_b"),
-                ("See https://例え.jp/a_b", "See https\\://例え.jp/a\\_b")):
+                ("See https://例え.jp/a_b", "See https\\://例え.jp/a\\_b"),
+                # A dotless host stays literal whatever follows it.
+                ("Docs at https://intranet/a_b", "Docs at https\\://intranet/a\\_b"),
+                ("Board http://grafana:3000/d/a_b", "Board http\\://grafana:3000/d/a\\_b")):
             with self.subTest(text=text):
                 self.assertEqual(render.markdown_text(text), expected)
         # Words that merely contain a scheme or `www.` are left alone.
@@ -196,3 +199,11 @@ class MarkdownRenderingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProseUrlHostTests(unittest.TestCase):
+    def test_hosts_with_a_dot_are_linked_with_ports_users_and_paths(self):
+        for url in ("https://example.com", "https://sub.example.co.jp:8443/a",
+                    "https://user@host.example/x", "https://user:pw@host.example", "http://192.0.2.1:8080/x", "www.example.com/a"):
+            with self.subTest(url=url):
+                self.assertTrue(render.markdown_text(f"see {url} now").startswith("see ["))

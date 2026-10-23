@@ -22,8 +22,8 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      prepare_cli, read_json, record_problems, validate)
+from findings import (LINE_BREAKS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+                      SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
@@ -113,8 +113,13 @@ def verdict_summary(findings):
                       for v in VERDICTS)
 
 
+# The guard lets these separate unrelated numbers, so each must show as a break.
+LINE_BREAK = re.compile(rf"\r\n|[{LINE_BREAKS}]")
+
+
 def as_text(value):
-    return ", ".join(value) if isinstance(value, list) else str(value)
+    """Recorded text with every line boundary written as a newline."""
+    return LINE_BREAK.sub("\n", ", ".join(value) if isinstance(value, list) else str(value))
 
 
 def shown(value):
@@ -191,7 +196,7 @@ def markdown_text(value, links=True):
     With `links`, URLs become explicit links whose targets keep their spelling.
     Link labels pass `links=False`, because a link cannot contain another link.
     """
-    text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = as_text(value)
     parts, pos = [], 0
     for match in URL_TOKEN.finditer(text) if links else ():
         url = _prose_url(match.group())
@@ -231,7 +236,7 @@ def markdown_item(value):
 
 def markdown_code(value):
     """Keep commands literal, including backticks, padding and line breaks."""
-    lines = as_text(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = as_text(value).split("\n")
     spans = []
     for line in lines:
         if not line:
@@ -271,10 +276,10 @@ def markdown_reference(ref):
 def html_reference(ref):
     url = ref["url"]
     title = reference_title(ref)
-    label = escape(title)
+    label = escape(as_text(title))
     destination = reference_destination(url)
     if destination is None:
-        return label if title == url else f"{label} — {escape(url)}"
+        return label if title == url else f"{label} — {escape(as_text(url))}"
     return f'<a href="{escape(destination)}">{label}</a>'
 
 

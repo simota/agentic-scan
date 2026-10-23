@@ -283,3 +283,33 @@ class RenderFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineBreakRenderingTests(unittest.TestCase):
+    """Every line boundary the personal-value guard accepts is shown as a break."""
+
+    BREAKS = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " ", "\r", "\r\n")
+
+    def test_guard_line_boundaries_are_visible_breaks_in_both_reports(self):
+        for brk in self.BREAKS:
+            with self.subTest(brk=ascii(brk)):
+                doc = complete_doc()
+                doc["checked_ok"] = [f"accounts 123456{brk}789012 rows"]
+                doc["findings"][0]["flow"] = f"1. step 123456{brk}789012"
+                doc["findings"][0]["references"] = [
+                    {"title": f"ticket 123456{brk}789012", "url": "https://example.com/t"}]
+                render.validate(doc, complete=True)
+                markdown = render.render_markdown(doc, "en")
+                html = render.render_html(doc, "en")
+                self.assertIn("accounts 123456<br>789012 rows", markdown)
+                self.assertIn("1. step 123456<br>789012", markdown)
+                self.assertIn("accounts 123456\n789012 rows", html)
+                self.assertIn("1. step 123456\n789012", html)
+                self.assertIn(">ticket 123456\n789012</a>", html)
+
+    def test_commands_split_at_every_line_boundary(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["method"] = "analysed"
+        doc["findings"][0]["analysis"] = {"tool": "rg", "command": "rg a rg b", "result": "none"}
+        self.assertIn("`rg a`<br>`rg b`", render.render_markdown(doc, "en"))
+        self.assertIn("<code>rg a\nrg b</code>", render.render_html(doc, "en"))

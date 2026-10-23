@@ -171,11 +171,14 @@ EXAMPLE_DOMAINS = re.compile(r"(?:^|\.)example\.(?:com|org|net)$|\.(?:example|te
 # An ASCII label that runs straight on into other letters, as Japanese prose
 # does after an address ("user@example.comに送る").
 ASCII_RUN_ON_LABEL = re.compile(r"([A-Za-z0-9-]*[A-Za-z])[^\x00-\x7f]")
+# Line boundaries (a regex class body). They separate unrelated numbers in
+# prose, so render.py shows every one of them as a line break.
+LINE_BREAKS = r"\r\n\v\f\x1c-\x1e\x85\u2028\u2029"
 # Horizontal Unicode whitespace and hyphens, including Unicode dashes, the minus
 # sign and the katakana prolonged sound mark, may separate the digits; line
 # boundaries still separate unrelated numbers in prose.
 LONG_NUMBER = re.compile(
-    r"\d(?:(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])*\d){11}")
+    rf"\d(?:(?:[^\S{LINE_BREAKS}]|[-\u2010-\u2015\u2212\u30fc])*\d){{11}}")
 # Card-style groups joined by one repeated '.', '/', '_' or '+' (4-4-4-2..4 or
 # 4-6-5). Groups of at most three digits, as in IP addresses, never match.
 # Three groups (4-4-4) are not refused: date-partitioned paths and port lists
@@ -195,7 +198,7 @@ GROUPED_NUMBER = re.compile(r"(?<!\d)\d{4}([./_+])\d{4}\1\d{4}\1\d{2,4}(?!\d)"
 # date or another UUID or digest beside it is not a free-standing number.
 # The hour of a clock time after a date (`2024-03-15 10:22`) and the seconds
 # before a date that follows (`10:22:33 - 2024-03-15`) belong to the date-time.
-SEPARATOR_CLASS = r"(?:[^\S\r\n\v\f\x1c-\x1e\x85\u2028\u2029]|[-\u2010-\u2015\u2212\u30fc])"
+SEPARATOR_CLASS = rf"(?:[^\S{LINE_BREAKS}]|[-\u2010-\u2015\u2212\u30fc])"
 DIGIT_SEPARATOR = re.compile(SEPARATOR_CLASS)
 DIGIT_RUN = re.compile(rf"\d(?:{SEPARATOR_CLASS}*\d)*")
 DATE_TOKEN = re.compile(r"(?:19|20)\d{2}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12]\d|3[01])(?!\d)")

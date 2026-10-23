@@ -137,7 +137,9 @@ of a validated `location` are treated as technical identifiers. The location's
 path and other report prose are still checked.
 
 Report prose is rendered as literal text in Markdown: placeholders such as
-`<email>`, table punctuation and line breaks are preserved. Commands use code
+`<email>`, table punctuation and line breaks are preserved. Both reports show
+every line boundary the long-number check treats as one (CR, LF, vertical tab,
+form feed, `\x1c`–`\x1e`, NEL, U+2028, U+2029) as a line break. Commands use code
 spans that preserve backticks, and HTTP(S) or relative reference links are
 encoded separately; other URL schemes remain visible as text. In the HTML
 dashboard, commands use preformatted code blocks that preserve line breaks and

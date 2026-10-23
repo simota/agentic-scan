@@ -1258,7 +1258,8 @@ def caller_set_keys(stmts, assume):
     caller already: either they narrow nothing, or the assume statement makes
     the very same demand (aws:RequestTag/team = platform in both). A grant for
     other values (team = security) opens nothing; values are not compared.
-    An explicit Deny of the action to "*" that may apply overrides any grant."""
+    An explicit Deny of the action to "*" overrides any grant when it holds for
+    every request the assume statement admits, by the same exact matching."""
     def to_anyone(st):
         return any(k in ("*", "AWS") and x == "*" for k, x in st["principals"])
     keys = ()
@@ -1267,7 +1268,8 @@ def caller_set_keys(stmts, assume):
                and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
                for st in stmts or []) and not any(
                 st["effect"] == "Deny" and matches_action(st, action) is not False and to_anyone(st)
-                and not narrowing(st["conditions"]) for st in stmts or []):
+                and not narrowing([c for c in st["conditions"] if c not in assume["conditions"]])
+                for st in stmts or []):
             keys += opened
     return keys
 
@@ -1464,7 +1466,8 @@ def s3_block(scan, res, flag):
     keys |= {scan.bucket_aliases.get((res.dir, key)) for key in keys}
     for key in keys - {None}:
         if flag in scan.s3_blocks.get((res.dir, key), ()):
-            return f"neutralised by {flag} in the bucket's public access block"
+            where = "ownership controls" if flag == "BucketOwnerEnforced" else "public access block"
+            return f"neutralised by {flag} in the bucket's {where}"
     if flag in scan.s3_blocks.get((res.dir, ("*", provider_key(res.view))), ()):
         return f"neutralised by {flag} in the account public access block"
     return None
@@ -1643,7 +1646,7 @@ def check_tf(scan, res):
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl", "aws_s3_object", "aws_s3_bucket_object"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.
-        blocked = s3_block(scan, res, "ignore_public_acls")
+        blocked = s3_block(scan, res, "ignore_public_acls") or s3_block(scan, res, "BucketOwnerEnforced")
         def acl_hit(line, detail):
             if blocked:
                 scan.hit("AWS-S3-001", res, line, f"{detail}; {blocked}", "Low")
@@ -2134,6 +2137,12 @@ def collect_context(scan, d, type_, view, text, defaults=True):
         on = {f for f in ("ignore_public_acls", "restrict_public_buckets") if tf_bool(view.get(f)) is True}
         if key and on and (defaults or not account):
             scan.s3_blocks.setdefault((d, key), set()).update(on)
+    if type_ == "aws_s3_bucket_ownership_controls" and surely_created(view) and any(
+            rule.get("object_ownership") == "BucketOwnerEnforced" for rule in view.blocks("rule")):
+        # ACLs are disabled: a public ACL is refused (AccessControlListNotSupported).
+        key = bucket_key(view)
+        if key:
+            scan.s3_blocks.setdefault((d, key), set()).add("BucketOwnerEnforced")
     if type_ == "aws_ec2_instance_metadata_defaults" and surely_created(view) and \
             view.get("http_tokens") == "required" and defaults:
         scan.imds_required_dirs.add((d, provider_key(view)))

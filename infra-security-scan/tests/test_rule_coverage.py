@@ -98,6 +98,15 @@ class ConditionTest(unittest.TestCase):
         text = f'resource "aws_iam_role" "denied" {{\n  assume_role_policy = <<EOF\n{json.dumps(doc)}\nEOF\n}}\n'
         self.assertEqual(hits({"main.tf": text}), [])
 
+    def test_conditional_deny_of_the_demanded_tag_opens_nothing(self):
+        demand = {"StringEquals": {"aws:RequestTag/team": "platform"}}
+        doc = {"Version": "2012-10-17", "Statement": [
+            {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:AssumeRole", "Condition": demand},
+            {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "sts:TagSession"},
+            {"Effect": "Deny", "Principal": {"AWS": "*"}, "Action": "sts:TagSession", "Condition": demand}]}
+        text = f'resource "aws_iam_role" "denied" {{\n  assume_role_policy = <<EOF\n{json.dumps(doc)}\nEOF\n}}\n'
+        self.assertEqual(hits({"main.tf": text}), [])
+
 
 class ResourceTypeTest(unittest.TestCase):
     def test_public_object_acl(self):
@@ -129,6 +138,18 @@ class ResourceTypeTest(unittest.TestCase):
             with self.subTest(block=block_ref, obj=obj_ref):
                 text = bucket + block % block_ref + obj % obj_ref
                 self.assertEqual(hits({"main.tf": text}), [("AWS-S3-001", "aws_s3_object.index", "Low")])
+
+    def test_acl_on_a_bucket_owner_enforced_bucket_is_low(self):
+        text = ('resource "aws_s3_bucket" "site" {\n  bucket = "site-assets"\n}\n'
+                'resource "aws_s3_bucket_ownership_controls" "site" {\n  bucket = aws_s3_bucket.site.id\n'
+                '  rule {\n    object_ownership = "BucketOwnerEnforced"\n  }\n}\n'
+                'resource "aws_s3_object" "index" {\n  bucket = "site-assets"\n  key = "i"\n'
+                '  acl = "public-read"\n}\n'
+                'resource "aws_s3_bucket_acl" "site" {\n  bucket = aws_s3_bucket.site.id\n  acl = "public-read"\n}\n')
+        found = scan({"main.tf": text}).hits
+        self.assertEqual(sorted((h["rule"], h["address"], h["severity"]) for h in found),
+                         [("AWS-S3-001", "aws_s3_bucket_acl.site", "Low"), ("AWS-S3-001", "aws_s3_object.index", "Low")])
+        self.assertTrue(all("BucketOwnerEnforced" in h["detail"] for h in found))
 
     def test_separate_kms_key_policy(self):
         policy = json.dumps({"Version": "2012-10-17", "Statement": [{

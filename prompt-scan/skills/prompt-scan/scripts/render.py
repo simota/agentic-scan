@@ -167,7 +167,8 @@ def validate_data(data):
         _str(meta, key, "meta")
     # Any other value would silently fall back to a Japanese report.
     if meta.get("lang") is not None and meta["lang"] not in LABELS:
-        raise SchemaError(f"meta.lang must be one of {', '.join(sorted(LABELS))}")
+        raise SchemaError(f"meta.lang must be one of {', '.join(sorted(LABELS))} "
+                          '(findings.py merge a fragment {"meta": {"lang": ...}} to set it)')
     if meta.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(meta["commit"])):
         raise SchemaError("meta.commit must be a full Git object id or null")
     if meta.get("dirty") is not None and not isinstance(meta["dirty"], bool):

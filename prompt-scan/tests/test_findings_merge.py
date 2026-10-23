@@ -50,6 +50,15 @@ class MergeTest(unittest.TestCase):
         self.assertIn("meta.lang must be one of", err)
         self.assertFalse(self.out.exists())
 
+    def test_a_fragment_repairs_a_language_recorded_before_it_was_checked(self):
+        write_json(self.out, {"meta": dict(META, lang="en-US"), "findings": [finding(1)]})
+        code, _, err = self.merge({"findings": [finding(2)]})
+        self.assertEqual(code, 2)
+        self.assertIn("meta.lang must be one of", err)
+        code, _, err = self.merge({"meta": {"lang": "en"}})
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.data()["meta"]["lang"], "en")
+
     def test_refuses_more_than_five_new_findings(self):
         code, _, err = self.merge({"meta": META, "findings": [finding(n) for n in range(1, 7)]})
         self.assertEqual(code, 1)

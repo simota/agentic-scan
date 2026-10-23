@@ -24,9 +24,10 @@ schema it reports only the first schema error and skips the record checks, so
 fix it and run `check` again. This is the complete list; other documents
 point here. `check` refuses an output directory unless:
 
-- it holds exactly `findings.json`, `dashboard.html` and `report.md` (plus
-  `--allow` names), each a readable, nonempty file (directories and broken
-  links do not qualify), and no staging file left by an interrupted write
+- it holds exactly `findings.json`, `dashboard.html` and `report.md`, each a
+  readable, nonempty file (directories and broken links do not qualify), and no
+  staging file left by an interrupted write; an `--allow` name may also be
+  present and is not inspected
 - `findings.json` passes the schema below with every required `meta` field
   (`project`, `scope`, `date`, `assessor`, `lang`)
 - IDs are `PV-001`… without gaps; reported findings (not `FalsePositive` or
@@ -137,7 +138,9 @@ of a validated `location` are treated as technical identifiers. The location's
 path and other report prose are still checked.
 
 Report prose is rendered as literal text in Markdown: placeholders such as
-`<email>`, table punctuation and line breaks are preserved. Commands use code
+`<email>`, table punctuation and line breaks are preserved. Both reports show
+every line boundary the long-number check treats as one (CR, LF, vertical tab,
+form feed, `\x1c`–`\x1e`, NEL, U+2028, U+2029) as a line break. Commands use code
 spans that preserve backticks, and HTTP(S) or relative reference links are
 encoded separately; other URL schemes remain visible as text. In the HTML
 dashboard, commands use preformatted code blocks that preserve line breaks and
@@ -155,7 +158,8 @@ non-ASCII host), stay literal text rather than links that keep escapes. A `!`
 before a URL stays text and never makes the link an image. Prose in a reference
 whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard
-filter instead of appearing under their severity; a filter that matches nothing says so. Dashboard cells wrap
+filter instead of appearing under their severity; a filter that matches nothing says so. An
+empty commitments ledger is shown as `None.` in both reports rather than omitted. Dashboard cells wrap
 long paths and keep line breaks.
 
 ## Shape

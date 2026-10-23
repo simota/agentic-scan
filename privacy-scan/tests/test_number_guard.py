@@ -249,3 +249,46 @@ class FuzzFindingTests(unittest.TestCase):
                       "taro@beta.example-corp.com", "user@1.2.3-corp.io"):
             with self.subTest(value=value):
                 self.assertTrue(refused(value))
+
+
+class TechnicalNeighbourTests(unittest.TestCase):
+    """Dates, UUIDs and digests stay exempt next to each other."""
+
+    UUID = "550e8400-e29b-41d4-a716-446655440000"
+    DIGEST = "0a1b2c3d4e5f678901234567890abcdef1234567"
+
+    def test_adjacent_technical_values_are_allowed(self):
+        uuid, digest = self.UUID, self.DIGEST
+        for value in (f"{uuid} 2026-10-09", f"{uuid} – 2026-10-09",
+                      f"2026-10-09 {uuid}", f"{uuid} {uuid}", f"{uuid}, {uuid}",
+                      f"{digest} 2026-10-09", f"2026-10-09 {digest}", f"{digest} {uuid}",
+                      f"request {uuid} 2026-10-09 10:22:33 - 2026-10-09 11:22:33"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))
+
+    def test_free_numbers_beside_technical_values_still_count(self):
+        uuid, digest = self.UUID, self.DIGEST
+        for value in (f"{uuid} 1234 2026-10-09", f"{uuid} 2026-10-09 1234",
+                      f"2026-10-09 1234 {uuid}", f"{digest} 4111 1111 1111",
+                      f"{uuid} {uuid} 1", f"090123456 {uuid} 2026-10-09"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+
+
+class InvisibleSplitTests(unittest.TestCase):
+    def test_default_ignorable_characters_cannot_split_a_number(self):
+        # Combining grapheme joiner, Khmer inherent vowels, Mongolian variation
+        # selectors, variation selectors (also the supplement) and Hangul fillers
+        # display as nothing but are not format (Cf) characters.
+        for split in ("͏", "឴", "឵", "᠋", "᠏", "︀", "️",
+                      "\U000e0100", "ᅟ", "ᅠ", "ㅤ", "ﾠ", "￰"):
+            with self.subTest(split=ascii(split)):
+                self.assertTrue(refused(f"account 123456{split}789012"))
+                self.assertTrue(refused(f"taro{split}@gmail.com"))
+                self.assertTrue(refused(f"taro@gmail{split}.com"))
+
+    def test_visible_marks_and_hangul_text_are_unchanged(self):
+        for value in ("한국어 2026-10-09", "café ガ 123456",
+                      "❤️ 12345 67890"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))

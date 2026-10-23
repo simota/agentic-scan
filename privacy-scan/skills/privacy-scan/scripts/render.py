@@ -22,8 +22,8 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
-                      prepare_cli, read_json, record_problems, validate)
+from findings import (LINE_BREAKS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+                      SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
@@ -113,8 +113,13 @@ def verdict_summary(findings):
                       for v in VERDICTS)
 
 
+# The guard lets these separate unrelated numbers, so each must show as a break.
+LINE_BREAK = re.compile(rf"\r\n|[{LINE_BREAKS}]")
+
+
 def as_text(value):
-    return ", ".join(value) if isinstance(value, list) else str(value)
+    """Recorded text with every line boundary written as a newline."""
+    return LINE_BREAK.sub("\n", ", ".join(value) if isinstance(value, list) else str(value))
 
 
 def shown(value):
@@ -151,7 +156,8 @@ def reference_title(ref):
     return title if title.strip() else ref["url"]
 
 
-MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#"})
+# `$` too: GitHub renders `$…$` as math, as in `$PATH:$HOME`.
+MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#$"})
 
 
 # URLs written in prose. GFM links them automatically but keeps our escape
@@ -179,7 +185,10 @@ def _prose_url(url):
     while url and (url[-1] in URL_TRAILING
                    or (url[-1] == ")" and url.count(")") > url.count("("))):
         url = url[:-1]
-    return url if re.search(r"[/.][A-Za-z0-9]", url.split("//", 1)[-1][1:] or "") else ""
+    # GFM links only a host with a dot; a dotless one stays literal whatever follows.
+    authority = re.split(r"[/?#]", url.split("//", 1)[-1], maxsplit=1)[0]
+    host = authority.rpartition("@")[2].partition(":")[0]
+    return url if re.search(r"[A-Za-z0-9]\.[A-Za-z0-9]", host) else ""
 
 
 def markdown_text(value, links=True):
@@ -188,7 +197,7 @@ def markdown_text(value, links=True):
     With `links`, URLs become explicit links whose targets keep their spelling.
     Link labels pass `links=False`, because a link cannot contain another link.
     """
-    text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
+    text = as_text(value)
     parts, pos = [], 0
     for match in URL_TOKEN.finditer(text) if links else ():
         url = _prose_url(match.group())
@@ -228,7 +237,7 @@ def markdown_item(value):
 
 def markdown_code(value):
     """Keep commands literal, including backticks, padding and line breaks."""
-    lines = as_text(value).replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    lines = as_text(value).split("\n")
     spans = []
     for line in lines:
         if not line:
@@ -268,10 +277,10 @@ def markdown_reference(ref):
 def html_reference(ref):
     url = ref["url"]
     title = reference_title(ref)
-    label = escape(title)
+    label = escape(as_text(title))
     destination = reference_destination(url)
     if destination is None:
-        return label if title == url else f"{label} — {escape(url)}"
+        return label if title == url else f"{label} — {escape(as_text(url))}"
     return f'<a href="{escape(destination)}">{label}</a>'
 
 
@@ -342,8 +351,12 @@ def render_markdown(doc, lang):
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
-    if doc.get("commitments"):
-        lines += [f"## {t['commitments']}", "", markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
+    # An empty ledger is shown as such, never left out silently.
+    lines += [f"## {t['commitments']}", ""]
+    if not doc.get("commitments"):
+        lines += [t["none"], ""]
+    else:
+        lines += [markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r.get("family", ""), r["source"], status)
@@ -380,6 +393,7 @@ details[data-sev] summary .muted{font-family:var(--sans);font-size:12px;font-wei
 details[data-sev] dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:14px 0 4px}
 details[data-sev] dt{font-family:var(--sans);font-size:12px;color:var(--muted)}
 dd{margin:0;overflow-wrap:anywhere;white-space:pre-line}
+details[data-sev] summary,.hero h1,.hero .meta,.footer{white-space:pre-line}
 li{white-space:pre-line}
 td{white-space:pre-line}
 details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
@@ -421,7 +435,8 @@ def render_html(doc, lang):
                         if shown(meta.get(k, "")))
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{e(t['title'])}: {e(meta.get('project', ''))}</title>"
+           # A document title cannot show a break, so its lines are joined visibly.
+           f"<title>{e(t['title'])}: {e(as_text(meta.get('project', '')).replace(chr(10), ' · '))}</title>"
            f"<style>{CSS}</style></head><body><main>",
            f"<header class='masthead'><span class='brand'>{e(t['brand'])}</span>"
            f"<div class='tools'><button id='theme' type='button'>{e(t['theme'])}</button></div></header>",
@@ -481,7 +496,10 @@ def render_html(doc, lang):
                              for ref in f.get("references", []))
                    + "</dl></details>")
     out.append("</div></section>")
-    if doc.get("commitments"):
+    if not doc.get("commitments"):
+        out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
+                   f"<p class='muted'>{e(t['none'])}</p></section>")
+    else:
         out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
                    f"<div class='tablewrap'><table class='ledger commitments'>"
                    f"{html_head(t['commitment_columns'])}")

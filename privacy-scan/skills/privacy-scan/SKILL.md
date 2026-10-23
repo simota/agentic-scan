@@ -124,7 +124,7 @@ requester's language (`--lang ja|en`).
 | The requester asks to look at production data, logs or a database | Decline for this skill: it reviews code. Suggest which query or log search they could run themselves to confirm a finding |
 | Asked to lock a commitment in or confirm a fix | GUARD: a test in the repo's own suite with synthetic data, red before and green after |
 | The host cannot run a second, independent reviewer | Record that in `limitations`; the *Never* rule on `Valid` still applies. Never invent a second reviewer |
-| Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several (its counts from `scripts/findings.py counts`). An open High goes to a private tracker. Filing or sending is the requester's step |
+| Asked to file findings as issues or write them up for an owner or DPO | Draft from `findings.json`: `templates/issue.<lang>.md` per finding, `templates/report.<lang>.md` for one report covering several (its counts from `scripts/findings.py counts`). An unfixed High (status `Open` or `Accepted`) goes to a private tracker. Filing or sending is the requester's step |
 
 ## Always / Never
 

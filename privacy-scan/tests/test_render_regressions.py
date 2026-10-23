@@ -1,6 +1,7 @@
 """Regression checks for report contents, references and output preservation on failure."""
 import io
 import json
+import re
 from contextlib import redirect_stdout
 from html import escape
 from html.parser import HTMLParser
@@ -283,3 +284,66 @@ class RenderFailureTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LineBreakRenderingTests(unittest.TestCase):
+    """Every line boundary the personal-value guard accepts is shown as a break."""
+
+    BREAKS = ("\v", "\f", "\x1c", "\x1d", "\x1e", "\x85", " ", " ", "\r", "\r\n")
+
+    def test_guard_line_boundaries_are_visible_breaks_in_both_reports(self):
+        for brk in self.BREAKS:
+            with self.subTest(brk=ascii(brk)):
+                doc = complete_doc()
+                doc["checked_ok"] = [f"accounts 123456{brk}789012 rows"]
+                doc["findings"][0]["flow"] = f"1. step 123456{brk}789012"
+                doc["findings"][0]["references"] = [
+                    {"title": f"ticket 123456{brk}789012", "url": "https://example.com/t"}]
+                render.validate(doc, complete=True)
+                markdown = render.render_markdown(doc, "en")
+                html = render.render_html(doc, "en")
+                self.assertIn("accounts 123456<br>789012 rows", markdown)
+                self.assertIn("1. step 123456<br>789012", markdown)
+                self.assertIn("accounts 123456\n789012 rows", html)
+                self.assertIn("1. step 123456\n789012", html)
+                self.assertIn(">ticket 123456\n789012</a>", html)
+
+    def test_dashboard_text_outside_pre_line_cells_keeps_its_breaks(self):
+        doc = complete_doc()
+        doc["meta"]["project"] = "shop 123456\u2028789012"
+        doc["meta"]["assessor"] = "team 123456\x1e789012"
+        doc["findings"][0]["title"] = "Leak 123456\x85789012"
+        html = render.render_html(doc, "en")
+        # The finding summary, project heading, byline and footer keep line breaks.
+        for selector in ("details[data-sev] summary", ".hero h1", ".hero .meta", ".footer"):
+            with self.subTest(selector=selector):
+                self.assertRegex(html, r"(^|[\s},])" + re.escape(selector)
+                                 + r"(,[^{]*)?\{[^}]*white-space:pre-line")
+        self.assertIn("<h1>shop 123456\n789012</h1>", html)
+        self.assertIn("Leak 123456\n789012", html)
+        self.assertIn("team 123456\n789012", html)
+        # A document title cannot hold a break; its lines are joined visibly.
+        self.assertIn("<title>Privacy assessment: shop 123456 · 789012</title>", html)
+
+    def test_commands_split_at_every_line_boundary(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["method"] = "analysed"
+        doc["findings"][0]["analysis"] = {"tool": "rg", "command": "rg a rg b", "result": "none"}
+        self.assertIn("`rg a`<br>`rg b`", render.render_markdown(doc, "en"))
+        self.assertIn("<code>rg a\nrg b</code>", render.render_html(doc, "en"))
+
+
+class EmptyLedgerTests(unittest.TestCase):
+    def test_an_empty_commitments_ledger_is_shown_as_none(self):
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                doc = complete_doc()
+                doc["commitments"] = []
+                for f in doc["findings"]:
+                    f.pop("commitment", None)
+                labels = render.LABELS[lang]
+                markdown = render.render_markdown(doc, lang)
+                self.assertIn(f"## {labels['commitments']}\n\n{labels['none']}\n", markdown)
+                html = render.render_html(doc, lang)
+                self.assertIn(f"<h2>{escape(labels['commitments'])}</h2>", html)
+                self.assertIn(f"<p class='muted'>{escape(labels['none'])}</p></section>", html)

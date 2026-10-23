@@ -7,7 +7,7 @@ language. Delete optional rows, lines and sections left empty (no conditions, no
 
 Before filing:
 - No personal data values: name fields and use placeholders (<customer email>)
-- An unfixed (status: Open) High goes to a private tracker, not a public issue
+- An unfixed (status: Open or Accepted) High goes to a private tracker, not a public issue
 - This is a technical finding, not a legal opinion. Route compliance questions to counsel or the DPO
 -->
 

@@ -1496,7 +1496,7 @@ def main(argv=None):
         else:
             note = L["pdf_failed"] if failed else L["pdf_missing"]
             try:
-                write_output(assessment, render_assessment(data, L, a.lang, sources, note))
+                write_output(assessment, stamp(render_assessment(data, L, a.lang, sources, note), digest))
             except OSError as e:
                 print(f"render: cannot write {assessment}: {e.strerror or e}", file=sys.stderr)
                 return 2

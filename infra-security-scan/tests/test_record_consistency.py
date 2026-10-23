@@ -7,6 +7,7 @@ from pathlib import Path
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
@@ -50,8 +51,10 @@ class RecordConsistencyTest(unittest.TestCase):
             with self.subTest(key=key):
                 text = f'aws_security_group.db["{key}"]'
                 self.assertEqual(list(common.find_references(common.RECORD_REFERENCE, text)), [])
-        self.assertEqual([m.group() for m in common.find_references(common.RECORD_REFERENCE, 'see "F-002"')],
-                         ["F-002"])
+        for prose in ('see "F-002"', 'Related findings: ["F-002"]', 'items["F-002"]'):
+            with self.subTest(prose=prose):
+                self.assertEqual([m.group() for m in common.find_references(common.RECORD_REFERENCE, prose)],
+                                 ["F-002"])
         data = copy.deepcopy(self.data)
         baseline = next(f for f in data["findings"] if f["id"].startswith("I-"))
         baseline["resources"] = ['aws_security_group.db["AP-07"]', 'aws_security_group.db["F-002"]']
@@ -80,6 +83,15 @@ class RecordConsistencyTest(unittest.TestCase):
         self.assertIn("dashboard.html was not rendered from this findings.json", msg)
         self.assertIn("assessment.html was not rendered from this findings.json", msg)
         self.render()
+        code, msg = quiet(contract_check.main, self.out, "--no-pdf")
+        self.assertEqual(code, 0, msg)
+
+    def test_report_rewritten_after_a_pdf_failure_keeps_the_stamp(self):
+        self.write()
+        with patch.object(render, "to_pdf", return_value=None):
+            code, msg = quiet(render.main, self.out / "findings.json", "--out", self.out)
+        self.assertEqual(code, 0, msg)
+        self.assertFalse((self.out / "assessment.pdf").exists())
         code, msg = quiet(contract_check.main, self.out, "--no-pdf")
         self.assertEqual(code, 0, msg)
 

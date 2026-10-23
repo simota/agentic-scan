@@ -38,6 +38,10 @@ class ConditionTest(unittest.TestCase):
     def test_caller_set_keys_do_not_narrow(self):
         text = trust("tag", {"StringEquals": {"aws:PrincipalTag/team": "platform"}})
         text += trust("session", {"StringEquals": {"sts:RoleSessionName": "deploy"}})
+        # Request tags and a source identity also need sts:TagSession /
+        # sts:SetSourceIdentity, which this statement does not allow.
+        text += trust("request", {"StringEquals": {"aws:RequestTag/team": "platform"}})
+        text += trust("source", {"StringEquals": {"sts:SourceIdentity": "deployer"}})
         text += trust("org", {"StringEquals": {"aws:PrincipalTag/team": "platform",
                                                 "aws:PrincipalOrgID": "o-abc123def4"}})
         self.assertEqual(hits({"main.tf": text}), [("AWS-IAM-003", "aws_iam_role.session", "High"),

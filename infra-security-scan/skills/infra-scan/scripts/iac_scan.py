@@ -1150,18 +1150,20 @@ class Scan:
 
 
 # Condition keys that hold for any caller, so they do not narrow Principal "*".
-# Tags, session names and source identities are set by the caller (any
-# account can tag its own role team=platform). Unknown keys count as
-# narrowing: precision over completeness.
+# The caller's own principal tags and session name need no further grant
+# (any account can tag its own role team=platform); request tags and a
+# source identity also need sts:TagSession / sts:SetSourceIdentity in the
+# same policy, so they stay narrowing. Unknown keys count as narrowing:
+# precision over completeness.
 OPEN_CONDITION_KEYS = {
     "aws:securetransport", "aws:currenttime", "aws:epochtime", "aws:requestedregion",
     "aws:referer", "aws:useragent", "aws:multifactorauthpresent", "s3:tlsversion",
     "s3:signatureversion", "s3:signatureage", "s3:authtype", "s3:x-amz-content-sha256",
     "s3:x-amz-server-side-encryption", "s3:x-amz-server-side-encryption-aws-kms-key-id",
     "s3:x-amz-acl", "s3:prefix", "s3:delimiter", "s3:max-keys",
-    "aws:multifactorauthage", "aws:tagkeys", "sts:rolesessionname", "sts:sourceidentity",
+    "aws:multifactorauthage", "sts:rolesessionname",
 }
-OPEN_CONDITION_PREFIXES = ("aws:principaltag/", "aws:requesttag/")
+OPEN_CONDITION_PREFIXES = ("aws:principaltag/",)
 
 
 def _condition_narrows(op, key, vals):

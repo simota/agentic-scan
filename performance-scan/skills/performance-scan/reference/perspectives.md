@@ -42,7 +42,8 @@ Rules:
   entry pays. The family in brackets after a heading only says which entries
   may cover some of its steps
 - The `note` lists the hunt step IDs applied and each one left out with its
-  reason (e.g. `DB1–DB3 via B-01; DB5 N/A: no explicit transactions`)
+  reason (e.g. `DB1 via B-01; DB2–DB4, DB6 applied; DB5 N/A: no explicit
+  transactions`)
 - A construct that is not sound but whose workload rate keeps it below every
   severity in `SKILL.md` leaves the status `applied`; its note says `below
   threshold: <rate>, no finding`

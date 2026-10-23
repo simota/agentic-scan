@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
                       record_exists)
-from safe_paths import open_directory, within  # noqa: E402
+from safe_paths import descriptor_within, open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
 from safe_source import PRIVATE_KEY, SECRET_NAME, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
@@ -440,6 +440,10 @@ def render_outputs(a, resources):
         resources.callback(os.close, directory)
     except (OSError, ValueError, RuntimeError) as e:
         print(f"render.py: cannot select output directory {out}: {e}", file=sys.stderr)
+        return 2
+    if a.repo and descriptor_within(directory, a.repo):
+        # The pinned directory receives the writes; a link retargeted after the check above is refused here.
+        print(f"render.py: --out must be outside --repo; {out} is inside {a.repo}", file=sys.stderr)
         return 2
     try:
         common = report.validate(to_common(data, a.lang, units, a.repo))

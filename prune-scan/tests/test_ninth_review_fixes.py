@@ -56,6 +56,16 @@ class DottedModuleTests(unittest.TestCase):
             self.assertNotIn(path, found)
         self.assertIn("polls/unused.py", found)
 
+    def test_logger_names_and_javascript_keys_do_not_hide_orphans(self):
+        result = scan({
+            "app/__init__.py": "",
+            "app/main.py": 'import logging\nlog = logging.getLogger("app.billing")\n',
+            "app/billing.py": "A = 1\n",
+            "auth/login.py": "B = 1\n",
+            "web/src/page.ts": 'export const label = t("auth.login");\n',
+        })
+        self.assertTrue({"app/billing.py", "auth/login.py"} <= orphans(result), orphans(result))
+
     def test_file_names_and_plain_pairs_do_not_hide_orphans(self):
         result = scan({
             "main.py": ('open("config.json")\nopen("settings.yaml")\nX = {"a": 1}\nY = "image:latest"\n'
@@ -78,6 +88,19 @@ class EnvironmentReadTests(unittest.TestCase):
         self.assertEqual({row["name"] for row in result["env_read"]}, {"DATABASE_URL", "PAGE_SIZE"})
         self.assertEqual(result["env_declared_not_read"], [])
 
+    def test_an_aliased_os_module_is_still_read(self):
+        result = scan({"config.py": 'import os as _os\nURL = _os.environ["DATABASE_URL"]\nX = _os.getenv("PAGE")\n'})
+        self.assertEqual({row["name"] for row in result["env_read"]}, {"DATABASE_URL", "PAGE"})
+
+    def test_a_wsgi_environ_argument_is_not_the_process_environment(self):
+        result = scan({"wsgi_app.py": ('def app(environ, start_response):\n    path = environ["PATH_INFO"]\n'
+                                       '    host = environ.get("HTTP_HOST")\n')})
+        self.assertEqual(result["env_read"], [])
+
+    def test_a_parenthesized_os_import_makes_environ_a_read(self):
+        result = scan({"config.py": 'from os import (\n    getenv,\n    environ,\n)\nURL = environ["DATABASE_URL"]\n'})
+        self.assertEqual({row["name"] for row in result["env_read"]}, {"DATABASE_URL"})
+
     def test_a_method_named_getenv_is_not_an_environment_read(self):
         result = scan({"config.py": 'URL = settings.getenv("DATABASE_URL")\nX = self.environ["PAGE"]\n'})
         self.assertEqual(result["env_read"], [])
@@ -98,8 +121,10 @@ class ByteOrderMarkTests(unittest.TestCase):
 class FlagDefinitionTests(unittest.TestCase):
     def test_exported_constants_in_a_flag_file_are_definitions(self):
         result = scan({"web/src/flags.ts": ("export const NEW_CHECKOUT = true;\nconst DARK_MODE: boolean = false;\n"
-                                            "export const flags = {\n  betaSearch: true,\n};\n")})
+                                            "export const flags = {\n  betaSearch: true,\n};\n"
+                                            "export function isOn() {\n  let result = false;\n  return result;\n}\n")})
         values = {row["name"]: row["value"] for row in result["feature_flags"]}
+        self.assertNotIn("result", values)
         self.assertEqual(values, {"NEW_CHECKOUT": True, "DARK_MODE": False, "betaSearch": True})
 
 

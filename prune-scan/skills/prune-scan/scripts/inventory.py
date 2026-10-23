@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
-from safe_paths import open_directory, within  # noqa: E402
+from safe_paths import descriptor_within, open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -107,14 +107,17 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
 PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
 # Dotted module paths loaded by name: "mysite.urls" (ROOT_URLCONF), "polls.apps.PollsConfig"
-# (INSTALLED_APPS), "pkg.mod:app" and an unquoted gunicorn/uvicorn pkg.mod:app.
-PYTHON_MODULE_STRING = re.compile(r"[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?[\"']|"
+# (INSTALLED_APPS), "pkg.mod:app" and an unquoted gunicorn/uvicorn pkg.mod:app. A logger
+# name (getLogger("app.billing")) is not a module load.
+PYTHON_MODULE_STRING = re.compile(r"(?<!getLogger\()[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?[\"']|"
                                   r"(?<![\w.:/-])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+):[A-Za-z_]\w*(?![\w.:/-])")
 # "config.json" and "logo.png" name files, not modules (named_in covers those).
 NOT_MODULE_SUFFIX = {"json", "yaml", "yml", "toml", "ini", "cfg", "conf", "txt", "md", "rst", "html", "htm", "css",
                      "scss", "less", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "py", "pyi", "sh", "sql", "csv",
                      "xml", "lock", "log", "env", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2",
                      "ttf", "pdf", "zip", "gz", "tar", "example", "sample", "local"}
+# Python sources, settings and server command files; a JS i18n key ("auth.login") names no module.
+MODULE_STRING_FILE = re.compile(r"(?i)(?:\.(?:py|toml|cfg|ini|ya?ml|sh|conf)|(?:^|/)(?:Procfile|Dockerfile)[^/]*)$")
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
@@ -146,12 +149,17 @@ RS_USE = re.compile(r"\b(?:use|extern\s+crate)\s+([A-Za-z_]\w*)|\b([A-Za-z_]\w*)
 
 ENV_READ = re.compile(
     r"process\.env\.([A-Z_][A-Z0-9_]*)|process\.env\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
-    r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|(?:\bos\.|(?<![\w.]))environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
-    r"(?:\bos\.|(?<![\w.]))environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
-    r"(?:\bos\.|(?<![\w.]))getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|os\.environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+    r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    r"(?:os\.|(?<![\w.]))getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
+# A bare environ is os.environ only where the file imports it: a WSGI app's own
+# environ argument holds request keys (environ["PATH_INFO"]), not env vars.
+OS_IMPORT = re.compile(r"^[^\S\r\n]*from\s+os\s+import\s+(\([^)]*\)|[^\n]*)", re.M)
+BARE_ENVIRON = re.compile(r"(?<![\w.])environ(?:\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
+                          r"\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"'])")
 # const { PORT = 3000, DATABASE_URL: url } = process.env reads each key it names.
 ENV_DESTRUCTURE = re.compile(r"\{([^{}]*)\}\s*=\s*(?:process|import\.meta)\.env\b(?!\s*[.\[])")
 ENV_DESTRUCTURED_KEY = re.compile(r"(?:^|,)\s*([A-Z_][A-Z0-9_]*)\s*(?=[=:,]|\Z)")
@@ -161,7 +169,8 @@ FLAG_CHECK = re.compile(r"\b(?:isEnabled|is_enabled|isFeatureEnabled|is_feature_
                         r"get_flag|variation|boolVariation|isOn|is_on|active\?)\(\s*[\"'`:]([\w.-]+)[\"'`]?")
 FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|experiments)\.(?:py|ts|tsx|js|mjs|"
                        r"json|ya?ml|toml)$")
-FLAG_DEF = re.compile(r"^[^\S\r\n]*(?:(?:export\s+)?(?:const|let|var)\s+)?[\"']?([A-Za-z][\w.-]*)[\"']?"
+# A declaration counts at the top level only, so a local (let result = false) is no flag.
+FLAG_DEF = re.compile(r"^(?:(?:export\s+)?(?:const|let|var)\s+|[^\S\r\n]*)[\"']?([A-Za-z][\w.-]*)[\"']?"
                       r"\s*(?::\s*boolean\s*)?[:=]\s*(true|false|True|False|on|off)\b", re.M)
 ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
 ROUTE_DEFS = (
@@ -1397,7 +1406,8 @@ def inventory(root, units=None, today=None):
         # attribute (a class) names no file. A lone first part names only a package, so a host
         # such as "api.example.com" leaves api.py a candidate.
         # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
-        for quoted, served in set() if is_test(rel) else set(PYTHON_MODULE_STRING.findall(text)):
+        scanned = MODULE_STRING_FILE.search(rel) and not is_test(rel)
+        for quoted, served in set(PYTHON_MODULE_STRING.findall(text)) if scanned else ():
             parts = (quoted or served).split(".")
             if parts[-1].lower() in NOT_MODULE_SUFFIX:
                 continue
@@ -1655,6 +1665,9 @@ def inventory(root, units=None, today=None):
             continue
         if rel in code_files:
             found = [(next(g for g in m.groups() if g), m.start()) for m in ENV_READ.finditer(text)]
+            if suffix(rel) in PY_EXT and any(re.search(r"\benviron\b(?!\s+as\b)", m.group(1))
+                                             for m in OS_IMPORT.finditer(text)):
+                found.extend((next(g for g in m.groups() if g), m.start()) for m in BARE_ENVIRON.finditer(text))
             if suffix(rel) in JS_EXT:
                 found.extend((key.group(1), m.start(1) + key.start(1)) for m in ENV_DESTRUCTURE.finditer(text)
                              for key in ENV_DESTRUCTURED_KEY.finditer(m.group(1)))
@@ -2110,6 +2123,11 @@ def main(argv=None):
             except (OSError, ValueError, RuntimeError) as e:
                 print(f"inventory.py: --out: {e}", file=sys.stderr)
                 return 2 if a.units else 1
+            if descriptor_within(directory, a.repo):
+                # The pinned directory receives the write; a link retargeted after the check above is refused here.
+                print(f"inventory.py: --out must be outside the reviewed repository; {a.out} is inside {a.repo}",
+                      file=sys.stderr)
+                return 2
         if a.units:
             try:
                 units, source = resources.enter_context(selected_units(a.units))

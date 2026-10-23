@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "prune-scan" / "scripts"
@@ -59,6 +60,24 @@ class OutputOutsideReviewedRepositoryTests(unittest.TestCase):
         self.assertFalse((self.repo / "out").exists())
         status, _ = self.render(self.base / "out", repo=alias)
         self.assertEqual(status, 0)
+
+    def test_render_checks_the_pinned_directory_not_only_the_path(self):
+        # A link retargeted into the repository after the pathname check passes it.
+        (self.repo / "report.html").write_text("<p>the app's own page</p>\n", encoding="utf-8")
+        with mock.patch.object(render, "within", return_value=False):
+            status, stderr = self.render(self.repo)
+        self.assertEqual(status, 2)
+        self.assertIn("outside --repo", stderr)
+        self.assertEqual((self.repo / "report.html").read_text(encoding="utf-8"), "<p>the app's own page</p>\n")
+        self.assertFalse((self.repo / "dashboard.html").exists())
+
+    def test_inventory_checks_the_pinned_directory_not_only_the_path(self):
+        (self.repo / "inventory.json").write_text('{"mine": 1}\n', encoding="utf-8")
+        with mock.patch.object(inventory, "within", return_value=False):
+            status, stderr = quiet(inventory.main, [str(self.repo), "--out", str(self.repo / "inventory.json")])
+        self.assertEqual(status, 2)
+        self.assertIn("outside the reviewed repository", stderr)
+        self.assertEqual(json.loads((self.repo / "inventory.json").read_text(encoding="utf-8")), {"mine": 1})
 
     def test_render_accepts_a_sibling_whose_name_extends_the_repository(self):
         status, _ = self.render(self.base / "app-review")

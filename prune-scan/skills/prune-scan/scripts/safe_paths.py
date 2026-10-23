@@ -64,3 +64,34 @@ def within(path, root):
         except OSError:
             continue
     return False
+
+
+def descriptor_within(descriptor, root):
+    """True when the pinned directory is root or lies below it, walking '..' from the descriptor.
+
+    A pathname check alone leaves a window: a symlinked output parent retargeted
+    into root after the check but before pinning would pass. The descriptor
+    names the directory that receives the writes, so its ancestry is what counts.
+    An ancestor that cannot be opened ends the walk; callers keep the pathname check.
+    """
+    try:
+        root_stat = os.stat(root)
+        current = os.open(".", getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY,
+                          dir_fd=descriptor)
+    except OSError:
+        return False
+    search = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY
+    try:
+        while True:
+            info = os.fstat(current)
+            if os.path.samestat(info, root_stat):
+                return True
+            parent = os.open("..", search, dir_fd=current)
+            os.close(current)
+            current = parent
+            if os.path.samestat(os.fstat(current), info):
+                return False  # The filesystem root is its own parent.
+    except OSError:
+        return False
+    finally:
+        os.close(current)

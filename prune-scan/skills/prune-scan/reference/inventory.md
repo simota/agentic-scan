@@ -100,9 +100,13 @@ reaches `backend/app/models.py`; `python -m server.jobs.nightly` names
 `pkg.mod:app` (gunicorn, uvicorn) name each package on that path and each module
 inside a package (a lone first part such as `api` in `"api.example.com"` names
 only a package), so
-modules Django or a server loads by name are not orphans (a test that patches
-`"pkg.mod.fn"` keeps nothing in use); a name ending in a
-file extension (`"config.json"`) is a file name, not a module. Dotted imports also match namespace
+modules Django or a server loads by name are not orphans. Only Python, TOML,
+INI/CFG, YAML, shell, Procfile and Dockerfile sources are read for these, never
+tests (a test that patches `"pkg.mod.fn"` keeps nothing in use), JS/TS (an i18n
+key `"auth.login"` names no module) or `getLogger("…")` names; a name ending in
+a file extension (`"config.json"`) is a file name, not a module. Any other
+Python string that spells an existing module path (an event name
+`"events.created"`) also keeps that module out of `orphan_files`. Dotted imports also match namespace
 distributions such as `azure-storage-blob` and `ruamel.yaml`; `// indirect`
 requirements in `go.mod` are not listed.
 
@@ -134,7 +138,7 @@ not inherit its replacement suggestion.
 | `duplicate_purpose` | Two or more packages from one purpose group in a manifest (date libraries, HTTP clients, utility belts, test runners, JSON libraries…) | DP2 |
 | `platform_replaceable` | Packages the platform or standard library now covers (`node-fetch`, `uuid`, `six`, `mock`, `simplejson`, `pytz`…), with the replacement | DP3 |
 | `env_read`, `env_declared_not_read`, `env_read_not_declared` | Environment variables read in code (process.env, including `const { PORT } = process.env`, os.environ/getenv, including `from os import getenv, environ`, import.meta.env, os.Getenv, env::var…) against those declared in the example env files; `env_read_not_declared` is empty when no example file exists (`env_declaration_files`) | CF1, CF2, OB1 |
-| `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`), as keys or as `export const NAME = true` constants, with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
+| `feature_flags` | Flags defined in flag files (`flags.*`, `features.*`, `toggles.*`, `experiments.*`), as keys or as top-level `export const NAME = true` constants (a local `let` inside a function is not a flag), with their literal value (`true`, `false`, `mixed`), plus every name checked through `isEnabled("…")`, `useFlag("…")`, `variation("…")` and similar calls, plus `FEATURE_*`/`ENABLE_*` env vars; `checks` counts call sites | FF1, FF3 |
 | `i18n_unreferenced`, `i18n_dynamic_prefixes` | Keys of JSON locale bundles that no string literal names (an i18next namespace prefix such as `common:` is ignored), except keys under a prefix built in a template literal (`` t(`status.${x}`) ``) | AS3 |
 | `assets_unreferenced` | Images, fonts, media and PDFs whose file name (`logo@2x.png` included) no other file mentions; `public` marks files served by URL, which outside pages can still link | AS1 |
 | `css_unreferenced`, `css_dynamic_prefixes` | Class selectors in CSS/SCSS/Less (outside attribute selectors and strings) that no non-CSS file names, except classes under a prefix built from a string (`` `btn-${variant}` ``); CSS modules are skipped | AS2 |

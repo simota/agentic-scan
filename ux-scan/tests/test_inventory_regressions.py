@@ -1485,6 +1485,117 @@ class InventoryRegressionTests(unittest.TestCase):
                                    "export const C = () => <button onClick={go}><Icon a={() => 1} />Delete</button>;\n"})
         self.assertEqual([r["location"] for r in data["icon_buttons"]], ["B.tsx:1"])
 
+    def scan_with_flows(self, files, tokens=None):
+        flows = {"viewports": ["360x640", "1280x800"],
+                 "tokens": tokens or {"spacing": [4, 8, 12, 16, 24], "font_sizes": [12, 14, 16, 20, 24, 32],
+                                      "breakpoints": [768, 1024]}}
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for name, contents in files.items():
+                (root / name).parent.mkdir(parents=True, exist_ok=True)
+                (root / name).write_text(contents, encoding="utf-8")
+            return inventory.inventory(root, flows)
+
+    def test_widths_that_cannot_apply_at_the_smallest_viewport(self):
+        data = self.scan_with_flows({"a.css":
+            ".modal { width: 600px; max-width: 100%; }\n"
+            "@media (min-width: 1024px) {\n  .sidebar { width: 400px; }\n}\n"
+            "@media screen and (width >= 48em), print { .wide { width: 700px; } }\n"
+            ".grid { min-width: 500px; max-width: 100%; }\n"
+            "@media (max-width: 1023px) { .rail { width: 380px; } }\n"
+            "@media (min-width: 320px) { .card { width: 360.5px; } }\n"
+            ".p { width: 610px; max-width: calc(100% - 2rem); }\n"
+            ".q { width: 620px; max-width: calc(100% + 20px); }\n"
+            ".r { width: 630px; max-width: 100% !important; }\n"
+            ".s { width: 640px; max-width: 100%, 1px; }\n",
+            "b.scss": ".panel {\n  @media (min-width: 900px) { width: 720px; }\n}\n"})
+        wide = {r["value"]: r["wider_than_smallest_viewport"] for r in data["fixed_widths"]}
+        # Capped by max-width, or only inside a min-width media query above 360px: cannot overflow there.
+        self.assertFalse(wide["600px"])
+        self.assertFalse(wide["400px"])
+        self.assertFalse(wide["720px"])
+        # A query list applies when any of its queries does; min-width beats max-width; max-width queries apply.
+        self.assertTrue(wide["700px"])
+        self.assertTrue(wide["500px"])
+        self.assertTrue(wide["380px"])
+        self.assertTrue(wide["360.5px"])
+        # Only a cap that cannot exceed its container counts: 100% less a length, not 100% plus one.
+        self.assertFalse(wide["610px"])
+        self.assertTrue(wide["620px"])
+        self.assertFalse(wide["630px"])
+        self.assertTrue(wide["640px"])
+        # The same value is wider when any one of its declarations applies at the smallest viewport.
+        data = self.scan_with_flows({"a.css": "@media (min-width: 1024px) { .a { width: 400px; } }\n.b { width: 400px; }\n"})
+        self.assertTrue(data["fixed_widths"][0]["wider_than_smallest_viewport"])
+
+    def test_breakpoint_upper_bounds_and_fluid_sizes_are_on_scale(self):
+        data = self.scan_with_flows({"a.css":
+            "@media (max-width: 767.98px) { .a { color: red; } }\n"
+            "@media (max-width: 1023px) { .b { color: red; } }\n"
+            "@media (min-width: 700px) { .c { color: red; } }\n"
+            "@media (min-width: 1023px) { .d { color: red; } }\n"
+            "@media (width < 767.5px), (1023.9px >= width) { .e { color: red; } }\n"
+            "@media (766.5px < width) { .f { color: red; } }\n"
+            "h1 { font-size: clamp(1.5rem, 1.2rem + 1.5vw, 2rem); }\n"
+            ".stack { padding-bottom: calc(1rem + 3px); margin: max(13px, 1rem) 0; }\n"
+            ".g { grid-gap: 14px; grid-row-gap: 8px; }\n"
+            ".w { margin:\n  16px\n  20px; }\n"})
+        # The tolerance is for upper bounds; a min-width 1 px below a breakpoint is off the scale.
+        self.assertEqual(sorted(r["value"] for r in data["off_scale"]["breakpoints"]), ["1023px", "700px", "766.5px"])
+        self.assertEqual(sorted(r["value"] for r in data["font_sizes"]), ["24px", "32px"])
+        self.assertEqual(sorted(r["value"] for r in data["off_scale"]["spacing"]), ["13px", "14px", "20px"])
+        self.assertIn({"value": "20px", "count": 1, "locations": ["a.css:10"]}, data["spacing"])
+
+    def test_style_object_keys_theme_units_theme_folders_and_selectors(self):
+        data = self.scan({
+            "A.vue": "<template><div :style=\"{ 'margin-top': '13px', 'font-size': '15px' }\">a</div></template>\n",
+            "B.tsx": "export const B = () => <><Box sx={{ padding: 3, marginTop: '13px' }} />"
+                     "<div style={{ padding: 5 }} /></>;\n",
+            "C.ts": 'export const c = { "padding": 18, "zIndex": 40 };\n',
+            "src/theme/index.ts": "export const theme = createTheme({});\n",
+            "d.css": ".left:hover { color: red; }\n.x { left: 0; }\n",
+        })
+        # Bare numbers in MUI sx are theme spacing units, not px; quoted lengths there are px.
+        self.assertEqual(sorted((r["value"], loc) for r in data["spacing"] for loc in r["locations"]),
+                         [("13px", "A.vue:1"), ("13px", "B.tsx:1"), ("18px", "C.ts:1"), ("5px", "B.tsx:1")])
+        self.assertEqual([r["value"] for r in data["font_sizes"]], ["15px"])
+        self.assertEqual([r["value"] for r in data["z_index"]], [40])
+        self.assertIn("src/theme/index.ts", [t["path"] for t in data["token_sources"]])
+        # A class or id named left or right is a selector, not a physical property.
+        flows_rtl = {"locales": ["ar"]}
+        with tempfile.TemporaryDirectory() as tmp:
+            (Path(tmp) / "d.css").write_text(".left:hover { color: red; }\n#right:focus { x: 1 }\n.x { left: 0; }\n",
+                                              encoding="utf-8")
+            data = inventory.inventory(Path(tmp), flows_rtl)
+        self.assertEqual(data["physical_properties"], [{"property": "left", "count": 1, "locations": ["d.css:3"]}])
+
+
+    def test_indented_syntax_and_token_folders_after_round_eight(self):
+        # In indented Sass and Stylus a line ends its declaration; colonless lines are not values.
+        data = self.scan({"btn.sass": ".btn\n  padding: 4px 8px\n  margin: 12px\n  +size(40px)\n  font-size: 14px\n",
+                          "b.styl": ".b\n  margin: 6px\n  font-size 30px\n  line-height 22px\n",
+                          # CSS still joins a value wrapped onto whole later lines, never part of one.
+                          "c.css": ".c { margin:\n  10px\n  20px;\n  padding: 4px\n  6px; gap: 30px }\n",
+                          "V.vue": "<template><p>x</p></template>\n<style lang=\"sass\">\n.v\n  padding: 5px\n"
+                                   "  margin: 14px\n</style>\n<style>\n.w { margin:\n  16px; }\n</style>\n"})
+        self.assertEqual(sorted((r["value"], sorted(r["locations"])) for r in data["spacing"]), sorted([
+            ("10px", ["c.css:1"]), ("12px", ["btn.sass:3"]), ("20px", ["c.css:1"]), ("30px", ["c.css:5"]),
+            ("14px", ["V.vue:5"]), ("16px", ["V.vue:8"]), ("4px", ["btn.sass:2", "c.css:4"]), ("5px", ["V.vue:4"]),
+            ("6px", ["b.styl:2", "c.css:4"]), ("8px", ["btn.sass:2"])]))
+        # Folder-named token sources are style or data files, or the folder's index module.
+        data = self.scan({"src/theme/index.ts": "export const t = {};\n",
+                          "src/theme/palette.ts": "export const p = {};\n",
+                          "src/tokens/colors.json": "{}\n",
+                          "tokens/color/base.json": "{}\n",
+                          "design-tokens/base/size.json": "{}\n",
+                          "src/auth/tokens/refresh.ts": "export const r = 1;\n",
+                          "src/components/theme/ThemeToggle.tsx": "export const T = () => <b />;\n"})
+        self.assertEqual(sorted(t["path"] for t in data["token_sources"]), [
+            "design-tokens/base/size.json", "src/theme/index.ts", "src/theme/palette.ts", "src/tokens/colors.json",
+            "tokens/color/base.json"])
+        # Sass interpolation on a continued line stays part of the value.
+        data = self.scan({"a.scss": ".a { margin: 8px\n    16px #{$x};\n  padding: $a\n    20px#{$b}; }\n"})
+        self.assertEqual(sorted(r["value"] for r in data["spacing"]), ["16px", "20px", "8px"])
 
 if __name__ == "__main__":
     unittest.main()

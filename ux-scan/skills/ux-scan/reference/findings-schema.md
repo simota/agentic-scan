@@ -73,7 +73,7 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `category` | Optional; defaults to the perspective family's name in the rendered pages |
 | `validation.verdict` | Required; `FalsePositive` and `NotApplicable` are excluded from counts; `Unverified` is allowed while merging but `contract_check.py` rejects it |
 | `mockup` | Optional before/after illustration of the fix, published in `mockups.html` (`reference/mockups.md`): one object, or a list of 2 to 4 objects that each need a `title` unique within the finding. An object has `before` and `after`, required HTML fragments of at most 64 KiB each, measured as UTF-8, with no `<link` tag text (`reference/mockups.md`), or instead `states` (2 to 4 objects of `label`, `before` and `after`, all required, and optional `note`; labels unique); optional `title`, `viewport` (`WIDTHxHEIGHT`), `note` (prose), `label` (names the `after` design; required with `alternatives`) and `alternatives` (1 to 5 objects of `label` and `after`, both required, and optional `note`; labels unique within the mockup, each `after` under the same fragment rules; with `states`, `states` of `label` and `after` per state of the mockup, in its order, instead of `after`). A finding's fragments total at most 1 MiB as UTF-8. No other keys. `"mockup": null` in a fragment removes it |
-| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control characters, backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
+| `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control or invisible format characters (such as zero-width spaces and bidirectional overrides; the joiners U+200C and U+200D that Persian and Indic words use are allowed outside the host), backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
 as `occurrences` replaces whole; `"mockup": null` removes the mockup) and adds
@@ -112,11 +112,16 @@ An inline code span containing only a finding id, such as `U-002`,
 is a finding reference and is updated; mark other code literals as code so
 their ids are not mistaken for references. Separate prose references from
 source paths with whitespace, punctuation or code spans; unseparated text that
-looks like one path is preserved as a source token.
+looks like one path is preserved as a source token. Ids joined only by slashes
+(`U-001/U-002`), each optionally in emphasis or a code span, are a list of
+references, not a path; ids with a leading or trailing slash (`/U-001`,
+`U-001/`) stay a path unless that slash joins them to an id code span
+(`` `U-001`/U-002 ``, `` `U-001`/U-002/U-003 ``).
 
 When ids move, explicit finding ranges written on one line using `to`,
-`through`, Japanese `から` (optionally followed by `まで`), `..`, or a hyphen, dash,
-`~`, `〜` or `～` expand to a
+`through`, Japanese `から` (optionally followed by `まで`), `..`, or a hyphen or dash
+(including the Unicode and full-width forms), `~`, `〜` or `～`, with optional
+spaces, no-break spaces or ideographic spaces around the connector, expand to a
 comma-separated list of the same findings in their original range order. Ids on
 different lines, such as a Markdown bullet list, are never a range: each is
 renumbered on its own.
@@ -139,5 +144,8 @@ For example, if `U-001` becomes `U-003` and `U-002` becomes `U-001`,
 `Fix U-001 to U-002` becomes `Fix U-003, U-001`. A range containing a missing id
 is refused when any id in that range moves; replace it with an explicit list
 of existing finding ids and retry. Ranges whose ids do not move stay unchanged.
+A single reference to an id no finding holds is likewise refused when another
+finding moves to that id, since it would silently come to name that finding;
+one nothing moves to stays as written.
 The command also repairs the array order when the ids themselves already have
 the correct values.

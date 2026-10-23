@@ -85,10 +85,10 @@ These Next.js exclusions do not apply to Svelte route segments.
 | Key | What it collects | Perspective |
 |---|---|---|
 | `routes`, `orphan_routes`, `screens` | Router paths (`<Route path>`, also after an `element={<… />}` attribute, `path: "/…"`, `app/**/page.*`, `routes/**/+page.svelte`, `+page@….svelte`); absolute routes that no `href`, `to=` (or `href:` / `to:` in a navigation array) or `navigate()` / `push()` reaches (dynamic segments and relative child routes, whose full path depends on their parents, excluded); files under `pages/`, `screens/`, `views/`, `routes/` | IA1, IA2 |
-| `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files), or defining three or more CSS custom properties | LG2, CC2 |
-| `spacing`, `font_sizes` | `margin` / `padding` / `gap` and `font-size` literals (CSS and JS style objects), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment | LG2, VH2 |
+| `token_sources` | Files named like tokens / theme / variables / `tailwind.config` (including JSON token files) or, anywhere below a `theme/`, `tokens/`, `design-tokens/` or `design-system/` folder, style and JSON files and `index` modules (below `theme/`, `design-tokens/` and `design-system/` also non-JSX script modules such as `palette.ts`), or defining three or more CSS custom properties | LG2, CC2 |
+| `spacing`, `font_sizes` | `margin` / `padding` / `gap` (also `grid-gap`) and `font-size` literals (CSS, including values wrapped onto whole later lines — in indented Sass and Stylus, also in `<style lang="sass">` blocks, a line ends the declaration — and JS style objects, including quoted and kebab-case keys such as Vue's `'margin-top'`), in px (rem and em at 16px); spacing of 0–2 px is ignored as hairline adjustment. Terms inside `calc()` and the preferred (middle) term of `clamp()` are not sizes on their own and are left out; the bounds of `clamp()` and the arguments of `min()` / `max()` are measured. A bare number in an MUI `sx` prop is a theme spacing multiple, not px, and is left out | LG2, VH2 |
 | `breakpoints` | Media-query widths (`(max-width: …)`, `(width >= …)`, `(768px <= width)`, both ends of `(400px <= width <= 700px)`), in CSS and in script strings; `@container` conditions are not viewport breakpoints and are left out | RS1 |
-| `z_index` | `z-index` / `zIndex` values | LG3 |
+| `z_index` | `z-index` / `zIndex` values (style-object keys may be quoted) | LG3 |
 | `fixed_widths` | `width` / `min-width` declarations of 320 px or more (rem and em at 16px); widths in parenthesized conditions are excluded | RS2 |
 | `tap_targets` | Rules whose selector looks interactive (button, btn, icon, link, chip, tab, close…) with an explicit width or height under 44 px; `below_24` flags dimensions under 24 px for review, with the actual hit area and WCAG 2.5.8 exceptions still to verify | RS3 |
 | `focus_outline` | `outline: none` / `0` / `0px` (and `outline: 0` or `"none"` in style objects, or in an HTML `style` attribute), with whether the same `:focus` rule sets a visible replacement (a box shadow, border, background, underline or outline whose value is not only `none`, `0`, `transparent` or a CSS-wide keyword such as `inherit`) and whether the file has a `:focus-visible` rule | ST2 |
@@ -108,8 +108,8 @@ With `--flows`, also:
 
 | Key | What it adds | Perspective |
 |---|---|---|
-| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed) | LG2, LG3, VH2, RS1, CC2 |
-| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it | RS2 |
+| `off_scale` | `spacing`, `font_sizes`, `breakpoints` and `z_index` rows whose value is not on the `tokens` scale (z-index 0, 1, −1 always allowed; an upper bound — `max-width`, `width <` — up to 1 px below a scale value, such as `max-width: 767.98px` or `767px` for 768, is that breakpoint; a value also used as a lower bound gets no such tolerance) | LG2, LG3, VH2, RS1, CC2 |
+| `smallest_viewport`, `fixed_widths[].wider_than_smallest_viewport` | The narrowest supported width, and which fixed widths exceed it there: a value is wider when at least one of its declarations applies at that width, so a CSS `width` whose rule also sets `max-width` to a percentage or `vw` of 100 or less (or `calc()` of one minus a length, such as `calc(100% - 2rem)`), and a declaration inside an `@media` rule whose minimum width (`min-width`, `width >=`, the lower end of a range) is above the smallest viewport, do not count. A query list applies when any of its queries does; negated queries, mixins and style objects are not judged and count | RS2 |
 | `physical_properties` | `margin-left`, `padding-right`, `left:`, `text-align: left`… — only when a shipped locale is right-to-left | IN3 |
 
 `flows_sha256` records a SHA-256 digest of the complete flows record using
@@ -174,8 +174,10 @@ limit) and lengths outside the finite numeric range are skipped individually
 with a warning; the rest of the file is still scanned. Mention relevant parse
 warnings in the report's `limitations`, as well as any `truncated` lists.
 Limits, to state in `limitations` when they matter:
-indented Sass and brace-less Stylus rules (their literals are measured, but
-`focus_outline` and `tap_targets` read only rules in braces),
+indented Sass and brace-less Stylus rules (their literals are measured one
+line at a time, so a value wrapped onto a later line and Sass nested properties
+such as `margin:` / `top: 4px` are not; `focus_outline` and `tap_targets` read
+only rules in braces),
 styles computed at run time, Tailwind utility classes other than `truncate`,
 native mobile UI code (SwiftUI, Compose, Flutter), components from a library
 whose source is not in the repository, and rendering itself (contrast,

@@ -137,6 +137,11 @@ def _http(url, where):
         http_url(url, where)
         if any(c in '<>"' for c in url):
             raise ValueError("unescaped URL delimiter")
+        # Join controls (ZWNJ, ZWJ) are part of words in Persian and Indic text, never of a host.
+        host = urlsplit(url).netloc
+        if any(unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") for c in host) or any(
+                unicode_category(c) in ("Cc", "Cf", "Zl", "Zp") and c not in "\u200c\u200d" for c in url):
+            raise ValueError("invisible or control character")
         # Python versions differ in whether urlsplit rejects text after an IPv6 host.
         authority = urlsplit(url).netloc.rsplit("@", 1)[-1]
         if authority.startswith("[") and not re.fullmatch(r"\[[^\]]+\](?::[0-9]*)?", authority):
@@ -472,7 +477,7 @@ FINDING_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P=first_style)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
+    r"[ \t 　]*(?:(?i:to|through)|から|\.\.|[-‐‑‒–—―−－〜～~])[ \t 　]*"
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
@@ -484,7 +489,7 @@ UNDERSCORE_RANGE = re.compile(
     r"(?(first_ticks)(?P<first_left>\s*))(?P<first>U-[0-9]{3})"
     r"(?(first_ticks)(?P<first_right>\s*)(?P=first_ticks))(?P<first_close>_*)"
     # A range stays on one line, so a Markdown bullet list of ids is not a range.
-    r"[ \t]*(?:(?i:to|through)|から|\.\.|[-–—−〜～~])[ \t]*"
+    r"[ \t 　]*(?:(?i:to|through)|から|\.\.|[-‐‑‒–—―−－〜～~])[ \t 　]*"
     r"(?P<last_open>_*)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
@@ -505,6 +510,12 @@ OTHER_IDENTIFIER_CHARACTERS = frozenset(
     "\u00b7\u0387\u1369\u136a\u136b\u136c\u136d\u136e\u136f\u1370\u1371"
     "\u19da\u200c\u200d\u30fb\uff65"
 )
+STYLED_ID = re.compile(r"(?:\*{1,3}|~~|_{1,3}|`+)(U-[0-9]{3})(?:\*{1,3}|~~|_{1,3}|`+)|`+(U-[0-9]{3})`+")
+# Ids and a slash beside an id code span, as in `U-001`/U-002 or **`U-001`**/U-002/U-003,
+# continue that list; a lone /U-001 or U-001/ elsewhere is a path.
+ID_CODE_BEFORE = re.compile(r"`+[ \t]*U-[0-9]{3}[ \t]*`+[*_~]*[ \t]*\Z")
+ID_CODE_AFTER = re.compile(r"[ \t]*[*_~]*`+[ \t]*U-[0-9]{3}[ \t]*`+")
+SLASHED_IDS = re.compile(r"/?U-[0-9]{3}(?:/U-[0-9]{3})*/?")
 FINDING_LIST = re.compile(
     r"(?<![A-Za-z0-9_./\\:-])U-[0-9]{3}(?:/U-[0-9]{3})+(?![A-Za-z0-9_./\\:-])")
 # Parentheses may be part of a path, especially Next.js route groups. Keep
@@ -704,7 +715,9 @@ URL_CHAR = r"[^\s<>\"'`()\[\]{}，、。；（）「」『』]"
 PROSE_PART = re.compile(
     # A fence opener, also after list markers or a blockquote (- ```js, 1. ```, > ```)
     # and inside an indented list item; _rewrite_prose finds its closer.
-    r"(?P<fence>^(?:[ \t]*(?:(?:[-*+]|[0-9]{1,9}[.)])[ \t]+|>[ \t]?))*[ \t]*(?:"
+    # Each marker takes no trailing blanks, so a run of blanks has one owner and
+    # nested markers cannot backtrack exponentially.
+    r"(?P<fence>^(?:[ \t]*(?:(?:[-*+]|[0-9]{1,9}[.)])(?=[ \t])|>))*[ \t]*(?:"
     r"(?P<backtick_marker>`{3,})(?!`)[^\n`]*(?=\n|\Z)|(?P<tilde_marker>~{3,})(?!~)[^\n]*))"
     # A code span closes only at a backtick run of exactly the opening length.
     # Like CommonMark, a code span stays within its paragraph: it never crosses
@@ -777,7 +790,8 @@ def _markdown_destinations(value, literal_spans):
 
 def _source_token(token):
     """Recognize paths/routes and source locations, without treating an ID list as a path."""
-    token = token.rstrip(".!?:").strip("[]{}*_~")
+    # Emphasis or code-span delimiters around ids in U-001/**U-002** are formatting.
+    token = STYLED_ID.sub(lambda m: m[1] or m[2], token.rstrip(".!?:")).strip("[]{}*_~")
     token = re.sub(r"(U-[0-9]{3})\.(?=[A-Z][a-z])", r"\1 ", token)  # U-001.Then is a sentence; U-001.md a file.
     token = FINDING_LIST.sub("", token)
     return ("/" in token or "\\" in token
@@ -1036,6 +1050,15 @@ def _rewrite_prose(value, mapping):
                               "replace it with an explicit list of existing finding ids before renumbering")
         return [mapping[fid] for fid in old_ids]
 
+    targets = {new for old, new in mapping.items() if old != new}
+
+    def single(fid):
+        # Left as is, an id no finding holds would come to name the finding moved onto it.
+        if fid not in mapping and fid in targets:
+            raise RecordError(f"{fid} names no finding, and renumbering moves another finding to {fid}; "
+                              "correct or remove that reference before renumbering")
+        return mapping.get(fid, fid)
+
     def identifier_boundary(source, left, right):
         return ((source.startswith("_") and left >= 0 and _word_character(value[left]))
                 or (source.endswith("_") and right < len(value) and _word_character(value[right])))
@@ -1064,10 +1087,10 @@ def _rewrite_prose(value, mapping):
             if match["first"]:
                 return reference_range(match)
             if match["styled"]:
-                return match["style"] + mapping.get(match["styled"], match["styled"]) + match["style"]
+                return match["style"] + single(match["styled"]) + match["style"]
             if any(0 <= i < len(value) and value[i] == "_" and i not in emphasis for i in (left, right)):
                 return source
-            return mapping.get(source, source)
+            return single(source)
 
         def underscore_range(match):
             if not any(match[key] for key in ("first_open", "first_close", "last_open", "last_close", "outer_close")):
@@ -1184,7 +1207,13 @@ def _rewrite_prose(value, mapping):
             literal_spans.append((match.start(), match.end()))
         elif ((match["path"] is not None and _source_token(match["path"]))
               or (match["token"] is not None and _source_token(match["token"]))):
-            source_spans.append(match.span())
+            left, right = match.span()
+            ids = STYLED_ID.sub(lambda m: m[1] or m[2], (match["path"] or match["token"]).rstrip(".!?:,;"))
+            ids = ids.strip("*_~")
+            if not (SLASHED_IDS.fullmatch(ids)
+                    and ((ids.startswith("/") and ID_CODE_BEFORE.search(value, max(0, left - 40), left))
+                         or (ids.endswith("/") and ID_CODE_AFTER.match(value, right)))):
+                source_spans.append(match.span())
     destinations = list(_markdown_destinations(value, literal_spans))
     protected_spans.extend(destinations)
     emphasis = _underscore_delimiters(value, literal_spans + destinations, block_spans)

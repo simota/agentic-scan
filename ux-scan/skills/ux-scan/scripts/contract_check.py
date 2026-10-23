@@ -32,8 +32,10 @@ REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "
 PAGES = ("dashboard.html", "report.html", mockups.PAGE)
 NO_PDF = "report.pdf not produced"
 LANGUAGES = ("en", "ja")
-# "N/A" in its common spellings, in English and Japanese.
-NOT_APPLICABLE = re.compile(r"(?i)^(?:N\s*[/／]?\s*A|not\s+applicable|該当なし|対象外|適用外)(?![\w/／])")
+# "N/A" in its common spellings, in English and Japanese, with an optional copula
+# ("対象外です"). A Latin token must end a word; a Japanese one may run into kana.
+NOT_APPLICABLE = re.compile(r"(?i)^(?:(?:N\.?\s*[/／]?\s*A\.?|not[-\s]+applicable)(?![A-Za-z0-9/／])|該当なし|対象外|適用外)"
+                            r"(?:\s*(?:です|でした|である|だ))?")
 
 
 class PageMetadata(HTMLParser):
@@ -186,7 +188,7 @@ def problems(out, no_pdf=False, allow=()):
         if unverified:
             yield f"findings: {', '.join(unverified)} still Unverified; settle the verdict in VERIFY"
         limited = any(line.startswith(NO_PDF) for line in data.get("limitations", []))
-        explained = any(line.startswith(NO_PDF + ":") and line[len(NO_PDF) + 1:].strip()
+        explained = any(line.startswith(NO_PDF + ":") and re.sub(r"[\W_]", "", line[len(NO_PDF) + 1:])
                         for line in data.get("limitations", []))
         if no_pdf and not explained:
             yield f"limitations: --no-pdf needs the line '{NO_PDF}: <reason>'"

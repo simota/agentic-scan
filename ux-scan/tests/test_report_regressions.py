@@ -529,16 +529,27 @@ class ReportRegressions(unittest.TestCase):
 
     def test_not_applicable_punctuation_is_not_a_reason(self):
         perspective = self.data["perspectives"][0]
-        for result in ("N/A.", "N/A：", "n/a —", "N/A。", "該当なし", "Not applicable", "NA", "N／A", "対象外。"):
+        for result in ("N/A.", "N/A：", "n/a —", "N/A。", "該当なし", "Not applicable", "NA", "N／A", "対象外。",
+                       "対象外です。", "該当なしです", "N/Aです", "N.A.", "Not-applicable", "適用外である。"):
             with self.subTest(result=result):
                 perspective.update(result=result, note="")
                 self.save_inputs()
                 self.assertEqual(self.invoke()[0], 0)
                 self.assertIn("N/A without a reason", "\n".join(contract_check.problems(self.out, no_pdf=True)))
-        perspective.update(result="N/A: no motion in the product")
+        for result in ("N/A: no motion in the product", "対象外です。アニメーションがない", "NAVIGATION reviewed",
+                       "対象外の画面も確認した"):
+            with self.subTest(result=result):
+                perspective.update(result=result)
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+
+    def test_no_pdf_limitation_needs_a_reason_not_punctuation(self):
+        self.data["limitations"] = [line for line in self.data["limitations"]
+                                    if not line.startswith(contract_check.NO_PDF)] + ["report.pdf not produced: —"]
         self.save_inputs()
         self.assertEqual(self.invoke()[0], 0)
-        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        self.assertIn("--no-pdf needs the line", "\n".join(contract_check.problems(self.out, no_pdf=True)))
 
     def test_allowed_second_language_render_is_verified(self):
         self.assertEqual(self.invoke()[0], 0)

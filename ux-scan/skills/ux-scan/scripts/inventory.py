@@ -70,22 +70,37 @@ ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br 
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
-CSS_SPACING = re.compile(r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap)"
-                         r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*([^;{}\n]+)")
-JS_SPACING = re.compile(r"\b(?:margin|padding|gap|rowGap|columnGap)(?:Top|Right|Bottom|Left|Inline|Block|X|Y)?"
-                        r"(?:Start|End)?\s*:\s*(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
-CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*([^;{}\n]+)")
-JS_FONT_SIZE = re.compile(r"\bfontSize\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
+# A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
+# or a line with a colon, which starts another declaration (also across masked
+# regions). Indented Sass and Stylus end a declaration at the line break.
+_CSS_CONTINUATION = r"(?:[^;{}:\n]|#\{[^{}\n]*\})*"  # Sass #{…} interpolation is part of a value.
+_CSS_VALUE = r"([^;{}\n]+(?:\n(?=" + _CSS_CONTINUATION + r"(?:[\n;}]|\Z))" + _CSS_CONTINUATION + r")*)"
+_CSS_LINE_VALUE = r"([^;{}\n]+)"
+INDENTED_CSS_EXT = {".sass", ".styl"}
+INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
+_CSS_SPACING_NAME = (r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
+                     r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
+CSS_SPACING = re.compile(_CSS_SPACING_NAME + _CSS_VALUE)
+CSS_SPACING_LINE = re.compile(_CSS_SPACING_NAME.replace(r"\s*:\s*", r"[^\S\n]*:[^\S\n]*") + _CSS_LINE_VALUE)
+# Style-object keys may be quoted, and Vue style bindings use kebab-case names.
+JS_SPACING = re.compile(r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
+                        r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
+                        r"(?:Start|End|-start|-end)?[\"']?\s*:\s*"
+                        r"(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
+CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
+CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
+JS_FONT_SIZE = re.compile(r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
+                          r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
 _MQ = r"(\d+(?:\.\d+)?)(px|em|rem)"
 MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
                    + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
 CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
-JS_Z = re.compile(r"\bzIndex\s*:\s*[\"']?(-?\d+)")
+JS_Z = re.compile(r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
 CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = re.compile(r"\b(width|minWidth)\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)(px|rem|em)[\"'])")
+JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)(px|rem|em)[\"'])")
 # Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
 # and bracketed regions are tracked by css_rules, including unquoted data URLs.
 # A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
@@ -114,10 +129,17 @@ TRUNCATION = re.compile(r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-spac
                         r"(?<![\w-])(?:v-bind)?:class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b|"
                         r"\bclass:(?:truncate|line-clamp-\d)\b")
 PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
-                      r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w-])(?:left|right)(?=\s*:))|"
+                      r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w.#-])(?:left|right)(?=\s*:))|"
                       r"\b(marginLeft|marginRight|paddingLeft|paddingRight|borderLeft|borderRight)\s*:")
 CUSTOM_PROPERTY = re.compile(r"(?<![\w-])--[\w-]+\s*:")
-TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.")
+# A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
+TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
+                        # Below such a folder, style and data files and index modules; below a
+                        # theme or design-system folder also script modules (palette.ts), not
+                        # components (.tsx) and not auth/tokens/*.ts.
+                        r"/(?:tokens|design-tokens|theme|design-system)/(?:[^/]+/)*"
+                        r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$|"
+                        r"/(?:design-tokens|theme|design-system)/(?:[^/]+/)*[^/]+\.[cm]?[jt]s$")
 FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
 LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
@@ -527,9 +549,48 @@ def fmt(value):
     return f"{value:g}px"
 
 
+SIZING_FUNCTION = re.compile(r"(?i)(?<![\w-])(?:-webkit-|-moz-)?(calc|clamp)\Z")
+
+
+def literal_terms(value):
+    """A CSS value without the terms that are not sizes in their own right.
+
+    calc() mixes units, and the preferred (middle) term of clamp() is a fluid
+    formula: their numbers are an intercept or an addend, not a size. The
+    bounds of clamp() and the arguments of min() and max() are kept. One pass,
+    without recursion, so nesting depth costs nothing.
+    """
+    if "(" not in value:
+        return value
+    out, frames, hidden, last = [], [], 0, 0
+    for m in re.finditer(r"[(),]", value):
+        if not hidden:
+            out.append(value[last:m.start()])
+        last = m.end()
+        token = m.group()
+        if token == "(":
+            name = SIZING_FUNCTION.search(value, max(0, m.start() - 16), m.start())
+            kind = name.group(1).lower() if name else ""
+            frames.append([kind, 0, kind == "calc"])
+            hidden += kind == "calc"
+        elif token == "," and frames and frames[-1][0] == "clamp":
+            frame = frames[-1]
+            hidden -= frame[2]
+            frame[1] += 1
+            frame[2] = frame[1] == 1
+            hidden += frame[2]
+        elif token == ")" and frames:
+            hidden -= frames.pop()[2]
+        if not hidden:
+            out.append(" ")
+    if not hidden:
+        out.append(value[last:])
+    return "".join(out)
+
+
 def lengths(value, warn=None):
     """px values of the lengths in a CSS value; bare numbers are not lengths in CSS."""
-    return [v for m in LENGTH.finditer(value) if (v := px(m.group(1), m.group(2), warn)) is not None]
+    return [v for m in LENGTH.finditer(literal_terms(value)) if (v := px(m.group(1), m.group(2), warn)) is not None]
 
 
 def js_lengths(bare, quoted, warn=None):
@@ -1092,10 +1153,12 @@ class CssRule:
     selector: str
     declarations: list
     closed: bool = False
+    body_start: int = 0
+    end: int | None = None
 
 
-def css_rules(text):
-    """Closed rules in source order, with only their own direct declarations.
+def css_blocks(text):
+    """Every rule in source order, with its body's extent.
 
     A brace stack keeps child declarations out of their parent while retaining
     declarations on either side of a nested rule. No selector expansion or CSS
@@ -1117,7 +1180,7 @@ def css_rules(text):
         elif token == "{":
             header = text[boundary:match.start()]
             start = boundary + len(header) - len(header.lstrip())
-            rule = CssRule(start, header.strip(), [])
+            rule = CssRule(start, header.strip(), [], body_start=match.end())
             stack.append(rule)
             rules.append(rule)
             boundary = match.end()
@@ -1129,11 +1192,69 @@ def css_rules(text):
             if stack:
                 rule = stack.pop()
                 rule.declarations.append(text[boundary:match.start()])
-                rule.closed = True
+                rule.closed, rule.end = True, match.start()
             boundary = match.end()
-    for rule in rules:
+    return rules
+
+
+def css_rules(text):
+    """Closed rules in source order, with only their own direct declarations."""
+    for rule in css_blocks(text):
         if rule.closed:
             yield rule.start, rule.selector, "".join(rule.declarations)
+
+
+# The narrowest viewport a media query admits: min-width, or a range's lower end.
+MEDIA_FLOOR = re.compile(r"(?i)\(\s*min-width\s*:\s*" + _MQ + r"\s*\)|\bwidth\s*>=?\s*" + _MQ
+                         + r"|" + _MQ + r"\s*<=?\s*width\b")
+# A width capped by its container or the viewport cannot overflow it (min-width can).
+# Only a whole value counts: N% or Nvw, or calc() of one less a length (calc(100% - 2rem)).
+WIDTH_CAP = re.compile(r"(?i)(?<![\w-])max-width\s*:\s*(?:(\d+(?:\.\d+)?)(?:%|[sdl]?vw)|"
+                       r"calc\(\s*(\d+(?:\.\d+)?)(?:%|[sdl]?vw)\s+-\s+\d*\.?\d+(?:px|r?em|%|[sdl]?vw)\s*\))"
+                       r"\s*(?:!\s*important\s*)?(?=;|$)")
+
+
+def own_media_floor(selector):
+    """The narrowest viewport width an @media rule admits, in px (0 for any other rule).
+
+    A query list (comma or "or") applies when any of its queries does, so it
+    admits the smallest of their minimums; a negated query is not judged.
+    """
+    if selector[:6].lower() != "@media":
+        return 0
+    return min((0 if re.search(r"(?i)\bnot\b", query) else
+                max((px(m.group(i), m.group(i + 1)) or 0
+                     for m in MEDIA_FLOOR.finditer(query) for i in (1, 3, 5) if m.group(i)), default=0))
+               for query in re.split(r"(?i),|\bor\b", selector[6:]))
+
+
+def width_conditions(text, offsets):
+    """offset -> (media floor, capped) for width declarations at those offsets.
+
+    The floor is the widest minimum any enclosing @media rule requires; capped
+    means the innermost rule also limits max-width to its container or the
+    viewport. Rules are swept once in source order against the sorted offsets,
+    and the stack holds only the chain of rules around the current position.
+    """
+    rules, stack, floors, caps, result, i = css_blocks(text), [], [], {}, {}, 0
+    for offset in sorted(offsets):
+        while i < len(rules) and rules[i].body_start <= offset:
+            rule = rules[i]
+            while stack and stack[-1].end is not None and stack[-1].end < rule.body_start:
+                stack.pop()
+                floors.pop()
+            floors.append(max(own_media_floor(rule.selector), floors[-1] if floors else 0))
+            stack.append(rule)
+            i += 1
+        while stack and stack[-1].end is not None and stack[-1].end <= offset:
+            stack.pop()
+            floors.pop()
+        inner = stack[-1] if stack else None
+        if inner is not None and id(inner) not in caps:
+            caps[id(inner)] = any(float(m.group(1) or m.group(2)) <= 100
+                                  for d in inner.declarations if (m := WIDTH_CAP.search(d.strip().rstrip(";"))))
+        result[offset] = (floors[-1] if floors else 0, inner is not None and caps[id(inner)])
+    return result
 
 
 def scan_css(rel, text, acc, source_lines=None):
@@ -1284,6 +1405,8 @@ def inventory(root, flows=None):
     root = Path(root).resolve()
     spacing, font_sizes, breakpoints, z_index = Tally(), Tally(), Tally(), Tally()
     widths, truncation, physical = Tally(), Tally(), Tally()
+    width_conditions_by_value = defaultdict(list)  # value -> (media floor, capped) per declaration
+    lower_breakpoints = set()  # breakpoint values used at least once as a lower bound
     acc = defaultdict(list)
     routes, links, screens, tokens, motion, reduced, locales = [], set(), [], [], [], [], defaultdict(dict)
     scanned = skipped = 0
@@ -1368,26 +1491,48 @@ def inventory(root, flows=None):
         if TOKEN_FILE.search("/" + rel) or props >= 3:
             tokens.append({"path": rel, "custom_properties": props})
         if css:
-            for m in CSS_SPACING.finditer(css_text):
-                for v in lengths(m.group(1), warn_at(m.start())):
-                    if abs(v) > 2:
-                        spacing.add(fmt(v), at(m.start()))
-            for m in CSS_FONT_SIZE.finditer(css_text):
-                for v in lengths(m.group(1), warn_at(m.start())):
-                    font_sizes.add(fmt(v), at(m.start()))
+            # Indented Sass and Stylus, as files or <style lang="sass|stylus"> blocks, are read by line.
+            if suffix in INDENTED_CSS_EXT:
+                by_syntax = [(css_text, True)]
+            else:
+                blocks = [(start, stop, css_text[start:stop]) for tag in parsed or ()
+                          if tag.name == "style" and tag.body is not None
+                          and (literal(tag.attrs.get("lang")) or "").lower() in INDENTED_STYLE_LANGS
+                          for start, stop in [tag.body]]
+                by_syntax = [(replace_regions(css_text, [(a, b, re.sub(r"[^\n]", " ", t)) for a, b, t in blocks]), False)]
+                if blocks:
+                    by_syntax.append((keep_regions(css_text, blocks), True))
+            for measured, indented in by_syntax:
+                for m in (CSS_SPACING_LINE if indented else CSS_SPACING).finditer(measured):
+                    for v in lengths(m.group(1), warn_at(m.start())):
+                        if abs(v) > 2:
+                            spacing.add(fmt(v), at(m.start()))
+                for m in (CSS_FONT_SIZE_LINE if indented else CSS_FONT_SIZE).finditer(measured):
+                    for v in lengths(m.group(1), warn_at(m.start())):
+                        font_sizes.add(fmt(v), at(m.start()))
             for m in CSS_Z.finditer(css_text):
                 value = integer(m.group(1), warn_at(m.start()))
                 if value is not None:
                     z_index.add(value, at(m.start()))
-            for m in CSS_WIDTH.finditer(css_text):
-                v = px(m.group(2), m.group(3), warn_at(m.start()))
-                if v is not None and v >= 320:
-                    widths.add(fmt(v), at(m.start()))
+            found = [(m, v) for m in CSS_WIDTH.finditer(css_text)
+                     if (v := px(m.group(2), m.group(3), warn_at(m.start()))) is not None and v >= 320]
+            conditions = width_conditions(css_text, [m.start() for m, _ in found]) if found else {}
+            for m, v in found:
+                floor, capped = conditions[m.start()]
+                widths.add(fmt(v), at(m.start()))
+                width_conditions_by_value[fmt(v)].append((floor, capped and m.group(1) == "width"))
             for m in CSS_MOTION.finditer(css_text):
                 motion.append(at(m.start()))
             scan_css(rel, css_text, acc, source_lines)
         if js:
+            # A bare number in an MUI sx prop is a multiple of the theme's spacing unit, not px.
+            sx = sorted(span[:2] for tag in parsed or () if (span := tag.attribute_spans.get("sx")) and span[2])
+            sx_starts = [start for start, _ in sx]
             for m in JS_SPACING.finditer(js_text):
+                if m.group(1) is not None and sx:
+                    k = bisect_right(sx_starts, m.start()) - 1
+                    if k >= 0 and m.start() < sx[k][1]:
+                        continue
                 for v in js_lengths(m.group(1), m.group(2), warn_at(m.start())):
                     if abs(v) > 2:
                         spacing.add(fmt(v), at(m.start()))
@@ -1402,6 +1547,7 @@ def inventory(root, flows=None):
                 v = px(m.group(2) or m.group(3), m.group(4) or "px", warn_at(m.start()))
                 if v is not None and v >= 320:
                     widths.add(fmt(v), at(m.start()))
+                    width_conditions_by_value[fmt(v)].append((0, False))
             for m in JS_MOTION.finditer(js_text):
                 motion.append(at(m.start()))
             for m in JS_OUTLINE_NONE.finditer(js_text):
@@ -1419,10 +1565,19 @@ def inventory(root, flows=None):
             rule_start = max(window, *(text.rfind(c, window, m.start()) + 1 for c in "{};"))
             if "@container" in text[rule_start:m.start()]:
                 continue  # A container query tests a component's width, not the viewport.
-            for number, unit in zip(m.groups()[::2], m.groups()[1::2]):
-                value = px(number, unit, warn_at(m.start())) if number else None
+            # Which end each width bounds: max-width, width < N and N > width are upper bounds.
+            if m.group(1):
+                uppers = [bool(re.search(r"(?i)max-width|width\s*<", m.group(0)))]
+            else:
+                ops = re.findall(r"[<>]", m.group(0))
+                uppers = [ops[0] == ">"] + ([ops[1] == "<"] if len(ops) > 1 else [])
+            numbers = [(n, u) for n, u in zip(m.groups()[::2], m.groups()[1::2]) if n]
+            for (number, unit), upper in zip(numbers, uppers):
+                value = px(number, unit, warn_at(m.start()))
                 if value is not None:
                     breakpoints.add(fmt(value), at(m.start()))
+                    if not upper:
+                        lower_breakpoints.add(fmt(value))
         for m in REDUCED_MOTION.finditer(text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
@@ -1507,7 +1662,13 @@ def inventory(root, flows=None):
                            ("breakpoints", result["breakpoints"])):
             if key in scales:
                 allowed = {float(x) for x in scales[key]}
-                off[key] = [row for row in tally if abs(float(row["value"][:-2])) not in allowed]
+                # An upper bound written just below a breakpoint (max-width: 767.98px or 767px) is
+                # that breakpoint; a value also used as a lower bound gets no tolerance.
+                def near(row):
+                    v = float(row["value"][:-2])
+                    return (key == "breakpoints" and row["value"] not in lower_breakpoints
+                            and any(0 < t - v <= 1 for t in allowed))
+                off[key] = [row for row in tally if abs(float(row["value"][:-2])) not in allowed and not near(row)]
         if "z_index" in scales:
             allowed = set(scales["z_index"]) | {0, -1, 1}
             off["z_index"] = [row for row in result["z_index"] if row["value"] not in allowed]
@@ -1516,8 +1677,10 @@ def inventory(root, flows=None):
         if viewports:
             smallest = min(viewports)
             result["smallest_viewport"] = smallest
+            # Wider only where a declaration applies at that viewport and is not capped.
             for row in result["fixed_widths"]:
-                row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest
+                row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest and any(
+                    floor <= smallest and not capped for floor, capped in width_conditions_by_value[row["value"]])
         if {loc.split("-")[0].split("_")[0].lower() for loc in flows.get("locales", [])} & RTL_LANGS:
             result["physical_properties"] = physical.rows("property")
     # Caps apply only after off_scale was measured on every row; each cut is counted.

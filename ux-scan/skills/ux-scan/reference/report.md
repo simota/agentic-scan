@@ -15,7 +15,7 @@ from the reviewed repository (SKILL.md *Paths*).
 
 `render.py` maps `findings.json` into scan-report-kit's common format
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
-in the shared design, plus `mockups.html` when an included finding carries a
+in the shared design, plus `mockups.html` when a `Valid` or `Likely` finding carries a
 before/after mockup (`reference/mockups.md`); a render without one removes a
 previous `mockups.html`. Each finding shows its flow (from `flows.json`), screen,
 viewport and criterion, and both pages state the viewports and locales from

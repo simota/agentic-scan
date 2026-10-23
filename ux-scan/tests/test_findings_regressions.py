@@ -8,6 +8,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -1009,6 +1010,95 @@ class TransactionRegressions(unittest.TestCase):
                 changed = json.loads(target.read_text(encoding="utf-8"))
                 self.assertEqual(changed["summary"], expected)
                 findings.check_findings(changed)
+
+    def test_renumber_round_eight_references(self):
+        mapping = {"U-001": "U-003", "U-002": "U-004", "U-003": "U-001", "U-004": "U-002"}
+        for prose, expected in (
+            # Slash-joined ids in emphasis or code spans are references, not a source path.
+            ("**U-001**/**U-002**", "**U-003**/**U-004**"),
+            ("*U-001*/*U-002*", "*U-003*/*U-004*"),
+            ("~~U-001~~/~~U-002~~", "~~U-003~~/~~U-004~~"),
+            ("U-001/*U-002*", "U-003/*U-004*"),
+            ("U-001/`U-002`", "U-003/`U-004`"),
+            ("`U-001`/U-002", "`U-003`/U-004"),
+            ("src/**U-001**.tsx:3", "src/**U-001**.tsx:3"),
+            # A lone id beside a slash is a path unless the slash joins it to a code span.
+            ("see /U-001", "see /U-001"),
+            ("U-001/ and /U-001/", "U-001/ and /U-001/"),
+            ("U-001/* and U-001/**", "U-001/* and U-001/**"),
+            ("`U-001`/U-002/x", "`U-003`/U-002/x"),
+            ("`U-001`/U-002.", "`U-003`/U-004."),
+            ("`U-001`/U-002/U-003", "`U-003`/U-004/U-001"),
+            ("`U-001`/U-002/`U-003`", "`U-003`/U-004/`U-001`"),
+            ("**`U-001`**/U-002", "**`U-003`**/U-004"),
+            ("U-001/ `U-002`", "U-003/ `U-004`"),
+            ("`U-001` /U-002", "`U-003` /U-004"),
+            # Hyphen, dash and space variants connect a range like their ASCII forms.
+            ("U-001\u2010U-003", "U-003, U-004, U-001"),
+            ("U-001\u2011U-003", "U-003, U-004, U-001"),
+            ("U-001\uff0dU-003", "U-003, U-004, U-001"),
+            ("U-001\u2015U-003", "U-003, U-004, U-001"),
+            ("U-001\u2012U-003", "U-003, U-004, U-001"),
+            ("U-001\u3000〜\u3000U-003", "U-003, U-004, U-001"),
+            ("U-001\u00a0to\u00a0U-003", "U-003, U-004, U-001"),
+            ("_U-001\u2010U-003_", "_U-003, U-004, U-001_"),
+        ):
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, mapping), expected)
+
+    def test_renumber_fence_openers_stay_linear(self):
+        # Nested quote and list markers on a line that is not a fence used to backtrack exponentially.
+        for prefix in ("> ", ">  ", "-  ", "1.  ", "- > "):
+            with self.subTest(prefix=prefix):
+                started = time.monotonic()
+                self.assertEqual(findings._rewrite_prose(prefix * 400 + "x U-001", {"U-001": "U-002"}),
+                                 prefix * 400 + "x U-002")
+                self.assertLess(time.monotonic() - started, 2)
+        # Fence openers after markers are recognized as before.
+        for prose, expected in (
+            ("> > ```\n> > U-001\n> > ```\nU-001", "> > ```\n> > U-001\n> > ```\nU-002"),
+            ("-  1.  ```\n        U-001\n        ```\nU-001", "-  1.  ```\n        U-001\n        ```\nU-002"),
+            (">```\nU-001\n```\nU-001", ">```\nU-002\n```\nU-001"),
+            ("-```\nU-001", "-```\nU-002"),
+            ("  - >  ~~~\nU-001\n~~~\nU-001", "  - >  ~~~\nU-002\n~~~\nU-001"),
+        ):
+            with self.subTest(prose=prose):
+                self.assertEqual(findings._rewrite_prose(prose, {"U-001": "U-002"}), expected)
+
+    def test_renumber_refuses_a_missing_id_that_another_finding_moves_to(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"] = data["findings"][:2]
+        data["findings"][0]["severity"] = "Low"
+        data["findings"][1]["id"] = "U-003"
+        for text in ("Fix U-002 first; U-001 is cosmetic.", "Fix **U-002** first."):
+            with self.subTest(text=text), tempfile.TemporaryDirectory() as tmp:
+                data["next_steps"] = [text]
+                target = Path(tmp) / "findings.json"
+                target.write_text(json.dumps(data), encoding="utf-8")
+                before = target.read_bytes()
+                result = run("renumber", target)
+                self.assert_refused(result)
+                self.assertIn("U-002", result.stderr)
+                self.assertEqual(target.read_bytes(), before)
+        # A missing id nothing moves to stays as written.
+        data["next_steps"] = ["See U-009."]
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "findings.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            self.assertEqual(run("renumber", target).returncode, 0)
+            self.assertEqual(json.loads(target.read_text(encoding="utf-8"))["next_steps"], ["See U-009."])
+
+    def test_reference_urls_refuse_invisible_format_characters(self):
+        for url in ("https://x\u200b.org/", "https://example.org/a\u202eb", "https://example.org/\u2028"):
+            with self.subTest(url=url):
+                with self.assertRaises(findings.RecordError):
+                    findings._http(url, "references[0].url")
+        # Join controls are part of words in Persian and Indic scripts, but never of a host.
+        for url in ("https://goo\u200dgle.com/", "https://\u200c.com/"):
+            with self.subTest(url=url):
+                with self.assertRaises(findings.RecordError):
+                    findings._http(url, "url")
+        findings._http("https://fa.wikipedia.org/wiki/\u0645\u06cc\u200c\u062e\u0648\u0627\u0647\u0645", "url")
 
     def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):
         data = copy.deepcopy(SAMPLE)

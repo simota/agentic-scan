@@ -22,8 +22,9 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
   line once it is final
 - `findings.py remove <out>/findings.json F-007 AP-03` deletes review findings or
   attack paths, the ID lists that point at them and the `limitations` line a
-  rescan wrote about them (`F-007: Baseline references removed by rescan: …`); it
-  refuses while other prose still names one of them
+  rescan wrote about them (`F-007: Baseline references removed by rescan: …`),
+  and rewords another record's rescan note that names one ("a removed finding");
+  it refuses while other prose still names one of them
 - `findings.py renumber <out>/findings.json` gives `F-*` the IDs `F-001…` in
   severity order, then location, rewriting attack-path links and F-IDs in text;
   run it once every review finding is merged
@@ -34,8 +35,8 @@ attack paths to `unknown` with a `note`, and adds a line to `limitations`.
   references to IDs that do not exist; `contract_check.py` fails on the latter (a
   standalone `F-NNN`, `AP-NN` or `I-NNN` in prose is read as a record ID; cite
   another tracker's keys in a URL, in `references`, or as `#AP-123`; an ID used as
-  a path component, as in `docs/F-001/`, or after a `.` in a resource address, as
-  in `aws_s3_bucket.F-001`, is not a reference; a URL ends at whitespace or the
+  a path component, as in `docs/F-001/`, or after a name and a `.` in a resource
+  address, as in `aws_s3_bucket.F-001`, is not a reference (`F-001...F-003` is two); a URL ends at whitespace or the
   first non-ASCII character)
 - An `I-*` named in the `validation.evidence` of its root-cause `F-*` is shown as
   covered by that finding and counted once: name in that evidence only the `I-*`

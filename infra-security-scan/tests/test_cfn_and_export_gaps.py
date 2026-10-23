@@ -93,6 +93,38 @@ class PolicyDocumentTest(unittest.TestCase):
 ''')
         self.assertEqual(rules(scan({"t.yaml": text})), ["AWS-IAM-001", "AWS-S3-003"])
 
+    def test_a_statement_with_a_condition_is_a_literal(self):
+        text = template('''  Deploy:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Statement:
+          - Effect: Allow
+            Principal: {Federated: "arn:aws:iam::111111111111:oidc-provider/token.actions.githubusercontent.com"}
+            Action: sts:AssumeRoleWithWebIdentity
+            Condition:
+              StringEquals:
+                token.actions.githubusercontent.com:aud: sts.amazonaws.com
+                token.actions.githubusercontent.com:sub: repo:org/app:ref:refs/heads/main
+''')
+        result = scan({"t.yaml": text})
+        self.assertEqual((result.hits, result.not_run), ([], []))
+
+    def test_intrinsic_ports_open_to_the_world_are_named(self):
+        text = template('''  Sg:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: x
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: !Ref Port
+          ToPort: !Ref Port
+          CidrIp: 0.0.0.0/0
+''')
+        result = scan({"t.yaml": text})
+        self.assertEqual(result.hits, [])
+        self.assertTrue(any("unresolved protocol or ports" in line for line in result.not_run), result.not_run)
+
     def test_unread_documents_and_conditional_statements_are_named(self):
         text = template('''  Block:
     Type: AWS::IAM::ManagedPolicy

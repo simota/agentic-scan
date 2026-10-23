@@ -50,6 +50,9 @@ from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, fin
                     sub_references, write_json_atomic)
 from redaction import CREDENTIAL  # noqa: E402
 
+# The line iac_scan.py adds to limitations when a rescan reopens a record.
+RESCAN_NOTE = re.compile(r"(?:F-[0-9]{3,}|AP-[0-9]{2,}): Baseline references removed by rescan: ")
+
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
 ALLOWED = {*OBJECTS, *RECORDS, "perspectives", *LISTS}
@@ -315,14 +318,19 @@ def remove(findings_path, ids):
         removed.append(rid)
     # The rescan note iac_scan.py wrote about a removed record goes with it;
     # no command could reword it, and it describes nothing that remains.
+    # Another record's rescan note that names a removed one as its reason
+    # ("supporting evidence for F-001") is reworded here, since only tools write it.
+    pattern = re.compile(ID_BEFORE + "(?:" + "|".join(map(re.escape, removed)) + ")" + ID_AFTER)
     if isinstance(record.get("limitations"), list):
         notes = tuple(f"{rid}: Baseline references removed by rescan: " for rid in removed)
-        record["limitations"] = [line for line in record["limitations"]
-                                 if not (isinstance(line, str) and line.startswith(notes))]
+        record["limitations"] = [
+            sub_references(pattern, line, lambda m: "a removed finding" if m.group().startswith("F-")
+                           else "a removed attack path") if isinstance(line, str) and RESCAN_NOTE.match(line)
+            else line
+            for line in record["limitations"] if not (isinstance(line, str) and line.startswith(notes))]
     # Prose mentioning a removed ID would later name whichever record takes
     # its number; make the author reword it first. Records removed in the same
     # call no longer count, so the order of the IDs does not matter.
-    pattern = re.compile(ID_BEFORE + "(?:" + "|".join(map(re.escape, removed)) + ")" + ID_AFTER)
     mentions = {}
     for where, text in record_strings(record) if removed else ():
         for m in find_references(pattern, text):

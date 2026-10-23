@@ -1059,8 +1059,9 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
+                # Only when the whole document is in raw: a templatefile() keeps its conditions elsewhere.
                 if attr == "assume_role_policy" and github_federation(raw, providers) and \
-                        "condition" not in raw.lower():
+                        "condition" not in raw.lower() and not re.search(r"\b(?:template)?file\(", raw):
                     return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
                              "not_action": False, "resources": ["*"], "not_resource": False,
                              "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
@@ -1193,8 +1194,13 @@ def any_owner(key, value):
     if key in OWNER_KEYS:
         return value.strip("*?") in ("", "o-")
     if key in OWNER_ARN_KEYS:
-        parts = value.split(":")
-        return len(parts) < 6 or any(c in parts[4] for c in "*?") or not parts[4]
+        parts = value.split(":", 5)
+        if len(parts) < 6:
+            return True
+        if parts[2] == "s3":
+            # arn:aws:s3:::bucket (or arn:aws:s3:*:*:bucket): bucket names are global, the account is not needed.
+            return parts[5].strip("*?/") == ""
+        return any(c in parts[4] for c in "*?")
     return False
 
 
@@ -2692,7 +2698,7 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
         cfn_secrets(scan, res, props, line)
         if type_ == "AWS::EC2::SecurityGroup":
             for rule in aslist(props.get("SecurityGroupIngress")):
-                if is_intrinsic(rule) or rule is UNKNOWN:
+                if intrinsic_only(rule) or rule is UNKNOWN:
                     # - !If [IsDev, {...0.0.0.0/0...}, !Ref AWS::NoValue]: a rule in some deployments.
                     scan.not_run.append(f"AWS-NET-001: ingress rule is not a literal; check not run: "
                                         f"{res.file}:{line} ({res.address})")
@@ -2810,6 +2816,12 @@ def cfn_shared(scan, res, type_, props, line):
         cert = config.get("ViewerCertificate") if isinstance(config.get("ViewerCertificate"), dict) else {}
         if cert.get("MinimumProtocolVersion") in OLD_TLS and cert.get("CloudFrontDefaultCertificate") not in (True, "true"):
             scan.hit("AWS-CF-001", res, line, f"MinimumProtocolVersion = {cert['MinimumProtocolVersion']}")
+
+
+def intrinsic_only(value):
+    """A value that is wholly an intrinsic call: a one-key object such as {"Fn::If": ...}.
+    A policy statement's "Condition" key does not make the statement one."""
+    return isinstance(value, dict) and len(value) == 1 and is_intrinsic(value)
 
 
 def is_intrinsic(value):
@@ -2956,18 +2968,20 @@ def cfn_statements(scan, res, document, line):
             document = json.loads(document, object_pairs_hook=unique_object)
         except ValueError:
             document = UNKNOWN
-    listed = document.get("Statement") if isinstance(document, dict) and not is_intrinsic(document) else UNKNOWN
+    listed = document.get("Statement") if isinstance(document, dict) and not intrinsic_only(document) else UNKNOWN
     if isinstance(listed, dict):
         listed = [listed]
-    if not isinstance(listed, list) or any(is_intrinsic(st) or not isinstance(st, dict) for st in listed):
+    if not isinstance(listed, list) or any(intrinsic_only(st) or not isinstance(st, dict) for st in listed):
         scan.not_run.append(f"policy document or statement is not a literal; policy checks not run on it: "
                             f"{res.file}:{line} ({res.address})")
     return norm_statements(document) if isinstance(document, dict) else None
 
 
 def cfn_ingress(scan, res, rule):
-    scan.ingress(res, res.line, [rule.get("CidrIp"), rule.get("CidrIpv6")], rule.get("IpProtocol"),
-                 rule.get("FromPort"), rule.get("ToPort"))
+    def value(key):  # FromPort: !Ref Port is unresolved, as a Terraform unknown is
+        return UNKNOWN if is_intrinsic(rule.get(key)) else rule.get(key)
+    scan.ingress(res, res.line, [rule.get("CidrIp"), rule.get("CidrIpv6")], value("IpProtocol"),
+                 value("FromPort"), value("ToPort"))
 
 
 def is_gcp_firewall_snapshot(value):

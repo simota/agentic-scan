@@ -92,6 +92,17 @@ resource "aws_iam_role" "ci" {
         pinned = 'Condition = { StringEquals = { "token.actions.githubusercontent.com:sub" = "repo:org/app:ref:refs/heads/main" } }'
         self.assertEqual(hits(trust(arn, pinned)), [])
 
+    def test_a_template_file_keeps_its_conditions(self):
+        role = '''resource "aws_iam_role" "ci" {
+  assume_role_policy = templatefile("${path.module}/trust.json.tpl", {
+    provider_arn = aws_iam_openid_connect_provider.this.arn
+  })
+}
+'''
+        result = scan({"main.tf": GITHUB_PROVIDER + role})
+        self.assertEqual(result.hits, [])
+        self.assertTrue(any("aws_iam_role.ci" in line for line in result.not_run), result.not_run)
+
     def test_another_oidc_provider_is_not_github(self):
         eks = '''resource "aws_iam_openid_connect_provider" "this" {
   url            = "https://oidc.eks.eu-west-1.amazonaws.com/id/EXAMPLE"
@@ -126,6 +137,15 @@ class OpenConditionTest(unittest.TestCase):
                      '{ StringLike = { "aws:PrincipalOrgID" = "o-abc123" } }'):
             with self.subTest(cond=cond):
                 self.assertEqual(hits(public(cond)), [])
+
+    def test_an_s3_source_arn_names_one_bucket(self):
+        # Bucket names are global: S3 notification policies omit or wildcard the account.
+        for arn in ("arn:aws:s3:::uploads", "arn:aws:s3:*:*:uploads"):
+            with self.subTest(arn=arn):
+                cond = f'{{ ArnLike = {{ "aws:SourceArn" = "{arn}" }} }}'
+                self.assertEqual(hits(public(cond, "bucket")), [])
+        cond = '{ ArnLike = { "aws:SourceArn" = "arn:aws:sns:*:*:alerts" } }'
+        self.assertEqual(hits(public(cond, "bucket")), [("AWS-S3-003", "aws_s3_bucket_policy.b")])
 
 
 class IngressTest(unittest.TestCase):

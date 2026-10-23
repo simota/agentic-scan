@@ -92,6 +92,17 @@ class RecordReferencesTest(unittest.TestCase):
         self.assertEqual(by_title, {"F-001": ["module.I-900.aws_security_group.web"],
                                     "F-002": ["aws_s3_bucket.F-005"]})
 
+    def test_ids_joined_by_dots_are_still_references(self):
+        line = "Fix F-001...F-003 together; see I-002..I-004 and F-003."
+        self.assertEqual([m.group() for m in common.find_references(common.RECORD_REFERENCE, line)],
+                         ["F-001", "F-003", "I-002", "I-004", "F-003"])
+        self.write(self.record_with(findings=[finding("F-001", "Info", "a.tf:1"), finding("F-002", "Info", "a.tf:2"),
+                                              finding("F-003", "High", "a.tf:3")],
+                                    next_steps=["Fix F-001...F-003 together; F-003 first."]))
+        code, out = call(findings.main, "renumber", self.record)
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.read()["next_steps"], ["Fix F-002...F-001 together; F-001 first."])
+
     # --- rescans
 
     def test_rescan_rewrites_reviewer_limitations_but_not_its_own_notes(self):
@@ -131,6 +142,19 @@ class RecordReferencesTest(unittest.TestCase):
         data = self.read()
         self.assertEqual([f["id"] for f in data["findings"]], [])
         self.assertEqual(render.dangling_references(data), [])
+
+    def test_remove_rewords_another_records_rescan_note(self):
+        path = {"id": "AP-01", "entry": "Internet", "target": "b", "status": "unknown", "edges": ["e (main.tf:1)"],
+                "findings": ["F-002"], "note": "Recheck"}
+        self.write(self.record_with(findings=[finding("F-001"), finding("F-002", attack_paths=["AP-01"])],
+                                    attack_paths=[path], limitations=[
+                                        "AP-01: Baseline references removed by rescan: supporting evidence for F-001. "
+                                        "Recheck this attack path."]))
+        code, out = call(findings.main, "remove", self.record, "F-001")
+        self.assertEqual(code, 0, out)
+        self.assertEqual(self.read()["limitations"], [
+            "AP-01: Baseline references removed by rescan: supporting evidence for a removed finding. "
+            "Recheck this attack path."])
 
     def test_remove_does_not_depend_on_argument_order(self):
         for order in (("AP-01", "F-006"), ("F-006", "AP-01")):

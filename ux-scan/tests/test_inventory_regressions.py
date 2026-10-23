@@ -1636,11 +1636,17 @@ class InventoryRegressionTests(unittest.TestCase):
             (root / "bom.css").write_bytes(b"\xef\xbb\xbf" + css)
             (root / "plain.css").write_bytes(css)
             (root / "Page.astro").write_bytes(b"\xef\xbb\xbf---\nconst gap = { zIndex: 9999 };\n---\n<p>x</p>\n")
+            (root / "locales").mkdir()
+            (root / "locales/en.json").write_bytes(b'\xef\xbb\xbf{"save": "Save"}')
+            (root / "locales/de.json").write_bytes(b'\xef\xbb\xbf{"save": "Speichern und schliessen"}')
             data = inventory.inventory(root, flows)
         self.assertEqual([(r["locations"], r["wider_than_smallest_viewport"]) for r in data["fixed_widths"]],
                          [(["bom.css:1", "plain.css:1"], False)])
         self.assertEqual([r["location"] for r in data["tap_targets"]], ["bom.css:2", "plain.css:2"])
         self.assertEqual([loc for r in data["z_index"] for loc in r["locations"]], ["Page.astro:2"])
+        self.assertEqual(data["parse_warnings"], [])
+        self.assertEqual([(r["lang"], [k["key"] for k in r["keys"]]) for r in data["locale_expansion"]],
+                         [("de", ["save"])])
 
     def test_location_objects_are_links_not_routes(self):
         router = 'export default [\n  { path: "/" },\n  { path: "/settings" },\n  { path: "/billing" },\n  { path: "/plans" },\n]\n'

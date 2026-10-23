@@ -176,15 +176,24 @@ class InventoryTest(unittest.TestCase):
         inventory.scan(root)
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
 
-    def test_a_required_filter_does_not_hide_a_clean_tree(self):
-        # git lfs install sets filter.lfs.required: with the clean command blanked, status must still succeed.
-        root = self.git_repo({".gitattributes": "*.md filter=x\n", "prompts/a.md": "hi\n"})
+    def test_a_required_transforming_filter_leaves_dirty_undetermined(self):
+        # As git lfs install sets it up: HEAD holds what the clean command makes of the file (a pointer). Without
+        # running that command, git cannot compare a stat-dirty file, so the answer is unknown, never "changed".
+        root = make_repo({".gitattributes": "*.md filter=x\n", "prompts/a.md": "expanded\n"})
         marker = Path(tempfile.mkdtemp()) / "ran"
-        subprocess.run(["git", "-C", str(root), "config", "filter.x.clean", f"sh -c 'touch {marker}; cat'"], check=True)
-        subprocess.run(["git", "-C", str(root), "config", "filter.x.required", "true"], check=True)
-        os.utime(root / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "config", "filter.x.clean", f"sh -c 'touch {marker}; sed s/expanded/pointer/'"], check=True)
+        subprocess.run([*git, "config", "filter.x.required", "true"], check=True)
+        # An mtime older than the index keeps the file out of git's racy-clean re-hash right after the commit.
+        os.utime(root / "prompts" / "a.md", (1_000_000_000, 1_000_000_000))
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        marker.unlink()
         self.assertIs(inventory.scan(root)["dirty"], False)
-        self.assertFalse(marker.exists())
+        os.utime(root / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
+        self.assertIsNone(inventory.scan(root)["dirty"])
+        self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
 
     def test_no_filter_driver_from_a_submodule_runs(self):
         sub = self.git_repo({".gitattributes": "*.md filter=x\n", "p.md": "hi\n"})

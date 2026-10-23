@@ -342,9 +342,7 @@ def git_state(root, read=()):
     drivers = git("config", "-z", "--name-only", "--get-regexp", r"^filter\..*\.(clean|process)$", ok=(0, 1))
     if drivers is None:
         return commit, None
-    # A driver marked required (git lfs install sets filter.lfs.required) fails status once blanked; clear that too.
-    no_filters = [arg for key in drivers.split("\0") if key
-                  for arg in ("-c", f"{key}=", "-c", f"{key.rpartition('.')[0]}.required=false")]
+    no_filters = [arg for key in drivers.split("\0") if key for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.
     # --ignore-submodules=all keeps status out of submodules, whose own config may name filter commands too.

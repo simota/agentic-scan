@@ -102,6 +102,12 @@ resource "aws_iam_role" "ci" {
         result = scan({"main.tf": GITHUB_PROVIDER + role})
         self.assertEqual(result.hits, [])
         self.assertTrue(any("aws_iam_role.ci" in line for line in result.not_run), result.not_run)
+        for expression in ('replace(local.trust_tpl, "PROVIDER", aws_iam_openid_connect_provider.this.arn)',
+                           'templatestring(local.trust_tpl, { arn = aws_iam_openid_connect_provider.this.arn })',
+                           'module.trust.policies[aws_iam_openid_connect_provider.this.arn]'):
+            with self.subTest(expression=expression):
+                role = f'resource "aws_iam_role" "ci" {{\n  assume_role_policy = {expression}\n}}\n'
+                self.assertEqual(scan({"main.tf": GITHUB_PROVIDER + role}).hits, [])
 
     def test_another_oidc_provider_is_not_github(self):
         eks = '''resource "aws_iam_openid_connect_provider" "this" {
@@ -144,8 +150,13 @@ class OpenConditionTest(unittest.TestCase):
             with self.subTest(arn=arn):
                 cond = f'{{ ArnLike = {{ "aws:SourceArn" = "{arn}" }} }}'
                 self.assertEqual(hits(public(cond, "bucket")), [])
-        cond = '{ ArnLike = { "aws:SourceArn" = "arn:aws:sns:*:*:alerts" } }'
-        self.assertEqual(hits(public(cond, "bucket")), [("AWS-S3-003", "aws_s3_bucket_policy.b")])
+        for arn in ("arn:aws:sns:*:*:alerts", "arn:aws:s3:::uploads-*", "arn:aws:s3:::u?", "arn:aws:s3:::*/*",
+                    "arn:aws:s3:*:*:accesspoint/*", "arn:aws:s3:us-east-1:*:job/*"):
+            with self.subTest(arn=arn):
+                cond = f'{{ ArnLike = {{ "aws:SourceArn" = "{arn}" }} }}'
+                self.assertEqual(hits(public(cond, "bucket")), [("AWS-S3-003", "aws_s3_bucket_policy.b")])
+        cond = '{ ArnLike = { "aws:SourceArn" = "arn:aws:s3:::uploads/incoming/*" } }'
+        self.assertEqual(hits(public(cond, "bucket")), [])
 
 
 class IngressTest(unittest.TestCase):

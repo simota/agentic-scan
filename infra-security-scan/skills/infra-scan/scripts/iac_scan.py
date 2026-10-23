@@ -1059,9 +1059,10 @@ class Scan:
                     entry[1] = True
                     return entry[0]
             if value is UNKNOWN:
-                # Only when the whole document is in raw: a templatefile() keeps its conditions elsewhere.
+                # Only when raw is the document itself (jsonencode or a heredoc): templatefile(),
+                # replace(local.tpl, ...) and the like keep their conditions elsewhere.
                 if attr == "assume_role_policy" and github_federation(raw, providers) and \
-                        "condition" not in raw.lower() and not re.search(r"\b(?:template)?file\(", raw):
+                        "condition" not in raw.lower() and raw.lstrip().startswith(("jsonencode(", "<<")):
                     return [{"effect": "Allow", "actions": ["sts:AssumeRoleWithWebIdentity"],
                              "not_action": False, "resources": ["*"], "not_resource": False,
                              "principals": [("Federated", "arn:aws:iam::*:oidc-provider/" + GITHUB_ISSUER)],
@@ -1197,10 +1198,12 @@ def any_owner(key, value):
         parts = value.split(":", 5)
         if len(parts) < 6:
             return True
-        if parts[2] == "s3":
-            # arn:aws:s3:::bucket (or arn:aws:s3:*:*:bucket): bucket names are global, the account is not needed.
-            return parts[5].strip("*?/") == ""
-        return any(c in parts[4] for c in "*?")
+        if parts[2] == "s3" and (not parts[4] or "/" not in parts[5]):
+            # A bucket (arn:aws:s3:::bucket/key, or arn:aws:s3:*:*:bucket): bucket names are
+            # global, so only a wildcard in the name lets another account match.
+            bucket = parts[5].split("/", 1)[0]
+            return not bucket or any(c in bucket for c in "*?")
+        return any(c in parts[4] for c in "*?")  # access points and jobs carry their account
     return False
 
 

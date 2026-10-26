@@ -9,8 +9,8 @@ WeasyPrint; CHROME picks the binary, PRUNE_SCAN_PDF_TIMEOUT the seconds). The
 rendered next steps open with the subtraction summary (remove now, reduce or
 consolidate, decide with a human), computed from the findings. With --repo,
 each finding's location is embedded as a short excerpt; secret-looking files
-are never read, and sources containing secret-looking names or private key
-blocks are omitted. Every page carries the SHA-256 of the findings.json and,
+are never read, and sources containing secret-looking names, credential-shaped
+values or private key blocks are omitted. Every page carries the SHA-256 of the findings.json and,
 when supplied, units.json it shows.
 Standard library only.
 Exit status: 0 written, 2 invalid record, PRUNE_SCAN_PDF_TIMEOUT, --out inside --repo or unwritable output,
@@ -33,7 +33,7 @@ from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_
                       record_exists)
 from safe_paths import descriptor_within, open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
-from safe_source import PRIVATE_KEY, SECRET_NAME, physical_lines, sensitive_source  # noqa: E402
+from safe_source import PRIVATE_KEY, SECRET_NAME, SECRET_VALUE, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 from scan_report_kit.report import LINE_BREAKS  # noqa: E402
 
@@ -241,7 +241,8 @@ def pdf_complete(path, *, directory=None):
 
 def redact_diagnostic(text):
     """Engine stderr may echo a secret value: mask the complete diagnostic."""
-    return "[masked: looks like a secret]" if SECRET_LINE.search(text) or PRIVATE_KEY.search(text) else text
+    return ("[masked: looks like a secret]"
+            if SECRET_LINE.search(text) or PRIVATE_KEY.search(text) or SECRET_VALUE.search(text) else text)
 
 
 def act_now(f):

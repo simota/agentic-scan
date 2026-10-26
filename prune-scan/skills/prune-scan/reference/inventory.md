@@ -59,7 +59,8 @@ those runtimes, using atomic pathname-based replacement, which cannot protect
 against concurrent replacement of the output parent.
 
 The optional `text` excerpts in `markers` and `skipped_tests` use the same
-source-level secret-name and private-key checks as report excerpts. If a
+source-level secret-name, credential-value and private-key checks as report
+excerpts. If a
 source looks sensitive anywhere, these fields contain
 `[omitted: source may contain secrets]`; the candidate, location, counts and
 date remain available. This avoids guessing where a continued secret

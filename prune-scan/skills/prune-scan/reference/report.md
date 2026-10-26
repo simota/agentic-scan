@@ -22,8 +22,11 @@ as a short excerpt. Secret-looking files and directories (env files such as
 `.env.local`, `.envrc` and `production.env` included), and files named for a
 secret (`passwords.txt`, `.vault-token`), are excluded. If a
 secret-looking name (including `DB_PASS`, upper-case `*_KEY` constants and a
-password inside a URL) or a private key block appears anywhere in the bounded
-source, its entire optional excerpt is omitted, including apparently
+password inside a URL), a credential recognizable by its value whatever it is
+called (Slack and Discord webhook URLs; GitHub, GitLab, Slack, AWS, Stripe,
+Google, OpenAI, Anthropic, npm and SendGrid key formats; JWTs; a literal
+`Bearer` or `Basic` header value) or a private key block appears anywhere in
+the bounded source, its entire optional excerpt is omitted, including apparently
 single-line assignments. Expression continuation and comment boundaries
 differ across languages, so a quoted value does not prove that the next line
 is safe to publish. This conservative check can also omit harmless source

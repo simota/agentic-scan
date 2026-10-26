@@ -110,16 +110,24 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
 PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
 # Dotted module paths loaded by name: "mysite.urls" (ROOT_URLCONF), "polls.apps.PollsConfig"
-# (INSTALLED_APPS), "pkg.mod:app" and an unquoted gunicorn/uvicorn pkg.mod:app. A logger
-# name (getLogger("app.billing")) is not a module load.
-PYTHON_MODULE_STRING = re.compile(r"(?<!getLogger\()[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)(?::[A-Za-z_]\w*)?[\"']|"
+# (INSTALLED_APPS), "pkg.mod:app" (also a factory call, "pkg.mod:create_app()") and an
+# unquoted gunicorn/uvicorn pkg.mod:app. A logger name (getLogger("app.billing")) is not a
+# module load.
+PYTHON_MODULE_STRING = re.compile(r"(?<!getLogger\()[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+)"
+                                  r"(?::[A-Za-z_]\w*(?:\([^\"'()\n]*\))?)?[\"']|"
                                   r"(?<![\w.:/-])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+):[A-Za-z_]\w*(?![\w.:/-])")
+# A server command names a single module too (gunicorn 'hello:create_app()', uvicorn service:app);
+# only on such a line, so a container tag ("redis:alpine") names no module.
+SERVER_COMMAND = re.compile(r"\b(?:gunicorn|uvicorn|hypercorn|daphne|granian|waitress-serve)\b")
+SERVER_MODULE = re.compile(r"(?<![\w.:/$-])[\"']?([A-Za-z_]\w*):[A-Za-z_]\w*(?:\([^\"'()\n]*\))?(?![\w.:/-])")
 # "config.json" and "logo.png" name files, not modules (named_in covers those).
 NOT_MODULE_SUFFIX = {"json", "yaml", "yml", "toml", "ini", "cfg", "conf", "txt", "md", "rst", "html", "htm", "css",
                      "scss", "less", "js", "jsx", "mjs", "cjs", "ts", "tsx", "vue", "py", "pyi", "sh", "sql", "csv",
                      "xml", "lock", "log", "env", "png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2",
                      "ttf", "pdf", "zip", "gz", "tar", "example", "sample", "local"}
 # Python sources, settings and server command files; a JS i18n key ("auth.login") names no module.
+DJANGO_SETTINGS = re.compile(r"(?m)^(?:INSTALLED_APPS|MIDDLEWARE)\s*[:=+]")
+SETTINGS_MODULE = re.compile(r"[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[\"']")
 MODULE_STRING_FILE = re.compile(r"(?i)(?:\.(?:py|toml|cfg|ini|ya?ml|sh|conf)|(?:^|/)(?:Procfile|Dockerfile)[^/]*)$")
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
@@ -181,6 +189,11 @@ FLAG_PARENT = re.compile(r"^[^\S\r\n]*(?:[\"']?([A-Za-z][\w.-]*)[\"']?[^\S\r\n]*
                          r"\[+[\"']?([\w.-]+?)[\"']?\]+)[^\S\r\n]*(?:(?:#|//).*)?\r?$")
 # Fields of a nested flag definition: the flag is the key that encloses them.
 FLAG_FIELDS = {"enabled", "enable", "value", "default", "defaultvalue", "default_value", "on", "active", "state"}
+HTTP_CLIENT_API = re.compile(r"\b(?:const|let|var)\s+api\b(?:\s*:[^=;\n]+)?\s*=\s*(?:axios|ky|ofetch)\b")
+# Bindings are checked for api afterwards; excluding braces keeps the scan linear.
+API_IMPORT = re.compile(r"\bimport\s+(?:type\s+)?(api\b|\{[^{}]*\})\s*from\s*[\"']([^\"']+)[\"']|"
+                        r"\b(?:const|let|var)\s+(api)\s*=\s*require\(\s*[\"']([^\"']+)[\"']\s*\)")
+API_CALL = re.compile(r"\bapi\.(?:get|post|put|patch|delete|all|head|options)\(")
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
     ("server", re.compile(r"\b(?:app|router|server|api|routes)\.(get|post|put|patch|delete|all|head|options)\(\s*"
@@ -198,6 +211,8 @@ REGEX_ROUTE_TOKEN = re.compile(r"(\\[dDwWsS]|\((?:\\.|[^()\\])*\)|\[(?:\\.|[^\]\
 # Directive lines (export CC ::= gcc, override X: y) and ::= assignments are not rules.
 MAKE_TARGET = re.compile(r"^(?!(?:export|unexport|override|private|undefine|vpath)[^\S\n])"
                          r"([A-Za-z0-9][\w.-]*(?:[^\S\n]+[\w.-]+)*)[^\S\n]*:(?!:*=)", re.M)
+MAKE_TARGET_VARIABLE = re.compile(r"[^\S\n]*(?:(?:export|override|private)[^\S\n]+)*[A-Za-z_][\w.-]*[^\S\n]*"
+                                  r"(?:[:+?!]|::)?=")
 # A define ... endef body is a variable's text, not rules.
 MAKE_DEFINE = re.compile(r"^[^\S\n]*(?:override[^\S\n]+)?define\b[\s\S]*?(?:^[^\S\n]*endef\b|\Z)", re.M)
 # Targets end on a non-space character, so trailing blanks are matched once.
@@ -1157,6 +1172,47 @@ def package_sections(text):
             for key, section in value.items() if isinstance(section, dict)}
 
 
+DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies",
+                        "bundleDependencies", "bundledDependencies", "overrides", "resolutions")
+
+
+def package_config_strings(text):
+    """Strings in package.json configuration fields, keys included ("jest": {"preset": "ts-jest"},
+    "prettier": "@acme/prettier-config", "config": {"commitizen": ...}): tools load what these name."""
+    try:
+        value = parse_json(text)
+    except RecordError:
+        return set()
+    if not isinstance(value, dict):
+        return set()
+    fields = {k: v for k, v in value.items() if k not in DEPENDENCY_SECTIONS + ("scripts",)}
+    found, pending = set(fields), list(fields.values())
+    while pending:
+        item = pending.pop()
+        if isinstance(item, str):
+            found.add(item)
+        elif isinstance(item, dict):
+            found.update(item)
+            pending.extend(item.values())
+        elif isinstance(item, list):
+            pending.extend(item)
+    return found
+
+
+def pyproject_tool_text(text):
+    """The manifest's own [tool.*] tables other than dependency tables: plugin and tool settings."""
+    keep, kept = False, []
+    for line in physical_lines(text):
+        header = re.match(r"\s*\[\[?\s*([^\]]+?)\s*\]", line)
+        if header:
+            table = header.group(1).strip("\"'")
+            keep = table.startswith("tool.") and "dependencies" not in table
+            continue
+        if keep:
+            kept.append(line)
+    return "\n".join(kept)
+
+
 def parse_go_mod(rel, text):
     block = False
     for i, line in enumerate(physical_lines(text), 1):
@@ -1280,9 +1336,13 @@ def npm_script(tokens):
 def make_targets(text):
     """(target, rule start) for every target a Makefile's rules name, in order; .PHONY-style names are skipped."""
     text = MAKE_DEFINE.sub(lambda m: re.sub(r"[^\n]", " ", m.group(0)), text)
+    seen = set()
     for m in MAKE_TARGET.finditer(text):
+        if MAKE_TARGET_VARIABLE.match(text, m.end()):
+            continue  # release: GOOS=linux sets a variable for the rule defined elsewhere.
         for target in m.group(1).split():
-            if not target.startswith("."):
+            if not target.startswith(".") and target not in seen:
+                seen.add(target)  # A target's further rule lines add prerequisites to the same target.
                 yield target, m.start()
 
 
@@ -1449,6 +1509,10 @@ def inventory(root, units=None, today=None):
         # such as "api.example.com" leaves api.py a candidate.
         # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
         scanned = MODULE_STRING_FILE.search(rel) and not is_test(rel)
+        for line in (physical_lines(text) if scanned and SERVER_COMMAND.search(text) else ()):
+            for single in SERVER_MODULE.findall(line) if SERVER_COMMAND.search(line) else ():
+                module_runs[single + ".py"].add(rel)
+                module_runs[single + "/__init__.py"].add(rel)
         for quoted, served in set(PYTHON_MODULE_STRING.findall(text)) if scanned else ():
             parts = (quoted or served).split(".")
             if parts[-1].lower() in NOT_MODULE_SUFFIX:
@@ -1613,8 +1677,19 @@ def inventory(root, units=None, today=None):
                     parts = module.lower().split(".")
                     for n in range(2, len(parts) + 1):
                         py_modules[".".join(parts[:n])] += 1
+                    # from google.cloud import bigquery imports google.cloud.bigquery.
+                    for name in names or ():
+                        if name != "*":
+                            py_modules[".".join([*parts, name.lower()])] += 1
                 for target in resolve_py(rel, dots, module, names):
                     inbound[target].add(rel)
+            if DJANGO_SETTINGS.search(text) and not is_test(rel):
+                # INSTALLED_APPS and MIDDLEWARE load packages by name ("corsheaders",
+                # "whitenoise.middleware.WhiteNoiseMiddleware"), never by import.
+                for module in set(SETTINGS_MODULE.findall(text)):
+                    parts = module.lower().split(".")
+                    for n in range(1, len(parts) + 1):
+                        py_modules[".".join(parts[:n])] += 1
         elif ext in CSS_EXT:
             # @import "normalize.css" and @use "bootstrap/scss/..." load packages.
             for spec in CSS_IMPORT.findall(text):
@@ -1661,18 +1736,26 @@ def inventory(root, units=None, today=None):
             key_lines = section_key_lines(text) if pkg else {}
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             haystack = scripts + "\n" + other_tools
+            config = package_config_strings(text) if pkg else set()
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
                     loc = f"{rel}:{key_lines.get((section, dep), 1)}"
+                    configured = sum(v == dep or v.startswith(dep + "/") for v in config)
                     deps.append((dep, section, loc, js_packages[dep],
-                                 mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack)))
+                                 mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack) + configured))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
             ecosystem = "python"
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
+            if name == "pyproject.toml":
+                other_tools += "\n" + pyproject_tool_text(text)
             for dep, section, loc in parsed:
                 modules = {py_dist_module(dep).lower(), re.sub(r"[-.]", "_", dep.lower())}
                 if re.search(r"[-.]", dep):
                     modules.add(re.sub(r"[-.]", ".", dep.lower()))
+                # python-decouple imports decouple, django-cors-headers corsheaders.
+                if bare := re.sub(r"^(?:python|py|django)-", "", dep.lower()):
+                    if bare != dep.lower():
+                        modules.update({re.sub(r"[-.]", "_", bare), re.sub(r"[-.]", "", bare)})
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
                              mentions_of(r"(?<![\w-])%s(?![\w-])", dep, other_tools)))
         elif name == "go.mod":
@@ -1829,11 +1912,16 @@ def inventory(root, units=None, today=None):
 
     # Routes.
     route_rows, seen_routes, definition_spans = [], set(), defaultdict(list)
+    # api.get("/users/me") on an axios, ky or ofetch instance is a client call,
+    # not a route, whether the instance is made in this file or imported from
+    # one that makes it; an express router named api is not.
+    client_modules = {rel for rel in code_files if suffix(rel) in JS_EXT and HTTP_CLIENT_API.search(texts[rel])}
     for rel in code_files:
         text = texts[rel]
-        # api.get("/users/me") on an axios, ky or ofetch instance is a client
-        # call, not a route; an express router named api in the same file is not.
-        http_client = bool(re.search(r"\b(?:const|let|var)\s+api\s*=\s*(?:axios|ky|ofetch)\b", text))
+        http_client = rel in client_modules or suffix(rel) in JS_EXT and bool(API_CALL.search(text)) and any(
+            target in client_modules for m in API_IMPORT.finditer(text)
+            if re.search(r"\bapi\b", m.group(1) or m.group(3)) and (spec := m.group(2) or m.group(4)).startswith(".")
+            for target in resolve_js(rel, spec))
         for kind, regex in ROUTE_DEFS:
             for m in regex.finditer(text):
                 route = m.group(2)

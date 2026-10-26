@@ -34,8 +34,8 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK,
-                    SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth, shape_problems,
-                    split_yaml_documents, unique_object)
+                    SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth,
+                    reviewer_fields, shape_problems, split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
 from redaction import (SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
                        is_secret_name, redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
@@ -251,7 +251,7 @@ def dangling_references(data):
     for key in ("findings", "attack_paths", "perspectives"):
         for item in data.get(key, []):
             if isinstance(item, dict):
-                walk(item, str(item.get("id") or item.get("name") or key))
+                walk(reviewer_fields(item), str(item.get("id") or item.get("name") or key))
     for key in STRING_LISTS:
         lines = data.get(key, [])
         for line in lines if isinstance(lines, list) else [lines]:

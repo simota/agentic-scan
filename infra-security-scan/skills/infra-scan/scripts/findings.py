@@ -46,8 +46,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
-from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, STRING_LISTS as LISTS, find_references,  # noqa: E402
-                    sub_references, write_json_atomic)
+from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, REVIEW_FIELDS, STRING_LISTS as LISTS,  # noqa: E402
+                    find_references, reviewer_fields, sub_references, write_json_atomic)
 from redaction import CREDENTIAL  # noqa: E402
 
 # The line iac_scan.py adds to limitations when a rescan reopens a record.
@@ -184,7 +184,7 @@ def fragment_problems(fragment, name, record):
             if key == "findings" and rid.startswith("I-"):
                 if rid not in existing:
                     problems.append(f"{name}: {rid}: I-* findings come only from iac_scan.py")
-                elif set(rec) - {"id", "validation", "confidence", "condition", "severity"}:
+                elif set(rec) - {"id", *REVIEW_FIELDS}:
                     problems.append(f"{name}: {rid}: a fragment may update only an I-* finding's "
                                     "validation, confidence, condition and severity")
     for p in fragment.get("perspectives", []):
@@ -293,7 +293,7 @@ def record_strings(record):
     for key in ("findings", "attack_paths", "perspectives"):
         for item in record.get(key, []):
             if isinstance(item, dict):
-                yield from walk(item, str(item.get("id") or item.get("name") or key))
+                yield from walk(reviewer_fields(item), str(item.get("id") or item.get("name") or key))
     for key in LISTS:
         yield from walk(record.get(key, []), key)
 
@@ -367,7 +367,9 @@ def renumber(findings_path):
             return {k: v if k == "references" else rewrite(v) for k, v in value.items()}
         return value
 
-    for key in ("findings", "attack_paths", "perspectives", *LISTS):
+    # What iac_scan.py wrote in an I-* stays as it wrote it; only its triage follows.
+    record["findings"] = [{**f, **rewrite(reviewer_fields(f))} for f in record["findings"]]
+    for key in ("attack_paths", "perspectives", *LISTS):
         record[key] = rewrite(record.get(key, []))
     record["attack_paths"] = sorted(record["attack_paths"], key=lambda ap: render.id_key(ap["id"]))
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \

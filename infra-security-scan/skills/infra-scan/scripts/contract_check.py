@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as record_gate  # noqa: E402
 import render  # noqa: E402
-from common import STATE_OR_VARS  # noqa: E402
+from common import REVIEW_FIELDS, STATE_OR_VARS, reviewer_fields  # noqa: E402
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
@@ -51,10 +51,6 @@ def output_problem(path):
             if not fh.read(64).lstrip().lower().startswith(b"<!doctype html"):
                 return "is not an HTML report written by render.py"
     return None
-
-
-# What a fragment may set on an I-* finding (findings.py); the rest is the scanner's.
-REVIEW_FIELDS = {"validation", "confidence", "condition", "severity"}
 
 
 def baseline_problems(data, iac_path):
@@ -126,11 +122,9 @@ def check(data, out_dir, pdf=True, allow=()):
             "(both in one run)")
     # The merge gate, over the whole record: it may have been written by hand.
     problems += [f"record: {p}" for p in record_gate.credential_problems(data, "findings.json")]
-    # I-* titles and details are the scanner's words about the configuration
-    # (they quote its values); no fragment could change them.
-    written = {**data, "findings": [
-        {k: v for k, v in f.items() if k not in ("title", "detail")} if str(f.get("id", "")).startswith("I-") else f
-        for f in data.get("findings", []) if isinstance(f, dict)]}
+    # An I-* is the scanner's words about the configuration (titles, details
+    # and resource addresses quote its values); only its triage is a fragment's.
+    written = {**data, "findings": [reviewer_fields(f) for f in data.get("findings", []) if isinstance(f, dict)]}
     problems += [f"record: {p}" for p in record_gate.payload_problems(written, "findings.json")]
     problems += baseline_problems(data, Path(out_dir) / "iac.json")
 

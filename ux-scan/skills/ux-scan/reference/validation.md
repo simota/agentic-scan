@@ -28,7 +28,7 @@ at run time.
 
 Before REPORT, settle every `Unverified` verdict, then renumber the findings.
 Each coverage entry starts with a family token (for example `AX Accessibility`)
-and has a non-empty result. For `N/A`, include the reason in the result or note.
+and has a non-empty result; `findings.py` refuses a name without one. For `N/A`, include the reason in the result or note (punctuation alone is not a reason).
 After a flow, viewport, locale or token change, rerun the inventory with the
 current flows before rendering. The final contract check verifies the recorded
 verdicts, output files and their fingerprints; it cannot establish that a

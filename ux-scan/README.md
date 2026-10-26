@@ -59,9 +59,9 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 | Script | Does |
 |---|---|
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
-| `scripts/findings.py flows|merge|check|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
-| `scripts/render.py findings.json --out DIR --lang ja|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, plus `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
-| `scripts/contract_check.py OUT [--no-pdf] [--allow ja\|en]` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; an allowed language directory must be a current second-language render; detects concurrent renders |
+| `scripts/findings.py flows\|merge\|check\|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
+| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, plus `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
+| `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]…` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; `--allow` (repeatable) admits an extra file that was asked for, and an allowed `ja` or `en` directory must be a current second-language render; detects concurrent renders |
 
 ## Develop
 

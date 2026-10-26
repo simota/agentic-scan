@@ -171,10 +171,16 @@ class ReportRegressions(unittest.TestCase):
         original = perspective["name"]
         perspective["name"] = "AXanything"
         self.save_inputs()
+        # The record is refused before rendering; the contract refuses it too.
+        code, _, error = self.invoke()
+        self.assertEqual(code, 2, error)
+        self.assertIn("must start with a family token", error)
+        self.assertIn("must start with a family token", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        del self.data["perspectives"][self.data["perspectives"].index(perspective)]
+        self.save_inputs()
         self.assertEqual(self.invoke()[0], 0)
-        errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
-        self.assertIn("must start with a family token", errors)
-        self.assertIn("no entry for AX", errors)
+        self.assertIn("no entry for AX", "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        self.data["perspectives"].append(perspective)
         perspective["name"] = original
         perspective["result"] = " "
         self.save_inputs()
@@ -813,6 +819,41 @@ class ReportRegressions(unittest.TestCase):
         (self.out / "report.pdf").write_bytes(PDF_ENVELOPE)
         errors = "\n".join(contract_check.problems(self.out, no_pdf=True, allow=["report.pdf"]))
         self.assertIn("report.pdf: must be absent", errors)
+
+    def test_records_lock_refuses_the_contract_even_when_allowed(self):
+        self.assertEqual(self.invoke()[0], 0)
+        lock = self.out / findings.RECORDS_LOCK
+        lock.mkdir()
+        for allow in ((), [findings.RECORDS_LOCK]):
+            with self.subTest(allow=allow):
+                errors = list(contract_check.problems(self.out, no_pdf=True, allow=allow))
+                self.assertEqual(len(errors), 1, errors)
+                self.assertIn("records are locked", errors[0])
+                self.assertIn("rmdir", errors[0])
+        lock.rmdir()
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        # A merge that takes the lock while the outputs are being checked is caught at the end.
+        check_flows = contract_check.check_flows
+
+        def merge_starts(*args):
+            lock.mkdir(exist_ok=True)
+            return check_flows(*args)
+        with mock.patch.object(contract_check, "check_flows", side_effect=merge_starts):
+            errors = list(contract_check.problems(self.out, no_pdf=True))
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("records are locked", errors[0])
+
+    def test_not_applicable_needs_a_reason_beyond_punctuation_in_result_or_note(self):
+        for result, note, ok in (("N/A -", "", False), ("N/A", "-", False), ("N/A", "・", False),
+                                 ("N/A", "no animation", True), ("N/A: no animation", "", True)):
+            with self.subTest(result=result, note=note):
+                for perspective in self.data["perspectives"]:
+                    if perspective["name"].startswith("MO"):
+                        perspective.update(result=result, note=note)
+                self.save_inputs()
+                self.assertEqual(self.invoke()[0], 0)
+                errors = "\n".join(contract_check.problems(self.out, no_pdf=True))
+                self.assertEqual("without a reason" not in errors, ok, errors)
 
     def test_output_inside_the_reviewed_repository_is_refused(self):
         code, _, error = self.invoke(out=self.repo / "report")

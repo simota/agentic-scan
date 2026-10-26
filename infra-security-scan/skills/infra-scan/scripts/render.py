@@ -796,6 +796,8 @@ def hcl_has_paired_secret(text):
                 if "{" not in between and "}" not in between:
                     return True
     top = parse_hcl(text)
+    if hcl_secret_indirection(top):
+        return True
     pending = list(top)
     while pending:
         block = pending.pop()
@@ -827,12 +829,40 @@ def hcl_has_paired_secret(text):
     return False
 
 
+HCL_INDIRECT = re.compile(r"(?<![\w.])(var|local)\.([A-Za-z_][\w-]*)")
+
+
+def hcl_secret_indirection(blocks):
+    """A secret-named attribute that reads a variable or local holding a literal.
+
+    `password = var.db_admin` is safe to show; `variable "db_admin" { default
+    = "..." }` is then the password, though its own name says nothing."""
+    literals, wanted = set(), set()
+    pending = list(blocks)
+    while pending:
+        block = pending.pop()
+        pending.extend(block.blocks)
+        if block.type == "variable" and block.labels and "default" in block.attrs:
+            default = literal(block.attrs["default"][0])
+            if isinstance(default, str) and default:
+                literals.add(("var", block.labels[0]))
+        for name, (raw, _) in block.attrs.items():
+            if block.type == "locals":
+                value = literal(raw.strip())
+                if isinstance(value, str) and value and not SAFE_VALUE.fullmatch(raw.strip()):
+                    literals.add(("local", name))
+            if is_secret_name(name):
+                wanted.update(HCL_INDIRECT.findall(raw))
+    return bool(literals & wanted)
+
+
 def hcl_module_sensitive(directory):
     """Conservatively include declarations inherited through override files.
 
     Do not evaluate override order or read symlink targets. Unknown sibling
     context makes the module's excerpts unsafe, even when this file looks public.
     """
+    blocks = []
     try:
         for sibling in directory.iterdir():
             if sibling.name.lower().endswith((".tf.json", ".tofu.json")):
@@ -845,9 +875,12 @@ def hcl_module_sensitive(directory):
             if sibling.is_file() and (sibling.stat().st_size > MAX_BYTES or
                                       hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig"))):
                 return True
+            if sibling.is_file():
+                blocks.extend(parse_hcl(sibling.read_text(encoding="utf-8-sig")))
     except (OSError, ValueError, TypeError, RecursionError):
         return True
-    return False
+    # The secret may be read in one file and written in another.
+    return hcl_secret_indirection(blocks)
 
 
 def source_lines(path):

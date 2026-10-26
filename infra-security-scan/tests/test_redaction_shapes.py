@@ -90,6 +90,23 @@ class ExcerptShapeTest(unittest.TestCase):
                 shown = redaction.scrub_line(redaction.redact(line % SECRET, syntax="yaml"), "yaml")
                 self.assertNotIn(SECRET, shown)
 
+    def test_a_literal_read_by_a_secret_attribute_is_hidden(self):
+        db = ('resource "aws_db_instance" "d" {\n  publicly_accessible = true\n  password = %s\n}\n')
+        same_file = 'variable "db_admin" {\n  default = "%s"\n}\n' % SECRET + db % "var.db_admin"
+        self.assertIsNone(self.excerpt("one/main.tf", same_file, 5))
+        (self.repo / "two").mkdir()
+        (self.repo / "two" / "variables.tf").write_text('variable "db_admin" {\n  default = "%s"\n}\n' % SECRET,
+                                                      encoding="utf-8")
+        self.assertIsNone(self.excerpt("two/main.tf", db % '"${var.db_admin}"', 2))
+        self.assertIsNone(self.excerpt("three/main.tf", 'locals {\n  admin = "%s"\n}\n' % SECRET
+                                       + db % "local.admin", 5))
+        # Nothing to leak: no default, or the variable feeds a public setting.
+        self.assertIn("password = var.db_admin", self.excerpt("four/main.tf", 'variable "db_admin" {}\n'
+                                                              + db % "var.db_admin", 3))
+        shown = self.excerpt("five/main.tf", 'variable "engine" {\n  default = "postgres"\n}\n'
+                             + db.replace("password = %s", "engine = %s") % "var.engine", 5)
+        self.assertIn('default = "postgres"', shown)
+
     def test_a_number_under_a_plain_secret_key_stays_hidden(self):
         self.assertNotIn("1234", redaction.redact("  password = 1234"))
         self.assertNotIn("8", redaction.redact("  password_length = 8 # note"))

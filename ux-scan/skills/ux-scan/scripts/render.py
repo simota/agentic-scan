@@ -283,7 +283,7 @@ def main(argv=None):
         pages = {"dashboard.html": report.render_dashboard(common, a.lang),
                  "report.html": report.render_document(common, a.lang)}
         if mockups.with_mockups(data):
-            pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang)
+            pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang, report.labels_for(common, a.lang))
             pages["dashboard.html"] = mockups.link_dashboard(pages["dashboard.html"], a.lang)
         stamps = {STAMP: source_stamp(source),
                   FLOWS_STAMP: canonical_digest(flows) if flows is not None else "absent",

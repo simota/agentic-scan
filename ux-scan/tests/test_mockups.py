@@ -358,6 +358,19 @@ class MockupTests(unittest.TestCase):
         self.assertIn('value="all"', u006)
         self.assertNotIn('value="all"', page[page.index('id="U-014"'):])
 
+    def test_header_names_the_report_and_theme_as_the_dashboard_does(self):
+        for lang in ("en", "ja"):
+            out = self.out / lang
+            out.mkdir()
+            self.render(lang, out)
+            dashboard = render.report.labels_for(
+                render.to_common(self.data, lang, FLOWS, self.repo), lang)
+            page = (out / "mockups.html").read_text(encoding="utf-8")
+            header = page[page.index("<header"):page.index("</header>")]
+            for key in ("kind", "report_link", "theme"):
+                self.assertIn(f">{dashboard[key]}<", header, (lang, key))
+            self.assertIn('href="report.html">' + dashboard["report_link"] + "<", header)
+
     def test_five_alternatives_are_accepted(self):
         mockup = finding(self.data, "U-006")["mockup"]
         mockup["alternatives"] = [{"label": f"Design {i}", "after": f"<p>{i}</p>"} for i in range(5)]

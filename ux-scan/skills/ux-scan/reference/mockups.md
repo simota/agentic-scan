@@ -136,7 +136,8 @@ anchor (`mockups.html#U-006`), the others add their position
 `mockups.html` lists each finding with a mockup, in record order, with its
 screen, viewport, location and flow, and shows the two sides side by side, under
 a slider, or one at a time, at any `flows.json` viewport, scaled to fit. A
-mockup with alternatives adds a proposal picker: every view compares `before`
+mockup with alternatives adds a proposal picker, hidden in the views it cannot
+change (*Before* and *All proposals*): every other view compares `before`
 with the chosen proposal, whose note is shown above it under its label, and an
 *All proposals* view sets `before` beside every proposal, in as many columns
 as stay readable. A mockup with states adds a state picker that switches every
@@ -146,7 +147,8 @@ the viewer picks a view, a comparison is shown side by side, or under the
 slider when side by side would shrink it below half size, where its text is
 too small to read; the choice is made again when the viewport or the window
 size changes. The
-dashboard's header links to it, and each finding in the dashboard and the
+dashboard's header links to it, its own header names the report link and the
+theme toggle with the dashboard's labels, and each finding in the dashboard and the
 report names its anchor (`mockups.html#U-006`). It carries the same
 fingerprints as the other pages: `contract_check.py` requires it exactly when
 a `Valid` or `Likely` finding has a mockup and otherwise rejects it, even with `--allow`, and a second-language render

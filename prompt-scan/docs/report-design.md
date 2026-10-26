@@ -22,7 +22,9 @@ to the stylesheets it governs.
   for prompt-scan record types: `REPORT_CSS` (the severity-by-kind counts
   table, the prompt inventory and eval-run tables, the kind label,
   before/after proposals) and `DASH_CSS` (decisions panel, verify-first
-  legend, paired counts on the closed card, earlier-validation history).
+  legend, paired counts on the closed card, earlier-validation history, and
+  proposal text that wraps as in the report while source excerpts keep the
+  kit's sideways scroll).
 - The running footer and the report kicker are `PROMPT REVIEW` (ja
   `プロンプト診断`), passed to `document_css()` from the `running_footer` label.
 - The PDF engine is the kit's (`PROMPT_SCAN_PDF_TIMEOUT` overrides its

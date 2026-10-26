@@ -666,8 +666,9 @@ def render_report_html(data, L, lang, excerpts):
 
 # The shared stylesheet (scan_report_kit/assets/dashboard.css, design: scan-report-kit)
 # comes first; these add only the rules for prompt-scan's dashboard pieces: the
-# decisions panel, the verify-first legend, paired counts on the closed card and
-# the earlier-validation history box.
+# decisions panel, the verify-first legend, paired counts on the closed card,
+# the earlier-validation history box and proposal text, which wraps as in the
+# report where the kit's code listing scrolls sideways.
 DASH_CSS = """
 #decisions-section h2{margin-bottom:8px}#decisions-section ul{margin:0;padding-left:20px}
 .verify-legend{margin:0 0 14px;color:var(--muted)}
@@ -676,6 +677,7 @@ DASH_CSS = """
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 .history{border:1px dashed var(--line);padding:12px;margin-top:16px}
 .history p{margin:5px 0;white-space:pre-wrap}
+.snippet.proposal-text{white-space:pre-wrap;overflow-wrap:anywhere}
 """
 
 DASHBOARD = r"""<!doctype html>
@@ -770,7 +772,7 @@ function copyButton(f){var b=el('button',{type:'button','class':'copy-finding','
 // otherwise build every record's full detail tree on each redraw.
 function details(f,anchor){var dt=el('tr',{'class':'detail',id:anchor+'-detail'});dt.hidden=!expanded.has(anchor);if(!dt.hidden)fillDetails(dt,f,anchor);return dt;}
 function snippetNode(start,lines,hit){var pre=el('pre',{'class':'snippet'});lines.forEach(function(text,i){var n=start+i,ln=el('span',{'class':hit&&n>=hit[0]&&n<=hit[1]?'hit':''});ln.appendChild(el('b',null,String(n).padStart(5,' ')+' '));ln.appendChild(document.createTextNode(text));pre.appendChild(ln);});return pre;}
-function textNode(text){var pre=el('pre',{'class':'snippet'});pre.textContent=text;return pre;}
+function textNode(text){var pre=el('pre',{'class':'snippet proposal-text'});pre.textContent=text;return pre;}
 function fillDetails(dt,f,anchor){if(dt.firstChild)return;var td=el('td',{colspan:7}),dl=el('dl');
 var head=el('div',{'class':'detail-actions'});head.appendChild(el('strong',null,f.id+' · '+f.title));var links=el('span',{'class':'detail-links'});links.appendChild(copyButton(f));links.appendChild(el('a',{href:'#'+anchor},L.permalink));head.appendChild(links);td.appendChild(head);
 if(f.status==='Open'&&!excluded(f)){var a=action(f),guidance=el('div',{'class':'action-guidance'});guidance.appendChild(el('strong',null,L[a]));guidance.appendChild(el('p',null,L[a+'_note']));td.appendChild(guidance);}else if(excluded(f)){td.appendChild(el('p',{'class':'muted'},L.excluded_note));}

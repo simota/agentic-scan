@@ -1746,17 +1746,22 @@ def check_tf(scan, res):
                "aws_iam_group_policy_attachments_exclusive"):
         if admin_arn_list(scan, res, "policy_arns"):
             scan.hit("AWS-IAM-001", res, v.line("policy_arns"), "AdministratorAccess attached")
+    elif t == "aws_ssoadmin_permission_set_inline_policy":
+        # A permission set grants its policies in every account it is assigned to.
+        scan.identity_policy(res, scan.statements(res, "inline_policy"), v.line("inline_policy"))
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
-               "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
-        arn = v.get("policy_arn")
-        raw = (v.raw("policy_arn") or "").strip()
+               "aws_iam_group_policy_attachment", "aws_iam_policy_attachment",
+               "aws_ssoadmin_managed_policy_attachment"):
+        attr = "managed_policy_arn" if t == "aws_ssoadmin_managed_policy_attachment" else "policy_arn"
+        arn = v.get(attr)
+        raw = (v.raw(attr) or "").strip()
         data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
         # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
         each = raw in ("each.value", "each.key") and any(
             isinstance(a, str) and ADMIN_ARN.search(a) for a in each_values(v.get("for_each"), raw))
-        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
+        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, attr)) or \
                 (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
-            scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
+            scan.hit("AWS-IAM-001", res, v.line(attr), "AdministratorAccess attached")
     elif t == "aws_iam_access_key":
         scan.hit("AWS-IAM-005", res, res.line, "access key for an IAM user")
     elif t == "aws_iam_user_login_profile":
@@ -2907,6 +2912,10 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 if isinstance(p, dict):
                     scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
+        elif type_ == "AWS::SSO::PermissionSet":
+            if props.get("InlinePolicy") is not None:
+                scan.identity_policy(res, cfn_statements(scan, res, props["InlinePolicy"], line), line)
+            cfn_admin(scan, res, props, line, "ManagedPolicies")
         elif type_ == "AWS::IAM::AccessKey":
             scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
         elif type_ == "AWS::KMS::Key":
@@ -3124,9 +3133,9 @@ def cfn_secrets(scan, res, props, line):
         scan.hit("SEC-001", Res("file", res.file, res.file, 1), line, f"literal value assigned to {key} ({res.address})")
 
 
-def cfn_admin(scan, res, props, line):
+def cfn_admin(scan, res, props, line, key="ManagedPolicyArns"):
     if any(isinstance(cfn_string(a), str) and ADMIN_ARN.search(cfn_string(a))
-           for a in aslist(props.get("ManagedPolicyArns"))):
+           for a in aslist(props.get(key))):
         scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
 
 

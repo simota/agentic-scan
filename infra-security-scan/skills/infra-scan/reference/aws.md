@@ -29,6 +29,9 @@ uses, never from memory.
   `aws_iam_group_policy`, `aws_iam_policy_document` data sources,
   `jsonencode({...})` bodies, `*_policy_attachment` with AWS managed policies
   (`AdministratorAccess`, `IAMFullAccess`, `PowerUserAccess`)
+- IAM Identity Center permission sets (`aws_ssoadmin_managed_policy_attachment`,
+  `aws_ssoadmin_permission_set_inline_policy`, `AWS::SSO::PermissionSet`): their
+  policies hold in every account the set is assigned to, so trace the assignments
 - Escalation permissions (perspectives IP2): `iam:PassRole` on `*`,
   `iam:CreatePolicyVersion`, `iam:SetDefaultPolicyVersion`,
   `iam:Attach{User,Group,Role}Policy`, `iam:Put{User,Group,Role}Policy`,

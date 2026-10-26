@@ -132,6 +132,21 @@ class RenumberTests(unittest.TestCase):
             "Read ftp://files.example/specs/PV-001.pdf, file:///srv/PV-001.txt, "
             "sftp://h.example/PV-001 and svn+ssh://h.example/PV-001, then fix PV-002"])
 
+    def test_long_words_and_digests_in_prose_are_renumbered_in_linear_time(self):
+        # Merge accepts these in linear time; renumber must too. A scheme is
+        # only tried where a word starts, so a 200k-character run is read once.
+        import time
+        doc = complete_doc()
+        doc["findings"] = [finding("PV-001", "Low", location="z.py:1"), finding("PV-002", "High")]
+        word, digest = "a" * 200_000, "3f" * 100_000
+        doc["next_steps"] = [f"{word} PV-001", f"{digest} PV-001",
+                             "1svn+ssh://h.example/PV-001 then PV-001"]
+        started = time.perf_counter()
+        findings.renumber(doc)
+        self.assertLess(time.perf_counter() - started, 5)
+        self.assertEqual(doc["next_steps"], [f"{word} PV-002", f"{digest} PV-002",
+                                             "1svn+ssh://h.example/PV-001 then PV-002"])
+
 
 class MergeAndSchemaTests(unittest.TestCase):
     def test_nested_validation_merges_key_by_key(self):

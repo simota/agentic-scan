@@ -784,7 +784,10 @@ PV_REFERENCE = re.compile(r"(?<![A-Za-z0-9_])(?:(?<=PV-\d{3}-)|(?<!-))PV-\d{3}(?
 # and `ftp://…/PV-002.pdf` keep their targets.
 # Non-ASCII text belongs to the URL when a `/` or `.` follows it (`https://例.example/`,
 # `/課題/`); otherwise it is prose run straight on after the URL (`…/aを参照、PV-002`).
-PROSE_URL = re.compile(r"(?:[A-Za-z][A-Za-z0-9+.-]*://|(?i:www\.))"
+# A scheme is tried only where a run of scheme characters starts, so a long
+# word is read once rather than once per letter; leading digits, `+`, `.` or
+# `-` (`1svn+ssh://`) join the match but hold no reference.
+PROSE_URL = re.compile(r"(?:(?<![A-Za-z0-9+.-])[0-9+.-]*[A-Za-z][A-Za-z0-9+.-]*://|(?i:www\.))"
                        r"(?:[A-Za-z0-9\-._~:/?#\[\]@!$&'()*+,;=%]|[^\x00-\x7f\s]+(?=[/.]))+")
 PV_OR_URL = re.compile(f"(?P<url>{PROSE_URL.pattern})|{PV_REFERENCE.pattern}")
 

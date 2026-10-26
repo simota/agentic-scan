@@ -279,7 +279,7 @@ def merge(findings_path, fragment_paths):
 
 
 def record_strings(record):
-    """(where, text) for every string in findings, attack paths, perspectives and lists."""
+    """(where, text) for every string in meta, findings, attack paths, perspectives and lists."""
     def walk(value, where):
         if isinstance(value, str):
             yield where, value
@@ -296,6 +296,7 @@ def record_strings(record):
                 yield from walk(reviewer_fields(item), str(item.get("id") or item.get("name") or key))
     for key in LISTS:
         yield from walk(record.get(key, []), key)
+    yield from walk(record.get("meta", {}), "meta")  # scope and method are prose too
 
 
 def remove(findings_path, ids):
@@ -371,6 +372,8 @@ def renumber(findings_path):
     record["findings"] = [{**f, **rewrite(reviewer_fields(f))} for f in record["findings"]]
     for key in ("attack_paths", "perspectives", *LISTS):
         record[key] = rewrite(record.get(key, []))
+    if isinstance(record.get("meta"), dict):
+        record["meta"] = rewrite(record["meta"])
     record["attack_paths"] = sorted(record["attack_paths"], key=lambda ap: render.id_key(ap["id"]))
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
         sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))

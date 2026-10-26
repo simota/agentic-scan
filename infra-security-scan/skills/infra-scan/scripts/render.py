@@ -257,6 +257,8 @@ def dangling_references(data):
         for line in lines if isinstance(lines, list) else [lines]:
             walk(line, key, baseline=not (key == "limitations" and isinstance(line, str)
                                           and CARRY_NOTE.fullmatch(line)))
+    if isinstance(data.get("meta"), dict):
+        walk(data["meta"], "meta")
     return out
 
 

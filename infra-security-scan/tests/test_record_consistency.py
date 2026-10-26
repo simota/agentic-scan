@@ -46,6 +46,17 @@ class RecordConsistencyTest(unittest.TestCase):
         code, msg = quiet(render.main, self.out / "findings.json", "--out", self.out, "--no-pdf")
         self.assertEqual(code, 0, msg)
 
+    def test_meta_prose_follows_a_renumber(self):
+        data = json.loads(SAMPLE.read_text(encoding="utf-8").replace("F-006", "F-906"))
+        data["meta"]["scope"] = "Production, except the bucket in F-906"
+        self.write(data)
+        record = self.out / "findings.json"
+        self.assertEqual(quiet(findings.main, "renumber", record)[0], 0)
+        self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["meta"]["scope"],
+                         "Production, except the bucket in F-006")
+        data["meta"]["scope"] = "Production, except the bucket in F-950"
+        self.assertIn(("meta.scope", "F-950"), render.dangling_references(data))
+
     def test_a_finding_on_an_unknown_path_is_not_confirmed(self):
         f4 = next(f for f in self.data["findings"] if f["id"] == "F-004")
         ap5 = next(a for a in self.data["attack_paths"] if a["id"] == "AP-05")

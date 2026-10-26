@@ -1328,7 +1328,11 @@ def load_json(path, record=False):
         path = Path(path)
         if record:
             from file_io import read_regular
-            return loads_json(read_regular(path).decode("utf-8"), str(path))
+            try:
+                source = read_regular(path)
+            except (OSError, ValueError) as e:
+                raise RecordError(str(e)) from None  # Its message already names the path.
+            return loads_json(source.decode("utf-8"), str(path))
         if not path.is_file():
             raise RecordError(f"{path}: expected a regular JSON file")
         return loads_json(path.read_text(encoding="utf-8"), str(path))
@@ -1408,7 +1412,7 @@ def merge(base, fragment):
         raise RecordError(f"remove: expected {{section: [exact lines]}} for {', '.join(LIST_KEYS)}, "
                           "or {\"perspectives\": [names]}")
     names = remove.pop("perspectives", [])
-    for name in _strings(names, "remove.perspectives", nonempty=False):
+    for name in dict.fromkeys(_strings(names, "remove.perspectives", nonempty=False)):
         if name not in perspectives:
             raise RecordError(f"remove.perspectives: no such entry {name!r}")
         del perspectives[name]
@@ -1423,7 +1427,8 @@ def merge(base, fragment):
     for f in _indexed(fragment.get("findings", []), "fragment.findings", "id", FINDING_ID).values():
         merged = {**by_id.get(f["id"], {}), **f}
         # null removes an optional field such as mockup or occurrences; a required one stays null and is refused.
-        for key in [k for k, v in f.items() if v is None and k not in REQUIRED_FINDING_KEYS]:
+        # A misspelled key stays, so the check refuses it instead of the null hiding the typo.
+        for key in [k for k, v in f.items() if v is None and k in FINDING_KEYS and k not in REQUIRED_FINDING_KEYS]:
             del merged[key]
         by_id[f["id"]] = merged
     out["findings"] = sorted(by_id.values(), key=lambda f: f["id"])

@@ -332,6 +332,8 @@ class TransactionRegressions(unittest.TestCase):
         self.assertEqual(fixed["perspectives"], data["perspectives"])
         with self.assertRaisesRegex(findings.RecordError, "remove.perspectives: no such entry"):
             findings.merge(data, {"remove": {"perspectives": ["Accessibility (AX)"]}})
+        twice = findings.merge(bad, {"remove": {"perspectives": ["Accessibility (AX)", "Accessibility (AX)"]}})
+        self.assertEqual(twice["perspectives"], data["perspectives"])
         with tempfile.TemporaryDirectory() as tmp:
             target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
             target.write_text(json.dumps(data), encoding="utf-8")
@@ -353,6 +355,9 @@ class TransactionRegressions(unittest.TestCase):
             findings.check_findings(findings.merge(data, {"findings": [{"id": "U-001", "occurrences": []}]}))
         with self.assertRaises(findings.RecordError):
             findings.check_findings(findings.merge(data, {"findings": [{"id": "U-001", "location": None}]}))
+        # A misspelled field sent as null is refused, not dropped while the real field stays.
+        with self.assertRaisesRegex(findings.RecordError, "occurences"):
+            findings.check_findings(findings.merge(data, {"findings": [{"id": "U-001", "occurences": None}]}))
 
     def test_check_and_merge_refuse_symlinked_records_as_render_does(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -377,6 +382,7 @@ class TransactionRegressions(unittest.TestCase):
             result = run("check", linked / "findings.json")
             self.assertEqual(result.returncode, 2, result.stdout)
             self.assertIn("regular file", result.stderr)
+            self.assertEqual(result.stderr.count(str(linked / "findings.json")), 1, result.stderr)
 
     def test_renumber_reorders_the_array_even_when_no_id_changes(self):
         with tempfile.TemporaryDirectory() as tmp:

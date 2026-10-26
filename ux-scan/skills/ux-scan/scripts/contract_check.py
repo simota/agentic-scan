@@ -104,10 +104,9 @@ def problems(out, no_pdf=False, allow=()):
         yield locked_problem(out)
         return
     if RECORDS_LOCK in found:
-        # A merge, flows or renumber may still be rewriting the records the pages were made from.
-        yield (f"{out}: records are locked; finish the active findings.py merge, flows or renumber, then rerender. "
-               "If a previous run was interrupted, verify that no findings.py process uses this directory, "
-               f"then remove the empty lock with 'rmdir {shlex.quote(str(out.absolute() / RECORDS_LOCK))}'")
+        # A merge, flows or renumber may still be rewriting the records the pages were made from;
+        # checked again at the end, as the render generation is.
+        yield from records_locked_problem(out)
         return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(out))}"
@@ -230,6 +229,15 @@ def problems(out, no_pdf=False, allow=()):
             yield from translation_problems(out, name, expected_stamps, no_pdf,
                                             None if data is None else mockups.PAGE in expected)
     yield from render_race_problems(out, generation)
+    if (out / RECORDS_LOCK).exists():
+        yield from records_locked_problem(out)
+
+
+def records_locked_problem(out):
+    """The message for an output directory whose records lock is present: a merge may be rewriting them."""
+    yield (f"{out}: records are locked; finish the active findings.py merge, flows or renumber, then rerender. "
+           "If a previous run was interrupted, verify that no findings.py process uses this directory, "
+           f"then remove the empty lock with 'rmdir {shlex.quote(str(out.absolute() / RECORDS_LOCK))}'")
 
 
 def locked_problem(directory):

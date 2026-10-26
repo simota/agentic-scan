@@ -832,6 +832,16 @@ class ReportRegressions(unittest.TestCase):
                 self.assertIn("rmdir", errors[0])
         lock.rmdir()
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        # A merge that takes the lock while the outputs are being checked is caught at the end.
+        check_flows = contract_check.check_flows
+
+        def merge_starts(*args):
+            lock.mkdir(exist_ok=True)
+            return check_flows(*args)
+        with mock.patch.object(contract_check, "check_flows", side_effect=merge_starts):
+            errors = list(contract_check.problems(self.out, no_pdf=True))
+        self.assertEqual(len(errors), 1, errors)
+        self.assertIn("records are locked", errors[0])
 
     def test_not_applicable_needs_a_reason_beyond_punctuation_in_result_or_note(self):
         for result, note, ok in (("N/A -", "", False), ("N/A", "-", False), ("N/A", "・", False),

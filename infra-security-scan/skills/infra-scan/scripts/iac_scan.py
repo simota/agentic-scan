@@ -55,8 +55,8 @@ from urllib.parse import unquote as url_unquote
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
-                    has_symlink_parent, inventory, json_depth, meta_prose, shape_problems, split_yaml_documents, sub_references, unique_object,
-                    write_json_atomic)
+                    has_symlink_parent, inventory, json_depth, meta_prose, shape_problems, split_yaml_documents,
+                    sub_references, unique_object, write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
 # Tool caches hold copies of the configuration (downloaded modules, the

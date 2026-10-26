@@ -40,15 +40,16 @@ short values, passphrases with spaces, typed declarations
 attributes of its tag (a `label`, `id` or `type="password"` does not count), literals passed to a call or wrapped in
 delimiters (`String("…")`, `(("…"))`, also inside `{…}`), fallbacks after a
 reference (`process.env.X || "…"`, `??`, `or`; ternary branches are not read), including a lookup that names the
-secret itself (`process.env.DB_PASSWORD || "…"`, `os.getenv("API_TOKEN") or "…"`), values wrapped onto a later line after
+secret itself (`process.env.DB_PASSWORD || "…"`, `os.getenv("API_TOKEN") or "…"`; not `PASSWORD_RESET_URL`), values wrapped onto a later line after
 `=` or an operator (or a secret-named field's attributes continuing there) (comment lines between are skipped), and literals left open or cut off by the 752-character limit. Labels such
 as "Password", "Enter your password" or "パスワード", types, code expressions
 and references (`process.env.X`, `auth.currentPassword`) and booleans stay visible,
 since forms and locale files are what UX findings cite. In configuration files
 (`.properties`, `.env`, `.ini`, `.cfg`, `.conf`, `.toml`, YAML) and on `NAME=value`
 lines every bare value is a literal (`password = Sommer.x`), as is an upper-case `NAME=value` pair elsewhere on a
-line (`ENV DB_PASSWORD=…`, `docker run -e API_TOKEN=…`) and a value with a
-digit in its root (`Pa55.word`). A secret-named YAML block scalar (`password: |`, `>-`) is masked with every more
+line (`ENV DB_PASSWORD=…`, `docker run -e API_TOKEN=…`; not a keyword argument or attribute inside an open
+`(` or tag, such as `Client(TOKEN=auth.token)`) and a value with a
+digit in its root (`Pa55.word`). A secret-named YAML block scalar (`password: |`, `>-`, also after a tag or anchor such as `!!str |`) is masked with every more
 indented line of its value, even when the excerpt starts inside it. In code a digit-free bare identifier is a
 reference (`password = currentPassword`), and `$VAR` / `${VAR}` stay visible as variables when they are the whole value (a `${VAR:-default}` default is
 judged as a value; text joined to the variable, such as `${VAR}"x"`, or in configuration anything but a `#` comment after it, makes a literal). Each line is judged on

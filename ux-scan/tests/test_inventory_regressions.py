@@ -41,7 +41,8 @@ class InventoryRegressionTests(unittest.TestCase):
         self.assertEqual(data["orphan_routes"], [])
         data = self.scan({"src/App.tsx": '<Routes><Route path={"/settings"} element={<S />} />\n'
                                          '<Route path={`/reports`} element={<R />} />\n'
-                                         '<Route path={base + "/x"} element={<R />} /></Routes>\n'})
+                                         '<Route path={base + "/x"} element={<R />} />\n'
+                                         '<Route path={`/users/${id}`} element={<U />} /></Routes>\n'})
         self.assertEqual([r["route"] for r in data["routes"]], ["/settings", "/reports"])
         data = self.scan({"src/routes/tasks/+page.svelte": '<script>\n  const tasks = fetch("/api/tasks")\n</script>\n'
                                                           "{#await tasks}\n  <p>Fetching…</p>\n{:then list}\n"
@@ -58,9 +59,10 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"playwright.config.ts": "export default defineConfig({ use: { viewport: { width: 1280, height: 720 } } })\n",
                           "app/layout.tsx": 'export const metadata = { openGraph: { images: [{ url: "/a.png", width: 1200 },\n'
                                             '  { url: "/b.png", width: 800 }] } }\n',
-                          "a.tsx": "export const A = () => <div style={{ width: 400 }} />\nconst s = { card: { minWidth: 480 } }\n"})
+                          "a.tsx": "export const A = () => <div style={{ width: 400 }} />\nconst s = { card: { minWidth: 480 } }\n",
+                          "S.js": "const s = StyleSheet.create({\n  image: { width: 640, height: 300 },\n})\n"})
         self.assertEqual([(r["value"], r["locations"]) for r in data["fixed_widths"]],
-                         [("400px", ["a.tsx:1"]), ("480px", ["a.tsx:2"])])
+                         [("400px", ["a.tsx:1"]), ("480px", ["a.tsx:2"]), ("640px", ["S.js:2"])])
 
     def test_block_comment_markers_in_jsx_child_text_hide_no_markup(self):
         import time
@@ -74,7 +76,8 @@ class InventoryRegressionTests(unittest.TestCase):
         # Comments in a tag, after an arrow function's body and in code stay comments.
         data = self.scan({"a.tsx": 'export const A = () => <div /* note */ className="x">\n'
                                    '  <button onClick={() => go()} /* <img src="/y.png" /> */>Go</button>\n</div>\n'
-                                   'const f = (a) => a /* <img src="/z.png" /> */\n'})
+                                   'const f = (a) => a /* <img src="/z.png" /> */\n'
+                                   'export const Logo = () => <Icon />\n/*\n<img src="legacy.png" />\n*/\n'})
         self.assertEqual(data["images"], [])
         started = time.monotonic()
         self.scan({"t.jsx": "<p>" + "a /*" * 200000})

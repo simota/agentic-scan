@@ -4291,6 +4291,12 @@ def is_json(text):
 def classify_json(doc):
     if isinstance(doc, dict) and "planned_values" in doc:
         return "plan"
+    # Terraform state under another name (terraform state pull > prod.json), or
+    # its terraform show -json rendering: the same secrets as a .tfstate file.
+    if isinstance(doc, dict) and (
+            isinstance(doc.get("lineage"), str) and "serial" in doc and isinstance(doc.get("resources"), list)
+            or "format_version" in doc and isinstance(doc.get("values"), dict) and "root_module" in doc["values"]):
+        return "state"
     if isinstance(doc, dict) and isinstance(doc.get("Resources"), dict) and (
             "AWSTemplateFormatVersion" in doc or any(
                 isinstance(r, dict) and str(r.get("Type", "")).startswith("AWS::")
@@ -4500,6 +4506,11 @@ def run(root, snapshots=()):
                         ('"apiVersion"' in text and '"kind"' in text):
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
+            if kind == "state":
+                scan.files.append({"path": rel, "kind": "state"})
+                scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "Terraform state (read from its content) in the "
+                         "repository", strong=True)
+                continue
             try:
                 if lname.endswith(".tfvars.json"):
                     kind = "tfvars"

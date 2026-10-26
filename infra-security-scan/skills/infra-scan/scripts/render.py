@@ -950,12 +950,13 @@ def attach_sources(data, repo, context=3):
     # when base64-encoded. Do not expose them through a neighboring finding.
     secret_manifests = set()
     for f in data.get("findings", []):
-        if f.get("rule") == "K8S-003":
+        # A state file is secret whatever its name (SEC-002 also reads content).
+        if f.get("rule") in ("K8S-003", "SEC-002"):
             match = LOCATION.match(f.get("location", ""))
             if match:
                 secret_manifests.add(posixpath.normpath(match.group(1)))
     for f in data.get("findings", []):
-        if f.get("rule") in ("SEC-001", "K8S-003"):
+        if f.get("rule") in ("SEC-001", "SEC-002", "K8S-003"):
             continue
         m = LOCATION.match(f.get("location", ""))
         if not m:

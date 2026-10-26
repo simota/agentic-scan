@@ -250,12 +250,13 @@ def fenced_lines(lines):
     return result
 
 
-def lint_template(lines, fenced, engine=False):
+def lint_template(lines, fenced, engine=False, data=False):
     stack, hits = [], []
     prose = [(number, line) for number, line in enumerate(lines, 1) if number not in fenced]
     # Outside an engine template file, a file that never opens {{ or {% is not a template: a }} there is
-    # JSON or literal text.
-    templated = engine or any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
+    # JSON or literal text. In a JSON, YAML or TOML file it closes nested objects even when a value holds
+    # a {{variable}}, so only an opener left open counts there.
+    templated = engine or not data and any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
     for number, line in prose:
         for token in TEMPLATE_TOKEN.findall(line):
             if token in PAIRS:
@@ -289,7 +290,8 @@ def lint_file(rel, text, tokens):
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [INLINE_CODE.sub("", line) for line in lines]
     hits = []
-    for number, detail in lint_template(prose, fenced, Path(rel).suffix.lower() in ENGINE_SUFFIXES):
+    suffix = Path(rel).suffix.lower()
+    for number, detail in lint_template(prose, fenced, suffix in ENGINE_SUFFIXES, suffix in CONFIG_SUFFIXES):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))

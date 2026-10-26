@@ -95,6 +95,12 @@ class InventoryTest(unittest.TestCase):
         # An engine template file whose only delimiter is a stray closer (a forgotten opener) still counts.
         for name in ("reply.j2", "reply.mustache"):
             self.assertEqual([h["rule"] for h in inventory.lint_file(name, "Hello }}\n", 1)], ["unbalanced-template"])
+        # In JSON, YAML and TOML a }} closes nested objects even when a value holds a {{variable}}; an
+        # opener left open is still a hit.
+        data_rules = lambda name, text: [h["rule"] for h in inventory.lint_file(name, text, 1)]  # noqa: E731
+        self.assertEqual(data_rules("chat.json", '{"messages": [{"content": "Help {{customer}}."}], "p": {"t": 0}}\n'), [])
+        self.assertEqual(data_rules("sum.yaml", "system: Hi {{name}}\nformat: {type: object, schema: {a: b}}\n"), [])
+        self.assertEqual(data_rules("sum.yml", "system: Hi {{name}\n"), ["unbalanced-template"])
 
     def test_fences_and_first_template_line(self):
         self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})

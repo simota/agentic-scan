@@ -121,7 +121,16 @@ class RenderTest(unittest.TestCase):
                  'os.environ["API_KEY"] = "abc"': 'os.environ["API_KEY"] = [REDACTED]',
                  "redis://:pw@localhost:6379/0": "redis://:[REDACTED]@localhost:6379/0",
                  "https://x.example/?token=abc&page=2": "https://x.example/?token=[REDACTED]&page=2",
-                 "token = tokenizer.encode(text)": "token = tokenizer.encode(text)", "api_key = None": "api_key = None"}
+                 "token = tokenizer.encode(text)": "token = tokenizer.encode(text)", "api_key = None": "api_key = None",
+                 # Declarations, type annotations and := (JS/TS, Kotlin, Java, Python, Go, Dockerfile).
+                 'const DB_PASSWORD = "Tr0ub4dorPony9";': "const DB_PASSWORD = [REDACTED];",
+                 '  export let apiKey = "k1"': "  export let apiKey = [REDACTED]",
+                 'private static final String PASSWORD = "x";': "private static final String PASSWORD = [REDACTED];",
+                 'API_KEY: str = "abc"': "API_KEY: str = [REDACTED]", 'password := "abc"': "password := [REDACTED]",
+                 "ENV API_TOKEN=abc": "ENV API_TOKEN=[REDACTED]", 'val secret = "Pa(ss)word9"': "val secret = [REDACTED]",
+                 "const token = getToken()": "const token = getToken()", "let password: string": "let password: string",
+                 # The password in a URL runs to the last @ of the authority.
+                 "https://user:p@ss@host/x": "https://user:[REDACTED]@host/x"}
         for line, masked in cases.items():
             self.assertEqual(render.mask_excerpt(line), masked)
 

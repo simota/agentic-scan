@@ -10,7 +10,8 @@ at `meta.commit` when the record names one and the tree was known clean at scan 
 holds what the clean command stored, and no repository command is run to undo that.
 Credential-shaped values in excerpts are masked, private-key blocks whole, and so
 are single-token values (quoted ones without spaces) assigned to credential-named
-keys (`password=`, `SECRET_KEY:`, `"api_key" =>`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
+keys (`password=`, `SECRET_KEY:`, `"api_key" =>`, `const DB_PASSWORD =`, `API_KEY: str =`,
+`password :=`, `ENV API_TOKEN=`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
 .jks, .keystore) and login files (.npmrc, .pypirc, .netrc, id_rsa...) get no excerpt.
 --lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
@@ -59,16 +60,23 @@ SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 # Values with no recognisable format sit next to ones that have one (an AWS secret key under its key id):
 # an excerpt masks the value assigned to a credential-named key, and the password in a URL. A key starts a
-# line (after indent, `export ` or `- `) or follows { ( [ , ; & ?, so prose ("asks for the password: no")
-# is left alone. The value is one token or a quoted string without spaces; a number, None/null/true/false,
-# a template variable or a call is not a secret. Every run is bounded, so long lines stay linear.
+# line (after indent, `- ` or declaration keywords such as `export const`, `private static final String`,
+# `ENV`) or follows { ( [ , ; & ?, so prose ("asks for the password: no") is left alone. It is assigned
+# with =, :, =>, := or a type annotation (`API_KEY: str =`). The value is one token or a quoted string
+# without spaces; a number, None/null/true/false, a template variable or an unquoted call is not a secret.
+# Every run is bounded, so long lines stay linear.
+DECLARATION = r"(?:export|const|let|var|val|final|static|readonly|private|public|protected|internal|ENV|String|string|str)"
 ASSIGNED_SECRET_RE = re.compile(
-    r"""(?im)((?:^[ \t]{0,64}(?:export[ \t]+|-[ \t]+)?|[{(\[,;&?][ \t]{0,8})["']?[\w.-]{0,64}?"""
+    r"""(?im)((?:^[ \t]{0,64}(?P<decl>(?:-[ \t]+|(?-i:""" + DECLARATION + r""")[ \t]+){0,4})|[{(\[,;&?][ \t]{0,8})["']?"""
+    r"""[\w.-]{0,64}?"""
     r"""(?:secret|passw(?:or)?d|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)"""
-    r"""(?:[_-][A-Za-z0-9]{1,16}){0,2}["']?\]?[ \t]{0,8}(?:=>|[:=])[ \t]{0,8})"""
+    r"""(?:[_-][A-Za-z0-9]{1,16}){0,2}["']?\]?[ \t]{0,8}"""
+    r"""(?P<op>=>|:=|[:=]|:[ \t]{0,8}[A-Za-z_][\w.\[\]]{0,40}[ \t]{0,8}=)[ \t]{0,8})"""
     r"""(?!(?:-?[0-9]+(?:\.[0-9]+)?|None|null|nil|true|false|undefined)[ \t]*(?:[,;#&)\]}]|$)|["']?[{$<%])"""
-    r"""("[^"\s]{1,256}"|'[^'\s]{1,256}'|[^\s"',;#&)\]}]{1,256})(?=[ \t]*(?:[,;#&)\]}]|$))""")
-URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{0,256}:)([^\s@]{1,256})(?=@)")
+    r"""(?P<value>"[^"\s]{1,256}"|'[^'\s]{1,256}'|[^\s"',;#&)\]}]{1,256})(?=[ \t]*(?:[,;#&)\]}]|$))""")
+# The password runs to the last @ before the host, so one that holds an @ is masked whole.
+URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{0,256}:)([^\s/]{1,256})"
+                             r"(?=@[^\s@/]{0,256}(?:[/?#\s]|$))")
 # Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}
 SENSITIVE_NAMES = {".npmrc", ".pypirc", ".netrc", "_netrc", ".pgpass", ".htpasswd", ".git-credentials",
@@ -362,7 +370,14 @@ def mask(text):
 def mask_excerpt(line):
     """mask(), plus the values an excerpt's context lines carry without a recognisable format."""
     # Before mask(): its [REDACTED] would otherwise read as a value assigned to the key.
-    line = ASSIGNED_SECRET_RE.sub(lambda m: m.group(0) if "(" in m.group(2) else m.group(1) + "[REDACTED]", line)
+    def assigned(m):
+        value = m["value"]
+        # An unquoted value holding "(" is a call, a quoted one a literal whatever it holds; after a
+        # declaration keyword a bare ":" starts a type (`let password: string`), not a value.
+        if "(" in value and value[0] not in "\"'" or m["op"] == ":" and m["decl"] and m["decl"].strip("- \t"):
+            return m.group(0)
+        return m.group(1) + "[REDACTED]"
+    line = ASSIGNED_SECRET_RE.sub(assigned, line)
     return mask(URL_PASSWORD_RE.sub(lambda m: m.group(1) + "[REDACTED]", line))
 
 

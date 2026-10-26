@@ -55,7 +55,7 @@ from urllib.parse import unquote as url_unquote
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
-                    has_symlink_parent, json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
+                    has_symlink_parent, json_depth, meta_prose, shape_problems, split_yaml_documents, sub_references, unique_object,
                     write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
@@ -4712,56 +4712,70 @@ def remap_baseline_references(data, old, new):
 
     carry_triage(data, old_by_id, replacements, new, rewrite_carried)
 
-    def rewrite_prose(value):
+    def rewrite_prose(value, removed=None):
+        """Renumber every string in value; a vanished ID's label is added to removed."""
         if isinstance(value, str):
-            return rewrite_carried(value)
+            def replace_reference(match):
+                fid = match.group()
+                if fid in replacements:
+                    return replacements[fid]
+                label = removed_label(fid)
+                if removed is not None and label not in removed:
+                    removed.append(label)
+                return f"[removed baseline: {label}]"
+            # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
+            # a sequence of string replacements would move both to I-003.
+            return sub_references(BASELINE_REFERENCE, value, replace_reference)
         if isinstance(value, list):
-            return [rewrite_prose(x) for x in value]
+            return [rewrite_prose(x, removed) for x in value]
         if isinstance(value, dict):
-            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v) for k, v in value.items()}
+            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v, removed)
+                    for k, v in value.items()}
         return value
 
-    # Every other mention of a baseline ID follows it too. F-* evidence is
-    # handled below, where a lost reference also reopens the finding; the
+    # Every other mention of a baseline ID follows it too. A lost one in a
+    # finding or an attack path reopens it below, as lost evidence does; the
     # carry-over notes iac_scan.py writes name earlier IDs on purpose.
+    lost_in_prose = {}
     for finding in data.get("findings", []):
         if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
+            lost = lost_in_prose.setdefault(finding["id"], [])
             for key, value in list(finding.items()):
                 if key not in ("id", "references", "validation", "attack_paths"):
-                    finding[key] = rewrite_prose(value)
-    data["attack_paths"] = rewrite_prose(data["attack_paths"])
+                    finding[key] = rewrite_prose(value, lost)
+    invalidated_paths = {}
+    for i, ap in enumerate(data["attack_paths"]):
+        lost = []
+        data["attack_paths"][i] = rewrite_prose(ap, lost)
+        if lost and isinstance(ap, dict):
+            invalidated_paths[ap.get("id")] = lost
     for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
         if isinstance(data.get(key), list):
             data[key] = rewrite_prose(data[key])
     if isinstance(data.get("limitations"), list):
         data["limitations"] = [line if isinstance(line, str) and CARRY_NOTE.fullmatch(line) else rewrite_prose(line)
                                for line in data["limitations"]]
+    if isinstance(data.get("meta"), dict):
+        prose = rewrite_prose(meta_prose(data["meta"]))
+        data["meta"].update({k: v for k, v in prose.items() if k != "inputs"})
+        for item, note in zip(data["meta"].get("inputs", []), prose.get("inputs", [])):
+            if "note" in note:
+                item["note"] = note["note"]
 
     invalidated = set()
-    invalidated_paths = {}
     for finding in data.get("findings", []):
         if not isinstance(finding, dict) or not str(finding.get("id", "")).startswith("F-"):
             continue
         validation = finding.get("validation")
-        if not isinstance(validation, dict) or not isinstance(validation.get("evidence"), str):
-            continue
-        removed = []
-
-        def replace_reference(match):
-            fid = match.group()
-            if fid in replacements:
-                return replacements[fid]
-            label = removed_label(fid)
-            if label not in removed:
-                removed.append(label)
-            return f"[removed baseline: {label}]"
-
-        # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
-        # a sequence of string replacements would move both to I-003.
-        validation["evidence"] = sub_references(BASELINE_REFERENCE, validation["evidence"], replace_reference)
+        removed = list(lost_in_prose.get(finding["id"], []))
+        if isinstance(validation, dict) and isinstance(validation.get("evidence"), str):
+            validation["evidence"] = rewrite_prose(validation["evidence"], removed)
         if removed:
+            if not isinstance(validation, dict):
+                validation = finding["validation"] = {}
+            evidence = validation.get("evidence") if isinstance(validation.get("evidence"), str) else ""
             note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this finding."
-            validation["evidence"] = validation["evidence"].rstrip() + "\n" + note
+            validation["evidence"] = (evidence.rstrip() + "\n" + note).lstrip()
             validation["verdict"] = "Unverified"
             finding["confidence"] = "Suspected"
             invalidated.add(finding["id"])
@@ -4790,7 +4804,7 @@ def remap_baseline_references(data, old, new):
                     removed.append(f"supporting evidence for {fid}")
             elif replacements.get(fid) is not None:
                 refs.append(replacements[fid])
-            else:
+            elif removed_label(fid) not in removed:
                 removed.append(removed_label(fid))
         if "findings" in ap:
             ap["findings"] = refs

@@ -355,6 +355,35 @@ class RescanReferencesTest(unittest.TestCase):
         data = self.scan()
         self.assertEqual(data["next_steps"], ["Fix [removed baseline: AWS-S3-001 at z.tf] first"])
 
+    def test_meta_prose_follows_renumbering(self):
+        data = self.scan()
+        data["meta"].update(scope="Bucket I-001 and its path", method="see I-001",
+                            inputs=[{"path": "repo", "note": "I-001 found here"}, {"path": "plan.json"}])
+        self.record.write_text(json.dumps(data), encoding="utf-8")
+        self.add_admin()  # a.tf sorts first, so the bucket becomes I-002
+        data = self.scan()
+        self.assertEqual((data["meta"]["scope"], data["meta"]["method"]), ("Bucket I-002 and its path", "see I-002"))
+        self.assertEqual(data["meta"]["inputs"], [{"path": "repo", "note": "I-002 found here"}, {"path": "plan.json"}])
+        self.assertEqual(render.dangling_references(data), [])
+
+    def test_lost_baseline_in_path_or_finding_prose_reopens_it(self):
+        data = self.scan()
+        self.seed_review(data, "Read the ACL at z.tf:3")
+        data = json.loads(self.record.read_text(encoding="utf-8"))
+        data["attack_paths"][0]["edges"] = ["Public ACL I-001 (z.tf:3)"]
+        data["attack_paths"][0]["findings"] = ["F-001", "I-001"]
+        self.review_finding(data)["path"] = "1. Public ACL, as I-001 shows (z.tf:3)"
+        self.record.write_text(json.dumps(data), encoding="utf-8")
+        self.bucket.write_text("# gone\n", encoding="utf-8")
+        data = self.scan()
+        ap, finding = data["attack_paths"][0], self.review_finding(data)
+        self.assertEqual(ap["edges"], ["Public ACL [removed baseline: AWS-S3-001 at z.tf] (z.tf:3)"])
+        self.assertEqual(ap["status"], "unknown")
+        self.assertEqual(ap["note"].count("AWS-S3-001 at z.tf"), 1)
+        self.assertEqual((finding["validation"]["verdict"], finding["confidence"]), ("Unverified", "Suspected"))
+        self.assertIn("AWS-S3-001 at z.tf", finding["validation"]["evidence"])
+        self.assertTrue(any(line.startswith("F-001: ") for line in data["limitations"]))
+
     def test_triage_keeps_confidence_and_condition(self):
         data = self.scan()
         data["findings"][0].update(confidence="Environment-dependent", condition="the bucket holds only I-001 assets",

@@ -154,7 +154,10 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
 links (also directly after Japanese text, and with an upper-case scheme), so
 renderers that link bare URLs do not keep escape characters in the target;
 `ftp://` URLs, and URLs not linked this way (a `www.<placeholder>`, a dotless or
-non-ASCII host), stay literal text rather than links that keep escapes. A `!`
+non-ASCII host), stay literal text rather than links that keep escapes. GitHub
+still links e-mail addresses (only reserved example domains pass the guard) and
+`mailto:` and `xmpp:` URLs in `report.md`, whatever the escaping; their target
+is the visible text, while the dashboard shows them as text. A `!`
 before a URL stays text and never makes the link an image. Prose in a reference
 whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard

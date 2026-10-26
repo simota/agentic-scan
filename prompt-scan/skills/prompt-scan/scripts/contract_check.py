@@ -160,7 +160,7 @@ def check(out, no_pdf=False, allow=()):
 
     findings = data.get("findings", [])
     code = [f for f in findings if f["id"].startswith("F-")]
-    if sorted(f["id"] for f in code) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
+    if sorted((f["id"] for f in code), key=render.id_key) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
     active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
     if active != sorted(active, key=merge_tool.order_key):

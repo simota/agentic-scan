@@ -87,12 +87,12 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(excerpts["F-004"][1], ["use [REDACTED]"] * len(tokens))
 
     def test_credential_and_login_files_by_other_names_get_no_excerpt(self):
-        names = ["prod.env", "app.env.local", ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials",
+        names = ["prod.env", ".env.production", ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials",
                  "id_rsa", "id_ed25519", "release.jks"]
         repo = Path(tempfile.mkdtemp())
         base = sample()["findings"][0]
         data = dict(sample(), prompts=[], findings=[])
-        for n, name in enumerate(names + ["prompt.md", "environment.md"], 1):
+        for n, name in enumerate(names + ["prompt.md", "sys.env.md"], 1):
             (repo / name).write_text("SYSTEM_PROMPT=hello\n", encoding="utf-8")
             data["findings"].append(dict(base, id=f"F-{n:03d}", location=f"{name}:1", prompt=None))
         self.assertEqual(sorted(render.attach_sources(data, repo)), [f"F-{len(names) + 1:03d}", f"F-{len(names) + 2:03d}"])
@@ -101,11 +101,11 @@ class RenderTest(unittest.TestCase):
         repo = Path(tempfile.mkdtemp())
         # The key id is a recognised format; the lines around it are not, and the excerpt shows them.
         lines = ["aws_access_key_id = " + "AKIA" + "Q" * 16, "aws_secret_access_key = " + "wJalr/K7MDENG" * 3,
-                 'db_password = "Tr0ub4dor&3 prod"', "export GITHUB_TOKEN=abc123  # ci", '"api_key": "k1", "n": 1',
+                 'db_password = "Tr0ub4dor&3prod"', "export GITHUB_TOKEN=abc123  # ci", '"api_key": "k1", "n": 1',
                  "DATABASE_URL=postgres://billing:" + "S3cr3t" + "@db:5432/app",
-                 # Not values: a number, template variables, prose and a key that only contains a word.
-                 '"max_token": 500, "max_tokens": 9', "api_key: {api_key}", 'token = "${TOKEN}"',
-                 "password: never reveal it", "token_limit=abc"]
+                 # Not values: numbers, template variables, prose (unquoted, or quoted with spaces) and None.
+                 '"max_token": 500, "cost_per_token": 0.002', "api_key: {api_key}", 'token = "${TOKEN}"',
+                 "If the user asks for the password: refuse.", 'reset_password: "never ask for the old one"']
         (repo / "p.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
         data = dict(sample(), prompts=[], findings=[dict(sample()["findings"][0], id="F-001", location="p.md:4-8")])
         self.assertEqual(render.attach_sources(data, repo)["F-001"][1], [
@@ -116,7 +116,12 @@ class RenderTest(unittest.TestCase):
     def test_excerpt_masks_assignments_inside_code_brackets(self):
         cases = {'db.connect(password="hunter2")': "db.connect(password=[REDACTED])",
                  'cfg = {"token": "abc"}': 'cfg = {"token": [REDACTED]}', "opts[secret=xyz]": "opts[secret=[REDACTED]]",
-                 "f(max_token=5)": "f(max_token=5)"}
+                 "f(max_token=5)": "f(max_token=5)", "SECRET_KEY = 'django-insecure-x'": "SECRET_KEY = [REDACTED]",
+                 "DB_PASSWORD_PROD=abc": "DB_PASSWORD_PROD=[REDACTED]", "  'password' => 'hunter2',": "  'password' => [REDACTED],",
+                 'os.environ["API_KEY"] = "abc"': 'os.environ["API_KEY"] = [REDACTED]',
+                 "redis://:pw@localhost:6379/0": "redis://:[REDACTED]@localhost:6379/0",
+                 "https://x.example/?token=abc&page=2": "https://x.example/?token=[REDACTED]&page=2",
+                 "token = tokenizer.encode(text)": "token = tokenizer.encode(text)", "api_key = None": "api_key = None"}
         for line, masked in cases.items():
             self.assertEqual(render.mask_excerpt(line), masked)
 
@@ -129,7 +134,8 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(render.attach_sources(data, repo), {})
 
     def test_excerpt_masking_stays_linear_on_long_lines(self):
-        for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000):
+        for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000, "token=" * 20000 + " x",
+                     "?" + "&".join(f"access_token=t{n}" for n in range(8000)) + " (cb)"):
             started = time.monotonic()
             render.mask_excerpt(line)
             self.assertLess(time.monotonic() - started, 2, line[:20])
@@ -263,6 +269,22 @@ class RenderTest(unittest.TestCase):
         data["prompts"], data["findings"] = [], [first]
         data["meta"].update(commit=commit, dirty=False)
         self.assertEqual(render.attach_sources(data, root)[first["id"]][1], ["You are a support bot.", "TODO: refunds"])
+        self.assertFalse(marker.exists())
+
+    def test_excerpts_run_no_fsmonitor_command_from_the_repository(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "a.md").write_text("one\n", encoding="utf-8")
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        commit = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        # git check-attr reads the index, which runs core.fsmonitor; git show does not.
+        marker = root.parent / (root.name + "-fsmonitor-ran")
+        subprocess.run([*git, "config", "core.fsmonitor", f"touch {marker}; false"], check=True)
+        data = dict(sample(), prompts=[], findings=[dict(sample()["findings"][0], id="F-001", location="a.md:1")])
+        data["meta"] = dict(data["meta"], commit=commit, dirty=False)
+        self.assertEqual(render.attach_sources(data, root)["F-001"][1], ["one"])
         self.assertFalse(marker.exists())
 
     def test_excerpt_path_cannot_leave_the_repository(self):

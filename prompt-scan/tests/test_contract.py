@@ -75,6 +75,13 @@ class ContractTest(unittest.TestCase):
             self.assertEqual(code, 1, message)
             self.assertIn(message, err)
 
+    def test_ids_past_f_999_run_without_gaps(self):
+        def grow(d):
+            template = dict(next(f for f in d["findings"] if f["id"] == "F-001"), severity="Info")
+            d["findings"] += [dict(template, id=f"F-{n:03d}", location=f"zz/{n:04d}.md:1") for n in range(9, 1001)]
+        code, err = self.problems(self.build(grow))
+        self.assertEqual(code, 0, err)
+
     def test_reviewed_lint_findings_still_match_the_scan(self):
         review = {"verdict": "FalsePositive", "evidence": "a literal brace", "method": "read"}
         code, err = self.problems(self.build(lambda d: d["findings"][9].update(

@@ -9,8 +9,8 @@ at `meta.commit` when the record names one and the tree was known clean at scan 
 `filter` attribute (git-crypt, Git LFS) is always read from the working tree: its blob
 holds what the clean command stored, and no repository command is run to undo that.
 Credential-shaped values in excerpts are masked, private-key blocks whole, and so
-are single-token values assigned to credential-named keys (`password=`, `*_SECRET:`,
-`api_key`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
+are single-token values (quoted ones without spaces) assigned to credential-named
+keys (`password=`, `SECRET_KEY:`, `"api_key" =>`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
 .jks, .keystore) and login files (.npmrc, .pypirc, .netrc, id_rsa...) get no excerpt.
 --lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
@@ -57,12 +57,17 @@ SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{
                        r"\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
 # Values with no recognisable format sit next to ones that have one (an AWS secret key under its key id):
-# an excerpt masks a single-token value assigned to a credential-named key (not a number or a template
-# variable), and the password in a URL.
+# an excerpt masks the value assigned to a credential-named key, and the password in a URL. A key starts a
+# line (after indent, `export ` or `- `) or follows { ( [ , ; & ?, so prose ("asks for the password: no")
+# is left alone. The value is one token or a quoted string without spaces; a number, None/null/true/false,
+# a template variable or a call is not a secret. Every run is bounded, so long lines stay linear.
 ASSIGNED_SECRET_RE = re.compile(
-    r"""(?i)((?<![\w.-])[\w.-]{0,64}?(?:secret|passw(?:or)?d|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|"""
-    r"""credentials?)["']?\s*[:=]\s*)(?![0-9]+\s*(?:[,;#)\]}]|$)|["']?[{$<%])("[^"]+"|'[^']+'|[^\s"',;#)\]}]+)(?=\s*(?:[,;#)\]}]|$))""")
-URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(?=@)")
+    r"""(?im)((?:^[ \t]{0,64}(?:export[ \t]+|-[ \t]+)?|[{(\[,;&?][ \t]{0,8})["']?[\w.-]{0,64}?"""
+    r"""(?:secret|passw(?:or)?d|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|credentials?)"""
+    r"""(?:[_-][A-Za-z0-9]{1,16}){0,2}["']?\]?[ \t]{0,8}(?:=>|[:=])[ \t]{0,8})"""
+    r"""(?!(?:-?[0-9]+(?:\.[0-9]+)?|None|null|nil|true|false|undefined)[ \t]*(?:[,;#&)\]}]|$)|["']?[{$<%])"""
+    r"""("[^"\s]{1,256}"|'[^'\s]{1,256}'|[^\s"',;#&)\]}]{1,256})(?=[ \t]*(?:[,;#&)\]}]|$))""")
+URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{0,256}:)([^\s@]{1,256})(?=@)")
 # Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}
 SENSITIVE_NAMES = {".npmrc", ".pypirc", ".netrc", "_netrc", ".pgpass", ".htpasswd", ".git-credentials",
@@ -346,8 +351,9 @@ def mask(text):
 
 def mask_excerpt(line):
     """mask(), plus the values an excerpt's context lines carry without a recognisable format."""
-    line = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + "[REDACTED]", mask(line))
-    return URL_PASSWORD_RE.sub(lambda m: m.group(1) + "[REDACTED]", line)
+    # Before mask(): its [REDACTED] would otherwise read as a value assigned to the key.
+    line = ASSIGNED_SECRET_RE.sub(lambda m: m.group(0) if "(" in m.group(2) else m.group(1) + "[REDACTED]", line)
+    return mask(URL_PASSWORD_RE.sub(lambda m: m.group(1) + "[REDACTED]", line))
 
 
 def mask_key_blocks(text):
@@ -370,8 +376,14 @@ def source_lines(text):
 def sensitive(name):
     """Whether a file name is one that holds credentials by convention (.env*, *.env, key and login files)."""
     lower = name.lower()
-    return (lower.startswith(".env") or lower.endswith(".env") or ".env." in lower or lower in SENSITIVE_NAMES
+    return (lower.startswith(".env") or lower.endswith(".env") or lower in SENSITIVE_NAMES
             or Path(lower).suffix in SENSITIVE_SUFFIXES)
+
+
+def git_in(repo):
+    """git in the reviewed repository, never running its fsmonitor command (check-attr reads the index) and
+    never writing its index, as inventory.py runs it."""
+    return ["git", "--no-optional-locks", "-C", str(repo), "-c", "core.fsmonitor=false"]
 
 
 def _source(repo, commit, rel):
@@ -381,13 +393,13 @@ def _source(repo, commit, rel):
         try:
             # A blob under a filter driver (git-crypt, LFS) is what the clean command stored, not the text the
             # scan read; the tree was clean, so the working-tree file is that text. check-attr runs no driver.
-            attr = subprocess.run(["git", "-C", str(repo), "check-attr", "-z", "filter", "--", f"./{rel}"],
+            attr = subprocess.run([*git_in(repo), "check-attr", "-z", "filter", "--", f"./{rel}"],
                                   capture_output=True, timeout=20)
             if attr.returncode != 0:
                 return None
             if attr.stdout.split(b"\0")[2:3] in ([b"unspecified"], [b"unset"]):
                 # "./" resolves the path against --repo, which may be a subdirectory of the Git work tree.
-                r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:./{rel}"], capture_output=True,
+                r = subprocess.run([*git_in(repo), "show", f"{commit}:./{rel}"], capture_output=True,
                                    timeout=20)
                 return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired):

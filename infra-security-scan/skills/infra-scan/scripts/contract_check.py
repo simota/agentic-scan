@@ -142,6 +142,9 @@ def check(data, out_dir, pdf=True, allow=()):
             stamp = render.RECORD_STAMP.search((out / name).read_text(encoding="utf-8", errors="replace"))
             if not stamp or stamp.group(1) != digest:
                 add(f"outputs: {name} was not rendered from this findings.json; re-render with render.py")
+    if not pdf and "assessment.pdf" in present:
+        # render.py --no-pdf removes it: this one is stale or a placeholder.
+        add("outputs: assessment.pdf is present although --no-pdf; re-render with render.py --no-pdf")
     for name in sorted(present - OUTPUTS - set(allow)):
         add(f"outputs: unexpected {name} (pass --allow {name} if the requester asked for it)")
     for p in out.rglob("*"):

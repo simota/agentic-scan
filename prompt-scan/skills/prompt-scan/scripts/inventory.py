@@ -355,6 +355,10 @@ def git_state(root, read=()):
     if drivers is None:
         return commit, None
     keys = [key for key in drivers.split("\0") if key]
+    # -c takes the first "=" for the end of the key, so a driver named "a=b" cannot be blanked; without
+    # running status, Git cannot say whether the tree changed.
+    if any("=" in key for key in keys):
+        return commit, None
     no_filters = [arg for key in keys for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.

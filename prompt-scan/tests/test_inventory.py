@@ -169,18 +169,20 @@ class InventoryTest(unittest.TestCase):
             self.assertIsNone(inventory.scan(root)["dirty"], flag)
 
     def test_no_filter_driver_from_the_repository_runs(self):
-        root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n",
-                              "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n"})
+        root = self.git_repo({".gitattributes": "*.md filter=x\n*.txt filter=my\\ x\n*.prompt filter=a=b\n",
+                              "prompts/a.md": "hi\n", "prompts/b.txt": "hi\n", "prompts/c.prompt": "hi\n"})
         marker = Path(tempfile.mkdtemp()) / "ran"
-        for driver in ("x", "my x"):  # A driver name may contain a space.
+        # A driver name may contain a space, or an "=", which -c would take for the end of the key.
+        for driver in ("x", "my x", "a=b"):
             for key in ("clean", "process"):
                 subprocess.run(["git", "-C", str(root), "config", f"filter.{driver}.{key}",
                                 f"sh -c 'touch {marker}; cat'"], check=True)
         # A newer mtime makes git status re-hash the file through the filter driver.
-        for name in ("a.md", "b.txt"):
+        for name in ("a.md", "b.txt", "c.prompt"):
             os.utime(root / "prompts" / name, (2_000_000_000, 2_000_000_000))
-        inventory.scan(root)
+        dirty = inventory.scan(root)["dirty"]
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
+        self.assertIsNone(dirty)  # Git cannot tell without the command an "=" keeps -c from blanking.
 
     def test_a_required_transforming_filter_leaves_dirty_undetermined(self):
         # As git lfs install sets it up: HEAD holds what the clean command makes of the file (a pointer). Without
@@ -198,8 +200,9 @@ class InventoryTest(unittest.TestCase):
         marker.unlink()
         self.assertIs(inventory.scan(root)["dirty"], False)
         os.utime(root / "prompts" / "a.md", (2_000_000_000, 2_000_000_000))
-        self.assertIsNone(inventory.scan(root)["dirty"])
+        dirty = inventory.scan(root)["dirty"]
         self.assertFalse(marker.exists(), "a filter command configured in the reviewed repository ran")
+        self.assertIsNone(dirty)  # Git cannot tell without the command an "=" keeps -c from blanking.
 
     def test_a_transforming_filter_leaves_an_unstaged_edit_undetermined(self):
         # nbstripout-style: not required, but HEAD holds the cleaned text, so a stat-dirty file may be no change.

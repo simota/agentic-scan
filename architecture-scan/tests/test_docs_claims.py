@@ -102,3 +102,16 @@ class RenderClaimTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LedgerFamilyTests(unittest.TestCase):
+    def test_configuration_rules_are_seam_rules_in_every_document(self):
+        # rules.md §2 puts how config is read under SEAM, so CHECKLIST maps a
+        # SEAM entry onto the CF steps and recon collects such rules.
+        rules = (SKILL / "reference" / "rules.md").read_text(encoding="utf-8")
+        self.assertRegex(rules, r"\*\*SEAM\*\* — [^\n]*configuration")
+        perspectives = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        self.assertRegex(perspectives, r"(?m)^### Configuration and environment \(CF\) \[SEAM\]$")
+        recon = (SKILL / "reference" / "recon.md").read_text(encoding="utf-8")
+        seam = re.search(r"\*\*Seam rules\*\* — (.+?)(?:\n- |\n\n|\Z)", recon, re.DOTALL)
+        self.assertIn("configuration", " ".join(seam[1].split()))

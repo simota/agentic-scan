@@ -75,6 +75,8 @@ be byte-identical to what `render.py` produces from the current
   (`"rule": "R-01, R-02"`). A rule ID in a trace cites nothing
 - no `reason` on a `holds` or `violated` rule: a provisional `not checked`
   reason is sent back as `"reason": null` with the final status
+- every `location` to name a file: a path that shows nothing (`" :3"`) is
+  refused, so a fragment sends the location again
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium

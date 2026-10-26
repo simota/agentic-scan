@@ -140,15 +140,18 @@ REFERENCE_KEYS = {"title", "url"}
 COMMITMENT_KEYS = {"id", "statement", "source", "status", "family", "inferred", "reason"}
 PERSPECTIVE_KEYS = {"name", "status", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
-FINDING_ID = re.compile(r"^PV-\d{3}$")
+# IDs and line numbers are ASCII digits; Unicode `\d` would also accept
+# Arabic-Indic or full-width digits that no source line or ledger uses.
+FINDING_ID = re.compile(r"^PV-[0-9]{3}$")
 # Bounded so a long digit run cannot pass as an exempt technical identifier.
-COMMITMENT_ID = re.compile(r"^C-\d{2,6}$")
+COMMITMENT_ID = re.compile(r"^C-[0-9]{2,6}$")
 # ASCII boundaries: Japanese prose writes IDs flush against kana and kanji
-# ("C-01の"), which `\w` would count as part of a longer word.
+# ("C-01の"), which `\w` would count as part of a longer word. Any digits
+# count here, so a citation in other digits is reported as missing from the ledger.
 COMMITMENT_REF = re.compile(r"(?<![A-Za-z0-9_-])C-\d{2,6}(?![A-Za-z0-9_-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
-LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:\d{1,9}(?:-\d{1,9})?$")
+LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:[0-9]{1,9}(?:-[0-9]{1,9})?$")
 # Values that look like real personal data. Field names and placeholders such
 # as `<email>` or `user@example.com` are fine; the value itself never is.
 EMAIL_MARKERS = re.compile(r'["@]')
@@ -863,10 +866,18 @@ def cmd_counts(args):
     return 0
 
 
+def _record_exists(path):
+    """Whether the record exists; a path that cannot be checked is refused."""
+    try:
+        return path.exists()
+    except OSError as exc:  # too long, no search permission: not merely missing
+        raise SchemaError(f"{path}: {exc.strerror or type(exc).__name__}") from None
+
+
 def cmd_merge(args):
     target = Path(args.findings)
     try:
-        doc = read_json(target) if target.exists() else {}
+        doc = read_json(target) if _record_exists(target) else {}
         for path in args.fragments:
             merge(doc, read_json(path), path)
         validate(doc)

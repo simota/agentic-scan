@@ -268,6 +268,27 @@ class ReviewRegressionTest(unittest.TestCase):
         # A VPC domain in another module is another domain of that name.
         self.assertEqual(rules({"a/main.tf": vpc, "b/main.tf": policy}), ["AWS-S3-003"])
 
+    def test_split_domain_policy_follows_its_vpc_domain_by_name(self):
+        statement = {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "es:*", "Resource": "*"}
+
+        def plan(vpc_options):
+            return {"format_version": "1.2", "planned_values": {"root_module": {"resources": [
+                {"address": "aws_opensearch_domain.d", "mode": "managed", "type": "aws_opensearch_domain",
+                 "name": "d", "values": {"domain_name": "logs", "vpc_options": vpc_options}},
+                {"address": "aws_opensearch_domain_policy.p", "mode": "managed",
+                 "type": "aws_opensearch_domain_policy", "name": "p",
+                 "values": {"domain_name": "logs", "access_policies": json.dumps({"Statement": [statement]})}}]}}}
+        self.assertEqual(rules({"plan.json": plan([{"subnet_ids": ["subnet-1"]}])}), [])
+        self.assertEqual(rules({"plan.json": plan([])}), ["AWS-S3-003"])
+        # HCL naming the domain by its literal name reads the same way.
+        policy = ('resource "aws_opensearch_domain_policy" "p" {\n  domain_name = "%s"\n'
+                  '  access_policies = jsonencode({Statement = [{Effect = "Allow", Principal = {AWS = "*"},\n'
+                  '    Action = "es:*", Resource = "*"}]})\n}\n')
+        vpc = ('resource "aws_opensearch_domain" "d" {\n  domain_name = "logs"\n  vpc_options {\n'
+               '    subnet_ids = ["s"]\n  }\n}\n')
+        self.assertEqual(rules({"main.tf": vpc + policy % "logs"}), [])
+        self.assertEqual(rules({"main.tf": vpc + policy % "other"}), ["AWS-S3-003"])
+
     def test_project_level_prevention_covers_only_its_module(self):
         files = {"project-a/main.tf": ('resource "google_project_organization_policy" "p" {\n  project = "a"\n'
                                        '  constraint = "storage.publicAccessPrevention"\n'

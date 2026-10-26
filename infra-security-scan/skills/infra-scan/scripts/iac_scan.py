@@ -1562,6 +1562,15 @@ def gke_node_config(scan, res, configs):
                          "(pods reach the node's metadata server)", "Medium")
 
 
+VPC_DOMAIN_TYPES = ("aws_opensearch_domain", "aws_elasticsearch_domain")
+
+
+def add_vpc_domain_name(scan, directory, view):
+    """A split domain policy may name its domain by value (always so in a plan)."""
+    if isinstance(view.get("domain_name"), str):
+        scan.vpc_domains.add((directory, "domain_name:" + view.get("domain_name")))
+
+
 def check_tf_shared(scan, res):
     """Rules that apply across several resource types, ahead of the per-type chain."""
     t, v = res.type, res.view
@@ -1574,6 +1583,8 @@ def check_tf_shared(scan, res):
         domain = re.fullmatch(r"\s*(aws_(?:opensearch|elasticsearch)_domain\.[\w-]+)\.domain_name\s*",
                               v.raw("domain_name") or "")
         vpc_domain = vpc_domain or bool(domain and (res.dir, domain.group(1)) in scan.vpc_domains)
+    if t.endswith("_domain_policy") and isinstance(v.get("domain_name"), str):
+        vpc_domain = vpc_domain or (res.dir, "domain_name:" + v.get("domain_name")) in scan.vpc_domains
     if attr and v.get(attr) is not None and not vpc_domain:
         scan.resource_policy(res, scan.statements(res, attr), v.line(attr))
     if t in PUBLIC_DATA_SERVICES and tf_bool(v.get("publicly_accessible")) is True:
@@ -2274,9 +2285,9 @@ def handle_terraform(scan, parsed):
                         scan.bucket_aliases[(d, address)] = b_view.get("bucket")
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
                         scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
-                    if b.labels[0] in ("aws_opensearch_domain", "aws_elasticsearch_domain") and \
-                            b_view.blocks("vpc_options"):
+                    if b.labels[0] in VPC_DOMAIN_TYPES and b_view.blocks("vpc_options"):
                         scan.vpc_domains.add((str(Path(rel).parent), ".".join(b.labels)))
+                        add_vpc_domain_name(scan, str(Path(rel).parent), b_view)
                 collect_policy_references(scan, str(Path(rel).parent), b)
             except RecursionError:
                 pass  # reported once by the checks below
@@ -2660,6 +2671,8 @@ def handle_plan(scan, rel, text, doc):
                 # First pass: account and org settings that change what omitted arguments mean.
                 collect_context(scan, rel, type_, DictView(values, line), json.dumps(values, default=str),
                                 defaults=not aliased)
+                if type_ in VPC_DOMAIN_TYPES and DictView(values, line).blocks("vpc_options"):
+                    add_vpc_domain_name(scan, rel, DictView(values, line))
                 continue
             reads = set()
             res = Res(type_, address, rel, line, DictView(values, line, reads), rel)

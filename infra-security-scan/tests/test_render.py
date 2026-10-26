@@ -4,7 +4,6 @@ import json
 import os
 from pathlib import Path
 import shutil
-import subprocess
 import sys
 import tempfile
 import unittest
@@ -289,25 +288,38 @@ class PdfTest(unittest.TestCase):
         self.assertEqual(self.pdf.read_bytes(), b"%PDF-1.7\ncurrent assessment\n%%EOF\n")
 
     def test_failed_weasyprint_does_not_leave_partial_output(self):
-        def fail(args, **kwargs):
-            self.assertFalse(self.pdf.exists())
-            self.pdf.write_bytes(b"partial weasyprint output")
-            return subprocess.CompletedProcess(args, 1)
-
-        with patch.object(shutil, "which", side_effect=lambda name: name if name == "weasyprint" else None), \
-                patch.object(subprocess, "run", side_effect=fail):
-            self.assertIsNone(render.to_pdf(self.html, self.pdf))
+        # On PATH, not mocked: the kit starts engines with Popen, and a mock of
+        # subprocess.run would leave the engine unstarted and the test vacuous.
+        weasyprint = self.engine("weasyprint", "out.write_bytes(b'%PDF-1.7\\npartial weasyprint output'); sys.exit(1)")
+        failures = []
+        with patch.dict(os.environ, {"PATH": str(weasyprint.parent)}):
+            self.assertIsNone(render.to_pdf(self.html, self.pdf, failures))
+        self.assertEqual(len(failures), 1, failures)
+        self.assertIn("weasyprint (exited with status 1", failures[0])
         self.assertFalse(self.pdf.exists())
 
     def test_weasyprint_timeout_does_not_leave_partial_output(self):
-        def timeout(args, **kwargs):
-            self.pdf.write_bytes(b"partial weasyprint output")
-            raise subprocess.TimeoutExpired(args, kwargs["timeout"])
-
-        with patch.object(shutil, "which", side_effect=lambda name: name if name == "weasyprint" else None), \
-                patch.object(subprocess, "run", side_effect=timeout):
-            self.assertIsNone(render.to_pdf(self.html, self.pdf))
+        weasyprint = self.engine("weasyprint", "import time\nout.write_bytes(b'%PDF-1.7\\npartial')\ntime.sleep(30)")
+        failures = []
+        with patch.dict(os.environ, {"PATH": str(weasyprint.parent)}):
+            self.assertIsNone(render.to_pdf(self.html, self.pdf, failures, timeout=1))
+        self.assertEqual(failures, ["weasyprint (timed out after 1 s)"])
         self.assertFalse(self.pdf.exists())
+
+    def test_engine_stderr_keeps_the_reason_and_hides_secrets(self):
+        secret = "hunter" + "2-not-a-real-value"
+        for padding in ("", "[1:ERROR:dbus/bus.cc] Failed to connect to the bus\\n" * 40):
+            with self.subTest(long=bool(padding)):
+                chrome = self.engine("test-chrome", (
+                    "sys.stderr.write('" + padding + "[1:ERROR:token_service.cc] auth token refresh skipped\\n"
+                    "--password " + secret + "\\n[2:FATAL:zygote_host] No usable sandbox!\\n'); sys.exit(1)"))
+                failures = []
+                with patch.dict(os.environ, {"PATH": str(chrome.parent)}):
+                    self.assertIsNone(render.to_pdf(self.html, self.pdf, failures))
+                # Scrubbed as one line, the token line hid every later line, and
+                # stderr past MAX_SCRUB characters was hidden whole.
+                self.assertIn("No usable sandbox!", failures[0])
+                self.assertNotIn(secret, failures[0])
 
 
 class ExcerptTest(unittest.TestCase):

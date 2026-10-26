@@ -75,6 +75,8 @@ class ReportViewTest(unittest.TestCase):
         for item in data["inventory"]["not_run"]:
             self.assertIn(item, dash)
         self.assertIn("addEventListener('hashchange',reveal)", dash)
+        # A second press of the same link fires no hashchange; the click handler reveals the row.
+        self.assertIn("a.hash===location.hash&&reveal()", dash)
         self.assertIn('aria-controls="F-001-detail"', dash)
         self.assertIn('id="F-001-detail"', dash)
         # The kit's fixed 7-column widths and mobile card layout apply only to .register.

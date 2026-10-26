@@ -57,7 +57,7 @@ CSS_EXT = {".css", ".scss", ".sass", ".less", ".styl", ".pcss"}
 # Files whose <style> blocks and style attributes are measured as CSS, including server templates.
 EMBED_CSS_EXT = {".html", ".htm", ".vue", ".svelte", ".astro", ".erb", ".hbs", ".handlebars", ".ejs", ".php",
                  ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".jinja2", ".j2"}
-JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".vue", ".svelte", ".astro"}
+JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mjs", ".cjs", ".mts", ".cts", ".vue", ".svelte", ".astro"}
 MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html", ".htm", ".erb", ".hbs",
               ".handlebars", ".ejs", ".php", ".njk", ".liquid", ".twig", ".mustache", ".jinja", ".jinja2", ".j2", ".mdx"}
 HTML_EXT = {".html", ".htm", ".erb", ".hbs", ".handlebars", ".ejs", ".php", ".njk", ".liquid",
@@ -107,6 +107,10 @@ JS_Z = re.compile(r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
 CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
 JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)(px|rem|em)[\"'])")
+# A script object that describes a viewport or an image rather than styling an element:
+# use: { viewport: { width: 1280 } } (test runners), openGraph: { images: [{ width: 1200 }] }.
+NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images?)[\"']?\s*:\s*"
+                               r"(?:\[(?:\s*\{[^{}]*\}\s*,)*)?\s*\{[^{}]*\Z")
 # Rule boundaries ignore quoted text and escaped punctuation. Parenthesized
 # and bracketed regions are tracked by css_rules, including unquoted data URLs.
 # A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
@@ -149,8 +153,10 @@ TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-syst
 FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
 LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
-                     r"\bstatus\s*===?\s*[\"'](?:loading|pending)")
-ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b")
+                     r"\bstatus\s*===?\s*[\"'](?:loading|pending)|"
+                     # A Svelte {#await p} block whose pending branch comes before {:then}.
+                     r"\{#await\b(?![^{}]*\bthen\b)")
+ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b|\{:catch\b")
 LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
 EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
@@ -176,13 +182,13 @@ MAX_HANDLER_REFERENCE = 200
 # A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
 CONFIRM = re.compile(r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
-ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*[\"']([^\"']+)[\"']|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*)?[\"'`]([^\"'`]+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
-# A location object ({ path: "/x" }) passed to to= or push() is a link, not a route.
+# A location object ({ path: "/x" }) passed to to=, href= or push() is a link, not a route.
 LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)|"
-                  r"(?:(?<![\w-]):?(?i:to)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
+                  r"(?:(?<![\w-]):?(?i:to|href)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
                   r"[^{}]{0,200}?\bpath(?:name)?\s*:\s*[\"'`](/[^\"'`?#]*)")
 FRONTMATTER = re.compile(r"---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", re.S)
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
@@ -391,6 +397,26 @@ def jsx_text_line(text, start, budget):
     return False
 
 
+def jsx_child_text(text, i, budget):
+    """Whether text[i] lies in JSX child text: only text since a tag's ">" on its line
+    ("<p>Requests to /api/* …"), or a line of text that continues child text.
+
+    Reading back draws on budget, as jsx_text_line does; once it is spent, "/*" is a comment again.
+    """
+    line_start = text.rfind("\n", 0, i) + 1
+    if i - line_start > budget[0]:
+        budget[0] = 0
+        return False
+    budget[0] -= i - line_start
+    close = text.rfind(">", line_start, i)
+    if close >= 0:
+        if JSX_TEXT.fullmatch(text, close + 1, i) is None:
+            return False
+        budget[0] -= min(close, 2000)
+        return _ends_tag(text, close, max(0, close - 2000))
+    return JSX_TEXT.fullmatch(text, line_start, i) is not None and jsx_text_line(text, line_start, budget)
+
+
 # An open, closing or fragment tag ending at the ">" found: a name and attributes
 # (arrow functions in {…} included), with no other "<" or ">" in between.
 TAG_BEFORE = re.compile(r"<(?:/?[A-Za-z][\w.:-]*(?:\s(?:[^<>]|=>)*?)?/?)?>\Z")
@@ -468,6 +494,9 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             continue
         if jsx and found == "/*" and inside_regex(text, match.start(), budget):
             cursor = match.end()  # Inside or at the end of a regular expression (/a/*2, /[/*]/), not a comment.
+            continue
+        if jsx and found == "/*" and child_text and jsx_child_text(text, match.start(), budget):
+            cursor = match.end()  # Visible text such as <p>Requests to /api/* …</p>, not a comment.
             continue
         if jsx and found not in ("{/*", "/*"):
             cursor = match.end()  # A JS string, not a comment or an HTML fragment.
@@ -1499,7 +1528,7 @@ def inventory(root, flows=None):
         js = suffix in JS_EXT or suffix in EMBED_CSS_EXT
         if suffix in MARKUP_EXT:
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT, template=suffix in HTML_EXT)
-        elif suffix in JS_EXT:  # .ts and .cjs: script without markup.
+        elif suffix in JS_EXT:  # .ts, .cjs, .mts and .cts: script without markup.
             text = mask_markup_comments(text, jsx=True, child_text=False)
         if suffix in CSS_EXT:
             text = mask_css_comments(text, suffix in LINE_COMMENT_EXT)
@@ -1583,6 +1612,8 @@ def inventory(root, flows=None):
                 if value is not None:
                     z_index.add(value, at(m.start()))
             for m in JS_WIDTH.finditer(js_text):
+                if NOT_ELEMENT_WIDTH.search(js_text, max(0, m.start() - 400), m.start()):
+                    continue
                 v = px(m.group(2) or m.group(3), m.group(4) or "px", warn_at(m.start()))
                 if v is not None and v >= 320:
                     widths.add(fmt(v), at(m.start()))

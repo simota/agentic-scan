@@ -140,7 +140,7 @@ class RenderConsistencyTests(unittest.TestCase):
         self.assertIn("- **perspective:** Logs, telemetry and errors (LT2)", markdown)
         self.assertIn("<dt>perspective</dt><dd>Logs, telemetry and errors (LT2)</dd>", html)
         self.assertIn("| C-01 | no PII in errors | CONTAIN | policy | violated |", markdown)
-        self.assertIn("<td>CONTAIN</td>", html)
+        self.assertIn("<td data-label='Family'>CONTAIN</td>", html)
         doc["findings"][0]["step"] = " "
         self.assertIn("- **perspective:** Logs, telemetry and errors\n",
                       render.render_markdown(doc, "en"))

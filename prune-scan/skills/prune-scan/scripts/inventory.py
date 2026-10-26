@@ -153,34 +153,37 @@ GO_DEF = re.compile(r"^func\s+([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
 RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)", re.M)
 MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
-# Files a framework loads by their location, relative to the package.json that declares it;
+# Files a framework loads by their location, relative to the package.json that declares it,
+# and the exports it reads from them by name (route handlers, data loaders, page options);
 # a page.tsx in a repository without that framework is still judged by its imports.
+HTTP_METHOD_EXPORTS = {"GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"}
 FRAMEWORK_FILES = (
     (("next",), re.compile(
         r"^(?:src/)?(?:app/(?:.+/)?(?:page|layout|template|loading|error|global-error|not-found|forbidden|"
         r"unauthorized|default|route|opengraph-image|twitter-image|icon|apple-icon|sitemap|robots|manifest)"
-        r"|pages/.+|middleware|instrumentation(?:-client)?)\.(?:[jt]sx?|mdx?)$")),
+        r"|pages/.+|middleware|instrumentation(?:-client)?)\.(?:[jt]sx?|mdx?)$"),
+     HTTP_METHOD_EXPORTS | {
+         "metadata", "generateMetadata", "viewport", "generateViewport", "generateStaticParams",
+         "generateImageMetadata", "generateSitemaps", "revalidate", "dynamic", "dynamicParams", "fetchCache",
+         "runtime", "preferredRegion", "maxDuration", "alt", "size", "contentType", "config", "middleware",
+         "register", "onRequestError", "getServerSideProps", "getStaticProps", "getStaticPaths",
+         "reportWebVitals"}),
     (("@sveltejs/kit",), re.compile(
         r"^src/(?:routes/(?:.+/)?\+(?:page|layout|server|error)(?:\.server)?(?:@[^/.]*)?\.(?:svelte|[jt]s)"
-        r"|hooks(?:\.(?:server|client))?\.[jt]s|service-worker(?:/index)?\.[jt]s|params/[^/]+\.[jt]s)$")),
+        r"|hooks(?:\.(?:server|client))?\.[jt]s|service-worker(?:/index)?\.[jt]s|params/[^/]+\.[jt]s)$"),
+     HTTP_METHOD_EXPORTS | {
+         "fallback", "load", "actions", "prerender", "ssr", "csr", "trailingSlash", "entries", "config",
+         "match", "handle", "handleFetch", "handleError", "init", "reroute", "transport"}),
     (("nuxt", "nuxt3"), re.compile(
         r"^(?:app/)?(?:(?:pages|layouts|middleware|plugins)/.+\.(?:vue|[jt]s)|error\.vue)$"
-        r"|^server/(?:api|routes|middleware|plugins)/.+\.[jt]s$")),
+        r"|^server/(?:api|routes|middleware|plugins)/.+\.[jt]s$"), set()),
     (("@remix-run/dev", "@remix-run/react"), re.compile(
-        r"^app/(?:root|entry\.client|entry\.server|routes/.+)\.[jt]sx?$")),
-    (("astro",), re.compile(r"^src/(?:pages/.+\.[jt]s|middleware(?:/index)?\.[jt]s)$")),
+        r"^app/(?:root|entry\.client|entry\.server|routes/.+)\.[jt]sx?$"),
+     {"loader", "action", "meta", "links", "headers", "handle", "ErrorBoundary", "HydrateFallback", "Layout",
+      "shouldRevalidate", "clientLoader", "clientAction", "handleError", "handleDataRequest", "streamTimeout"}),
+    (("astro",), re.compile(r"^src/(?:pages/.+\.[jt]s|middleware(?:/index)?\.[jt]s)$"),
+     HTTP_METHOD_EXPORTS | {"ALL", "getStaticPaths", "prerender", "partial", "onRequest"}),
 )
-# Exports these frameworks read from such files by name: route handlers, data loaders, page options.
-FRAMEWORK_EXPORTS = {
-    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL", "fallback",
-    "metadata", "generateMetadata", "viewport", "generateViewport", "generateStaticParams",
-    "generateImageMetadata", "generateSitemaps", "revalidate", "dynamic", "dynamicParams", "fetchCache",
-    "runtime", "preferredRegion", "maxDuration", "alt", "size", "contentType", "config", "middleware",
-    "register", "onRequestError", "getServerSideProps", "getStaticProps", "getStaticPaths",
-    "reportWebVitals", "load", "actions", "prerender", "ssr", "csr", "trailingSlash", "entries", "match",
-    "handle", "handleFetch", "handleError", "reroute", "transport", "loader", "action", "meta", "links",
-    "headers", "ErrorBoundary", "HydrateFallback", "Layout", "shouldRevalidate", "clientLoader",
-    "clientAction", "onRequest", "partial"}
 # Packages a declared framework needs beside it without an import in the application.
 FRAMEWORK_PEERS = {"next": ("react", "react-dom"), "@remix-run/react": ("react", "react-dom"),
                    "gatsby": ("react", "react-dom")}
@@ -1221,28 +1224,58 @@ def declared_packages(text):
 
 
 def framework_loaded(texts, code_files):
-    """Source files a declared framework loads by their location below its package.json."""
+    """Source files a declared framework loads by their location below its package.json,
+    each with the export names that framework reads from it."""
     roots = []
     for rel, text in texts.items():
         if Path(rel).name == "package.json":
             declared = declared_packages(text)
             base = Path(rel).parent.as_posix()
-            roots.extend(("" if base == "." else base + "/", pattern)
-                         for names, pattern in FRAMEWORK_FILES if declared.intersection(names))
-    return {rel for rel in code_files for base, pattern in roots
-            if rel.startswith(base) and pattern.search(rel[len(base):])}
+            roots.extend(("" if base == "." else base + "/", pattern, exports)
+                         for names, pattern, exports in FRAMEWORK_FILES if declared.intersection(names))
+    loaded = defaultdict(set)
+    for rel in code_files:
+        for base, pattern, exports in roots:
+            if rel.startswith(base) and pattern.search(rel[len(base):]):
+                loaded[rel] |= exports
+    return dict(loaded)
+
+
+def jsx_config_sources(texts, rel, seen=None):
+    """jsxImportSource packages a tsconfig/jsconfig sets: its own field, else the one it
+    extends; the configs it references (tsconfig.app.json) govern their own files."""
+    seen = set() if seen is None else seen
+    text = texts.get(rel)
+    if text is None or rel in seen:
+        return set()
+    seen.add(rel)
+    own = JSX_IMPORT_SOURCE.search(text)
+    if own:
+        return {own.group(1)}
+    found = set()
+    base = Path(rel).parent
+    extends = re.search(r"[\"']extends[\"']\s*:\s*(\[[^\]]*\]|[\"'][^\"']+[\"'])", text)
+    for target in re.findall(r"[\"']([^\"']+)[\"']", extends.group(1)) if extends else ():
+        if target.startswith("."):  # A package preset (@tsconfig/vite-react) is not in the repository.
+            path = os.path.normpath((base / target).as_posix()).replace(os.sep, "/")
+            found = jsx_config_sources(texts, path if path.endswith(".json") else path + ".json", seen) or found
+    for target in re.findall(r"[\"']path[\"']\s*:\s*[\"']([^\"']+)[\"']", text):
+        path = os.path.normpath((base / target).as_posix()).replace(os.sep, "/")
+        found |= jsx_config_sources(texts, path if path.endswith(".json") else path + "/tsconfig.json", seen)
+    return found
 
 
 def jsx_runtime_imports(texts, code_files):
     """Packages JSX files import implicitly: the automatic runtime needs no import of react.
-    A file's @jsxImportSource pragma wins, then the nearest tsconfig/jsconfig, then react."""
+    A file's @jsxImportSource pragma wins, then the nearest tsconfig.json or jsconfig.json
+    (with what it extends and references), then react."""
     sources = {}
-    for rel, text in texts.items():
-        if re.fullmatch(r"(?:ts|js)config(?:\.[\w-]+)?\.json", Path(rel).name):
-            found = JSX_IMPORT_SOURCE.search(text)
-            if found:
-                base = Path(rel).parent.as_posix()
-                sources.setdefault("" if base == "." else base, found.group(1))
+    for rel in texts:
+        if Path(rel).name in ("tsconfig.json", "jsconfig.json"):
+            base = Path(rel).parent.as_posix()
+            base = "" if base == "." else base
+            if base not in sources or Path(rel).name == "tsconfig.json":
+                sources[base] = jsx_config_sources(texts, rel) or {"react"}
     counts = Counter()
     for rel in code_files:
         if suffix(rel) not in (".jsx", ".tsx"):
@@ -1250,9 +1283,9 @@ def jsx_runtime_imports(texts, code_files):
         pragma = JSX_PRAGMA.search(texts[rel])
         parent = Path(rel).parent
         ancestors = ["" if a.as_posix() == "." else a.as_posix() for a in (parent, *parent.parents)]
-        source = pragma.group(1) if pragma else next((sources[d] for d in ancestors if d in sources), "react")
-        if js_package(source):
-            counts[js_package(source)] += 1
+        runtime = {pragma.group(1)} if pragma else next((sources[d] for d in ancestors if d in sources), {"react"})
+        for package in filter(None, map(js_package, runtime)):
+            counts[package] += 1
     return counts
 
 
@@ -1645,7 +1678,7 @@ def inventory(root, units=None, today=None):
             name = next(g for g in m.groups() if g)
             if name in ENTRY_SYMBOLS or name.startswith("__"):
                 continue
-            if rel in framework_files and name in FRAMEWORK_EXPORTS and m.group(0).startswith("export"):
+            if name in framework_files.get(rel, ()) and m.group(0).startswith("export"):
                 continue  # The framework reads it from the file: export const metadata, export function GET.
             line = line_of(text, m.start())
             if python_defs is not None and line not in python_defs:

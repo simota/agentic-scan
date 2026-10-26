@@ -63,6 +63,11 @@ class NextConventionTests(unittest.TestCase):
         self.assertIn("apps/admin/page.tsx", found)
         self.assertIn("pages/legacy.tsx", found)  # The root manifest declares no Next.js.
 
+    def test_another_frameworks_export_names_stay_unreferenced(self):
+        files = dict(NEXT_APP)
+        files["pages/legacy.tsx"] += "export const load = () => 42\nexport function loader() {}\n"
+        self.assertEqual(symbols(scan(files)), {"unusedHelper", "stale", "load", "loader"})
+
     def test_a_page_file_without_the_framework_is_still_judged(self):
         result = scan({
             "package.json": '{"dependencies": {"react": "18"}}',
@@ -122,6 +127,37 @@ class JsxRuntimeTests(unittest.TestCase):
             "tsconfig.json": '{"compilerOptions": {"jsx": "react-jsx", "jsxImportSource": "preact"}}',
             "src/index.tsx": "export default function A() { return <p /> }\n",
             "src/styled.tsx": "/** @jsxImportSource @emotion/react */\nexport const B = () => <p />\nB()\n",
+        })
+        self.assertEqual(unimported(result), {"react": "unreferenced"})
+
+    def test_an_unused_sibling_config_does_not_choose_the_runtime(self):
+        result = scan({
+            "package.json": '{"dependencies": {"react": "18", "preact": "10"}}',
+            "tsconfig.json": '{"compilerOptions": {"jsx": "react-jsx"}}',
+            "tsconfig.unused.json": '{"compilerOptions": {"jsxImportSource": "preact"}}',
+            "src/index.tsx": "export default function A() { return <p /> }\n",
+        })
+        self.assertEqual(unimported(result), {"preact": "unreferenced"})
+
+    def test_a_nearer_config_without_the_field_keeps_react(self):
+        result = scan({
+            "package.json": '{"dependencies": {"react": "18", "preact": "10"}}',
+            "tsconfig.json": '{"compilerOptions": {"jsxImportSource": "preact"}}',
+            "web/tsconfig.json": '{"compilerOptions": {"jsx": "react-jsx"}}',
+            "web/index.tsx": "export default function A() { return <p /> }\n",
+        })
+        self.assertEqual(unimported(result), {"preact": "unreferenced"})
+
+    def test_extended_and_referenced_configs_set_the_runtime(self):
+        result = scan({
+            "package.json": '{"dependencies": {"react": "18", "preact": "10", "solid-js": "1"}}',
+            "tsconfig.json": '{"files": [], "references": [{"path": "./tsconfig.app.json"}]}',
+            "tsconfig.app.json": '{\n  // JSONC comments are allowed\n  "extends": "./tsconfig.base.json"\n}',
+            "tsconfig.base.json": '{"compilerOptions": {"jsxImportSource": "preact"}}',
+            "src/index.tsx": "export default function A() { return <p /> }\n",
+            "solid/tsconfig.json": '{"extends": ["../tsconfig.base.json", "./tsconfig.solid.json"]}',
+            "solid/tsconfig.solid.json": '{"compilerOptions": {"jsxImportSource": "solid-js"}}',
+            "solid/App.tsx": "export default function B() { return <p /> }\n",
         })
         self.assertEqual(unimported(result), {"react": "unreferenced"})
 

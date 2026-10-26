@@ -182,7 +182,7 @@ MAX_HANDLER_REFERENCE = 200
 # A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
 CONFIRM = re.compile(r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
-ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*)?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
 # A location object ({ path: "/x" }) passed to to=, href= or push() is a link, not a route.
@@ -398,24 +398,33 @@ def jsx_text_line(text, start, budget):
 
 
 def jsx_child_text(text, i, budget):
-    """Whether text[i] lies in JSX child text: only text since a tag's ">" on its line
-    ("<p>Requests to /api/* …"), or after text on a line that continues child text.
+    """Whether text[i] lies in JSX child text: inside an element opened earlier on its line
+    ("<p>Requests to /api/* …", "<p><b>x</b>/* …"), or on a line that continues child text.
 
-    Reading back draws on budget, as jsx_text_line does; once it is spent, "/*" is a comment again.
+    The tags before i on its line are read right to left, each closing tag matching an opening one;
+    after a complete element (const A = <div /> /* … */) or code, "/*" opens a comment. Reading
+    back draws on budget, as jsx_text_line does; once it is spent, "/*" is a comment again.
     """
     line_start = text.rfind("\n", 0, i) + 1
     if i - line_start > budget[0]:
         budget[0] = 0
         return False
     budget[0] -= i - line_start
-    close = text.rfind(">", line_start, i)
-    if close >= 0:
-        if JSX_TEXT.fullmatch(text, close + 1, i) is None:
-            return False
-        budget[0] -= min(close, 2000)
-        return _ends_tag(text, close, max(0, close - 2000))
+    depth, end = 0, i
+    while (close := text.rfind(">", line_start, end)) >= 0:
+        opening = text.rfind("<", line_start, close)
+        if (JSX_TEXT.fullmatch(text, close + 1, end) is None or opening < 0
+                or not TAG_BEFORE.match(text, opening, close + 1)):
+            return False  # Code, or a tag that started on an earlier line.
+        if text.startswith("</", opening):
+            depth += 1
+        elif text[close - 1] != "/":
+            if not depth:
+                return True  # The element this text belongs to.
+            depth -= 1
+        end = opening
     # A "/*" that starts its line opens a comment: after "() => <Icon />" the next line is code again.
-    return (bool(text[line_start:i].strip()) and JSX_TEXT.fullmatch(text, line_start, i) is not None
+    return (not depth and bool(text[line_start:i].strip()) and JSX_TEXT.fullmatch(text, line_start, end) is not None
             and jsx_text_line(text, line_start, budget))
 
 

@@ -42,7 +42,8 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"src/App.tsx": '<Routes><Route path={"/settings"} element={<S />} />\n'
                                          '<Route path={`/reports`} element={<R />} />\n'
                                          '<Route path={base + "/x"} element={<R />} />\n'
-                                         '<Route path={`/users/${id}`} element={<U />} /></Routes>\n'})
+                                         '<Route path={`/users/${id}`} element={<U />} />\n'
+                                         '<Route path={"/prefix" + dynamic} element={<P />} /></Routes>\n'})
         self.assertEqual([r["route"] for r in data["routes"]], ["/settings", "/reports"])
         data = self.scan({"src/routes/tasks/+page.svelte": '<script>\n  const tasks = fetch("/api/tasks")\n</script>\n'
                                                           "{#await tasks}\n  <p>Fetching…</p>\n{:then list}\n"
@@ -77,10 +78,16 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"a.tsx": 'export const A = () => <div /* note */ className="x">\n'
                                    '  <button onClick={() => go()} /* <img src="/y.png" /> */>Go</button>\n</div>\n'
                                    'const f = (a) => a /* <img src="/z.png" /> */\n'
-                                   'export const Logo = () => <Icon />\n/*\n<img src="legacy.png" />\n*/\n'})
+                                   'export const Logo = () => <Icon />\n/*\n<img src="legacy.png" />\n*/\n'
+                                   'const C = <div /> /* <img src="old.png" /> */;\n'
+                                   'const D = () => <p>x</p> /* <img src="old2.png" /> */;\n'})
         self.assertEqual(data["images"], [])
+        # Inside an element opened on an earlier line, as for "//" child text.
+        data = self.scan({"b.tsx": 'export default () => (\n  <div>\n    <Icon /> /* <img src="x.png" /> */\n  </div>\n)\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["b.tsx:3"])
         started = time.monotonic()
         self.scan({"t.jsx": "<p>" + "a /*" * 200000})
+        self.scan({"u.jsx": "<p>" + "<b>x</b> /*" * 100000})
         self.assertLess(time.monotonic() - started, 5)
 
     def test_css_comment_without_braces_completes(self):

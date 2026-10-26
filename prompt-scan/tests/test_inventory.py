@@ -267,6 +267,21 @@ class InventoryTest(unittest.TestCase):
         self.assertIn(inventory.SKIPPED_NOTE, result["not_covered"])
         clean = inventory.scan(make_repo({"prompts/a.md": "hi\n"}))
         self.assertEqual((clean["skipped_dirs"], inventory.SKIPPED_NOTE in clean["not_covered"]), ([], False))
+        self.assertEqual((clean["skipped_files"], inventory.UNREAD_NOTE in clean["not_covered"]), ([], False))
+
+    def test_prompt_files_that_are_not_read_are_named(self):
+        # The largest prompts, the ones large-prompt exists for, used to vanish without a trace.
+        root = make_repo({"prompts/big.md": "x" * (inventory.MAX_FILE_BYTES + 1), "notes.md": "hi\n"})
+        (root / "prompts" / "bin.md").write_bytes(b"a\x00b")
+        (root / "docs").mkdir()
+        (root / "docs" / "image.bin").write_bytes(b"\x00")  # Not a prompt file: not listed.
+        (root / "prompts" / "link.md").symlink_to(root / "notes.md")
+        (root / "CLAUDE.md").symlink_to(root / "notes.md")
+        result = inventory.scan(root)
+        self.assertEqual(result["skipped_files"], [
+            {"path": "CLAUDE.md", "reason": "symlink"}, {"path": "prompts/big.md", "reason": "over 1 MiB"},
+            {"path": "prompts/bin.md", "reason": "binary"}, {"path": "prompts/link.md", "reason": "symlink"}])
+        self.assertIn(inventory.UNREAD_NOTE, result["not_covered"])
 
     def test_fences_follow_commonmark(self):
         root = make_repo({

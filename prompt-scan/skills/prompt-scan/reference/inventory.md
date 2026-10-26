@@ -54,7 +54,8 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 `--into` replaces every `L-*` in `findings.json`, so review them only after the
 last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `contract_check.py` fails when its lint hits or Git state differ from the
-`L-*` findings and `meta`. `--out` replaces only an earlier `inventory.json`,
+`L-*` findings and `meta`, or when an `L-*` differs from what `--into` wrote
+in anything but its review. `--out` replaces only an earlier `inventory.json`,
 so swapping it with `--into` is refused rather than overwriting
 `findings.json`. For each one, read the location and merge a `validation`
 with a verdict and evidence — for example `FalsePositive` for a literal brace

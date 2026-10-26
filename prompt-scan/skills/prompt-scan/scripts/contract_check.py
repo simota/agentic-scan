@@ -24,12 +24,12 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as merge_tool  # noqa: E402
+import inventory as inventory_tool  # noqa: E402
 import render  # noqa: E402
 
 SKILL = Path(__file__).resolve().parents[1]
 OUTPUTS = {"findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf"}
 RENDERED = ("dashboard.html", "report.html")
-CODE_ID = re.compile(r"F-([0-9]{3,})")
 REQUIRED_TEXT = ("symptom", "cause", "impact", "fix")
 NO_PDF = "report.pdf not produced: no PDF engine"
 NO_EVAL = "model behaviour not executed: static review only"
@@ -98,11 +98,17 @@ def scan_problems(inventory, data):
     meta = data.get("meta", {})
     if "commit" in meta and (inventory.get("commit"), inventory.get("dirty")) != (meta["commit"], meta.get("dirty")):
         problems.append(f"inventory.json and findings.json record different Git states: {rerun}")
-    lint = inventory.get("lint")
-    hits = sorted((str(h.get("rule")), str(h.get("location"))) for h in lint if isinstance(h, dict)) \
-        if isinstance(lint, list) else None
-    recorded = sorted((str(f.get("rule")), f["location"]) for f in data.get("findings", []) if f["id"].startswith("L-"))
-    if hits != recorded:
+    # --into writes each L-* exactly as lint_findings() builds it; review adds only validation, and a rescan
+    # previous_validation. Anything else that differs was edited by hand (a severity lowered, say).
+    def scanned(f):
+        return {k: v for k, v in f.items() if k not in merge_tool.LINT_REVIEWED}
+    try:
+        expected = [scanned(f) for f in inventory_tool.lint_findings(inventory["lint"])]
+    except (KeyError, TypeError, AttributeError):
+        expected = None
+    recorded = sorted((scanned(f) for f in data.get("findings", []) if f["id"].startswith("L-")),
+                      key=lambda f: render.id_key(f["id"]))
+    if recorded != expected:
         problems.append(f"L-* findings do not match inventory.json lint: {rerun}")
     return problems
 
@@ -154,8 +160,7 @@ def check(out, no_pdf=False, allow=()):
 
     findings = data.get("findings", [])
     code = [f for f in findings if f["id"].startswith("F-")]
-    numbers = sorted(int(CODE_ID.fullmatch(f["id"]).group(1)) for f in code)
-    if numbers != list(range(1, len(code) + 1)):
+    if sorted(f["id"] for f in code) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
     active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
     if active != sorted(active, key=merge_tool.order_key):
@@ -164,6 +169,8 @@ def check(out, no_pdf=False, allow=()):
     for f in findings:
         if f["id"].startswith("L-") and f.get("source") != "inventory.py":
             problems.append(f"{f['id']}: L-* findings come only from inventory.py --into")
+        if f["id"].startswith("F-") and {"source", "rule", "previous_validation"} & f.keys():
+            problems.append(f"{f['id']}: source, rule and previous_validation belong to inventory.py's L-* findings")
         if f["severity"] in ("High", "Medium"):
             if f["validation"]["verdict"] == "Unverified":
                 problems.append(f"{f['id']}: a {f['severity']} finding needs a verdict other than Unverified")

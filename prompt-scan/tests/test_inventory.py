@@ -95,6 +95,12 @@ class InventoryTest(unittest.TestCase):
         # An engine template file whose only delimiter is a stray closer (a forgotten opener) still counts.
         for name in ("reply.j2", "reply.mustache"):
             self.assertEqual([h["rule"] for h in inventory.lint_file(name, "Hello }}\n", 1)], ["unbalanced-template"])
+        # In JSON, YAML and TOML a }} closes nested objects even when a value holds a {{variable}}; an
+        # opener left open is still a hit.
+        data_rules = lambda name, text: [h["rule"] for h in inventory.lint_file(name, text, 1)]  # noqa: E731
+        self.assertEqual(data_rules("chat.json", '{"messages": [{"content": "Help {{customer}}."}], "p": {"t": 0}}\n'), [])
+        self.assertEqual(data_rules("sum.yaml", "system: Hi {{name}}\nformat: {type: object, schema: {a: b}}\n"), [])
+        self.assertEqual(data_rules("sum.yml", "system: Hi {{name}\n"), ["unbalanced-template"])
 
     def test_fences_and_first_template_line(self):
         self.assertEqual(inventory.fenced_lines(["````", "```", "<x>", "````", "<y>"]), {1, 2, 3, 4})
@@ -261,6 +267,21 @@ class InventoryTest(unittest.TestCase):
         self.assertIn(inventory.SKIPPED_NOTE, result["not_covered"])
         clean = inventory.scan(make_repo({"prompts/a.md": "hi\n"}))
         self.assertEqual((clean["skipped_dirs"], inventory.SKIPPED_NOTE in clean["not_covered"]), ([], False))
+        self.assertEqual((clean["skipped_files"], inventory.UNREAD_NOTE in clean["not_covered"]), ([], False))
+
+    def test_prompt_files_that_are_not_read_are_named(self):
+        # The largest prompts, the ones large-prompt exists for, used to vanish without a trace.
+        root = make_repo({"prompts/big.md": "x" * (inventory.MAX_FILE_BYTES + 1), "notes.md": "hi\n"})
+        (root / "prompts" / "bin.md").write_bytes(b"a\x00b")
+        (root / "docs").mkdir()
+        (root / "docs" / "image.bin").write_bytes(b"\x00")  # Not a prompt file: not listed.
+        (root / "prompts" / "link.md").symlink_to(root / "notes.md")
+        (root / "CLAUDE.md").symlink_to(root / "notes.md")
+        result = inventory.scan(root)
+        self.assertEqual(result["skipped_files"], [
+            {"path": "CLAUDE.md", "reason": "symlink"}, {"path": "prompts/big.md", "reason": "over 1 MiB"},
+            {"path": "prompts/bin.md", "reason": "binary"}, {"path": "prompts/link.md", "reason": "symlink"}])
+        self.assertIn(inventory.UNREAD_NOTE, result["not_covered"])
 
     def test_fences_follow_commonmark(self):
         root = make_repo({

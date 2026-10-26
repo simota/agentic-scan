@@ -16,8 +16,10 @@ refreshing the index. A file whose name is not UTF-8 is listed with the bytes
 escaped (`\xff`); Git still sees its real name, but `render.py` cannot reopen
 the escaped one, so its findings carry no excerpt. Directories such as `.git`,
 `node_modules`, virtual environments and build output are skipped (listed in
-`skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
-symlinks, binary files and files over 1 MiB.
+`skipped_dirs`, VCS metadata aside), as are `.env*` and `*.env` files, key
+files, login files such as `.npmrc`, `.netrc` and `id_rsa` (`render.py` quotes
+none of these either), symlinks, binary files and files over 1 MiB (a prompt
+file among these is listed in `skipped_files`).
 
 ## What it lists
 
@@ -28,6 +30,7 @@ symlinks, binary files and files over 1 MiB.
 | `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location, including the cloud forms `us.anthropic.claude-…-v1:0` (Bedrock), `claude-…@YYYYMMDD` (Vertex) and `models/gemini-…`. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
 | `skipped_dirs` | Each directory pruned by name, at any depth: a skill or prompt directory named `build`, `coverage`, `env`, `vendor`… is pruned too. Read the prompt files in any that hold some, or name them in `limitations` |
+| `skipped_files` | Each file that would be a prompt file but was not read, with the reason: `symlink`, `binary`, `unreadable` or `over 1 MiB`. Read them by hand or name them in `limitations` |
 | `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
 
 `est_tokens` is a rough estimate (about four ASCII characters per token, one
@@ -38,7 +41,7 @@ per other character). Use it to rank prompts by size, not as a provider count.
 | Rule | Kind / severity / confidence | Hit when |
 |---|---|---|
 | `secret-literal` | defect / High / Suspected | A line in a prompt file matches a credential format (provider key prefixes, AWS access keys, GitHub, GitLab, Hugging Face, Stripe and Slack tokens, private-key block). Location and kind only; the value is never copied |
-| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in an engine template file (`.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs`, `.tmpl`, `.tpl`) or a file that opens `{{` or `{%` somewhere: elsewhere `}}` is JSON or literal text |
+| `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in an engine template file (`.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs`, `.tmpl`, `.tpl`) or a file that opens `{{` or `{%` somewhere, never in a JSON, YAML or TOML file: elsewhere `}}` is JSON or literal text |
 | `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
 | `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX` (not inside a format mask such as `XXX-XXX-XXXX`), lorem ipsum or `[INSERT …]` outside code |
 | `duplicate-line` | improvement / Info / Confirmed | A line of 40 or more characters (not a table row) appears again in the same file |
@@ -53,7 +56,8 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 `--into` replaces every `L-*` in `findings.json`, so review them only after the
 last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `contract_check.py` fails when its lint hits or Git state differ from the
-`L-*` findings and `meta`. `--out` replaces only an earlier `inventory.json`,
+`L-*` findings and `meta`, or when an `L-*` differs from what `--into` wrote
+in anything but its review. `--out` replaces only an earlier `inventory.json`,
 so swapping it with `--into` is refused rather than overwriting
 `findings.json`. For each one, read the location and merge a `validation`
 with a verdict and evidence — for example `FalsePositive` for a literal brace

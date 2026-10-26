@@ -100,6 +100,8 @@ NOT_COVERED = [
 # Added to not_covered when a directory was pruned by name: a skill or prompt directory called build,
 # coverage, env or vendor is skipped too, so each pruned path is listed in skipped_dirs.
 SKIPPED_NOTE = "files under directories skipped by name (dependencies, environments, build output; see skipped_dirs)"
+# Added when a file that would be a prompt file could not be read as text; each is listed in skipped_files.
+UNREAD_NOTE = "prompt files not read: symlinked, binary, unreadable or over 1 MiB (see skipped_files)"
 
 # Text for each lint rule's L-* finding. Scanner-written text stays in English.
 RULES = {
@@ -149,8 +151,9 @@ RULES = {
 SEVERITY_RANK = {s: i for i, s in enumerate(render.SEVERITIES)}
 
 
-def walk(root, skipped=None):
-    """Files under root, sorted; each directory pruned by name (VCS metadata aside) is added to skipped."""
+def walk(root, skipped=None, unread=None):
+    """Files under root, sorted; each directory pruned by name (VCS metadata aside) is added to skipped, and
+    each symlink that would be a prompt file to unread."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         if skipped is not None:
             skipped += [(Path(dirpath) / d).relative_to(root).as_posix() for d in sorted(dirnames)
@@ -159,6 +162,9 @@ def walk(root, skipped=None):
         for name in sorted(filenames):
             path = Path(dirpath) / name
             if path.is_symlink() or not path.is_file() or render.sensitive(name):
+                rel = path.relative_to(root).as_posix()
+                if unread is not None and path.is_symlink() and not render.sensitive(name) and prompt_kind(shown(rel)):
+                    unread.append({"path": shown(rel), "reason": "symlink"})
                 continue
             yield path, path.relative_to(root).as_posix()
 
@@ -169,15 +175,16 @@ def shown(rel):
 
 
 def read_text(path):
+    """(text, None), or (None, why the file was not read)."""
     try:
         if path.stat().st_size > MAX_FILE_BYTES:
-            return None
+            return None, "over 1 MiB"
         raw = path.read_bytes()
     except OSError:
-        return None
+        return None, "unreadable"
     if b"\x00" in raw:
-        return None
-    return raw.decode("utf-8", errors="replace")
+        return None, "binary"
+    return raw.decode("utf-8", errors="replace"), None
 
 
 def prompt_kind(rel):
@@ -250,12 +257,13 @@ def fenced_lines(lines):
     return result
 
 
-def lint_template(lines, fenced, engine=False):
+def lint_template(lines, fenced, engine=False, data=False):
     stack, hits = [], []
     prose = [(number, line) for number, line in enumerate(lines, 1) if number not in fenced]
     # Outside an engine template file, a file that never opens {{ or {% is not a template: a }} there is
-    # JSON or literal text.
-    templated = engine or any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
+    # JSON or literal text. In a JSON, YAML or TOML file it closes nested objects even when a value holds
+    # a {{variable}}, so only an opener left open counts there.
+    templated = engine or not data and any(token in PAIRS for _, line in prose for token in TEMPLATE_TOKEN.findall(line))
     for number, line in prose:
         for token in TEMPLATE_TOKEN.findall(line):
             if token in PAIRS:
@@ -289,7 +297,8 @@ def lint_file(rel, text, tokens):
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [INLINE_CODE.sub("", line) for line in lines]
     hits = []
-    for number, detail in lint_template(prose, fenced, Path(rel).suffix.lower() in ENGINE_SUFFIXES):
+    suffix = Path(rel).suffix.lower()
+    for number, detail in lint_template(prose, fenced, suffix in ENGINE_SUFFIXES, suffix in CONFIG_SUFFIXES):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))
@@ -397,16 +406,18 @@ def git_state(root, read=()):
 
 def scan(root):
     root = Path(root).resolve()
-    prompt_files, call_sites, models, lint, read, skipped = [], [], {}, [], set(), []
-    for path, on_disk in walk(root, skipped):
+    prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
+    for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
         kind = prompt_kind(rel)
         is_code = suffix in CODE_SUFFIXES
         if kind is None and not is_code and suffix not in CONFIG_SUFFIXES:
             continue
-        text = read_text(path)
+        text, why = read_text(path)
         if text is None:
+            if kind is not None:
+                unread.append({"path": rel, "reason": why})
             continue
         lines = render.source_lines(text)
         if kind is not None:
@@ -433,7 +444,8 @@ def scan(root):
         "prompt_files": prompt_files, "call_sites": call_sites,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
-        "not_covered": NOT_COVERED + ([SKIPPED_NOTE] if skipped else []),
+        "skipped_files": sorted(unread, key=lambda f: f["path"]),
+        "not_covered": NOT_COVERED + ([SKIPPED_NOTE] if skipped else []) + ([UNREAD_NOTE] if unread else []),
     }
 
 

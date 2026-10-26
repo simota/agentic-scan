@@ -64,11 +64,29 @@ class ContractTest(unittest.TestCase):
             (lambda d: d["limitations"].remove(contract_check.NO_EVAL), "no eval_runs"),
             (lambda d: d["meta"].pop("commit"), "meta.commit is missing"),
             (lambda d: d["perspectives"][5].update(note=""), "without a reason"),
+            # An L-* takes only a review: an edited scanner field (here a severity that dodges the verdict
+            # rule) no longer matches the scan.
+            (lambda d: d["findings"][9].update(severity="Info"), "L-* findings do not match inventory.json lint"),
+            (lambda d: d["findings"][7].update(id="F-0008"), "without gaps"),
+            (lambda d: d["findings"][0].update(source="inventory.py", rule="placeholder"), "belong to inventory.py"),
         ]
         for mutate, message in cases:
             code, err = self.problems(self.build(mutate))
             self.assertEqual(code, 1, message)
             self.assertIn(message, err)
+
+    def test_ids_past_f_999_run_without_gaps(self):
+        def grow(d):
+            template = dict(next(f for f in d["findings"] if f["id"] == "F-001"), severity="Info")
+            d["findings"] += [dict(template, id=f"F-{n:03d}", location=f"zz/{n:04d}.md:1") for n in range(9, 1001)]
+        code, err = self.problems(self.build(grow))
+        self.assertEqual(code, 0, err)
+
+    def test_reviewed_lint_findings_still_match_the_scan(self):
+        review = {"verdict": "FalsePositive", "evidence": "a literal brace", "method": "read"}
+        code, err = self.problems(self.build(lambda d: d["findings"][9].update(
+            validation=review, previous_validation=dict(review, verdict="Valid"))))
+        self.assertEqual(code, 0, err)
 
     def test_output_set(self):
         out = self.build()

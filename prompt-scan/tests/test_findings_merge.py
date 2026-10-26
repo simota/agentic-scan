@@ -104,6 +104,14 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(code, 2, err)
         self.assertIn("error:", err)
 
+    def test_lone_surrogate_is_an_input_error(self):
+        # It passed every check, then crashed the write with a traceback (exit 1, which means "refused").
+        path = self.dir / "surrogate.json"
+        path.write_text('{"checked_ok": ["split \\ud83d here"]}', encoding="utf-8")
+        code, _, err = run(findings.main, "merge", self.out, path)
+        self.assertEqual(code, 2, err)
+        self.assertIn("surrogate", err)
+
     def test_refuses_scanner_meta(self):
         code, _, err = self.merge({"meta": dict(META, commit="0" * 40)})
         self.assertEqual(code, 1)
@@ -243,6 +251,11 @@ class MergeTest(unittest.TestCase):
             "app/llm/answer.pyの12行目でF-001と同じ欠陥。": "app/llm/answer.pyの12行目でF-009と同じ欠陥。",
             "F-002（prompts/a.md）を参照": "F-008（prompts/a.md）を参照",
             "詳細はprompts/F-002/a.mdを参照": "詳細はprompts/F-002/a.mdを参照",
+            # A hyphenated word is prose unless an extension follows; a list may mix record kinds; a colon
+            # ends the word, so neither a label nor path:line hides an id or makes one part of a path.
+            "the F-001-style contradiction, F-002-v2.md": "the F-009-style contradiction, F-002-v2.md",
+            "see L-003/F-001 and F-002/P-01": "see L-003/F-009 and F-008/P-01",
+            "関連:F-001/F-002、prompts/F-002/a.md:3": "関連:F-009/F-008、prompts/F-002/a.md:3",
         }
         for before, after in cases.items():
             data = {"findings": [{"id": "F-005", "cause": before}]}

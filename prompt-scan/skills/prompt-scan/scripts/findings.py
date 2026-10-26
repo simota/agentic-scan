@@ -226,24 +226,26 @@ def renumber_map(findings):
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
-LIST_OF_REFS = re.compile(r"F-[0-9]{3,}(?:/F-[0-9]{3,})+")
+LIST_OF_REFS = re.compile(r"[FLPE]-[0-9]{2,}(?:/[FLPE]-[0-9]{2,})+")
 
 
 def in_path(text, start, end):
     """Whether the F-NNN at text[start:end] belongs to a path or file name, not to the prose around it.
 
-    A word holding a slash or backslash is a path (prompts/F-002/a.md, a URL) unless it is only finding
-    ids joined by slashes (F-001/F-002/F-003); F-002.md and F-002-system.md are file names.
+    A word holding a slash or backslash is a path (prompts/F-002/a.md, a URL) unless it is only record
+    ids joined by slashes (F-001/F-002, L-003/F-001); F-002.md and F-002-system.md are file names, while
+    F-002-style is prose.
     """
-    if re.match(r"[.-][A-Za-z0-9_]", text[end:]) and not re.match(r"-F-[0-9]{3,}(?![A-Za-z0-9_])", text[end:]):
+    if re.match(r"(?:-[A-Za-z0-9_-]*)?\.[A-Za-z0-9]", text[end:]):
         return True
     # A path is a run of ASCII characters: Japanese prose has no spaces, so "answer.pyの12行目でF-001" must
-    # stop at the kana rather than make the whole sentence one word.
+    # stop at the kana rather than make the whole sentence one word. A colon ends it too ("関連:F-001/F-002",
+    # "path:line"); what is left of a path or URL around the id still holds its slash.
     first, last = start, end
     while first > 0 and text[first - 1].isascii() and not text[first - 1].isspace() \
-            and text[first - 1] not in "([{<\"'`":
+            and text[first - 1] not in "([{<\"'`:":
         first -= 1
-    while last < len(text) and text[last].isascii() and not text[last].isspace() and text[last] not in ")]}>\"'`":
+    while last < len(text) and text[last].isascii() and not text[last].isspace() and text[last] not in ")]}>\"'`:":
         last += 1
     word = text[first:last].rstrip(".,;:!?")
     return ("/" in word or "\\" in word) and not LIST_OF_REFS.fullmatch(word)

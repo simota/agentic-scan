@@ -124,7 +124,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	for f in "$(SKILL)"/reference/*.md; do \
 	  [ -e "$$f" ] || continue; b=$$(basename "$$f"); \
 	  grep -qF "reference/$$b" "$(SKILL)/SKILL.md" || { echo "MISS reference/$$b exists but SKILL.md never names it" >&2; fail=1; }; \
-	  awk 'NF && !/^# / { exit !/^\*\*Read when:\*\*/ }' "$$f" || { echo "MISS reference/$$b does not start with a **Read when:** line" >&2; fail=1; }; \
+	  awk 'NF && !/^# / { found = 1; exit !/^\*\*Read when:\*\*/ } END { if (!found) exit 1 }' "$$f" || { echo "MISS reference/$$b does not start with a **Read when:** line" >&2; fail=1; }; \
 	done; \
 	head -1 "$(SKILL)/SKILL.md" | grep -qx -- '---' || { echo "MISS SKILL.md does not open a frontmatter fence" >&2; fail=1; }; \
 	sed -n '2,8p' "$(SKILL)/SKILL.md" | grep -q '^name: $(NAME)$$' || { echo "MISS SKILL.md frontmatter has no 'name: $(NAME)' line" >&2; fail=1; }; \

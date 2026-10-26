@@ -34,10 +34,10 @@ from urllib.parse import urlparse
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK,
-                    SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth, shape_problems,
-                    split_yaml_documents, unique_object)
+                    SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth,
+                    meta_prose, reviewer_fields, shape_problems, split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
-from redaction import (SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
+from redaction import (SAFE_VALUE, SETTING_NAME, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
                        is_secret_name, redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
@@ -251,12 +251,13 @@ def dangling_references(data):
     for key in ("findings", "attack_paths", "perspectives"):
         for item in data.get(key, []):
             if isinstance(item, dict):
-                walk(item, str(item.get("id") or item.get("name") or key))
+                walk(reviewer_fields(item), str(item.get("id") or item.get("name") or key))
     for key in STRING_LISTS:
         lines = data.get(key, [])
         for line in lines if isinstance(lines, list) else [lines]:
             walk(line, key, baseline=not (key == "limitations" and isinstance(line, str)
                                           and CARRY_NOTE.fullmatch(line)))
+    walk(meta_prose(data.get("meta")), "meta")
     return out
 
 
@@ -490,6 +491,22 @@ def validate(data, partial=False):
             for fid in refs:
                 if not isinstance(fid, str) or fid not in finding_ids:
                     add(f"{where}: finding {fid} does not exist (merge linked records in one call, or add the link later)")
+    if not partial:
+        # An unknown edge is unread: a High or Medium on that path cannot be Confirmed.
+        unknown_paths = {a["id"] for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)
+                         and a.get("status") == "unknown"}
+        linked = {(fid, a["id"]) for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)
+                  and a["id"] in unknown_paths
+                  and isinstance(a.get("findings"), list) for fid in a["findings"] if isinstance(fid, str)}
+        for f in findings:
+            if isinstance(f, dict) and isinstance(f.get("id"), str) and isinstance(f.get("attack_paths"), list):
+                linked |= {(f["id"], ap) for ap in f["attack_paths"] if isinstance(ap, str) and ap in unknown_paths}
+        for f in findings:
+            if isinstance(f, dict) and isinstance(f.get("id"), str) and f.get("severity") in ("High", "Medium") \
+                    and f.get("confidence") == "Confirmed":
+                for ap in sorted(ap for fid, ap in linked if fid == f["id"]):
+                    add(f"{f['id']}: a {f['severity']} on {ap}, whose status is unknown, is Environment-dependent "
+                        "or Suspected, never Confirmed")
 
     persp = data.get("perspectives", [])
     if not isinstance(persp, list):
@@ -780,6 +797,8 @@ def hcl_has_paired_secret(text):
                 if "{" not in between and "}" not in between:
                     return True
     top = parse_hcl(text)
+    if hcl_secret_indirection(top):
+        return True
     pending = list(top)
     while pending:
         block = pending.pop()
@@ -811,12 +830,49 @@ def hcl_has_paired_secret(text):
     return False
 
 
+HCL_INDIRECT = re.compile(r"(?<![\w.])(var|local)\.([A-Za-z_][\w-]*)")
+# What such an attribute reads through a file function is a path, and a
+# *_id, *_name or *_arn names a secret held elsewhere (secret_id = "prod/db").
+HCL_FILE_CALL = re.compile(r"\b(?:file|filebase64|templatefile|pathexpand|abspath|dirname|basename)\s*\([^()]*\)")
+HCL_NAMES_A_SECRET = re.compile(r"(?i)(?:_id|_ids|_name|_names|_arn|_arns|_file|_path)$")
+
+
+def _holds_value(value):
+    """A literal that could be the secret: text, a number or a non-empty collection."""
+    return value not in (None, "", [], {}) and value is not UNKNOWN and not isinstance(value, bool)
+
+
+def hcl_secret_indirection(blocks):
+    """A secret-named attribute that reads a variable or local holding a literal.
+
+    `password = var.db_admin` is safe to show; `variable "db_admin" { default
+    = "..." }` is then the password, though its own name says nothing. So is
+    `password = local.creds.admin` over a literal object, or a number."""
+    literals, wanted = set(), set()
+    pending = list(blocks)
+    while pending:
+        block = pending.pop()
+        pending.extend(block.blocks)
+        if block.type == "variable" and block.labels and "default" in block.attrs:
+            if _holds_value(literal(block.attrs["default"][0])):
+                literals.add(("var", block.labels[0]))
+        for name, (raw, _) in block.attrs.items():
+            if block.type == "locals" and _holds_value(literal(raw.strip())) and \
+                    not SAFE_VALUE.fullmatch(raw.strip()):
+                literals.add(("local", name))
+            # password_length = var.n reads a setting, not a secret.
+            if is_secret_name(name) and not HCL_NAMES_A_SECRET.search(name) and not SETTING_NAME.search(name):
+                wanted.update(HCL_INDIRECT.findall(HCL_FILE_CALL.sub("", raw)))
+    return bool(literals & wanted)
+
+
 def hcl_module_sensitive(directory):
     """Conservatively include declarations inherited through override files.
 
     Do not evaluate override order or read symlink targets. Unknown sibling
     context makes the module's excerpts unsafe, even when this file looks public.
     """
+    blocks = []
     try:
         for sibling in directory.iterdir():
             if sibling.name.lower().endswith((".tf.json", ".tofu.json")):
@@ -829,9 +885,12 @@ def hcl_module_sensitive(directory):
             if sibling.is_file() and (sibling.stat().st_size > MAX_BYTES or
                                       hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig"))):
                 return True
+            if sibling.is_file():
+                blocks.extend(parse_hcl(sibling.read_text(encoding="utf-8-sig")))
     except (OSError, ValueError, TypeError, RecursionError):
         return True
-    return False
+    # The secret may be read in one file and written in another.
+    return hcl_secret_indirection(blocks)
 
 
 def source_lines(path):
@@ -899,12 +958,13 @@ def attach_sources(data, repo, context=3):
     # when base64-encoded. Do not expose them through a neighboring finding.
     secret_manifests = set()
     for f in data.get("findings", []):
-        if f.get("rule") == "K8S-003":
+        # A state file is secret whatever its name (SEC-002 also reads content).
+        if f.get("rule") in ("K8S-003", "SEC-002"):
             match = LOCATION.match(f.get("location", ""))
             if match:
                 secret_manifests.add(posixpath.normpath(match.group(1)))
     for f in data.get("findings", []):
-        if f.get("rule") in ("SEC-001", "K8S-003"):
+        if f.get("rule") in ("SEC-001", "SEC-002", "K8S-003"):
             continue
         m = LOCATION.match(f.get("location", ""))
         if not m:

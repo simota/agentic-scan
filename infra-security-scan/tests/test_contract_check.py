@@ -91,6 +91,16 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("outputs: assessment.pdf missing", err.getvalue())
 
+    def test_a_pdf_left_beside_a_no_pdf_render_is_a_violation(self):
+        for body in (b"", b"%PDF-1.4\n%x\n"):
+            with self.subTest(body=body):
+                (self.out / "assessment.pdf").write_bytes(body)
+                code, _, err = self.check()
+                self.assertEqual(code, 1)
+                self.assertIn("outputs: assessment.pdf is present although --no-pdf", err)
+        (self.out / "assessment.pdf").unlink()
+        self.assertEqual(self.check()[0], 0)
+
     def test_extra_file_needs_allow(self):
         (self.out / "README.md").write_text("x", encoding="utf-8")
         code, _, err = self.check()

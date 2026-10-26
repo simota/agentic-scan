@@ -1,6 +1,9 @@
 """Credential shapes the excerpt and module-source redaction used to miss,
 and public evidence it used to hide."""
+import base64
 from pathlib import Path
+import random
+import string
 import sys
 import tempfile
 import unittest
@@ -87,9 +90,87 @@ class ExcerptShapeTest(unittest.TestCase):
                 shown = redaction.scrub_line(redaction.redact(line % SECRET, syntax="yaml"), "yaml")
                 self.assertNotIn(SECRET, shown)
 
+    def test_a_literal_read_by_a_secret_attribute_is_hidden(self):
+        db = ('resource "aws_db_instance" "d" {\n  publicly_accessible = true\n  password = %s\n}\n')
+        same_file = 'variable "db_admin" {\n  default = "%s"\n}\n' % SECRET + db % "var.db_admin"
+        self.assertIsNone(self.excerpt("one/main.tf", same_file, 5))
+        (self.repo / "two").mkdir()
+        (self.repo / "two" / "variables.tf").write_text('variable "db_admin" {\n  default = "%s"\n}\n' % SECRET,
+                                                      encoding="utf-8")
+        self.assertIsNone(self.excerpt("two/main.tf", db % '"${var.db_admin}"', 2))
+        self.assertIsNone(self.excerpt("three/main.tf", 'locals {\n  admin = "%s"\n}\n' % SECRET
+                                       + db % "local.admin", 5))
+        # Nothing to leak: no default, or the variable feeds a public setting.
+        self.assertIn("password = var.db_admin", self.excerpt("four/main.tf", 'variable "db_admin" {}\n'
+                                                              + db % "var.db_admin", 3))
+        shown = self.excerpt("five/main.tf", 'variable "engine" {\n  default = "postgres"\n}\n'
+                             + db.replace("password = %s", "engine = %s") % "var.engine", 5)
+        self.assertIn('default = "postgres"', shown)
+        # Numbers and collections hold a secret too.
+        number = "4193" + "9071"
+        for n, (declared, read) in enumerate((
+                ('variable "db_admin" {\n  default = %s\n}\n' % number, "var.db_admin"),
+                ('locals {\n  pin = %s\n}\n' % number, "local.pin"),
+                ('locals {\n  creds = { admin = "%s" }\n}\n' % SECRET, "local.creds.admin"),
+                ('variable "cfg" {\n  default = { admin = "%s" }\n}\n' % SECRET, "var.cfg.admin"),
+                ('locals {\n  pws = ["%s"]\n}\n' % SECRET, "local.pws[0]"))):
+            with self.subTest(read=read):
+                self.assertIsNone(self.excerpt(f"six{n}/main.tf", declared + db % read, 5))
+
+    def test_a_path_or_secret_name_read_by_reference_keeps_the_module_readable(self):
+        rule = ('resource "aws_security_group_rule" "ssh" {\n  type = "ingress"\n  from_port = 22\n'
+                '  to_port = 22\n  cidr_blocks = ["0.0.0.0/0"]\n}\n')
+        for n, other in enumerate((
+                'variable "credentials_file" {\n  default = "account.json"\n}\n'
+                'provider "google" {\n  credentials = file(var.credentials_file)\n}\n',
+                'variable "db_secret_name" {\n  default = "prod/db"\n}\n'
+                'data "aws_secretsmanager_secret_version" "d" {\n  secret_id = var.db_secret_name\n}\n',
+                'variable "pub" {\n  default = "id.pub"\n}\nresource "x" "y" {\n  ssh_key = file(var.pub)\n}\n',
+                'variable "n" {\n  default = 16\n}\nresource "random_password" "p" {\n'
+                '  password_length = var.n\n}\n')):
+            with self.subTest(other=other[:30]):
+                (self.repo / f"seven{n}").mkdir()
+                (self.repo / f"seven{n}" / "other.tf").write_text(other, encoding="utf-8")
+                self.assertIn("0.0.0.0/0", self.excerpt(f"seven{n}/sg.tf", rule, 5) or "")
+
     def test_a_number_under_a_plain_secret_key_stays_hidden(self):
         self.assertNotIn("1234", redaction.redact("  password = 1234"))
         self.assertNotIn("8", redaction.redact("  password_length = 8 # note"))
+
+    def test_a_number_is_public_only_under_a_setting_name(self):
+        number = "4193" + "9071"
+        for line in ("ENV MYSQL_ROOT_PASSWORD %s", "MYSQL_ROOT_PASSWORD=%s", "  db_pass: %s"):
+            with self.subTest(line=line):
+                self.assertNotIn(number, redaction.scrub_line(line % number, "yaml"))
+        shown = self.excerpt("Dockerfile", "FROM mysql:8\nENV MYSQL_ROOT_PASSWORD %s\n" % number, 2)
+        self.assertNotIn(number, shown or "")
+        for kept in ("minimum_password_length = 14", "RefreshTokenValidity: 30", '"MaxPasswordAge": 90,',
+                     "password_reuse_prevention = 24"):
+            with self.subTest(kept=kept):
+                self.assertEqual(redaction.scrub_line(kept, "yaml"), kept)
+
+    def test_a_mixed_case_token_with_underscores_is_judged_by_entropy(self):
+        rng = random.Random(7)
+        token = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(24))
+        for prefix in ("sk_" + "live_", "npm_", "hf_", ""):
+            with self.subTest(prefix=prefix):
+                value = prefix + token[:12] + "_" + token[12:]
+                self.assertNotIn(token[:12], redaction.scrub_line("# billing key: " + value, "hcl"))
+        for kept in ("name = my_bucket_name_for_logs_2024", "env: AWS_DEFAULT_REGION_FOR_STAGING_2",
+                     "role = aws_iam_role.Lambda_Exec_Role2.arn", 'name = "EC2_Instance_Profile_v2"',
+                     'function_name = "Process_Orders_V2_Handler"'):
+            with self.subTest(kept=kept):
+                self.assertEqual(redaction.scrub_line(kept, "yaml"), kept)
+
+    def test_a_base64_key_after_an_equals_sign_is_one_token(self):
+        # NAME=<key> is judged as one token, exactly as NAME <key> is; before,
+        # about a quarter of keys kept runs of eight or more characters.
+        rng = random.Random(11)
+        for _ in range(200):
+            key = base64.b64encode(bytes(rng.randrange(256) for _ in range(32))).decode()
+            spaced = redaction.scrub_line("# rotate: ENCRYPTION_KEY " + key, "hcl")
+            joined = redaction.scrub_line("# rotate: ENCRYPTION_KEY=" + key, "hcl")
+            self.assertEqual(joined, spaced.replace("KEY ", "KEY=", 1), key)
 
 
 class ModuleSourceTest(unittest.TestCase):

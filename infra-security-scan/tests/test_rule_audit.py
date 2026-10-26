@@ -225,6 +225,40 @@ class ReviewRegressionTest(unittest.TestCase):
                 'module "x" {\n  source = "./x"\n  custom_role_policy_arns = [aws_iam_policy.admin.arn]\n}\n')
         self.assertIn("AWS-IAM-001", rules({"main.tf": text}))
 
+    def test_boundary_also_attached_elsewhere_is_admin_in_a_plan(self):
+        admin = {"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+        ref = {"references": ["aws_iam_policy.admin.arn", "aws_iam_policy.admin"]}
+
+        def plan(config):
+            return {"format_version": "1.2", "planned_values": {"root_module": {"resources": [
+                {"address": "aws_iam_policy.admin", "mode": "managed", "type": "aws_iam_policy", "name": "admin",
+                 "values": {"policy": json.dumps(admin)}},
+                {"address": "aws_iam_role.r", "mode": "managed", "type": "aws_iam_role", "name": "r",
+                 "values": {"assume_role_policy": "{}"}}]}},
+                "configuration": {"root_module": {"resources": [
+                    {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}}], **config}}}
+        module_argument = {"module_calls": {"x": {"source": "./x", "expressions": {"custom_role_policy_arns": ref},
+                                                  "module": {"resources": []}}}}
+        for_each_map = {"module_calls": {}, "resources": [
+            {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}},
+            {"address": "aws_iam_role_policy_attachment.a", "for_each_expression": ref,
+             "expressions": {"policy_arn": {"references": ["each.value"]}}}]}
+        for name, config in (("module argument", module_argument), ("for_each map", for_each_map)):
+            with self.subTest(name):
+                self.assertIn("AWS-IAM-001", rules({"plan.json": plan(config)}))
+        result = scan({"plan.json": plan({})})
+        self.assertNotIn("AWS-IAM-001", {h["rule"] for h in result.hits})
+        self.assertTrue(any("only as a permissions boundary" in n for n in result.not_run))
+        # A plan does not resolve locals: one read outside the boundary may attach it.
+        through_local = {"resources": [
+            {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}},
+            {"address": "aws_iam_role_policy_attachment.a",
+             "expressions": {"policy_arn": {"references": ["local.admin_arn"]}}}]}
+        result = scan({"plan.json": plan(through_local)})
+        self.assertTrue(any("a local the plan does not resolve may attach it" in n for n in result.not_run),
+                        result.not_run)
+        self.assertFalse(any("only as a permissions boundary" in n for n in result.not_run))
+
     def test_non_literal_cloudformation_type_is_skipped(self):
         result = scan({"t.json": cfn({"X": {"Type": ["AWS::S3::Bucket"]}})})
         self.assertTrue(any("non-literal Type" in n for n in result.not_run))
@@ -267,6 +301,27 @@ class ReviewRegressionTest(unittest.TestCase):
         self.assertEqual(rules({"main.tf": public + policy}), ["AWS-S3-003"])
         # A VPC domain in another module is another domain of that name.
         self.assertEqual(rules({"a/main.tf": vpc, "b/main.tf": policy}), ["AWS-S3-003"])
+
+    def test_split_domain_policy_follows_its_vpc_domain_by_name(self):
+        statement = {"Effect": "Allow", "Principal": {"AWS": "*"}, "Action": "es:*", "Resource": "*"}
+
+        def plan(vpc_options):
+            return {"format_version": "1.2", "planned_values": {"root_module": {"resources": [
+                {"address": "aws_opensearch_domain.d", "mode": "managed", "type": "aws_opensearch_domain",
+                 "name": "d", "values": {"domain_name": "logs", "vpc_options": vpc_options}},
+                {"address": "aws_opensearch_domain_policy.p", "mode": "managed",
+                 "type": "aws_opensearch_domain_policy", "name": "p",
+                 "values": {"domain_name": "logs", "access_policies": json.dumps({"Statement": [statement]})}}]}}}
+        self.assertEqual(rules({"plan.json": plan([{"subnet_ids": ["subnet-1"]}])}), [])
+        self.assertEqual(rules({"plan.json": plan([])}), ["AWS-S3-003"])
+        # HCL naming the domain by its literal name reads the same way.
+        policy = ('resource "aws_opensearch_domain_policy" "p" {\n  domain_name = "%s"\n'
+                  '  access_policies = jsonencode({Statement = [{Effect = "Allow", Principal = {AWS = "*"},\n'
+                  '    Action = "es:*", Resource = "*"}]})\n}\n')
+        vpc = ('resource "aws_opensearch_domain" "d" {\n  domain_name = "logs"\n  vpc_options {\n'
+               '    subnet_ids = ["s"]\n  }\n}\n')
+        self.assertEqual(rules({"main.tf": vpc + policy % "logs"}), [])
+        self.assertEqual(rules({"main.tf": vpc + policy % "other"}), ["AWS-S3-003"])
 
     def test_project_level_prevention_covers_only_its_module(self):
         files = {"project-a/main.tf": ('resource "google_project_organization_policy" "p" {\n  project = "a"\n'

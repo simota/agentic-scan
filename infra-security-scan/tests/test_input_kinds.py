@@ -10,6 +10,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import iac_scan  # noqa: E402
+import render  # noqa: E402
 
 OPEN_SG = ('resource "aws_security_group_rule" "r" {\n  type = "ingress"\n  from_port = 22\n'
            '  to_port = 22\n  protocol = "tcp"\n  cidr_blocks = ["0.0.0.0/0"]\n}\n')
@@ -37,6 +38,46 @@ class InputKindTest(unittest.TestCase):
 
     def notes(self, scan, rel):
         return [n for n in scan.not_run if rel in n]
+
+    def test_state_under_another_name_is_read_by_its_content(self):
+        password = "st" + "ate" + "Pw" + "41"
+        db = {"type": "aws_db_instance", "name": "d", "instances": [{"attributes": {
+            "password": password, "publicly_accessible": True}}]}
+        pulled = {"version": 4, "terraform_version": "1.6.0", "serial": 7, "lineage": "0f3c", "resources": [db]}
+        shown = {"format_version": "1.0", "values": {"root_module": {"resources": [{
+            "address": "aws_db_instance.d", "type": "aws_db_instance", "name": "d",
+            "values": {"password": password, "publicly_accessible": True}}]}}}
+        self.write("backup/prod-state.json", json.dumps(pulled, indent=2))
+        self.write("backup/shown.json", json.dumps(shown, indent=2))
+        result = self.scan()
+        self.assertEqual(self.hits(result), [("SEC-002", "backup/prod-state.json"), ("SEC-002", "backup/shown.json")])
+        self.assertEqual(sorted((f["path"], f["kind"]) for f in result.files),
+                         [("backup/prod-state.json", "state"), ("backup/shown.json", "state")])
+        # No excerpt of the state, also for a reviewer's finding in that file.
+        record = {"findings": [{"id": "I-001", "rule": "SEC-002", "location": "backup/prod-state.json:1"},
+                               {"id": "F-001", "location": "backup/prod-state.json:5"}]}
+        self.assertEqual(render.attach_sources(record, self.root), {})
+        record["findings"][0]["rule"] = "AWS-RDS-001"
+        self.assertIn('"lineage"', str(render.attach_sources(record, self.root)))  # what SEC-002 now prevents
+
+    def test_state_shapes_and_look_alikes(self):
+        legacy = {"version": 3, "terraform_version": "0.11.14", "serial": 2, "lineage": "x", "modules": []}
+        self.write("old.json", json.dumps(legacy))
+        self.write("data/lineage.json", json.dumps({"lineage": "ml-dataset", "serial": "A1", "resources": ["a"]}))
+        result = self.scan()
+        self.assertEqual(self.hits(result), [("SEC-002", "old.json")])
+
+    def test_a_state_supplied_as_a_snapshot_is_named_not_flagged(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        snapshots = Path(tmp.name)
+        state = {"version": 4, "serial": 1, "lineage": "x", "resources": []}
+        (snapshots / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (snapshots / "terraform.tfstate").write_text(json.dumps(state), encoding="utf-8")
+        self.write("main.tf", OPEN_SG)
+        result = self.scan(snapshots)
+        self.assertEqual(self.hits(result), [("AWS-NET-001", "main.tf")])
+        self.assertEqual(len([n for n in result.not_run if "state supplied as a snapshot" in n]), 2)
 
     def test_deep_hcl_is_a_note_not_a_crash(self):
         self.write("a/deep.tf", 'resource "aws_instance" "x" {\n' + "a {\n" * 3000 + "}\n" * 3001)

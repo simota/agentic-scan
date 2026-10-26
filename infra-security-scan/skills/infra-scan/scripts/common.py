@@ -11,6 +11,32 @@ SEV_RANK = {s: i for i, s in enumerate(SEVERITIES)}
 # The record's lists of plain strings, and every list a new record starts with.
 STRING_LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 RECORD_LISTS = ("attack_paths", "findings", "perspectives", *STRING_LISTS)
+# The only fields of an I-* finding a fragment may set; every other field is
+# iac_scan.py's and must stay exactly as it wrote it.
+REVIEW_FIELDS = ("validation", "confidence", "condition", "severity")
+
+
+def meta_prose(meta):
+    """The reviewer's prose in meta: scope, method and input notes. The project
+    and assessor are names ("F-150 telematics") and input paths are paths."""
+    if not isinstance(meta, dict):
+        return {}
+    out = {k: meta[k] for k in ("scope", "method") if k in meta}
+    if isinstance(meta.get("inputs"), list):
+        out["inputs"] = [{"note": i["note"]} if isinstance(i, dict) and "note" in i else {}
+                         for i in meta["inputs"]]
+    return out
+
+
+def reviewer_fields(finding):
+    """The part of a finding the reviewer wrote: all of an F-*, the triage of an I-*.
+
+    An I-* title, detail or resource address quotes the configuration
+    ("ref=F-123"); it is not prose that a renumber may rewrite or that could
+    hold a stale reference."""
+    if isinstance(finding, dict) and str(finding.get("id", "")).startswith("I-"):
+        return {k: v for k, v in finding.items() if k == "id" or k in REVIEW_FIELDS}
+    return finding
 
 # terraform.tfstate, .tfstate.backup and the timestamped backups that
 # `terraform state` subcommands write (terraform.tfstate.1700000000.backup).

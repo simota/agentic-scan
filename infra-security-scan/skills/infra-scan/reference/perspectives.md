@@ -118,7 +118,7 @@ provider references.
 | Step | Hunt | Where | Sound when — because | Catalog |
 |---|---|---|---|---|
 | SK1 | Literal secrets in IaC, `.tfvars`, Helm values, manifests, Kubernetes `Secret` objects in the repo | Every input file. `iac_scan.py` finds credential shapes in every text file, and secret-named literals (quoted strings, heredocs, secret-named variable defaults, name/value env entries) in Terraform, tfvars, Terragrunt and CloudFormation/SAM; read Helm values, Kubernetes env, and secrets inside maps, `locals` or lists by hand | Values come from a secret manager or are injected at apply time — because the repository is read by more people than prod | CWE-798 |
-| SK2 | State files and plan outputs in the repository, or in a backend readable by many | `*.tfstate`, `terraform.tfstate.d`, backend config | State is remote, encrypted and access-restricted — because state holds every secret in plain text | CWE-312 |
+| SK2 | State files and plan outputs in the repository, or in a backend readable by many | `*.tfstate`, `terraform.tfstate.d`, state JSON under another name (`iac_scan.py` reads it by content), backend config | State is remote, encrypted and access-restricted — because state holds every secret in plain text | CWE-312 |
 | SK3 | Secrets marked sensitive and outputs exposing them | `sensitive = true`, `output` blocks | Secret outputs are sensitive or absent — because outputs are printed in CI logs | CWE-532 |
 | SK4 | KMS and secret rotation | `enable_key_rotation`, `rotation_period`, Secrets Manager rotation | Rotation on for keys and long-lived secrets — because a leaked key without rotation is leaked forever | CWE-324 |
 

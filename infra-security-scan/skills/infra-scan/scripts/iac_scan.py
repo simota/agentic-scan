@@ -1308,8 +1308,10 @@ def caller_set_keys(stmts, assume):
 
 
 def world_cidrs(values):
-    """Canonical /0 ranges only; unknown, invalid and narrower ranges are skipped."""
-    out = []
+    """Canonical /0 ranges, and narrower ranges in the same list that together
+    cover a whole address family (0.0.0.0/1 + 128.0.0.0/1); unknown, invalid
+    and other narrower ranges are skipped."""
+    out, parts = [], {4: [], 6: []}
     for value in aslist(values):
         if not isinstance(value, str):
             continue
@@ -1319,6 +1321,13 @@ def world_cidrs(values):
             continue
         if network.prefixlen == 0:
             out.append(str(network))
+        elif network not in parts[network.version]:
+            parts[network.version].append(network)
+    for version, nets in parts.items():
+        world = ipaddress.ip_network("0.0.0.0/0" if version == 4 else "::/0")
+        if str(world) in out or world not in ipaddress.collapse_addresses(nets):
+            continue
+        out.append(" + ".join(map(str, nets)) if len(nets) <= 3 else f"{world} split over {len(nets)} ranges")
     return out
 
 

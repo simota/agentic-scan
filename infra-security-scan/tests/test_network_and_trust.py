@@ -126,6 +126,49 @@ class NetworkCidrTest(ScanCase):
                 with self.subTest(rule=rule, value=value):
                     self.assertEqual(self.scan(text.replace('"CIDR"', value)).hits, [])
 
+    def test_ranges_that_together_cover_every_address_are_the_world(self):
+        # 0.0.0.0/1 + 128.0.0.0/1 admits every IPv4 address without spelling /0.
+        halves = ["0.0.0.0/1", "128.0.0.0/1"]
+        sg = ('resource "aws_security_group" "ssh" {\n  ingress {\n    protocol = "tcp"\n'
+              '    from_port = 22\n    to_port = 22\n    cidr_blocks = CIDRS\n  }\n}\n')
+        firewall = ('resource "google_compute_firewall" "ssh" {\n  name = "ssh"\n  network = "default"\n'
+                    '  source_ranges = CIDRS\n  allow {\n    protocol = "tcp"\n    ports = ["22"]\n  }\n}\n')
+        sql = ('resource "google_sql_database_instance" "app" {\n  settings {\n    ip_configuration {\n'
+               '      ssl_mode = "ENCRYPTED_ONLY"\n'
+               + "".join(f'      authorized_networks {{\n        value = "{c}"\n      }}\n' for c in halves)
+               + '    }\n  }\n}\n')
+        eks = ('resource "aws_eks_cluster" "app" {\n  vpc_config {\n    endpoint_public_access = true\n'
+               '    public_access_cidrs = CIDRS\n  }\n}\n')
+        snapshot = json.dumps({"SecurityGroups": [{"GroupId": "sg-example", "IpPermissions": [{
+            "IpProtocol": "tcp", "FromPort": 22, "ToPort": 22,
+            "IpRanges": [{"CidrIp": c} for c in halves]}]}]})
+        cases = (("AWS-NET-001", sg, "main.tf"), ("GCP-NET-001", firewall, "main.tf"),
+                 ("GCP-SQL-001", sql, "main.tf"), ("AWS-EKS-001", eks, "main.tf"),
+                 ("AWS-NET-001", snapshot, "input.json"))
+        for rule, text, name in cases:
+            with self.subTest(rule=rule, name=name):
+                scan = self.scan(text.replace("CIDRS", json.dumps(halves)), name)
+                self.assertEqual([hit["rule"] for hit in scan.hits], [rule])
+                self.assertIn("0.0.0.0/1 + 128.0.0.0/1", scan.hits[0]["detail"])
+        quarters = ["::/2", "4000::/2", "8000::/2", "c000::/2", "2001:db8::/32"]
+        scan = self.scan(sg.replace("cidr_blocks", "ipv6_cidr_blocks").replace("CIDRS", json.dumps(quarters)))
+        self.assertEqual([hit["rule"] for hit in scan.hits], ["AWS-NET-001"])
+        self.assertIn("::/0 split over 5 ranges", scan.hits[0]["detail"])
+        # Ranges that leave any address out, or mix families, are not the world.
+        for cidrs in (["0.0.0.0/1"], ["0.0.0.0/1", "128.0.0.0/2"], ["0.0.0.0/1", "8000::/1"]):
+            with self.subTest(cidrs=cidrs):
+                self.assertEqual(self.scan(sg.replace("CIDRS", json.dumps(cidrs))).hits, [])
+
+    def test_a_source_ip_condition_split_over_the_world_does_not_narrow(self):
+        policy = {"Statement": [{"Effect": "Allow", "Principal": "*", "Action": "s3:GetObject",
+                                 "Resource": "arn:aws:s3:::example/*",
+                                 "Condition": {"IpAddress": {"aws:SourceIp": "CIDRS"}}}]}
+        text = ('resource "aws_s3_bucket_policy" "p" {\n  bucket = "example"\n  policy = jsonencode('
+                + json.dumps(policy).replace(":", " =") + ")\n}\n")
+        hits = self.scan(text.replace('"CIDRS"', '["0.0.0.0/1", "128.0.0.0/1"]')).hits
+        self.assertEqual([hit["rule"] for hit in hits], ["AWS-S3-003"])
+        self.assertEqual(self.scan(text.replace('"CIDRS"', '["0.0.0.0/1"]')).hits, [])
+
 
 class TrustActionTest(ScanCase):
     @staticmethod

@@ -3,7 +3,8 @@
 **Read when:** VERIFY — before settling any finding's verdict (merging may record `Unverified` until then).
 
 Every finding answers four questions, each with evidence (`path:line`, flow id,
-inventory key, screenshot the requester supplied):
+inventory key, screenshot or video), and keeps the evidence it rests on as files
+cited in its `evidence` (`reference/evidence.md`):
 
 1. **Criterion** — which rule does it fail, and how authoritative is it: a
    WCAG 2.2 success criterion, the app's own documented token or pattern, a

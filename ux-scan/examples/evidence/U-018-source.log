@@ -1,0 +1,10 @@
+$ awk 'NR>=11 && NR<=15 {print FILENAME ":" FNR ": " $0}' src/styles/app.css
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/styles/app.css:11: .toast { position: fixed; z-index: 1000; }
+src/styles/app.css:12: .icon-btn { width: 20px; height: 20px; padding: 0; }
+src/styles/app.css:13: .task-title, .btn-label { max-width: 120px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+src/styles/app.css:14: .avatar { border-radius: 50%; }
+src/styles/app.css:15: .panel { transition: transform 600ms ease-in-out; }

@@ -337,6 +337,7 @@ class RenderTests(unittest.TestCase):
             out.mkdir()
             shutil.copy(ROOT / "examples" / "flows.sample.json", out / "flows.json")
             shutil.copy(ROOT / "examples" / "findings.sample.ja.json", out / "findings.json")
+            shutil.copytree(ROOT / "examples" / "evidence", out / "evidence")
             self.assertEqual(run("inventory.py", FIXTURE, "--flows", out / "flows.json",
                                  "--out", out / "inventory.json").returncode, 0)
             r = run("render.py", out / "findings.json", "--out", out, "--lang", "ja", "--repo", FIXTURE, "--no-pdf")

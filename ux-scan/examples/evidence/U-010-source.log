@@ -1,0 +1,10 @@
+$ awk 'NR>=9 && NR<=13 {print FILENAME ":" FNR ": " $0}' src/components/SignupForm.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/components/SignupForm.tsx:9:   function onEmail(e) {
+src/components/SignupForm.tsx:10:     setEmail(e.target.value);
+src/components/SignupForm.tsx:11:     setError(/^[^@]+@[^@]+$/.test(e.target.value) ? "" : t("signup.invalid"));
+src/components/SignupForm.tsx:12:   }
+src/components/SignupForm.tsx:13: 

@@ -1,0 +1,10 @@
+$ awk 'NR>=9 && NR<=13 {print FILENAME ":" FNR ": " $0}' src/components/AddTaskModal.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+src/components/AddTaskModal.tsx:9:       <label htmlFor="task-title">{t("task.titleLabel")}</label>
+src/components/AddTaskModal.tsx:10:       <input id="task-title" value={title} onChange={(e) => setTitle(e.target.value)} />
+src/components/AddTaskModal.tsx:11:       <button className="btn" onClick={onClose}>{t("common.save")}</button>
+src/components/AddTaskModal.tsx:12:     </div>
+src/components/AddTaskModal.tsx:13:   );

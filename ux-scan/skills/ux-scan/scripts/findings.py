@@ -36,6 +36,7 @@ from urllib.parse import urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
+import evidence as evidence_files  # noqa: E402
 
 SEVERITIES = ("High", "Medium", "Low", "Info")
 CONFIDENCES = ("Confirmed", "Runtime-dependent", "Suspected")
@@ -53,7 +54,7 @@ SCREEN_KEYS = ("name", "route", "location")
 META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales")
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
-                "validation", "references", "mockup")
+                "validation", "references", "mockup", "evidence")
 REQUIRED_FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "flow_ref", "screen",
                          "criterion", "location", "validation")
 MOCKUP_KEYS = ("title", "before", "after", "states", "viewport", "note", "label", "alternatives")
@@ -180,6 +181,40 @@ def _mockup(mockup, where):
     if size > MAX_FINDING_MOCKUP_BYTES:
         raise RecordError(f"{where}: fragments total more than {MAX_FINDING_MOCKUP_BYTES // 1024} KiB as UTF-8; "
                           "use fewer states or alternatives")
+
+
+def _evidence(items, where):
+    """Check a finding's evidence list (reference/evidence.md); the files themselves are checked by render.py."""
+    if not isinstance(items, list) or not 1 <= len(items) <= evidence_files.MAX_ITEMS:
+        raise RecordError(f"{where}: expected a list of 1 to {evidence_files.MAX_ITEMS} evidence objects "
+                          "(\"evidence\": null in a fragment removes it)")
+    seen = set()
+    for i, item in enumerate(items):
+        at = f"{where}[{i}]"
+        if not isinstance(item, dict):
+            raise RecordError(f"{at}: expected an object")
+        _known_keys(item, evidence_files.KEYS, at)
+        kind = item.get("kind")
+        if kind not in evidence_files.KINDS:
+            raise RecordError(f"{at}.kind: expected one of {', '.join(evidence_files.KINDS)}")
+        name = _str(item, "file", at, required=True)
+        m = evidence_files.FILE.match(name)
+        if not m or ".." in name:
+            raise RecordError(f"{at}.file: {name!r} is not a plain file name inside {evidence_files.DIRECTORY}/")
+        if m["ext"] not in evidence_files.KINDS[kind]:
+            raise RecordError(f"{at}.file: a {kind} is .{', .'.join(evidence_files.KINDS[kind])}, not .{m['ext']}")
+        if name in seen:
+            raise RecordError(f"{at}.file: {name!r} is already listed for this finding")
+        seen.add(name)
+        if LINE_BREAKS.search(_str(item, "caption", at, required=True)):
+            raise RecordError(f"{at}.caption: expected one line")
+        if item.get("stage", "before") not in evidence_files.STAGES:
+            raise RecordError(f"{at}.stage: expected one of {', '.join(evidence_files.STAGES)}")
+        if _str(item, "viewport", at):
+            _viewports([item["viewport"]], f"{at}.viewport")
+        if "url" in item:
+            _http(item["url"], f"{at}.url")
+        _str(item, "captured", at)
 
 
 def _one_mockup(mockup, where):
@@ -470,6 +505,8 @@ def check_findings(data, flow_ids=None, ordered=True):
                 _str(ref_, key, f"{where}.references[{j}]")
         if "mockup" in f:
             _mockup(f["mockup"], f"{where}.mockup")
+        if "evidence" in f:
+            _evidence(f["evidence"], f"{where}.evidence")
     if ordered:
         mapping = renumber_map(findings)
         if any(old != new for old, new in mapping.items()) or [f["id"] for f in findings] != list(mapping):
@@ -1272,8 +1309,10 @@ def renumber(data, mapping):
             end = start + len(value.strip())
             return value[:start] + _rewrite_prose(value[start:end], mapping) + value[end:]
         if isinstance(value, dict):
-            # Mockup sides are markup shown to users, not prose that cites findings.
-            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url", "before", "after"),
+            # Mockup sides are markup shown to users, not prose that cites findings; evidence
+            # file names name files on disk, even when they carry a finding id.
+            return {k: rewrite(v, replace and k not in ("location", "occurrences", "url", "before", "after",
+                                                        "file", "captured"),
                                mockup or k == "mockup", k)
                     for k, v in value.items()}
         if isinstance(value, list):

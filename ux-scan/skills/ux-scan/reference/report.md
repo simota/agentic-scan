@@ -17,7 +17,12 @@ from the reviewed repository (SKILL.md *Paths*).
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
 in the shared design, plus `mockups.html` when a `Valid` or `Likely` finding carries a
 before/after mockup (`reference/mockups.md`); a render without one removes a
-previous `mockups.html`. Each finding shows its flow (from `flows.json`), screen,
+previous `mockups.html`. When findings cite evidence, it also writes
+`evidence.html` and places each finding's screenshots and log excerpts (masked
+like source excerpts) in `report.html` and so in the PDF, `before` and `after`
+side by side; videos are named there and play in `evidence.html`
+(`reference/evidence.md`). Every page records the SHA-256 of each cited file, so
+a replaced or missing file makes the pages stale. Each finding shows its flow (from `flows.json`), screen,
 viewport and criterion, and both pages state the viewports and locales from
 `flows.json` that the review was judged against. With `--repo`, each finding's first `path:line` is
 embedded as a short excerpt: at most 40 lines and 240 characters per line,
@@ -164,7 +169,8 @@ included High finding cites it in `flow_ref`, or cites the `shared` flow
 (the shell or a shared component it uses). A missing PDF is reported in the
 outputs line, not in the status. Then:
 
-- the High findings, one line each with `path:line` and the flow they block
+- the High findings, one line each with `path:line`, the flow they block and their evidence file
+- whether the UI was rendered (screenshots or video) or the evidence is logs only
 - decisions that need a human (`decisions`)
 - what was not reviewed (`limitations`), in one line
 - where the outputs and the scratch directory are

@@ -6,10 +6,14 @@
 Maps the record into scan-report-kit's common format (scan-report/1) and writes
 DIR/dashboard.html, DIR/report.html and DIR/report.pdf (headless Chrome, else
 WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds), plus
-DIR/mockups.html when a Valid or Likely finding carries a before/after mockup. With
+DIR/mockups.html when a Valid or Likely finding carries a before/after mockup, and
+DIR/evidence.html when a finding carries evidence (screenshots, videos, logs kept
+in evidence/ beside findings.json; screenshots and log excerpts are also embedded
+in report.html and so in the PDF). With
 --repo, each finding's location is embedded as a short excerpt; secret-looking
 files and symlinks are never read and secret-looking lines are masked. Every
-page fingerprints its findings, flows, render, complete HTML and (when produced) PDF.
+page fingerprints its findings, flows, evidence files, render, complete HTML and
+(when produced) PDF.
 Outputs must be outside --repo. Standard library only.
 Exit status: 0 written, 2 invalid record or unwritable output, 3 no PDF produced.
 """
@@ -29,9 +33,10 @@ from file_io import read_regular, tolerant_console, within  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
+import evidence  # noqa: E402
 import mockups  # noqa: E402
 
-OUTPUTS = ("dashboard.html", "report.html", "report.pdf", mockups.PAGE)
+OUTPUTS = ("dashboard.html", "report.html", "report.pdf", mockups.PAGE, evidence.PAGE)
 OUTPUT_LOCK = ".ux-scan-render.lock"
 OUTPUT_GENERATION = ".ux-scan-render-generation"
 STAMP = "ux-scan-source"
@@ -223,6 +228,8 @@ def to_common(data, lang, flows=None, repo=None):
                   (T["intent"], f["validation"].get("intent_checked", ""))]
         if mockup_field := mockups.field(f, lang):
             fields.append(mockup_field)
+        if evidence_field := evidence.field(f, lang):
+            fields.append(evidence_field)
         fix_is_action = f["status"] == "Open" and verdict == "Valid" and bool(f.get("fix", "").strip())
         if fix_is_action:  # Shown once, as the next action.
             fields = [(k, v) for k, v in fields if k != T["fix"]]
@@ -279,14 +286,23 @@ def main(argv=None):
         flows_source = read_regular(flows_path) if os.path.lexists(flows_path) else None
         flows = check_flows(loads_json(flows_source.decode("utf-8"), str(flows_path))) if flows_source is not None else None
         data = check_findings(loads_json(source.decode("utf-8"), str(a.findings)), flow_ids(flows) if flows else None)
+        # Evidence lives beside findings.json; a second-language render links back to it.
+        record_dir = Path(a.findings).absolute().parent
+        files = evidence.load(record_dir, data)
+        href = Path(os.path.relpath(record_dir / evidence.DIRECTORY, out.absolute())).as_posix()
         common = report.validate(to_common(data, a.lang, flows, repo))
         pages = {"dashboard.html": report.render_dashboard(common, a.lang),
                  "report.html": report.render_document(common, a.lang)}
         if mockups.with_mockups(data):
             pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang, report.labels_for(common, a.lang))
             pages["dashboard.html"] = mockups.link_dashboard(pages["dashboard.html"], a.lang)
+        if files:
+            pages["report.html"] = evidence.inject_report(pages["report.html"], data, files, a.lang, href)
+            pages[evidence.PAGE] = evidence.render_page(data, files, a.lang, report.labels_for(common, a.lang), href)
+            pages["dashboard.html"] = evidence.link_dashboard(pages["dashboard.html"], a.lang)
         stamps = {STAMP: source_stamp(source),
                   FLOWS_STAMP: canonical_digest(flows) if flows is not None else "absent",
+                  evidence.STAMP: evidence.digest(files),
                   RENDER_STAMP: canonical_digest({
                       "lang": a.lang, "record": common,
                       # Bind the pair even when only renderer assets changed.
@@ -319,7 +335,7 @@ def write_reports(out, pages, finding_count, no_pdf):
         # restore the old pair and PDF together, not leave mixed report versions.
         # A render without mockups removes the previous render's mockup page.
         output.write_outputs(out, {name: seal_page(page) for name, page in pages.items()},
-                             remove=("report.pdf", *((mockups.PAGE,) if mockups.PAGE not in pages else ())))
+                             remove=("report.pdf", *(name for name in (mockups.PAGE, evidence.PAGE) if name not in pages)))
         for name in pages:
             print(f"wrote {out / name}")
         if no_pdf:

@@ -1,0 +1,10 @@
+$ awk 'NR>=3 && NR<=7 {print FILENAME ":" FNR ": " $0}' index.html
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+index.html:3: <head>
+index.html:4: <meta charset="utf-8">
+index.html:5: <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+index.html:6: <title>Tasklane</title>
+index.html:7: <link rel="stylesheet" href="/src/styles/tokens.css">

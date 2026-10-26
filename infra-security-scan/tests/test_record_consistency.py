@@ -48,12 +48,18 @@ class RecordConsistencyTest(unittest.TestCase):
 
     def test_meta_prose_follows_a_renumber(self):
         data = json.loads(SAMPLE.read_text(encoding="utf-8").replace("F-006", "F-906"))
-        data["meta"]["scope"] = "Production, except the bucket in F-906"
+        data["meta"].update(scope="Production, except the bucket in F-906", project="F-150 telematics",
+                            inputs=[{"kind": "plan", "path": "plans/F-906/plan.json", "note": "covers F-906"}])
         self.write(data)
         record = self.out / "findings.json"
-        self.assertEqual(quiet(findings.main, "renumber", record)[0], 0)
-        self.assertEqual(json.loads(record.read_text(encoding="utf-8"))["meta"]["scope"],
-                         "Production, except the bucket in F-006")
+        code, msg = quiet(findings.main, "renumber", record)
+        self.assertEqual(code, 0, msg)
+        meta = json.loads(record.read_text(encoding="utf-8"))["meta"]
+        self.assertEqual(meta["scope"], "Production, except the bucket in F-006")
+        # A name and a path are not prose: they stay, and hold no stale reference.
+        self.assertEqual((meta["project"], meta["inputs"]), ("F-150 telematics", [
+            {"kind": "plan", "path": "plans/F-906/plan.json", "note": "covers F-006"}]))
+        self.assertEqual(quiet(findings.main, "status", record)[0], 0)
         data["meta"]["scope"] = "Production, except the bucket in F-950"
         self.assertIn(("meta.scope", "F-950"), render.dangling_references(data))
 

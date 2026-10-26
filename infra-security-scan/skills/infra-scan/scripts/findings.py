@@ -47,7 +47,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import render  # noqa: E402
 from common import (ID_AFTER, ID_BEFORE, F_REFERENCE, REVIEW_FIELDS, STRING_LISTS as LISTS,  # noqa: E402
-                    find_references, reviewer_fields, sub_references, write_json_atomic)
+                    find_references, meta_prose, reviewer_fields, sub_references, write_json_atomic)
 from redaction import CREDENTIAL  # noqa: E402
 
 # The line iac_scan.py adds to limitations when a rescan reopens a record.
@@ -296,7 +296,7 @@ def record_strings(record):
                 yield from walk(reviewer_fields(item), str(item.get("id") or item.get("name") or key))
     for key in LISTS:
         yield from walk(record.get(key, []), key)
-    yield from walk(record.get("meta", {}), "meta")  # scope and method are prose too
+    yield from walk(meta_prose(record.get("meta")), "meta")
 
 
 def remove(findings_path, ids):
@@ -373,7 +373,11 @@ def renumber(findings_path):
     for key in ("attack_paths", "perspectives", *LISTS):
         record[key] = rewrite(record.get(key, []))
     if isinstance(record.get("meta"), dict):
-        record["meta"] = rewrite(record["meta"])
+        prose = rewrite(meta_prose(record["meta"]))
+        record["meta"].update({k: v for k, v in prose.items() if k != "inputs"})
+        for item, note in zip(record["meta"].get("inputs", []), prose.get("inputs", [])):
+            if "note" in note:
+                item["note"] = note["note"]
     record["attack_paths"] = sorted(record["attack_paths"], key=lambda ap: render.id_key(ap["id"]))
     record["findings"] = [f for f in record["findings"] if not render.F_ID.match(f["id"])] + \
         sorted((f for f in record["findings"] if render.F_ID.match(f["id"])), key=lambda f: render.id_key(f["id"]))

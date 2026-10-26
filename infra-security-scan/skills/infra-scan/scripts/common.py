@@ -16,6 +16,18 @@ RECORD_LISTS = ("attack_paths", "findings", "perspectives", *STRING_LISTS)
 REVIEW_FIELDS = ("validation", "confidence", "condition", "severity")
 
 
+def meta_prose(meta):
+    """The reviewer's prose in meta: scope, method and input notes. The project
+    and assessor are names ("F-150 telematics") and input paths are paths."""
+    if not isinstance(meta, dict):
+        return {}
+    out = {k: meta[k] for k in ("scope", "method") if k in meta}
+    if isinstance(meta.get("inputs"), list):
+        out["inputs"] = [{"note": i["note"]} if isinstance(i, dict) and "note" in i else {}
+                         for i in meta["inputs"]]
+    return out
+
+
 def reviewer_fields(finding):
     """The part of a finding the reviewer wrote: all of an F-*, the triage of an I-*.
 

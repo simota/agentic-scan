@@ -35,9 +35,9 @@ from urllib.parse import urlparse
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK,
                     SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth,
-                    reviewer_fields, shape_problems, split_yaml_documents, unique_object)
+                    meta_prose, reviewer_fields, shape_problems, split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
-from redaction import (SAFE_VALUE, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
+from redaction import (SAFE_VALUE, SETTING_NAME, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
                        is_secret_name, redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
@@ -257,8 +257,7 @@ def dangling_references(data):
         for line in lines if isinstance(lines, list) else [lines]:
             walk(line, key, baseline=not (key == "limitations" and isinstance(line, str)
                                           and CARRY_NOTE.fullmatch(line)))
-    if isinstance(data.get("meta"), dict):
-        walk(data["meta"], "meta")
+    walk(meta_prose(data.get("meta")), "meta")
     return out
 
 
@@ -832,29 +831,38 @@ def hcl_has_paired_secret(text):
 
 
 HCL_INDIRECT = re.compile(r"(?<![\w.])(var|local)\.([A-Za-z_][\w-]*)")
+# What such an attribute reads through a file function is a path, and a
+# *_id, *_name or *_arn names a secret held elsewhere (secret_id = "prod/db").
+HCL_FILE_CALL = re.compile(r"\b(?:file|filebase64|templatefile|pathexpand|abspath|dirname|basename)\s*\([^()]*\)")
+HCL_NAMES_A_SECRET = re.compile(r"(?i)(?:_id|_ids|_name|_names|_arn|_arns|_file|_path)$")
+
+
+def _holds_value(value):
+    """A literal that could be the secret: text, a number or a non-empty collection."""
+    return value not in (None, "", [], {}) and value is not UNKNOWN and not isinstance(value, bool)
 
 
 def hcl_secret_indirection(blocks):
     """A secret-named attribute that reads a variable or local holding a literal.
 
     `password = var.db_admin` is safe to show; `variable "db_admin" { default
-    = "..." }` is then the password, though its own name says nothing."""
+    = "..." }` is then the password, though its own name says nothing. So is
+    `password = local.creds.admin` over a literal object, or a number."""
     literals, wanted = set(), set()
     pending = list(blocks)
     while pending:
         block = pending.pop()
         pending.extend(block.blocks)
         if block.type == "variable" and block.labels and "default" in block.attrs:
-            default = literal(block.attrs["default"][0])
-            if isinstance(default, str) and default:
+            if _holds_value(literal(block.attrs["default"][0])):
                 literals.add(("var", block.labels[0]))
         for name, (raw, _) in block.attrs.items():
-            if block.type == "locals":
-                value = literal(raw.strip())
-                if isinstance(value, str) and value and not SAFE_VALUE.fullmatch(raw.strip()):
-                    literals.add(("local", name))
-            if is_secret_name(name):
-                wanted.update(HCL_INDIRECT.findall(raw))
+            if block.type == "locals" and _holds_value(literal(raw.strip())) and \
+                    not SAFE_VALUE.fullmatch(raw.strip()):
+                literals.add(("local", name))
+            # password_length = var.n reads a setting, not a secret.
+            if is_secret_name(name) and not HCL_NAMES_A_SECRET.search(name) and not SETTING_NAME.search(name):
+                wanted.update(HCL_INDIRECT.findall(HCL_FILE_CALL.sub("", raw)))
     return bool(literals & wanted)
 
 

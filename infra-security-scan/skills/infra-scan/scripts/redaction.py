@@ -627,12 +627,19 @@ def _base64_key(token):
         len(token) >= 40 and letters != letters.lower() and letters != letters.upper()))
 
 
+# One word of an identifier: Lambda, EC2, Role2, v2 (not a run of random case).
+NAME_WORD = re.compile(r"[A-Z]?[a-z]{1,12}[0-9]{0,4}|[A-Z]{1,8}[0-9]{0,4}|[0-9]{1,4}")
+
+
 def _high_entropy(token):
     """Random-looking: mixed case with digits, long hex, or long letter-digit runs.
 
-    Names such as my-bucket-2024-prod or k8s-node-group-v2 stay readable.
+    Names such as my-bucket-2024-prod, k8s-node-group-v2 or Lambda_Exec_Role2
+    stay readable.
     """
     if RESOURCE_ID.fullmatch(token):
+        return False
+    if "_" in token and all(NAME_WORD.fullmatch(word) for word in token.split("_")):
         return False
     upper = any(c.isupper() for c in token)
     lower = any(c.islower() for c in token)

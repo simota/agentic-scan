@@ -106,6 +106,32 @@ class ExcerptShapeTest(unittest.TestCase):
         shown = self.excerpt("five/main.tf", 'variable "engine" {\n  default = "postgres"\n}\n'
                              + db.replace("password = %s", "engine = %s") % "var.engine", 5)
         self.assertIn('default = "postgres"', shown)
+        # Numbers and collections hold a secret too.
+        number = "4193" + "9071"
+        for n, (declared, read) in enumerate((
+                ('variable "db_admin" {\n  default = %s\n}\n' % number, "var.db_admin"),
+                ('locals {\n  pin = %s\n}\n' % number, "local.pin"),
+                ('locals {\n  creds = { admin = "%s" }\n}\n' % SECRET, "local.creds.admin"),
+                ('variable "cfg" {\n  default = { admin = "%s" }\n}\n' % SECRET, "var.cfg.admin"),
+                ('locals {\n  pws = ["%s"]\n}\n' % SECRET, "local.pws[0]"))):
+            with self.subTest(read=read):
+                self.assertIsNone(self.excerpt(f"six{n}/main.tf", declared + db % read, 5))
+
+    def test_a_path_or_secret_name_read_by_reference_keeps_the_module_readable(self):
+        rule = ('resource "aws_security_group_rule" "ssh" {\n  type = "ingress"\n  from_port = 22\n'
+                '  to_port = 22\n  cidr_blocks = ["0.0.0.0/0"]\n}\n')
+        for n, other in enumerate((
+                'variable "credentials_file" {\n  default = "account.json"\n}\n'
+                'provider "google" {\n  credentials = file(var.credentials_file)\n}\n',
+                'variable "db_secret_name" {\n  default = "prod/db"\n}\n'
+                'data "aws_secretsmanager_secret_version" "d" {\n  secret_id = var.db_secret_name\n}\n',
+                'variable "pub" {\n  default = "id.pub"\n}\nresource "x" "y" {\n  ssh_key = file(var.pub)\n}\n',
+                'variable "n" {\n  default = 16\n}\nresource "random_password" "p" {\n'
+                '  password_length = var.n\n}\n')):
+            with self.subTest(other=other[:30]):
+                (self.repo / f"seven{n}").mkdir()
+                (self.repo / f"seven{n}" / "other.tf").write_text(other, encoding="utf-8")
+                self.assertIn("0.0.0.0/0", self.excerpt(f"seven{n}/sg.tf", rule, 5) or "")
 
     def test_a_number_under_a_plain_secret_key_stays_hidden(self):
         self.assertNotIn("1234", redaction.redact("  password = 1234"))
@@ -130,7 +156,9 @@ class ExcerptShapeTest(unittest.TestCase):
             with self.subTest(prefix=prefix):
                 value = prefix + token[:12] + "_" + token[12:]
                 self.assertNotIn(token[:12], redaction.scrub_line("# billing key: " + value, "hcl"))
-        for kept in ("name = my_bucket_name_for_logs_2024", "env: AWS_DEFAULT_REGION_FOR_STAGING_2"):
+        for kept in ("name = my_bucket_name_for_logs_2024", "env: AWS_DEFAULT_REGION_FOR_STAGING_2",
+                     "role = aws_iam_role.Lambda_Exec_Role2.arn", 'name = "EC2_Instance_Profile_v2"',
+                     'function_name = "Process_Orders_V2_Handler"'):
             with self.subTest(kept=kept):
                 self.assertEqual(redaction.scrub_line(kept, "yaml"), kept)
 

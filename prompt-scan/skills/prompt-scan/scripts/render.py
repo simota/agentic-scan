@@ -74,8 +74,8 @@ ASSIGNED_SECRET_RE = re.compile(
     r"""(?P<op>=>|:=|[:=]|:[ \t]{0,8}[A-Za-z_][\w.\[\]]{0,40}[ \t]{0,8}=)[ \t]{0,8})"""
     r"""(?!(?:-?[0-9]+(?:\.[0-9]+)?|None|null|nil|true|false|undefined)[ \t]*(?:[,;#&)\]}]|$)|["']?[{$<%])"""
     r"""(?P<value>"[^"\s]{1,256}"|'[^'\s]{1,256}'|[^\s"',;#&)\]}]{1,256})(?=[ \t]*(?:[,;#&)\]}]|$))""")
-# The password runs to the last @ before the host, so one that holds an @ is masked whole.
-URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{0,256}:)([^\s/]{1,256})"
+# The password runs to the last @ before the host, so one that holds an @ or a / is masked whole.
+URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{0,256}:)(\S{1,256})"
                              r"(?=@[^\s@/]{0,256}(?:[/?#\s]|$))")
 # Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}

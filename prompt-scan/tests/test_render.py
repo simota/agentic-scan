@@ -130,7 +130,8 @@ class RenderTest(unittest.TestCase):
                  "ENV API_TOKEN=abc": "ENV API_TOKEN=[REDACTED]", 'val secret = "Pa(ss)word9"': "val secret = [REDACTED]",
                  "const token = getToken()": "const token = getToken()", "let password: string": "let password: string",
                  # The password in a URL runs to the last @ of the authority.
-                 "https://user:p@ss@host/x": "https://user:[REDACTED]@host/x"}
+                 "https://user:p@ss@host/x": "https://user:[REDACTED]@host/x",
+                 "postgres://u:ab/c@d@db/app": "postgres://u:[REDACTED]@db/app"}
         for line, masked in cases.items():
             self.assertEqual(render.mask_excerpt(line), masked)
 

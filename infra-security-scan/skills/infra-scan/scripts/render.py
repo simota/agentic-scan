@@ -38,7 +38,7 @@ from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS
                     meta_prose, reviewer_fields, shape_problems, split_yaml_documents, unique_object)
 from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
 from redaction import (SAFE_VALUE, SETTING_NAME, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
-                       is_secret_name, redact_json_values, redact_lines, scrub_line, scrub_lines, split_lines)
+                       is_secret_name, redact_json_values, redact_lines, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
 
@@ -1484,12 +1484,22 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
 """
 
 
+def scrub_text(text):
+    """Scrub multi-line text (an engine's stderr) line by line.
+
+    scrub_line takes one line: given the whole stderr it hides every line past
+    the first secret word, or all of it beyond MAX_SCRUB, and with them the
+    lines that say why the engine failed.
+    """
+    return "\n".join(scrub_lines(split_lines(hide_credentials(text))))
+
+
 def to_pdf(html_path, pdf_path, failed=None, timeout=None):
     """Print with scan_report_kit.pdf.to_pdf (Chrome, else WeasyPrint); leave no PDF when neither succeeds.
 
     Engines that were found but did not produce a PDF, and a CHROME that does
     not exist, are appended to `failed` as one readable string each. Engine
-    stderr is scrubbed (redaction.scrub_line) before it is recorded.
+    stderr is scrubbed (scrub_text) before it is recorded.
     """
     failed = [] if failed is None else failed
     chrome = os.environ.get("CHROME")
@@ -1497,7 +1507,7 @@ def to_pdf(html_path, pdf_path, failed=None, timeout=None):
         failed.append(f"CHROME={chrome} (not found)")
     failures = []
     engine = kit_pdf.to_pdf(html_path, pdf_path, failures, kit_pdf.pdf_timeout() if timeout is None else timeout,
-                            redact=scrub_line)
+                            redact=scrub_text)
     failed.extend(f"{name} ({reason})" + (f": {detail}" if detail else "") for name, reason, detail in failures)
     if engine is None:
         Path(pdf_path).unlink(missing_ok=True)  # A failed engine's partial output is not an assessment.

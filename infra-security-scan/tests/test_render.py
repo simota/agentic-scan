@@ -309,6 +309,21 @@ class PdfTest(unittest.TestCase):
             self.assertIsNone(render.to_pdf(self.html, self.pdf))
         self.assertFalse(self.pdf.exists())
 
+    def test_engine_stderr_keeps_the_reason_and_hides_secrets(self):
+        secret = "hunter" + "2-not-a-real-value"
+        for padding in ("", "[1:ERROR:dbus/bus.cc] Failed to connect to the bus\\n" * 40):
+            with self.subTest(long=bool(padding)):
+                chrome = self.engine("test-chrome", (
+                    "sys.stderr.write('" + padding + "[1:ERROR:token_service.cc] auth token refresh skipped\\n"
+                    "--password " + secret + "\\n[2:FATAL:zygote_host] No usable sandbox!\\n'); sys.exit(1)"))
+                failures = []
+                with patch.dict(os.environ, {"PATH": str(chrome.parent)}):
+                    self.assertIsNone(render.to_pdf(self.html, self.pdf, failures))
+                # Scrubbed as one line, the token line hid every later line, and
+                # stderr past MAX_SCRUB characters was hidden whole.
+                self.assertIn("No usable sandbox!", failures[0])
+                self.assertNotIn(secret, failures[0])
+
 
 class ExcerptTest(unittest.TestCase):
     def setUp(self):

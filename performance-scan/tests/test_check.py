@@ -195,10 +195,27 @@ class CitationTests(unittest.TestCase):
         self.assertFalse(findings.cites_location("a" * 200000))
         self.assertTrue(findings.cites_location("a" * 200000 + " views.py:3"))
         for token in ("a" * 200000 + ":1", "a/" * 100000 + ":1", "a." * 100000 + ":1",
-                      "A" * 200000 + "/1:1", "設" * 200000 + ":1"):
+                      "A" * 200000 + "/1:1", "設" * 200000 + ":1", "設" + "1." * 100000 + ":1"):
             findings.cites_location(token)
             findings.citation_rejections(token)
         self.assertLess(time.monotonic() - started, 2)
+
+    def test_a_number_in_unspaced_prose_is_not_a_file(self):
+        # Japanese, Chinese and Korean put no space before a number, so the
+        # citation candidate starts at the word before it.
+        for text in ("読み書き比は約2.5:1で", "比率は1.5:1", "TLSは1.3:443", "約２.５：１",
+                     "比例约2.5:1", "비율은1.5:1", "（約2.5:1）"):
+            self.assertFalse(findings.cites_location(text), text)
+        for text in ("python3.11:3", "設計書.md:3", "資料1.txt:3", "設定.2:3",
+                     "ドキュメント/設計.md:4", "docs/比率2.5:1", "約2.5:1、app/views.py:18",
+                     "比は2:1。views.py:3", "根拠（app/views.py:18）", "「views.py:3」"):
+            self.assertTrue(findings.cites_location(text), text)
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["evidence"] = "読み書き比は約2.5:1で、上限は確認できない"
+        self.assertEqual(contract_problems(doc), [
+            "P-001.validation.evidence: Valid evidence must cite a path:line ('読み書き比は約2.5:1' is "
+            "not a file name (a setting, number, version or word; write an extensionless "
+            "file with its directory or ./))"])
 
     def test_a_directory_is_named_as_one(self):
         for text in ("src/..:3", "./.:1", "src\\..:3"):

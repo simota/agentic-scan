@@ -81,9 +81,11 @@ BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 BUDGET_MENTION = re.compile(r"(?<![A-Za-z0-9_-])B-[0-9]{2,}(?![A-Za-z0-9_-])")
 # Evidence for a definitive verdict cites at least one path:line (or path#L42).
 # The lookbehind starts a match only at the beginning of a run: without it a long
-# run with no colon is retried from every position (quadratic time).
-CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>])"
-                      r"([^\s:：#()\[\]'\"`,;<>]+)(?:[:：]|#L)[1-9１-９][0-9０-９]*")
+# run with no colon is retried from every position (quadratic time). CJK
+# punctuation separates too: unspaced prose (比は2:1、app/views.py:18) has no
+# other boundary before a path.
+CITATION = re.compile(r"(?<![^\s:：#()\[\]'\"`,;<>、。，；（）「」『』【】])"
+                      r"([^\s:：#()\[\]'\"`,;<>、。，；（）「」『』【】]+)(?:[:：]|#L)[1-9１-９][0-9０-９]*")
 # The path holds no line break of any kind str.splitlines() knows.
 LOCATION = re.compile(r"(?P<path>[^\r\n\x0b\x0c\x1c-\x1e\x85\u2028\u2029]+)"
                       r":(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
@@ -161,6 +163,10 @@ ROOT_FILE = re.compile(r"(?:GNU)?makefile|[A-Z][a-z]*file"
                         r"|MAINTAINERS|NOTICE|COPYING|INSTALL|SECURITY|TODO")
 # Capitalised words ending in "file" that are prose, not files.
 NOT_FILES = frozenset(("Profile", "Ffile"))
+# Kana, kanji and hangul: scripts written without spaces between words, so a
+# number in the prose (比率は1.5:1, 約２.５：１) is glued to the word before it.
+CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uf900-\ufaff"
+                 r"\uff66-\uff9f]")
 
 
 def _is_host(name):
@@ -219,6 +225,17 @@ def _protocol_version(path):
     return not (dot and extension[:1].isalpha())
 
 
+def _number_after_prose(name):
+    """True for a number written straight after kana, kanji or hangul (約2.5,
+    TLSは1.3): unspaced prose, not a file name. A string walk, not a pattern, so
+    a long run of digits and dots stays linear."""
+    start = len(name)
+    while start and (name[start - 1].isdecimal() or name[start - 1] == "."):
+        start -= 1
+    return (start < len(name) and start > 0 and name[start].isdecimal()
+            and bool(CJK.fullmatch(name[start - 1])))
+
+
 def _file_shaped(path):
     """True when path has a directory part, a dotted suffix or a root-file name."""
     if NUMERIC.fullmatch(path) or _protocol_version(path):
@@ -234,7 +251,7 @@ def _file_shaped(path):
     # A root-level name needs a letter (.5, ~1.5 and 1/2-like tokens are numbers).
     if (VERSION_START.match(last) and not MIGRATION.match(last)) or not LETTER.search(last):
         return False
-    if PACKAGE_VERSION.search(last) or _product_version(last):
+    if PACKAGE_VERSION.search(last) or _product_version(last) or _number_after_prose(last):
         return False
     _, dot, suffix = last.rpartition(".")
     return bool(dot and suffix) or bool(ROOT_FILE.fullmatch(last))

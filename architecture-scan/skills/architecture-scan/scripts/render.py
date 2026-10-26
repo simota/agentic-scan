@@ -567,6 +567,11 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .empty{padding:20px 12px;margin:0}
 @media(max-width:850px){.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary>span:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
 @media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}}
+/* Rules ledger and perspective coverage: a long path or note breaks anywhere rather than
+   widen the table past its status column; below the register's breakpoint each row
+   stacks, its ID or perspective beside its status, each value under its column label. */
+table.rules td,table.coverage-table td{overflow-wrap:anywhere}
+@media(max-width:850px){table.rules,table.rules>tbody,table.coverage-table,table.coverage-table>tbody{display:block}table.rules>thead,table.coverage-table>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}table.rules>tbody>tr,table.coverage-table>tbody>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px 12px;border-bottom:1px solid var(--line)}table.rules>tbody>tr:last-child,table.coverage-table>tbody>tr:last-child{border-bottom:0}table.rules>tbody>tr>td,table.coverage-table>tbody>tr>td{border:0;padding:0}table.rules>tbody>tr>td:before,table.coverage-table>tbody>tr>td:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans);margin-bottom:3px}table.rules>tbody>tr>td:nth-child(2),table.rules>tbody>tr>td:nth-child(3),table.coverage-table>tbody>tr>td:nth-child(3){grid-column:1/-1}table.rules>tbody>tr>td:nth-child(4){grid-column:2;grid-row:1}table.rules>tbody>tr>td.nowrap{white-space:normal}}
 /* Application shell: the register is a list of details, not the kit's table, so
    its head row and focused finding get the shell's pinning and focus marks here. */
 .app-shell #decisions-section:focus,.app-shell #rules-section:focus{outline:0}
@@ -875,7 +880,9 @@ def render_html(doc, lang):
                f"<div class='tablewrap'><table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
                f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>")
     for name, p in rows:
-        out.append(f"<tr><td>{e(name)}</td><td>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
+        out.append(f"<tr><td data-label='{escape(t['perspective'])}'>{e(name)}</td>"
+                   f"<td data-label='{escape(t['rule_status'])}'>{e(p['status'])}</td>"
+                   f"<td data-label='{escape(t['note'])}'>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
 
     if doc.get("rules"):
@@ -887,8 +894,10 @@ def render_html(doc, lang):
             rule_state = e(r["status"])
             if filled(r, "reason"):
                 rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
-            out.append(f"<tr><td class='nowrap'>{e(rule_id(r))}</td><td>{e(rule_statement(r, lang))}</td>"
-                       f"<td>{e(r['source'])}</td><td>{rule_state}</td></tr>")
+            out.append(f"<tr><td class='nowrap' data-label='{escape(t['id'])}'>{e(rule_id(r))}</td>"
+                       f"<td data-label='{escape(t['statement'])}'>{e(rule_statement(r, lang))}</td>"
+                       f"<td data-label='{escape(t['source'])}'>{e(r['source'])}</td>"
+                       f"<td data-label='{escape(t['rule_status'])}'>{rule_state}</td></tr>")
         out.append("</tbody></table></div></section>")
 
     cats = sorted(tally(included, lambda f: f["category"]).items(), key=lambda kv: (-kv[1], kv[0]))

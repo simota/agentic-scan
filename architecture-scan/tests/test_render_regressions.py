@@ -109,7 +109,7 @@ class RenderRegressionTests(unittest.TestCase):
                 self.assertEqual(len(row), 4)
                 self.assertEqual(plain_cell(row[3]), f"not checked\n{label}: {reason}")
                 html = render.render_html(doc, lang)
-                html_row = re.search(r"<tr><td class='nowrap'>R-01</td>.*?</tr>", html).group(0)
+                html_row = re.search(r"<tr><td class='nowrap'[^>]*>R-01</td>.*?</tr>", html).group(0)
                 self.assertIn(f"not checked\n{label}: {reason}", CellText(html_row).text)
                 self.assertNotIn("<manifest>", html_row)
 
@@ -131,8 +131,76 @@ class RenderRegressionTests(unittest.TestCase):
                 row = table_rows(markdown, render.LABELS[lang]["rules"])[0]
                 self.assertEqual(row[3], "violated")
                 html = render.render_html(doc, lang)
-                self.assertIn("<td>violated</td></tr>", html)
+                self.assertRegex(html, r"<td[^>]*>violated</td></tr>")
 
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class CellLabels(HTMLParser):
+    """Each table's column headers and the data-label of each of its body cells."""
+
+    def __init__(self, source):
+        super().__init__()
+        self.tables, self.in_th = {}, False
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "table":
+            self.current = self.tables.setdefault(attrs.get("class"), {"heads": [], "rows": []})
+        elif tag == "th":
+            self.in_th = True
+            self.current["heads"].append("")
+        elif tag == "tr" and self.current["heads"]:
+            self.current["rows"].append([])
+        elif tag == "td":
+            self.current["rows"][-1].append(attrs.get("data-label"))
+
+    def handle_endtag(self, tag):
+        if tag == "th":
+            self.in_th = False
+
+    def handle_data(self, data):
+        if self.in_th:
+            self.current["heads"][-1] += data
+
+
+class LedgerTableLayoutTests(unittest.TestCase):
+    """The rules and coverage tables stack on narrow screens, as the register does.
+
+    A path in a rule's source is one unbreakable word, so as a table the ledger
+    pushed its status column out of a phone-width view.
+    """
+
+    def test_every_ledger_cell_is_labelled_with_its_column(self):
+        doc = complete_doc()
+        doc["rules"][0].update(family="OWN", status="not checked", reason="out of scope")
+        doc["perspectives"] = [{"name": "Coupling", "status": "applied", "note": "CP1-CP4"}]
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                tables = CellLabels(render.render_html(doc, lang)).tables
+                for name in ("rules", "coverage-table"):
+                    table = tables[name]
+                    self.assertTrue(table["rows"])
+                    for row in table["rows"]:
+                        self.assertEqual(row, table["heads"])
+
+    def test_ledger_tables_stack_where_the_register_does_and_break_long_paths(self):
+        css = render.CSS
+        breakpoint = re.search(r"@media\(max-width:(\d+)px\)\{\.reg-head\{display:none\}", css)[1]
+        block = re.search(r"@media\(max-width:" + breakpoint + r"px\)\{(table\.rules,.*?\})\}", css)[1]
+        declared = {}
+        for selectors, body in re.findall(r"([^{}]+)\{([^{}]*)\}", block):
+            for selector in selectors.split(","):
+                declared.setdefault(selector, "")
+                declared[selector] += body + ";"
+        for table in ("table.rules", "table.coverage-table"):
+            with self.subTest(table=table):
+                self.assertIn("display:grid", declared[f"{table}>tbody>tr"])
+                self.assertIn("clip-path:inset(50%)", declared[f"{table}>thead"])
+                self.assertIn("content:attr(data-label)", declared[f"{table}>tbody>tr>td:before"])
+        # Half a phone's width cannot hold `R-04 · CONTRACT` on one line; it wraps at the blank.
+        self.assertIn("white-space:normal", declared["table.rules>tbody>tr>td.nowrap"])
+        self.assertRegex(css, r"table\.rules td,table\.coverage-table td\{overflow-wrap:anywhere\}")

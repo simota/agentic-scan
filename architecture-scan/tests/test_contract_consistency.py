@@ -211,7 +211,8 @@ class RenderConsistencyTests(unittest.TestCase):
         self.assertEqual(tuple(name for name, _ in rows[1:]), findings.PERSPECTIVES)
         self.assertEqual(rows[1], (missing, "—"))
         html = render.render_html(doc, "en")
-        self.assertIn(f"<tr><td>{missing}</td><td>—</td><td>not recorded</td></tr>", html)
+        self.assertRegex(html, f"<tr><td[^>]*>{re.escape(missing)}</td><td[^>]*>—</td>"
+                               "<td[^>]*>not recorded</td></tr>")
 
     def test_blank_commit_and_method_fall_back(self):
         doc = complete_doc()

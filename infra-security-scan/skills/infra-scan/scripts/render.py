@@ -490,6 +490,22 @@ def validate(data, partial=False):
             for fid in refs:
                 if not isinstance(fid, str) or fid not in finding_ids:
                     add(f"{where}: finding {fid} does not exist (merge linked records in one call, or add the link later)")
+    if not partial:
+        # An unknown edge is unread: a High or Medium on that path cannot be Confirmed.
+        unknown_paths = {a["id"] for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)
+                         and a.get("status") == "unknown"}
+        linked = {(fid, a["id"]) for a in paths if isinstance(a, dict) and isinstance(a.get("id"), str)
+                  and a["id"] in unknown_paths
+                  and isinstance(a.get("findings"), list) for fid in a["findings"] if isinstance(fid, str)}
+        for f in findings:
+            if isinstance(f, dict) and isinstance(f.get("id"), str) and isinstance(f.get("attack_paths"), list):
+                linked |= {(f["id"], ap) for ap in f["attack_paths"] if isinstance(ap, str) and ap in unknown_paths}
+        for f in findings:
+            if isinstance(f, dict) and isinstance(f.get("id"), str) and f.get("severity") in ("High", "Medium") \
+                    and f.get("confidence") == "Confirmed":
+                for ap in sorted(ap for fid, ap in linked if fid == f["id"]):
+                    add(f"{f['id']}: a {f['severity']} on {ap}, whose status is unknown, is Environment-dependent "
+                        "or Suspected, never Confirmed")
 
     persp = data.get("perspectives", [])
     if not isinstance(persp, list):

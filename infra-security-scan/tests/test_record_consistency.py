@@ -46,6 +46,29 @@ class RecordConsistencyTest(unittest.TestCase):
         code, msg = quiet(render.main, self.out / "findings.json", "--out", self.out, "--no-pdf")
         self.assertEqual(code, 0, msg)
 
+    def test_a_finding_on_an_unknown_path_is_not_confirmed(self):
+        f4 = next(f for f in self.data["findings"] if f["id"] == "F-004")
+        ap5 = next(a for a in self.data["attack_paths"] if a["id"] == "AP-05")
+        self.assertEqual((ap5["status"], ap5["findings"], f4["attack_paths"]), ("unknown", ["F-004"], ["AP-05"]))
+        f4["confidence"] = "Confirmed"
+        f4.pop("condition")
+        for side in ("both", "path only", "finding only"):
+            with self.subTest(side=side):
+                data = copy.deepcopy(self.data)
+                if side == "path only":
+                    next(f for f in data["findings"] if f["id"] == "F-004").pop("attack_paths")
+                if side == "finding only":
+                    next(a for a in data["attack_paths"] if a["id"] == "AP-05")["findings"] = []
+                with self.assertRaisesRegex(render.SchemaError, "F-004: a Medium on AP-05, whose status is unknown"):
+                    render.validate(data)
+                render.validate(data, partial=True)  # a merge in progress may still adjust it
+        self.write()
+        code, msg = quiet(contract_check.main, self.out, "--no-pdf")
+        self.assertEqual(code, 1, msg)
+        self.assertIn("whose status is unknown", msg)
+        f4["severity"] = "Low"
+        render.validate(self.data)
+
     def test_instance_key_shaped_like_an_id_is_an_address(self):
         for key in ("AP-07", "F-002", "I-001"):
             with self.subTest(key=key):

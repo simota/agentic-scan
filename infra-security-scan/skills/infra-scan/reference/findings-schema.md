@@ -116,7 +116,9 @@ Fragments may not set it.
 
 `status` is `open` (every edge allowed in the inputs), `blocked` (an edge is
 denied — name it in `note`), or `unknown` (an edge is `UNKNOWN`; name it).
-Every finding ID listed must exist. IDs start at `AP-01`, with at least two
+Every finding ID listed must exist. A High or Medium finding linked to an
+`unknown` path (from either side) is `Environment-dependent` or `Suspected`,
+never `Confirmed`; a complete record is refused otherwise. IDs start at `AP-01`, with at least two
 digits; the sequence continues through `AP-100` and beyond.
 
 | Field | Required | Content |

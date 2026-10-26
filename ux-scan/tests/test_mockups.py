@@ -109,7 +109,7 @@ class MockupTests(unittest.TestCase):
         for f in self.data["findings"]:
             f.pop("mockup", None)
         self.save()
-        self.assertIn("mockups.html: no included finding has a mockup", self.problems())
+        self.assertIn("mockups.html: no Valid or Likely finding has a mockup", self.problems())
         self.render()
         self.assertFalse((self.out / "mockups.html").exists())
         self.assertNotIn('href="mockups.html"', (self.out / "dashboard.html").read_text(encoding="utf-8"))
@@ -125,7 +125,7 @@ class MockupTests(unittest.TestCase):
         (self.out / "mockups.html").write_bytes(stale)
         for allow in ([], ["mockups.html"]):
             problems = self.problems(allow=allow)
-            self.assertIn("mockups.html: no included finding has a mockup", problems)
+            self.assertIn("mockups.html: no Valid or Likely finding has a mockup", problems)
             self.assertNotIn("--allow", problems)
 
     def test_excluded_findings_publish_no_mockup(self):

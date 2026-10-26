@@ -285,7 +285,7 @@ def _section(f, anchor, mockup, flows, lang, L):
 
 
 def render_page(data, flows, lang):
-    """mockups.html for the included findings with a mockup."""
+    """mockups.html for the Valid and Likely findings with a mockup."""
     L = LABELS[lang]
     items = with_mockups(data)
     project = data["meta"]["project"]

@@ -153,6 +153,39 @@ GO_DEF = re.compile(r"^func\s+([A-Za-z_]\w*)|^type\s+([A-Za-z_]\w*)", re.M)
 RS_DEF = re.compile(r"^(?:pub(?:\([^)]*\))?\s+)?(?:async\s+)?(?:fn|struct|enum|trait)\s+([A-Za-z_]\w*)", re.M)
 MODIFIERS = {"export", "default", "declare", "async", "abstract"}
 ENTRY_SYMBOLS = {"main", "init", "setup", "teardown", "handler", "default", "__all__", "__version__"}
+# Files a framework loads by their location, relative to the package.json that declares it;
+# a page.tsx in a repository without that framework is still judged by its imports.
+FRAMEWORK_FILES = (
+    (("next",), re.compile(
+        r"^(?:src/)?(?:app/(?:.+/)?(?:page|layout|template|loading|error|global-error|not-found|forbidden|"
+        r"unauthorized|default|route|opengraph-image|twitter-image|icon|apple-icon|sitemap|robots|manifest)"
+        r"|pages/.+|middleware|instrumentation(?:-client)?)\.(?:[jt]sx?|mdx?)$")),
+    (("@sveltejs/kit",), re.compile(
+        r"^src/(?:routes/(?:.+/)?\+(?:page|layout|server|error)(?:\.server)?(?:@[^/.]*)?\.(?:svelte|[jt]s)"
+        r"|hooks(?:\.(?:server|client))?\.[jt]s|service-worker(?:/index)?\.[jt]s|params/[^/]+\.[jt]s)$")),
+    (("nuxt", "nuxt3"), re.compile(
+        r"^(?:app/)?(?:(?:pages|layouts|middleware|plugins)/.+\.(?:vue|[jt]s)|error\.vue)$"
+        r"|^server/(?:api|routes|middleware|plugins)/.+\.[jt]s$")),
+    (("@remix-run/dev", "@remix-run/react"), re.compile(
+        r"^app/(?:root|entry\.client|entry\.server|routes/.+)\.[jt]sx?$")),
+    (("astro",), re.compile(r"^src/(?:pages/.+\.[jt]s|middleware(?:/index)?\.[jt]s)$")),
+)
+# Exports these frameworks read from such files by name: route handlers, data loaders, page options.
+FRAMEWORK_EXPORTS = {
+    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "ALL", "fallback",
+    "metadata", "generateMetadata", "viewport", "generateViewport", "generateStaticParams",
+    "generateImageMetadata", "generateSitemaps", "revalidate", "dynamic", "dynamicParams", "fetchCache",
+    "runtime", "preferredRegion", "maxDuration", "alt", "size", "contentType", "config", "middleware",
+    "register", "onRequestError", "getServerSideProps", "getStaticProps", "getStaticPaths",
+    "reportWebVitals", "load", "actions", "prerender", "ssr", "csr", "trailingSlash", "entries", "match",
+    "handle", "handleFetch", "handleError", "reroute", "transport", "loader", "action", "meta", "links",
+    "headers", "ErrorBoundary", "HydrateFallback", "Layout", "shouldRevalidate", "clientLoader",
+    "clientAction", "onRequest", "partial"}
+# Packages a declared framework needs beside it without an import in the application.
+FRAMEWORK_PEERS = {"next": ("react", "react-dom"), "@remix-run/react": ("react", "react-dom"),
+                   "gatsby": ("react", "react-dom")}
+JSX_IMPORT_SOURCE = re.compile(r"[\"']jsxImportSource[\"']\s*:\s*[\"']([^\"']+)[\"']")
+JSX_PRAGMA = re.compile(r"@jsxImportSource\s+(\S+)")
 
 PY_IMPORT = re.compile(r"^[^\S\r\n]*import\s+([\w.]+(?:\s+as\s+\w+)?(?:\s*,\s*[\w.]+(?:\s+as\s+\w+)?)*)", re.M)
 PY_FROM = re.compile(r"^[^\S\r\n]*from\s+(\.*)([\w.]*)\s+import\s+(\((?:#[^\n]*(?:\n|$)|[^)#])*\)|[^\n#]+)", re.M)
@@ -1181,6 +1214,48 @@ def package_sections(text):
             for key, section in value.items() if isinstance(section, dict)}
 
 
+def declared_packages(text):
+    pkg = package_sections(text)
+    return {dep for section in ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies")
+            for dep in pkg.get(section, {})}
+
+
+def framework_loaded(texts, code_files):
+    """Source files a declared framework loads by their location below its package.json."""
+    roots = []
+    for rel, text in texts.items():
+        if Path(rel).name == "package.json":
+            declared = declared_packages(text)
+            base = Path(rel).parent.as_posix()
+            roots.extend(("" if base == "." else base + "/", pattern)
+                         for names, pattern in FRAMEWORK_FILES if declared.intersection(names))
+    return {rel for rel in code_files for base, pattern in roots
+            if rel.startswith(base) and pattern.search(rel[len(base):])}
+
+
+def jsx_runtime_imports(texts, code_files):
+    """Packages JSX files import implicitly: the automatic runtime needs no import of react.
+    A file's @jsxImportSource pragma wins, then the nearest tsconfig/jsconfig, then react."""
+    sources = {}
+    for rel, text in texts.items():
+        if re.fullmatch(r"(?:ts|js)config(?:\.[\w-]+)?\.json", Path(rel).name):
+            found = JSX_IMPORT_SOURCE.search(text)
+            if found:
+                base = Path(rel).parent.as_posix()
+                sources.setdefault("" if base == "." else base, found.group(1))
+    counts = Counter()
+    for rel in code_files:
+        if suffix(rel) not in (".jsx", ".tsx"):
+            continue
+        pragma = JSX_PRAGMA.search(texts[rel])
+        parent = Path(rel).parent
+        ancestors = ["" if a.as_posix() == "." else a.as_posix() for a in (parent, *parent.parents)]
+        source = pragma.group(1) if pragma else next((sources[d] for d in ancestors if d in sources), "react")
+        if js_package(source):
+            counts[js_package(source)] += 1
+    return counts
+
+
 DEPENDENCY_SECTIONS = ("dependencies", "devDependencies", "optionalDependencies", "peerDependencies",
                         "bundleDependencies", "bundledDependencies", "overrides", "resolutions")
 
@@ -1539,6 +1614,7 @@ def inventory(root, units=None, today=None):
         return bool(named_in.get(Path(rel).name, set()) - {rel})
 
     rows = {}
+    framework_files = framework_loaded(texts, code_files)
 
     # Symbols.
     defs = defaultdict(list)
@@ -1569,6 +1645,8 @@ def inventory(root, units=None, today=None):
             name = next(g for g in m.groups() if g)
             if name in ENTRY_SYMBOLS or name.startswith("__"):
                 continue
+            if rel in framework_files and name in FRAMEWORK_EXPORTS and m.group(0).startswith("export"):
+                continue  # The framework reads it from the file: export const metadata, export function GET.
             line = line_of(text, m.start())
             if python_defs is not None and line not in python_defs:
                 continue  # A definition-shaped line in a docstring is not executable code.
@@ -1712,10 +1790,13 @@ def inventory(root, units=None, today=None):
         elif ext in RS_EXT:
             for m in RS_USE.finditer(text):
                 rs_crates[m.group(1) or m.group(2)] += 1
+    js_packages.update(jsx_runtime_imports(texts, code_files))
     orphans = []
     for rel in sorted(code_files):
         if suffix(rel) not in PY_EXT | JS_EXT or is_test(rel) or Path(rel).stem in ENTRY_STEMS:
             continue
+        if rel in framework_files:
+            continue  # Loaded by its location: app/about/page.tsx, src/routes/+page.ts.
         if re.search(r"\.config\.\w+$|\.d\.(?:ts|mts|cts)$", rel) or named_elsewhere(rel):
             continue
         importers = inbound.get(rel, set()) - {rel}
@@ -1746,11 +1827,14 @@ def inventory(root, units=None, today=None):
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
             haystack = scripts + "\n" + other_tools
             config = package_config_strings(text) if pkg else set()
+            # next imports react and react-dom itself; the application need not.
+            names_here = declared_packages(text)
+            peers = {peer for framework, needs in FRAMEWORK_PEERS.items() if framework in names_here for peer in needs}
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
                     loc = f"{rel}:{key_lines.get((section, dep), 1)}"
                     configured = sum(v == dep or v.startswith(dep + "/") for v in config)
-                    deps.append((dep, section, loc, js_packages[dep],
+                    deps.append((dep, section, loc, js_packages[dep] + (dep in peers),
                                  mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack) + configured))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
             ecosystem = "python"

@@ -4,7 +4,7 @@
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
 Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
-report.html and report.pdf (and mockups.html exactly when an included finding carries a mockup),
+report.html and report.pdf (and mockups.html exactly when a Valid or Likely finding carries a mockup),
 plus optional reserved .ux-scan-render-generation metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
@@ -24,7 +24,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import mockups  # noqa: E402
-from findings import FAMILIES, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
+from findings import FAMILIES, FAMILY_NAME, RECORDS_LOCK, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from render import (FLOWS_STAMP, OUTPUT_GENERATION, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP,  # noqa: E402
                     PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp)
 
@@ -103,6 +103,12 @@ def problems(out, no_pdf=False, allow=()):
     if OUTPUT_LOCK in found:
         yield locked_problem(out)
         return
+    if RECORDS_LOCK in found:
+        # A merge, flows or renumber may still be rewriting the records the pages were made from.
+        yield (f"{out}: records are locked; finish the active findings.py merge, flows or renumber, then rerender. "
+               "If a previous run was interrupted, verify that no findings.py process uses this directory, "
+               f"then remove the empty lock with 'rmdir {shlex.quote(str(out.absolute() / RECORDS_LOCK))}'")
+        return
     expected = set(REQUIRED) | ({"report.pdf"} if not no_pdf else set())
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(out))}"
                 f" --lang {rendered_lang(out)} --repo <repo>"
@@ -155,7 +161,7 @@ def problems(out, no_pdf=False, allow=()):
     if data is not None and mockups.PAGE not in expected:
         forbidden.add(mockups.PAGE)
         if mockups.PAGE in found:
-            yield f"{mockups.PAGE}: no included finding has a mockup; run {rerender}, which removes it"
+            yield f"{mockups.PAGE}: no Valid or Likely finding has a mockup; run {rerender}, which removes it"
     for name in sorted(found - expected - set(allow) - forbidden - unjudged - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")
@@ -167,7 +173,7 @@ def problems(out, no_pdf=False, allow=()):
         recorded = set()
         for perspective in data.get("perspectives", []):
             name, result = perspective["name"], perspective.get("result", "").strip()
-            family = re.match(r"^(%s)(?=\W|$)" % "|".join(FAMILIES), name.strip())
+            family = FAMILY_NAME.match(name.strip())
             if not family:
                 yield f"perspectives: {name!r} must start with a family token such as 'AX Accessibility'"
                 continue
@@ -176,9 +182,9 @@ def problems(out, no_pdf=False, allow=()):
                 continue
             recorded.add(family[1])
             na = NOT_APPLICABLE.match(result)
-            # Punctuation alone, in either script, is not a reason.
+            # Punctuation alone, in either script, is not a reason, in the result or the note.
             if (na and not re.sub(r"[\W_]", "", result[na.end():])
-                    and not perspective.get("note", "").strip()):
+                    and not re.sub(r"[\W_]", "", perspective.get("note", ""))):
                 yield f"perspectives: {name!r} is N/A without a reason in result or note"
         missing = [f for f in FAMILIES if f not in recorded]
         if missing:

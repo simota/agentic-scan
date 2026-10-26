@@ -7,8 +7,9 @@
     python3 findings.py renumber <out>/findings.json
 
 merge updates findings by id, appends new lines to checked_ok, limitations,
-decisions and next_steps (a fragment's "remove" deletes exact lines), and
-replaces perspectives by name. flows adds or replaces flows by id and replaces
+decisions and next_steps (a fragment's "remove" deletes exact lines, or
+perspectives entries by name), replaces perspectives by name, and drops an
+optional finding field sent as null. flows adds or replaces flows by id and replaces
 the other top-level keys (app, viewports, locales, tokens). Both check the
 result before replacing anything, then write it atomically; a refused fragment
 changes nothing. merge accepts findings in any order; renumber then numbers
@@ -53,6 +54,8 @@ META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewpo
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
                 "validation", "references", "mockup")
+REQUIRED_FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "flow_ref", "screen",
+                         "criterion", "location", "validation")
 MOCKUP_KEYS = ("title", "before", "after", "states", "viewport", "note", "label", "alternatives")
 ALTERNATIVE_KEYS = ("label", "after", "states", "note")
 STATE_KEYS = ("label", "before", "after", "note")
@@ -70,6 +73,8 @@ REFERENCE_KEYS = ("type", "title", "url")
 HUNT_STEPS = {"IA": 4, "LG": 5, "RS": 5, "VH": 4, "CC": 4, "ST": 4, "FM": 5,
               "FB": 5, "CP": 4, "AX": 6, "MO": 3, "IN": 4, "PP": 4}
 FAMILIES = tuple(HUNT_STEPS)
+# A perspectives entry name opens with its family token: "AX Accessibility".
+FAMILY_NAME = re.compile(r"^(%s)(?=\W|$)" % "|".join(FAMILIES))
 FINDING_ID = re.compile(r"^U-[0-9]{3}\Z")
 FLOW_ID = re.compile(r"^FL-[0-9]{2,3}\Z")
 PERSPECTIVE = re.compile(r"^(?:%s)\Z" % "|".join(f"{family}[1-{last}]" for family, last in HUNT_STEPS.items()))
@@ -401,7 +406,9 @@ def check_findings(data, flow_ids=None, ordered=True):
     for key in LIST_KEYS:
         if key in data:
             _strings(data[key], key, nonempty=False)
-    _perspectives(data.get("perspectives", []))
+    for name in _perspectives(data.get("perspectives", [])):
+        if not FAMILY_NAME.match(name.strip()):
+            raise RecordError(f"perspectives: {name!r} must start with a family token such as 'AX Accessibility'")
     findings = data.get("findings")
     if not isinstance(findings, list):
         raise RecordError("findings: expected a list")
@@ -439,7 +446,8 @@ def check_findings(data, flow_ids=None, ordered=True):
             raise RecordError(f"{where}.flow_ref: {ref} is not a flow in flows.json")
         location = _location(_str(f, "location", where, required=True), f"{where}.location")
         if "occurrences" in f and not f["occurrences"]:
-            raise RecordError(f"{where}.occurrences: omit it or list every path:line the fix covers")
+            raise RecordError(f"{where}.occurrences: omit it (\"occurrences\": null in a fragment removes it) "
+                              "or list every path:line the fix covers")
         for loc in _strings(f.get("occurrences", [location]), f"{where}.occurrences"):
             _location(loc, f"{where}.occurrences")
         validation = f.get("validation")
@@ -1313,9 +1321,14 @@ def loads_json(text, where="JSON"):
         raise RecordError(f"{where}: {e}") from None
 
 
-def load_json(path):
+def load_json(path, record=False):
+    """Parse the JSON file at path. A record (findings.json, flows.json) must be a regular file,
+    not a symlink, as render.py and contract_check.py require; a fragment may be either."""
     try:
         path = Path(path)
+        if record:
+            from file_io import read_regular
+            return loads_json(read_regular(path).decode("utf-8"), str(path))
         if not path.is_file():
             raise RecordError(f"{path}: expected a regular JSON file")
         return loads_json(path.read_text(encoding="utf-8"), str(path))
@@ -1341,7 +1354,7 @@ def flow_ids_beside(findings_path):
     flows = Path(findings_path).with_name("flows.json")
     if not flows.exists() and not flows.is_symlink():
         return None
-    return flow_ids(check_flows(load_json(flows)))
+    return flow_ids(check_flows(load_json(flows, record=True)))
 
 
 def merge_flows(base, fragment):
@@ -1390,9 +1403,17 @@ def merge(base, fragment):
             out[key] = list(perspectives.values())
         elif key not in ("findings", "remove"):
             out[key] = value
-    remove = fragment.get("remove", {})
-    if not isinstance(remove, dict) or not all(k in LIST_KEYS and isinstance(v, list) for k, v in remove.items()):
-        raise RecordError(f"remove: expected {{section: [exact lines]}} for {', '.join(LIST_KEYS)}")
+    remove = dict(fragment.get("remove", {})) if isinstance(fragment.get("remove", {}), dict) else None
+    if remove is None or not all(k in (*LIST_KEYS, "perspectives") and isinstance(v, list) for k, v in remove.items()):
+        raise RecordError(f"remove: expected {{section: [exact lines]}} for {', '.join(LIST_KEYS)}, "
+                          "or {\"perspectives\": [names]}")
+    names = remove.pop("perspectives", [])
+    for name in _strings(names, "remove.perspectives", nonempty=False):
+        if name not in perspectives:
+            raise RecordError(f"remove.perspectives: no such entry {name!r}")
+        del perspectives[name]
+    if names:
+        out["perspectives"] = list(perspectives.values())
     for key, lines in remove.items():
         _strings(lines, f"remove.{key}", nonempty=False)
         missing = [x for x in lines if x not in out.get(key, [])]
@@ -1401,9 +1422,9 @@ def merge(base, fragment):
         out[key] = [x for x in out.get(key, []) if x not in lines]
     for f in _indexed(fragment.get("findings", []), "fragment.findings", "id", FINDING_ID).values():
         merged = {**by_id.get(f["id"], {}), **f}
-        # "mockup": null removes a mockup; other fields are emptied with "" or replaced.
-        if "mockup" in f and f["mockup"] is None:
-            del merged["mockup"]
+        # null removes an optional field such as mockup or occurrences; a required one stays null and is refused.
+        for key in [k for k, v in f.items() if v is None and k not in REQUIRED_FINDING_KEYS]:
+            del merged[key]
         by_id[f["id"]] = merged
     out["findings"] = sorted(by_id.values(), key=lambda f: f["id"])
     return out
@@ -1448,7 +1469,7 @@ def main(argv=None):
     cmd, target, fragments = argv[0], Path(argv[1]), argv[2:]
     try:
         if cmd == "check":
-            check_findings(load_json(target), flow_ids_beside(target))
+            check_findings(load_json(target, record=True), flow_ids_beside(target))
             print(f"ok {target}")
             return 0
         if not target.parent.is_dir():
@@ -1466,19 +1487,19 @@ def main(argv=None):
 def _update(cmd, target, fragments):
     """Run merge, flows or renumber on target while the records lock is held."""
     if cmd == "flows":
-        result = load_json(target) if target.exists() else {}
+        result = load_json(target, record=True) if target.exists() else {}
         for fragment in fragments:
             result = merge_flows(result, load_json(fragment))
             check_flows(result)
         beside = target.with_name("findings.json")
         if beside.exists() or beside.is_symlink():  # Every flow_ref in the record must stay a flow.
-            check_findings(load_json(beside), flow_ids(result), ordered=False)
+            check_findings(load_json(beside, record=True), flow_ids(result), ordered=False)
         write_output(target, dump(result))
         print(f"wrote {target} ({len(result['flows'])} flows)")
         return 0
     if cmd == "renumber":
         ids = flow_ids_beside(target)
-        data = check_findings(load_json(target), ids, ordered=False)
+        data = check_findings(load_json(target, record=True), ids, ordered=False)
         mapping = renumber_map(data["findings"])
         moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)
         normalized = check_findings(renumber(data, mapping), ids)
@@ -1488,7 +1509,7 @@ def _update(cmd, target, fragments):
         write_output(target, dump(normalized))
         print(f"renumbered {target}: {moved or 'restored findings array order'}")
         return 0
-    data = load_json(target) if target.exists() else {"schema_version": 1, "findings": []}
+    data = load_json(target, record=True) if target.exists() else {"schema_version": 1, "findings": []}
     ids = flow_ids_beside(target)
     for fragment in fragments:
         data = merge(data, load_json(fragment))

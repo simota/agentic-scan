@@ -76,11 +76,13 @@ covers uncommitted changes: say so in `limitations` (which files, or how many).
 | `references` | Optional list of objects; `url` must be a valid http(s) URL with a host and no whitespace, control or invisible format characters (such as zero-width spaces and bidirectional overrides; the joiners U+200C and U+200D that Persian and Indic words use are allowed outside the host), backslashes, raw angle brackets or double quotes. Host validation also checks percent-decoded and Unicode-normalized forms using the renderer's URL rules; optional `type` and `title` are strings |
 
 `merge` replaces a finding with the same id field by field (a list field such
-as `occurrences` replaces whole; `"mockup": null` removes the mockup) and adds
+as `occurrences` replaces whole; `null` removes an optional field such as `mockup`) and adds
 new ids. It replaces `meta` and `summary` when a fragment carries them, appends
 new lines to `checked_ok`,
 `limitations`, `decisions` and `next_steps`, and replaces `perspectives` entries
-by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`.
+by `name`. To drop a line, send `{"remove": {"limitations": ["exact line"]}}`; to drop a
+perspectives entry, `{"remove": {"perspectives": ["exact name"]}}`. An optional finding
+field sent as `null` is removed (`"occurrences": null`); a required one cannot be.
 A fragment may carry only the record's documented sections and `remove`; a
 misspelled section is refused rather than kept where nothing reads it. The
 same holds inside `meta`, each finding, its `validation`, each reference and each perspective:

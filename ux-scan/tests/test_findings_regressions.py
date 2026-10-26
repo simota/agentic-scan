@@ -321,6 +321,63 @@ class TransactionRegressions(unittest.TestCase):
         findings.check_findings(result)
         self.assertEqual(result["limitations"], [])
 
+    def test_perspective_names_need_a_family_token_and_can_be_removed_by_name(self):
+        data = copy.deepcopy(SAMPLE)
+        bad = findings.merge(data, {"perspectives": [{"name": "Accessibility (AX)", "result": "applied"}]})
+        with self.assertRaisesRegex(findings.RecordError, "family token"):
+            findings.check_findings(bad)
+        # A record that already holds the bad entry is repaired by a merge, not by hand.
+        fixed = findings.merge(bad, {"remove": {"perspectives": ["Accessibility (AX)"]}})
+        findings.check_findings(fixed)
+        self.assertEqual(fixed["perspectives"], data["perspectives"])
+        with self.assertRaisesRegex(findings.RecordError, "remove.perspectives: no such entry"):
+            findings.merge(data, {"remove": {"perspectives": ["Accessibility (AX)"]}})
+        with tempfile.TemporaryDirectory() as tmp:
+            target, fragment = Path(tmp) / "findings.json", Path(tmp) / "fragment.json"
+            target.write_text(json.dumps(data), encoding="utf-8")
+            fragment.write_text(json.dumps({"perspectives": [{"name": "Accessibility", "result": "applied"}]}),
+                                encoding="utf-8")
+            before = target.read_bytes()
+            self.assert_refused(run("merge", target, fragment))
+            self.assertEqual(target.read_bytes(), before)
+
+    def test_null_removes_an_optional_finding_field_but_not_a_required_one(self):
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["occurrences"] = [data["findings"][0]["location"]]
+        data["findings"][0]["viewport"] = "360x640"
+        result = findings.merge(data, {"findings": [{"id": "U-001", "occurrences": None, "viewport": None}]})
+        findings.check_findings(result)
+        self.assertNotIn("occurrences", result["findings"][0])
+        self.assertNotIn("viewport", result["findings"][0])
+        with self.assertRaisesRegex(findings.RecordError, "null in a fragment removes it"):
+            findings.check_findings(findings.merge(data, {"findings": [{"id": "U-001", "occurrences": []}]}))
+        with self.assertRaises(findings.RecordError):
+            findings.check_findings(findings.merge(data, {"findings": [{"id": "U-001", "location": None}]}))
+
+    def test_check_and_merge_refuse_symlinked_records_as_render_does(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            real, linked = Path(tmp) / "real", Path(tmp) / "linked"
+            real.mkdir()
+            linked.mkdir()
+            (real / "flows.json").write_text(json.dumps(FLOWS), encoding="utf-8")
+            (linked / "findings.json").write_text(json.dumps(SAMPLE), encoding="utf-8")
+            (linked / "flows.json").symlink_to(real / "flows.json")
+            fragment = Path(tmp) / "fragment.json"
+            fragment.write_text(json.dumps({"summary": "x"}), encoding="utf-8")
+            for args in (("check", linked / "findings.json"), ("merge", linked / "findings.json", fragment)):
+                with self.subTest(command=args[0]):
+                    result = run(*args)
+                    self.assertEqual(result.returncode, 2, result.stdout)
+                    self.assertIn("regular file", result.stderr)
+            (real / "findings.json").write_text(json.dumps(SAMPLE), encoding="utf-8")
+            (linked / "flows.json").unlink()
+            (linked / "flows.json").write_text(json.dumps(FLOWS), encoding="utf-8")
+            (linked / "findings.json").unlink()
+            (linked / "findings.json").symlink_to(real / "findings.json")
+            result = run("check", linked / "findings.json")
+            self.assertEqual(result.returncode, 2, result.stdout)
+            self.assertIn("regular file", result.stderr)
+
     def test_renumber_reorders_the_array_even_when_no_id_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             target = Path(tmp) / "findings.json"

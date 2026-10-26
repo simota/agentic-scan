@@ -105,11 +105,18 @@ class CheckRuleTests(unittest.TestCase):
             "P-002.category: Database access is recorded N/A, but this finding came from it; "
             "record the perspective applied"])
         statuses["Database access"]["status"] = "not checked"
+        self.assertEqual(contract_problems(doc)[0],
+                         "P-001.category: Database access is recorded not checked, but this "
+                         "finding came from it; record the perspective applied")
         self.assertEqual(len(contract_problems(doc)), 2)
         # An excluded finding may sit under a perspective that does not apply.
         excluded = {"verdict": "NotApplicable", "method": "static", "evidence": "x.py:1"}
         doc["findings"] = [finding(validation=excluded)]
         self.assertEqual(contract_problems(doc), [])
+        # An unrecorded perspective is reported once, not once per finding as well.
+        doc["findings"] = [finding()]
+        doc["perspectives"].remove(statuses["Database access"])
+        self.assertEqual(contract_problems(doc), ["perspective not recorded: Database access"])
 
     def test_required_lists_and_unique_ids(self):
         doc = complete_doc()

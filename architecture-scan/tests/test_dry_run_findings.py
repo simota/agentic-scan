@@ -1,6 +1,7 @@
 """Defects found by running the skill end to end on a small app."""
 import io
 import json
+import re
 from pathlib import Path
 import shutil
 import tempfile
@@ -82,8 +83,9 @@ class RenderReadabilityTests(unittest.TestCase):
             with self.subTest(lang=lang):
                 self.assertIn(f"| R-01 · OWN | one writer ({marker}) |",
                               render.render_markdown(doc, lang))
-                self.assertIn(f"<td class='nowrap'>R-01 · OWN</td><td>one writer ({marker})</td>",
-                              render.render_html(doc, lang))
+                self.assertRegex(render.render_html(doc, lang),
+                                 f"<td class='nowrap'[^>]*>R-01 · OWN</td><td[^>]*>"
+                                 f"one writer \\({re.escape(marker)}\\)</td>")
 
     def test_japanese_labels_separate_source_evidence_and_method(self):
         t = render.LABELS["ja"]

@@ -53,7 +53,10 @@ VENV_MARKERS = ("pyvenv.cfg", "bin/activate", "Scripts/activate", "conda-meta")
 SKIP_FILES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "Cargo.lock", "poetry.lock", "Gemfile.lock",
               "go.sum", "composer.lock", "Podfile.lock", "pubspec.lock", "bun.lockb", "bun.lock", "uv.lock",
               "npm-shrinkwrap.json", "Pipfile.lock"}
-SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:\.(?!example$|sample$|template$|dist$)[\w.-]+)?|.*\.(?:pem|key|p12|pfx|jks|"
+# Env files in every spelling render.py excludes (.envrc, .env-local, production.env),
+# except the declaration files ENV_DECL_FILE reads for variable names only.
+SECRET_FILE = re.compile(r"(?i)^(?:\.env(?:rc|[._-](?!(?:example|sample|template|dist)$)[^/]*)?|"
+                         r"(?!example\.env$).*\.env|.*\.(?:pem|key|p12|pfx|jks|"
                          r"keystore)|id_(?:[rd]sa|ecdsa|ed25519|xmss).*|\.netrc|\.npmrc|\.pypirc|"
                          r"\.htpasswd|\.pgpass|\.dockercfg|.*\.tfstate(?:\..*)?|.*\.kdbx)$")
 # Credential files known by their directory: the rest of .docker/ (a Dockerfile) is ordinary.
@@ -173,6 +176,11 @@ FLAG_FILE = re.compile(r"(?i)(?:^|/)(?:feature[-_]?)?(?:flags?|features|toggles|
 FLAG_DEF = re.compile(r"^(?:(?:export\s+)?(?:const|let|var)\s+|[^\S\r\n]*)[\"']?([A-Za-z][\w.-]*)[\"']?"
                       r"\s*(?::\s*boolean\s*)?[:=]\s*(true|false|True|False|on|off)\b", re.M)
 ENV_FLAG = re.compile(r"^(?:FEATURE|FF|ENABLE|FLAG)_[A-Z0-9_]+$")
+# A key that opens a block (new_checkout:, "new_checkout": {) or a TOML table ([flags.new_checkout]).
+FLAG_PARENT = re.compile(r"^[^\S\r\n]*(?:[\"']?([A-Za-z][\w.-]*)[\"']?[^\S\r\n]*[:=][^\S\r\n]*\{?|"
+                         r"\[+[\"']?([\w.-]+?)[\"']?\]+)[^\S\r\n]*(?:(?:#|//).*)?\r?$")
+# Fields of a nested flag definition: the flag is the key that encloses them.
+FLAG_FIELDS = {"enabled", "enable", "value", "default", "defaultvalue", "default_value", "on", "active", "state"}
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
     ("server", re.compile(r"\b(?:app|router|server|api|routes)\.(get|post|put|patch|delete|all|head|options)\(\s*"
@@ -182,6 +190,10 @@ ROUTE_DEFS = (
     ("client", re.compile(r"\b(path)\s*:\s*[\"'](/[^\"']*)[\"']")),
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
+# A Django re_path pattern: groups, classes, \d-style escapes and a bare . (each
+# with its quantifier) match a segment; other escapes are their literal character.
+REGEX_ROUTE_TOKEN = re.compile(r"(\\[dDwWsS]|\((?:\\.|[^()\\])*\)|\[(?:\\.|[^\]\\])*\]|\.)(?:[+*?]|\{[0-9,]*\})?"
+                               r"|\\(.)|(.)", re.S)
 # A rule may name several targets (clean distclean:); each is a target.
 # Directive lines (export CC ::= gcc, override X: y) and ::= assignments are not rules.
 MAKE_TARGET = re.compile(r"^(?!(?:export|unexport|override|private|undefine|vpath)[^\S\n])"
@@ -395,11 +407,11 @@ def read_file(path, root, *, root_fd=None, root_stat=None):
         return None, size
     if b"\0" in data:
         return None, size
-    try:
-        # A byte order mark (Windows editors) would hide a JSON or env file's first key.
-        text = data.decode("utf-8").removeprefix("\ufeff")
-    except UnicodeDecodeError:
-        return None, size
+    # Text in a legacy encoding (Latin-1, Shift_JIS) keeps its ASCII imports and
+    # names; dropping it would report what it uses as unused.
+    text = data.decode("utf-8", errors="replace")
+    # A byte order mark (Windows editors) would hide a JSON or env file's first key.
+    text = text.removeprefix("\ufeff")
     return (env_names_only(text) if ENV_DECL_FILE.match(path.name) else text), size
 
 
@@ -531,6 +543,36 @@ def line_breaks(text):
 
 def line_of(text, index):
     return bisect_left(line_breaks(text), index) + 1
+
+
+def flag_parents(text):
+    """The key enclosing each physical line (by indentation, or the TOML table), in one pass."""
+    parents, stack, table = [], [], None
+    for line in physical_lines(text):
+        stripped = line.lstrip(" \t")
+        indent = len(line) - len(stripped)
+        if stripped and not stripped.startswith(("#", "//")):
+            while stack and stack[-1][0] >= indent:
+                stack.pop()
+        parents.append(stack[-1][1] if stack else table if indent == 0 else None)
+        opener = FLAG_PARENT.match(line)
+        if opener and opener.group(2):
+            table, stack = opener.group(2).rpartition(".")[2], []
+        elif opener:
+            stack.append((indent, opener.group(1)))
+    return parents
+
+
+def flag_definitions(text):
+    """(name, value, offset) of each flag a flag file defines; enabled: true names its enclosing key."""
+    parents = None
+    for m in FLAG_DEF.finditer(text):
+        name, start = m.group(1), m.start(1)
+        if name.lower() in FLAG_FIELDS:
+            parents = flag_parents(text) if parents is None else parents
+            line = line_of(text, start) - 1
+            name = parents[line] if line < len(parents) and parents[line] else name
+        yield name, m.group(2).lower() in ("true", "on"), start
 
 
 def is_test(rel):
@@ -1600,22 +1642,30 @@ def inventory(root, units=None, today=None):
 
     # Dependencies.
     tool_text = "\n".join(t for r, t in texts.items() if TOOL_FILES.search(r))
+
+    def mentions_of(pattern, name, haystack):
+        # Most packages are never named in tool files: skip the regex scan when the name is absent.
+        return len(re.findall(pattern % re.escape(name), haystack)) if name in haystack else 0
+
     declared, unimported, dup_rows, platform_rows = [], [], [], []
     for rel, text in sorted(texts.items()):
         name = Path(rel).name
         deps = []
         ecosystem = None
+        # Built once per manifest: tool files other than this manifest name its packages.
+        other_tools = tool_text.replace(text, "") if name in ("package.json", "pyproject.toml") or re.match(
+            r"requirements[\w.-]*\.(?:txt|in)$", name) else ""
         if name == "package.json":
             ecosystem = "javascript"
             pkg = package_sections(text)
             key_lines = section_key_lines(text) if pkg else {}
             scripts = " ".join(v for v in pkg.get("scripts", {}).values() if isinstance(v, str))
+            haystack = scripts + "\n" + other_tools
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
                     loc = f"{rel}:{key_lines.get((section, dep), 1)}"
                     deps.append((dep, section, loc, js_packages[dep],
-                                 len(re.findall(r"(?<![\w@/-])%s(?![\w-])" % re.escape(dep.split("/")[-1]),
-                                                scripts + "\n" + tool_text.replace(text, "")))))
+                                 mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack)))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
             ecosystem = "python"
             parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
@@ -1624,7 +1674,7 @@ def inventory(root, units=None, today=None):
                 if re.search(r"[-.]", dep):
                     modules.add(re.sub(r"[-.]", ".", dep.lower()))
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
-                             len(re.findall(r"(?<![\w-])%s(?![\w-])" % re.escape(dep), tool_text.replace(text, "")))))
+                             mentions_of(r"(?<![\w-])%s(?![\w-])", dep, other_tools)))
         elif name == "go.mod":
             for dep, section, loc in parse_go_mod(rel, text):
                 deps.append((dep, section, loc, sum(n for p, n in go_imports.items() if p == dep or p.startswith(dep + "/")),
@@ -1688,10 +1738,10 @@ def inventory(root, units=None, today=None):
             secret_checks.extend((m.group(1), f"{rel}:{line_of(text, m.start())}") for m in FLAG_CHECK.finditer(text))
             continue
         if FLAG_FILE.search(rel):
-            for m in FLAG_DEF.finditer(text):
-                f = flags[m.group(1)]
-                f["definitions"].append(f"{rel}:{line_of(text, m.start(1))}")
-                f["values"].add(m.group(2).lower() in ("true", "on"))
+            for name, value, start in flag_definitions(text):
+                f = flags[name]
+                f["definitions"].append(f"{rel}:{line_of(text, start)}")
+                f["values"].add(value)
         for m in FLAG_CHECK.finditer(text):
             flags[m.group(1)]["checks"].append(f"{rel}:{line_of(text, m.start())}")
     for name, location in secret_checks:
@@ -1803,6 +1853,10 @@ def inventory(root, units=None, today=None):
         # joiner below holds a literal \$ for ${...} that must stay intact.
         route = row["route"].removeprefix("^")
         route = route[:-1] if route.endswith("$") and not route.endswith("\\$") else route
+        if row["method"] == "RE_PATH":
+            # An optional trailing slash (reports/?) is the same route either way.
+            route = "".join("<param>" if m.group(1) else m.group(2) or m.group(3)
+                            for m in REGEX_ROUTE_TOKEN.finditer(route.removesuffix("/?")))
         route = route if route.startswith("/") or row["kind"] == "client" else "/" + route
         parts = [re.escape(p) for p in PARAM.split(route)]
         # A bounded ${...} on one line keeps an unclosed one from rescanning the file.

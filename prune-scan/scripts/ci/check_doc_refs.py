@@ -6,32 +6,35 @@
 Checks backticked `reference/...` and `scripts/...` paths
 (resolved against the skill), backticked repository paths such as
 `skills/prune-scan/...`, `docs/...`, `examples/...` and `tests/...`, and
-relative Markdown links, in every tracked Markdown document.
+relative Markdown links, in every tracked Markdown document. A backticked
+command such as `scripts/render.py --lang ja` cites the path it starts with.
 """
 from pathlib import Path
 import re
 import sys
 
 REPO = Path(__file__).resolve().parents[2]
-SKILL = REPO / "skills" / "prune-scan"
-DOCS = sorted({*REPO.glob("*.md"), *REPO.glob("docs/*.md"), *SKILL.glob("*.md"),
-               *SKILL.glob("reference/*.md")})
-SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)`")
-REPO_REF = re.compile(r"`((?:skills/prune-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])`")
+# The path alone, or the first word of a command whose arguments follow it.
+ARGS = r"(?:\s[^`]*)?`"
+SKILL_REF = re.compile(r"`((?:reference|scripts)/[A-Za-z][A-Za-z0-9._/-]*)" + ARGS)
+REPO_REF = re.compile(r"`((?:skills/prune-scan|docs|examples|tests|scripts/ci)/[A-Za-z0-9._/-]*[A-Za-z0-9_-])" + ARGS)
 LINK = re.compile(r"\]\(([^)\s#]+)(?:#[^)]*)?\)")
 
 
-def problems():
-    for doc in DOCS:
+def problems(repo=REPO):
+    skill = repo / "skills" / "prune-scan"
+    docs = sorted({*repo.glob("*.md"), *repo.glob("docs/*.md"), *skill.glob("*.md"),
+                   *skill.glob("reference/*.md")})
+    for doc in docs:
         text = doc.read_text(encoding="utf-8")
-        rel = doc.relative_to(REPO)
+        rel = doc.relative_to(repo)
         for ref in sorted(set(SKILL_REF.findall(text))):
             # A bare scripts/ci/... path is a repository path, not a skill path.
-            base = REPO if ref.startswith("scripts/ci/") else SKILL
+            base = repo if ref.startswith("scripts/ci/") else skill
             if not (base / ref.rstrip("/")).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for ref in sorted(set(REPO_REF.findall(text))):
-            if "*" not in ref and not (REPO / ref).exists():
+            if "*" not in ref and not (repo / ref).exists():
                 yield f"{rel} cites {ref}, which does not exist"
         for target in sorted(set(LINK.findall(text))):
             if re.match(r"[a-z][a-z0-9+.-]*:", target) or "{{" in target:

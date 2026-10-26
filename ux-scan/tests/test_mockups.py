@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import json
+import shutil
 import sys
 import tempfile
 import unittest
@@ -58,6 +59,7 @@ class MockupTests(unittest.TestCase):
     def save(self):
         (self.out / "findings.json").write_text(json.dumps(self.data, ensure_ascii=False), encoding="utf-8")
         (self.out / "flows.json").write_text(json.dumps(FLOWS), encoding="utf-8")
+        shutil.copytree(ROOT / "examples" / "evidence", self.out / "evidence", dirs_exist_ok=True)
         (self.out / "inventory.json").write_text(json.dumps({
             "tool": "inventory.py", "flows_sha256": findings.canonical_digest(FLOWS)}), encoding="utf-8")
 

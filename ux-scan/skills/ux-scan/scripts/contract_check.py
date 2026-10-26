@@ -4,11 +4,14 @@
     python3 contract_check.py OUT [--no-pdf] [--allow NAME]...
 
 Passes when OUT holds findings.json, flows.json, inventory.json, dashboard.html,
-report.html and report.pdf (and mockups.html exactly when a Valid or Likely finding carries a mockup),
+report.html and report.pdf (and mockups.html exactly when a Valid or Likely finding carries a mockup;
+evidence.html and the evidence/ directory exactly when findings carry evidence),
 plus optional reserved .ux-scan-render-generation metadata (no PDF with --no-pdf, which then
 requires the "report.pdf not produced" limitation); the record and flows are
 valid; every perspective family is recorded in perspectives; no finding is
-left Unverified; and every complete page matches the current findings, flows and PDF.
+left Unverified; every included finding carries evidence of the defect (stage "before"), and every Fixed one of
+its fix (stage "after"); evidence/ holds exactly the referenced files; and every complete
+page matches the current findings, flows, evidence files and PDF.
 An allowed en or ja directory is a second-language render: it must hold exactly
 its pages (and its report.pdf unless --no-pdf) in that language, rendered from
 the same findings and flows.
@@ -23,13 +26,14 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import evidence  # noqa: E402
 import mockups  # noqa: E402
-from findings import FAMILIES, FAMILY_NAME, RECORDS_LOCK, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
+from findings import EXCLUDED, FAMILIES, FAMILY_NAME, RECORDS_LOCK, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from render import (FLOWS_STAMP, OUTPUT_GENERATION, OUTPUT_LOCK, PAGE_KIND_STAMP, PAGE_STAMP,  # noqa: E402
                     PDF_STAMP, RENDER_STAMP, STAMP, page_stamp, pdf_stamp, read_regular, source_stamp)
 
 REQUIRED = ("findings.json", "flows.json", "inventory.json", "dashboard.html", "report.html")
-PAGES = ("dashboard.html", "report.html", mockups.PAGE)
+PAGES = ("dashboard.html", "report.html", mockups.PAGE, evidence.PAGE)
 NO_PDF = "report.pdf not produced"
 LANGUAGES = ("en", "ja")
 # "N/A" in its common spellings, in English and Japanese, with an optional copula
@@ -114,7 +118,7 @@ def problems(out, no_pdf=False, allow=()):
                 + (" --no-pdf" if no_pdf else ""))
     sources = {}
     read_errors = {}
-    for name in sorted(found & (expected | {mockups.PAGE})):
+    for name in sorted(found & (expected | {mockups.PAGE, evidence.PAGE})):
         try:
             sources[name] = read_regular(out / name)
         except (OSError, ValueError) as e:
@@ -142,11 +146,31 @@ def problems(out, no_pdf=False, allow=()):
         except (ValueError, RecordError) as e:
             record_problems.append(f"record: {e}")
     # The record decides whether the mockup page belongs; an invalid record leaves it unjudged.
-    unjudged = {mockups.PAGE} if data is None else set()
+    unjudged = {mockups.PAGE, evidence.PAGE, evidence.DIRECTORY} if data is None else set()
     if data is not None and mockups.with_mockups(data):
         expected.add(mockups.PAGE)
     elif mockups.PAGE in sources:
         del sources[mockups.PAGE]
+    files = {}
+    if data is not None and evidence.with_evidence(data):
+        expected.add(evidence.PAGE)
+        try:
+            files = evidence.load(out, data)
+        except (OSError, ValueError) as e:
+            record_problems.append(f"evidence: {e}")
+            unjudged.add(evidence.DIRECTORY)
+        else:
+            found.discard(evidence.DIRECTORY)
+            try:
+                extra = sorted(p.name for p in (out / evidence.DIRECTORY).iterdir())
+            except OSError as e:
+                extra = []
+                record_problems.append(f"{evidence.DIRECTORY}: cannot list: {e.strerror or e}")
+            for name in extra:
+                if name not in files:
+                    record_problems.append(f"{evidence.DIRECTORY}/{name}: no finding cites it; cite it or remove it")
+    elif evidence.PAGE in sources:
+        del sources[evidence.PAGE]
     for name in sorted(expected - found):
         hint = {"findings.json": "merge fragments with findings.py merge",
                 "flows.json": "write the flows with findings.py flows",
@@ -161,6 +185,10 @@ def problems(out, no_pdf=False, allow=()):
         forbidden.add(mockups.PAGE)
         if mockups.PAGE in found:
             yield f"{mockups.PAGE}: no Valid or Likely finding has a mockup; run {rerender}, which removes it"
+    if data is not None and evidence.PAGE not in expected:
+        forbidden.add(evidence.PAGE)
+        if evidence.PAGE in found:
+            yield f"{evidence.PAGE}: no finding carries evidence; run {rerender}, which removes it"
     for name in sorted(found - expected - set(allow) - forbidden - unjudged - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")
@@ -189,6 +217,16 @@ def problems(out, no_pdf=False, allow=()):
         if missing:
             yield (f"perspectives: no entry for {', '.join(missing)}; record each family as applied, "
                    "N/A with the reason, or not checked")
+        bare = [f["id"] for f in data["findings"] if f["validation"]["verdict"] not in EXCLUDED
+                and not any(evidence.stage(i) == "before" for i in evidence.items(f))]
+        if bare:
+            yield (f"findings: {', '.join(bare)} carry no evidence of the defect as found (stage \"before\"); "
+                   f"save a screenshot, video or log in {evidence.DIRECTORY}/ and cite it in the finding's "
+                   "evidence (reference/evidence.md)")
+        unproven = [f["id"] for f in data["findings"] if f["status"] == "Fixed"
+                    and not any(evidence.stage(i) == "after" for i in evidence.items(f))]
+        if unproven:
+            yield f"findings: {', '.join(unproven)} are Fixed without evidence of the fix (stage \"after\")"
         unverified = [f["id"] for f in data["findings"] if f["validation"]["verdict"] == "Unverified"]
         if unverified:
             yield f"findings: {', '.join(unverified)} still Unverified; settle the verdict in VERIFY"
@@ -217,6 +255,8 @@ def problems(out, no_pdf=False, allow=()):
     expected_stamps = {STAMP: source_stamp(sources["findings.json"])} if "findings.json" in sources else {}
     if flows is not None:
         expected_stamps[FLOWS_STAMP] = flows_digest
+    if data is not None and (files or not evidence.with_evidence(data)):
+        expected_stamps[evidence.STAMP] = evidence.digest(files)
     if "report.pdf" in sources:
         try:
             expected_stamps[PDF_STAMP] = pdf_stamp(sources["report.pdf"])
@@ -227,7 +267,8 @@ def problems(out, no_pdf=False, allow=()):
         # A requested second language must exist; it is not merely tolerated.
         for name in sorted(set(allow) & set(LANGUAGES)):
             yield from translation_problems(out, name, expected_stamps, no_pdf,
-                                            None if data is None else mockups.PAGE in expected)
+                                            None if data is None else mockups.PAGE in expected,
+                                            None if data is None else evidence.PAGE in expected)
     yield from render_race_problems(out, generation)
     if (out / RECORDS_LOCK).exists():
         yield from records_locked_problem(out)
@@ -276,10 +317,10 @@ def render_race_problems(directory, generation, prefix=""):
                    "run contract_check.py again after rendering finishes")
 
 
-def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups):
+def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups, with_evidence=False):
     """A second-language render in OUT/<lang> must come from the current record and flows.
 
-    with_mockups is None when the record is invalid: the mockup page is then left unjudged.
+    with_mockups and with_evidence are None when the record is invalid: those pages are then left unjudged.
     """
     directory = out / lang
     rerender = (f"render.py {shlex.quote(str(out / 'findings.json'))} --out {shlex.quote(str(directory))}"
@@ -301,10 +342,11 @@ def translation_problems(out, lang, parent_stamps, no_pdf, with_mockups):
         yield f"{lang}: the main pages are already in {lang}; a second-language render needs the other language"
         return
     expected = ({"dashboard.html", "report.html"} | (set() if no_pdf else {"report.pdf"})
-                | ({mockups.PAGE} if with_mockups else set()))
+                | ({mockups.PAGE} if with_mockups else set()) | ({evidence.PAGE} if with_evidence else set()))
     for name in sorted(expected - found):
         yield f"{lang}/{name}: missing; run {rerender}"
-    unjudged = {mockups.PAGE} if with_mockups is None else set()
+    unjudged = (({mockups.PAGE} if with_mockups is None else set())
+                | ({evidence.PAGE} if with_evidence is None else set()))
     for name in sorted(found - expected - unjudged - {OUTPUT_GENERATION}):
         yield f"{lang}/{name}: not part of a second-language render"
     sources = {}

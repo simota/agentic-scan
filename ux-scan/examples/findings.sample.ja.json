@@ -39,7 +39,15 @@
         "verdict": "Valid",
         "evidence": "AddTaskModal.tsx:5 と :10 はタイトルをローカルの状態に持つだけで、:11 は閉じるだけ。src/api.ts は open と remove しか公開していない。",
         "intent_checked": "ほかにタスクを作成するコードはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-001-source.log",
+          "stage": "before",
+          "caption": "src/components/AddTaskModal.tsx:11 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-002",
@@ -64,7 +72,15 @@
         "verdict": "Valid",
         "evidence": "submit() はフォームの onSubmit（SignupForm.tsx:25）で、OK 以外の応答ごとにリセットが実行される。",
         "intent_checked": "リセットを求めるコメントや設定はない。パスワードは安全上消してもよいが、メールアドレスを消す理由はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-002-source.log",
+          "stage": "before",
+          "caption": "src/components/SignupForm.tsx:18 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-003",
@@ -92,6 +108,14 @@
           "title": "WCAG 2.2 達成基準 2.1.1 の解説",
           "url": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html"
         }
+      ],
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-003-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:15 の該当行（レビュー対象のチェックアウトから取得）"
+        }
       ]
     },
     {
@@ -113,7 +137,15 @@
         "verdict": "Valid",
         "evidence": "inventory icon_buttons。lucide-react のアイコンは title のない aria-hidden の SVG を描画する。",
         "intent_checked": "ボタン内に視覚的に隠したテキストやツールチップはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-004-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:16 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-005",
@@ -134,7 +166,15 @@
         "verdict": "Valid",
         "evidence": "inventory destructive_actions。api.remove（src/api.ts:3）が直接 DELETE を送り、ファイル内に確認・ダイアログ・取り消しがない。",
         "intent_checked": "API モジュールにゴミ箱やアーカイブの段階はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-005-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:16 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-006",
@@ -170,7 +210,15 @@
         "verdict": "Valid",
         "evidence": "inventory fixed_widths 480px（最小ビューポート 360 より広い）。唯一のメディアクエリ（app.css:18）は .card にしか効かない。",
         "intent_checked": "設計メモは 360x640 を対応幅としている。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-006-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:6 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-007",
@@ -191,7 +239,15 @@
         "verdict": "Valid",
         "evidence": "inventory viewport_meta blocks_zoom: true。index.html は唯一のエントリページ。",
         "intent_checked": "理由を説明するコメントはない。iOS の入力時ズームを防ぐなら、代わりに入力欄を 16px 以上にする。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-007-source.log",
+          "stage": "before",
+          "caption": "index.html:5 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-008",
@@ -212,7 +268,15 @@
         "verdict": "Valid",
         "evidence": "AddTaskModal.tsx:7-12 にフォーカスやキーの処理がなく、Dashboard.tsx:19 がそのまま描画している。",
         "intent_checked": "ダイアログのライブラリは導入も import もされていない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-008-source.log",
+          "stage": "before",
+          "caption": "src/components/AddTaskModal.tsx:7 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-009",
@@ -237,7 +301,15 @@
         "verdict": "Valid",
         "evidence": "inventory orphan_routes に /archive がある。href・to=・navigate() のどれも到達しない。",
         "intent_checked": "Archive.tsx は完成しており、機能フラグの背後にもない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-009-source.log",
+          "stage": "before",
+          "caption": "src/components/Nav.tsx:7 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-010",
@@ -258,7 +330,15 @@
         "verdict": "Valid",
         "evidence": "onEmail はメール入力欄の onChange（SignupForm.tsx:26）。",
         "intent_checked": "デバウンスや操作済み状態のガードはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-010-source.log",
+          "stage": "before",
+          "caption": "src/components/SignupForm.tsx:11 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-011",
@@ -283,7 +363,15 @@
         "verdict": "Valid",
         "evidence": "inventory inputs: 両方の欄で label が欠け、placeholder_only。",
         "intent_checked": "囲む <label> や aria-label はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-011-source.log",
+          "stage": "before",
+          "caption": "src/components/SignupForm.tsx:26 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-012",
@@ -328,7 +416,15 @@
             "note": "リクエストが失敗したら空に見せず、失敗を伝えて再試行を促します。"
           }
         ]
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-012-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:8 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-013",
@@ -354,7 +450,15 @@
         "verdict": "Valid",
         "evidence": "両キーとも SignupForm.tsx:11 と :20 で表示される。",
         "intent_checked": "文言のみ。ブランドボイスは対象外（brand-scan）。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-013-source.log",
+          "stage": "before",
+          "caption": "src/i18n/en.json:4 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-014",
@@ -385,7 +489,15 @@
         "verdict": "Valid",
         "evidence": "どちらもデザインシステムの Button で、同じ variant。",
         "intent_checked": "Import を優先するオンボーディング状態はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-014-source.log",
+          "stage": "before",
+          "caption": "src/pages/Dashboard.tsx:15 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-015",
@@ -406,7 +518,15 @@
         "verdict": "Valid",
         "evidence": "Button.tsx は渡された props を展開するだけで、Dashboard.tsx:16 はハンドラーを渡していない。",
         "intent_checked": "近日公開を示すフラグや無効状態はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-015-source.log",
+          "stage": "before",
+          "caption": "src/pages/Dashboard.tsx:16 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-016",
@@ -427,7 +547,15 @@
         "verdict": "Valid",
         "evidence": "inventory click_handlers（href のない a）と、スケール外の spacing 10px。",
         "intent_checked": "Button.tsx は存在し、ダッシュボードで使われている。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-016-source.log",
+          "stage": "before",
+          "caption": "src/pages/Settings.tsx:9 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-017",
@@ -448,7 +576,15 @@
         "verdict": "Valid",
         "evidence": "inventory focus_outline: ルール内に代替がなく、このファイルにも tokens.css にも :focus-visible がない。",
         "intent_checked": "ほかにグローバルなフォーカススタイルはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-017-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:4 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-018",
@@ -469,7 +605,15 @@
         "verdict": "Likely",
         "evidence": "inventory truncation app.css:13。.task-title はブロック要素の <div>（TaskList.tsx:15）なので max-width と省略記号が効く。.btn-label はインラインの <span>（Button.tsx:4）なので、ボタンのラベルは切れない。",
         "intent_checked": "正確な幅はフォントとタスク名次第で、描画はしていない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-018-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:13 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-019",
@@ -494,7 +638,15 @@
         "verdict": "Valid",
         "evidence": "inventory inputs: autocomplete と type=email が欠けている。",
         "intent_checked": "独自の自動入力処理はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-019-source.log",
+          "stage": "before",
+          "caption": "src/components/SignupForm.tsx:26 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-020",
@@ -515,7 +667,15 @@
         "verdict": "Valid",
         "evidence": "inventory state_branches: SignupForm.tsx は loading を欠く。",
         "intent_checked": "API 側の重複処理は読んでいない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-020-source.log",
+          "stage": "before",
+          "caption": "src/components/SignupForm.tsx:30 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-021",
@@ -536,7 +696,15 @@
         "verdict": "Valid",
         "evidence": "inventory images: alt が欠けている。",
         "intent_checked": "aria-hidden や role=presentation はない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-021-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:14 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-022",
@@ -557,7 +725,15 @@
         "verdict": "Likely",
         "evidence": "inventory images: 寸法が欠けている。.avatar は大きさを指定していない（app.css:14）。",
         "intent_checked": "ずれの大きさは画像次第。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-022-source.log",
+          "stage": "before",
+          "caption": "src/components/TaskList.tsx:14 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-023",
@@ -582,7 +758,15 @@
         "verdict": "Valid",
         "evidence": "inventory off_scale: spacing 13px・18px・10px、font_sizes 15px。10px は Settings.tsx:9 で、U-016 の修正で置き換わる。",
         "intent_checked": "値の理由を示すコメントはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-023-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:7 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-024",
@@ -603,7 +787,15 @@
         "verdict": "Valid",
         "evidence": "inventory off_scale z_index 99999。.dropdown を参照するコンポーネントはない。",
         "intent_checked": "ドロップダウンのコンポーネントはまだなく、クラスは共通 CSS にある。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-024-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:9 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-025",
@@ -628,7 +820,15 @@
         "verdict": "Valid",
         "evidence": "inventory motion: 宣言 2 件、reduced_motion は空。ダイアログは条件付きでマウントされ（Dashboard.tsx:19）、transform を変える処理もないためトランジションは動かない。.spinner を使うコンポーネントはない。",
         "intent_checked": "JS のモーションライブラリはない。"
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-025-source.log",
+          "stage": "before",
+          "caption": "src/styles/app.css:15 の該当行（レビュー対象のチェックアウトから取得）"
+        }
+      ]
     },
     {
       "id": "U-026",

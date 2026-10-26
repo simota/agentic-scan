@@ -22,6 +22,8 @@ RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT
           │                                       │
    flows.json (primary tasks, screens,     findings.json ─→ dashboard.html
    token scales, viewports, locales)                     ─→ report.html / report.pdf
+                                                         ─→ evidence.html + evidence/ (screenshots,
+                                                            videos, logs; before/after)
                                                           ─→ mockups.html (before/after, when asked)
           │
    inventory.py --flows ─→ inventory.json (candidates, never findings)
@@ -39,6 +41,13 @@ Then ask the agent, e.g. "ux-scan this repository" or "review the sign-up and
 checkout UI for usability and accessibility problems". Add "with before/after
 mockups" to get `mockups.html`, which compares each mocked finding as it is and
 as its fix proposes.
+
+Every report carries its evidence: each finding cites screenshots, videos or
+logs saved in `evidence/` next to `findings.json`, marked `before` (the defect)
+or `after` (the fix). The report and PDF embed screenshots and log excerpts side
+by side; `evidence.html` also plays videos. Give a running local URL (or ask the
+agent to start the app) to get screenshots; otherwise the evidence is source and
+command logs. See `skills/ux-scan/reference/evidence.md`.
 
 ## What it checks
 
@@ -60,8 +69,9 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 |---|---|
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
 | `scripts/findings.py flows\|merge\|check\|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
-| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, plus `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
-| `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]…` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, pages stamped with the current record; `--allow` (repeatable) admits an extra file that was asked for, and an allowed `ja` or `en` directory must be a current second-language render; detects concurrent renders |
+| `scripts/capture.py screenshot URL --viewport WxH --out FILE` / `log --out FILE -- CMD…` | Evidence files: a PNG from headless Chrome, or a command's output with its command line and exit status, secrets masked |
+| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, with each finding's screenshots and log excerpts (before/after) embedded, plus `evidence.html` when findings cite evidence and `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
+| `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]…` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, evidence on every included finding (and `after` evidence on `Fixed` ones) with `evidence/` holding exactly the cited files, pages stamped with the current record; `--allow` (repeatable) admits an extra file that was asked for, and an allowed `ja` or `en` directory must be a current second-language render; detects concurrent renders |
 
 ## Develop
 

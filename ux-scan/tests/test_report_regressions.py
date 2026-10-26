@@ -8,6 +8,7 @@ import io
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +54,7 @@ class ReportRegressions(unittest.TestCase):
         self.data = copy.deepcopy(SAMPLE)
         self.flows = copy.deepcopy(FLOWS)
         self.data["limitations"].append("report.pdf not produced: no engine in this test")
+        shutil.copytree(ROOT / "examples" / "evidence", self.out / "evidence")
         self.save_inputs()
 
     def save_inputs(self):
@@ -970,7 +972,7 @@ class ReportRegressions(unittest.TestCase):
 
     def test_interrupted_output_lock_requires_explicit_recovery_without_changing_reports(self):
         self.assertEqual(self.invoke()[0], 0)
-        before = {path.name: path.read_bytes() for path in self.out.iterdir()}
+        before = {path.name: path.read_bytes() for path in self.out.iterdir() if path.is_file()}
         lock = self.out / render.OUTPUT_LOCK
         lock.mkdir()
         code, _, error = self.invoke()
@@ -1135,7 +1137,7 @@ class ReportRegressions(unittest.TestCase):
         self.ready_for_pdf()
         with mock.patch.object(render.pdf, "to_pdf", side_effect=self.successful_engine):
             self.assertEqual(self.invoke(no_pdf=False)[0], 0)
-        before = {path.name: path.read_bytes() for path in self.out.iterdir()}
+        before = {path.name: path.read_bytes() for path in self.out.iterdir() if path.is_file()}
         writer = render.output.write_output
 
         def fail_generation(path, text):
@@ -1147,7 +1149,7 @@ class ReportRegressions(unittest.TestCase):
             code, _, error = self.invoke(no_pdf=False)
         self.assertEqual(code, 2, error)
         self.assertIn("simulated full disk writing generation", error)
-        self.assertEqual({path.name: path.read_bytes() for path in self.out.iterdir()}, before)
+        self.assertEqual({path.name: path.read_bytes() for path in self.out.iterdir() if path.is_file()}, before)
         self.assertEqual(list(contract_check.problems(self.out)), [])
 
     def test_a_failed_publication_does_not_restore_the_previous_generation(self):

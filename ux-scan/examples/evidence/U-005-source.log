@@ -1,0 +1,10 @@
+$ awk 'NR>=14 && NR<=18 {print FILENAME ":" FNR ": " $0}' src/components/TaskList.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+src/components/TaskList.tsx:14:           <img src={task.assignee.avatar} className="avatar" />
+src/components/TaskList.tsx:15:           <div className="task-title" onClick={() => api.open(task.id)}>{task.title}</div>
+src/components/TaskList.tsx:16:           <button className="icon-btn" onClick={() => api.remove(task.id)}>
+src/components/TaskList.tsx:17:             <Trash2 />
+src/components/TaskList.tsx:18:           </button>

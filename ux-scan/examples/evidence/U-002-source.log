@@ -1,0 +1,10 @@
+$ awk 'NR>=16 && NR<=20 {print FILENAME ":" FNR ": " $0}' src/components/SignupForm.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+src/components/SignupForm.tsx:16:     const res = await fetch("/api/signup", { method: "POST", body: JSON.stringify({ email, password }) });
+src/components/SignupForm.tsx:17:     if (!res.ok) {
+src/components/SignupForm.tsx:18:       setEmail("");
+src/components/SignupForm.tsx:19:       setPassword("");
+src/components/SignupForm.tsx:20:       setError(t("signup.failed"));

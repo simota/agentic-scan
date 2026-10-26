@@ -1,0 +1,10 @@
+$ awk 'NR>=2 && NR<=6 {print FILENAME ":" FNR ": " $0}' src/i18n/en.json
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/i18n/en.json:2:   "task": {"new": "New task", "import": "Import", "titleLabel": "Title"},
+src/i18n/en.json:3:   "common": {"save": "Save"},
+src/i18n/en.json:4:   "signup": {"password": "Password", "submit": "Create account", "invalid": "Invalid input", "failed": "Error 500"},
+src/i18n/en.json:5:   "settings": {"title": "Settings", "name": "Name"}
+src/i18n/en.json:6: }

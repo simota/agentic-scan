@@ -1,0 +1,10 @@
+$ awk 'NR>=5 && NR<=9 {print FILENAME ":" FNR ": " $0}' src/components/AddTaskModal.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+src/components/AddTaskModal.tsx:5:   const [title, setTitle] = useState("");
+src/components/AddTaskModal.tsx:6:   return (
+src/components/AddTaskModal.tsx:7:     <div className="modal panel">
+src/components/AddTaskModal.tsx:8:       <h2>{t("task.new")}</h2>
+src/components/AddTaskModal.tsx:9:       <label htmlFor="task-title">{t("task.titleLabel")}</label>

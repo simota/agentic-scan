@@ -117,7 +117,8 @@ class DemoTests(unittest.TestCase):
                 self.assertIn("contract ok:", result.stdout)
                 self.assertEqual({p.name for p in out.iterdir()},
                                  {"findings.json", "flows.json", "inventory.json",
-                                  "dashboard.html", "report.html", "mockups.html", OUTPUT_GENERATION})
+                                  "dashboard.html", "report.html", "mockups.html", "evidence.html", "evidence",
+                                  OUTPUT_GENERATION})
                 data = json.loads((out / "findings.json").read_text(encoding="utf-8"))
                 self.assertTrue(any(line.startswith("report.pdf not produced:")
                                     for line in data["limitations"]))

@@ -1,0 +1,10 @@
+$ awk 'NR>=28 && NR<=32 {print FILENAME ":" FNR ": " $0}' src/components/SignupForm.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/components/SignupForm.tsx:28:         onChange={(e) => setPassword(e.target.value)} />
+src/components/SignupForm.tsx:29:       {error && <p className="error">{error}</p>}
+src/components/SignupForm.tsx:30:       <button type="submit" className="btn">{t("signup.submit")}</button>
+src/components/SignupForm.tsx:31:     </form>
+src/components/SignupForm.tsx:32:   );

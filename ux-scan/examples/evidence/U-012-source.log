@@ -1,0 +1,10 @@
+$ awk 'NR>=6 && NR<=10 {print FILENAME ":" FNR ": " $0}' src/components/TaskList.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/components/TaskList.tsx:6:   const [tasks, setTasks] = useState([]);
+src/components/TaskList.tsx:7:   useEffect(() => {
+src/components/TaskList.tsx:8:     fetch("/api/tasks").then((r) => r.json()).then(setTasks);
+src/components/TaskList.tsx:9:   }, []);
+src/components/TaskList.tsx:10:   return (

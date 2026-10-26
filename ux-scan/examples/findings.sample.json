@@ -39,7 +39,15 @@
         "verdict": "Valid",
         "evidence": "AddTaskModal.tsx:5 and :10 hold the title only in local state; :11 only closes; src/api.ts exports open and remove only.",
         "intent_checked": "No other code path creates tasks."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-001-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/AddTaskModal.tsx:11, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-002",
@@ -64,7 +72,15 @@
         "verdict": "Valid",
         "evidence": "submit() is the form's onSubmit (SignupForm.tsx:25); the resets run on every non-OK response.",
         "intent_checked": "No comment or setting asks for the reset; the password field could be cleared for security, the email has no such reason."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-002-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/SignupForm.tsx:18, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-003",
@@ -92,6 +108,14 @@
           "title": "WCAG 2.2 Understanding 2.1.1",
           "url": "https://www.w3.org/WAI/WCAG22/Understanding/keyboard.html"
         }
+      ],
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-003-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:15, captured from the reviewed checkout"
+        }
       ]
     },
     {
@@ -113,7 +137,15 @@
         "verdict": "Valid",
         "evidence": "inventory icon_buttons; lucide-react icons render an aria-hidden SVG with no title.",
         "intent_checked": "No visually hidden text or tooltip inside the button."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-004-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:16, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-005",
@@ -134,7 +166,15 @@
         "verdict": "Valid",
         "evidence": "inventory destructive_actions; api.remove (src/api.ts:3) issues DELETE directly; no confirm, dialog or undo in the file.",
         "intent_checked": "No trash or archive step exists in the API module."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-005-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:16, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-006",
@@ -170,7 +210,15 @@
         "verdict": "Valid",
         "evidence": "inventory fixed_widths 480px (wider than smallest viewport 360); the only media query (app.css:18) touches .card only.",
         "intent_checked": "The design notes list 360x640 as supported."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-006-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:6, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-007",
@@ -191,7 +239,15 @@
         "verdict": "Valid",
         "evidence": "inventory viewport_meta blocks_zoom: true; index.html is the single entry page.",
         "intent_checked": "No comment explains it; to stop iOS zooming into inputs, set inputs to at least 16px instead."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-007-source.log",
+          "stage": "before",
+          "caption": "Source lines at index.html:5, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-008",
@@ -212,7 +268,15 @@
         "verdict": "Valid",
         "evidence": "AddTaskModal.tsx:7-12 has no focus or key handling; Dashboard.tsx:19 renders it inline.",
         "intent_checked": "No dialog library is installed or imported."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-008-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/AddTaskModal.tsx:7, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-009",
@@ -237,7 +301,15 @@
         "verdict": "Valid",
         "evidence": "inventory orphan_routes lists /archive; no href, to= or navigate() reaches it.",
         "intent_checked": "Archive.tsx is complete, not behind a feature flag."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-009-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/Nav.tsx:7, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-010",
@@ -258,7 +330,15 @@
         "verdict": "Valid",
         "evidence": "onEmail is the email input's onChange (SignupForm.tsx:26).",
         "intent_checked": "No debounce or touched-state guard."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-010-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/SignupForm.tsx:11, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-011",
@@ -283,7 +363,15 @@
         "verdict": "Valid",
         "evidence": "inventory inputs: label missing, placeholder_only on both fields.",
         "intent_checked": "No wrapping <label> or aria-label."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-011-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/SignupForm.tsx:26, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-012",
@@ -328,7 +416,15 @@
             "note": "A failed request says so and offers a retry, instead of looking empty."
           }
         ]
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-012-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:8, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-013",
@@ -354,7 +450,15 @@
         "verdict": "Valid",
         "evidence": "Both keys are rendered by SignupForm.tsx:11 and :20.",
         "intent_checked": "Copy only; brand voice is out of scope (brand-scan)."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-013-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/i18n/en.json:4, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-014",
@@ -385,7 +489,15 @@
         "verdict": "Valid",
         "evidence": "Both are the design-system Button with the same variant.",
         "intent_checked": "No onboarding state that would favour Import."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-014-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/pages/Dashboard.tsx:15, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-015",
@@ -406,7 +518,15 @@
         "verdict": "Valid",
         "evidence": "Button.tsx spreads only the given props; Dashboard.tsx:16 passes no handler.",
         "intent_checked": "No feature flag or disabled state marks it as coming soon."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-015-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/pages/Dashboard.tsx:16, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-016",
@@ -427,7 +547,15 @@
         "verdict": "Valid",
         "evidence": "inventory click_handlers (a without href) and spacing 10px off the scale.",
         "intent_checked": "Button.tsx exists and is used on the dashboard."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-016-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/pages/Settings.tsx:9, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-017",
@@ -448,7 +576,15 @@
         "verdict": "Valid",
         "evidence": "inventory focus_outline: no replacement in the rule, no :focus-visible in the file or tokens.css.",
         "intent_checked": "No global focus style elsewhere."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-017-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:4, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-018",
@@ -469,7 +605,15 @@
         "verdict": "Likely",
         "evidence": "inventory truncation app.css:13; .task-title is a block <div> (TaskList.tsx:15), so max-width and the ellipsis apply. .btn-label is an inline <span> (Button.tsx:4), so its button labels are not cut.",
         "intent_checked": "Exact width depends on the font and the title; not rendered."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-018-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:13, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-019",
@@ -494,7 +638,15 @@
         "verdict": "Valid",
         "evidence": "inventory inputs: autocomplete and type=email missing.",
         "intent_checked": "No custom autofill handling."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-019-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/SignupForm.tsx:26, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-020",
@@ -515,7 +667,15 @@
         "verdict": "Valid",
         "evidence": "inventory state_branches: SignupForm.tsx missing loading.",
         "intent_checked": "The API's duplicate handling was not read."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-020-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/SignupForm.tsx:30, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-021",
@@ -536,7 +696,15 @@
         "verdict": "Valid",
         "evidence": "inventory images: missing alt.",
         "intent_checked": "No aria-hidden or role=presentation."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-021-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:14, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-022",
@@ -557,7 +725,15 @@
         "verdict": "Likely",
         "evidence": "inventory images: missing dimensions; .avatar sets no size (app.css:14).",
         "intent_checked": "The size of the shift depends on the image."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-022-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/components/TaskList.tsx:14, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-023",
@@ -582,7 +758,15 @@
         "verdict": "Valid",
         "evidence": "inventory off_scale: spacing 13px, 18px, 10px; font_sizes 15px. The 10px is Settings.tsx:9, which U-016's fix replaces.",
         "intent_checked": "No comment justifies the values."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-023-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:7, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-024",
@@ -603,7 +787,15 @@
         "verdict": "Valid",
         "evidence": "inventory off_scale z_index 99999; no component references .dropdown.",
         "intent_checked": "No dropdown component exists yet; the class is shared CSS."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-024-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:9, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-025",
@@ -628,7 +820,15 @@
         "verdict": "Valid",
         "evidence": "inventory motion: 2 declarations, reduced_motion empty. The dialog mounts conditionally (Dashboard.tsx:19) and nothing changes its transform, so the transition never runs; no component uses .spinner.",
         "intent_checked": "No JS motion library."
-      }
+      },
+      "evidence": [
+        {
+          "kind": "log",
+          "file": "U-025-source.log",
+          "stage": "before",
+          "caption": "Source lines at src/styles/app.css:15, captured from the reviewed checkout"
+        }
+      ]
     },
     {
       "id": "U-026",

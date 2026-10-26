@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Prepare validated sample records without following planted output symlinks."""
 import argparse
+import shutil
 import sys
 from pathlib import Path
 
@@ -8,11 +9,12 @@ ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / "skills" / "ux-scan" / "scripts"))
 
 from findings import RecordError, check_findings, check_flows, dump, flow_ids, load_json, merge  # noqa: E402
+from evidence import DIRECTORY, PAGE as EVIDENCE_PAGE, referenced  # noqa: E402
 from render import OUTPUT_GENERATION  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_outputs  # noqa: E402
 
 OUTPUTS = ("flows.json", "findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf",
-           "mockups.html", OUTPUT_GENERATION)
+           "mockups.html", EVIDENCE_PAGE, OUTPUT_GENERATION)
 
 
 def main(argv=None):
@@ -42,6 +44,20 @@ def main(argv=None):
         if bad:
             raise RecordError(f"{bad}: output must be a regular file, not a symlink or directory")
         write_outputs(out, {"flows.json": dump(flows), "findings.json": dump(data)})
+        # The sample's evidence files: exactly those the record cites.
+        evidence = out / DIRECTORY
+        if evidence.is_symlink() or (evidence.exists() and not evidence.is_dir()):
+            raise RecordError(f"{evidence}: must be a directory, not a symlink")
+        evidence.mkdir(exist_ok=True)
+        cited = referenced(data)
+        for stale in evidence.iterdir():
+            if stale.name not in cited and (stale.is_file() or stale.is_symlink()):
+                stale.unlink()
+        for name in sorted(cited):
+            target = evidence / name
+            if target.is_symlink():
+                target.unlink()
+            shutil.copyfile(ROOT / "examples" / DIRECTORY / name, target)
     except (OSError, RuntimeError, RecordError) as error:
         print(f"prepare_sample.py: {error}", file=sys.stderr)
         return 2

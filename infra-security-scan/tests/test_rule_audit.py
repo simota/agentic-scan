@@ -249,6 +249,15 @@ class ReviewRegressionTest(unittest.TestCase):
         result = scan({"plan.json": plan({})})
         self.assertNotIn("AWS-IAM-001", {h["rule"] for h in result.hits})
         self.assertTrue(any("only as a permissions boundary" in n for n in result.not_run))
+        # A plan does not resolve locals: one read outside the boundary may attach it.
+        through_local = {"resources": [
+            {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}},
+            {"address": "aws_iam_role_policy_attachment.a",
+             "expressions": {"policy_arn": {"references": ["local.admin_arn"]}}}]}
+        result = scan({"plan.json": plan(through_local)})
+        self.assertTrue(any("a local the plan does not resolve may attach it" in n for n in result.not_run),
+                        result.not_run)
+        self.assertFalse(any("only as a permissions boundary" in n for n in result.not_run))
 
     def test_non_literal_cloudformation_type_is_skipped(self):
         result = scan({"t.json": cfn({"X": {"Type": ["AWS::S3::Bucket"]}})})

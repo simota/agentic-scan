@@ -885,17 +885,34 @@ def each_ports(view):
     return [(lo, hi)]
 
 
-def each_cidrs(view, *attrs):
-    """A rule's CIDRs, with each.value (or [each.value]) over a literal
-    collection of strings read as its elements, as each_ports does for ports."""
+EACH_ELEMENT = re.compile(r"\beach\.(?:value|key)\b(?![.\[\w])")
+
+
+def each_cidrs(view, *attrs, for_each=None):
+    """A rule's CIDRs, with each.value (or each.key) over a literal collection of
+    strings read as its elements, as each_ports does for ports. for_each is the
+    enclosing resource's, for a nested ingress block."""
+    for_each = view.get("for_each") if for_each is None else for_each
     out = []
-    for_each = view.get("for_each")
     for attr in attrs:
-        raw = re.sub(r"^\[\s*(.*?)\s*\]$", r"\1", (view.raw(attr) or "").strip())
-        values = each_values(for_each, raw) if raw in ("each.value", "each.key") and isinstance(
-            for_each, (list, dict)) else []
-        out += values if values and all(isinstance(c, str) for c in values) else aslist(view.get(attr))
+        values = aslist(view.get(attr))
+        refs = [m.group() for m in EACH_ELEMENT.finditer(view.raw(attr) or "")]
+        elements = each_values(for_each, refs[0]) if refs and isinstance(for_each, (list, dict)) else []
+        if elements and all(isinstance(c, str) for c in elements) and values.count(UNKNOWN) >= len(refs):
+            for _ in refs:
+                values.remove(UNKNOWN)
+            values += elements
+        out += values
     return out
+
+
+def cidr_raw(view, *attrs, parent=None):
+    """The expressions behind a rule's CIDRs. Through each., they come from
+    for_each: an input there (var., local.) may be the world, a subnet is not."""
+    raw = raw_of(view, *attrs)
+    if "each." in raw:
+        raw += " " + ((parent or view).raw("for_each") or "")
+    return raw
 
 
 def lower_strs(values):
@@ -955,6 +972,9 @@ class Scan:
         self.vpc_domains = set()  # (dir, address) of OpenSearch/Elasticsearch domains with vpc_options
         self.admin_policy_data = set()  # (dir, name) of data "aws_iam_policy" naming AdministratorAccess
         self.boundary_policies, self.attached_policies = set(), set()
+        # (plan file, module prefix) whose configuration reads a local outside a
+        # boundary: a plan does not resolve locals, so one may attach a policy.
+        self.plan_local_refs = set()
         # Principal-less policy JSON files: {rel: [statements, referenced?]}
         self.policy_files = {}
         self.tf_dirs = {}
@@ -1032,7 +1052,7 @@ class Scan:
             # An input (var.ssh_cidr, !Ref SSHLocation) may be the world: say so,
             # as GCP-NET-001 does for source ranges. A VPC or subnet attribute
             # (aws_vpc.main.cidr_block, module.vpc.*, !GetAtt Vpc.CidrBlock) never is.
-            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local|each)\.", raw)) or any(
+            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local)\.", raw)) or any(
                 isinstance(c, dict) and "Fn::GetAtt" not in c for c in aslist(cidrs))
             if supplied and sensitive_ports(proto, lo, hi):
                 self.not_run.append(f"{rule}: source CIDR unresolved; check not run: "
@@ -1652,21 +1672,21 @@ def check_tf(scan, res):
     check_tf_shared(scan, res)
     if t in ("aws_security_group", "aws_default_security_group"):
         for rule in v.blocks("ingress"):
-            scan.ingress(res, rule.line(), aslist(rule.get("cidr_blocks")) +
-                         aslist(rule.get("ipv6_cidr_blocks")), rule.get("protocol"),
-                         rule.get("from_port"), rule.get("to_port"), raw=raw_of(rule, "cidr_blocks", "ipv6_cidr_blocks"))
+            scan.ingress(res, rule.line(), each_cidrs(rule, "cidr_blocks", "ipv6_cidr_blocks", for_each=v.get("for_each")),
+                         rule.get("protocol"), rule.get("from_port"), rule.get("to_port"),
+                         raw=cidr_raw(rule, "cidr_blocks", "ipv6_cidr_blocks", parent=v))
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
             line = v.line("cidr_blocks") if world_cidrs(each_cidrs(v, "cidr_blocks")) else v.line("ipv6_cidr_blocks")
             for lo, hi in each_ports(v):
                 scan.ingress(res, line, each_cidrs(v, "cidr_blocks", "ipv6_cidr_blocks"),
-                             v.get("protocol"), lo, hi, raw=raw_of(v, "cidr_blocks", "ipv6_cidr_blocks"))
+                             v.get("protocol"), lo, hi, raw=cidr_raw(v, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_vpc_security_group_ingress_rule":
         line = v.line("cidr_ipv4") if world_cidrs(each_cidrs(v, "cidr_ipv4")) else v.line("cidr_ipv6")
         for lo, hi in each_ports(v):
             scan.ingress(res, line, each_cidrs(v, "cidr_ipv4", "cidr_ipv6"), v.get("ip_protocol"), lo, hi,
-                         raw=raw_of(v, "cidr_ipv4", "cidr_ipv6"))
+                         raw=cidr_raw(v, "cidr_ipv4", "cidr_ipv6"))
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl", "aws_s3_object", "aws_s3_bucket_object"):
         # A public access block on the same bucket makes S3 ignore public ACLs:
         # still a misconfiguration, but defence in depth rather than exposure.
@@ -1701,8 +1721,10 @@ def check_tf(scan, res):
         if t == "aws_iam_policy" and key in scan.boundary_policies and key not in scan.attached_policies:
             # A permissions boundary caps permissions ("allow *, deny X" is the
             # usual shape); it grants nothing by itself.
-            scan.not_run.append(f"IAM policy used only as a permissions boundary; grant rules not applied: "
-                                f"{res.file}:{res.line} ({res.address})")
+            module = key[1][:key[1].rindex("aws_iam_policy.")]
+            use = ("used as a permissions boundary, and a local the plan does not resolve may attach it"
+                   if (res.dir, module) in scan.plan_local_refs else "used only as a permissions boundary")
+            scan.not_run.append(f"IAM policy {use}; grant rules not applied: {res.file}:{res.line} ({res.address})")
             return
         scan.identity_policy(res, scan.statements(res, "policy"), v.line("policy"))
     elif t == "aws_iam_role":
@@ -1812,8 +1834,9 @@ def check_tf(scan, res):
                 allows.append((a.get("protocol"), each_values(v.get("for_each"), raw.strip("[]"))))
             else:
                 allows.append((a.get("protocol"), a.get("ports")))
+        ranges = each_cidrs(v, "source_ranges") if "each." in (v.raw("source_ranges") or "") else v.get("source_ranges")
         scan.firewall(res, res.line, v.get("direction"), tf_bool(v.get("disabled")),
-                      v.get("source_ranges"), allows, (v.get("source_tags"), v.get("source_service_accounts")))
+                      ranges, allows, (v.get("source_tags"), v.get("source_service_accounts")))
     elif t in ("google_compute_firewall_policy_rule", "google_compute_network_firewall_policy_rule",
                "google_compute_region_network_firewall_policy_rule"):
         # Hierarchical and network firewall policies: match { src_ip_ranges, layer4_configs }.
@@ -2739,6 +2762,8 @@ def plan_config_refs(scan, rel, doc):
                 if m:
                     target = scan.boundary_policies if boundary else scan.attached_policies
                     target.add((rel, prefix + m.group(1)))
+                elif str(ref).startswith("local.") and not boundary:
+                    scan.plan_local_refs.add((rel, prefix))
             for key, item in value.items():
                 if key != "references":
                     note(item, prefix, boundary or key == "permissions_boundary")
@@ -4293,8 +4318,10 @@ def classify_json(doc):
         return "plan"
     # Terraform state under another name (terraform state pull > prod.json), or
     # its terraform show -json rendering: the same secrets as a .tfstate file.
+    # Version 4 keeps resources, version 3 (Terraform 0.11 and older) modules.
     if isinstance(doc, dict) and (
-            isinstance(doc.get("lineage"), str) and "serial" in doc and isinstance(doc.get("resources"), list)
+            type(doc.get("version")) is int and isinstance(doc.get("lineage"), str)
+            and type(doc.get("serial")) is int and isinstance(doc.get("resources", doc.get("modules")), list)
             or "format_version" in doc and isinstance(doc.get("values"), dict) and "root_module" in doc["values"]):
         return "state"
     if isinstance(doc, dict) and isinstance(doc.get("Resources"), dict) and (
@@ -4424,6 +4451,17 @@ def snapshot_prefixes(dirs):
             for n, name in enumerate(names, 1)]
 
 
+def state_file(scan, rel, detail):
+    """A state holds every secret in plain text: no rule reads it. In the
+    repository it is SEC-002; supplied as a snapshot it is the requester's export."""
+    scan.files.append({"path": rel, "kind": "state"})
+    if rel.startswith(SNAPSHOT_PREFIX):
+        scan.not_run.append(f"Terraform state supplied as a snapshot; not read (it holds secrets in plain text), "
+                            f"supply plan JSON instead: {rel}")
+    else:
+        scan.hit("SEC-002", Res("file", rel, rel, 1), 1, detail, strong=True)
+
+
 def run(root, snapshots=()):
     root = Path(root)
     scan = Scan(root)
@@ -4438,8 +4476,7 @@ def run(root, snapshots=()):
     for full, rel in entries:
         name = full.name
         if STATE_FILE.search(name):
-            scan.files.append({"path": rel, "kind": "state"})
-            scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "state file in the repository", strong=True)
+            state_file(scan, rel, "state file in the repository")
             continue
         snapshot = rel.startswith(SNAPSHOT_PREFIX)
         # Inputs the scanner would read are named; other skipped files (archives,
@@ -4507,9 +4544,7 @@ def run(root, snapshots=()):
                     scan.not_run.append(f"invalid JSON skipped: {rel}")
             kind = classify_json(doc)
             if kind == "state":
-                scan.files.append({"path": rel, "kind": "state"})
-                scan.hit("SEC-002", Res("file", rel, rel, 1), 1, "Terraform state (read from its content) in the "
-                         "repository", strong=True)
+                state_file(scan, rel, "Terraform state (read from its content) in the repository")
                 continue
             try:
                 if lname.endswith(".tfvars.json"):

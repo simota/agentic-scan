@@ -60,6 +60,25 @@ class InputKindTest(unittest.TestCase):
         record["findings"][0]["rule"] = "AWS-RDS-001"
         self.assertIn('"lineage"', str(render.attach_sources(record, self.root)))  # what SEC-002 now prevents
 
+    def test_state_shapes_and_look_alikes(self):
+        legacy = {"version": 3, "terraform_version": "0.11.14", "serial": 2, "lineage": "x", "modules": []}
+        self.write("old.json", json.dumps(legacy))
+        self.write("data/lineage.json", json.dumps({"lineage": "ml-dataset", "serial": "A1", "resources": ["a"]}))
+        result = self.scan()
+        self.assertEqual(self.hits(result), [("SEC-002", "old.json")])
+
+    def test_a_state_supplied_as_a_snapshot_is_named_not_flagged(self):
+        tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(tmp.cleanup)
+        snapshots = Path(tmp.name)
+        state = {"version": 4, "serial": 1, "lineage": "x", "resources": []}
+        (snapshots / "state.json").write_text(json.dumps(state), encoding="utf-8")
+        (snapshots / "terraform.tfstate").write_text(json.dumps(state), encoding="utf-8")
+        self.write("main.tf", OPEN_SG)
+        result = self.scan(snapshots)
+        self.assertEqual(self.hits(result), [("AWS-NET-001", "main.tf")])
+        self.assertEqual(len([n for n in result.not_run if "state supplied as a snapshot" in n]), 2)
+
     def test_deep_hcl_is_a_note_not_a_crash(self):
         self.write("a/deep.tf", 'resource "aws_instance" "x" {\n' + "a {\n" * 3000 + "}\n" * 3001)
         self.write("b/interp.tf", 'resource "aws_instance" "y" {\n  description = "'

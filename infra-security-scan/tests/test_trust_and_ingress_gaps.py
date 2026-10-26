@@ -229,6 +229,26 @@ resource "google_compute_firewall" "admin" {
         self.assertEqual(len(unresolved), 1, result.not_run)
         self.assertIn("aws_vpc_security_group_ingress_rule.input", unresolved[0])
 
+    def test_for_each_cidrs_in_lists_blocks_and_firewalls(self):
+        text = ('resource "aws_security_group_rule" "mixed" {\n  for_each = toset(["0.0.0.0/0"])\n'
+                '  type = "ingress"\n  from_port = 22\n  to_port = 22\n  protocol = "tcp"\n'
+                '  cidr_blocks = ["10.0.0.0/8", each.value]\n  security_group_id = "sg-1"\n}\n'
+                'resource "aws_security_group" "inline" {\n  for_each = toset(["0.0.0.0/0"])\n'
+                '  ingress {\n    from_port = 22\n    to_port = 22\n    protocol = "tcp"\n'
+                '    cidr_blocks = [each.value]\n  }\n}\n'
+                'resource "google_compute_firewall" "fw" {\n  for_each = toset(["0.0.0.0/0"])\n'
+                '  network = "default"\n  source_ranges = [each.value]\n'
+                '  allow {\n    protocol = "tcp"\n    ports = ["22"]\n  }\n}\n'
+                # A subnet's own range is never the world: no finding and no note.
+                'resource "aws_vpc_security_group_ingress_rule" "subnets" {\n  for_each = aws_subnet.private\n'
+                '  security_group_id = "sg-1"\n  ip_protocol = "tcp"\n  from_port = 22\n  to_port = 22\n'
+                '  cidr_ipv4 = each.value.cidr_block\n}\n')
+        result = scan({"main.tf": text})
+        self.assertEqual(sorted((h["rule"], h["address"]) for h in result.hits),
+                         [("AWS-NET-001", "aws_security_group.inline"), ("AWS-NET-001", "aws_security_group_rule.mixed"),
+                          ("GCP-NET-001", "google_compute_firewall.fw")])
+        self.assertEqual([n for n in result.not_run if "unresolved" in n], [])
+
     def test_unresolved_ports_open_to_the_world_are_named(self):
         text = '''resource "aws_security_group_rule" "unk" {
   type              = "ingress"

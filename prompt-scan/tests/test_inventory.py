@@ -269,6 +269,20 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual((clean["skipped_dirs"], inventory.SKIPPED_NOTE in clean["not_covered"]), ([], False))
         self.assertEqual((clean["skipped_files"], inventory.UNREAD_NOTE in clean["not_covered"]), ([], False))
 
+    def test_symlinked_directories_are_named(self):
+        # The walk does not follow a directory symlink, so a symlinked prompts/ used to vanish without a trace.
+        root = make_repo({"shared/sys.md": "You are a bot.\n", "app/prompts/a.md": "hi\n"})
+        outside = Path(tempfile.mkdtemp())
+        (outside / "b.md").write_text("hi\n", encoding="utf-8")
+        (root / "prompts").symlink_to(root / "shared")
+        (root / "app" / "prompts" / "linked").symlink_to(outside)
+        (root / "prompts.md").symlink_to(root / "shared" / "sys.md")  # A file symlink stays in skipped_files.
+        result = inventory.scan(root)
+        self.assertEqual([f["path"] for f in result["prompt_files"]], ["app/prompts/a.md"])
+        self.assertEqual(result["skipped_dirs"], ["app/prompts/linked", "prompts"])
+        self.assertIn(inventory.SKIPPED_NOTE, result["not_covered"])
+        self.assertEqual(result["skipped_files"], [])
+
     def test_prompt_files_that_are_not_read_are_named(self):
         # The largest prompts, the ones large-prompt exists for, used to vanish without a trace.
         root = make_repo({"prompts/big.md": "x" * (inventory.MAX_FILE_BYTES + 1), "notes.md": "hi\n"})

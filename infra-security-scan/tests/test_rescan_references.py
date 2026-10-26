@@ -384,6 +384,17 @@ class RescanReferencesTest(unittest.TestCase):
         self.assertIn("AWS-S3-001 at z.tf", finding["validation"]["evidence"])
         self.assertTrue(any(line.startswith("F-001: ") for line in data["limitations"]))
 
+    def test_contract_refuses_an_inventory_from_another_scan(self):
+        data = self.scan()
+        self.assertEqual(contract_check.baseline_problems(data, self.out / "iac.json"), [])
+        # A later --out run without --into leaves the record describing the earlier inputs.
+        (self.repo / "topic.tf").write_text('resource "aws_sns_topic" "t" {\n  name = "t"\n}\n', encoding="utf-8")
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(iac_scan.main([str(self.repo), "--out", str(self.out / "iac.json")]), 0)
+        problems = contract_check.baseline_problems(data, self.out / "iac.json")
+        self.assertEqual(problems, ["inventory: differs from iac.json (resources, by_provider, files); "
+                                    "rerun iac_scan.py with both --out and --into"])
+
     def test_triage_keeps_confidence_and_condition(self):
         data = self.scan()
         data["findings"][0].update(confidence="Environment-dependent", condition="the bucket holds only I-001 assets",

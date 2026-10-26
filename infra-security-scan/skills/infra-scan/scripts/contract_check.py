@@ -8,7 +8,7 @@ and provenance only: schema, ID scheme and order, the fields every F-* finding
 carries, a verdict other than `Unverified` on every finding, every perspective
 recorded once, references that name existing records, the merge gate's
 credential and exploit-string checks over the whole record, I-* findings and
-meta.commit identical to iac.json, and the exact output file set, each output
+meta.commit and the inventory identical to iac.json, and the exact output file set, each output
 nonempty and of its kind (HTML, iac_scan JSON, %PDF), with both HTML reports
 rendered from this findings.json. It cannot tell whether a finding is true.
 
@@ -22,7 +22,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as record_gate  # noqa: E402
 import render  # noqa: E402
-from common import REVIEW_FIELDS, STATE_OR_VARS, reviewer_fields  # noqa: E402
+from common import REVIEW_FIELDS, STATE_OR_VARS, inventory, reviewer_fields  # noqa: E402
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
@@ -74,6 +74,13 @@ def baseline_problems(data, iac_path):
                      key=lambda i: render.id_key(i) if render.I_ID.match(i) else ("", 0))
         problems.append(f"I-*: differ from iac.json ({', '.join(map(str, ids[:10]))}); I-* come only from one "
                         "iac_scan.py run with both --out and --into")
+    if all(isinstance(iac.get(k), list) for k in ("resources", "files", "not_run")):
+        expected = inventory(iac["resources"], iac["files"], iac["not_run"])
+        held = data.get("inventory") if isinstance(data.get("inventory"), dict) else {}
+        differ = [k for k in expected if held.get(k) != expected[k]]
+        if differ:
+            problems.append(f"inventory: differs from iac.json ({', '.join(differ)}); "
+                            "rerun iac_scan.py with both --out and --into")
     meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
     if iac.get("commit") is not None and meta.get("commit") != iac.get("commit"):
         problems.append("meta.commit: differs from iac.json; rerun iac_scan.py with both --out and --into")

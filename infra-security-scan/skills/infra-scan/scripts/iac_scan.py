@@ -55,7 +55,7 @@ from urllib.parse import unquote as url_unquote
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
-                    has_symlink_parent, json_depth, meta_prose, shape_problems, split_yaml_documents, sub_references, unique_object,
+                    has_symlink_parent, inventory, json_depth, meta_prose, shape_problems, split_yaml_documents, sub_references, unique_object,
                     write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
@@ -4653,11 +4653,7 @@ def git_commit(root):
 
 
 def inventory_of(scan):
-    by_provider = {}
-    for r in scan.resources:
-        by_provider[r["provider"]] = by_provider.get(r["provider"], 0) + 1
-    return {"resources": len(scan.resources), "by_provider": dict(sorted(by_provider.items())),
-            "files": len(scan.files), "not_run": list(scan.not_run)}
+    return inventory(scan.resources, scan.files, scan.not_run)
 
 
 def report(scan, root, commit, findings, snapshots=()):

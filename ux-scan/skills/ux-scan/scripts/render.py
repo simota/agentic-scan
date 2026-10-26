@@ -25,7 +25,7 @@ import uuid
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from file_io import read_regular, within  # noqa: E402
+from file_io import read_regular, tolerant_console, within  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
@@ -378,4 +378,5 @@ def write_reports(out, pages, finding_count, no_pdf):
 
 
 if __name__ == "__main__":
+    tolerant_console()
     sys.exit(main())

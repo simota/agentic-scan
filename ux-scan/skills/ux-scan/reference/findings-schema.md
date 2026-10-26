@@ -121,7 +121,7 @@ references, not a path; ids with a leading or trailing slash (`/U-001`,
 When ids move, explicit finding ranges written on one line using `to`,
 `through`, Japanese `から` (optionally followed by `まで`), `..`, or a hyphen or dash
 (including the Unicode and full-width forms), `~`, `〜` or `～`, with optional
-spaces, no-break spaces or ideographic spaces around the connector, expand to a
+spaces, no-break spaces or ideographic spaces around the connector (and before `まで`), expand to a
 comma-separated list of the same findings in their original range order. Ids on
 different lines, such as a Markdown bullet list, are never a range: each is
 renumbered on its own.

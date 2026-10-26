@@ -240,12 +240,13 @@ def in_path(text, start, end):
         return True
     # A path is a run of ASCII characters: Japanese prose has no spaces, so "answer.pyの12行目でF-001" must
     # stop at the kana rather than make the whole sentence one word. A colon ends it too ("関連:F-001/F-002",
-    # "path:line"); what is left of a path or URL around the id still holds its slash.
+    # "path:line"), and so do a comma and a semicolon ("F-001,F-002/F-003"); what is left of a path or URL
+    # around the id still holds its slash.
     first, last = start, end
     while first > 0 and text[first - 1].isascii() and not text[first - 1].isspace() \
-            and text[first - 1] not in "([{<\"'`:":
+            and text[first - 1] not in "([{<\"'`:,;":
         first -= 1
-    while last < len(text) and text[last].isascii() and not text[last].isspace() and text[last] not in ")]}>\"'`:":
+    while last < len(text) and text[last].isascii() and not text[last].isspace() and text[last] not in ")]}>\"'`:,;":
         last += 1
     word = text[first:last].rstrip(".,;:!?")
     return ("/" in word or "\\" in word) and not LIST_OF_REFS.fullmatch(word)

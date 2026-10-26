@@ -57,6 +57,7 @@ class ContractTest(unittest.TestCase):
                 "verdict": "Unverified", "evidence": "", "method": "inventory.py lint"}), "L-002: a High finding needs a verdict"),
             (lambda d: d["findings"][2]["validation"].update(verdict="Unverified"), "other than Unverified"),
             (lambda d: d["findings"][5].pop("proposal"), "needs proposal.after"),
+            (lambda d: d["findings"][5]["proposal"].pop("before"), "needs proposal.before"),
             (lambda d: d["findings"][0].pop("test"), "test (an eval"),
             (lambda d: d["findings"][0].update(category="Bugs"), "not a perspective name"),
             (lambda d: d["findings"][8].pop("source"), "come only from inventory.py"),

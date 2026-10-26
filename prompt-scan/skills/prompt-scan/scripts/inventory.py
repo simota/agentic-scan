@@ -97,9 +97,11 @@ NOT_COVERED = [
     "prompts loaded from databases, prompt registries, feature flags or environment variables",
     "provider-side or framework-added system text",
 ]
-# Added to not_covered when a directory was pruned by name: a skill or prompt directory called build,
-# coverage, env or vendor is skipped too, so each pruned path is listed in skipped_dirs.
-SKIPPED_NOTE = "files under directories skipped by name (dependencies, environments, build output; see skipped_dirs)"
+# Added to not_covered when a directory was pruned: by name (a skill or prompt directory called build,
+# coverage, env or vendor is skipped too) or because it is a symlink the walk does not follow, so each
+# pruned path is listed in skipped_dirs.
+SKIPPED_NOTE = ("files under directories skipped by name (dependencies, environments, build output) "
+                "or because they are symlinks (see skipped_dirs)")
 # Added when a file that would be a prompt file could not be read as text; each is listed in skipped_files.
 UNREAD_NOTE = "prompt files not read: symlinked, binary, unreadable or over 1 MiB (see skipped_files)"
 
@@ -152,12 +154,12 @@ SEVERITY_RANK = {s: i for i, s in enumerate(render.SEVERITIES)}
 
 
 def walk(root, skipped=None, unread=None):
-    """Files under root, sorted; each directory pruned by name (VCS metadata aside) is added to skipped, and
-    each symlink that would be a prompt file to unread."""
+    """Files under root, sorted; each directory pruned by name (VCS metadata aside) or not followed because it
+    is a symlink is added to skipped, and each symlink that would be a prompt file to unread."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
         if skipped is not None:
             skipped += [(Path(dirpath) / d).relative_to(root).as_posix() for d in sorted(dirnames)
-                        if d in SKIP_DIRS - VCS_DIRS]
+                        if d in SKIP_DIRS - VCS_DIRS or d not in SKIP_DIRS and (Path(dirpath) / d).is_symlink()]
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
@@ -353,6 +355,10 @@ def git_state(root, read=()):
     if drivers is None:
         return commit, None
     keys = [key for key in drivers.split("\0") if key]
+    # -c takes the first "=" for the end of the key, so a driver named "a=b" cannot be blanked; without
+    # running status, Git cannot say whether the tree changed.
+    if any("=" in key for key in keys):
+        return commit, None
     no_filters = [arg for key in keys for arg in ("-c", f"{key}=")]
     # "." limits the answer to the scanned tree when root is a subdirectory of the work tree.
     # --untracked-files=normal overrides a repository's status.showUntrackedFiles=no.

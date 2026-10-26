@@ -29,7 +29,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language, `ja` or `en`; `render.py --lang` defaults to it, and to `ja` when it is absent. Any other value is a schema error, which a fragment setting `meta.lang` repairs |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
-| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell (also when a file read is marked skip-worktree or assume-unchanged, or when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm). Excerpts come from `commit` only when `dirty` is `false` and the file has no `filter` attribute, otherwise from the working tree |
+| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell (also when a file read is marked skip-worktree or assume-unchanged, or when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm, or when a configured filter driver's name contains `=`, which keeps `inventory.py` from switching it off, so `git status` is not run). Excerpts come from `commit` only when `dirty` is `false` and the file has no `filter` attribute, otherwise from the working tree |
 
 ## Prompt record
 
@@ -96,7 +96,8 @@ evidence.
   excluded findings last) and rewrites every `F-*` reference in the record,
   except quoted `proposal` text, reference URLs, locations, paths and file
   names (a feature id such as `prompts/F-002/` or `F-002.md`), `meta`, prompt records and the
-  scanner fields of `L-*` findings
+  scanner fields of `L-*` findings (an `L-*` finding's `validation` and `previous_validation` are review
+  text, so their references follow)
 - `remove` deletes exact entries from `checked_ok`, `decisions`,
   `limitations` or `next_steps`
 - Literal instruction-override strings and credential-shaped values in any

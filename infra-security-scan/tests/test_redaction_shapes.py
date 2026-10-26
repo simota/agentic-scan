@@ -1,6 +1,9 @@
 """Credential shapes the excerpt and module-source redaction used to miss,
 and public evidence it used to hide."""
+import base64
 from pathlib import Path
+import random
+import string
 import sys
 import tempfile
 import unittest
@@ -90,6 +93,39 @@ class ExcerptShapeTest(unittest.TestCase):
     def test_a_number_under_a_plain_secret_key_stays_hidden(self):
         self.assertNotIn("1234", redaction.redact("  password = 1234"))
         self.assertNotIn("8", redaction.redact("  password_length = 8 # note"))
+
+    def test_a_number_is_public_only_under_a_setting_name(self):
+        number = "4193" + "9071"
+        for line in ("ENV MYSQL_ROOT_PASSWORD %s", "MYSQL_ROOT_PASSWORD=%s", "  db_pass: %s"):
+            with self.subTest(line=line):
+                self.assertNotIn(number, redaction.scrub_line(line % number, "yaml"))
+        shown = self.excerpt("Dockerfile", "FROM mysql:8\nENV MYSQL_ROOT_PASSWORD %s\n" % number, 2)
+        self.assertNotIn(number, shown or "")
+        for kept in ("minimum_password_length = 14", "RefreshTokenValidity: 30", '"MaxPasswordAge": 90,',
+                     "password_reuse_prevention = 24"):
+            with self.subTest(kept=kept):
+                self.assertEqual(redaction.scrub_line(kept, "yaml"), kept)
+
+    def test_a_mixed_case_token_with_underscores_is_judged_by_entropy(self):
+        rng = random.Random(7)
+        token = "".join(rng.choice(string.ascii_letters + string.digits) for _ in range(24))
+        for prefix in ("sk_" + "live_", "npm_", "hf_", ""):
+            with self.subTest(prefix=prefix):
+                value = prefix + token[:12] + "_" + token[12:]
+                self.assertNotIn(token[:12], redaction.scrub_line("# billing key: " + value, "hcl"))
+        for kept in ("name = my_bucket_name_for_logs_2024", "env: AWS_DEFAULT_REGION_FOR_STAGING_2"):
+            with self.subTest(kept=kept):
+                self.assertEqual(redaction.scrub_line(kept, "yaml"), kept)
+
+    def test_a_base64_key_after_an_equals_sign_is_one_token(self):
+        # NAME=<key> is judged as one token, exactly as NAME <key> is; before,
+        # about a quarter of keys kept runs of eight or more characters.
+        rng = random.Random(11)
+        for _ in range(200):
+            key = base64.b64encode(bytes(rng.randrange(256) for _ in range(32))).decode()
+            spaced = redaction.scrub_line("# rotate: ENCRYPTION_KEY " + key, "hcl")
+            joined = redaction.scrub_line("# rotate: ENCRYPTION_KEY=" + key, "hcl")
+            self.assertEqual(joined, spaced.replace("KEY ", "KEY=", 1), key)
 
 
 class ModuleSourceTest(unittest.TestCase):

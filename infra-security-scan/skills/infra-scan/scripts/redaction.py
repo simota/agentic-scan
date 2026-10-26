@@ -52,7 +52,9 @@ SAFE_SCALAR = re.compile(
     r'(?:null|true|false|"?(?:none|NONE|AWS_IAM|IAM|CUSTOM|JWT|COGNITO_USER_POOLS)"?)\s*[,}]?\s*$')
 # A count or duration about a secret is policy evidence (minimum_password_length
 # = 14, RefreshTokenValidity: 30); only a bare integer under such a key is kept.
-SETTING_KEY = re.compile(r"(?i)(?:length|age|prevention|validity|days|hours|minutes|seconds|ttl|period)[\"']?\s*[:=]")
+SETTING_WORD = r"(?i)(?:length|age|prevention|validity|days|hours|minutes|seconds|ttl|period)[\"']?"
+SETTING_KEY = re.compile(SETTING_WORD + r"\s*[:=]")
+SETTING_NAME = re.compile(SETTING_WORD + r"\Z")
 SETTING_VALUE = re.compile(r'"?[0-9]+"?\s*,?\s*$')
 HEREDOC = re.compile(r"<<-?\s*([A-Za-z_][A-Za-z0-9_-]*)\s*$")
 # Apostrophes are valid in URL userinfo. Keep it through the last @ so a
@@ -546,14 +548,20 @@ MAX_SCRUB = 2000  # longer lines (minified JSON) are hidden whole: linear time, 
 STRUCTURE = re.compile(r'^\s*(?:resource|data|module|variable|output|provider|dynamic)\b[^=]*\{\s*$|'
                        r'^\s*(?:kind|type|Type)\s*:\s*"?[\w:.-]+"?\s*,?\s*$')
 SAFE_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?(?:true|false|null|none|NONE|AWS_IAM|IAM|CUSTOM|JWT|'
-                       r'COGNITO_USER_POOLS|[0-9]+)"?\s*,?\s*$')
+                       r'COGNITO_USER_POOLS)"?\s*,?\s*$')
+# As in redact(): an integer is public only under a setting name (password_length = 14);
+# MYSQL_ROOT_PASSWORD 41939071 is a password.
+SETTING_TAIL = re.compile(r'\s*(?:[:=]\s*)?"?[0-9]+"?\s*,?\s*$')
 ENTROPY = re.compile(r"[A-Za-z0-9+_-]{16,}")
 # A base64 key is one token: ENTROPY alone splits it at "/" and "=" into
 # pieces too short or too plain to judge, leaving long runs of the key.
-BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/=])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
-# Cloud resource IDs and ARNs are long and mixed but name no secret.
-RESOURCE_ID = re.compile(r"(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
-                         r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17}|[a-z0-9-]+_[a-z0-9_]+", re.IGNORECASE)
+# It may follow "=": NAME=<key> in an env file or connection string.
+BASE64_TOKEN = re.compile(r"(?<![A-Za-z0-9+/])[A-Za-z0-9+/]{20,}={0,2}(?![A-Za-z0-9+/=])")
+# Cloud resource IDs and ARNs are long and mixed but name no secret, nor
+# do snake_case names in one case. A mixed-case token with underscores
+# (sk_live_..., npm_..., URL-safe base64) is judged like any other.
+RESOURCE_ID = re.compile(r"(?i:(?:ami|sg|subnet|vpc|i|vol|snap|eni|igw|nat|rtb|acl|pcx|tgw|lt|eipalloc|"
+                         r"vpce|fs|db|cluster|key|sgr)-[0-9a-f]{8,17})|[a-z0-9-]+_[a-z0-9_]+|[A-Z0-9-]+_[A-Z0-9_]+")
 # Linear alternatives: userinfo without a slash, possibly with an escaped
 # quote or a space inside (postgres://app:a\"b@db, postgres://app:a b@db).
 URL_USERINFO = re.compile(r"://[^/\s\"'@]*(?:\\\"[^/\s\"'@]*)*@|://[^/\"'@]*\s[^/\"'@]*@")
@@ -774,6 +782,7 @@ def scrub_line(line, syntax="hcl"):
         value = re.sub(r"^\s*[:=]\s*", "", rest)
         # Complete Terraform references name no value; "[redacted]" is ours.
         public = SAFE_TAIL.fullmatch(rest) or value.strip() == "[redacted]" or (
+            SETTING_TAIL.fullmatch(rest) and SETTING_NAME.search(line[:end])) or (
             syntax == "hcl" and SAFE_VALUE.fullmatch(value))
         if re.search(r"[A-Za-z0-9]", rest) and not public:
             line = line[:end] + " [redacted]"

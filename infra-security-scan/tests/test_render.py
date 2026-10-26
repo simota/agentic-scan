@@ -88,6 +88,8 @@ class ValidateTest(unittest.TestCase):
         # An UNKNOWN edge, with what would decide it, leaves the path unknown, not open.
         data["attack_paths"][0]["edges"][0] = "UNKNOWN: the WAF in front of the ALB is not in the inputs"
         self.assertIn("AP-01: an UNKNOWN edge makes the path unknown, not open", problems(data, partial=True))
+        data["attack_paths"][0]["edges"][0] = "UNKNOWN: listener reachability depends on the deployment (alb.tf:12)"
+        self.assertIn("AP-01: an UNKNOWN edge makes the path unknown, not open", problems(data, partial=True))
         data["attack_paths"][0].update(status="unknown", note="The WAF is not in the inputs")
         self.assertFalse([p for p in problems(data, partial=True) if p.startswith("AP-01")])
 

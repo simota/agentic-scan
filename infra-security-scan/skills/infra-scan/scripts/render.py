@@ -483,11 +483,11 @@ def validate(data, partial=False):
         if not isinstance(edges, list) or not edges or any(blank(e) for e in edges):
             add(f"{where}: edges must be a nonempty list of strings")
         else:
-            unread = [n for n, e in enumerate(edges, 1) if not CITED.search(e)]
-            for n in unread:
-                if "UNKNOWN" not in edges[n - 1]:
+            for n, e in enumerate(edges, 1):
+                if not CITED.search(e) and "UNKNOWN" not in e:
                     add(f"{where}: edge {n} cites no path:line and is not marked UNKNOWN")
-            if unread and a.get("status") == "open":
+            # A cited edge may still be UNKNOWN ("depends on the deployment (main.tf:12)").
+            if a.get("status") == "open" and any("UNKNOWN" in e for e in edges):
                 add(f"{where}: an UNKNOWN edge makes the path unknown, not open")
         if "note" in a and not isinstance(a["note"], str):
             add(f"{where}: note must be a string")

@@ -25,8 +25,8 @@ PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsaf
 DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
 
 LABELS = {
-    "en": {"kind": "UX review", "title": "Before / After", "dashboard": "Dashboard", "report": "Report",
-           "theme": "Theme", "before": "Before", "after": "After", "side": "Side by side", "slider": "Slider",
+    "en": {"title": "Before / After", "dashboard": "Dashboard", "before": "Before", "after": "After",
+           "side": "Side by side", "slider": "Slider",
            "view": "View", "viewport": "Viewport", "split": "Before / After split",
            "contents": "Mockups", "screen": "Screen", "location": "Location", "flow": "Flow",
            "observed": "Observed", "expected": "Expected", "fix": "Fix", "field": "Before/After",
@@ -34,8 +34,8 @@ LABELS = {
            "lead": "Mockups illustrate each finding as it is and as its fix proposes. They are drawn for the "
                    "review, not rendered from the app, and are not part of the PDF report.",
            "no_script": "Scripts are off: every side is shown at full size."},
-    "ja": {"kind": "UX診断", "title": "Before / After", "dashboard": "ダッシュボード", "report": "診断書",
-           "theme": "テーマ", "before": "Before（現状）", "after": "After（修正案）", "side": "並べて表示",
+    "ja": {"title": "Before / After", "dashboard": "ダッシュボード", "before": "Before（現状）", "after": "After（修正案）",
+           "side": "並べて表示",
            "slider": "スライダー", "view": "表示", "viewport": "ビューポート", "split": "Before / After の境界",
            "contents": "モック一覧", "screen": "画面", "location": "箇所", "flow": "フロー",
            "observed": "現状", "expected": "あるべき状態", "fix": "修正", "field": "Before/After",
@@ -143,7 +143,8 @@ JS = """
         el.hidden = (el.dataset.state !== undefined && el.dataset.state !== chosen.state) ||
           (el.dataset.proposal !== undefined && !all && el.dataset.proposal !== chosen.proposal);
       });
-      if (proposals) { press(proposals, chosen.proposal); proposals.hidden = all; }
+      // Under "all" every proposal shows, and under "before" none does: the picker would do nothing.
+      if (proposals) { press(proposals, chosen.proposal); proposals.hidden = all || compare.dataset.mode === 'before'; }
       if (states) press(states, chosen.state);
     }
     function mode(value) { compare.dataset.mode = value; press(modes, value); show(); size(section); }
@@ -284,8 +285,12 @@ def _section(f, anchor, mockup, flows, lang, L):
             f"<dl>{details}</dl></section>")
 
 
-def render_page(data, flows, lang):
-    """mockups.html for the Valid and Likely findings with a mockup."""
+def render_page(data, flows, lang, chrome):
+    """mockups.html for the Valid and Likely findings with a mockup.
+
+    chrome holds the dashboard's own labels (scan_report_kit.report.labels_for), so
+    the app bar names the report link and the theme toggle exactly as the dashboard does.
+    """
     L = LABELS[lang]
     items = with_mockups(data)
     project = data["meta"]["project"]
@@ -307,7 +312,7 @@ def render_page(data, flows, lang):
 </style>
 </head>
 <body>
-<header class="appbar"><div class="appbar-in"><span class="brand"><span>{esc(L["kind"])}</span> <span class="appbar-project">{esc(project)}</span></span><div class="tools"><a class="button" href="dashboard.html">{esc(L["dashboard"])}</a><a class="button" href="report.html">{esc(L["report"])}</a><button id="theme" type="button">{esc(L["theme"])}</button></div></div></header>
+<header class="appbar"><div class="appbar-in"><span class="brand"><span>{esc(chrome["kind"])}</span> <span class="appbar-project">{esc(project)}</span></span><div class="tools"><a class="button" href="dashboard.html">{esc(L["dashboard"])}</a><a class="button" href="report.html">{esc(chrome["report_link"])}</a><button id="theme" type="button">{esc(chrome["theme"])}</button></div></div></header>
 <main>
 <h1>{esc(L["title"])}</h1>
 <p class="mockups-lead">{esc(L["lead"])}</p>

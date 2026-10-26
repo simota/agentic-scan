@@ -17,8 +17,9 @@ SECRET_VALUE = re.compile(
     r"xox[abposr]-[A-Za-z0-9-]{10,}|gh[pousr]_[A-Za-z0-9]{30,}|github_pat_[A-Za-z0-9_]{30,}|"
     r"glpat-[A-Za-z0-9_-]{20,}|(?:AKIA|ASIA)[0-9A-Z]{16}|[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|"
     r"AIza[0-9A-Za-z_-]{35}|sk-(?:ant-|proj-)[A-Za-z0-9_-]{20,}|sk-[A-Za-z0-9]{32,}|npm_[A-Za-z0-9]{36}|"
-    r"SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.|"
-    r"(?i:bearer|basic)[ \t]+[A-Za-z0-9._~+/-]{16,})")
+    r"SG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}|(?i:bearer|basic)[ \t]+[A-Za-z0-9._~+/-]{16,})|"
+    # A JWT starts its token: an eyJ inside a longer one (_eyJ_eyJ...) would rescan the rest each time.
+    r"(?<![A-Za-z0-9_-])eyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.")
 
 
 def physical_lines(text):

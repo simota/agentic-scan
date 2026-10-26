@@ -2,6 +2,7 @@
 
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -58,6 +59,16 @@ class SecretValueTests(unittest.TestCase):
         for line in HARMLESS:
             with self.subTest(line):
                 self.assertFalse(sensitive_source(line))
+
+    def test_repeated_prefixes_that_never_match_stay_linear(self):
+        # About 2 MB each, the largest source inventory and excerpts read; a backtracking
+        # value pattern takes minutes here, a linear one well under a second.
+        for prefix in ("_eyJ", "-eyJ", "eyJaaaaaaaaaa.", "_xoxb-", "SG._", "_sk_live_", "_github_pat_", "Bearer_"):
+            with self.subTest(prefix):
+                source = 's = "' + prefix * (2_000_000 // len(prefix)) + '"'
+                start = time.monotonic()
+                sensitive_source(source)
+                self.assertLess(time.monotonic() - start, 3)
 
     def test_inventory_marker_text_omits_sources_with_credential_values(self):
         with tempfile.TemporaryDirectory() as temporary:

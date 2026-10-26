@@ -39,6 +39,18 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("</script>", payload)
         self.assertEqual(json.loads(payload)["findings"][0]["title"], "</script><b>x</b>")
 
+    def test_dashboard_proposal_text_wraps_like_the_report(self):
+        # The kit's .snippet scrolls sideways to keep code lines whole; proposal text is prose to read and paste.
+        dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
+        self.assertIn("'class':'snippet proposal-text'", dashboard)
+        css = re.search(r"<style>(.*?)</style>", dashboard, re.S).group(1)
+        rule = re.search(r"\.snippet\.proposal-text\{([^}]*)\}", css)
+        self.assertIsNotNone(rule)
+        self.assertIn("white-space:pre-wrap", rule.group(1))
+        self.assertIn("overflow-wrap:anywhere", rule.group(1))
+        # The rule follows the kit's .snippet{white-space:pre}, so it wins at equal or higher specificity.
+        self.assertGreater(css.index(rule.group(0)), css.index(".snippet{"))
+
     def test_report_uses_the_shared_format_and_escapes(self):
         data = sample("ja")
         data["findings"][0]["title"] = "<b>x</b> & y"

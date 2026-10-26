@@ -304,6 +304,11 @@ def parse_json(raw, path):
         raise SchemaError(f"{path}: {e}") from None
     if json_depth(value) > MAX_JSON_DEPTH:
         raise SchemaError(f"{path}: JSON nesting deeper than {MAX_JSON_DEPTH} levels")
+    try:
+        # A \ud83d escape with no pair parses, but no output can encode it.
+        json.dumps(value, ensure_ascii=False).encode("utf-8")
+    except UnicodeEncodeError:
+        raise SchemaError(f"{path}: a string holds a lone UTF-16 surrogate escape (\\ud800-\\udfff)") from None
     return value
 
 

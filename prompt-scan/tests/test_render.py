@@ -259,7 +259,9 @@ class RenderTest(unittest.TestCase):
 
     def test_non_standard_json_is_a_schema_error(self):
         for raw in (b'{"findings": [], "perspectives": [{"name": "a", "result": "applied", "x": NaN}]}',
-                    b'{"findings": [], "findings": []}'):
+                    b'{"findings": [], "findings": []}',
+                    # A lone surrogate parses but cannot be written: render.py crashed before writing anything.
+                    b'{"findings": [], "checked_ok": ["split \\ud83d here"]}', b'{"findings": [], "\\udc00": 1}'):
             with self.assertRaises(render.SchemaError):
                 render.load("findings.json", raw)
 

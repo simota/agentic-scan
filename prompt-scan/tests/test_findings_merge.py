@@ -104,6 +104,14 @@ class MergeTest(unittest.TestCase):
         self.assertEqual(code, 2, err)
         self.assertIn("error:", err)
 
+    def test_lone_surrogate_is_an_input_error(self):
+        # It passed every check, then crashed the write with a traceback (exit 1, which means "refused").
+        path = self.dir / "surrogate.json"
+        path.write_text('{"checked_ok": ["split \\ud83d here"]}', encoding="utf-8")
+        code, _, err = run(findings.main, "merge", self.out, path)
+        self.assertEqual(code, 2, err)
+        self.assertIn("surrogate", err)
+
     def test_refuses_scanner_meta(self):
         code, _, err = self.merge({"meta": dict(META, commit="0" * 40)})
         self.assertEqual(code, 1)

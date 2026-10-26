@@ -3862,12 +3862,16 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
             hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
     for container in containers:
         for env in aslist(container.get("env") if isinstance(container, _YamlMap) else None):
-            # $(OTHER_VAR) expands another entry; {{ }} is an unrendered chart template.
-            if isinstance(env, _YamlMap) and isinstance(env.get("name"), str) and \
-                    CFN_SECRET_KEY.fullmatch(env["name"]) and literal_secret(env.get("value")) and \
-                    not re.search(r"\$\(|\{\{", env["value"]):
+            # $(OTHER_VAR) expands another entry; ${VAR} / $VAR are envsubst or Flux
+            # placeholders; {{ }} is an unrendered chart template.
+            if not (isinstance(env, _YamlMap) and isinstance(env.get("name"), str)):
+                continue
+            name, value = env["name"], env.get("value")
+            exempt = next((p for keys, p in NOT_A_SECRET.items() if name.lower().endswith(keys)), None)
+            if CFN_SECRET_KEY.fullmatch(name) and literal_secret(value) and \
+                    not re.search(r"\$[({A-Za-z_]|\{\{", value) and not (exempt and exempt.search(value)):
                 scan.hit("SEC-001", Res("file", rel, rel, 1), env.lines.get("value", res.line),
-                         f"literal value for {env['name']} ({res.address})")
+                         f"literal value for {name} ({res.address})")
     for volume in aslist(pod.get("volumes")):
         if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
             hits.append((volume, "hostPath", "hostPath volume"))
@@ -4294,7 +4298,7 @@ def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
     generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
-        lambda line: [*filter(None, [GENERIC_SECRET.match(line)]), *INLINE_SECRET.finditer(line)])
+        lambda line: filter(None, [GENERIC_SECRET.match(line)]))
     mocks = mock_lines(lines) if kind == "terragrunt" else set()
     # Environment entries are read without comments, which may sit beside a name or
     # mention a reference type; a heredoc's body (container definitions) is kept.
@@ -4312,7 +4316,9 @@ def scan_secrets(scan, rel, text, kind):
                     and not FLAG_VALUE.fullmatch(value.strip()) \
                     and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
-        for m in generic(line):
+        # Inline objects are read without comments, which may show such a shape as an example.
+        inline = INLINE_SECRET.finditer(code_lines[n - 1]) if kind in HCL_KINDS and n <= len(code_lines) else ()
+        for m in [*generic(line), *inline]:
             if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):

@@ -106,10 +106,12 @@ class ExcerptScrubTest(OutputTest):
                     self.assertNotIn(W, page)
         # The public spellings stay readable.
         for line in ('authorizer_id = "abc123"', 'authorizer_uri = "arn:aws:apigateway:x"',
-                     'authorization_type = "CUSTOM"', 'type = "PLAINTEXT"'):
+                     'authorization_type = "CUSTOM"', 'type = "PLAINTEXT"', "plaintext_listener_port = 9092",
+                     "AuthorizerCredentials: arn:aws:iam::111122223333:role/apigw-invoke"):
             with self.subTest(line=line):
-                self.assertEqual(redaction.redact_lines([line]), [line])
-                self.assertEqual(redaction.scrub_line(line), line)
+                syntax = "yaml" if line.startswith("Authorizer") else "hcl"
+                self.assertEqual(redaction.redact_lines([line], syntax=syntax), [line])
+                self.assertEqual(redaction.scrub_line(line, syntax), line)
 
     def test_respelled_locations_name_the_file_they_open(self):
         for name, text in ((".env", f"PGPASS={M}\n"), ("terraform.tfstate", f'{{"result": "{M}"}}\n'),

@@ -269,6 +269,9 @@ class SecretAttributeNameTest(unittest.TestCase):
                          [("SEC-001", 2, "literal value assigned to DB_PASSWORD"),
                           ("SEC-001", 5, "literal value assigned to api_token")])
         self.assertEqual(scan({"ok.tf": 'locals {\n  db = { password = var.pw, token_ttl = "300" }\n}\n'}).hits, [])
+        # A comment that shows the shape is not configuration.
+        self.assertEqual(scan({"c.tf": '# e.g. variables = { DB_PASSWORD = "changeme-in-comment" }\n'
+                                       'locals {\n  a = 1 // { api_token = "in-a-comment" }\n}\n'}).hits, [])
         # CodeBuild's type = "PLAINTEXT" names a kind, not a secret.
         self.assertEqual(scan({"cb.tf": 'locals {\n  type = "PLAINTEXT"\n}\n'}).hits, [])
 

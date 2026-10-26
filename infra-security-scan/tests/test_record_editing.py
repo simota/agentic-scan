@@ -59,7 +59,7 @@ class RecordEditingTest(unittest.TestCase):
         self.assertEqual(saved["cwe"], "CWE-284")
 
     def test_remove_and_renumber_keep_references_consistent(self):
-        ap = {"id": "AP-01", "entry": "Internet", "target": "db", "status": "open", "edges": ["e"],
+        ap = {"id": "AP-01", "entry": "Internet", "target": "db", "status": "open", "edges": ["e (main.tf:1)"],
               "findings": ["F-001", "F-002", "F-003"]}
         fs = [finding("F-001", "Low", "b.tf:10", attack_paths=["AP-01"]),
               finding("F-002", "High", "a.tf:9", attack_paths=["AP-01"]),

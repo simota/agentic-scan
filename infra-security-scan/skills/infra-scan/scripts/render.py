@@ -482,6 +482,13 @@ def validate(data, partial=False):
         edges = a.get("edges")
         if not isinstance(edges, list) or not edges or any(blank(e) for e in edges):
             add(f"{where}: edges must be a nonempty list of strings")
+        else:
+            unread = [n for n, e in enumerate(edges, 1) if not CITED.search(e)]
+            for n in unread:
+                if "UNKNOWN" not in edges[n - 1]:
+                    add(f"{where}: edge {n} cites no path:line and is not marked UNKNOWN")
+            if unread and a.get("status") == "open":
+                add(f"{where}: an UNKNOWN edge makes the path unknown, not open")
         if "note" in a and not isinstance(a["note"], str):
             add(f"{where}: note must be a string")
         refs = a.get("findings", [])

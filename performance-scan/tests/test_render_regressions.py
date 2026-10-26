@@ -105,25 +105,25 @@ class RenderRegressions(unittest.TestCase):
         self.assertIn("Data (data:text/html,&lt;script&gt;bad()&lt;/script&gt;)", references[2])
         self.assertTrue(all("](" not in line for line in references))
 
-    def test_measurement_command_keeps_backticks_and_line_breaks(self):
+    def measure(self, before, after=None):
         finding = self.doc["findings"][0]
         finding["validation"]["method"] = "measured"
-        finding["measurement"] = {
-            "result": "1 < 2 & **literal**",
-            "environment": "local\n<throwaway>",
-            "command": "printf '`<n>`'\n# not a heading\n\n`",
-        }
+        finding["measurement"] = {"environment": "local\n<throwaway>", "before": before,
+                                  "after": after or {"command": "c", "result": "ok", "log": "l"}}
+        return finding
+
+    def test_measurement_command_keeps_backticks_and_line_breaks(self):
+        self.measure({"result": "1 < 2 & **literal**", "log": "l",
+                      "command": "printf '`<n>`'\n# not a heading\n\n`"})
         report = render.render_markdown(self.doc, "en")
-        measurement = next(line for line in report.splitlines() if line.startswith("- **measurement:**"))
-        self.assertEqual(measurement, "- **measurement:** 1 &lt; 2 &amp; \\*\\*literal\\*\\* "
-                         "(``printf '`<n>`'``<br>`# not a heading`<br><br>`` ` ``, "
-                         "local<br>&lt;throwaway&gt;)")
+        lines = report.splitlines()
+        at = lines.index("- **measurement:** local<br>&lt;throwaway&gt;")
+        self.assertEqual(lines[at + 1], "  - **before:** 1 &lt; 2 &amp; \\*\\*literal\\*\\* "
+                         "(``printf '`<n>`'``<br>`# not a heading`<br><br>`` ` ``)")
         self.assertNotIn("\n# not a heading", report)
 
     def test_code_delimiters_do_not_remove_command_edge_spaces(self):
-        finding = self.doc["findings"][0]
-        finding["validation"]["method"] = "measured"
-        finding["measurement"] = {"result": "ok", "environment": "local", "command": ""}
+        finding = self.measure({"result": "ok", "command": "", "log": "l"})
         for command, expected in (
             ("  command  ", "`   command   `"),
             ("  command", "`  command`"),
@@ -132,30 +132,36 @@ class RenderRegressions(unittest.TestCase):
             ("`command`", "`` `command` ``"),
         ):
             with self.subTest(command=command):
-                finding["measurement"]["command"] = command
+                finding["measurement"]["before"]["command"] = command
                 report = render.render_markdown(self.doc, "en")
-                self.assertIn(f"- **measurement:** ok ({expected}, local)", report)
+                self.assertIn(f"  - **before:** ok ({expected})", report)
 
-    def test_html_measurement_keeps_an_exact_separate_command_block(self):
+    def test_markdown_log_is_a_literal_fence_inside_the_finding(self):
+        log = "```\n# not a heading\n<script>bad()</script>\n\n- not a list"
+        self.measure({"command": "c", "result": "ok", "log": log})
+        lines = render.render_markdown(self.doc, "en").splitlines()
+        at = lines.index("    ````text")
+        self.assertEqual(lines[at + 1:at + 7], ["    ```", "    # not a heading",
+                                                "    <script>bad()</script>", "", "    - not a list",
+                                                "    ````"])
+        self.assertEqual(lines[at - 1].split(":**")[0], "  - **before")
+        self.assertTrue(lines[at + 7].startswith("  - **after:** ok"))
+
+    def test_html_measurement_keeps_exact_separate_command_and_log_blocks(self):
         command = "python - <<'PY'\n  print('<script>bad()</script> & `')\n\nPY\n"
-        finding = self.doc["findings"][0]
-        finding["validation"]["method"] = "measured"
-        finding["measurement"] = {
-            "result": "1 < 2\nresult marker",
-            "environment": "local\n<throwaway>",
-            "command": command,
-        }
+        log = "orders=50 queries=52\n<b>raw</b> & `"
+        finding = self.measure({"result": "1 < 2\nresult marker", "command": command, "log": log},
+                               {"result": "after marker", "command": "after-cmd", "log": "after-log"})
         render.validate(self.doc, complete=True)
         for lang in ("ja", "en"):
             with self.subTest(lang=lang):
                 root = HtmlTreeReader(render.render_html(self.doc, lang)).root
-                codes = root.findall(".//details/dl/dd/pre/code")
-                self.assertEqual(len(codes), 1)
-                self.assertEqual(element_text(codes[0]), command)
+                codes = [element_text(code) for code in root.findall(".//details/dl/dd/pre/code")]
+                self.assertEqual(codes, [command, log, "after-cmd", "after-log"])
                 cells = [element_text(dd) for dd in root.findall(".//details/dl/dd")]
-                self.assertIn(finding["measurement"]["result"], cells)
-                self.assertIn(finding["measurement"]["environment"], cells)
-                self.assertIn(command, cells)
+                for value in ("1 < 2\nresult marker", "after marker",
+                              finding["measurement"]["environment"]):
+                    self.assertIn(value, cells)
                 self.assertEqual(len(root.findall(".//script")), 1)
 
     def test_html_plain_text_preserves_line_breaks_without_creating_markup(self):

@@ -266,8 +266,8 @@ class UnknownKeyTests(unittest.TestCase):
         cases = (
             (lambda d: d["findings"][0].update(budjet="B-99"), r"^findings\[0\]: unknown keys \['budjet'\]"),
             (lambda d: d["findings"][0]["validation"].update(evidense="x"), r"^findings\[0\]\.validation: unknown"),
-            (lambda d: d["findings"][0].update(measurement={"environment": "e", "command": "c",
-                                                            "result": "r", "note": "n"}),
+            (lambda d: d["findings"][0].update(measurement={"environment": "e", "note": "n",
+                                                            "before": {}, "after": {}}),
              r"^findings\[0\]\.measurement: unknown"),
             (lambda d: d["findings"][0].update(references=[{"url": "https://a.test", "label": "x"}]),
              r"^findings\[0\]\.references\[0\]: unknown"),

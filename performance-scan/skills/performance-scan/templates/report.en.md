@@ -53,6 +53,7 @@ Link the issue filed from templates/issue.en.md, or write "not filed yet". -->
 - **Cost model:** {{cost_model}}
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
+- **Measured (before → after):** {{measurement.before.result}} → {{measurement.after.result}} ({{measurement.environment}})
 - **Tracked in:** <issue URL, or "not filed yet">
 
 ## 4. Budgets
@@ -84,3 +85,4 @@ Link the issue filed from templates/issue.en.md, or write "not filed yet". -->
 
 - `report.md` — the written assessment
 - `dashboard.html` — every finding, works offline
+- Measurement logs — for each finding with a measurement, the before and after commands and their raw logs (also in each finding of `report.md`)

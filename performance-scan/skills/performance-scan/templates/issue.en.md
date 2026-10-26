@@ -52,7 +52,23 @@ shared resource, name the workload that causes the stall and the workloads that 
 
 {{validation.evidence}}
 
-<!-- If measured: {{measurement.command}} on {{measurement.environment}} → {{measurement.result}} -->
+<!-- If measured, remove the comment markers and keep this block (environment: {{measurement.environment}}); otherwise delete it
+## Measurement log
+
+Before: {{measurement.before.result}}
+
+```text
+$ {{measurement.before.command}}
+{{measurement.before.log}}
+```
+
+After: {{measurement.after.result}}
+
+```text
+$ {{measurement.after.command}}
+{{measurement.after.log}}
+```
+-->
 
 ## Fix direction
 

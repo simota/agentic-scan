@@ -36,7 +36,9 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence,
   checked against four claims: reachability, scale, mitigations and impact.
   Static cost models (`1 + N queries`) and local measurements stay distinct;
-  unmeasured milliseconds are never reported
+  unmeasured milliseconds are never reported. A recorded measurement always
+  carries a before and an after run (without and with the fix direction), each
+  with its command, result and raw log, and both outputs show them
 - **Severity** — High when a hot path's cost grows with an uncapped scale
   driver, or one request blocks a shared resource; each condition the code does
   not control lowers it one level

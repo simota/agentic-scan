@@ -407,6 +407,21 @@ details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:any
 .coverage-table th:nth-child(3){width:44%}
 .lists .panel ul{white-space:normal}
 @media(max-width:850px){details[data-sev] dl{grid-template-columns:minmax(0,1fr);gap:3px}details[data-sev] dd{margin-bottom:10px}}
+/* Narrow screens: each ledger row becomes a labelled card, as the kit does for
+   its register, so the status column is never scrolled out of view. Print keeps
+   the tables. */
+@media screen and (max-width:850px){
+table.ledger,table.ledger>tbody,table.ledger>tbody>tr,table.ledger>tbody>tr>td{display:block}
+table.ledger>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
+table.ledger>tbody>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px 14px;padding:12px 4px;border-bottom:1px solid var(--line)}
+table.ledger>tbody>tr:last-child{border-bottom:0}
+table.ledger>tbody>tr>td{border:0;padding:0;overflow-wrap:anywhere}
+table.ledger>tbody>tr>td:before{content:attr(data-label);display:block;font-family:var(--sans);font-size:11px;color:var(--muted);margin-bottom:2px}
+.commitments td:nth-child(1){grid-area:1/1}
+.commitments td:nth-child(5){grid-area:1/2}
+.commitments td:nth-child(2){grid-column:1/-1}
+table.coverage-table>tbody>tr{grid-template-columns:max-content minmax(0,1fr)}
+.coverage-table td:nth-child(1){grid-column:1/-1}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
@@ -423,6 +438,18 @@ const empty=document.querySelector('[data-empty]');if(empty)empty.hidden=shown>0
 
 def html_head(columns):
     return "<thead><tr>" + "".join(f"<th>{escape(c)}</th>" for c in columns) + "</tr></thead>"
+
+
+# Short identifiers (C-01) never break at their hyphen.
+NOWRAP = " class='nowrap'"
+
+
+def html_row(columns, cells, nowrap=()):
+    """A ledger row; each cell names its column for the narrow-screen card layout."""
+    return "<tr>" + "".join(
+        f"<td{NOWRAP if i in nowrap else ''} data-label='{escape(column)}'>"
+        f"{escape(as_text(cell))}</td>"
+        for i, (column, cell) in enumerate(zip(columns, cells))) + "</tr>"
 
 
 def render_html(doc, lang):
@@ -505,15 +532,14 @@ def render_html(doc, lang):
                    f"{html_head(t['commitment_columns'])}")
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            cells = (statement, r.get("family", ""), r["source"], status)
-            out.append(f"<tr><td class='nowrap'>{e(r['id'])}</td>"
-                       + "".join(f"<td>{e(cell)}</td>" for cell in cells) + "</tr>")
+            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
+            out.append(html_row(t["commitment_columns"], cells, nowrap=(0,)))
         out.append("</table></div></section>")
     out.append(f"<section><div class='section-head'><div><h2>{e(t['perspectives'])}</h2></div></div>"
                f"<div class='tablewrap'><table class='ledger coverage-table'>"
                f"{html_head(t['perspective_columns'])}")
     for row in perspective_rows(doc, t):
-        out.append("<tr>" + "".join(f"<td>{e(cell)}</td>" for cell in row) + "</tr>")
+        out.append(html_row(t["perspective_columns"], row))
     out.append("</table></div></section><div class='lists'>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])

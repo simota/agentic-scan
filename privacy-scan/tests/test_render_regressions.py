@@ -159,8 +159,12 @@ class ReportRenderingTests(unittest.TestCase):
                     outputs = self.render_outputs(doc, lang)
                     self.assertIn(f"| C-01 | no PII in errors |  | policy | {status} |",
                                   outputs["report.md"])
-                    self.assertIn("<tr><td class='nowrap'>C-01</td><td>no PII in errors</td>"
-                                  f"<td></td><td>policy</td><td>{status}</td></tr>",
+                    columns = render.LABELS[lang]["commitment_columns"]
+                    cells = ("C-01", "no PII in errors", "", "policy", status)
+                    self.assertIn("<tr><td class='nowrap' data-label='ID'>C-01</td>"
+                                  + "".join(f"<td data-label='{c}'>{v}</td>"
+                                            for c, v in zip(columns[1:], cells[1:]))
+                                  + "</tr>",
                                   outputs["dashboard.html"])
 
     def test_references_remain_in_both_outputs_and_languages(self):
@@ -347,3 +351,66 @@ class EmptyLedgerTests(unittest.TestCase):
                 html = render.render_html(doc, lang)
                 self.assertIn(f"<h2>{escape(labels['commitments'])}</h2>", html)
                 self.assertIn(f"<p class='muted'>{escape(labels['none'])}</p></section>", html)
+
+
+class LedgerCells(HTMLParser):
+    """Column headers and each cell's data-label, per ledger table class."""
+
+    def __init__(self, source):
+        super().__init__()
+        self.tables, self._table, self._cell = {}, None, None
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if tag == "table" and "ledger" in attrs.get("class", "").split():
+            self._table = self.tables.setdefault(attrs["class"], {"heads": [], "rows": []})
+        elif self._table is not None and tag == "tr":
+            self._table["rows"].append([])
+        elif self._table is not None and tag in ("th", "td"):
+            self._cell = [tag, attrs.get("data-label"), ""]
+
+    def handle_endtag(self, tag):
+        if tag == "table":
+            self._table = None
+        elif self._cell is not None and tag == self._cell[0]:
+            kind, label, text = self._cell
+            if kind == "th":
+                self._table["heads"].append(text)
+            else:
+                self._table["rows"][-1].append((label, text))
+            self._cell = None
+
+    def handle_data(self, data):
+        if self._cell is not None:
+            self._cell[2] += data
+
+
+class NarrowLedgerTests(unittest.TestCase):
+    """On narrow screens a ledger row is a card, so each cell names its column."""
+
+    def test_every_ledger_cell_is_labelled_with_its_column(self):
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                labels = render.LABELS[lang]
+                tables = LedgerCells(render.render_html(complete_doc(), lang)).tables
+                expected = {"ledger commitments": labels["commitment_columns"],
+                            "ledger coverage-table": labels["perspective_columns"]}
+                self.assertEqual(set(tables), set(expected))
+                for name, columns in expected.items():
+                    table = tables[name]
+                    self.assertEqual(table["heads"], list(columns))
+                    rows = [row for row in table["rows"] if row]
+                    self.assertTrue(rows)
+                    for row in rows:
+                        self.assertEqual([label for label, _ in row], list(columns))
+                # The status a reader scans for stays in the commitment card.
+                commitment = tables["ledger commitments"]["rows"][1]
+                self.assertEqual(commitment[-1], (labels["commitment_columns"][-1],
+                                                  render.term(labels, "violated")))
+
+    def test_card_layout_applies_to_narrow_screens_but_not_print(self):
+        media = re.search(r"@media screen and \(max-width:850px\)\{(.*?)\}\}", render.CSS, re.S)
+        self.assertIsNotNone(media)
+        self.assertIn("table.ledger>thead{position:absolute", media.group(1))
+        self.assertIn("content:attr(data-label)", media.group(1))

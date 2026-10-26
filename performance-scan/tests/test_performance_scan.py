@@ -139,6 +139,17 @@ class DocumentTests(unittest.TestCase):
         steps = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \|", hunts, re.MULTILINE))
         self.assertEqual(steps, findings.HUNT_STEPS)
 
+    def test_each_hunt_step_belongs_to_the_perspective_heading_it(self):
+        text = (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        hunts = text.split("## Hunt steps per perspective", 1)[1].split("## Sound constructs", 1)[0]
+        owners = {}
+        for name, prefix, body in re.findall(r"^### (.+?) \(([A-Z]{2})\).*?\n(.*?)(?=^### |\Z)",
+                                             hunts, re.MULTILINE | re.DOTALL):
+            for step in re.findall(r"^\| ([A-Z]{2}[0-9]+) \|", body, re.MULTILINE):
+                self.assertTrue(step.startswith(prefix), step)
+                owners[step] = name
+        self.assertEqual(owners, findings.STEP_PERSPECTIVES)
+
     def test_chat_block_follows_the_rendered_field_order(self):
         text = (SKILL / "reference" / "report.md").read_text(encoding="utf-8")
         block = text.split("```", 2)[1]

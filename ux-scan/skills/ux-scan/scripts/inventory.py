@@ -397,36 +397,51 @@ def jsx_text_line(text, start, budget):
     return False
 
 
-def jsx_child_text(text, i, budget):
+def jsx_child_text(text, i, budget, memo=None):
     """Whether text[i] lies in JSX child text: inside an element opened earlier on its line
     ("<p>Requests to /api/* …", "<p><b>x</b>/* …"), or on a line that continues child text.
 
     The tags before i on its line are read right to left, each closing tag matching an opening one;
     after a complete element (const A = <div /> /* … */) or code, "/*" opens a comment. Reading
     back draws on budget, as jsx_text_line does; once it is spent, "/*" is a comment again.
+    memo, a dict kept for one text, holds the answer from each tag start an earlier call passed
+    with no element left to match, so "<p><b>x</b> /* … /*" does not re-read the line per "/*".
     """
     line_start = text.rfind("\n", 0, i) + 1
     if i - line_start > budget[0]:
         budget[0] = 0
         return False
     budget[0] -= i - line_start
-    depth, end = 0, i
+    depth, end, level = 0, i, []
     while (close := text.rfind(">", line_start, end)) >= 0:
         opening = text.rfind("<", line_start, close)
         if (JSX_TEXT.fullmatch(text, close + 1, end) is None or opening < 0
                 or not TAG_BEFORE.match(text, opening, close + 1)
                 or text.count("{", opening, close) != text.count("}", opening, close)):
-            return False  # Code, a tag that started on an earlier line, or a ">" inside {…} (=>, a > b).
+            # Code, a tag that started on an earlier line, or a ">" inside {…} (=>, a > b).
+            return _remember(memo, level, False)
         if text.startswith("</", opening):
             depth += 1
         elif text[close - 1] != "/":
             if not depth:
-                return True  # The element this text belongs to.
+                return _remember(memo, level, True)  # The element this text belongs to.
             depth -= 1
         end = opening
+        if not depth and memo is not None:
+            if end in memo:
+                return _remember(memo, level, memo[end])
+            level.append(end)
     # A "/*" that starts its line opens a comment: after "() => <Icon />" the next line is code again.
+    # Not remembered: this answer also depends on the budget left.
     return (not depth and bool(text[line_start:i].strip()) and JSX_TEXT.fullmatch(text, line_start, end) is not None
             and jsx_text_line(text, line_start, budget))
+
+
+def _remember(memo, starts, answer):
+    """Record answer for each tag start in starts, as jsx_child_text found it; return answer."""
+    if memo is not None:
+        memo.update(dict.fromkeys(starts, answer))
+    return answer
 
 
 # An open, closing or fragment tag ending at the ">" found: a name and attributes
@@ -495,6 +510,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
     parts, end, cursor = [], 0, 0
     token = (JSX_TOKEN if child_text else SCRIPT_TOKEN) if jsx else TEMPLATE_TOKEN if template else MARKUP_TOKEN
     budget = [JSX_TEXT_BUDGET[0] + JSX_TEXT_BUDGET[1] * len(text)]
+    child_memo = {}
     while match := token.search(text, cursor):
         found = match.group(0)
         if jsx and found.lstrip().startswith("//"):
@@ -507,7 +523,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
         if jsx and found == "/*" and inside_regex(text, match.start(), budget):
             cursor = match.end()  # Inside or at the end of a regular expression (/a/*2, /[/*]/), not a comment.
             continue
-        if jsx and found == "/*" and child_text and jsx_child_text(text, match.start(), budget):
+        if jsx and found == "/*" and child_text and jsx_child_text(text, match.start(), budget, child_memo):
             cursor = match.end()  # Visible text such as <p>Requests to /api/* …</p>, not a comment.
             continue
         if jsx and found not in ("{/*", "/*"):

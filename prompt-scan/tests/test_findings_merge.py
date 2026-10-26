@@ -243,6 +243,11 @@ class MergeTest(unittest.TestCase):
             "app/llm/answer.pyの12行目でF-001と同じ欠陥。": "app/llm/answer.pyの12行目でF-009と同じ欠陥。",
             "F-002（prompts/a.md）を参照": "F-008（prompts/a.md）を参照",
             "詳細はprompts/F-002/a.mdを参照": "詳細はprompts/F-002/a.mdを参照",
+            # A hyphenated word is prose unless an extension follows; a list may mix record kinds; a colon
+            # ends the word, so neither a label nor path:line hides an id or makes one part of a path.
+            "the F-001-style contradiction, F-002-v2.md": "the F-009-style contradiction, F-002-v2.md",
+            "see L-003/F-001 and F-002/P-01": "see L-003/F-009 and F-008/P-01",
+            "関連:F-001/F-002、prompts/F-002/a.md:3": "関連:F-009/F-008、prompts/F-002/a.md:3",
         }
         for before, after in cases.items():
             data = {"findings": [{"id": "F-005", "cause": before}]}

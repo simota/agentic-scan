@@ -6,8 +6,10 @@
 With --repo, each finding's `location` excerpt is embedded: read from the blob
 at `meta.commit` when the record names one and the tree was known clean at scan time
 (never from later working-tree edits), otherwise from the working tree.
-Credential-shaped values in excerpts are masked, private-key blocks whole; `.env*`
-and key files (.pem, .key, .p12, .pfx) get no excerpt.
+Credential-shaped values in excerpts are masked, private-key blocks whole, and so
+are single-token values assigned to credential-named keys (`password=`, `*_SECRET:`,
+`api_key`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
+.jks, .keystore) and login files (.npmrc, .pypirc, .netrc, id_rsa...) get no excerpt.
 --lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
 scan-report-kit (scan_report_kit/): the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
@@ -52,8 +54,17 @@ SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{
                        r"\bhf_[A-Za-z0-9]{30,}|\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|"
                        r"\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# Values with no recognisable format sit next to ones that have one (an AWS secret key under its key id):
+# an excerpt masks a single-token value assigned to a credential-named key (not a number or a template
+# variable), and the password in a URL.
+ASSIGNED_SECRET_RE = re.compile(
+    r"""(?i)((?<![\w.-])[\w.-]{0,64}?(?:secret|passw(?:or)?d|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|"""
+    r"""credentials?)["']?\s*[:=]\s*)(?![0-9]+\s*(?:[,;#]|$)|["']?[{$<%])("[^"]+"|'[^']+'|[^\s"',;#]+)(?=\s*(?:[,;#]|$))""")
+URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(?=@)")
 # Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
-SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx"}
+SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}
+SENSITIVE_NAMES = {".npmrc", ".pypirc", ".netrc", "_netrc", ".pgpass", ".htpasswd", ".git-credentials",
+                   "credentials", "id_rsa", "id_dsa", "id_ecdsa", "id_ed25519"}
 # A whole private-key block, so masking it also hides the key body lines (an unterminated block runs to the end).
 KEY_BLOCK_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:-----END (?:[A-Z0-9]+ )*PRIVATE KEY-----|\Z)",
                           re.S)
@@ -326,6 +337,12 @@ def mask(text):
     return SECRET_RE.sub("[REDACTED]", text)
 
 
+def mask_excerpt(line):
+    """mask(), plus the values an excerpt's context lines carry without a recognisable format."""
+    line = ASSIGNED_SECRET_RE.sub(lambda m: m.group(1) + "[REDACTED]", mask(line))
+    return URL_PASSWORD_RE.sub(lambda m: m.group(1) + "[REDACTED]", line)
+
+
 def mask_key_blocks(text):
     """Replace each private-key block line by line, so line numbers stay put."""
     return KEY_BLOCK_RE.sub(lambda m: "\n".join("[REDACTED]" for _ in m.group(0).split("\n")), text)
@@ -344,8 +361,10 @@ def source_lines(text):
 
 
 def sensitive(name):
-    """Whether a file name is one that holds credentials by convention (.env*, key files)."""
-    return name.startswith(".env") or Path(name).suffix.lower() in SENSITIVE_SUFFIXES
+    """Whether a file name is one that holds credentials by convention (.env*, *.env, key and login files)."""
+    lower = name.lower()
+    return (lower.startswith(".env") or lower.endswith(".env") or ".env." in lower or lower in SENSITIVE_NAMES
+            or Path(lower).suffix in SENSITIVE_SUFFIXES)
 
 
 def _source(repo, commit, rel):
@@ -391,7 +410,7 @@ def attach_sources(data, repo, context=3, limit=40):
             continue
         first = max(1, start - context)
         last = min(len(lines), end + context, first + limit - 1)
-        excerpts[f["id"]] = (first, [mask(line) for line in lines[first - 1:last]], (start, end))
+        excerpts[f["id"]] = (first, [mask_excerpt(line) for line in lines[first - 1:last]], (start, end))
     return excerpts
 
 

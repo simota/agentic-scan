@@ -16,8 +16,9 @@ refreshing the index. A file whose name is not UTF-8 is listed with the bytes
 escaped (`\xff`); Git still sees its real name, but `render.py` cannot reopen
 the escaped one, so its findings carry no excerpt. Directories such as `.git`,
 `node_modules`, virtual environments and build output are skipped (listed in
-`skipped_dirs`, VCS metadata aside), as are `.env*` files, key files,
-symlinks, binary files and files over 1 MiB.
+`skipped_dirs`, VCS metadata aside), as are `.env*` and `*.env` files, key
+files, login files such as `.npmrc`, `.netrc` and `id_rsa` (`render.py` quotes
+none of these either), symlinks, binary files and files over 1 MiB.
 
 ## What it lists
 

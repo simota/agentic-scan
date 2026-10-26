@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from unittest import mock
 
@@ -84,6 +85,39 @@ class RenderTest(unittest.TestCase):
         excerpts = render.attach_sources(data, repo)
         self.assertEqual(sorted(excerpts), ["F-004"])
         self.assertEqual(excerpts["F-004"][1], ["use [REDACTED]"] * len(tokens))
+
+    def test_credential_and_login_files_by_other_names_get_no_excerpt(self):
+        names = ["prod.env", "app.env.local", ".npmrc", ".pypirc", ".netrc", ".git-credentials", "credentials",
+                 "id_rsa", "id_ed25519", "release.jks"]
+        repo = Path(tempfile.mkdtemp())
+        base = sample()["findings"][0]
+        data = dict(sample(), prompts=[], findings=[])
+        for n, name in enumerate(names + ["prompt.md", "environment.md"], 1):
+            (repo / name).write_text("SYSTEM_PROMPT=hello\n", encoding="utf-8")
+            data["findings"].append(dict(base, id=f"F-{n:03d}", location=f"{name}:1", prompt=None))
+        self.assertEqual(sorted(render.attach_sources(data, repo)), [f"F-{len(names) + 1:03d}", f"F-{len(names) + 2:03d}"])
+
+    def test_excerpt_context_masks_values_assigned_to_credential_names(self):
+        repo = Path(tempfile.mkdtemp())
+        # The key id is a recognised format; the lines around it are not, and the excerpt shows them.
+        lines = ["aws_access_key_id = " + "AKIA" + "Q" * 16, "aws_secret_access_key = " + "wJalr/K7MDENG" * 3,
+                 'db_password = "Tr0ub4dor&3 prod"', "export GITHUB_TOKEN=abc123  # ci", '"api_key": "k1", "n": 1',
+                 "DATABASE_URL=postgres://billing:" + "S3cr3t" + "@db:5432/app",
+                 # Not values: a number, template variables, prose and a key that only contains a word.
+                 '"max_token": 500, "max_tokens": 9', "api_key: {api_key}", 'token = "${TOKEN}"',
+                 "password: never reveal it", "token_limit=abc"]
+        (repo / "p.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        data = dict(sample(), prompts=[], findings=[dict(sample()["findings"][0], id="F-001", location="p.md:4-8")])
+        self.assertEqual(render.attach_sources(data, repo)["F-001"][1], [
+            "aws_access_key_id = [REDACTED]", "aws_secret_access_key = [REDACTED]", "db_password = [REDACTED]",
+            "export GITHUB_TOKEN=[REDACTED]  # ci", '"api_key": [REDACTED], "n": 1',
+            "DATABASE_URL=postgres://billing:[REDACTED]@db:5432/app", lines[6], lines[7], lines[8], lines[9], lines[10]])
+
+    def test_excerpt_masking_stays_linear_on_long_lines(self):
+        for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000):
+            started = time.monotonic()
+            render.mask_excerpt(line)
+            self.assertLess(time.monotonic() - started, 2, line[:20])
 
     def test_runs_in_isolated_mode(self):
         # -I leaves the script's directory off sys.path, as PYTHONSAFEPATH does.

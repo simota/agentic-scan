@@ -110,7 +110,7 @@ Each step says **what** to hunt, **where** to look, and what evidence makes it
 | AC2 | *(sound constructs)* Versioning and evolution: breaking changes without a version, events without a schema or version, removed fields still read by clients | API routes, schema files, event definitions, client code in the repo | A versioning or additive-only policy applied — because consumers deploy on their own schedule |
 | AC3 | Inconsistent contract shapes: naming, pagination, error format and ID formats differing between endpoints | Route inventory | One convention, or documented exceptions — because each variant is client code to write and maintain |
 
-### Configuration and environment (CF)
+### Configuration and environment (CF) [SEAM]
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|

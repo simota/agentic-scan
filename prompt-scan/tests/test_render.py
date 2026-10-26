@@ -113,6 +113,21 @@ class RenderTest(unittest.TestCase):
             "export GITHUB_TOKEN=[REDACTED]  # ci", '"api_key": [REDACTED], "n": 1',
             "DATABASE_URL=postgres://billing:[REDACTED]@db:5432/app", lines[6], lines[7], lines[8], lines[9], lines[10]])
 
+    def test_excerpt_masks_assignments_inside_code_brackets(self):
+        cases = {'db.connect(password="hunter2")': "db.connect(password=[REDACTED])",
+                 'cfg = {"token": "abc"}': 'cfg = {"token": [REDACTED]}', "opts[secret=xyz]": "opts[secret=[REDACTED]]",
+                 "f(max_token=5)": "f(max_token=5)"}
+        for line, masked in cases.items():
+            self.assertEqual(render.mask_excerpt(line), masked)
+
+    def test_a_commit_git_cannot_read_gives_no_excerpt(self):
+        # Never fall back to the working tree, which may hold later edits the scan never saw.
+        repo = Path(tempfile.mkdtemp())
+        (repo / "p.md").write_text("later edit\n", encoding="utf-8")
+        data = dict(sample(), prompts=[], findings=[dict(sample()["findings"][0], id="F-001", location="p.md:1")])
+        data["meta"] = dict(data["meta"], commit="0" * 40, dirty=False)
+        self.assertEqual(render.attach_sources(data, repo), {})
+
     def test_excerpt_masking_stays_linear_on_long_lines(self):
         for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000):
             started = time.monotonic()

@@ -61,7 +61,7 @@ SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{
 # variable), and the password in a URL.
 ASSIGNED_SECRET_RE = re.compile(
     r"""(?i)((?<![\w.-])[\w.-]{0,64}?(?:secret|passw(?:or)?d|passwd|pwd|token|api[_-]?key|access[_-]?key|private[_-]?key|"""
-    r"""credentials?)["']?\s*[:=]\s*)(?![0-9]+\s*(?:[,;#]|$)|["']?[{$<%])("[^"]+"|'[^']+'|[^\s"',;#]+)(?=\s*(?:[,;#]|$))""")
+    r"""credentials?)["']?\s*[:=]\s*)(?![0-9]+\s*(?:[,;#)\]}]|$)|["']?[{$<%])("[^"]+"|'[^']+'|[^\s"',;#)\]}]+)(?=\s*(?:[,;#)\]}]|$))""")
 URL_PASSWORD_RE = re.compile(r"((?<![A-Za-z0-9+.-])[A-Za-z][A-Za-z0-9+.-]{0,31}://[^\s:/@]{1,256}:)([^\s@/]{1,256})(?=@)")
 # Files that hold credentials by convention: inventory.py never reads them, and no excerpt quotes them.
 SENSITIVE_SUFFIXES = {".pem", ".key", ".p12", ".pfx", ".jks", ".keystore"}
@@ -383,8 +383,9 @@ def _source(repo, commit, rel):
             # scan read; the tree was clean, so the working-tree file is that text. check-attr runs no driver.
             attr = subprocess.run(["git", "-C", str(repo), "check-attr", "-z", "filter", "--", f"./{rel}"],
                                   capture_output=True, timeout=20)
-            filtered = attr.returncode != 0 or attr.stdout.split(b"\0")[2:3] not in ([b"unspecified"], [b"unset"])
-            if not filtered:
+            if attr.returncode != 0:
+                return None
+            if attr.stdout.split(b"\0")[2:3] in ([b"unspecified"], [b"unset"]):
                 # "./" resolves the path against --repo, which may be a subdirectory of the Git work tree.
                 r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:./{rel}"], capture_output=True,
                                    timeout=20)

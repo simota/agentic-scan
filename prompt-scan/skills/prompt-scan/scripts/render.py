@@ -5,7 +5,9 @@
 
 With --repo, each finding's `location` excerpt is embedded: read from the blob
 at `meta.commit` when the record names one and the tree was known clean at scan time
-(never from later working-tree edits), otherwise from the working tree.
+(never from later working-tree edits), otherwise from the working tree. A file with a
+`filter` attribute (git-crypt, Git LFS) is always read from the working tree: its blob
+holds what the clean command stored, and no repository command is run to undo that.
 Credential-shaped values in excerpts are masked, private-key blocks whole, and so
 are single-token values assigned to credential-named keys (`password=`, `*_SECRET:`,
 `api_key`) and URL passwords; `.env*`, `*.env`, key files (.pem, .key, .p12, .pfx,
@@ -372,11 +374,18 @@ def _source(repo, commit, rel):
         return None
     if commit:
         try:
-            # "./" resolves the path against --repo, which may be a subdirectory of the Git work tree.
-            r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:./{rel}"], capture_output=True, timeout=20)
+            # A blob under a filter driver (git-crypt, LFS) is what the clean command stored, not the text the
+            # scan read; the tree was clean, so the working-tree file is that text. check-attr runs no driver.
+            attr = subprocess.run(["git", "-C", str(repo), "check-attr", "-z", "filter", "--", f"./{rel}"],
+                                  capture_output=True, timeout=20)
+            filtered = attr.returncode != 0 or attr.stdout.split(b"\0")[2:3] not in ([b"unspecified"], [b"unset"])
+            if not filtered:
+                # "./" resolves the path against --repo, which may be a subdirectory of the Git work tree.
+                r = subprocess.run(["git", "-C", str(repo), "show", f"{commit}:./{rel}"], capture_output=True,
+                                   timeout=20)
+                return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
         except (OSError, subprocess.TimeoutExpired):
             return None
-        return r.stdout.decode("utf-8", errors="replace") if r.returncode == 0 else None
     root = Path(repo).resolve()
     path = (root / rel).resolve()
     if root not in path.parents or sensitive(path.name) or not path.is_file() or path.stat().st_size > 4 * 1024 * 1024:

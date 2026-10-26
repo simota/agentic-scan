@@ -228,6 +228,28 @@ class RenderTest(unittest.TestCase):
             data["meta"]["dirty"] = dirty
             self.assertIn("edited line", render.attach_sources(data, repo)[first["id"]][1], dirty)
 
+    def test_excerpt_of_a_filtered_file_is_the_text_the_scan_read(self):
+        root = Path(tempfile.mkdtemp())
+        (root / "prompts").mkdir()
+        (root / "prompts" / "a.md").write_text("You are a support bot.\nTODO: refunds\n", encoding="utf-8")
+        (root / ".gitattributes").write_text("prompts/** filter=rot\n", encoding="utf-8")
+        # The commit stores what the clean command produced (as git-crypt stores ciphertext); the smudge
+        # command, which would turn it back, must not run while rendering.
+        marker = root / "smudged"
+        git = ["git", "-C", str(root), "-c", "user.name=t", "-c", "user.email=t@example.com",
+               "-c", "filter.rot.clean=tr A-Za-z N-ZA-Mn-za-m", "-c", f"filter.rot.smudge=touch {marker}; cat"]
+        subprocess.run(["git", "init", "-q", str(root)], check=True)
+        subprocess.run([*git, "add", "."], check=True)
+        subprocess.run([*git, "commit", "-qm", "init"], check=True)
+        commit = subprocess.run([*git, "rev-parse", "HEAD"], check=True, capture_output=True, text=True).stdout.strip()
+        data = sample()
+        first = dict(data["findings"][0], location="prompts/a.md:2")
+        first.pop("prompt")
+        data["prompts"], data["findings"] = [], [first]
+        data["meta"].update(commit=commit, dirty=False)
+        self.assertEqual(render.attach_sources(data, root)[first["id"]][1], ["You are a support bot.", "TODO: refunds"])
+        self.assertFalse(marker.exists())
+
     def test_excerpt_path_cannot_leave_the_repository(self):
         data = sample()
         data["findings"][0]["location"] = "../outside.txt:1"

@@ -81,6 +81,9 @@ ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^
                        r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
 # The end of a line whose assigned value continues on the next one.
 OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
+# A YAML block scalar indicator (|, >, |-, >2, |+ # note), after any tag or anchor (!!str |, &pw >):
+# the value is the more indented lines below.
+BLOCK_SCALAR = re.compile(r"(?:[!&]\S*[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?(?:[ \t]+#.*)?\Z")
 # A secret flag whose value follows a shell line continuation: --password \\
 FLAG_CONTINUES = re.compile(r"(?i)(?<!\S)(--(?:password|passwd|pass|token|secret|api-?key))(?:=|\s+)\\\Z")
 BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
@@ -111,11 +114,23 @@ ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
 # Files whose values are configuration, judged with config=True.
 CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
 ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
+# An environment pair anywhere on a line: ENV DB_PASSWORD=v, docker run -e API_TOKEN=v, --env=PW=v, env PW=v cmd.
+ENV_PAIR = re.compile(r"(?<![^\s=])[A-Z][A-Z0-9_]*=\Z")
+# Before an argument list or a tag still open, NAME=value is a keyword argument or attribute, not a pair.
+CALL_OR_TAG = re.compile(r"\(|<[A-Za-z]")
 IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
 # A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
 # Ternary branches are not read: they mostly choose between UI values (isMobile ? "sm" : "md").
 FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b)\s*(?:[({\[]\s*){0,8}(?=[\"'`])")  # also || ("…")
 STATEMENT_END = re.compile(r"[,;}\n]")
+# An environment lookup that names the secret, up to its name: process.env.DB_PASSWORD, process.env["API_TOKEN"],
+# import.meta.env.VITE_API_KEY, os.getenv("DB_PASSWORD"), os.environ["SECRET_KEY"], Deno.env.get("TOKEN").
+ENV_LOOKUP = re.compile(r"(?:\benv|\bENV|\benviron|\bgetenv)\s*(?:\.get\s*\(|\(|\[|\.)\s*[\"'`]?[\w-]{0,64}\Z")
+# The rest of the lookup after a name that ends it (the closing quote, ] or ) and the space before a
+# fallback): PASSWORD_RESET_URL names a UI setting, not the password.
+LOOKUP_REST = re.compile(r"(?![\w-])[\"'`]?\s*[\])]?\s*")
+# A fallback operator that ends the line: the literal follows on a later one.
+OPEN_FALLBACK = re.compile(r"(?:\|\||\?\?|\bor)\s*\Z")
 NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
                         r"include|same-origin|omit|strong|weak|medium)\W*")
 COLOR_OR_LENGTH = re.compile(r"#[0-9a-fA-F]{3,8}|-?\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|ms|s)")
@@ -329,6 +344,12 @@ def _secret_literal(quoted, name):
     return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
 
 
+def _inside_call_or_tag(text, end):
+    """Whether text[:end] leaves a ( or a <Tag open: Client(TOKEN=auth.token, <Field PASSWORD=pw."""
+    opened = [m for m in CALL_OR_TAG.finditer(text, 0, end)]
+    return any(text.find(")" if m[0] == "(" else ">", m.end(), end) < 0 for m in opened)
+
+
 def _code_reference(text, bare, config=False):
     """Whether a bare value is code: a digit-free identifier or reference (currentPassword,
     auth.currentPassword). In configuration files and on NAME=value lines (.env, .properties)
@@ -350,8 +371,9 @@ def _code_reference(text, bare, config=False):
     if text.startswith("${", bare.start()):
         return False  # ${VALUE} followed by more text: not a whole reference, so a literal.
     dotted = REFERENCE.fullmatch(value) is not None
-    if config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text):
-        return False  # Configuration files hold values, never code.
+    if (config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text)
+            or (ENV_PAIR.search(text, 0, bare.start()) and not _inside_call_or_tag(text, bare.start()))):
+        return False  # Configuration files and environment pairs hold values, never code.
     if re.search(r"\d", IDENTIFIER.match(value).group(0)):
         return False  # hunter2.secret reads as a value, not an object.
     return True  # In code a string literal is quoted, so a bare identifier is a reference.
@@ -365,6 +387,22 @@ def _fallback_secret(text, start, name):
         if quoted and _secret_literal(quoted, name):
             return True
     return False
+
+
+def _lookups(text):
+    """(start of the lookup, the secret-like name, offset after the lookup) for each environment
+    lookup that names a secret: process.env.DB_PASSWORD, os.getenv("API_TOKEN")."""
+    for name in SECRET_NAME.finditer(text):
+        lookup = ENV_LOOKUP.search(text, max(0, name.start() - 96), name.start())
+        rest = LOOKUP_REST.match(text, name.end())
+        if lookup and rest:
+            yield lookup.start(), name.group(0), rest.end()
+
+
+def _lookup_fallback(text):
+    """Whether an environment lookup that names a secret falls back to a credential literal:
+    process.env.DB_PASSWORD || "…", os.getenv("API_TOKEN") or "…"."""
+    return any(FALLBACK.match(text, rest) and _fallback_secret(text, rest, name) for _, name, rest in _lookups(text))
 
 
 def _assigned_secret(text, config=False):
@@ -437,6 +475,8 @@ def _open_names(text):
             starts.append(name.start())
         elif field := _open_field(text, name):
             starts.append(field)  # From name=, so the joined text still names the field.
+    # process.env.DB_PASSWORD || at the end of the line: from the lookup, so the joined text still reads as one.
+    starts.extend(start for start, _, rest in _lookups(text) if OPEN_FALLBACK.match(text, rest))
     value = _open_value(text)
     if value is not None:
         starts.append(value)
@@ -482,6 +522,40 @@ def _without_line_comment(line):
     return line
 
 
+def _block_scalar_lines(lines, index, stop, config):
+    """Indexes of a secret-like name's YAML block scalar (password: |) and the lines that hold its
+    value, every later line indented deeper than the name (blank lines included), or an empty set."""
+    text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
+    rest = next((rest for rest, _ in _value_starts(text) if BLOCK_SCALAR.match(text, rest)), None)
+    if rest is None:
+        return set()
+    indent = len(text) - len(text.lstrip())
+    body = []
+    for following in range(index + 1, min(len(lines), stop)):
+        line = lines[following]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        body.append(following)
+    value = " ".join(lines[i].strip() for i in body if lines[i].strip())
+    return {index, *body} if value and secret_line(text[:rest] + value, config) else set()
+
+
+def _enclosing_lines(lines, start):
+    """Indexes of the lines above start that are each indented less than the one after them: the
+    YAML keys that may open a block scalar holding line start, nearest first."""
+    first = next((i for i in range(start, len(lines)) if lines[i].strip()), None)
+    if first is None:
+        return
+    indent = len(lines[first]) - len(lines[first].lstrip())
+    for above in range(min(start, len(lines)) - 1, -1, -1):
+        line = lines[above]
+        if indent == 0:
+            return
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            indent = len(line) - len(line.lstrip())
+            yield above
+
+
 def continued_secret_lines(lines, start, stop, config=False):
     """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
     (export const clientToken =\n  "…";) or flag (--password \\\n  "…"), with the name's line.
@@ -492,7 +566,13 @@ def continued_secret_lines(lines, start, stop, config=False):
     line before the excerpt.
     """
     hidden = set()
+    if config:  # An excerpt that starts inside a block scalar opened further up than start.
+        hidden.update(next((block for above in _enclosing_lines(lines, max(0, start))
+                            if (block := _block_scalar_lines(lines, above, stop, config))), set()))
     for index in range(max(0, start), min(len(lines), stop)):
+        if config and (block := _block_scalar_lines(lines, index, stop, config)):
+            hidden.update(block)  # A YAML block scalar: every line of its value, however many.
+            continue
         text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
         flag = FLAG_CONTINUES.search(text)
         names = _open_names(text)
@@ -541,7 +621,7 @@ def secret_line(line, config=False):
     # comment's own text is judged too, for a secret written inside it.
     comments = BLOCK_COMMENT.findall(searched) if "/*" in searched else []
     uncommented = BLOCK_COMMENT.sub(lambda m: " " * len(m.group(0)), searched) if comments else searched
-    if (KNOWN_SECRET.search(searched) or _assigned_secret(uncommented, config)
+    if (KNOWN_SECRET.search(searched) or _assigned_secret(uncommented, config) or _lookup_fallback(uncommented)
             or any(_assigned_secret(comment[2:-2], config) for comment in comments)):
         return True
     return len(line) > SHOWN_CHARACTERS and bool(CUT_SECRET.search(line[:SHOWN_CHARACTERS]))

@@ -34,6 +34,64 @@ class InventoryRegressionTests(unittest.TestCase):
             capture_output=True, text=True, timeout=timeout,
         )
 
+    def test_framework_forms_of_links_routes_await_blocks_and_module_extensions(self):
+        data = self.scan({"app/about/page.tsx": "export default function P() { return null }\n",
+                          "app/page.tsx": 'export default function H() {\n'
+                                          '  return <Link href={{ pathname: "/about" }}>About</Link>\n}\n'})
+        self.assertEqual(data["orphan_routes"], [])
+        data = self.scan({"src/App.tsx": '<Routes><Route path={"/settings"} element={<S />} />\n'
+                                         '<Route path={`/reports`} element={<R />} />\n'
+                                         '<Route path={base + "/x"} element={<R />} />\n'
+                                         '<Route path={`/users/${id}`} element={<U />} />\n'
+                                         '<Route path={"/prefix" + dynamic} element={<P />} /></Routes>\n'})
+        self.assertEqual([r["route"] for r in data["routes"]], ["/settings", "/reports"])
+        data = self.scan({"src/routes/tasks/+page.svelte": '<script>\n  const tasks = fetch("/api/tasks")\n</script>\n'
+                                                          "{#await tasks}\n  <p>Fetching…</p>\n{:then list}\n"
+                                                          "  <p>{list.length}</p>\n{:catch err}\n  <p>Failed</p>\n{/await}\n",
+                          "src/routes/short/+page.svelte": '<script>\n  const p = fetch("/api/x")\n</script>\n'
+                                                          "{#await p then v}<p>{v}</p>{/await}\n"})
+        self.assertEqual([(r["file"], r["missing"]) for r in data["state_branches"]],
+                         [("src/routes/short/+page.svelte", ["loading", "error"])])
+        data = self.scan({"src/a.mts": "export const s = { padding: 16 }\n", "src/b.cts": "module.exports = { gap: 24 }\n"})
+        self.assertEqual(data["files_scanned"], 2)
+        self.assertEqual([r["locations"] for r in data["spacing"]], [["src/a.mts:1"], ["src/b.cts:1"]])
+
+    def test_script_objects_sizing_a_viewport_or_image_are_not_fixed_widths(self):
+        data = self.scan({"playwright.config.ts": "export default defineConfig({ use: { viewport: { width: 1280, height: 720 } } })\n",
+                          "app/layout.tsx": 'export const metadata = { openGraph: { images: [{ url: "/a.png", width: 1200 },\n'
+                                            '  { url: "/b.png", width: 800 }] } }\n',
+                          "a.tsx": "export const A = () => <div style={{ width: 400 }} />\nconst s = { card: { minWidth: 480 } }\n",
+                          "S.js": "const s = StyleSheet.create({\n  image: { width: 640, height: 300 },\n})\n"})
+        self.assertEqual([(r["value"], r["locations"]) for r in data["fixed_widths"]],
+                         [("400px", ["a.tsx:1"]), ("480px", ["a.tsx:2"]), ("640px", ["S.js:2"])])
+
+    def test_block_comment_markers_in_jsx_child_text_hide_no_markup(self):
+        import time
+        data = self.scan({"Docs.tsx": "export default function Docs() {\n  return (\n    <div>\n"
+                                      "      <p>Requests to /api/* are proxied.</p>\n      <img src=\"/diagram.png\" />\n"
+                                      "      <button onClick={() => deleteAll()}><TrashIcon /></button>\n"
+                                      "      {/* footer */}\n    </div>\n  )\n}\n"})
+        self.assertEqual([r["location"] for r in data["images"]], ["Docs.tsx:5"])
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["Docs.tsx:6"])
+        self.assertEqual([r["call"] for r in data["destructive_actions"]], ["deleteAll"])
+        # Comments in a tag, after an arrow function's body and in code stay comments.
+        data = self.scan({"a.tsx": 'export const A = () => <div /* note */ className="x">\n'
+                                   '  <button onClick={() => go()} /* <img src="/y.png" /> */>Go</button>\n</div>\n'
+                                   'const f = (a) => a /* <img src="/z.png" /> */\n'
+                                   'export const Logo = () => <Icon />\n/*\n<img src="legacy.png" />\n*/\n'
+                                   'const C = <div /> /* <img src="old.png" /> */;\n'
+                                   'const D = () => <p>x</p> /* <img src="old2.png" /> */;\n'
+                                   'const E = <Widget render={() => /* <img src="old3.png" /> */ <span>ok</span>} />;\n'
+                                   'const F = <W when={x > y /* <img src="old4.png" /> */} />;\n'})
+        self.assertEqual(data["images"], [])
+        # Inside an element opened on an earlier line, as for "//" child text.
+        data = self.scan({"b.tsx": 'export default () => (\n  <div>\n    <Icon /> /* <img src="x.png" /> */\n  </div>\n)\n'})
+        self.assertEqual([r["location"] for r in data["images"]], ["b.tsx:3"])
+        started = time.monotonic()
+        self.scan({"t.jsx": "<p>" + "a /*" * 200000})
+        self.scan({"u.jsx": "<p>" + "<b>x</b> /*" * 100000})
+        self.assertLess(time.monotonic() - started, 5)
+
     def test_css_comment_without_braces_completes(self):
         # A valid large comment used to trigger quadratic rule-scanning retries.
         with tempfile.TemporaryDirectory() as tmp:
@@ -1418,7 +1476,8 @@ class InventoryRegressionTests(unittest.TestCase):
                                    'const q = i++ / /* <img src="old3" /> */ divisor;\n'
                                    'export const A = () => <img src="a.png" />;\n'
                                    'export const B = () => <p><b>x</b>/* <img src="d" /> */</p>;\n'})
-        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:7"])
+        # In child text "/*" is visible text, as "//" is, so the <img> after it renders.
+        self.assertEqual([r["location"] for r in data["images"]], ["a.jsx:7", "a.jsx:8"])
         started = time.monotonic()
         self.scan({"b.jsx": "/*" * 300000})
         self.assertLess(time.monotonic() - started, 5)

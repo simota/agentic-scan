@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import json
+import os
 import re
 import subprocess
 import sys
@@ -216,6 +217,29 @@ class TransactionRegressions(unittest.TestCase):
         self.assertEqual(result.returncode, 2, result.stderr)
         self.assertIn("findings.py:", result.stderr)
         self.assertNotIn("Traceback", result.stderr)
+
+    def test_success_messages_naming_a_path_the_console_cannot_encode_still_succeed(self):
+        env = {**os.environ, "PYTHONIOENCODING": "cp1252", "PYTHONDONTWRITEBYTECODE": "1"}
+        with tempfile.TemporaryDirectory() as tmp:
+            out = Path(tmp) / "レビュー"
+            commands = (
+                [ROOT / "scripts" / "ci" / "prepare_sample.py", ROOT / "examples" / "findings.sample.json",
+                 "--out", out, "--no-pdf"],
+                [SCRIPTS / "findings.py", "renumber", out / "findings.json"],
+                [SCRIPTS / "findings.py", "check", out / "findings.json"],
+                [SCRIPTS / "inventory.py", ROOT / "examples" / "tasklane", "--flows", out / "flows.json",
+                 "--out", out / "inventory.json"],
+                [SCRIPTS / "render.py", out / "findings.json", "--out", out, "--lang", "en",
+                 "--repo", ROOT / "examples" / "tasklane", "--no-pdf"],
+                [SCRIPTS / "contract_check.py", out, "--no-pdf"],
+            )
+            for command in commands:
+                with self.subTest(script=command[0].name, args=command[1]):
+                    result = subprocess.run([sys.executable, *map(str, command)], capture_output=True, env=env,
+                                            timeout=60)
+                    self.assertEqual(result.returncode, 0, result.stderr.decode("cp1252", "replace"))
+                    self.assertNotIn(b"Traceback", result.stderr)
+            self.assertIn(b"\\u30ec\\u30d3\\u30e5\\u30fc", result.stdout)
 
     def test_malformed_findings_fragments_are_refused_without_replacing_target(self):
         fragments = (
@@ -854,6 +878,12 @@ class TransactionRegressions(unittest.TestCase):
             ("Fix **U-001 to U-003**.", "Fix **U-003, U-001, U-002**."),
             ("Fix __U-001 to U-003__.", "Fix __U-003, U-001, U-002__."),
             ("Fix _U-001からU-003まで_.", "Fix _U-003, U-001, U-002_."),
+            # まで after a space goes with the range, as it does unspaced.
+            ("U-001 から U-003 まで修正する。", "U-003, U-001, U-002修正する。"),
+            ("_U-001 から U-003\u3000まで_。", "_U-003, U-001, U-002_。"),
+            ("**U-001 〜 U-003\u00a0まで**", "**U-003, U-001, U-002**"),
+            # A trailing slash keeps ids a path, as it does for one id.
+            ("Keep U-001/U-003/ and U-001/.", "Keep U-001/U-003/ and U-001/."),
             ("Fix ~~U-001–U-003~~.", "Fix ~~U-003, U-001, U-002~~."),
             ("Fix __` U-001 ` to ` U-003 `__.", "Fix __` U-003 `, ` U-001 `, ` U-002 `__."),
             ("Fix ___U-001__ to __U-003___.", "Fix ___U-003__, __U-001__, __U-002___."),

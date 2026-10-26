@@ -365,4 +365,6 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    from file_io import tolerant_console
+    tolerant_console()
     sys.exit(main())

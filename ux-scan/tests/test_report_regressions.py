@@ -285,6 +285,49 @@ class ReportRegressions(unittest.TestCase):
             with self.subTest(lines=lines):
                 self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
 
+    def test_yaml_block_scalars_environment_fallbacks_and_pairs_are_masked(self):
+        for marker in ("|", ">", "|2", "|-", ">2-", "| # note", "!!str |", "&pw >-"):
+            lines = ["smtp:", "  host: mail", "  password: " + marker, "    Sommerwind-2024", "", "    more",
+                     "  from: x"]
+            with self.subTest(marker=marker):
+                self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines), config=True)),
+                                 [2, 3, 4, 5])
+        # Other block scalars stay visible, as does a block of a label word.
+        for lines in (["  description: |", "    Long text", "  next: 1"], ["  password: |", "    true", "  next: 1"]):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines), config=True), set())
+        # An excerpt that starts deep inside a block scalar opened above it.
+        lines = ["a:", "  token: |"] + [f"    Sommerwind{i}" for i in range(20)] + ["  next: 1"]
+        (self.repo / "app.yml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        excerpt = render.snippet(self.repo, "app.yml:18-23")
+        self.assertGreater(excerpt["start"], 2 + render.CONTINUATION_LINES)
+        self.assertEqual(excerpt["lines"][:-1], [render.LABELS["en"]["masked"]] * (len(excerpt["lines"]) - 1))
+        self.assertEqual(excerpt["lines"][-1], "  next: 1")
+        for line in ('const db = process.env.DB_PASSWORD || "Sommerwind";',
+                     'const db = process.env["DB_PASSWORD"] ?? "Sommerwind";',
+                     'const k = import.meta.env.VITE_API_KEY ?? "abcSecret";', 'pw = os.getenv("DB_PASSWORD") or "Sommer"',
+                     "ENV DB_PASSWORD=sommerwind", "ARG API_TOKEN=sommerwind", "docker run -e DB_PASSWORD=sommerwind app",
+                     "env DB_PASSWORD=sommerwind node server.js", "docker run --env=DB_PASSWORD=sommerwind app",
+                     'const k = process.env.STRIPE_SECRET_KEY_LIVE ?? "abc"'):
+            with self.subTest(line=line):
+                self.assertTrue(render.secret_line(line))
+        for line in ('const db = process.env.DB_PASSWORD || "";', "const x = process.env.API_TOKEN || process.env.TOKEN",
+                     'msg = errors.password || "Required"', 'const host = process.env.DB_HOST || "localhost"',
+                     'const p = process.env.PASSWORD ?? "Password"', "ENV DB_PASSWORD=$DB_PASSWORD",
+                     "const password = currentPassword",
+                     'const resetUrl = process.env.PASSWORD_RESET_URL || "/reset-password";',
+                     'const color = process.env.TOKEN_COLOR ?? "indigo";', "client = Client(timeout=5, TOKEN=auth.token)",
+                     '<Field label="Password" PASSWORD=currentPassword />'):
+            with self.subTest(line=line):
+                self.assertFalse(render.secret_line(line))
+        # A fallback wrapped onto a later line, past a comment line.
+        lines = ["const dbPw = process.env.DB_PASSWORD ||", "  // dev only", '  "hunter2";']
+        self.assertEqual(sorted(render.continued_secret_lines(lines, 0, len(lines))), [0, 2])
+        for lines in (["const url = process.env.PASSWORD_RESET_URL ||", '  "/reset";'],
+                      ["const dbPw = process.env.DB_PASSWORD ||", "  process.env.FALLBACK_PW;"]):
+            with self.subTest(lines=lines):
+                self.assertEqual(render.continued_secret_lines(lines, 0, len(lines)), set())
+
     def test_secret_values_are_masked_by_format_or_assigned_value(self):
         leaks = ["const t = 'eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.sig';",
                  "key: 'AIzaSyA1234567890abcdefghijklmnopqrstu'", "pk = 'pk_live_51Habc'",

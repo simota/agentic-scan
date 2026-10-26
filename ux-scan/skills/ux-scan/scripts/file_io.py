@@ -1,4 +1,5 @@
-"""Bounded regular-file reads, optionally anchored inside a repository.
+"""Bounded regular-file reads, optionally anchored inside a repository, and console output
+that cannot fail on a path the console's encoding lacks.
 
 Repository reads require descriptor-relative, no-follow directory traversal.
 Platforms without those primitives refuse them instead of following a path
@@ -7,6 +8,7 @@ that can change after a symlink check. Standard library only.
 
 import os
 import stat
+import sys
 from pathlib import Path
 
 SUPPORTS_ROOT_READS = (os.open in os.supports_dir_fd
@@ -91,3 +93,11 @@ Ancestors that do not exist yet, or cannot be inspected, are skipped.
         if (info.st_dev, info.st_ino) == (target.st_dev, target.st_ino):
             return True
     return False
+
+
+def tolerant_console():
+    """Escape characters stdout and stderr cannot encode (a Japanese output path on a cp1252
+    pipe), so a success message never turns finished work into a failure exit."""
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="backslashreplace")

@@ -480,7 +480,7 @@ FINDING_RANGE = re.compile(
     r"(?P<last_style>\*{1,3}|_{1,3}|~~|)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P=last_style)"
-    r"(?:まで)?(?P=range_style)(?![A-Za-z0-9_])")
+    r"(?:[ \t 　]*まで)?(?P=range_style)(?![A-Za-z0-9_])")
 # Capture each underscore run once, then split outer and endpoint emphasis by
 # position. Adjacent unbounded style groups would backtrack quadratically.
 UNDERSCORE_RANGE = re.compile(
@@ -492,7 +492,7 @@ UNDERSCORE_RANGE = re.compile(
     r"(?P<last_open>_*)(?P<last_ticks>`+)?"
     r"(?(last_ticks)(?P<last_left>\s*))(?P<last>U-[0-9]{3})"
     r"(?(last_ticks)(?P<last_right>\s*)(?P=last_ticks))(?P<last_close>_*)"
-    r"(?P<until>まで(?P<outer_close>_*))?(?![A-Za-z0-9_`])")
+    r"(?P<until>[ \t 　]*まで(?P<outer_close>_*))?(?![A-Za-z0-9_`])")
 FINDING_MENTION = re.compile(
     FINDING_RANGE.pattern
     + r"|(?<![A-Za-z0-9_])(?P<style>\*{1,3}|_{1,3}|~~)(?P<styled>U-[0-9]{3})(?P=style)(?![A-Za-z0-9_])"
@@ -731,7 +731,7 @@ PROSE_PART = re.compile(
     # A URL, including raw Japanese path or query text and balanced (…), runs
     # to whitespace, quotes, an unbalanced bracket or Japanese punctuation.
     r"|(?P<url>https?://(?:" + URL_CHAR + "|" + _balanced("(", ")", r"[^\s()<>]") + r")+)"
-    r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+)"
+    r"|(?P<path>[/\\]?" + SOURCE_COMPONENT + r"(?:[/\\]" + SOURCE_COMPONENT + r")+[/\\]?)"
     r"|(?P<token>[^\s`<>\"'(),;，、。；（）「」『』]+)", re.MULTILINE | re.DOTALL | re.IGNORECASE)
 MARKDOWN_DESTINATION = re.compile(
     r"(?P<inline>\]\()[ \t]*(?:\r?\n[ \t]*)?"
@@ -1499,4 +1499,6 @@ def _update(cmd, target, fragments):
 
 
 if __name__ == "__main__":
+    from file_io import tolerant_console
+    tolerant_console()
     sys.exit(main())

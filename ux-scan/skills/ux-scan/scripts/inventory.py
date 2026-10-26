@@ -414,8 +414,9 @@ def jsx_child_text(text, i, budget):
     while (close := text.rfind(">", line_start, end)) >= 0:
         opening = text.rfind("<", line_start, close)
         if (JSX_TEXT.fullmatch(text, close + 1, end) is None or opening < 0
-                or not TAG_BEFORE.match(text, opening, close + 1)):
-            return False  # Code, or a tag that started on an earlier line.
+                or not TAG_BEFORE.match(text, opening, close + 1)
+                or text.count("{", opening, close) != text.count("}", opening, close)):
+            return False  # Code, a tag that started on an earlier line, or a ">" inside {…} (=>, a > b).
         if text.startswith("</", opening):
             depth += 1
         elif text[close - 1] != "/":

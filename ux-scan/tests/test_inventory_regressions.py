@@ -80,7 +80,9 @@ class InventoryRegressionTests(unittest.TestCase):
                                    'const f = (a) => a /* <img src="/z.png" /> */\n'
                                    'export const Logo = () => <Icon />\n/*\n<img src="legacy.png" />\n*/\n'
                                    'const C = <div /> /* <img src="old.png" /> */;\n'
-                                   'const D = () => <p>x</p> /* <img src="old2.png" /> */;\n'})
+                                   'const D = () => <p>x</p> /* <img src="old2.png" /> */;\n'
+                                   'const E = <Widget render={() => /* <img src="old3.png" /> */ <span>ok</span>} />;\n'
+                                   'const F = <W when={x > y /* <img src="old4.png" /> */} />;\n'})
         self.assertEqual(data["images"], [])
         # Inside an element opened on an earlier line, as for "//" child text.
         data = self.scan({"b.tsx": 'export default () => (\n  <div>\n    <Icon /> /* <img src="x.png" /> */\n  </div>\n)\n'})

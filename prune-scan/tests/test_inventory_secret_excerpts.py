@@ -46,6 +46,19 @@ class InventorySecretExcerptTests(unittest.TestCase):
         self.assert_masked(row)
         self.assertIsNone(render.snippet(self.repo, "settings.py:1"))
 
+    def test_env_files_render_excludes_are_never_read(self):
+        # Values without a secret-looking name pass the source check, so the file name must keep them out.
+        for name in (".envrc", ".env-local", ".env_prod", "deploy/production.env", "prod.ENV"):
+            self.write(name, "PAYMENTS_LIVE=DO_NOT_PUBLISH  # deprecated, remove after 2025-01-01\n")
+            self.assertIsNone(render.snippet(self.repo, f"{name}:1"), name)
+        for name in (".env.example", "example.env"):
+            self.write(name, "PAYMENTS_LIVE=DO_NOT_PUBLISH\n")
+        result = inventory.inventory(self.repo, today="2026-10-12")
+        self.assertNotIn("DO_NOT_PUBLISH", json.dumps(result))
+        self.assertEqual(result["markers"], [])
+        self.assertEqual(result["files_scanned"], 2)
+        self.assertEqual(result["env_declaration_files"], [".env.example", "example.env"])
+
     def test_skipped_test_reasons_do_not_export_secret_values(self):
         sources = {
             "tests/test_settings.py": '@pytest.mark.skipif(os.getenv("API_TOKEN") == "DO_NOT_PUBLISH")\n',

@@ -1228,12 +1228,19 @@ facets.forEach(function(b){b.addEventListener('click',function(){
 function reveal(){
   var h='';try{h=location.hash?decodeURIComponent(location.hash.slice(1)):'';}catch(e){return;}
   var el=h&&document.getElementById(h);
-  if(!el||!el.classList.contains('row'))return;
+  if(!el||!el.classList.contains('row'))return false;
   if(el.hidden){Object.keys(f).forEach(function(k){f[k].value='';});apply();}
   var b=el.querySelector('.finding-toggle');if(b.getAttribute('aria-expanded')!=='true')b.click();
   el.scrollIntoView({block:'start'});
+  return true;
 }
 window.addEventListener('hashchange',reveal);
+// A link to the finding already in the URL fires no hashchange: reopen it all the same.
+document.addEventListener('click',function(e){
+  if(e.button||e.altKey||e.ctrlKey||e.metaKey||e.shiftKey)return;
+  var a=e.target.closest&&e.target.closest('a[href^="#"]');
+  if(a&&a.hash===location.hash&&reveal())e.preventDefault();
+});
 Object.keys(f).forEach(function(k){f[k].addEventListener('input',apply);});
 document.querySelectorAll('.finding-toggle').forEach(function(b){b.addEventListener('click',function(){
   var open=b.getAttribute('aria-expanded')==='true';b.setAttribute('aria-expanded',String(!open));

@@ -885,6 +885,19 @@ def each_ports(view):
     return [(lo, hi)]
 
 
+def each_cidrs(view, *attrs):
+    """A rule's CIDRs, with each.value (or [each.value]) over a literal
+    collection of strings read as its elements, as each_ports does for ports."""
+    out = []
+    for_each = view.get("for_each")
+    for attr in attrs:
+        raw = re.sub(r"^\[\s*(.*?)\s*\]$", r"\1", (view.raw(attr) or "").strip())
+        values = each_values(for_each, raw) if raw in ("each.value", "each.key") and isinstance(
+            for_each, (list, dict)) else []
+        out += values if values and all(isinstance(c, str) for c in values) else aslist(view.get(attr))
+    return out
+
+
 def lower_strs(values):
     return {v.lower() for v in values if isinstance(v, str)}
 
@@ -1019,7 +1032,7 @@ class Scan:
             # An input (var.ssh_cidr, !Ref SSHLocation) may be the world: say so,
             # as GCP-NET-001 does for source ranges. A VPC or subnet attribute
             # (aws_vpc.main.cidr_block, module.vpc.*, !GetAtt Vpc.CidrBlock) never is.
-            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local)\.", raw)) or any(
+            supplied = (any(c is UNKNOWN for c in aslist(cidrs)) and re.search(r"\b(?:var|local|each)\.", raw)) or any(
                 isinstance(c, dict) and "Fn::GetAtt" not in c for c in aslist(cidrs))
             if supplied and sensitive_ports(proto, lo, hi):
                 self.not_run.append(f"{rule}: source CIDR unresolved; check not run: "
@@ -1645,14 +1658,14 @@ def check_tf(scan, res):
     elif t == "aws_security_group_rule":
         if v.get("type") == "ingress":
             # The open range's own line: an override may set it in another file.
-            line = v.line("cidr_blocks") if world_cidrs(aslist(v.get("cidr_blocks"))) else v.line("ipv6_cidr_blocks")
+            line = v.line("cidr_blocks") if world_cidrs(each_cidrs(v, "cidr_blocks")) else v.line("ipv6_cidr_blocks")
             for lo, hi in each_ports(v):
-                scan.ingress(res, line, aslist(v.get("cidr_blocks")) + aslist(v.get("ipv6_cidr_blocks")),
+                scan.ingress(res, line, each_cidrs(v, "cidr_blocks", "ipv6_cidr_blocks"),
                              v.get("protocol"), lo, hi, raw=raw_of(v, "cidr_blocks", "ipv6_cidr_blocks"))
     elif t == "aws_vpc_security_group_ingress_rule":
-        line = v.line("cidr_ipv4") if world_cidrs([v.get("cidr_ipv4")]) else v.line("cidr_ipv6")
+        line = v.line("cidr_ipv4") if world_cidrs(each_cidrs(v, "cidr_ipv4")) else v.line("cidr_ipv6")
         for lo, hi in each_ports(v):
-            scan.ingress(res, line, [v.get("cidr_ipv4"), v.get("cidr_ipv6")], v.get("ip_protocol"), lo, hi,
+            scan.ingress(res, line, each_cidrs(v, "cidr_ipv4", "cidr_ipv6"), v.get("ip_protocol"), lo, hi,
                          raw=raw_of(v, "cidr_ipv4", "cidr_ipv6"))
     elif t in ("aws_s3_bucket", "aws_s3_bucket_acl", "aws_s3_object", "aws_s3_bucket_object"):
         # A public access block on the same bucket makes S3 ignore public ACLs:

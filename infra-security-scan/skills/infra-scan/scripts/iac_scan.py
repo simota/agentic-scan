@@ -2724,29 +2724,42 @@ def plan_expressions(doc):
 
 
 def plan_config_refs(scan, rel, doc):
-    """Policy references from the plan's configuration section (values are unknown at plan time)."""
+    """Policy references from the plan's configuration section (values are unknown at plan time).
+
+    As collect_policy_references for HCL: a reference from anything but
+    permissions_boundary may attach the policy (policy_arn, a for_each map,
+    a module argument, an output a caller attaches)."""
     config = doc.get("configuration")
+
+    def note(value, prefix, boundary=False):
+        if isinstance(value, dict):
+            refs = value.get("references")
+            for ref in refs if isinstance(refs, list) else []:
+                m = re.match(r"^(aws_iam_policy\.[\w-]+)", str(ref))
+                if m:
+                    target = scan.boundary_policies if boundary else scan.attached_policies
+                    target.add((rel, prefix + m.group(1)))
+            for key, item in value.items():
+                if key != "references":
+                    note(item, prefix, boundary or key == "permissions_boundary")
+        elif isinstance(value, list):
+            for item in value:
+                note(item, prefix, boundary)
 
     def walk(module, prefix):
         if not isinstance(module, dict):
             return
         for r in module.get("resources", []) if isinstance(module.get("resources"), list) else []:
-            expressions = r.get("expressions") if isinstance(r, dict) else None
-            if not isinstance(expressions, dict):
-                continue
-            for attr, target in (("permissions_boundary", scan.boundary_policies),
-                                 ("policy_arn", scan.attached_policies),
-                                 ("managed_policy_arns", scan.attached_policies),
-                                 ("policy_arns", scan.attached_policies)):
-                expr = expressions.get(attr)
-                refs = expr.get("references") if isinstance(expr, dict) else None
-                for ref in refs if isinstance(refs, list) else []:
-                    m = re.match(r"^(aws_iam_policy\.[\w-]+)", str(ref))
-                    if m:
-                        target.add((rel, prefix + m.group(1)))
+            if isinstance(r, dict):
+                for key in ("expressions", "for_each_expression", "count_expression"):
+                    note(r.get(key), prefix)
+        note(module.get("outputs"), prefix)
         calls = module.get("module_calls")
         for name, call in calls.items() if isinstance(calls, dict) else []:
             if isinstance(call, dict):
+                # A module's arguments name the caller's resources.
+                for key in ("expressions", "for_each_expression", "count_expression"):
+                    note(call.get(key), prefix)
                 walk(call.get("module"), f"{prefix}module.{name}.")
     walk(config.get("root_module") if isinstance(config, dict) else None, "")
 

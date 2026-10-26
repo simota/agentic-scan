@@ -225,6 +225,31 @@ class ReviewRegressionTest(unittest.TestCase):
                 'module "x" {\n  source = "./x"\n  custom_role_policy_arns = [aws_iam_policy.admin.arn]\n}\n')
         self.assertIn("AWS-IAM-001", rules({"main.tf": text}))
 
+    def test_boundary_also_attached_elsewhere_is_admin_in_a_plan(self):
+        admin = {"Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+        ref = {"references": ["aws_iam_policy.admin.arn", "aws_iam_policy.admin"]}
+
+        def plan(config):
+            return {"format_version": "1.2", "planned_values": {"root_module": {"resources": [
+                {"address": "aws_iam_policy.admin", "mode": "managed", "type": "aws_iam_policy", "name": "admin",
+                 "values": {"policy": json.dumps(admin)}},
+                {"address": "aws_iam_role.r", "mode": "managed", "type": "aws_iam_role", "name": "r",
+                 "values": {"assume_role_policy": "{}"}}]}},
+                "configuration": {"root_module": {"resources": [
+                    {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}}], **config}}}
+        module_argument = {"module_calls": {"x": {"source": "./x", "expressions": {"custom_role_policy_arns": ref},
+                                                  "module": {"resources": []}}}}
+        for_each_map = {"module_calls": {}, "resources": [
+            {"address": "aws_iam_role.r", "expressions": {"permissions_boundary": ref}},
+            {"address": "aws_iam_role_policy_attachment.a", "for_each_expression": ref,
+             "expressions": {"policy_arn": {"references": ["each.value"]}}}]}
+        for name, config in (("module argument", module_argument), ("for_each map", for_each_map)):
+            with self.subTest(name):
+                self.assertIn("AWS-IAM-001", rules({"plan.json": plan(config)}))
+        result = scan({"plan.json": plan({})})
+        self.assertNotIn("AWS-IAM-001", {h["rule"] for h in result.hits})
+        self.assertTrue(any("only as a permissions boundary" in n for n in result.not_run))
+
     def test_non_literal_cloudformation_type_is_skipped(self):
         result = scan({"t.json": cfn({"X": {"Type": ["AWS::S3::Bucket"]}})})
         self.assertTrue(any("non-literal Type" in n for n in result.not_run))

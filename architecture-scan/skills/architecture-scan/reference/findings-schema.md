@@ -34,7 +34,9 @@ including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
 never `//host`, `\\host` or `/\host`, which name another host);
-any other scheme, or any URL containing a control or bidirectional character,
+any other scheme, any URL containing a control (C0 or C1) or bidirectional
+character, or, in `report.md`, a backslash before ASCII punctuation (`ftp\://`,
+which a link destination would unescape into `ftp://`),
 is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or
@@ -75,8 +77,9 @@ be byte-identical to what `render.py` produces from the current
   (`"rule": "R-01, R-02"`). A rule ID in a trace cites nothing
 - no `reason` on a `holds` or `violated` rule: a provisional `not checked`
   reason is sent back as `"reason": null` with the final status
-- every `location` to name a file: a path that shows nothing (`" :3"`) is
-  refused, so a fragment sends the location again
+- every `location` to name a file: a path that shows nothing (`" :3"`) or
+  names a directory (`api/:3`, `api/.:3`) is refused, so a fragment sends the
+  location again
 - every finding not excluded to sit under a perspective recorded as `applied`
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
@@ -85,7 +88,8 @@ be byte-identical to what `render.py` produces from the current
   (a path with a `/` or `\`, a file with an extension, a build or project file
   such as `Makefile`, `BUILD`, `CODEOWNERS` or `README`, or a path or file name
   from the finding's own `location`, then a line from 1: `job.py:58`,
-  `根拠:job.py:58`, `BUILD:12`, `server:9` beside `bin/server:9`; not
+  `根拠:job.py:58`, `根拠：Makefile:12`, `BUILD:12`, `(CODEOWNERS:4)`,
+  `` `server:9` `` beside `bin/server:9`; not
   `ABC:123`, `10:30`, `v1.2:3`, a URL's port or a host and port ending in
   `.com`, `.net`, `.io`, `.internal` or `.localhost`, such as
   `db.internal:5432`. Dotfiles and names such as `Dockerfile.dev` or
@@ -181,8 +185,11 @@ without gaps. Every whole-word mention of an old ID in the record's prose
 (`title`, `trace`, `evidence`, `next_steps`, `decisions`…) is rewritten in the
 same pass. Literal values keep theirs: `meta`, every `location`, reference
 `url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
-ticket or an argument). In prose, a token such as `JIRA-A-001` and a path
-segment such as `docs/A-001.md` are left alone, while an ID beside Japanese
+ticket or an argument). In prose, a token such as `JIRA-A-001` or
+`A-001-style`, a path segment such as `docs/A-001.md` and a URL are left
+alone; a URL runs to the next blank or non-ASCII punctuation, so write
+`https://x/adr/4 を見て A-001` or `https://x/adr/4。A-001`, never
+`https://x/adr/4を見てA-001`. An ID beside Japanese
 text (`A-001を`) or joined to another ID (`A-002/A-001`, `A-002-A-001`) is
 rewritten. A mention of an ID that no finding holds is left as written, and
 `check` names it; when renumber would give that ID to a finding, so the

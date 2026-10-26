@@ -96,8 +96,9 @@ RULE_FAMILIES = ("LAYER", "BOUND", "OWN", "TX", "FAIL", "CONTRACT", "SEAM")
 # qualify or contradict it, needs a `path:line` like any other evidence; the
 # reasons live in the finding it repeats. The ID stands apart from an English
 # label (`ofA-004` is no mention, so renumber would not rewrite it).
-DUPLICATE_OF = re.compile(r"(?i)\s*(?:duplicates?(?: of)?\s+|重複[:：]\s*)(A-[0-9]{3})\s*[.。]?\s*",
-                          re.ASCII)
+# A full-width or no-break space, as an input method types it, is a blank too.
+DUPLICATE_OF = re.compile(r"(?i)[\s\u3000\u00a0]*(?:duplicates?(?: of)?[\s\u3000\u00a0]+|重複[:：][\s\u3000\u00a0]*)"
+                          r"(A-[0-9]{3})[\s\u3000\u00a0]*[.。]?[\s\u3000\u00a0]*", re.ASCII)
 # `findings[].rule` names one rule or several (`R-01, R-02`) when one root
 # cause breaks more than one.
 RULE_LIST = re.compile(r"[\s,、，;；]+")
@@ -127,13 +128,16 @@ MAX_FINDINGS = 999
 RULE_ID = re.compile(r"R-[0-9]{2,}")
 STEP_ID = re.compile(r"([A-Z]{2})([1-9][0-9]{0,2})")
 # A `path:line` candidate: it starts after a blank, opening punctuation or a
-# label's colon (`根拠:job.py:58`), but not as the `//host` of a URL, so a port
-# is not a line; it has a letter (`10:30` is not one) and a line from 1. A
-# Windows drive (`C:\repo\a.py:3`) is allowed. `evidence_paths` finds them in
-# one pass, so a long list of names in evidence stays linear.
-PATH_RUN = re.compile(r"[^\s:]+")
+# label's colon (`根拠:job.py:58`, `根拠：Makefile:12`), never on that
+# punctuation (`` `Makefile:12` `` names `Makefile`), and not as the `//host`
+# of a URL, so a port is not a line; it has a letter (`10:30` is not one) and
+# a line from 1. A Windows drive (`C:\repo\a.py:3`) is allowed.
+# `evidence_paths` finds them in one pass, so a long list of names in evidence
+# stays linear.
+# A full-width colon ends a label as an ASCII one does.
+PATH_RUN = re.compile(r"[^\s:：]+")
 LINE_AFTER = re.compile(r":[1-9][0-9]*")
-PATH_START_AFTER = set("([{'\"`,;:")
+PATH_START_AFTER = set("([{'\"`,;:「『（【〔［｛〈《、，；：")
 # From `://` to the next blank or punctuation that can open a path, a colon
 # separates a user, password or port (`postgres://app:pw@db:5432`).
 URL_TAIL = re.compile(r"://[^\s,;()\[\]{}'\"`|<>]*")
@@ -334,7 +338,8 @@ def evidence_paths(text):
         if line:
             last = max((i for i in range(begin, end) if letter(text[i])), default=-1)
             plain = next((i for i in range(begin, last + 1)
-                          if starts_here(i) and not text.startswith("//", i)), None)
+                          if starts_here(i) and text[i] not in PATH_START_AFTER
+                          and not text.startswith("//", i)), None)
         # A Windows drive (`C:` and the next run) can only start at the run's
         # last character; the letter a path needs comes after the drive.
         drive = end - 1
@@ -952,8 +957,12 @@ def _report_renumber(target, changed, rewritten):
         print(f"already in order: {target}")
 
 
-def _merge_all(doc, fragments):
-    validate(doc)
+def _merge_all(doc, fragments, record=None):
+    try:
+        validate(doc)
+    except SchemaError as exc:
+        # The record, not a fragment, is what no fragment can be merged into.
+        raise SchemaError(f"{record}: existing record is invalid: {exc}") from exc
     for path in fragments:
         fragment = read_json(path)  # its errors name the file already
         try:
@@ -979,7 +988,7 @@ def cmd_merge(args):
             if target.exists() and not target.is_file():
                 # A FIFO would block the read while holding the lock.
                 raise SchemaError(f"{target}: not a regular file")
-            doc = _merge_all(read_json(target) if target.exists() else {}, args.fragments)
+            doc = _merge_all(read_json(target) if target.exists() else {}, args.fragments, target)
             # Serialize before staging any output.
             _atomic_write(target, _serialize(doc))
     except (OSError, ValueError, RuntimeError) as exc:
@@ -1041,7 +1050,9 @@ def contract_problems(out, allow=()):
     problems = []
     for name in sorted(OUTPUTS - present):
         problems.append(f"missing output: {name}")
-    for name in sorted(present - OUTPUTS - set(allow)):
+    # `drafts/` and `./drafts`, as a shell completes them, name `drafts`.
+    allow = {os.path.normpath(name) for name in allow}
+    for name in sorted(present - OUTPUTS - allow):
         if TEMPORARY.fullmatch(name):
             problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
                             "write; delete it once no merge or render is running")
@@ -1088,7 +1099,9 @@ def contract_problems(out, allow=()):
         for loc in as_locations(f["location"]):
             # Not a schema error: merge validates the record before a fragment
             # can correct it, so refusing it there would leave only a hand edit.
-            if not visible(split_location(loc)[0]):
+            path = split_location(loc)[0]
+            # `api/` or `api/.` names a directory, even where `--repo` is not given.
+            if not visible(path) or re.split(r"[/\\]", path)[-1] in ("", ".", ".."):
                 problems.append(f"{f['id']}: location {loc!r} names no file; give its path "
                                 "from the repository root")
         for rid in cited_rules(f):

@@ -33,7 +33,7 @@ SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
 
 
 def is_web_url(url):
-    return (bool(URL_SCHEME.match(url)) and not re.search(r"[\x00-\x20\x7f]", url)
+    return (bool(URL_SCHEME.match(url)) and not re.search(r"[\x00-\x20\x7f-\x9f]", url)
             and not BIDI_CONTROLS.search(url))
 
 
@@ -45,7 +45,11 @@ def is_safe_link(url):
     """
     # A bidi control would reorder the destination wherever it is shown or
     # copied, though its label makes it visible: such a URL is never a link.
-    if re.search(r"[\x00-\x1f\x7f]", url) or BIDI_CONTROLS.search(url):
+    if re.search(r"[\x00-\x1f\x7f-\x9f]", url) or BIDI_CONTROLS.search(url):
+        return False
+    # A link destination unescapes a backslash before ASCII punctuation, even
+    # one written as `&#92;`: `ftp\://x` would link `ftp://x`, `a\#b` `a#b`.
+    if re.search(r"\\[!-/:-@\[-`{-~]", url):
         return False
     stripped = url.lstrip(" ")
     if len(stripped) > 1 and set(stripped[:2]) <= {"/", "\\"}:
@@ -557,7 +561,7 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .detail{background:var(--tint);padding:18px 24px}
 .detail dl{display:grid;grid-template-columns:150px minmax(0,1fr);gap:8px 18px;margin:12px 0}
 .detail dt{font-size:12px;color:var(--muted)}
-.detail dd{margin:0;overflow-wrap:anywhere}
+.detail dd{margin:0;overflow-wrap:anywhere;white-space:pre-wrap}
 .action-guidance{margin-top:12px}
 .action-guidance strong{font-family:var(--sans);font-size:13px}
 .empty{padding:20px 12px;margin:0}
@@ -603,8 +607,10 @@ if(list){document.querySelectorAll('.filters select').forEach(function(s){s.onch
 var timer=null;q.oninput=function(){clearTimeout(timer);timer=setTimeout(show,items.length>300?150:0);};
 byId('reset').onclick=function(){reset();show();};}
 // Sidebar facets: a press filters the register by severity, a second press clears it.
+// It clears an excluded verdict, which no included finding carries.
 var facets=Array.prototype.slice.call(document.querySelectorAll('.facet'));
-facets.forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true';byId('f-scope').value='included';byId('f-sev').value=on?'':b.dataset.sev;show();byId('findings').scrollIntoView();};});
+facets.forEach(function(b){b.onclick=function(){var on=b.getAttribute('aria-pressed')==='true',vs=byId('f-verdict');byId('f-scope').value='included';
+if(vs&&vs.dataset.excluded.split(' ').indexOf(vs.value)>=0)vs.value='';byId('f-sev').value=on?'':b.dataset.sev;show();byId('findings').scrollIntoView();};});
 if(list)show();
 function openHash(){var id;try{id=decodeURIComponent(location.hash.slice(1));}catch(err){return;}var d=byId(id);if(!d||!d.classList.contains('finding'))return;if(d.hidden){reset();if(d.dataset.x==='1')byId('f-scope').value='all';show();}d.querySelector('details').open=true;d.scrollIntoView({block:'start'});d.querySelector('summary').focus({preventScroll:true});}
 window.addEventListener('hashchange',openHash);if(location.hash)openHash();

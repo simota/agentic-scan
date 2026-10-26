@@ -131,6 +131,15 @@ SETTINGS_MODULE = re.compile(r"[\"']([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)[\"']")
 MODULE_STRING_FILE = re.compile(r"(?i)(?:\.(?:py|toml|cfg|ini|ya?ml|sh|conf)|(?:^|/)(?:Procfile|Dockerfile)[^/]*)$")
 CSS_IMPORT = re.compile(r"@(?:import|use|forward)\s+(?:url\(\s*)?[\"']~?([^\"'()\s]+)[\"']")
 DYNAMIC_KEY = re.compile(r"`([\w-]+(?:\.[\w-]+)*\.)\$\{")
+# A translator scoped to a namespace or key prefix (next-intl useTranslations("HomePage"),
+# i18next keyPrefix: "auth") looks keys up below it: t("title") reads HomePage.title.
+SCOPED_TRANSLATOR = re.compile(r"\b(?:useTranslations|getTranslations)\(\s*(?:\{[^{}()]*?\bnamespace\s*:\s*)?"
+                               r"[\"'`]([\w.-]+)[\"'`]|\bkeyPrefix\s*:\s*[\"'`]([\w.-]+)[\"'`]")
+# i18next resolves t("item", {count}) to item_one / item_other (and item_plural in v3),
+# and t("friend", {context}) to friend_male.
+PLURAL_SUFFIX = re.compile(r"_(?:ordinal_)?(?:zero|one|two|few|many|other|plural|[0-9]+)\Z")
+CONTEXT_CALL = re.compile(r"\bt\(\s*[\"'`]([\w.:-]+)[\"'`]\s*,\s*\{[^{}]*?\bcontext\s*:")
+MAX_SCOPED_KEYS = 100_000  # Per file; beyond it a scope hides every key below it, unlisted.
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
 CONCAT_CLASS = re.compile(r"[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
 
@@ -1843,18 +1852,36 @@ def inventory(root, units=None, today=None):
         for n, f in sorted(flags.items())]
 
     # Locale keys.
-    # Prefixes from secret-named sources suppress candidates but are never listed.
+    # Prefixes from secret-named sources, and oversized translator scopes, suppress
+    # candidates but are never listed.
     quoted, prefixes, secret_prefixes = set(), set(), set()
+    contexts = set()
     for rel in code_files:
         if suffix(rel) == ".json":
             continue
-        quoted.update(QUOTED.findall(texts[rel]))
+        local = set(QUOTED.findall(texts[rel]))
         for literal in STRING_LITERAL.finditer(texts[rel]):
             value = next(g for g in literal.groups() if g is not None)
-            quoted.add(value)
+            local.add(value)
             if ":" in value:
-                quoted.add(value.split(":", 1)[1])  # i18next namespace: common:save
+                local.add(value.split(":", 1)[1])  # i18next namespace: common:save
+        scopes = {a or b for a, b in SCOPED_TRANSLATOR.findall(texts[rel])}
+        if len(scopes) * len(local) > MAX_SCOPED_KEYS:
+            secret_prefixes.update(scope + "." for scope in scopes)
+            scopes = set()
+        quoted.update(local, (f"{scope}.{value}" for scope in scopes for value in local))
+        for key in CONTEXT_CALL.findall(texts[rel]):
+            key = key.split(":", 1)[-1]
+            contexts.update((key, *(f"{scope}.{key}" for scope in scopes)))
         (secret_prefixes if rel in secret_sources else prefixes).update(DYNAMIC_KEY.findall(texts[rel]))
+
+    def key_named(key):
+        base = PLURAL_SUFFIX.sub("", key)
+        if base in quoted:
+            return True
+        # A context suffix (friend_male) only for a key looked up with a context.
+        head, _, tail = base.rpartition("_")
+        return bool(head and tail) and head in contexts
     i18n = []
     locale_lines = {}
     for bundle, langs in sorted(col.locales.items()):
@@ -1863,7 +1890,7 @@ def inventory(root, units=None, today=None):
             for key in flat:
                 keys[key].append((lang, rel))
         for key, where in sorted(keys.items()):
-            if key in quoted or any(key.startswith(p) for p in prefixes | secret_prefixes):
+            if key_named(key) or any(key.startswith(p) for p in prefixes | secret_prefixes):
                 continue
             first = where[0][1]
             if first not in locale_lines:

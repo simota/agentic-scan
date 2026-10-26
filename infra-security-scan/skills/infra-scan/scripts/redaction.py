@@ -439,6 +439,9 @@ class _Value:
         return not self.started or bool(self.stack or self.quote or self.trailing_op)
 
 
+YAML_PROPERTIES = re.compile(r"^(?:(?:![^\s]*|&\S+)(?:\s+|$))+")
+
+
 def redact_lines(lines, *, syntax="hcl"):
     """Redact before slicing excerpts, preserving the original line numbers.
 
@@ -486,6 +489,9 @@ def redact_lines(lines, *, syntax="hcl"):
         if heredoc is None and value is None and block_indent is None and not private:
             for match in reversed(list(_secret_fields(line))):
                 rest = line[match.end():].strip()
+                if syntax == "yaml":
+                    # Node properties (!Sub, !!str, &anchor) come before the value.
+                    rest = YAML_PROPERTIES.sub("", rest)
                 start = HEREDOC.fullmatch(rest)
                 if start:
                     heredoc = start.group(1)
@@ -867,7 +873,8 @@ def scrub_lines(lines, syntax="hcl", original=None):
             term = start.group(1)
             end_idx = next((j for j in range(idx + 1, len(original)) if original[j].strip() == term), len(original))
             heredoc = (term, not _is_safe_json_block(original[idx + 1:end_idx]))
-        elif syntax == "yaml" and re.search(r"(?:^|:\s|-\s)\s*[|>][1-9+-]*\s*(?:#.*)?$", line):
+        elif syntax == "yaml" and re.search(r"(?:^|:\s|-\s)\s*(?:(?:![^\s]*|&\S+)\s+)*[|>][1-9+-]*\s*(?:#.*)?$",
+                                            line):
             indent = len(line) - len(line.lstrip())
             body_lines = []
             for next_line in original[idx + 1:]:

@@ -55,6 +55,22 @@ CASES = {
 }
 
 
+# A short-form tag or anchor before the value does not end it on that line;
+# each finding sits on the public line after it, as a neighbouring finding would.
+# A lowercase word: the last-pass scrub of opaque tokens does not catch it.
+W = "quiet" + "meadowlark"
+TAGGED = {
+    **{f"cfn_tag_{n}.yaml": ("Resources:\n  Db:\n    Type: AWS::RDS::DBInstance\n    Properties:\n"
+                             f"      MasterUserPassword: {value}\n    Next: x\n")
+       for n, value in enumerate((f"!Sub |\n        {W}", f"!Join\n        - ''\n        - - a\n          - {W}",
+                                  f"!Join # joined\n        - ''\n        - - {W}",
+                                  f"&pw !Sub >-\n        {W}", f"!!str\n        {W}"))},
+    "cfn_userdata.yaml": ("Resources:\n  Web:\n    Type: AWS::EC2::Instance\n    Properties:\n"
+                          "      UserData:\n        Fn::Base64: !Sub |\n          #!/bin/bash\n"
+                          f"          printf '%s' '{W}' > /etc/app/db.conf\n      ImageId: ami-1\n"),
+}
+
+
 class ExcerptScrubTest(OutputTest):
     def test_free_text_and_uncommon_secret_shapes_stay_out_of_reports(self):
         for name, text in CASES.items():
@@ -63,6 +79,15 @@ class ExcerptScrubTest(OutputTest):
                 record = self.record(f"{name}:{line_of(text)}")
                 for page in self.pages(record):
                     self.assertNotIn(M, page)
+
+    def test_tagged_yaml_values_stay_hidden_below_their_key(self):
+        for name, text in TAGGED.items():
+            with self.subTest(name=name):
+                self.write(name, text)
+                public = "ImageId" if "ImageId" in text else "Next"
+                record = self.record(f"{name}:{line_of(text, public)}")
+                for page in self.pages(record):
+                    self.assertNotIn(W, page)
 
     def test_respelled_locations_name_the_file_they_open(self):
         for name, text in ((".env", f"PGPASS={M}\n"), ("terraform.tfstate", f'{{"result": "{M}"}}\n'),

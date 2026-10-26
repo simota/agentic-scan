@@ -176,7 +176,7 @@ class RenderRegressions(unittest.TestCase):
                     if re.search(r"white-space\s*:\s*(?:pre-wrap|pre-line|pre|break-spaces)\b",
                                  declarations):
                         preserves_lines.update(selector.strip() for selector in selectors.split(","))
-                for tag in ("h1", "p", "summary", "dd", "td", "li"):
+                for tag in ("h1", "p", "summary", "dd", "td", ".lists li"):
                     self.assertIn(tag, preserves_lines, f"{tag} must display recorded line breaks")
                 cells = [element_text(dd) for dd in root.findall(".//details/dl/dd")]
                 self.assertIn(self.doc["findings"][0]["request"], cells)
@@ -184,6 +184,20 @@ class RenderRegressions(unittest.TestCase):
                 self.assertEqual(len(root.findall(".//script")), 1)
                 self.assertEqual(root.findall(".//img"), [])
                 self.assertEqual(root.findall(".//pre"), [])
+
+    def test_contents_links_keep_the_kits_single_line(self):
+        # The kit lays the contents out as one scrolling row on narrow screens
+        # (white-space:nowrap); a bare li rule broke "Summary" into "Sum/mar/y".
+        root = HtmlTreeReader(render.render_html(self.doc, "en")).root
+        styles = element_text(root.find(".//style"))
+        own = re.sub(r"/\*.*?\*/", "", styles[len(render.kit_style.dashboard_css()):], flags=re.S)
+        for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", own):
+            if re.search(r"white-space|overflow-wrap|word-break", declarations):
+                for selector in selectors.split(","):
+                    self.assertNotIn(selector.strip(), ("li", "a", "ol"),
+                                     "scope list rules to record text such as .lists li")
+        self.assertTrue(root.findall(".//nav[@id='nav']/ol/li/a"))
+        self.assertFalse(root.findall(".//*[@class='lists']//nav"))
 
     def test_html_severity_filters_match_counts_and_mark_excluded_summaries(self):
         base = self.doc["findings"][0]

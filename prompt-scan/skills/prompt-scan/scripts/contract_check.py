@@ -189,8 +189,10 @@ def check(out, no_pdf=False, allow=()):
             problems.append(f"{ident}: test (an eval or test assertion of the good outcome) is missing")
         if not render.LOC_RE.match(f["location"]):
             problems.append(f"{ident}: location must be path:line")
-        if f["kind"] == "improvement" and not str((f.get("proposal") or {}).get("after") or "").strip():
-            problems.append(f"{ident}: an improvement needs proposal.after")
+        if f["kind"] == "improvement":
+            for key in ("before", "after"):
+                if not str((f.get("proposal") or {}).get(key) or "").strip():
+                    problems.append(f"{ident}: an improvement needs proposal.{key}")
         if has_prompts and not f.get("prompt"):
             problems.append(f"{ident}: prompt (the P-NN it affects) is missing")
         if f["category"] not in canonical:

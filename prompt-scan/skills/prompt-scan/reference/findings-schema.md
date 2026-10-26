@@ -96,7 +96,8 @@ evidence.
   excluded findings last) and rewrites every `F-*` reference in the record,
   except quoted `proposal` text, reference URLs, locations, paths and file
   names (a feature id such as `prompts/F-002/` or `F-002.md`), `meta`, prompt records and the
-  scanner fields of `L-*` findings
+  scanner fields of `L-*` findings (an `L-*` finding's `validation` and `previous_validation` are review
+  text, so their references follow)
 - `remove` deletes exact entries from `checked_ok`, `decisions`,
   `limitations` or `next_steps`
 - Literal instruction-override strings and credential-shaped values in any

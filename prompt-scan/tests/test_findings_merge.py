@@ -143,7 +143,9 @@ class MergeTest(unittest.TestCase):
         self.assertFalse(self.out.exists())
 
     def test_non_standard_json_is_an_input_error(self):
-        for raw in ('{"meta": {"x": NaN}}', '{"meta": {"x": -Infinity}}', '{"meta": {}, "meta": {}}'):
+        for raw in ('{"meta": {"x": NaN}}', '{"meta": {"x": -Infinity}}', '{"meta": {}, "meta": {}}',
+                    # 1e400 parses as a float infinity, which json.dumps would write back as Infinity.
+                    '{"meta": {"x": 1e400}}', '{"prompts": [{"id": "P-01", "max_tokens": -1e400}]}'):
             path = self.dir / "fragment.json"
             path.write_text(raw, encoding="utf-8")
             code, _, err = run(findings.main, "merge", self.out, path)
@@ -256,6 +258,8 @@ class MergeTest(unittest.TestCase):
             "the F-001-style contradiction, F-002-v2.md": "the F-009-style contradiction, F-002-v2.md",
             "see L-003/F-001 and F-002/P-01": "see L-003/F-009 and F-008/P-01",
             "関連:F-001/F-002、prompts/F-002/a.md:3": "関連:F-009/F-008、prompts/F-002/a.md:3",
+            # A comma or semicolon ends the word too: a list beside a slash list is not a path.
+            "F-001,F-002/F-003; F-004;F-001/F-002": "F-009,F-008/F-007; F-006;F-009/F-008",
         }
         for before, after in cases.items():
             data = {"findings": [{"id": "F-005", "cause": before}]}

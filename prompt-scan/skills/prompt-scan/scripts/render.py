@@ -25,6 +25,7 @@ from collections import Counter
 import hashlib
 import html
 import json
+import math
 import os
 from pathlib import Path
 import re
@@ -292,7 +293,8 @@ def validate_data(data):
 
 
 def parse_json(raw, path):
-    """Strict JSON: a duplicate key would silently drop a value, and NaN or Infinity is not JSON a browser parses."""
+    """Strict JSON: a duplicate key would silently drop a value, and NaN or Infinity (or a number that overflows to
+    it) is not JSON a browser parses."""
     def unique(pairs):
         result = {}
         for key, value in pairs:
@@ -303,8 +305,16 @@ def parse_json(raw, path):
 
     def constant(name):
         raise ValueError(f"{name} is not a JSON value")
+
+    def number(text):
+        # 1e400 is valid JSON but overflows to inf, which json.dumps would write back as Infinity.
+        value = float(text)
+        if math.isinf(value):
+            raise ValueError(f"{text} does not fit a double")
+        return value
     try:
-        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique, parse_constant=constant)
+        value = json.loads(raw.decode("utf-8"), object_pairs_hook=unique, parse_constant=constant,
+                           parse_float=number)
     except (UnicodeError, ValueError, RecursionError) as e:
         raise SchemaError(f"{path}: {e}") from None
     if json_depth(value) > MAX_JSON_DEPTH:

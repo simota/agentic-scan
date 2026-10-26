@@ -45,7 +45,8 @@ stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
 evidence cites a `path:line` (a duplicate may name the finding it repeats),
-every finding ID mentioned in prose names a recorded finding, and both
+every finding ID mentioned in prose names a recorded finding, every
+location names a file, and both
 rendered files match what `render.py` produces from the current record
 in `meta.lang`. With `--repo`, each location's file must exist in that
 checkout and its line must be within the file.
@@ -1084,6 +1085,12 @@ def contract_problems(out, allow=()):
     kept = {f["id"] for f in findings if f["validation"]["verdict"] not in EXCLUDED}
     for f in findings:
         verdict, evidence = f["validation"]["verdict"], f["validation"].get("evidence", "")
+        for loc in as_locations(f["location"]):
+            # Not a schema error: merge validates the record before a fragment
+            # can correct it, so refusing it there would leave only a hand edit.
+            if not visible(split_location(loc)[0]):
+                problems.append(f"{f['id']}: location {loc!r} names no file; give its path "
+                                "from the repository root")
         for rid in cited_rules(f):
             status = rule_status.get(rid)
             if status is None:

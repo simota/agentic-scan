@@ -88,8 +88,8 @@ gapless `A-NNN` IDs in severity order, then path (excluded verdicts last), every
 `checked_ok` and `limitations`, cited rules that exist (a `Valid` finding cites one
 recorded as violated, a `Likely` one violated or partly read), every violated rule
 cited by a Valid or Likely finding and no reason left on a closed rule, traced and evidenced
-High and Medium findings, finding IDs in prose that name recorded findings, and a dashboard and
-report that match a fresh render of the current `findings.json` in
+High and Medium findings, locations that name a file, finding IDs in prose that
+name recorded findings, and a dashboard and report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape
 and consistency, not whether a finding is true.
 

@@ -1,4 +1,5 @@
 """Regression checks for finding fields, measurements and source locations."""
+from copy import deepcopy
 import io
 import json
 from pathlib import Path
@@ -7,13 +8,17 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from support import complete_doc, finding, findings, render, run_cli, run_main
+from support import complete_doc, contract_problems, finding, findings, render, run_cli, run_main
 
 
 MEASUREMENT = {
     "environment": "local synthetic data",
-    "command": "python3 tests/query_count.py",
-    "result": "query count is 3 for both 1 and 50 orders",
+    "before": {"command": "python3 tests/query_count.py",
+               "result": "query count is 52 for 50 orders",
+               "log": "orders=1 queries=3\norders=50 queries=52"},
+    "after": {"command": "python3 tests/query_count.py",
+              "result": "query count is 3 for both 1 and 50 orders",
+              "log": "orders=1 queries=3\norders=50 queries=3"},
 }
 
 
@@ -73,11 +78,23 @@ class MeasurementRegressionTests(unittest.TestCase):
     def test_invalid_measurements_preserve_merge_target_for_both_methods(self):
         invalid = [None, [], "not an object", {}]
         for key in MEASUREMENT:
-            missing = dict(MEASUREMENT)
+            missing = deepcopy(MEASUREMENT)
             del missing[key]
             invalid.append(missing)
-            invalid.append(dict(MEASUREMENT, **{key: " \t"}))
-            invalid.append(dict(MEASUREMENT, **{key: 0}))
+            invalid.append(dict(deepcopy(MEASUREMENT), **{key: " \t"}))
+            invalid.append(dict(deepcopy(MEASUREMENT), **{key: 0}))
+        for run in ("before", "after"):
+            invalid.append(dict(deepcopy(MEASUREMENT), **{run: "not an object"}))
+            for key in MEASUREMENT[run]:
+                for value in (None, " \t", 0):
+                    broken = deepcopy(MEASUREMENT)
+                    if value is None:
+                        del broken[run][key]
+                    else:
+                        broken[run][key] = value
+                    invalid.append(broken)
+        # The flat shape from before runs were split is refused, not half-read.
+        invalid.append({"environment": "local", "command": "c", "result": "r"})
 
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
@@ -122,10 +139,44 @@ class MeasurementRegressionTests(unittest.TestCase):
             with self.subTest(method=method):
                 doc = complete_doc()
                 doc["findings"][0]["validation"]["method"] = method
-                doc["findings"][0]["measurement"] = dict(MEASUREMENT)
+                doc["findings"][0]["measurement"] = deepcopy(MEASUREMENT)
                 findings.validate(doc, complete=True)
-                self.assertIn(MEASUREMENT["result"], render.render_markdown(doc, "en"))
-                self.assertIn(MEASUREMENT["result"], render.render_html(doc, "en"))
+                for output in (render.render_markdown(doc, "en"), render.render_html(doc, "en")):
+                    for run in ("before", "after"):
+                        for key in ("command", "result"):
+                            self.assertIn(MEASUREMENT[run][key], output)
+                        for line in MEASUREMENT[run]["log"].splitlines():
+                            self.assertIn(line, output)
+
+    def test_llm_copy_carries_both_runs_as_fenced_data(self):
+        doc = complete_doc()
+        doc["findings"][0]["measurement"] = deepcopy(MEASUREMENT)
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                text = render.llm_finding(doc["findings"][0], render.LABELS[lang], doc["meta"])
+                for run in ("before", "after"):
+                    label = render.LABELS[lang][run]
+                    self.assertIn(f"### {render.LABELS[lang]['measurement']}: {label} · "
+                                  f"{render.LABELS[lang]['log']}\n\n```text\n"
+                                  f"{MEASUREMENT[run]['log']}\n```", text)
+
+    def test_measured_finding_passes_the_run_contract(self):
+        doc = complete_doc()
+        doc["findings"][0]["validation"]["method"] = "measured"
+        doc["findings"][0]["measurement"] = deepcopy(MEASUREMENT)
+        self.assertEqual(contract_problems(doc), [])
+        del doc["findings"][0]["measurement"]["after"]
+        problems = contract_problems(doc)
+        self.assertEqual(len(problems), 1)
+        self.assertIn("findings[0].measurement.after: must be an object", problems[0])
+
+    def test_unknown_run_keys_are_refused(self):
+        doc = complete_doc()
+        doc["findings"][0]["measurement"] = deepcopy(MEASUREMENT)
+        doc["findings"][0]["measurement"]["after"]["output"] = "x"
+        with self.assertRaisesRegex(findings.SchemaError,
+                                    r"^findings\[0\]\.measurement\.after: unknown keys \['output'\]"):
+            findings.validate(doc, complete=True)
 
 
 class LocationRegressionTests(unittest.TestCase):

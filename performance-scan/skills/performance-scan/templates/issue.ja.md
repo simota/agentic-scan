@@ -51,7 +51,23 @@ path:line、参考の title が空なら URL をリンク文字列にする。
 
 {{validation.evidence}}
 
-<!-- 計測した場合: {{measurement.command}}（{{measurement.environment}}）→ {{measurement.result}} -->
+<!-- 計測した場合はコメント記号を外して以下を残す（実行環境: {{measurement.environment}}）。計測していなければこのブロックごと削除する
+## 計測ログ
+
+修正前: {{measurement.before.result}}
+
+```text
+$ {{measurement.before.command}}
+{{measurement.before.log}}
+```
+
+修正後: {{measurement.after.result}}
+
+```text
+$ {{measurement.after.command}}
+{{measurement.after.log}}
+```
+-->
 
 ## 修正方針
 

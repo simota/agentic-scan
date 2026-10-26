@@ -50,6 +50,8 @@ Write in the requester's language.
      regression test: at least one deterministic assertion
      recorded verdict / verification: Valid … / static or measured
      evidence: path:line and what it shows
+     measurement (when recorded): environment, then before and after, each
+       with its result, command and raw log
    ```
 
    The fields follow the order of `report.md` so both read the same way.

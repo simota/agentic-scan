@@ -24,9 +24,9 @@ import unicodedata
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, VERDICTS, SchemaError,  # noqa: E402
+from findings import (EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       escape_unencodable_console, file_mode, read_json, resolve_path,
-                      validate)
+                      SchemaError, validate)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -41,6 +41,7 @@ LABELS = {
         "impact": "what happens", "verdict": "recorded verdict", "method": "verification",
         "evidence": "evidence", "measurement": "measurement", "fix": "fix direction",
         "command": "command", "environment": "environment",
+        "before": "before", "after": "after", "result": "result", "log": "log",
         "regression_test": "regression test", "references": "references", "status": "status",
         "budget": "budget", "static_note": "Static review; no load was sent to any deployed environment.",
         "measured_note": "Static review plus explicitly authorized local measurements.",
@@ -73,6 +74,7 @@ LABELS = {
         "impact": "何が起きるか", "verdict": "検証判定", "method": "検証方法",
         "evidence": "根拠", "measurement": "計測", "fix": "修正方針",
         "command": "コマンド", "environment": "実行環境",
+        "before": "修正前", "after": "修正後", "result": "結果", "log": "ログ",
         "regression_test": "回帰テスト", "references": "参考", "status": "ステータス",
         "budget": "バジェット", "static_note": "静的レビューのみ。稼働中の環境には負荷を一切かけていない。",
         "measured_note": "静的レビューに加え、明示的に許可されたローカル計測を実施。",
@@ -210,6 +212,14 @@ def markdown_code(value):
     return "<br>".join(span(line) for line in text_lines(value))
 
 
+def markdown_fence(value, indent):
+    """A fenced block inside a list item; the fence outruns any backtick run in the log."""
+    lines = text_lines(value)
+    fence = "`" * max(3, max((len(run) for line in lines for run in re.findall(r"`+", line)),
+                             default=0) + 1)
+    return [indent + line if line else "" for line in (f"{fence}text", *lines, fence)]
+
+
 def link_destination(url):
     """Return a URL safe to link, before escaping for Markdown or HTML.
 
@@ -320,8 +330,11 @@ def markdown_finding(f, t):
         lines.append(f"- **{t['evidence']}:** {markdown_text(v['evidence'])}")
     if "measurement" in f:
         m = f["measurement"]
-        lines.append(f"- **{t['measurement']}:** {markdown_text(m['result'])} "
-                     f"({markdown_code(m['command'])}, {markdown_text(m['environment'])})")
+        lines.append(f"- **{t['measurement']}:** {markdown_text(m['environment'])}")
+        for run in MEASUREMENT_RUNS:
+            r = m[run]
+            lines.append(f"  - **{t[run]}:** {markdown_text(r['result'])} ({markdown_code(r['command'])})")
+            lines += markdown_fence(r["log"], "    ")
     if not excluded:
         lines.append(f"- **{t['status']}:** {shown(f.get('status', 'Open'), t['lang'])}")
     for ref in f.get("references", []):
@@ -535,8 +548,10 @@ def llm_finding(f, t, meta):
         out += llm_block(t["evidence"], v["evidence"])
     if "measurement" in f:
         m = f["measurement"]
-        out += (llm_block(t["measurement"], m["result"]) + llm_block(t["environment"], m["environment"])
-                + llm_block(t["command"], m["command"]))
+        out += llm_block(f"{t['measurement']}: {t['environment']}", m["environment"])
+        for run in MEASUREMENT_RUNS:
+            for key in ("result", "command", "log"):
+                out += llm_block(f"{t['measurement']}: {t[run]} · {t[key]}", m[run][key])
     if f.get("references"):
         out += ["", f"### {t['references']}", ""]
         out += [f"- {llm_line(reference_title(ref))}: {llm_line(ref['url'])}" for ref in f["references"]]
@@ -561,8 +576,7 @@ def html_finding(f, t, meta):
     if not excluded:
         rows.append((t["status"], shown(f.get("status", "Open"), lang)))
     if "measurement" in f:
-        m = f["measurement"]
-        rows += [(t["measurement"], m["result"]), (t["environment"], m["environment"])]
+        rows.append((t["environment"], f["measurement"]["environment"]))
     out = [f"<details data-sev='{group}'><summary><span class='badge {f['severity']}'>"
            f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
            f"<span class='small'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
@@ -571,9 +585,11 @@ def html_finding(f, t, meta):
            f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
            f"data-failed='{e(t['copy_failed'])}'>{e(t['copy_llm'])}</button></div><dl>"]
     out += [f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in rows]
-    if "measurement" in f:
-        out.append(f"<dt>{e(t['command'])}</dt><dd><pre><code>"
-                   f"{e(f['measurement']['command'])}</code></pre></dd>")
+    for run in MEASUREMENT_RUNS if "measurement" in f else ():
+        r, label = f["measurement"][run], f"{t['measurement']} ({t[run]})"
+        out.append(f"<dt>{e(label)}</dt><dd>{e(r['result'])}</dd>")
+        out += [f"<dt>{e(label)} {e(t[key])}</dt><dd><pre><code>{e(r[key])}</code></pre></dd>"
+                for key in ("command", "log")]
     for ref in f.get("references", []):
         out.append(f"<dt>{e(t['references'])}</dt><dd>"
                    f"{html_link(reference_title(ref), ref['url'])}</dd>")

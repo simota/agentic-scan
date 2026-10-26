@@ -11,8 +11,10 @@ LANGUAGES = (
 )
 MEASUREMENT = {
     "environment": "authorized local synthetic data",
-    "command": "python3 tests/query_count.py",
-    "result": "query count is 3 for both 1 and 50 orders",
+    "before": {"command": "python3 tests/query_count.py", "result": "query count is 52 for 50 orders",
+               "log": "orders=50 queries=52"},
+    "after": {"command": "python3 tests/query_count.py", "result": "query count is 3 for 50 orders",
+              "log": "orders=50 queries=3"},
 }
 
 

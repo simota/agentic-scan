@@ -53,6 +53,7 @@ templates/issue.ja.md で登録した issue へリンクし、未登録なら「
 - **コストモデル:** {{cost_model}}
 - **影響:** {{impact}}
 - **修正方針:** {{fix}}
+- **計測（修正前 → 修正後）:** {{measurement.before.result}} → {{measurement.after.result}}（{{measurement.environment}}）
 - **対応 issue:** <issue の URL、または「未登録」>
 
 ## 4. 性能バジェット
@@ -84,3 +85,4 @@ templates/issue.ja.md で登録した issue へリンクし、未登録なら「
 
 - `report.md` — 診断レポート本文
 - `dashboard.html` — 全検出事項（オフラインで閲覧可）
+- 計測ログ — measurement のある finding ごとに、修正前と修正後のコマンドと生ログ（`report.md` の各 finding にも収録）

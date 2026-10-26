@@ -67,9 +67,21 @@ when the host can run one; otherwise say so in `limitations`.
 Static support can establish a finding when every claim is supported. Label it
 `validation.method: "static"`. It does not mean anything was run.
 
-`measured` requires a recorded `measurement` with the command, the environment
-(local or throwaway, synthetic data and its shape) and the result. Rules:
+`measured` requires a recorded `measurement`: the `environment` (local or
+throwaway, synthetic data and its shape) and two runs of the same harness on
+the same data, `before` (the code as assessed) and `after` (the fix direction
+applied), each with its `command`, its `result` (the numbers, e.g. "52 queries
+for N=50") and its `log` (the raw output the command printed, trimmed to the
+lines that show the numbers, never rewritten). `check` refuses a measurement
+missing either run or any of these fields. Rules:
 
+- The `after` run is made on a throwaway copy of the repository in scratch
+  (e.g. `git clone --no-hardlinks <repo> <scratch>/after` or a plain copy; not
+  `git worktree add`, which writes into the audited repository's `.git`) with the fix direction
+  applied there, never on the audited working tree; for VERIFY-FIX it is the
+  repository with the fix. When no `after` run can be made (the fix direction is
+  not concrete enough to apply), record no `measurement`: keep the finding
+  `static` and put the before-only result, with its command, in `limitations`
 - Only after an explicit go-ahead, only on the requester's own local or
   throwaway environment, with synthetic data. Never production, staging,
   shared environments or third-party endpoints; stub external services
@@ -99,7 +111,8 @@ A fix is verified by a regression check in the repo's own suite that:
   such
 
 `status: Fixed` records that a fix was made. It is not proof of a retest
-unless the before and after runs are recorded in `measurement`.
+unless the before and after runs, with their logs, are recorded in
+`measurement`.
 
 ## Reporting and limits
 

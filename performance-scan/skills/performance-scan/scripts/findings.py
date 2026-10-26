@@ -71,7 +71,11 @@ FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "locati
 FINDING_KEYS = frozenset(FINDING_REQUIRED + ("contrast", "budget", "step", "status",
                                              "measurement", "references"))
 VALIDATION_KEYS = frozenset(("verdict", "method", "evidence"))
-MEASUREMENT_KEYS = frozenset(("environment", "command", "result"))
+MEASUREMENT_KEYS = frozenset(("environment", "before", "after"))
+# A measurement is a comparison: the same harness on the code as it is and with
+# the fix direction applied, each with the raw output it printed.
+MEASUREMENT_RUNS = ("before", "after")
+RUN_KEYS = ("command", "result", "log")
 REFERENCE_KEYS = frozenset(("url", "title"))
 BUDGET_KEYS = frozenset(("id", "statement", "source", "family", "inferred", "status", "reason"))
 PERSPECTIVE_KEYS = frozenset(("name", "status", "note"))
@@ -444,8 +448,15 @@ def validate_finding(f, where):
         if not isinstance(m, dict):
             raise SchemaError(f"{where}.measurement: must be an object")
         _known_keys(m, MEASUREMENT_KEYS, f"{where}.measurement")
-        for key in ("environment", "command", "result"):
-            _text(m.get(key), f"{where}.measurement.{key}")
+        _text(m.get("environment"), f"{where}.measurement.environment")
+        for run in MEASUREMENT_RUNS:
+            r = m.get(run)
+            if not isinstance(r, dict):
+                raise SchemaError(f"{where}.measurement.{run}: must be an object "
+                                  "(a measurement records both the before and the after run)")
+            _known_keys(r, frozenset(RUN_KEYS), f"{where}.measurement.{run}")
+            for key in RUN_KEYS:
+                _text(r.get(key), f"{where}.measurement.{run}.{key}")
     references = f.get("references", [])
     if not isinstance(references, list):
         raise SchemaError(f"{where}.references: must be a list")

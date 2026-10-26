@@ -420,8 +420,10 @@ summary .small{font-weight:400;font-size:13px;margin-left:0}
 .detail-actions{justify-content:flex-end;margin:10px 0 0}
 details dl{display:grid;grid-template-columns:160px minmax(0,1fr);gap:8px 18px;margin:12px 0 4px;padding:14px 18px;background:var(--tint)}
 dt{font-size:12px;color:var(--muted)}dd{margin:0}
-h1,summary,p,dd,li{overflow-wrap:anywhere}
-h1,summary,p,dd,td,li{white-space:pre-wrap}
+/* Record text keeps its line breaks and wraps anywhere. Lists are scoped to .lists:
+   a bare li would also reach the contents links, which the kit keeps on one line. */
+h1,summary,p,dd,.lists li{overflow-wrap:anywhere}
+h1,summary,p,dd,td,.lists li{white-space:pre-wrap}
 pre{margin:0;white-space:pre-wrap;overflow-wrap:anywhere;border-left:1px solid var(--text);padding:2px 0 2px 10px}
 code{line-height:1.6}
 td,th{padding:10px}

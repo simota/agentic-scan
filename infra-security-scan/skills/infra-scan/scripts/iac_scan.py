@@ -3860,6 +3860,14 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         dangerous = [c for c in added if c.upper().removeprefix("CAP_") in DANGEROUS_CAPABILITIES]
         if dangerous:
             hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
+    for container in containers:
+        for env in aslist(container.get("env") if isinstance(container, _YamlMap) else None):
+            # $(OTHER_VAR) expands another entry; {{ }} is an unrendered chart template.
+            if isinstance(env, _YamlMap) and isinstance(env.get("name"), str) and \
+                    CFN_SECRET_KEY.fullmatch(env["name"]) and literal_secret(env.get("value")) and \
+                    not re.search(r"\$\(|\{\{", env["value"]):
+                scan.hit("SEC-001", Res("file", rel, rel, 1), env.lines.get("value", res.line),
+                         f"literal value for {env['name']} ({res.address})")
     for volume in aslist(pod.get("volumes")):
         if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
             hits.append((volume, "hostPath", "hostPath volume"))

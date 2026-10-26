@@ -52,6 +52,7 @@ from redaction import CREDENTIAL  # noqa: E402
 
 # The line iac_scan.py adds to limitations when a rescan reopens a record.
 RESCAN_NOTE = re.compile(r"(?:F-[0-9]{3,}|AP-[0-9]{2,}): Baseline references removed by rescan: ")
+RESCAN_PATH_NOTE = "Baseline references removed by rescan: "
 
 OBJECTS = ("meta",)
 RECORDS = ("findings", "attack_paths")
@@ -322,13 +323,20 @@ def remove(findings_path, ids):
     # Another record's rescan note that names a removed one as its reason
     # ("supporting evidence for F-001") is reworded here, since only tools write it.
     pattern = re.compile(ID_BEFORE + "(?:" + "|".join(map(re.escape, removed)) + ")" + ID_AFTER)
+
+    def reword(line):
+        return sub_references(pattern, line, lambda m: "a removed finding" if m.group().startswith("F-")
+                              else "a removed attack path")
     if isinstance(record.get("limitations"), list):
         notes = tuple(f"{rid}: Baseline references removed by rescan: " for rid in removed)
         record["limitations"] = [
-            sub_references(pattern, line, lambda m: "a removed finding" if m.group().startswith("F-")
-                           else "a removed attack path") if isinstance(line, str) and RESCAN_NOTE.match(line)
-            else line
+            reword(line) if isinstance(line, str) and RESCAN_NOTE.match(line) else line
             for line in record["limitations"] if not (isinstance(line, str) and line.startswith(notes))]
+    # The rescan also appends that sentence, unprefixed, to the path's own note.
+    for ap in record.get("attack_paths", []):
+        if isinstance(ap, dict) and isinstance(ap.get("note"), str):
+            ap["note"] = "\n".join(reword(line) if line.startswith(RESCAN_PATH_NOTE) else line
+                                   for line in ap["note"].split("\n"))
     # Prose mentioning a removed ID would later name whichever record takes
     # its number; make the author reword it first. Records removed in the same
     # call no longer count, so the order of the IDs does not matter.

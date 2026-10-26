@@ -241,6 +241,54 @@ POD = "  template:\n    spec:\n      containers:\n        - name: c\n          s
 
 
 class KubernetesTest(unittest.TestCase):
+    def test_a_literal_secret_in_a_container_env_is_sec_001(self):
+        manifest = """apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app
+spec:
+  template:
+    spec:
+      initContainers:
+      - name: migrate
+        image: app
+        env:
+        - name: DB_PASSWORD
+          value: "VALUE"
+      containers:
+      - name: app
+        image: app
+        env:
+        - name: LOG_LEVEL
+          value: debug
+        - name: API_TOKEN
+          valueFrom:
+            secretKeyRef: {name: app, key: token}
+        - name: DB_PASSWORD_REF
+          value: "$(DB_PASSWORD)"
+        - name: TLS_ENABLED
+          value: "true"
+"""
+        value = "Literal" + "Pw" * 6
+        result = scan({"deploy.yaml": manifest.replace("VALUE", value)})
+        hits = [h for h in result.hits if h["rule"] == "SEC-001"]
+        self.assertEqual([(h["file"], h["line"]) for h in hits], [("deploy.yaml", 13)])
+        self.assertIn("DB_PASSWORD", hits[0]["detail"])
+        self.assertNotIn(value, json.dumps(result.hits))
+        # A key file path under a credentials name is no secret, as in Terraform.
+        path = manifest.replace("DB_PASSWORD", "GOOGLE_APPLICATION_CREDENTIALS", 1).replace(
+            '"VALUE"', "/var/secrets/google/key.json")
+        self.assertEqual([h for h in scan({"deploy.yaml": path}).hits if h["rule"] == "SEC-001"], [])
+        # The same container in kubectl JSON.
+        doc = {"apiVersion": "v1", "kind": "Pod", "metadata": {"name": "p"},
+               "spec": {"containers": [{"name": "c", "image": "x",
+                                        "env": [{"name": "CLIENT_SECRET", "value": value}]}]}}
+        self.assertEqual([h["rule"] for h in scan({"pod.json": doc}).hits], ["SEC-001"])
+        for placeholder in ("", "<set-me>", "{{ .Values.password }}", "${DB_PASSWORD}", "$DB_PASSWORD"):
+            with self.subTest(placeholder=placeholder):
+                result = scan({"deploy.yaml": manifest.replace('"VALUE"', json.dumps(placeholder))})
+                self.assertEqual([h for h in result.hits if h["rule"] == "SEC-001"], [])
+
     def test_more_workload_kinds(self):
         for name, text in {
             "knative.yaml": "apiVersion: serving.knative.dev/v1\nkind: Service\nmetadata:\n  name: k\nspec:\n" + POD,

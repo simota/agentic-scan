@@ -81,6 +81,18 @@ class ValidateTest(unittest.TestCase):
         self.assertIn("F-002: attack path AP-09 does not exist", found)
         self.assertIn("AP-03: note must name", found)
 
+    def test_each_edge_is_cited_or_unknown(self):
+        data = sample()
+        data["attack_paths"][0]["edges"] = ["Internet reaches the service", "Role reads the table (iam.tf:4)"]
+        self.assertIn("AP-01: edge 1 cites no path:line and is not marked UNKNOWN", problems(data, partial=True))
+        # An UNKNOWN edge, with what would decide it, leaves the path unknown, not open.
+        data["attack_paths"][0]["edges"][0] = "UNKNOWN: the WAF in front of the ALB is not in the inputs"
+        self.assertIn("AP-01: an UNKNOWN edge makes the path unknown, not open", problems(data, partial=True))
+        data["attack_paths"][0]["edges"][0] = "UNKNOWN: listener reachability depends on the deployment (alb.tf:12)"
+        self.assertIn("AP-01: an UNKNOWN edge makes the path unknown, not open", problems(data, partial=True))
+        data["attack_paths"][0].update(status="unknown", note="The WAF is not in the inputs")
+        self.assertFalse([p for p in problems(data, partial=True) if p.startswith("AP-01")])
+
     def test_references_must_be_https_without_credentials(self):
         data = sample()
         data["findings"][0]["references"] = [{"title": "x", "url": "http://example.com"},

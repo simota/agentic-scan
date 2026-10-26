@@ -74,5 +74,42 @@ class AdministratorPolicyReferenceTest(unittest.TestCase):
             '  role       = "app"\n  policy_arn = each.key\n}\n'), ["aws_iam_role_policy_attachment.a"])
 
 
+class PermissionSetTest(unittest.TestCase):
+    """An IAM Identity Center permission set grants its policies in every assigned account."""
+    ADMIN = "arn:aws:iam::aws:policy/AdministratorAccess"
+    STAR = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "*", "Resource": "*"}]}
+    READ = {"Version": "2012-10-17", "Statement": [{"Effect": "Allow", "Action": "s3:Get*", "Resource": "*"}]}
+
+    def hits(self, name, text):
+        with tempfile.TemporaryDirectory(prefix="iac-permission-set-") as tmp:
+            (Path(tmp) / name).write_text(text, encoding="utf-8")
+            return sorted((h["rule"], h["address"]) for h in iac_scan.run(tmp).hits)
+
+    def terraform(self, arn, policy):
+        return ('resource "aws_ssoadmin_managed_policy_attachment" "a" {\n  instance_arn = "i"\n'
+                f'  permission_set_arn = "p"\n  managed_policy_arn = {json.dumps(arn)}\n}}\n'
+                'resource "aws_ssoadmin_permission_set_inline_policy" "p" {\n  instance_arn = "i"\n'
+                f'  permission_set_arn = "p"\n  inline_policy = jsonencode({json.dumps(policy)})\n}}\n')
+
+    def cloudformation(self, arn, policy):
+        return json.dumps({"Resources": {"Admin": {"Type": "AWS::SSO::PermissionSet", "Properties": {
+            "InstanceArn": "i", "Name": "admin", "ManagedPolicies": [arn], "InlinePolicy": policy}}}})
+
+    def test_admin_grants_on_a_permission_set_are_admin(self):
+        self.assertEqual(self.hits("main.tf", self.terraform(self.ADMIN, self.STAR).replace(": ", " = ")), [
+            ("AWS-IAM-001", "aws_ssoadmin_managed_policy_attachment.a"),
+            ("AWS-IAM-001", "aws_ssoadmin_permission_set_inline_policy.p")])
+        self.assertEqual(self.hits("stack.json", self.cloudformation(self.ADMIN, self.STAR)),
+                         [("AWS-IAM-001", "cfn:Admin"), ("AWS-IAM-001", "cfn:Admin")])
+        # InlinePolicy is a Json property: a JSON string reads the same.
+        self.assertEqual(self.hits("stack.json", self.cloudformation(
+            "arn:aws:iam::aws:policy/ReadOnlyAccess", json.dumps(self.STAR))), [("AWS-IAM-001", "cfn:Admin")])
+
+    def test_narrower_permission_sets_are_not_admin(self):
+        readonly = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+        self.assertEqual(self.hits("main.tf", self.terraform(readonly, self.READ).replace(": ", " = ")), [])
+        self.assertEqual(self.hits("stack.json", self.cloudformation(readonly, self.READ)), [])
+
+
 if __name__ == "__main__":
     unittest.main()

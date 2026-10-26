@@ -55,8 +55,8 @@ from urllib.parse import unquote as url_unquote
 # Run with python -I (isolated mode), the script's own directory is not on the path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, SEV_RANK, STATE_FILE,
-                    has_symlink_parent, json_depth, shape_problems, split_yaml_documents, sub_references, unique_object,
-                    write_json_atomic)
+                    has_symlink_parent, inventory, json_depth, meta_prose, shape_problems, split_yaml_documents,
+                    sub_references, unique_object, write_json_atomic)
 from redaction import CREDENTIAL, CREDENTIAL_SHAPES, KEY_BEGIN, module_source, split_lines
 
 # Tool caches hold copies of the configuration (downloaded modules, the
@@ -1308,8 +1308,10 @@ def caller_set_keys(stmts, assume):
 
 
 def world_cidrs(values):
-    """Canonical /0 ranges only; unknown, invalid and narrower ranges are skipped."""
-    out = []
+    """Canonical /0 ranges, and narrower ranges in the same list that together
+    cover a whole address family (0.0.0.0/1 + 128.0.0.0/1); unknown, invalid
+    and other narrower ranges are skipped."""
+    out, parts = [], {4: [], 6: []}
     for value in aslist(values):
         if not isinstance(value, str):
             continue
@@ -1319,6 +1321,13 @@ def world_cidrs(values):
             continue
         if network.prefixlen == 0:
             out.append(str(network))
+        elif network not in parts[network.version]:
+            parts[network.version].append(network)
+    for version, nets in parts.items():
+        world = ipaddress.ip_network("0.0.0.0/0" if version == 4 else "::/0")
+        if str(world) in out or world not in ipaddress.collapse_addresses(nets):
+            continue
+        out.append(" + ".join(map(str, nets)) if len(nets) <= 3 else f"{world} split over {len(nets)} ranges")
     return out
 
 
@@ -1737,17 +1746,22 @@ def check_tf(scan, res):
                "aws_iam_group_policy_attachments_exclusive"):
         if admin_arn_list(scan, res, "policy_arns"):
             scan.hit("AWS-IAM-001", res, v.line("policy_arns"), "AdministratorAccess attached")
+    elif t == "aws_ssoadmin_permission_set_inline_policy":
+        # A permission set grants its policies in every account it is assigned to.
+        scan.identity_policy(res, scan.statements(res, "inline_policy"), v.line("inline_policy"))
     elif t in ("aws_iam_role_policy_attachment", "aws_iam_user_policy_attachment",
-               "aws_iam_group_policy_attachment", "aws_iam_policy_attachment"):
-        arn = v.get("policy_arn")
-        raw = (v.raw("policy_arn") or "").strip()
+               "aws_iam_group_policy_attachment", "aws_iam_policy_attachment",
+               "aws_ssoadmin_managed_policy_attachment"):
+        attr = "managed_policy_arn" if t == "aws_ssoadmin_managed_policy_attachment" else "policy_arn"
+        arn = v.get(attr)
+        raw = (v.raw(attr) or "").strip()
         data = re.fullmatch(r"data\.aws_iam_policy\.([\w-]+)\.arn", raw)
         # for_each = toset([".../AdministratorAccess", ...]) with policy_arn = each.value (or each.key).
         each = raw in ("each.value", "each.key") and any(
             isinstance(a, str) and ADMIN_ARN.search(a) for a in each_values(v.get("for_each"), raw))
-        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, "policy_arn")) or \
+        if (isinstance(arn, str) and ADMIN_ARN.search(arn)) or ADMIN_ARN_RAW.search(text_of(v, attr)) or \
                 (data and (res.dir, data.group(1)) in scan.admin_policy_data) or each:
-            scan.hit("AWS-IAM-001", res, v.line("policy_arn"), "AdministratorAccess attached")
+            scan.hit("AWS-IAM-001", res, v.line(attr), "AdministratorAccess attached")
     elif t == "aws_iam_access_key":
         scan.hit("AWS-IAM-005", res, res.line, "access key for an IAM user")
     elif t == "aws_iam_user_login_profile":
@@ -2898,6 +2912,10 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 if isinstance(p, dict):
                     scan.identity_policy(res, cfn_statements(scan, res, p.get("PolicyDocument"), line), line)
             cfn_admin(scan, res, props, line)
+        elif type_ == "AWS::SSO::PermissionSet":
+            if props.get("InlinePolicy") is not None:
+                scan.identity_policy(res, cfn_statements(scan, res, props["InlinePolicy"], line), line)
+            cfn_admin(scan, res, props, line, "ManagedPolicies")
         elif type_ == "AWS::IAM::AccessKey":
             scan.hit("AWS-IAM-005", res, line, "access key for an IAM user")
         elif type_ == "AWS::KMS::Key":
@@ -3058,7 +3076,7 @@ FLAG_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|enabled?|disabled?|[0-
 CFN_SECRET_KEY = re.compile(
     r"(?i)[A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_?key|secret_?string|"
     r"secret_?data|secret_?binary|token|api_?key|access_?key|private_?key|client_?key|"
-    r"ssh_?key|tls\.key|passphrase|bearer|auth_?token|credentials?)"
+    r"ssh_?key|tls\.key|passphrase|bearer|auth_?token|credentials?|pre_?shared_?key)"
     r"(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|"
     r"(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z]))")
 
@@ -3115,9 +3133,9 @@ def cfn_secrets(scan, res, props, line):
         scan.hit("SEC-001", Res("file", res.file, res.file, 1), line, f"literal value assigned to {key} ({res.address})")
 
 
-def cfn_admin(scan, res, props, line):
+def cfn_admin(scan, res, props, line, key="ManagedPolicyArns"):
     if any(isinstance(cfn_string(a), str) and ADMIN_ARN.search(cfn_string(a))
-           for a in aslist(props.get("ManagedPolicyArns"))):
+           for a in aslist(props.get(key))):
         scan.hit("AWS-IAM-001", res, line, "AdministratorAccess attached")
 
 
@@ -3842,6 +3860,18 @@ def _check_k8s(scan, rel, doc, fallback_kind=None):
         dangerous = [c for c in added if c.upper().removeprefix("CAP_") in DANGEROUS_CAPABILITIES]
         if dangerous:
             hits.append((caps, "add", f"capabilities add {dangerous[0]}"))
+    for container in containers:
+        for env in aslist(container.get("env") if isinstance(container, _YamlMap) else None):
+            # $(OTHER_VAR) expands another entry; ${VAR} / $VAR are envsubst or Flux
+            # placeholders; {{ }} is an unrendered chart template.
+            if not (isinstance(env, _YamlMap) and isinstance(env.get("name"), str)):
+                continue
+            name, value = env["name"], env.get("value")
+            exempt = next((p for keys, p in NOT_A_SECRET.items() if name.lower().endswith(keys)), None)
+            if CFN_SECRET_KEY.fullmatch(name) and literal_secret(value) and \
+                    not re.search(r"\$[({A-Za-z_]|\{\{", value) and not (exempt and exempt.search(value)):
+                scan.hit("SEC-001", Res("file", rel, rel, 1), env.lines.get("value", res.line),
+                         f"literal value for {name} ({res.address})")
     for volume in aslist(pod.get("volumes")):
         if isinstance(volume, _YamlMap) and isinstance(volume.get("hostPath"), dict):
             hits.append((volume, "hostPath", "hostPath volume"))
@@ -4096,7 +4126,7 @@ SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 SECRET_KEY_NAME = (
     r'"?([A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_key|secret_string|secret_data|secret_binary|'
     r'token|api_key|apikey|access_key|private_key|client_key|ssh_key|tls\.key|passphrase|bearer|auth_token|'
-    r'credentials?|connection_string)(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|'
+    r'credentials?|connection_string|preshared_key|plaintext)(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|'
     r'(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z])))"?'
 )
 # A key file path or a connection string without a password is no secret.
@@ -4109,6 +4139,8 @@ NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|
 API_CURSOR_FIELDS = {"clienttoken", "nexttoken", "continuationtoken", "nextcontinuationtoken", "paginationtoken",
                      "idempotencytoken", "startingtoken"}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
+# The same inside a one-line object: variables = { LOG = "x", DB_PASSWORD = "..." }.
+INLINE_SECRET = re.compile(rf'[{{,]\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
@@ -4249,7 +4281,8 @@ def hcl_literal_secrets(scan, res, lines, mocks):
                 body = m.group(2)
             elif not opener:
                 body = None
-        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and (m := INLINE_LOCALS_SECRET.search(line)):
+        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and not INLINE_SECRET.search(line) \
+                and (m := INLINE_LOCALS_SECRET.search(line)):
             label = f"literal value assigned to {m.group(1)}"
             body = m.group(2)
         if label and body is not None and i + 1 not in mocks and literal(body):
@@ -4283,7 +4316,9 @@ def scan_secrets(scan, rel, text, kind):
                     and not FLAG_VALUE.fullmatch(value.strip()) \
                     and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
-        for m in generic(line):
+        # Inline objects are read without comments, which may show such a shape as an example.
+        inline = INLINE_SECRET.finditer(code_lines[n - 1]) if kind in HCL_KINDS and n <= len(code_lines) else ()
+        for m in [*generic(line), *inline]:
             if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
                         m.group(1).lower() == "secret" and SECRET_REF_BLOCK.search("\n".join(lines[max(0, n - 6):n])))):
@@ -4627,11 +4662,7 @@ def git_commit(root):
 
 
 def inventory_of(scan):
-    by_provider = {}
-    for r in scan.resources:
-        by_provider[r["provider"]] = by_provider.get(r["provider"], 0) + 1
-    return {"resources": len(scan.resources), "by_provider": dict(sorted(by_provider.items())),
-            "files": len(scan.files), "not_run": list(scan.not_run)}
+    return inventory(scan.resources, scan.files, scan.not_run)
 
 
 def report(scan, root, commit, findings, snapshots=()):
@@ -4686,56 +4717,70 @@ def remap_baseline_references(data, old, new):
 
     carry_triage(data, old_by_id, replacements, new, rewrite_carried)
 
-    def rewrite_prose(value):
+    def rewrite_prose(value, removed=None):
+        """Renumber every string in value; a vanished ID's label is added to removed."""
         if isinstance(value, str):
-            return rewrite_carried(value)
+            def replace_reference(match):
+                fid = match.group()
+                if fid in replacements:
+                    return replacements[fid]
+                label = removed_label(fid)
+                if removed is not None and label not in removed:
+                    removed.append(label)
+                return f"[removed baseline: {label}]"
+            # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
+            # a sequence of string replacements would move both to I-003.
+            return sub_references(BASELINE_REFERENCE, value, replace_reference)
         if isinstance(value, list):
-            return [rewrite_prose(x) for x in value]
+            return [rewrite_prose(x, removed) for x in value]
         if isinstance(value, dict):
-            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v) for k, v in value.items()}
+            return {k: v if k in ("id", "references", "findings") else rewrite_prose(v, removed)
+                    for k, v in value.items()}
         return value
 
-    # Every other mention of a baseline ID follows it too. F-* evidence is
-    # handled below, where a lost reference also reopens the finding; the
+    # Every other mention of a baseline ID follows it too. A lost one in a
+    # finding or an attack path reopens it below, as lost evidence does; the
     # carry-over notes iac_scan.py writes name earlier IDs on purpose.
+    lost_in_prose = {}
     for finding in data.get("findings", []):
         if isinstance(finding, dict) and str(finding.get("id", "")).startswith("F-"):
+            lost = lost_in_prose.setdefault(finding["id"], [])
             for key, value in list(finding.items()):
                 if key not in ("id", "references", "validation", "attack_paths"):
-                    finding[key] = rewrite_prose(value)
-    data["attack_paths"] = rewrite_prose(data["attack_paths"])
+                    finding[key] = rewrite_prose(value, lost)
+    invalidated_paths = {}
+    for i, ap in enumerate(data["attack_paths"]):
+        lost = []
+        data["attack_paths"][i] = rewrite_prose(ap, lost)
+        if lost and isinstance(ap, dict):
+            invalidated_paths[ap.get("id")] = lost
     for key in ("perspectives", "checked_ok", "decisions", "next_steps"):
         if isinstance(data.get(key), list):
             data[key] = rewrite_prose(data[key])
     if isinstance(data.get("limitations"), list):
         data["limitations"] = [line if isinstance(line, str) and CARRY_NOTE.fullmatch(line) else rewrite_prose(line)
                                for line in data["limitations"]]
+    if isinstance(data.get("meta"), dict):
+        prose = rewrite_prose(meta_prose(data["meta"]))
+        data["meta"].update({k: v for k, v in prose.items() if k != "inputs"})
+        for item, note in zip(data["meta"].get("inputs", []), prose.get("inputs", [])):
+            if "note" in note:
+                item["note"] = note["note"]
 
     invalidated = set()
-    invalidated_paths = {}
     for finding in data.get("findings", []):
         if not isinstance(finding, dict) or not str(finding.get("id", "")).startswith("F-"):
             continue
         validation = finding.get("validation")
-        if not isinstance(validation, dict) or not isinstance(validation.get("evidence"), str):
-            continue
-        removed = []
-
-        def replace_reference(match):
-            fid = match.group()
-            if fid in replacements:
-                return replacements[fid]
-            label = removed_label(fid)
-            if label not in removed:
-                removed.append(label)
-            return f"[removed baseline: {label}]"
-
-        # One regex pass is essential when I-001 -> I-002 and I-002 -> I-003:
-        # a sequence of string replacements would move both to I-003.
-        validation["evidence"] = sub_references(BASELINE_REFERENCE, validation["evidence"], replace_reference)
+        removed = list(lost_in_prose.get(finding["id"], []))
+        if isinstance(validation, dict) and isinstance(validation.get("evidence"), str):
+            validation["evidence"] = rewrite_prose(validation["evidence"], removed)
         if removed:
+            if not isinstance(validation, dict):
+                validation = finding["validation"] = {}
+            evidence = validation.get("evidence") if isinstance(validation.get("evidence"), str) else ""
             note = "Baseline references removed by rescan: " + "; ".join(removed) + ". Recheck this finding."
-            validation["evidence"] = validation["evidence"].rstrip() + "\n" + note
+            validation["evidence"] = (evidence.rstrip() + "\n" + note).lstrip()
             validation["verdict"] = "Unverified"
             finding["confidence"] = "Suspected"
             invalidated.add(finding["id"])
@@ -4764,7 +4809,7 @@ def remap_baseline_references(data, old, new):
                     removed.append(f"supporting evidence for {fid}")
             elif replacements.get(fid) is not None:
                 refs.append(replacements[fid])
-            else:
+            elif removed_label(fid) not in removed:
                 removed.append(removed_label(fid))
         if "findings" in ap:
             ap["findings"] = refs

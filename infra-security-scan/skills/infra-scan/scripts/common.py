@@ -16,6 +16,16 @@ RECORD_LISTS = ("attack_paths", "findings", "perspectives", *STRING_LISTS)
 REVIEW_FIELDS = ("validation", "confidence", "condition", "severity")
 
 
+def inventory(resources, files, not_run):
+    """findings.json inventory: what one iac_scan.py run read, from its iac.json lists."""
+    by_provider = {}
+    for r in resources:
+        provider = r.get("provider") if isinstance(r, dict) else None
+        by_provider[provider] = by_provider.get(provider, 0) + 1
+    return {"resources": len(resources), "by_provider": dict(sorted(by_provider.items(), key=lambda kv: str(kv[0]))),
+            "files": len(files), "not_run": list(not_run)}
+
+
 def meta_prose(meta):
     """The reviewer's prose in meta: scope, method and input notes. The project
     and assessor are names ("F-150 telematics") and input paths are paths."""

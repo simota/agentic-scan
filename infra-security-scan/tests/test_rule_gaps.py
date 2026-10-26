@@ -251,5 +251,30 @@ class YamlKeyTest(unittest.TestCase):
         self.assertEqual([(h["rule"], h["line"]) for h in result.hits], [("K8S-001", 8)])
 
 
+
+class SecretAttributeNameTest(unittest.TestCase):
+    def test_pre_shared_keys_and_kms_plaintext_are_literal_secrets(self):
+        value = "quiet" + "meadowlark"
+        result = scan({"main.tf": f'resource "aws_kms_ciphertext" "c" {{\n  key_id = "k"\n  plaintext = "{value}"\n}}\n'
+                                  f'resource "aws_vpn_connection" "v" {{\n  tunnel1_preshared_key = "{value}"\n}}\n',
+                       "vpn.json": {"Resources": {"Vpn": {"Type": "AWS::EC2::VPNConnection", "Properties": {
+                           "VpnTunnelOptionsSpecifications": [{"PreSharedKey": value}]}}}}})
+        self.assertEqual(sorted((h["file"], h["line"]) for h in result.hits if h["rule"] == "SEC-001"),
+                         [("main.tf", 3), ("main.tf", 6), ("vpn.json", 3)])
+        # A one-line object holds secret-named keys as well as a block does.
+        result = scan({"fn.tf": 'resource "aws_lambda_function" "f" {\n'
+                                f'  environment {{ variables = {{ LOG = "x", DB_PASSWORD = "{value}" }} }}\n}}\n'
+                                f'locals {{\n  db = {{ api_token = "{value}" }}\n}}\n'})
+        self.assertEqual([(h["rule"], h["line"], h["detail"]) for h in result.hits],
+                         [("SEC-001", 2, "literal value assigned to DB_PASSWORD"),
+                          ("SEC-001", 5, "literal value assigned to api_token")])
+        self.assertEqual(scan({"ok.tf": 'locals {\n  db = { password = var.pw, token_ttl = "300" }\n}\n'}).hits, [])
+        # A comment that shows the shape is not configuration.
+        self.assertEqual(scan({"c.tf": '# e.g. variables = { DB_PASSWORD = "changeme-in-comment" }\n'
+                                       'locals {\n  a = 1 // { api_token = "in-a-comment" }\n}\n'}).hits, [])
+        # CodeBuild's type = "PLAINTEXT" names a kind, not a secret.
+        self.assertEqual(scan({"cb.tf": 'locals {\n  type = "PLAINTEXT"\n}\n'}).hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

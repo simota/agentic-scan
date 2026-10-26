@@ -250,8 +250,9 @@ class StructuredSourceRedactionTest(OutputTest):
         scan = iac_scan.run(self.repo)
         record = self.record("pod.yaml:10")
         record["findings"] = iac_scan.build_findings(scan.hits)
+        # The literal is itself SEC-001; neither finding may show it.
         self.assertEqual([(f["rule"], f["location"]) for f in record["findings"]],
-                         [("K8S-001", "pod.yaml:10")])
+                         [("SEC-001", "pod.yaml:13"), ("K8S-001", "pod.yaml:10")])
         self.assertEqual(scan.not_run, [])
         self.assert_source_omitted(record, value)
 

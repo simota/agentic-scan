@@ -127,7 +127,7 @@ digits; the sequence continues through `AP-100` and beyond.
 | `entry` | yes | The entry actor (`reference/attack-paths.md` §1), one line |
 | `target` | yes | The crown jewel, with its resource address, one line |
 | `status` | yes | `open`, `blocked`, `unknown` |
-| `edges` | yes | Non-empty list of edges, each with `path:line` |
+| `edges` | yes | Non-empty list of edges, each with `path:line`, or marked `UNKNOWN` with what would decide it (then the status is not `open`) |
 | `findings` | no | `F-*` / `I-*` IDs on this path |
 | `note` | `blocked`, `unknown` | The denying or unknown edge |
 

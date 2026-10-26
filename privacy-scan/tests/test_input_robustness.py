@@ -1,4 +1,5 @@
 """Regressions for interrupted writes, special or oversized inputs, and safe status output."""
+import errno
 import io
 import json
 import os
@@ -10,6 +11,7 @@ import tempfile
 import time
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest import mock
 
 from test_privacy_scan import SKILL, complete_doc, findings, render
 
@@ -223,3 +225,47 @@ class CodeReviewFollowUpTests(unittest.TestCase):
         with self.assertRaises(findings.SchemaError) as raised:
             findings.read_json("/nonexistent/fragment.json")
         self.assertEqual(str(raised.exception).count("fragment.json"), 1)
+
+
+class UncheckableTargetTests(unittest.TestCase):
+    def test_merge_refuses_a_target_whose_existence_cannot_be_checked(self):
+        # Before Python 3.14, Path.exists() raises for errors other than
+        # "missing" (too long, no search permission); 3.14 returns False. The
+        # error is simulated so every version exercises the refusal.
+        with tempfile.TemporaryDirectory() as directory:
+            fragment = Path(directory) / "fragment.json"
+            fragment.write_text("{}", encoding="utf-8")
+            target = Path(directory) / "locked" / "findings.json"
+            for error in (errno.ENAMETOOLONG, errno.EACCES):
+                with self.subTest(errno=errno.errorcode[error]):
+                    stderr = io.StringIO()
+                    with mock.patch.object(Path, "exists", side_effect=OSError(error, os.strerror(error))), \
+                            redirect_stdout(io.StringIO()), redirect_stderr(stderr):
+                        code = findings.main(["merge", str(target), str(fragment)])
+                    self.assertEqual(code, 1)
+                    self.assertEqual(stderr.getvalue(), f"refused: {target}: {os.strerror(error)}\n")
+                    self.assertFalse(target.parent.exists())
+
+
+class AsciiDigitTests(unittest.TestCase):
+    def test_ids_and_line_numbers_need_ascii_digits(self):
+        # Unicode \d accepts Arabic-Indic and full-width digits, which the
+        # schema's `PV-001`, `C-01` and `path:line` shapes do not describe.
+        cases = (("findings", 0, "location", ["api/app.py:٢٢"], "location[0]"),
+                 ("findings", 0, "location", "api/app.py:２２", "location[0]"),
+                 ("findings", 0, "id", "PV-٠٠١", "findings[0].id"),
+                 ("commitments", 0, "id", "C-٠١", "commitments[0].id"))
+        for key, index, field, value, where in cases:
+            with self.subTest(field=field, value=value):
+                doc = complete_doc()
+                doc[key][index][field] = value
+                with self.assertRaises(findings.SchemaError) as raised:
+                    findings.validate(doc, complete=True)
+                self.assertIn(where, str(raised.exception))
+
+    def test_a_commitment_cited_with_other_digits_is_still_checked_against_the_ledger(self):
+        doc = complete_doc()
+        doc["findings"][0]["commitment"] = "C-٠١"
+        findings.validate(doc, complete=True)
+        self.assertTrue(any("is not in the commitments ledger" in p
+                            for p in findings.record_problems(doc)))

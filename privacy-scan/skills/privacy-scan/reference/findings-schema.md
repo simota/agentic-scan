@@ -154,7 +154,10 @@ a blank reference `title` shows the URL, and a blank `meta.commit` shows
 links (also directly after Japanese text, and with an upper-case scheme), so
 renderers that link bare URLs do not keep escape characters in the target;
 `ftp://` URLs, and URLs not linked this way (a `www.<placeholder>`, a dotless or
-non-ASCII host), stay literal text rather than links that keep escapes. A `!`
+non-ASCII host), stay literal text rather than links that keep escapes. GitHub
+still links e-mail addresses (only reserved example domains pass the guard) and
+`mailto:` and `xmpp:` URLs in `report.md`, whatever the escaping; their target
+is the visible text, while the dashboard shows them as text. A `!`
 before a URL stays text and never makes the link an image. Prose in a reference
 whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard
@@ -226,7 +229,7 @@ usually holds several findings and commitments.
 | `confidence` | `Confirmed` (follows from the code), `Environment-dependent` (needs a named runtime setting), `Suspected`. Confidence says how the claim follows from the code; the verdict says how far its verification got, so `Confirmed` with `Likely` means the code shows the gap but a hop was not traced. An excluded finding keeps the severity it would have had |
 | `category` | One perspective name from `reference/perspectives.md`, exactly |
 | `step` | Optional hunt step ID (`LT1`…), shown after the perspective in both reports. `check` requires a step listed under `category` (`LT1`…`LT4` under Logs, telemetry and errors) |
-| `location` | A `path:line` (or `path:start-end`) string, or a list of them. Paths may contain spaces; colons and control characters are not allowed, so `path:line:column` is refused (drop the column) and a colon in a file name is written as a placeholder (`app/routes/<colon-name>.tsx:12`). When the fix is a file that does not exist yet, use `path:0` for the file to create and say so in `fix` |
+| `location` | A `path:line` (or `path:start-end`) string, or a list of them, with line numbers in ASCII digits (as in `PV-001` and `C-01`). Paths may contain spaces; colons and control characters are not allowed, so `path:line:column` is refused (drop the column) and a colon in a file name is written as a placeholder (`app/routes/<colon-name>.tsx:12`). When the fix is a file that does not exist yet, use `path:0` for the file to create and say so in `fix` |
 | `title`, `data`, `subjects`, `flow`, `impact`, `fix`, `guard` | Required nonblank strings (`reference/commitments.md` §5); no personal data values. `fix` and `guard` may be omitted for `FalsePositive` and `NotApplicable` |
 | `conditions` | Optional string: the runtime settings the grade assumes. `check` requires it for an `Environment-dependent` finding that is not excluded |
 | `contrast`, `commitment` | Strings the schema treats as optional but `SKILL.md` expects on every finding: the flow that keeps the commitment at `path:line` (or `none`); the ledger ID. `check` reports a ledger ID that is not in `commitments` |

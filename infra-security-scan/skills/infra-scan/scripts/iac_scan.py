@@ -4135,6 +4135,8 @@ NOT_A_SECRET = {("credential", "credentials"): re.compile(r"^[\w./~-]+\.(?:json|
 API_CURSOR_FIELDS = {"clienttoken", "nexttoken", "continuationtoken", "nextcontinuationtoken", "paginationtoken",
                      "idempotencytoken", "startingtoken"}
 GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
+# The same inside a one-line object: variables = { LOG = "x", DB_PASSWORD = "..." }.
+INLINE_SECRET = re.compile(rf'[{{,]\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
@@ -4275,7 +4277,8 @@ def hcl_literal_secrets(scan, res, lines, mocks):
                 body = m.group(2)
             elif not opener:
                 body = None
-        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and (m := INLINE_LOCALS_SECRET.search(line)):
+        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and not INLINE_SECRET.search(line) \
+                and (m := INLINE_LOCALS_SECRET.search(line)):
             label = f"literal value assigned to {m.group(1)}"
             body = m.group(2)
         if label and body is not None and i + 1 not in mocks and literal(body):
@@ -4291,7 +4294,7 @@ def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
     generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
-        lambda line: filter(None, [GENERIC_SECRET.match(line)]))
+        lambda line: [*filter(None, [GENERIC_SECRET.match(line)]), *INLINE_SECRET.finditer(line)])
     mocks = mock_lines(lines) if kind == "terragrunt" else set()
     # Environment entries are read without comments, which may sit beside a name or
     # mention a reference type; a heredoc's body (container definitions) is kept.

@@ -261,6 +261,14 @@ class SecretAttributeNameTest(unittest.TestCase):
                            "VpnTunnelOptionsSpecifications": [{"PreSharedKey": value}]}}}}})
         self.assertEqual(sorted((h["file"], h["line"]) for h in result.hits if h["rule"] == "SEC-001"),
                          [("main.tf", 3), ("main.tf", 6), ("vpn.json", 3)])
+        # A one-line object holds secret-named keys as well as a block does.
+        result = scan({"fn.tf": 'resource "aws_lambda_function" "f" {\n'
+                                f'  environment {{ variables = {{ LOG = "x", DB_PASSWORD = "{value}" }} }}\n}}\n'
+                                f'locals {{\n  db = {{ api_token = "{value}" }}\n}}\n'})
+        self.assertEqual([(h["rule"], h["line"], h["detail"]) for h in result.hits],
+                         [("SEC-001", 2, "literal value assigned to DB_PASSWORD"),
+                          ("SEC-001", 5, "literal value assigned to api_token")])
+        self.assertEqual(scan({"ok.tf": 'locals {\n  db = { password = var.pw, token_ttl = "300" }\n}\n'}).hits, [])
         # CodeBuild's type = "PLAINTEXT" names a kind, not a secret.
         self.assertEqual(scan({"cb.tf": 'locals {\n  type = "PLAINTEXT"\n}\n'}).hits, [])
 

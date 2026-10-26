@@ -251,5 +251,19 @@ class YamlKeyTest(unittest.TestCase):
         self.assertEqual([(h["rule"], h["line"]) for h in result.hits], [("K8S-001", 8)])
 
 
+
+class SecretAttributeNameTest(unittest.TestCase):
+    def test_pre_shared_keys_and_kms_plaintext_are_literal_secrets(self):
+        value = "quiet" + "meadowlark"
+        result = scan({"main.tf": f'resource "aws_kms_ciphertext" "c" {{\n  key_id = "k"\n  plaintext = "{value}"\n}}\n'
+                                  f'resource "aws_vpn_connection" "v" {{\n  tunnel1_preshared_key = "{value}"\n}}\n',
+                       "vpn.json": {"Resources": {"Vpn": {"Type": "AWS::EC2::VPNConnection", "Properties": {
+                           "VpnTunnelOptionsSpecifications": [{"PreSharedKey": value}]}}}}})
+        self.assertEqual(sorted((h["file"], h["line"]) for h in result.hits if h["rule"] == "SEC-001"),
+                         [("main.tf", 3), ("main.tf", 6), ("vpn.json", 3)])
+        # CodeBuild's type = "PLAINTEXT" names a kind, not a secret.
+        self.assertEqual(scan({"cb.tf": 'locals {\n  type = "PLAINTEXT"\n}\n'}).hits, [])
+
+
 if __name__ == "__main__":
     unittest.main()

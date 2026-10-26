@@ -14,6 +14,7 @@ from common import unique_object  # noqa: E402
 # only as whole words, so bypass_mode or upwards are not keys of a secret.
 SECRET_FIELD = re.compile(
     r"(?i)(?<![\w/?&.-])(?:[\w/.-]*(password|passwd|secret|token|private[-_]?key|access[-_]?key|api[-_]?key|"
+    r"pre[-_]?shared[-_]?key|plaintext|"
     r"client[-_]?key|tls\.key|ssh[-_]?key|client[-_]?secret|connection[-_]?string|credentials?|"
     r"(?:signing|hmac|jwt|session|app)[-_]?key)[\w/.-]*|"
     r"(?:[\w/.-]*[^a-zA-Z\s\"'=:])?(pass(?:phrase)?|pwd|pw|authorization|bearer)"
@@ -540,7 +541,9 @@ SECRET_WORD = re.compile(
 # Public spellings that contain a secret word but name no secret.
 PUBLIC_WORDS = re.compile(r"(?i)token\.actions\.githubusercontent\.com|kms[-_]?key|http[-_]?tokens|secretsmanager|"
                           r"block[-_]project[-_]ssh[-_]keys|authori[sz]ation[-_]scopes|"
-                          r"authori[sz]ation[-_]type|auth[-_]?type|authorizer[\w-]{0,64}|"
+                          r"authori[sz]ation[-_]type|auth[-_]?type|"
+                          r"authorizer(?:[-_](?:id|uri|type|name|credentials(?:[-_]arn)?|result[-_]ttl[\w-]{0,32}|"
+                          r"payload[-_]format[-_]version|identity[-_]sources?))?(?![a-z0-9])|"
                           r"token[-_](?:endpoint|url|uri|ttl|lifetime|expiry)|"
                           r"(?:secret|token|auth)[\w-]{0,64}\.(?:arn|id|name)\b")
 # The subset that names a credential value, used to judge a whole document

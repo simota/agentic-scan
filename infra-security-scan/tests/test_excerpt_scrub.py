@@ -89,6 +89,28 @@ class ExcerptScrubTest(OutputTest):
                 for page in self.pages(record):
                     self.assertNotIn(W, page)
 
+    def test_secret_names_the_public_spellings_and_lists_missed(self):
+        cases = {
+            "authorizer.tf": f'resource "aws_lambda_function" "auth" {{\n'
+                             f'  environment {{ variables = {{ AUTHORIZER_SECRET = "{W}" }} }}\n}}\n',
+            "authorizer_token.tf": f'locals {{\n  lambda_authorizer_token = "{W}"\n}}\n',
+            "kms.tf": f'resource "aws_kms_ciphertext" "c" {{\n  key_id = "k"\n  plaintext = "{W}"\n}}\n',
+            "vpn.tf": f'resource "aws_vpn_connection" "v" {{\n  tunnel1_preshared_key = "{W}"\n}}\n',
+        }
+        for name, text in cases.items():
+            with self.subTest(name=name):
+                text += 'resource "aws_s3_bucket" "logs" {\n  bucket = "logs"\n}\n'
+                self.write(name, text)
+                record = self.record(f"{name}:{line_of(text, 'bucket = ')}")
+                for page in self.pages(record):
+                    self.assertNotIn(W, page)
+        # The public spellings stay readable.
+        for line in ('authorizer_id = "abc123"', 'authorizer_uri = "arn:aws:apigateway:x"',
+                     'authorization_type = "CUSTOM"', 'type = "PLAINTEXT"'):
+            with self.subTest(line=line):
+                self.assertEqual(redaction.redact_lines([line]), [line])
+                self.assertEqual(redaction.scrub_line(line), line)
+
     def test_respelled_locations_name_the_file_they_open(self):
         for name, text in ((".env", f"PGPASS={M}\n"), ("terraform.tfstate", f'{{"result": "{M}"}}\n'),
                            (".envrc", f"export TOKEN={M}\n")):

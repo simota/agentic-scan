@@ -3076,7 +3076,7 @@ FLAG_VALUE = re.compile(r"(?i)(?:true|false|yes|no|on|off|enabled?|disabled?|[0-
 CFN_SECRET_KEY = re.compile(
     r"(?i)[A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_?key|secret_?string|"
     r"secret_?data|secret_?binary|token|api_?key|access_?key|private_?key|client_?key|"
-    r"ssh_?key|tls\.key|passphrase|bearer|auth_?token|credentials?)"
+    r"ssh_?key|tls\.key|passphrase|bearer|auth_?token|credentials?|pre_?shared_?key)"
     r"(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|"
     r"(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z]))")
 
@@ -4122,7 +4122,7 @@ SECRET_PATTERNS.append(("private key", KEY_BEGIN))
 SECRET_KEY_NAME = (
     r'"?([A-Za-z0-9_-]*(?:(?:password|passwd|secret|secret_key|secret_string|secret_data|secret_binary|'
     r'token|api_key|apikey|access_key|private_key|client_key|ssh_key|tls\.key|passphrase|bearer|auth_token|'
-    r'credentials?|connection_string)(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|'
+    r'credentials?|connection_string|preshared_key|plaintext)(?:[_-]?(?:prod|dev|staging|test|base|val|value|str|string|data|binary|[0-9]+))?|'
     r'(?<![A-Za-z])(?:pass|pwd|pw)(?![A-Za-z])))"?'
 )
 # A key file path or a connection string without a password is no secret.

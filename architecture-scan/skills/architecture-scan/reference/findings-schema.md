@@ -34,7 +34,9 @@ including excluded findings, and list the perspectives in the order of
 `reference/perspectives.md`, marking any not recorded. References become links
 only for `http`/`https` URLs (and, in `report.md`, scheme-less relative paths,
 never `//host`, `\\host` or `/\host`, which name another host);
-any other scheme, or any URL containing a control or bidirectional character,
+any other scheme, any URL containing a control (C0 or C1) or bidirectional
+character, or, in `report.md`, a backslash before ASCII punctuation (`ftp\://`,
+which a link destination would unescape into `ftp://`),
 is shown as literal text (with the bidirectional character made visible). In `report.md`, recorded text keeps emphasis and code spans, but
 cannot open a Markdown block (heading, list, rule, code block, link
 definition) and cannot form a link, image, autolink (a bare URL, `www.` or

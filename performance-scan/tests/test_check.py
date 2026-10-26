@@ -73,11 +73,50 @@ class CheckRuleTests(unittest.TestCase):
         doc["findings"][0]["step"] = " DB1"
         self.assertEqual(contract_problems(doc)[0],
                          "P-001.step: ' DB1' is not a hunt step in reference/perspectives.md")
-        doc["findings"][0]["step"] = "OB1"
+        doc["findings"][0]["step"] = "DB6"
         doc["findings"][1]["step"] = ""
         self.assertEqual(contract_problems(doc), [])
         del doc["findings"][1]["step"]
         self.assertEqual(contract_problems(doc), [])
+
+    def test_a_step_belongs_to_the_finding_s_perspective(self):
+        # perspectives.md: DB steps are Database access steps, OB steps Observability's.
+        excluded = {"verdict": "FalsePositive", "method": "static", "evidence": "x.py:1"}
+        doc = complete_doc()
+        doc["findings"][0]["step"] = "OB1"
+        doc["findings"][1].update(category="Caching", validation=excluded)
+        self.assertEqual(contract_problems(doc), [
+            "P-001.step: OB1 is a hunt step of Observability, not of the category "
+            "Database access",
+            "P-002.step: DB1 is a hunt step of Database access, not of the category Caching"])
+        doc["findings"][0]["category"] = "Observability"
+        doc["findings"][1]["step"] = "CA2"
+        self.assertEqual(contract_problems(doc), [])
+
+    def test_a_perspective_with_an_included_finding_is_applied(self):
+        # The coordinator records a perspective applied when any unit applied it,
+        # and every finding names the perspective that surfaced it.
+        doc = complete_doc()
+        statuses = {p["name"]: p for p in doc["perspectives"]}
+        statuses["Database access"]["status"] = "N/A"
+        self.assertEqual(contract_problems(doc), [
+            "P-001.category: Database access is recorded N/A, but this finding came from it; "
+            "record the perspective applied",
+            "P-002.category: Database access is recorded N/A, but this finding came from it; "
+            "record the perspective applied"])
+        statuses["Database access"]["status"] = "not checked"
+        self.assertEqual(contract_problems(doc)[0],
+                         "P-001.category: Database access is recorded not checked, but this "
+                         "finding came from it; record the perspective applied")
+        self.assertEqual(len(contract_problems(doc)), 2)
+        # An excluded finding may sit under a perspective that does not apply.
+        excluded = {"verdict": "NotApplicable", "method": "static", "evidence": "x.py:1"}
+        doc["findings"] = [finding(validation=excluded)]
+        self.assertEqual(contract_problems(doc), [])
+        # An unrecorded perspective is reported once, not once per finding as well.
+        doc["findings"] = [finding()]
+        doc["perspectives"].remove(statuses["Database access"])
+        self.assertEqual(contract_problems(doc), ["perspective not recorded: Database access"])
 
     def test_required_lists_and_unique_ids(self):
         doc = complete_doc()

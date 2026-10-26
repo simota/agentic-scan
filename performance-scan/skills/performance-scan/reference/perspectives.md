@@ -33,7 +33,10 @@ Rules:
   reason (e.g. `Front end: N/A — API only, no client in the repo`)
 - A perspective that could not be checked statically is recorded as `not
   checked` with what would be needed
-- Every finding names the perspective that surfaced it in `category`
+- Every finding names the perspective that surfaced it in `category`, and its
+  `step`, when present, is one of that perspective's hunt steps. A perspective
+  with a finding that is not `FalsePositive` or `NotApplicable` is recorded
+  `applied`
 - A hunt step covered by a budget ledger entry cites it (`B-…`) in the
   perspective's `note` instead of being re-run. A step is covered only when
   that entry's cost-trace rows already hunt the step's own construct on the

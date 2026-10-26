@@ -53,10 +53,12 @@ PERSPECTIVES = (
     "Background work", "Startup and configuration", "Dependencies and platform",
     "Observability",
 )
-# The hunt-step IDs of reference/perspectives.md, per perspective in its order.
-HUNT_STEPS = frozenset(f"{prefix}{n}" for prefix, count in (
+# The hunt-step IDs of reference/perspectives.md, per perspective in its order,
+# mapped to the perspective they belong to.
+STEP_PERSPECTIVES = {f"{prefix}{n}": name for name, (prefix, count) in zip(PERSPECTIVES, (
     ("DB", 6), ("AL", 4), ("ME", 4), ("IO", 6), ("CA", 4), ("CC", 5), ("PA", 4),
-    ("FE", 5), ("BG", 3), ("SC", 3), ("DP", 2), ("OB", 1)) for n in range(1, count + 1))
+    ("FE", 5), ("BG", 3), ("SC", 3), ("DP", 2), ("OB", 1))) for n in range(1, count + 1)}
+HUNT_STEPS = frozenset(STEP_PERSPECTIVES)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "budgets", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
@@ -727,6 +729,7 @@ def _record_problems(doc):
     """Evidence, perspective coverage, budget cross-references and required lists."""
     problems = []
     findings = doc.get("findings", [])
+    statuses = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
     for f in findings:
         v = f["validation"]
         if v["verdict"] in DEFINITIVE and not cites_location(v["evidence"]):
@@ -742,6 +745,14 @@ def _record_problems(doc):
         if step.strip() and step not in HUNT_STEPS:
             problems.append(f"{f['id']}.step: {_show(step)} is not a hunt step in "
                             "reference/perspectives.md")
+        elif step in HUNT_STEPS and STEP_PERSPECTIVES[step] != f["category"]:
+            problems.append(f"{f['id']}.step: {step} is a hunt step of "
+                            f"{STEP_PERSPECTIVES[step]}, not of the category {f['category']}")
+        # The perspective that surfaced an included finding was applied.
+        status = statuses.get(f["category"], "applied")
+        if status != "applied" and v["verdict"] not in EXCLUDED:
+            problems.append(f"{f['id']}.category: {f['category']} is recorded {status}, but "
+                            "this finding came from it; record the perspective applied")
         if f["confidence"] == "Suspected" and v["verdict"] == "Valid":
             problems.append(f"{f['id']}: a Suspected finding cannot be Valid; confirm the "
                             "code link (Confirmed or Environment-dependent) or record Likely")

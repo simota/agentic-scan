@@ -89,6 +89,57 @@
     {"name": "Duplication and consistency of patterns", "status": "applied", "note": "DU1-DU2 applied"},
     {"name": "Dependencies and evolution", "status": "applied", "note": "DE1-DE3 applied"}
   ],
+  "architecture": {
+    "before": {
+      "note": "Module graph at the assessed revision; red edges are the ones A-001 to A-003 cite",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "orm", "label": "db (ORM session)"},
+        {"id": "broker", "label": "Message broker", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base (dedup)"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "writes"},
+        {"from": "refunds", "to": "invoices", "label": "raw UPDATE", "finding": "A-001"},
+        {"from": "pricing", "to": "orm", "label": "imports db.session", "finding": "A-003"},
+        {"from": "broker", "to": "shipment", "label": "shipment messages"},
+        {"from": "shipment", "to": "stock", "label": "decrements", "finding": "A-002"}
+      ]
+    },
+    "after": {
+      "note": "The same graph with the fix directions of A-001 to A-003 applied",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "coupons", "label": "api/pricing coupon repository"},
+        {"id": "orm", "label": "db (ORM session)"},
+        {"id": "broker", "label": "Message broker", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base (dedup)"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "refunds", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "writes"},
+        {"from": "pricing", "to": "coupons", "label": "injected repository"},
+        {"from": "coupons", "to": "orm", "label": "queries coupons"},
+        {"from": "broker", "to": "shipment", "label": "shipment messages"},
+        {"from": "shipment", "to": "dedup", "label": "dedup by message ID"},
+        {"from": "shipment", "to": "stock", "label": "decrements once per message"}
+      ]
+    }
+  },
   "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)", "Order placement uses a transactional outbox (api/orders/outbox.py:15)"],
   "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)"],
   "limitations": ["Broker delivery semantics in production were not observed", "GraphQL resolvers were not read"],

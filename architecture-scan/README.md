@@ -80,8 +80,8 @@ python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  #
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, a priority queue, findings filterable by severity, confidence, perspective, status, verdict and text (excluded findings apart), design rules, perspective coverage, copy-for-LLM per finding |
-| `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, a priority queue, findings filterable by severity, confidence, perspective, status, verdict and text (excluded findings apart), before and after architecture diagrams (inline SVG), design rules, perspective coverage, copy-for-LLM per finding |
+| `report.md` | The written assessment: scope, findings, before and after architecture diagrams (Mermaid), rules, coverage, sound items, limitations, next steps |
 
 `findings.py check` enforces the run contract: exactly these three files,
 gapless `A-NNN` IDs in severity order, then path (excluded verdicts last), every perspective recorded, nonempty
@@ -89,7 +89,7 @@ gapless `A-NNN` IDs in severity order, then path (excluded verdicts last), every
 recorded as violated, a `Likely` one violated or partly read), every violated rule
 cited by a Valid or Likely finding and no reason left on a closed rule, traced and evidenced
 High and Medium findings, locations that name a file, finding IDs in prose that
-name recorded findings, and a dashboard and report that match a fresh render of the current `findings.json` in
+name recorded findings, both architecture diagrams (before and after), and a dashboard and report that match a fresh render of the current `findings.json` in
 `meta.lang`, byte for byte (re-render after the last merge). It checks shape
 and consistency, not whether a finding is true.
 

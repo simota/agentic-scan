@@ -41,7 +41,9 @@ class PandocGfmTests(unittest.TestCase):
         f["validation"]["method"] = "analysed"
         html = self.html(render.render_markdown(doc, "en"))
         # Emphasis the author wrote (`_www.e.example_`) is kept on purpose.
-        self.assertNotRegex(html, r"<a |<img |class=\"math")
+        # pandoc anchors each line of a highlighted code block (the Mermaid
+        # diagrams) with `<a href="#cb1-1" aria-hidden="true">`; that is no link.
+        self.assertNotRegex(html, r"<a (?!href=\"#cb[0-9]+-[0-9]+\" aria-hidden)|<img |class=\"math")
         for text in ("bob@example.com", "$HOME/$USER/cache", "${DB_URL}/${DB_NAME}",
                      r"api/\*/models.py", "javascript:alert(1)"):
             self.assertIn(text, re.sub(r"<[^>]+>", "", html).replace("&amp;", "&"))

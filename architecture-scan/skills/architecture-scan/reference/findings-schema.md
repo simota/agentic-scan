@@ -96,6 +96,8 @@ be byte-identical to what `render.py` produces from the current
   `Makefile.local` count as files). A duplicate's `NotApplicable` evidence
   may instead be only the name of the reported finding it repeats, with
   nothing else (`Duplicate of A-004`, `重複: A-004`)
+- both architecture diagrams, `architecture.before` and `architecture.after`
+  (*Architecture diagrams* below)
 - every finding ID that prose mentions to name a recorded finding, read as
   renumber reads mentions (not in `meta`, a `location`, a URL, a command or a
   rule `source`): a fragment merged after renumber that still names an old
@@ -137,6 +139,9 @@ Merge semantics:
   within one fragment are refused
 - `checked_ok`, `decisions`, `limitations` and `next_steps` append without
   duplicates
+- `architecture` updates diagram by diagram: a fragment's `before` or `after`
+  replaces that diagram whole (its edges name its own nodes), and `null`
+  removes it
 - A complete finding (every required field) sent with an ID that already holds
   a finding with a different `title` or `location` is refused as an ID
   collision: two review units numbered the same ID, or a different finding at
@@ -281,9 +286,55 @@ record. Existing permission bits and symbolic-link destinations are retained.
   "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)"],
   "decisions": ["Confirm that worker/ may not write billing tables"],
   "limitations": ["Broker delivery semantics in production were not observed"],
-  "next_steps": ["Fix A-001, then add the single-writer check to CI"]
+  "next_steps": ["Fix A-001, then add the single-writer check to CI"],
+  "architecture": {
+    "before": {
+      "nodes": [{"id": "refunds", "label": "worker/refunds"},
+                {"id": "billing", "label": "api/billing"},
+                {"id": "invoices", "label": "invoices", "kind": "store"}],
+      "edges": [{"from": "refunds", "to": "invoices", "label": "raw UPDATE", "finding": "A-001"},
+                {"from": "billing", "to": "invoices", "label": "writes"}]
+    },
+    "after": {
+      "note": "A-001 fixed: the refund job goes through billing",
+      "nodes": [{"id": "refunds", "label": "worker/refunds"},
+                {"id": "billing", "label": "api/billing"},
+                {"id": "invoices", "label": "invoices", "kind": "store"}],
+      "edges": [{"from": "refunds", "to": "billing", "label": "BillingService.adjust()"},
+                {"from": "billing", "to": "invoices", "label": "writes"}]
+    }
+  }
 }
 ```
+
+## Architecture diagrams
+
+Every report carries two diagrams of the same module graph: `before`, the
+assessed revision, and `after`, the revision once the recorded fix directions
+are applied. Draw the modules, data stores and external systems the findings
+and core flows touch, not every file (at most 60 nodes and 150 edges per
+diagram). Keep a node's `id` the same in both diagrams; the outputs compare
+the two by `id` and by `from`/`to` pair:
+
+- an edge of `before` that `after` lacks is drawn dashed (removed), an edge or
+  node only `after` has is drawn in bold blue (added); the outputs also list
+  each change in words
+- an edge with `finding` is drawn red: give it on the `before` edges the
+  findings cite (the cycle, the second writer, the forbidden import). A
+  finding with no edge of its own (a missing seam, a swallowed failure) needs
+  none
+- a run with nothing to fix draws `after` equal to `before`
+
+`report.md` shows each diagram as a Mermaid flowchart (GitHub and most
+Markdown viewers draw it; elsewhere it reads as text), with node IDs it
+generates and every label quoted, so no recorded text can end a label or the
+block. The dashboard draws both as inline SVG with every node in the same
+place in both diagrams; an edge spanning several columns passes through a
+free slot in each column between, never under a node it does not touch, and
+a text list of the modules and edges follows each diagram. Labels too long
+for a box are cut with `…` in the drawing, never in the list or the Mermaid
+source; a finding ID is never cut: IDs that do not fit beside the label
+wrap onto further lines.
 
 ## Field rules
 
@@ -307,4 +358,5 @@ record. Existing permission bits and symbolic-link destinations are retained.
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`, a `partly read` one may carry it, and `check` refuses it on `holds` or `violated` (send `"reason": null` with the final status). Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (required nonblank: steps applied, steps left out with reasons). A perspective is replaced by sending it again, never removed |
+| `architecture` | Required for `check`: an object with `before` and `after` (merge accepts either alone). Each diagram is `{nodes, edges, note}`: `nodes` is a nonempty list of `{id, label, kind}`, where `id` is unique in the diagram, starts with a letter and holds letters, digits, `_`, `.` or `-` (up to 64; never a finding ID such as `A-001`), `label` is the nonblank text shown and optional `kind` is `module` (default), `store` or `external`; `edges` is a list of `{from, to, label, finding}`, where `from` and `to` are two different node IDs of the same diagram, each pair at most once, `label` is optional nonblank text and optional `finding` names the findings the edge shows (`"A-001"`, `"A-001, A-003"`; renumber rewrites them and `check` requires each to be recorded); optional `note` is nonblank text shown under the diagram's heading |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional. Items in all four lists are nonblank strings |

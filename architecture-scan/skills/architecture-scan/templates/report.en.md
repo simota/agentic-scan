@@ -55,33 +55,48 @@ attached report.md. -->
 - **Guard:** {{guard}}
 - **Tracked in:** <issue URL>
 
-## 4. Design rules
+## 4. Architecture: before and after
+
+<!-- Copy both ```mermaid blocks and the change list from report.md's architecture section unchanged, so the
+report shows the same graph as the dashboard. Before is the assessed revision with the edges the findings cite
+in red; after is the same graph with the fix directions applied. Say in one line what the after diagram
+changes, e.g. "The refund job stops writing invoices and goes through billing." -->
+
+### Before
+
+### After
+
+### What changes
+
+- 
+
+## 5. Design rules
 
 <!-- rules[]: each rule, its source and status. Inferred rules are questions for the owner; a baseline
 entry (source `baseline…`) is a general family rule, not a question. -->
 - 
 
-## 5. Checked and sound
+## 6. Checked and sound
 
 <!-- checked_ok: what was examined and held. -->
 - 
 
-## 6. What could not be checked
+## 7. What could not be checked
 
 <!-- limitations: runtime topology, delivery semantics, team ownership, roadmap. -->
 - 
 
-## 7. Decisions needed
+## 8. Decisions needed
 
 <!-- decisions: rules to confirm, documented intent the code contradicts, trade-offs. -->
 - 
 
-## 8. Recommended order of work
+## 9. Recommended order of work
 
 <!-- next_steps. -->
 1. 
 
 ## Attachments
 
-- `report.md` — the written assessment
+- `report.md` — the written assessment, with the before and after architecture diagrams
 - `dashboard.html` — every finding, works offline

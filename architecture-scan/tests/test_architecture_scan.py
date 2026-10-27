@@ -69,6 +69,21 @@ def complete_doc() -> dict:
                          for n in findings.PERSPECTIVES],
         "checked_ok": ["no cycles"],
         "limitations": ["delivery semantics not observed"],
+        "architecture": architecture(),
+    }
+
+
+def architecture(fid="A-001") -> dict:
+    """The smallest before/after pair check accepts: the refund job's write moves to billing."""
+    nodes = [{"id": "refunds", "label": "worker/refunds"}, {"id": "billing", "label": "api/billing"},
+             {"id": "invoices", "label": "invoices", "kind": "store"}]
+    return {
+        "before": {"nodes": copy.deepcopy(nodes), "edges": [
+            {"from": "refunds", "to": "invoices", "label": "writes", "finding": fid},
+            {"from": "billing", "to": "invoices", "label": "writes"}]},
+        "after": {"nodes": copy.deepcopy(nodes), "edges": [
+            {"from": "refunds", "to": "billing", "label": "adjust()"},
+            {"from": "billing", "to": "invoices", "label": "writes"}]},
     }
 
 

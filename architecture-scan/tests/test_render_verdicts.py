@@ -15,6 +15,7 @@ class DashboardText(HTMLParser):
         self.summaries = []
         self.before_findings = True
         self.in_summary = False
+        self.diagram_text = False
         self.ignored = False
         self.feed(source)
 
@@ -23,7 +24,9 @@ class DashboardText(HTMLParser):
             self.ignored = True
         elif tag == "details":
             self.before_findings = False
-        elif tag == "summary":
+            # The diagrams' text alternative is no finding.
+            self.diagram_text = ("class", "arch-text") in attrs
+        elif tag == "summary" and not self.diagram_text:
             self.in_summary = True
             self.summaries.append([])
 
@@ -74,7 +77,7 @@ class RenderVerdictTests(unittest.TestCase):
         for lang in ("en", "ja"):
             with self.subTest(lang=lang):
                 markdown = render.render_markdown(doc, lang)
-                headings = re.findall(r"^### (.+)$", markdown, re.MULTILINE)
+                headings = re.findall(r"^### (A-.+)$", markdown, re.MULTILINE)
                 parsed = DashboardText(render.render_html(doc, lang))
                 self.assertEqual(len(headings), len(findings.VERDICTS))
                 self.assertEqual(len(parsed.summaries), len(findings.VERDICTS))

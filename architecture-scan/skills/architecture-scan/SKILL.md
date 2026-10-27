@@ -108,7 +108,7 @@ skill's directory, not the audited repository.
 | CHECKLIST | Ledger first: each rule with its source and every module or path that must keep it. Then the perspectives that apply, keeping only hunt steps no ledger entry covers; attach early suspicions marked unverified | `reference/rules.md`, `reference/perspectives.md`, `reference/report.md` |
 | REVIEW | One pass (or one reviewer) per review unit. For each owned rule, trace every edge or path that must keep it with one trace row per edge: from `path:line` → to `path:line`, which rule, verdict. Every control cell names the enforcing mechanism (an import-lint contract, a module's public interface, a repository that is the only writer, a transaction wrapper) at `path:line`, or `NONE` / `N/A` / `UNKNOWN` with a reason — never "the framework separates it". Then the writer-backward pass (every write to a core table maps to a row), then sweep every applicable perspective's hunt steps | `reference/rules.md`, `reference/perspectives.md`, `reference/findings-schema.md` |
 | VERIFY | Record evidence-linked reach, consequence, mitigations and change cost; try to falsify each claim (a facade that routes all calls, an outbox, an idempotency key, a test that pins the rule); keep runtime and organisational unknowns explicit | `reference/validation.md` |
-| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out> --repo <checkout>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added, regraded, relocated or excluded (`FalsePositive`, `NotApplicable`), render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md`, `reference/rules.md` §5, `reference/perspectives.md` |
+| REPORT | Write `findings.json` through fragments and `scripts/findings.py merge`, including the `architecture` diagrams: `before`, the module graph at the assessed revision with each edge a finding cites marked, and `after`, the same graph with the recorded fix directions applied; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out>` (the language is `meta.lang`); pass `scripts/findings.py check <out> --repo <checkout>`. When check fails, correct the record with a fragment (`reference/findings-schema.md`, *Correcting the record*), renumber if a finding was added, regraded, relocated or excluded (`FalsePositive`, `NotApplicable`), render and check again; then give the summary in chat | `reference/findings-schema.md`, `reference/report.md`, `reference/rules.md` §5, `reference/perspectives.md` |
 | GUARD *(on request)* | With explicit permission, add a fitness function to the repo's own suite that encodes a rule — an import or layer contract, a cycle check, a single-writer check, a contract test — and show it fails on the current violation. Show it passing after the fix on a scratch copy with the smallest fix applied; apply the fix in the repository itself only with separate permission for that. Record it per `reference/validation.md` (*Fitness functions*), then merge, render and check again | `reference/validation.md` |
 
 ## Outputs
@@ -117,8 +117,8 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard (security-scan layout, scan-report-kit styles): counts, priority queue, filterable findings, design rules, perspective coverage |
-| `report.md` | The written assessment: scope, findings, rules, coverage, sound items, limitations, next steps |
+| `dashboard.html` | Self-contained dashboard (security-scan layout, scan-report-kit styles): counts, priority queue, filterable findings, before and after architecture diagrams, design rules, perspective coverage |
+| `report.md` | The written assessment: scope, findings, before and after architecture diagrams, rules, coverage, sound items, limitations, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
 requester's language (`ja` or `en`); render uses it, and `check` requires it.
@@ -155,6 +155,11 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
 - Always: grade **severity** (High / Medium / Low / Info) and **confidence**
   (Confirmed / Environment-dependent / Suspected) separately, and keep the
   verification basis (`static` or `analysed`) separate from both
+- Always: attach the before and after architecture diagrams to every report
+  (`findings.json` `architecture`, `reference/findings-schema.md`): before
+  shows the modules, stores and external systems the findings touch at the
+  assessed revision, after shows the same graph once the fix directions are
+  applied. A run with no finding to fix draws after equal to before
 - Always: list what was checked and found sound. A report with no negatives
   cannot be told apart from a report that did not look
 - Always: say what static reading cannot show — runtime topology, delivery

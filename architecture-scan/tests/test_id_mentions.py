@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_architecture_scan import complete_doc, finding, findings, render
+from test_architecture_scan import architecture, complete_doc, finding, findings, render
 
 
 class MentionTests(unittest.TestCase):
@@ -65,6 +65,7 @@ class MentionTests(unittest.TestCase):
     def test_a_merge_after_renumber_that_names_an_old_block_id_fails_check(self):
         doc = complete_doc()
         doc["findings"] = [finding("A-101", rule="R-01"), finding("A-201", "Low")]
+        doc["architecture"] = architecture("A-101")
         self.target.write_text(json.dumps(doc), encoding="utf-8")
         self.assertEqual(self.run_cli("renumber", str(self.target))[0], 0)
         # Fragments live in scratch, never in the output directory.
@@ -97,6 +98,7 @@ class MentionTests(unittest.TestCase):
         doc = complete_doc()
         doc["findings"] = [finding("A-101", rule="R-01"), finding("A-201", "Low")]
         doc["next_steps"] = ["Fix A-101, then A-150"]
+        doc["architecture"] = architecture("A-101")
         self.target.write_text(json.dumps(doc), encoding="utf-8")
         self.assertEqual(self.run_cli("renumber", str(self.target))[0], 0)
         self.assertEqual(findings.read_json(self.target)["next_steps"], ["Fix A-001, then A-150"])

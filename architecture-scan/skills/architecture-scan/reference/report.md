@@ -50,7 +50,9 @@ Write in the requester's language.
 6. **Next step** — the fix order (core-flow defects first, then hotspots), and
    which guards to add so the rules stay kept
 7. **Files** — link `dashboard.html` and `report.md` rendered from
-   `findings.json` (`reference/findings-schema.md`). The output directory holds
+   `findings.json` (`reference/findings-schema.md`); both carry the before
+   and after architecture diagrams, so name what the after diagram changes in
+   one line. The output directory holds
    exactly the set named in `SKILL.md` (*Run contract*)
 
 Use the same verdicts, confidence and verification basis in chat, dashboard

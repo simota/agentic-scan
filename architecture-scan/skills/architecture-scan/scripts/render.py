@@ -23,9 +23,9 @@ import unicodedata
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
-from findings import (CONFIDENCES, EXCLUDED, PERSPECTIVES, SEVERITIES, STATUSES, VERDICTS,  # noqa: E402
-                      SchemaError, _atomic_write_all, as_locations, read_json, safe_output, validate,
-                      visible)
+from findings import (CONFIDENCES, DIAGRAMS, EXCLUDED, PERSPECTIVES, RULE_LIST, SEVERITIES,  # noqa: E402
+                      STATUSES, VERDICTS, SchemaError, _atomic_write_all, as_locations, read_json,
+                      safe_output, validate, visible)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
@@ -77,6 +77,20 @@ LABELS = {
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
+        "architecture": "Architecture: before and after",
+        "before": "Before: the assessed revision",
+        "after": "After: with the recorded fix directions applied",
+        "not_drawn": "Not recorded.",
+        "legend_before": "Red: an edge a finding cites. Dashed: removed in the after diagram.",
+        "legend_after": "Bold blue: added by the fix.",
+        "shapes_md": "Cylinder: a data store; hexagon: an external system.",
+        "shapes_svg": "Rounded, shaded box: a data store; dashed border: an external system. "
+                      "A module keeps its place in both diagrams.",
+        "changes": "Changes from before to after", "no_changes": "The after diagram adds or "
+        "removes no module or edge.",
+        "removed_node": "Removed module", "added_node": "Added module",
+        "removed_edge": "Removed edge", "added_edge": "Added edge",
+        "edges_text": "Modules and edges as text",
     },
     "ja": {
         "title": "アーキテクチャ診断", "scope": "対象と方法",
@@ -96,6 +110,19 @@ LABELS = {
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
+        "architecture": "アーキテクチャ: 修正前と修正後",
+        "before": "修正前: 診断時点のリビジョン",
+        "after": "修正後: 記録した修正方針を適用した姿",
+        "not_drawn": "未記録。",
+        "legend_before": "赤: 検出事項が指摘する依存。破線: 修正後の図で取り除かれる依存。",
+        "legend_after": "太い青: 修正で加わる依存。",
+        "shapes_md": "円柱: データストア。六角形: 外部システム。",
+        "shapes_svg": "角が丸く色の付いた箱: データストア。破線の枠: 外部システム。"
+                      "同じモジュールは両方の図で同じ位置に置く。",
+        "changes": "修正前から修正後への変更", "no_changes": "修正後の図で増減するモジュールや依存はない。",
+        "removed_node": "取り除くモジュール", "added_node": "加えるモジュール",
+        "removed_edge": "取り除く依存", "added_edge": "加える依存",
+        "edges_text": "モジュールと依存の一覧（テキスト）",
     },
 }
 FIELDS = ("location", "scenario", "blast_radius", "trace", "contrast", "impact", "rule",
@@ -321,6 +348,126 @@ def markdown_reference(ref):
     return f"[{title}](<{url}>)"
 
 
+def diagram_changes(arch):
+    """What the after diagram removes and adds, by node ID and by (from, to) edge."""
+    before, after = arch.get("before"), arch.get("after")
+    if before is None or after is None:
+        return {"removed_nodes": set(), "added_nodes": set(),
+                "removed_edges": set(), "added_edges": set()}
+    nodes = [{n["id"] for n in d["nodes"]} for d in (before, after)]
+    edges = [{(e["from"], e["to"]) for e in d.get("edges", [])} for d in (before, after)]
+    return {"removed_nodes": nodes[0] - nodes[1], "added_nodes": nodes[1] - nodes[0],
+            "removed_edges": edges[0] - edges[1], "added_edges": edges[1] - edges[0]}
+
+
+def edge_state(edge, side, changes):
+    """The classes an edge is drawn with: violation, removed (before) or added (after)."""
+    pair = (edge["from"], edge["to"])
+    states = ["violation"] if "finding" in edge else []
+    if side == "before" and pair in changes["removed_edges"]:
+        states.append("removed")
+    if side == "after" and pair in changes["added_edges"]:
+        states.append("added")
+    return states
+
+
+def node_state(node, side, changes):
+    if side == "before" and node["id"] in changes["removed_nodes"]:
+        return "removed"
+    if side == "after" and node["id"] in changes["added_nodes"]:
+        return "added"
+    return ""
+
+
+def edge_caption(edge):
+    """The label and the findings an edge cites, as one line: `writes · A-001`."""
+    parts = [edge["label"]] if "label" in edge else []
+    if "finding" in edge:
+        parts.append(", ".join(x for x in RULE_LIST.split(edge["finding"]) if x))
+    return " · ".join(" ".join(as_text(p).split()) for p in parts)
+
+
+def diagram_change_items(arch, lang):
+    """Each change as (kind label, text) in diagram order, for both outputs."""
+    t, changes = LABELS[lang], diagram_changes(arch)
+    if "before" not in arch or "after" not in arch:
+        return []
+    labels = {n["id"]: n["label"] for side in DIAGRAMS for n in arch[side]["nodes"]}
+    items = []
+    for side, node_key, edge_key in (("before", "removed_nodes", "removed_edges"),
+                                     ("after", "added_nodes", "added_edges")):
+        kind = "removed" if side == "before" else "added"
+        items += [(t[f"{kind}_node"], n["label"]) for n in arch[side]["nodes"]
+                  if n["id"] in changes[node_key]]
+        for e in arch[side].get("edges", []):
+            if (e["from"], e["to"]) in changes[edge_key]:
+                caption = edge_caption(e)
+                items.append((t[f"{kind}_edge"], f"{labels[e['from']]} → {labels[e['to']]}"
+                              + (f" ({caption})" if caption else "")))
+    return items
+
+
+# Mermaid reads `#code;` as a character, so these cannot end a quoted label,
+# open a markdown string or HTML, split a statement or close the fence.
+MERMAID_ESCAPE = {ord(c): f"#{ord(c)};" for c in '#"<>&`|;'}
+MERMAID_SHAPES = {"module": ('["', '"]'), "store": ('[("', '")]'), "external": ('{{"', '"}}')}
+MERMAID_EDGE_STYLE = {"violation": "stroke:#c0392b,stroke-width:2.5px",
+                      "added": "stroke:#1f6fb2,stroke-width:3px",
+                      "removed": "stroke-dasharray:6 4"}
+MERMAID_NODE_STYLE = {"added": "stroke:#1f6fb2,stroke-width:3px",
+                      "removed": "stroke-dasharray:5 3,color:#888"}
+
+
+def mermaid_text(value):
+    return " ".join(as_text(value).split()).translate(MERMAID_ESCAPE)
+
+
+def mermaid(diagram, side, changes):
+    """One diagram as a Mermaid flowchart; node IDs are generated, labels quoted."""
+    ids = {n["id"]: f"n{i}" for i, n in enumerate(diagram["nodes"], 1)}
+    lines = ["```mermaid", "flowchart LR"]
+    for n in diagram["nodes"]:
+        opening, closing = MERMAID_SHAPES[n.get("kind", "module")]
+        lines.append(f"  {ids[n['id']]}{opening}{mermaid_text(n['label'])}{closing}")
+    styles = []
+    for i, e in enumerate(diagram.get("edges", [])):
+        caption = edge_caption(e)
+        label = f'|"{mermaid_text(caption)}"|' if caption else ""
+        lines.append(f"  {ids[e['from']]} -->{label} {ids[e['to']]}")
+        style = ",".join(MERMAID_EDGE_STYLE[state] for state in edge_state(e, side, changes))
+        if style:
+            styles.append(f"  linkStyle {i} {style}")
+    lines += styles
+    for state in ("added", "removed"):
+        marked = [ids[n["id"]] for n in diagram["nodes"] if node_state(n, side, changes) == state]
+        if marked:
+            lines += [f"  classDef {state} {MERMAID_NODE_STYLE[state]}",
+                      f"  class {','.join(marked)} {state}"]
+    return lines + ["```"]
+
+
+def markdown_architecture(doc, lang):
+    t, text = LABELS[lang], markdown_inline
+    arch = doc.get("architecture", {})
+    changes = diagram_changes(arch)
+    lines = [f"## {t['architecture']}", ""]
+    for side in DIAGRAMS:
+        lines += [f"### {t[side]}", ""]
+        if side not in arch:
+            lines += [t["not_drawn"], ""]
+            continue
+        if filled(arch[side], "note"):
+            lines += [block_safe(text(arch[side]["note"])), ""]
+        lines += mermaid(arch[side], side, changes) + [
+            "", f"{t[f'legend_{side}']} {t['shapes_md']}", ""]
+    if "before" in arch and "after" in arch:
+        lines += [f"### {t['changes']}", ""]
+        items = diagram_change_items(arch, lang)
+        lines += [f"- {kind}: {text(value)}" for kind, value in items] or [t["no_changes"]]
+        lines.append("")
+    return lines
+
+
 def render_markdown(doc, lang):
     t = LABELS[lang]
     cell = markdown_table_cell
@@ -371,6 +518,7 @@ def render_markdown(doc, lang):
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
+    lines += markdown_architecture(doc, lang)
     if doc.get("rules"):
         lines += [f"## {t['rules']}", "",
                   f"| {t['id']} | {t['statement']} | {t['source']} | {t['rule_status']} |",
@@ -463,6 +611,7 @@ DASH = {
         "permalink": "Link to finding", "expand": "Show details", "collapse": "Hide details",
         "method_row": "Method",
         "contents": "Contents", "nav_summary": "Summary", "nav_coverage": "Scope and coverage",
+        "nav_architecture": "Architecture",
         "nav_lists": "Next steps and checks", "shortcuts": "Keyboard", "key_search": "Search",
         "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
         "footer": "Rendered from findings.json; every value is shown as recorded. Inspect this "
@@ -523,6 +672,7 @@ DASH = {
         "permalink": "この検出事項へのリンク", "expand": "詳細を開く", "collapse": "詳細を閉じる",
         "method_row": "方法",
         "contents": "目次", "nav_summary": "概要", "nav_coverage": "対象範囲と確認状況",
+        "nav_architecture": "アーキテクチャ",
         "nav_lists": "次の作業と確認済み事項", "shortcuts": "キー操作", "key_search": "検索",
         "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
         "footer": "findings.json から生成しています。値はすべて記録どおりに表示しています。共有前に内容を"
@@ -581,7 +731,31 @@ table.rules td,table.coverage-table td{overflow-wrap:anywhere}
 @media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
 @media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
 @media print{.app-shell .reg-head{position:static}.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}}
-@media print{.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
+/* Before/after architecture: a wide diagram scrolls inside its frame, never the page. */
+.arch-figure{margin:18px 0 0}
+.arch-figure figcaption p{margin:4px 0}
+.arch-scroll{overflow-x:auto;border:1px solid var(--line);background:var(--bg);margin-top:8px}
+.arch-scroll:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.arch-svg{display:block;font-family:var(--sans);font-size:12px}
+.arch-svg .node rect{fill:var(--panel);stroke:var(--text);stroke-width:1.2}
+.arch-svg .node text{fill:var(--text)}
+.arch-svg .node.store rect{fill:var(--soft)}
+.arch-svg .node.external rect{stroke-dasharray:4 3}
+.arch-svg .node.added rect{stroke:var(--accent);stroke-width:3}
+.arch-svg .node.removed rect{stroke:var(--muted);stroke-dasharray:6 4}
+.arch-svg .node.removed text{fill:var(--muted)}
+.arch-svg .edge path{fill:none;stroke:var(--muted);stroke-width:1.4}
+.arch-svg .edge.violation path{stroke:var(--high);stroke-width:2.6}
+.arch-svg .edge.added path{stroke:var(--accent);stroke-width:3}
+.arch-svg .edge.removed path{stroke-dasharray:7 5}
+.arch-svg .arrow path{fill:var(--muted)}
+.arch-svg .arrow.violation path{fill:var(--high)}
+.arch-svg .arrow.added path{fill:var(--accent)}
+.arch-svg .elabel{fill:var(--text);font-size:11px;paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
+.arch-svg .elabel.violation{fill:var(--high)}
+.arch-text{margin-top:8px;font-family:var(--sans);font-size:13px}
+.arch-text li,.arch-changes li{overflow-wrap:anywhere}
+@media print{.arch-scroll{overflow:visible;border:0}.arch-svg{max-width:100%;height:auto}.arch-figure{break-inside:avoid}.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
@@ -751,6 +925,356 @@ def bullet_list(items, empty):
     return "<ul>" + "".join(f"<li>{html_text(i)}</li>" for i in items) + "</ul>"
 
 
+# Diagram geometry, in SVG user units (CSS pixels at natural size).
+# A gap between columns holds an edge label of about 24 narrow characters.
+NODE_W, NODE_H, GAP_X, GAP_Y, PAD = 184, 44, 168, 28, 24
+# Room right of the last column for an edge between two nodes of one column.
+LOOP = 48
+# Width of a narrow character in an edge label, and the label's line height.
+LABEL_UNIT, LABEL_H = 6.4, 14
+LABEL_UNITS = 24
+
+
+def arch_layout(arch):
+    """Place every node of either diagram once, so a module sits still between them.
+
+    Columns follow the longest path along the edges of both diagrams (an edge
+    closing a cycle is left out of the ranking). An edge spanning several
+    columns passes through a free slot in each column between, so it never runs
+    under a node it does not touch; an edge against the columns is routed from
+    its target and drawn with the arrow at its start. Within a column, nodes
+    and slots are ordered by the mean row of their neighbours in the column
+    before, then in the column after, a few times over; then each one moves to
+    the place in its column with the fewest crossings (on a tie, away from where
+    it stood, to leave a plateau), and the order with the fewest crossings seen
+    is kept. Returns the node positions, each edge's route and the canvas size.
+    """
+    order, edges = [], []
+    for side in DIAGRAMS:
+        if side in arch:
+            order += [n["id"] for n in arch[side]["nodes"] if n["id"] not in order]
+            edges += [(e["from"], e["to"]) for e in arch[side].get("edges", [])
+                      if (e["from"], e["to"]) not in edges]
+    out = {node: [] for node in order}
+    for a, b in edges:
+        out[a].append(b)
+    # Depth-first, in record order: an edge to a node still on the path closes a cycle.
+    state, kept = {}, []
+    for root in order:
+        if root in state:
+            continue
+        state[root], stack = 1, [(root, iter(out[root]))]
+        while stack:
+            node, children = stack[-1]
+            child = next(children, None)
+            if child is None:
+                state[node] = 2
+                stack.pop()
+            elif child not in state:
+                kept.append((node, child))
+                state[child] = 1
+                stack.append((child, iter(out[child])))
+            elif state[child] == 2:
+                kept.append((node, child))
+    rank = {node: 0 for node in order}
+    incoming = {node: 0 for node in order}
+    for _, b in kept:
+        incoming[b] += 1
+    ready = [node for node in order if not incoming[node]]
+    while ready:
+        node = ready.pop(0)
+        for a, b in kept:
+            if a == node:
+                rank[b] = max(rank[b], rank[a] + 1)
+                incoming[b] -= 1
+                if not incoming[b]:
+                    ready.append(b)
+    columns = [[] for _ in range(max(rank.values()) + 1)]
+    for node in order:
+        columns[rank[node]].append(node)
+    # Each edge as a chain left to right: its first node, a slot per column
+    # between, its last node. A slot is a tuple, so it never equals a node ID.
+    chains = {}
+    for a, b in edges:
+        left, right = (a, b) if rank[a] <= rank[b] else (b, a)
+        slots = [("slot", a, b, c) for c in range(rank[left] + 1, rank[right])]
+        for slot in slots:
+            columns[slot[3]].append(slot)
+        chains[(a, b)] = [left, *slots, right]
+    neighbours = {node: set() for column in columns for node in column}
+    for chain in chains.values():
+        for x, y in zip(chain, chain[1:]):
+            neighbours[x].add(y)
+            neighbours[y].add(x)
+
+    def reorder(c, beside):
+        row = {node: i for i, node in enumerate(columns[beside])}
+
+        def key(at, node):
+            near = [row[x] for x in neighbours[node] if x in row]
+            return (sum(near) / len(near) if near else at, at)
+        columns[c] = [node for _, node in sorted(
+            ((key(at, node), i), node) for i, (at, node) in enumerate(enumerate(columns[c])))]
+
+    for _ in range(4):
+        for c in range(1, len(columns)):
+            reorder(c, c - 1)
+        for c in range(len(columns) - 2, -1, -1):
+            reorder(c, c + 1)
+    def gap_crossings(c):
+        """Crossings between columns c and c + 1: inversions, counted with a Fenwick tree."""
+        here = {node: i for i, node in enumerate(columns[c])}
+        there = {node: i for i, node in enumerate(columns[c + 1])}
+        pairs = sorted((here[x], there[y]) for x in columns[c] for y in neighbours[x] if y in there)
+        tree, count = [0] * (len(there) + 1), 0
+        for seen, (_, j) in enumerate(pairs):
+            i, below = j + 1, 0
+            while i:
+                below, i = below + tree[i], i - (i & -i)
+            count += seen - below  # earlier pairs ending below j cross this one
+            i = j + 1
+            while i <= len(there):
+                tree[i], i = tree[i] + 1, i + (i & -i)
+        return count
+
+    def total():
+        return sum(gap_crossings(c) for c in range(len(columns) - 1))
+
+    def sift(c):
+        """Move each node of column c to its place with the fewest crossings."""
+        column = columns[c]
+        sides = [{node: i for i, node in enumerate(columns[o])}
+                 for o in (c - 1, c + 1) if 0 <= o < len(columns)]
+        rows = {node: [sorted(row[x] for x in neighbours[node] if x in row) for row in sides]
+                for node in column}
+
+        def cross(u, v):
+            """Crossings among the edges of u and v when u stands above v."""
+            return sum(a > b for side_u, side_v in zip(rows[u], rows[v])
+                       for a in side_u for b in side_v)
+
+        for node in list(column):
+            stood = column.index(node)
+            others = [x for x in column if x != node]
+            cost = sum(cross(node, x) for x in others)
+            at, fewest = 0, cost
+            for i, x in enumerate(others, 1):
+                cost += cross(x, node) - cross(node, x)
+                # On a tie, move away from where it stood, to leave a plateau.
+                if cost < fewest or (cost == fewest and at == stood and i != stood):
+                    at, fewest = i, cost
+            others.insert(at, node)
+            column[:] = others
+
+    best, fewest_total = [list(column) for column in columns], total()
+    for _ in range(6):
+        if not fewest_total:
+            break
+        for c in range(len(columns)):
+            sift(c)
+        if total() < fewest_total:
+            best, fewest_total = [list(column) for column in columns], total()
+    columns = best
+    tallest = max(len(column) for column in columns)
+    positions = {}
+    for c, column in enumerate(columns):
+        offset = (tallest - len(column)) * (NODE_H + GAP_Y) / 2
+        for r, node in enumerate(column):
+            positions[node] = (PAD + c * (NODE_W + GAP_X), PAD + offset + r * (NODE_H + GAP_Y))
+    routes = {}
+    for (a, b), chain in chains.items():
+        # Two edges joining the same pair both ways run a little apart.
+        shift = (7 if chain[0] == b else -7) if (b, a) in chains else 0
+        if rank[a] == rank[b]:
+            routes[(a, b)] = ("loop", positions[a], positions[b], shift)
+            continue
+        points = []
+        for i, node in enumerate(chain):
+            x, y = positions[node]
+            y += NODE_H / 2 + shift
+            if i:
+                points.append((x, y))
+            if i < len(chain) - 1:
+                points.append((x + NODE_W, y))
+        routes[(a, b)] = ("chain", points, chain[0] == b, shift)
+    width = PAD * 2 + len(columns) * NODE_W + (len(columns) - 1) * GAP_X + LOOP
+    height = PAD * 2 + tallest * NODE_H + (tallest - 1) * GAP_Y
+    return positions, routes, width, height
+
+
+def text_units(value):
+    """value's width in narrow characters: a wide (CJK) character counts two."""
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in value)
+
+
+def fit(value, units):
+    """value collapsed to one line and cut to about `units` narrow characters."""
+    value = " ".join(as_text(value).split())
+    used = 0
+    for i, char in enumerate(value):
+        used += text_units(char)
+        if used > units:
+            return value[:i - 1] + "…" if i else "…"
+    return value
+
+
+def fit_caption(edge):
+    """An edge's label as lines that fit its gap: the text may be cut, a finding ID never.
+
+    The label and the IDs share one line when they fit, the text cut first;
+    otherwise the text takes a line of its own and the IDs as many lines as
+    they need.
+    """
+    caption = edge_caption(edge)
+    if "finding" not in edge or text_units(caption) <= LABEL_UNITS:
+        return [fit(caption, LABEL_UNITS)]
+    lines = [""]
+    for fid in (x for x in RULE_LIST.split(edge["finding"]) if x):
+        joined = f"{lines[-1]}, {fid}" if lines[-1] else fid
+        if text_units(joined) <= LABEL_UNITS:
+            lines[-1] = joined
+        else:
+            lines.append(fid)
+    if "label" not in edge:
+        return lines
+    room = LABEL_UNITS - text_units(lines[0]) - 3
+    if len(lines) == 1 and room >= 4:
+        return [f"{fit(edge['label'], room)} · {lines[0]}"]
+    return [fit(edge["label"], LABEL_UNITS), *lines]
+
+
+def svg_route(route):
+    """A route as SVG path data, and the cubic segments a label may sit on."""
+    kind, *rest = route
+    if kind == "loop":
+        # Same column: out of the right side and back in, bulging right.
+        (x1, y1), (x2, y2), shift = rest
+        p0, p3 = (x1 + NODE_W, y1 + NODE_H / 2 + shift), (x2 + NODE_W, y2 + NODE_H / 2 + shift)
+        p1, p2 = (p0[0] + LOOP, p0[1]), (p3[0] + LOOP, p3[1])
+        data = "M{:g},{:g} C{:g},{:g} {:g},{:g} {:g},{:g}".format(*p0, *p1, *p2, *p3)
+        return data, [(p0, p1, p2, p3)], False
+    points, reverse, _ = rest
+    data, segments = ["M{:g},{:g}".format(*points[0])], []
+    for i in range(0, len(points) - 1, 2):
+        p0, p3 = points[i], points[i + 1]
+        dx = (p3[0] - p0[0]) / 2
+        segment = (p0, (p0[0] + dx, p0[1]), (p3[0] - dx, p3[1]), p3)
+        segments.append(segment)
+        data.append("C{:g},{:g} {:g},{:g} {:g},{:g}".format(*segment[1], *segment[2], *p3))
+        if i + 2 < len(points):
+            data.append("L{:g},{:g}".format(*points[i + 2]))  # across a column's free slot
+    return " ".join(data), segments, reverse
+
+
+def bezier(points, t):
+    return tuple(sum(c * p[i] for c, p in zip(
+        ((1 - t) ** 3, 3 * t * (1 - t) ** 2, 3 * t * t * (1 - t), t ** 3), points)) for i in (0, 1))
+
+
+def label_spot(segments, width, taken, height=LABEL_H):
+    """Where a label of `width` and `height` goes: the middle of a gap, unless a box is there.
+
+    `taken` holds the boxes (x, y, w, h, weight) of the nodes and of the labels
+    placed so far; the spot with the least weighted overlap wins, the middle
+    first. A node weighs more than a label: a label over a box hides its name.
+    """
+    def overlap(spot):
+        x, y = spot[0] - width / 2, spot[1] - height
+        return sum(weight * max(0, min(x + width, bx + bw) - max(x, bx))
+                   * max(0, min(y + height, by + bh) - max(y, by))
+                   for bx, by, bw, bh, weight in taken)
+
+    spots = [bezier(segment, t) for t in (0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9)
+             for segment in segments]
+    spot = min(spots, key=overlap)  # min keeps the first of equal spots
+    taken.append((spot[0] - width / 2, spot[1] - height, width, height, 1))
+    return spot
+
+
+def svg_text(value):
+    return escape(" ".join(as_text(value).split()))
+
+
+def svg_diagram(diagram, side, changes, layout, title):
+    positions, routes, width, height = layout
+    out = [f"<svg class='arch-svg' role='img' aria-labelledby='{side}-arch-title' "
+           f"width='{width:g}' height='{height:g}' viewBox='0 0 {width:g} {height:g}' "
+           f"xmlns='http://www.w3.org/2000/svg'><title id='{side}-arch-title'>{escape(title)}</title><defs>"]
+    for state in ("plain", "violation", "added"):
+        out.append(f"<marker id='{side}-arrow-{state}' class='arrow {state}' viewBox='0 0 10 10' "
+                   "refX='10' refY='5' markerWidth='10' markerHeight='10' markerUnits='userSpaceOnUse' "
+                   "orient='auto-start-reverse'>"
+                   "<path d='M0,0 L10,5 L0,10 z'/></marker>")
+    out.append("</defs>")
+    taken = [(*positions[n["id"]], NODE_W, NODE_H, 10) for n in diagram["nodes"]]
+    labels = []
+    for e in diagram.get("edges", []):
+        states = edge_state(e, side, changes)
+        path, segments, reverse = svg_route(routes[(e["from"], e["to"])])
+        arrow = next((s for s in ("violation", "added") if s in states), "plain")
+        caption = edge_caption(e)
+        end = "start" if reverse else "end"
+        out.append(f"<g class='edge {' '.join(states)}'><title>{svg_text(caption)}</title>"
+                   f"<path d='{path}' marker-{end}='url(#{side}-arrow-{arrow})'/></g>")
+        if caption:
+            lines = fit_caption(e)
+            mx, my = label_spot(segments, max(map(text_units, lines)) * LABEL_UNIT, taken,
+                                LABEL_H * len(lines))
+            # The lines stack upward, the last one where a one-line label sits.
+            top = my - 4 - LABEL_H * (len(lines) - 1)
+            spans = "".join(f"<tspan x='{mx:g}' dy='{LABEL_H if i else 0}'>{svg_text(line)}</tspan>"
+                            for i, line in enumerate(lines))
+            labels.append(f"<text class='elabel {' '.join(states)}' x='{mx:g}' y='{top:g}' "
+                          f"text-anchor='middle'>{spans}</text>")
+    for n in diagram["nodes"]:
+        x, y = positions[n["id"]]
+        cls = f"node {n.get('kind', 'module')} {node_state(n, side, changes)}".strip()
+        radius = 16 if n.get("kind") == "store" else 4
+        out.append(f"<g class='{cls}'><title>{svg_text(n['label'])}</title>"
+                   f"<rect x='{x:g}' y='{y:g}' width='{NODE_W}' height='{NODE_H}' rx='{radius}'/>"
+                   f"<text x='{x + NODE_W / 2:g}' y='{y + NODE_H / 2 + 4:g}' text-anchor='middle'>"
+                   f"{svg_text(fit(n['label'], 24))}</text></g>")
+    # Labels last, so no node box covers them.
+    return "".join(out + labels) + "</svg>"
+
+
+def html_architecture(doc, lang):
+    t = LABELS[lang]
+    e = html_text
+    arch = doc.get("architecture", {})
+    changes = diagram_changes(arch)
+    layout = arch_layout(arch) if arch else None
+    out = [f"<section class='panel arch' id='architecture' tabindex='-1'><h2>{e(t['architecture'])}</h2>"]
+    for side in DIAGRAMS:
+        out.append(f"<figure class='arch-figure'><figcaption><h3>{e(t[side])}</h3>")
+        if side not in arch:
+            out.append(f"<p class='muted'>{e(t['not_drawn'])}</p></figcaption></figure>")
+            continue
+        diagram = arch[side]
+        if filled(diagram, "note"):
+            out.append(f"<p>{e(diagram['note'])}</p>")
+        out.append(f"<p class='section-note'>{e(t[f'legend_{side}'])} {e(t['shapes_svg'])}</p></figcaption>"
+                   # Focusable, so a keyboard can scroll a diagram wider than the screen.
+                   f"<div class='arch-scroll' tabindex='0' role='region' aria-label='{escape(t[side])}'>"
+                   f"{svg_diagram(diagram, side, changes, layout, t[side])}</div>")
+        labels = {n["id"]: n["label"] for n in diagram["nodes"]}
+        rows = [f"<li>{e(n['label'])}</li>" for n in diagram["nodes"]]
+        rows += [f"<li>{e(labels[x['from']])} → {e(labels[x['to']])}"
+                 + (f" ({e(x['label'])})" if "label" in x else "")
+                 + (f" · {e(x['finding'])}" if "finding" in x else "") + "</li>"
+                 for x in diagram.get("edges", [])]
+        out.append(f"<details class='arch-text'><summary>{e(t['edges_text'])}</summary>"
+                   f"<ul>{''.join(rows)}</ul></details></figure>")
+    if "before" in arch and "after" in arch:
+        items = diagram_change_items(arch, lang)
+        out.append(f"<h3>{e(t['changes'])}</h3>")
+        out.append("<ul class='arch-changes'>" + "".join(
+            f"<li><strong>{e(kind)}:</strong> {e(value)}</li>" for kind, value in items) + "</ul>"
+            if items else f"<p class='muted'>{e(t['no_changes'])}</p>")
+    out.append("</section>")
+    return "".join(out)
+
+
 def render_html(doc, lang):
     t, d = LABELS[lang], DASH[lang]
     e = html_text
@@ -768,7 +1292,8 @@ def render_html(doc, lang):
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
            ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"])]
     nav += [("rules-section", t["rules"])] if doc.get("rules") else []
-    nav += [("findings", d["findings_register"]), ("lists", d["nav_lists"])]
+    nav += [("findings", d["findings_register"]), ("architecture", d["nav_architecture"]),
+            ("lists", d["nav_lists"])]
     sidebar = [f"<nav class='sidebar' id='nav' aria-label='{escape(d['contents'])}'>"
                f"<h2 class='nav-title'>{e(d['contents'])}</h2><ol class='nav-links'>"
                + "".join(f"<li><a href=\"#{i}\">{e(label)}</a></li>" for i, label in nav) + "</ol>"]
@@ -1003,6 +1528,8 @@ def render_html(doc, lang):
             f"<a href=\"#{anchor(f)}\">{e(d['permalink'])}</a></span></div>{guidance}<dl>"
             + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in fields) + "</dl></div></details></div>")
     out.append("</div></div></section>")
+    # After the register: the after diagram is where the fix directions lead.
+    out.append(html_architecture(doc, lang))
 
     out.append("<div class='lists' id='lists' tabindex='-1'>" + "".join(
         f"<section class='panel'><h2>{e(t[k])}</h2>{bullet_list(doc.get(k, []), t['none'])}</section>"

@@ -11,7 +11,8 @@ shell heredoc or a generated script). It holds any of these top-level keys:
 `meta` is merged key by key; `findings` and `rules` records are matched by
 `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
-`decisions`, `limitations`, `next_steps`) are appended without duplicates.
+`decisions`, `limitations`, `next_steps`) are appended without duplicates;
+`architecture` holds the `before` and `after` diagrams, each replaced whole.
 A `null` value removes an optional key from `meta`, a finding or a rule, and
 `remove` deletes list items (`{"next_steps": ["exact text"]}`) or ledger
 entries by id (`{"rules": ["R-05"]}`) before the fragment's own items are
@@ -46,7 +47,8 @@ outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
 evidence cites a `path:line` (a duplicate may name the finding it repeats),
 every finding ID mentioned in prose names a recorded finding, every
-location names a file, and both
+location names a file, both architecture diagrams (before and after) are
+recorded, and both
 rendered files match what `render.py` produces from the current record
 in `meta.lang`. With `--repo`, each location's file must exist in that
 checkout and its line must be within the file.
@@ -103,7 +105,7 @@ DUPLICATE_OF = re.compile(r"(?i)[\s\u3000\u00a0]*(?:duplicates?(?: of)?[\s\u3000
 # cause breaks more than one.
 RULE_LIST = re.compile(r"[\s,、，;；]+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-TOP_KEYS = {"meta", "findings", "rules", "perspectives", *LISTS}
+TOP_KEYS = {"meta", "findings", "rules", "perspectives", "architecture", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 RULE_REQUIRED = ("id", "statement", "source", "status")
 ALLOWED_RULE_STATUS = {"Valid": ("violated",), "Likely": ("violated", "partly read")}
@@ -155,6 +157,17 @@ EXTENSIONLESS = {"BUILD", "BUILD.bazel", "WORKSPACE", "CODEOWNERS", "OWNERS", "L
 # lets weak evidence through.
 FILE_EXTENSION = re.compile(r"\.([A-Za-z][A-Za-z0-9_+-]{0,15})$")
 HOST_SUFFIXES = {"com", "net", "io", "internal", "localhost"}
+# The before/after architecture diagrams: the module graph at the assessed
+# revision and the same graph with the recorded fix directions applied.
+DIAGRAMS = ("before", "after")
+DIAGRAM_KEYS = {"nodes", "edges", "note"}
+NODE_KEYS = {"id", "label", "kind"}
+NODE_KINDS = ("module", "store", "external")
+EDGE_KEYS = {"from", "to", "label", "finding"}
+# A node ID is a short name the edges refer to; the label is what is shown.
+NODE_ID = re.compile(r"[A-Za-z][A-Za-z0-9_.-]{0,63}")
+# Enough for a module map; past this a diagram stops being readable.
+MAX_NODES, MAX_EDGES = 60, 150
 # At most nine digits per line number, so `int()` never meets a huge value.
 LOCATION = re.compile(r"[^\r\n]+:([0-9]{1,9})(?:-([0-9]{1,9}))?")
 
@@ -383,6 +396,72 @@ def cites_line(evidence, locations=()):
     return False
 
 
+def _validate_diagram(diagram, where):
+    if not isinstance(diagram, dict):
+        raise SchemaError(f"{where}: must be an object")
+    _known(diagram, DIAGRAM_KEYS, where)
+    if "note" in diagram:
+        _text(diagram["note"], f"{where}.note")
+    nodes = _list(diagram.get("nodes"), f"{where}.nodes")
+    if not nodes:
+        raise SchemaError(f"{where}.nodes: at least one node")
+    if len(nodes) > MAX_NODES:
+        raise SchemaError(f"{where}.nodes: more than {MAX_NODES}; draw modules, not files")
+    ids = set()
+    for i, n in enumerate(nodes):
+        field = f"{where}.nodes[{i}]"
+        if not isinstance(n, dict):
+            raise SchemaError(f"{field}: must be an object")
+        _known(n, NODE_KEYS, field)
+        if not isinstance(n.get("id"), str) or not NODE_ID.fullmatch(n["id"]):
+            raise SchemaError(f"{field}.id: {n.get('id')!r} must look like billing or api.orders")
+        if ID_RUN.search(n["id"]):
+            # renumber would read it as a finding mention and rename it.
+            raise SchemaError(f"{field}.id: {n['id']!r} looks like a finding ID")
+        if n["id"] in ids:
+            raise SchemaError(f"{field}.id: duplicate {n['id']}")
+        ids.add(n["id"])
+        _text(n.get("label"), f"{field}.label")
+        if "kind" in n:
+            _choice(n["kind"], NODE_KINDS, f"{field}.kind")
+    edges = _list(diagram.get("edges", []), f"{where}.edges")
+    if len(edges) > MAX_EDGES:
+        raise SchemaError(f"{where}.edges: more than {MAX_EDGES}")
+    pairs = set()
+    for i, e in enumerate(edges):
+        field = f"{where}.edges[{i}]"
+        if not isinstance(e, dict):
+            raise SchemaError(f"{field}: must be an object")
+        _known(e, EDGE_KEYS, field)
+        for key in ("from", "to"):
+            if not isinstance(e.get(key), str) or e[key] not in ids:
+                raise SchemaError(f"{field}.{key}: {e.get(key)!r} is not a node id of {where}")
+        if e["from"] == e["to"]:
+            raise SchemaError(f"{field}: an edge joins two different nodes")
+        if (e["from"], e["to"]) in pairs:
+            raise SchemaError(f"{field}: duplicate edge {e['from']} -> {e['to']}; "
+                              "put both labels on one edge")
+        pairs.add((e["from"], e["to"]))
+        if "label" in e:
+            _text(e["label"], f"{field}.label")
+        if "finding" in e:
+            # The findings this edge shows; renumber rewrites them with the rest.
+            cited = [x for x in RULE_LIST.split(e["finding"]) if x] \
+                if isinstance(e["finding"], str) else []
+            if not cited or not all(FINDING_ID.fullmatch(x) for x in cited):
+                raise SchemaError(f"{field}.finding: finding IDs such as \"A-001\" or "
+                                  "\"A-001, A-003\"")
+
+
+def _validate_architecture(arch):
+    if not isinstance(arch, dict):
+        raise SchemaError("architecture: must be an object")
+    _known(arch, set(DIAGRAMS), "architecture")
+    for key in DIAGRAMS:
+        if key in arch:
+            _validate_diagram(arch[key], f"architecture.{key}")
+
+
 def _validate_perspectives(records, where):
     names = set()
     for i, p in enumerate(_list(records, where)):
@@ -471,6 +550,8 @@ def validate(doc, complete=False):
         if "inferred" in r and not isinstance(r["inferred"], bool):
             raise SchemaError(f"{where}.inferred ({r['id']}): must be true or false")
     _validate_perspectives(doc.get("perspectives", []), "perspectives")
+    if "architecture" in doc:
+        _validate_architecture(doc["architecture"])
     for key in LISTS:
         values = _list(doc.get(key, []), key)
         for i, value in enumerate(values):
@@ -584,6 +665,14 @@ def merge(doc, fragment, where):
         if not isinstance(fragment["meta"], dict):
             raise SchemaError(f"{where}.meta: must be an object")
         _apply(doc.setdefault("meta", {}), fragment["meta"], META_REQUIRED, f"{where}.meta")
+    if "architecture" in fragment:
+        # Each diagram is replaced whole: its edges refer to its own nodes.
+        if not isinstance(fragment["architecture"], dict):
+            raise SchemaError(f"{where}.architecture: must be an object")
+        arch = doc.setdefault("architecture", {})
+        _apply(arch, fragment["architecture"], (), f"{where}.architecture")
+        if not arch:
+            del doc["architecture"]
     slots = {}
     if "remove" in fragment:
         # First, so one fragment can remove an entry and send its replacement.
@@ -788,7 +877,8 @@ def _first_location(f):
 
 # Literal values that only look like prose: a path, a URL, a command that ran,
 # a rule's source. An `A-001` in them is a file, ticket or argument, not a finding.
-LITERAL_KEYS = {"location", "url", "command", "source"}
+# A diagram edge's ends name node IDs.
+LITERAL_KEYS = {"location", "url", "command", "source", "from", "to"}
 
 
 def _rewrite_ids(value, mapping, key=None):
@@ -1162,6 +1252,11 @@ def contract_problems(out, allow=()):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
+    for key in DIAGRAMS:
+        if key not in doc.get("architecture", {}):
+            problems.append(f"architecture.{key}: draw the {key} diagram (module graph "
+                            + ("at the assessed revision)" if key == "before" else
+                               "with the recorded fix directions applied)"))
     return problems + _stale_outputs(out, doc, not_files | (OUTPUTS - present))
 
 

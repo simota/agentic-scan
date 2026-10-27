@@ -11,6 +11,11 @@ that misses either. The files sit in `<out>/evidence/`, next to `findings.json`;
 in `report.pdf`), before and after side by side, and writes `evidence.html`,
 which also plays the videos.
 
+GIF recordings use an image preview in `evidence.html`; MP4/WebM recordings use
+video controls. Recordings stay linked to files in `evidence/`, including from
+second-language pages. The printable report names and links each recording
+instead of embedding its frames; animation is not preserved in the PDF.
+
 ## What to capture
 
 | Kind | Files | Capture it when | How |

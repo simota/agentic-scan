@@ -1,5 +1,6 @@
 """Evidence files: schema, embedding in the report, evidence.html, the output contract and capture.py."""
 
+import base64
 import contextlib
 import copy
 import io
@@ -10,6 +11,7 @@ import sys
 import tempfile
 import unittest
 import zlib
+from html.parser import HTMLParser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +25,20 @@ import render  # noqa: E402
 
 SAMPLE = json.loads((ROOT / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
 FLOWS = json.loads((ROOT / "examples" / "flows.sample.json").read_text(encoding="utf-8"))
+
+# Valid 1x1 GIF; the second frame makes it an animation rather than a video codec.
+GIF = (base64.b64decode("R0lGODlhAQABAIAAAAAAAP///yH5BAAKAAAALAAAAAABAAEAAAICRAEA")
+       + base64.b64decode("IfkEAAoAAAAsAAAAAAEAAQAAAgJMAQA7"))
+
+
+class Elements(HTMLParser):
+    def __init__(self, source):
+        super().__init__()
+        self.tags = []
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        self.tags.append((tag, dict(attrs)))
 
 
 def png(width=2, height=2):
@@ -100,6 +116,67 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn("U-006-source.log", rows[1])
         self.assertEqual(block.count("<h5>"), 2)  # One heading per stage.
         self.assertEqual(rows[1].count('class="evidence-stage'), 2)  # An empty After cell keeps the columns.
+
+    def add_gif_recording(self):
+        item = {"kind": "video", "file": "U-006-recording.gif", "stage": "after",
+                "caption": 'Focus returns to "Save" <after closing>'}
+        (self.out / "evidence" / item["file"]).write_bytes(GIF)
+        finding(self.data, "U-006")["evidence"].append(item)
+        self.save()
+        return item
+
+    def test_gif_recordings_use_linked_images_and_keep_print_fallback(self):
+        item = self.add_gif_recording()
+        self.render()
+        tags = Elements((self.out / "evidence.html").read_text(encoding="utf-8")).tags
+        source = "evidence/" + item["file"]
+        images = [attrs for tag, attrs in tags if tag == "img" and attrs.get("src") == source]
+        self.assertEqual(len(images), 1)
+        self.assertEqual(images[0]["alt"], item["caption"])
+        self.assertFalse(any(tag == "video" and attrs.get("src") == source for tag, attrs in tags))
+        # Large recordings stay external; PDF/report output continues to name the file.
+        report = (self.out / "report.html").read_text(encoding="utf-8")
+        self.assertNotIn('src="' + source + '"', report)
+        self.assertNotIn("data:image/gif", report)
+        self.assertIn('href="' + source + '"', report)
+        self.assertIn(evidence.LABELS["en"]["video_print"], report)
+        self.assertNotIn("data", evidence.load(self.out, self.data)[item["file"]])
+        self.assertEqual(self.problems(), "")
+
+    def test_gif_recording_page_policy_allows_local_images_without_remote_sources(self):
+        self.add_gif_recording()
+        self.render()
+        tags = Elements((self.out / "evidence.html").read_text(encoding="utf-8")).tags
+        policy = next(attrs["content"] for tag, attrs in tags
+                      if tag == "meta" and attrs.get("http-equiv") == "Content-Security-Policy")
+        sources = next(part.split()[1:] for part in policy.split(";") if part.strip().startswith("img-src "))
+        self.assertEqual(set(sources), {"'self'", "file:", "data:"})
+
+    def test_mp4_recordings_keep_video_controls(self):
+        name = "U-006-recording.mp4"
+        # Header-only fixture checks rendering choice, not MP4 decoding/playback.
+        (self.out / "evidence" / name).write_bytes(b"\x00\x00\x00\x18ftypisom")
+        finding(self.data, "U-006")["evidence"].append(
+            {"kind": "video", "file": name, "caption": "Recorded interaction"})
+        self.save()
+        self.render()
+        tags = Elements((self.out / "evidence.html").read_text(encoding="utf-8")).tags
+        videos = [attrs for tag, attrs in tags if tag == "video" and attrs.get("src") == "evidence/" + name]
+        self.assertEqual(len(videos), 1)
+        self.assertIn("controls", videos[0])
+        self.assertEqual(videos[0]["preload"], "metadata")
+        self.assertEqual(self.problems(), "")
+
+    def test_gif_recording_second_language_links_and_digest_remain_valid(self):
+        item = self.add_gif_recording()
+        self.render()
+        self.render(lang="ja", out=self.out / "ja")
+        tags = Elements((self.out / "ja" / "evidence.html").read_text(encoding="utf-8")).tags
+        self.assertTrue(any(tag == "img" and attrs.get("src") == "../evidence/" + item["file"]
+                            for tag, attrs in tags))
+        self.assertEqual(self.problems(allow=["ja"]), "")
+        (self.out / "evidence" / item["file"]).write_bytes(GIF + b"changed")
+        self.assertIn("stale ux-scan-evidence", self.problems(allow=["ja"]))
 
     def test_second_language_render_links_back_to_the_evidence(self):
         self.render()

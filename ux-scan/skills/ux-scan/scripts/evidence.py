@@ -35,8 +35,8 @@ MAX_BYTES = {"screenshot": 5 * 1024 * 1024, "video": 200 * 1024 * 1024, "log": 1
 MAX_LOG_LINES = 60
 MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "image/webp", "gif": "image/gif",
         "webm": "video/webm", "mp4": "video/mp4", "txt": "text/plain", "log": "text/plain", "json": "application/json"}
-# Images are embedded; videos load from the evidence directory beside the page.
-PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
+# Screenshots are embedded; recordings (including GIF images) load beside the page.
+PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: 'self' file:; "
                "media-src 'self' file:; base-uri 'none'; form-action 'none'")
 DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
 ARTICLE = re.compile(r"<article class='[^']*' id='[^']*'><div class='finding-header'><span class='finding-id'>"
@@ -242,8 +242,14 @@ def _figure(item, files, href, L, printable):
         uri = f"data:{MIME[entry['ext']]};base64,{base64.b64encode(entry['data']).decode('ascii')}"
         body = f"<img src=\"{uri}\" alt=\"{esc(item['caption'])}\">"
     elif item["kind"] == "video":
-        body = (f"<p>{esc(L['video_print'])}</p>" if printable else
-                f"<video controls preload=\"metadata\" src=\"{esc(link)}\"></video>")
+        if printable:
+            body = f"<p>{esc(L['video_print'])}</p>"
+        elif entry["ext"] == "gif":
+            # GIF recordings are images, not HTML video codecs. Keep potentially
+            # large files external, just like MP4/WebM recordings.
+            body = f"<img src=\"{esc(link)}\" alt=\"{esc(item['caption'])}\">"
+        else:
+            body = f"<video controls preload=\"metadata\" src=\"{esc(link)}\"></video>"
     else:
         lines, total = log_excerpt(entry["text"], L["masked"])
         note = f"<p>{esc(L['excerpt'].format(n=len(lines), total=total))}</p>" if total > len(lines) else ""

@@ -1,8 +1,8 @@
 # Before/after mockups
 
-**Read when:** REPORT — the requester asked for mockups, a before/after
-comparison of findings, more than one design proposal for a fix, or a
-comparison across screen states or screens.
+**Read when:** REPORT — a `Valid` or `Likely` finding changes what a user
+sees, or the requester asked for mockups, more than one design proposal for a
+fix, or a comparison across screen states or screens.
 
 A mockup shows one finding as the user meets it today (`before`) and as its
 `fix` proposes (`after`). It illustrates the finding; it is not a redesign and
@@ -12,17 +12,25 @@ dashboard. The PDF does not include it.
 
 ## When to attach one
 
-- Only when asked, and only to findings whose verdict is `Valid` or `Likely`.
-  Mockups on findings with any other verdict (`Unverified`, `Unlikely`,
-  `FalsePositive`, `NotApplicable`) are kept in the record but not published
-- Prefer findings a picture explains better than prose: layout and responsive
-  defects, hierarchy, states, forms, feedback. A missing `alt` or an ARIA
-  attribute shows nothing; leave those without one
+- By default, without being asked: every finding whose verdict is `Valid` or
+  `Likely` and whose defect or fix changes what a user sees. Mockups on
+  findings with any other verdict (`Unverified`, `Unlikely`, `FalsePositive`,
+  `NotApplicable`) are kept in the record but not published
+- Visible means a picture explains it better than prose: layout and responsive
+  defects, hierarchy, components, states, forms, feedback, visible focus,
+  truncation. A missing `alt`, an ARIA attribute or an unused token shows
+  nothing; leave those without one, and `Info` findings too
+- Order: High, then Medium, then Low, primary flows before secondary. Draw
+  them after VERIFY has settled every verdict and never let them crowd out
+  VERIFY; under a tight budget stop after Medium, and say in `limitations`
+  which visible High and Medium findings got none
+- When the requester names findings, mock those first; when they decline
+  mockups, draw none and say so in `limitations`
 - One mockup per finding, unless the defect shows on more than one screen or
   region (*Several mockups*); alternative proposals and screen states go
-  inside it (*Alternative proposals*, *States*). When the requester names
-  findings, mock those; when not, the High findings on primary flows first,
-  and say in `limitations` which findings got none
+  inside it (*Alternative proposals*, *States*). The state to draw is the one
+  that carries the defect (the error, the empty list, the 360 px layout), not
+  every state of the flow
 
 ## Writing the two sides
 
@@ -80,6 +88,11 @@ reasonable shape with different trade-offs, the mockup can carry up to five
                              "note": "Every list one tap away; costs 48px of height."}]}
 ```
 
+- Add alternatives without being asked only when the choice between them is
+  genuinely the team's (a drawer or a chip row, an inline error or a summary
+  at the top), and spread them along different axes: placement, emphasis,
+  density or interaction. Two designs that differ only in colour or wording
+  are one
 - `after` stays the proposal `fix` describes; it is the recommendation.
   `label` names it, and is required once there are alternatives
 - Each alternative is `label` (required) and `after` (required, the same

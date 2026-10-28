@@ -24,7 +24,7 @@ RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT
    token scales, viewports, locales)                     ─→ report.html / report.pdf
                                                          ─→ evidence.html + evidence/ (screenshots,
                                                             videos, logs; before/after)
-                                                          ─→ mockups.html (before/after, when asked)
+                                                          ─→ mockups.html (before/after of each visible finding)
           │
    inventory.py --flows ─→ inventory.json (candidates, never findings)
 ```
@@ -38,9 +38,10 @@ make status
 ```
 
 Then ask the agent, e.g. "ux-scan this repository" or "review the sign-up and
-checkout UI for usability and accessibility problems". Add "with before/after
-mockups" to get `mockups.html`, which compares each mocked finding as it is and
-as its fix proposes.
+checkout UI for usability and accessibility problems". Each `Valid` or
+`Likely` finding a user can see gets a before/after mockup in `mockups.html`,
+which compares the screen as it is and as its fix proposes; name the findings
+to mock, or say "no mockups" to skip them.
 
 Every report carries its evidence: each finding cites screenshots, videos or
 logs saved in `evidence/` next to `findings.json`, marked `before` (the defect)

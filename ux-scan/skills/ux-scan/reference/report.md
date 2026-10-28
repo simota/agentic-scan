@@ -171,6 +171,7 @@ outputs line, not in the status. Then:
 
 - the High findings, one line each with `path:line`, the flow they block and their evidence file
 - whether the UI was rendered (screenshots or video) or the evidence is logs only
+- which findings carry a mockup (`mockups.html`), and which visible High and Medium findings have none
 - decisions that need a human (`decisions`)
 - what was not reviewed (`limitations`), in one line
 - where the outputs and the scratch directory are

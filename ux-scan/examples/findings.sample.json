@@ -925,7 +925,8 @@
   ],
   "limitations": [
     "This is fictional sample data for the renderer, not a review of a real product.",
-    "Static review: nothing was rendered, so contrast, exact truncation widths and overlap are inferred from code."
+    "Static review: nothing was rendered, so contrast, exact truncation widths and overlap are inferred from code.",
+    "To keep the sample small, only three findings carry mockups; the other visible High and Medium findings have none."
   ],
   "decisions": [
     "Is /signup intentionally reachable only from the marketing site? It has no in-app link (inventory orphan_routes).",

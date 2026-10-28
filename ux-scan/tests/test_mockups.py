@@ -360,6 +360,21 @@ class MockupTests(unittest.TestCase):
         self.assertIn('value="all"', u006)
         self.assertNotIn('value="all"', page[page.index('id="U-014"'):])
 
+    def test_contents_show_severity_and_every_section_links_back(self):
+        for lang in ("en", "ja"):
+            out = self.out / lang
+            out.mkdir()
+            self.render(lang, out)
+            page = (out / "mockups.html").read_text(encoding="utf-8")
+            parsed = Frames(page)
+            self.assertIn('<nav id="contents"', page)
+            toc = page[page.index('<ol class="mockup-toc">'):page.index("</ol>")]
+            self.assertEqual(toc.count("<li>"), len(parsed.sections))
+            for f in mockups.with_mockups(self.data):
+                self.assertIn(f'<span class="badge {f["severity"]}">{f["severity"]}</span><a href="#{f["id"]}">', toc)
+            self.assertEqual(parsed.links.count("#contents"), len(parsed.sections), lang)
+            self.assertIn(f'>{mockups.LABELS[lang]["back"]}</a>', page)
+
     def test_header_names_the_report_and_theme_as_the_dashboard_does(self):
         for lang in ("en", "ja"):
             out = self.out / lang

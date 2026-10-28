@@ -28,7 +28,8 @@ LABELS = {
     "en": {"title": "Before / After", "dashboard": "Dashboard", "before": "Before", "after": "After",
            "side": "Side by side", "slider": "Slider",
            "view": "View", "viewport": "Viewport", "split": "Before / After split",
-           "contents": "Mockups", "screen": "Screen", "location": "Location", "flow": "Flow",
+           "contents": "Mockups", "back": "Back to the list of mockups",
+           "screen": "Screen", "location": "Location", "flow": "Flow",
            "observed": "Observed", "expected": "Expected", "fix": "Fix", "field": "Before/After",
            "proposal": "Proposal", "alternative": "Alternative", "state": "State", "all": "All proposals",
            "lead": "Mockups illustrate each finding as it is and as its fix proposes. They are drawn for the "
@@ -37,7 +38,7 @@ LABELS = {
     "ja": {"title": "Before / After", "dashboard": "ダッシュボード", "before": "Before（現状）", "after": "After（修正案）",
            "side": "並べて表示",
            "slider": "スライダー", "view": "表示", "viewport": "ビューポート", "split": "Before / After の境界",
-           "contents": "モック一覧", "screen": "画面", "location": "箇所", "flow": "フロー",
+           "contents": "モック一覧", "back": "モック一覧へ戻る", "screen": "画面", "location": "箇所", "flow": "フロー",
            "observed": "現状", "expected": "あるべき状態", "fix": "修正", "field": "Before/After",
            "proposal": "案", "alternative": "別案", "state": "状態", "all": "全案を並べる",
            "lead": "各指摘の現状と修正案をモックで示します。モックは診断のために描いたもので、アプリを実際に"
@@ -48,6 +49,10 @@ LABELS = {
 CSS = """
 .mockups-lead{color:var(--muted);max-width:72ch}
 .mockup-toc{margin:0 0 28px;padding-left:20px}
+.mockup-toc li{margin:0 0 4px}
+.mockup-toc .badge{margin-right:6px}
+#contents{scroll-margin-top:calc(var(--appbar-h) + 16px)}
+.mockup-back{margin:16px 0 0;font-size:13px}
 .mockup{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin:0 0 28px;scroll-margin-top:calc(var(--appbar-h) + 16px)}
 .mockup h2{margin:4px 0 6px;font-size:18px}
 .mockup-meta{display:flex;flex-wrap:wrap;gap:4px 16px;margin:0 0 10px;font-size:12px;color:var(--muted)}
@@ -282,7 +287,7 @@ def _section(f, anchor, mockup, flows, lang, L):
             + f'<div class="mockup-controls" hidden>{pickers}{modes}{sizes}</div>'
             f'<div class="compare" data-mode="side">{panes}</div>'
             f'<input class="split" type="range" min="0" max="100" value="50" aria-label="{esc(L["split"])}">'
-            f"<dl>{details}</dl></section>")
+            f'<dl>{details}</dl><p class="mockup-back"><a href="#contents">{esc(L["back"])}</a></p></section>')
 
 
 def render_page(data, flows, lang, chrome):
@@ -295,7 +300,10 @@ def render_page(data, flows, lang, chrome):
     items = with_mockups(data)
     project = data["meta"]["project"]
     entries = [(f, anchor, m) for f in items for anchor, m in mockups_of(f)]
-    toc = "".join(f'<li><a href="#{esc(anchor)}">{esc(f["id"])} {esc(f["title"])}'
+    # With a mockup on most visible findings the page runs long: the contents show severity,
+    # and every section links back to them.
+    toc = "".join(f'<li><span class="badge {esc(f["severity"])}">{esc(f["severity"])}</span>'
+                  f'<a href="#{esc(anchor)}">{esc(f["id"])} {esc(f["title"])}'
                   f'{esc(" — " + m["title"].strip()) if m.get("title", "").strip() else ""}</a></li>'
                   for f, anchor, m in entries)
     sections = "".join(_section(f, anchor, m, flows, lang, L) for f, anchor, m in entries)
@@ -317,7 +325,7 @@ def render_page(data, flows, lang, chrome):
 <h1>{esc(L["title"])}</h1>
 <p class="mockups-lead">{esc(L["lead"])}</p>
 <noscript><p class="mockups-lead">{esc(L["no_script"])}</p></noscript>
-<nav aria-label="{esc(L["contents"])}"><ol class="mockup-toc">{toc}</ol></nav>
+<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="mockup-toc">{toc}</ol></nav>
 {sections}
 </main>
 <script>

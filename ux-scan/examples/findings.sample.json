@@ -926,7 +926,7 @@
   "limitations": [
     "This is fictional sample data for the renderer, not a review of a real product.",
     "Static review: nothing was rendered, so contrast, exact truncation widths and overlap are inferred from code.",
-    "To keep the sample small, only three findings carry mockups; the other visible High and Medium findings have none."
+    "To keep the sample small, only three findings carry mockups; these visible High and Medium findings have none: U-001, U-002, U-005, U-009, U-010, U-011, U-013, U-015, U-016, U-017 and U-018."
   ],
   "decisions": [
     "Is /signup intentionally reachable only from the marketing site? It has no in-app link (inventory orphan_routes).",

@@ -27,6 +27,7 @@ KINDS = {"screenshot": ("png", "jpg", "jpeg", "webp", "gif"),
          "video": ("webm", "mp4", "gif"),
          "log": ("txt", "log", "json")}
 STAGES = ("before", "after")
+RULED_OUT = ("FalsePositive", "NotApplicable")
 KEYS = ("kind", "file", "caption", "stage", "viewport", "url", "captured")
 MAX_ITEMS = 12
 # A plain file name inside evidence/: no directories, no hidden files, a known extension.
@@ -47,6 +48,7 @@ LABELS = {
            "screenshot": "Screenshot", "video": "Video", "log": "Log", "dashboard": "Dashboard",
            "viewport": "Viewport", "url": "URL", "captured": "Captured", "open": "Open the file",
            "video_print": "Video: play it in evidence.html or open the file", "contents": "Findings",
+           "back": "Back to the list of findings",
            "excerpt": "First {n} of {total} lines", "masked": "[masked: looks like a secret]",
            "lead": "Screenshots, videos and logs captured for each finding: Before shows the defect as found, "
                    "After shows the fix. Files are kept in the evidence directory next to findings.json."},
@@ -54,6 +56,7 @@ LABELS = {
            "screenshot": "スクリーンショット", "video": "動画", "log": "ログ", "dashboard": "ダッシュボード",
            "viewport": "ビューポート", "url": "URL", "captured": "取得日時", "open": "ファイルを開く",
            "video_print": "動画: evidence.html で再生するか、ファイルを開いてください", "contents": "指摘一覧",
+           "back": "指摘一覧へ戻る",
            "excerpt": "全 {total} 行中、先頭 {n} 行", "masked": "[秘密情報らしき行のため非表示]",
            "lead": "各指摘について取得したスクリーンショット・動画・ログです。Before は見つかった状態、"
                    "After は修正後の状態を示します。ファイルは findings.json と同じ場所の evidence ディレクトリにあります。"},
@@ -73,6 +76,11 @@ REPORT_CSS = """
 PAGE_CSS = """
 .evidence-lead{color:var(--muted);max-width:72ch}
 .evidence-toc{margin:0 0 28px;padding-left:20px}
+.evidence-toc li{margin:0 0 4px}
+.evidence-toc .badge{margin-right:6px}
+.evidence-toc .ruled-out,.evidence-finding .ruled-out{color:var(--muted);font-size:12px}
+#contents{scroll-margin-top:calc(var(--appbar-h) + 16px)}
+.evidence-back{margin:16px 0 0;font-size:13px}
 .evidence-finding{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:20px;margin:0 0 28px;scroll-margin-top:calc(var(--appbar-h) + 16px)}
 .evidence-finding h2{margin:4px 0 6px;font-size:18px}
 .evidence-stages{display:grid;grid-template-columns:repeat(var(--stages,1),minmax(0,1fr));gap:16px}
@@ -253,7 +261,9 @@ def _figure(item, files, href, L, printable):
     else:
         lines, total = log_excerpt(entry["text"], L["masked"])
         note = f"<p>{esc(L['excerpt'].format(n=len(lines), total=total))}</p>" if total > len(lines) else ""
-        body = f"<pre>{esc(chr(10).join(lines))}</pre>{note}"
+        # On the page a long log scrolls inside its box: focusable, so a keyboard can scroll it too.
+        scroll = "" if printable else f' tabindex="0" role="region" aria-label="{esc(L["log"] + ": " + item["file"])}"'
+        body = f"<pre{scroll}>{esc(chr(10).join(lines))}</pre>{note}"
     return f"<figure>{body}{caption}</figure>"
 
 
@@ -275,6 +285,13 @@ def _stages(finding, files, href, L, printable, heading):
     return "".join(out)
 
 
+def _badge(finding):
+    """The severity badge; a ruled-out finding also names its verdict, so its severity is not read as a defect."""
+    verdict = finding["validation"]["verdict"]
+    ruled_out = f'<span class="ruled-out">{esc(verdict)}</span> ' if verdict in RULED_OUT else ""
+    return f'<span class="badge {esc(finding["severity"])}">{esc(finding["severity"])}</span>{ruled_out}'
+
+
 def inject_report(page, data, files, lang, href):
     """report.html with each finding's evidence placed at the end of its card."""
     L = LABELS[lang]
@@ -291,8 +308,7 @@ def inject_report(page, data, files, lang, href):
         return m[0][:-len("</article>")] + block + "</article>"
 
     page = ARTICLE.sub(place, page)
-    missing = [fid for fid in by_id if fid not in placed and by_id[fid]["validation"]["verdict"] not in
-               ("FalsePositive", "NotApplicable")]
+    missing = [fid for fid in by_id if fid not in placed and by_id[fid]["validation"]["verdict"] not in RULED_OUT]
     if missing:
         raise RuntimeError(f"report template changed: cannot place the evidence of {', '.join(missing)}")
     if page.count("</head>") != 1:
@@ -313,11 +329,15 @@ def render_page(data, files, lang, chrome, href):
     L = LABELS[lang]
     project = data["meta"]["project"]
     findings = with_evidence(data)
-    toc = "".join(f'<li><a href="#{esc(f["id"])}">{esc(f["id"])} {esc(f["title"])}</a></li>' for f in findings)
+    # Every finding with evidence is listed, so the page runs long: as on mockups.html, the
+    # contents show severity, and every section links back to them.
+    toc = "".join(f'<li>{_badge(f)}<a href="#{esc(f["id"])}">{esc(f["id"])} {esc(f["title"])}</a></li>' for f in findings)
     sections = "".join(
-        f'<section class="evidence-finding evidence" id="{esc(f["id"])}"><h2>{esc(f["id"])} {esc(f["title"])}</h2>'
+        f'<section class="evidence-finding evidence" id="{esc(f["id"])}" aria-labelledby="{esc(f["id"])}-h">'
+        f'{_badge(f)}<h2 id="{esc(f["id"])}-h">{esc(f["id"])} {esc(f["title"])}</h2>'
         f'<p class="evidence-lead">{esc(f["screen"])} · <code>{esc(f["location"])}</code></p>'
-        f'{_stages(f, files, href, L, False, "h3")}</section>' for f in findings)
+        f'{_stages(f, files, href, L, False, "h3")}'
+        f'<p class="evidence-back"><a href="#contents">{esc(L["back"])}</a></p></section>' for f in findings)
     return f"""<!doctype html>
 <html lang="{esc(lang)}" class="app-shell">
 <head>
@@ -335,7 +355,7 @@ def render_page(data, files, lang, chrome, href):
 <main>
 <h1>{esc(L["title"])}</h1>
 <p class="evidence-lead">{esc(L["lead"])}</p>
-<nav aria-label="{esc(L["contents"])}"><ol class="evidence-toc">{toc}</ol></nav>
+<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="evidence-toc">{toc}</ol></nav>
 {sections}
 </main>
 <script>

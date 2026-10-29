@@ -9,7 +9,10 @@ shows the fix (`stage: "after"`). `scripts/contract_check.py` refuses a report
 that misses either. The files sit in `<out>/evidence/`, next to `findings.json`;
 `scripts/render.py` embeds screenshots and log excerpts in `report.html` (and so
 in `report.pdf`), before and after side by side, and writes `evidence.html`,
-which also plays the videos.
+which also plays the videos. As on `mockups.html`, its contents give each
+finding's severity (and the verdict of a ruled-out one), and each finding ends
+with a link back to them; a log excerpt that runs past its box scrolls there by
+keyboard as well as by pointer.
 
 GIF recordings use an image preview in `evidence.html`; MP4/WebM recordings use
 video controls. Recordings stay linked to files in `evidence/`, including from

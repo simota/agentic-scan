@@ -24,6 +24,19 @@ SAMPLE = json.loads((ROOT / "examples" / "findings.sample.json").read_text(encod
 FLOWS = json.loads((ROOT / "examples" / "flows.sample.json").read_text(encoding="utf-8"))
 
 
+def keep_first(data, n):
+    keep(data, data["findings"][:n])
+
+
+def keep(data, kept):
+    """Keep only these findings, and drop the list lines that cite one of the others."""
+    data["findings"] = kept
+    ids = {f["id"] for f in kept}
+    for key in findings.LIST_KEYS:
+        if key in data:
+            data[key] = [line for line in data[key] if set(re.findall(r"U-[0-9]{3}", line)) <= ids]
+
+
 def run(*args):
     return subprocess.run([sys.executable, str(SCRIPTS / "findings.py"), *map(str, args)],
                           capture_output=True, text=True, timeout=10)
@@ -400,7 +413,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_rewrites_japanese_references_without_partial_id_matches(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["findings"][0]["id"], data["findings"][1]["id"] = "U-002", "U-001"
         data["next_steps"] = ["先にU-002を修正、次にU-001を確認。XU-002 U-0020 U-002_extra"]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
@@ -409,7 +422,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_source_paths_and_external_urls(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         item = data["findings"][0]
         item.update(id="U-002", location="src/U-002.tsx:1", occurrences=["src/U-002.tsx:1"],
                     references=[{"url": "https://example.com/issues/U-002", "title": "Evidence for U-002"}])
@@ -428,7 +441,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_paths_urls_routes_and_code_in_prose(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         item = data["findings"][0]
         item.update(id="U-002", location="src/U-002.tsx:1", occurrences=["src/U-002.tsx:1"],
                     screen="Customer detail (/customers/U-002)",
@@ -470,7 +483,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_grouped_source_paths_and_relative_link_targets(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         data["next_steps"] = [
             "Inspect app/(U-002)/page.tsx:1; fix U-002.",
@@ -493,7 +506,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_markdown_destinations_without_path_markers(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         cases = (
             ("Check [U-002](U-002); fix U-002.", "Check [U-001](U-002); fix U-001."),
@@ -517,7 +530,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_reference_destinations_and_overlapping_code(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         data["next_steps"] = [
             '[evidence][U-002]\n\n[U-002]: U-002 "For U-002"\n\nFix U-002.',
@@ -540,7 +553,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_does_not_extend_a_link_destination_past_literal_boundaries(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         data["next_steps"] = [
             '`[x](`U-002) then U-002.',
@@ -558,7 +571,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_requires_a_complete_reference_definition(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         cases = (
             ('[U-002]: U-002 title-invalid', '[U-001]: U-001 title-invalid'),
@@ -574,7 +587,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_code_delimiters_and_html_comments(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         evidence = [
             '``a ``` U-002``',
@@ -596,7 +609,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_expands_ranges_without_changing_the_referenced_findings(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
             item["severity"] = severity
         data["next_steps"] = [
@@ -623,8 +636,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_refuses_a_still_range_whose_missing_id_another_finding_moves_onto(self):
         data = copy.deepcopy(SAMPLE)
-        kept = [item for item in data["findings"] if item["id"] in ("U-001", "U-003")]
-        data["findings"] = kept
+        keep(data, [item for item in data["findings"] if item["id"] in ("U-001", "U-003")])
         mapping = findings.renumber_map(data["findings"])
         self.assertEqual(mapping, {"U-001": "U-001", "U-003": "U-002"})
         for prose in ("Fix U-001 to U-002 first.", "Fix U-002 to U-001 first.", "Then U-002."):
@@ -638,7 +650,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_treats_comparisons_as_prose_and_bullets_as_separate_ids(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:4]
+        keep_first(data, 4)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium", "Info")):
             item["severity"] = severity
         data["summary"] = "Fix first:\n- U-001\n- U-004\n\n- **U-002**\n-U-003\nThen U-001 through\nU-003."
@@ -661,7 +673,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_follows_tag_grammar_url_brackets_and_underscore_emphasis(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Medium", "High", "Low")):
             item["severity"] = severity
         data["next_steps"] = [
@@ -691,7 +703,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_angular_markup_in_prose_stays_literal(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
         data["next_steps"] = ["<button (click)=\"open('U-001')\" *ngIf=\"x\"> U-001 <input #q aria-label=\"U-001\">"]
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
@@ -700,7 +712,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_escaped_quotes_and_long_underscore_runs(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
         data["next_steps"] = ['<Button label={"a \\"quoted\\""} data-id="U-001"> foo____U-001 U-001____bar ____U-001 U-001']
         changed = findings.renumber(data, findings.renumber_map(data["findings"]))
@@ -839,7 +851,7 @@ class TransactionRegressions(unittest.TestCase):
                      "<a b={" + "'\"`" * 20000, "<a b={{{{" + "\"'" * 20000):
             with self.subTest(text=text[:8]):
                 data = copy.deepcopy(SAMPLE)
-                data["findings"] = data["findings"][:2]
+                keep_first(data, 2)
                 data["findings"][0]["severity"], data["findings"][1]["severity"] = "Low", "High"
                 data["summary"], data["next_steps"] = text, []
                 started = time.monotonic()
@@ -918,7 +930,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_leaves_unchanged_ranges_and_protects_source_ranges(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["next_steps"] = ["Fix U-001 to U-002."]
         self.assertEqual(findings.renumber(data, findings.renumber_map(data["findings"])), data)
         data["findings"][0]["severity"] = "Low"
@@ -931,7 +943,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_keeps_ranges_with_padded_code_ids_and_whole_range_emphasis(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
             item["severity"] = severity
         cases = (
@@ -978,7 +990,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_rewrites_references_inside_underscore_emphasis_without_changing_identifiers(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
             item["severity"] = severity
         cases = (
@@ -1027,7 +1039,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_respects_escaped_underscores_and_block_boundaries(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
             item["severity"] = severity
         cases = (
@@ -1060,7 +1072,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_preserves_unicode_identifiers_in_ranges_styled_ids_and_lists(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:3]
+        keep_first(data, 3)
         for item, severity in zip(data["findings"], ("Low", "High", "Medium")):
             item["severity"] = severity
         contexts = (("変数", "値"), ("変数", ""), ("", "値"),
@@ -1099,7 +1111,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_handles_long_underscore_inputs(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:1]
+        keep_first(data, 1)
         data["findings"][0]["id"] = "U-002"
         data["next_steps"] = ["Fix U-002."]
         markers = "_" * 20_000
@@ -1175,7 +1187,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_refuses_a_missing_id_that_another_finding_moves_to(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["findings"][0]["severity"] = "Low"
         data["findings"][1]["id"] = "U-003"
         for text in ("Fix U-002 first; U-001 is cosmetic.", "Fix **U-002** first."):
@@ -1210,7 +1222,7 @@ class TransactionRegressions(unittest.TestCase):
 
     def test_renumber_refuses_a_moving_range_with_missing_ids_without_writing(self):
         data = copy.deepcopy(SAMPLE)
-        data["findings"] = data["findings"][:2]
+        keep_first(data, 2)
         data["findings"][0]["severity"] = "Low"
         data["findings"][1]["id"] = "U-003"
         for text in ("Fix U-001 to U-003.", "Fix ` U-001 ` to ` U-003 `.",

@@ -61,6 +61,7 @@ CSS = """
 .mockup-controls[hidden]{display:none}
 .mockup-controls .group{display:flex;flex-wrap:wrap;gap:6px;align-items:center}
 .mockup-controls button{padding:5px 10px}
+.mockup-controls .group-label{font-family:var(--sans);color:var(--muted);margin-right:2px}
 .mockup-controls button[aria-pressed="true"]{background:var(--text);color:var(--bg);border-color:var(--text)}
 .compare{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px}
 .pane{margin:0;min-width:0}
@@ -236,10 +237,13 @@ def _pane(side, caption, fragment, name, viewport, lang, proposal=None, state=No
             f'srcdoc="{html.escape(frame_document(fragment, lang), quote=True)}"></iframe></div></figure>')
 
 
-def _buttons(label, values, cls, first="0"):
+def _buttons(anchor, label, values, cls, first="0"):
+    """A labelled button group: the label is shown, since side by side the groups are told apart only by it."""
     buttons = "".join(f'<button type="button" value="{v}" aria-pressed="{str(v == first).lower()}">{esc(text)}</button>'
                       for v, text in values)
-    return f'<div class="group {cls}" role="group" aria-label="{esc(label)}">{buttons}</div>'
+    label_id = esc(f"{anchor}-{cls}")
+    return (f'<div class="group {cls}" role="group" aria-labelledby="{label_id}">'
+            f'<span class="group-label" id="{label_id}">{esc(label)}</span>{buttons}</div>')
 
 
 def _section(f, anchor, mockup, flows, lang, L):
@@ -270,11 +274,11 @@ def _section(f, anchor, mockup, flows, lang, L):
                     for j, (label, _, _, note) in enumerate(sides) if note.strip())
     notes += "".join(f'<p class="mockup-note" data-proposal="{i}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
                      for i, (label, _, _, note) in enumerate(options) if note.strip())
-    pickers = _buttons(L["state"], [(j, s[0]) for j, s in enumerate(sides)], "states", 0) if staged else ""
-    pickers += _buttons(L["proposal"], [(i, o[0]) for i, o in enumerate(options)], "proposals", 0) if several else ""
-    modes = _buttons(L["view"], [(m, L[m]) for m in ("side", "slider", "before", "after", *(("all",) if several else ()))],
+    pickers = _buttons(anchor, L["state"], [(j, s[0]) for j, s in enumerate(sides)], "states", 0) if staged else ""
+    pickers += _buttons(anchor, L["proposal"], [(i, o[0]) for i, o in enumerate(options)], "proposals", 0) if several else ""
+    modes = _buttons(anchor, L["view"], [(m, L[m]) for m in ("side", "slider", "before", "after", *(("all",) if several else ()))],
                      "modes", "side")
-    sizes = _buttons(L["viewport"], [(v, v) for v in choices], "viewports", viewport)
+    sizes = _buttons(anchor, L["viewport"], [(v, v) for v in choices], "viewports", viewport)
     details = "".join(f"<dt>{esc(L[k])}</dt><dd>{esc(f[k])}</dd>" for k in ("observed", "expected", "fix") if f.get(k))
     heading = f"{fid} {f['title']}" + (f" — {title}" if title else "")
     return (f'<section class="mockup" id="{esc(anchor)}" data-viewport="{viewport}" data-options="{len(options)}" '

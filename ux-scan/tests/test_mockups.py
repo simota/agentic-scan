@@ -40,6 +40,31 @@ class Frames(HTMLParser):
             self.sections.append(attrs)
 
 
+class Groups(HTMLParser):
+    """Each role=group's attributes, and the text of every visible group label by id."""
+
+    def __init__(self, source):
+        super().__init__()
+        self.groups, self.ids, self.labels, self._label = [], [], {}, None
+        self.feed(source)
+
+    def handle_starttag(self, tag, attrs):
+        attrs = dict(attrs)
+        if attrs.get("role") == "group":
+            self.groups.append(attrs)
+        elif tag == "span" and attrs.get("class") == "group-label":
+            self._label = attrs["id"]
+            self.ids.append(self._label)
+            self.labels[self._label] = ""
+
+    def handle_data(self, data):
+        if self._label:
+            self.labels[self._label] += data
+
+    def handle_endtag(self, tag):
+        self._label = None
+
+
 def finding(data, fid):
     return next(f for f in data["findings"] if f["id"] == fid)
 
@@ -202,8 +227,8 @@ class MockupTests(unittest.TestCase):
         self.assertEqual([f["title"] for f in frames[:3]],
                          ["U-006 Before", "U-006 After — Drawer", "U-006 Alternative — Chip row"])
         self.assertEqual(frames[2]["srcdoc"], mockups.frame_document(mockup["alternatives"][0]["after"], "en"))
-        self.assertIn('<div class="group proposals" role="group" aria-label="Proposal">'
-                      '<button type="button" value="0" aria-pressed="true">Drawer</button>'
+        self.assertIn('<div class="group proposals" role="group" aria-labelledby="U-006-proposals">'
+                      '<span class="group-label" id="U-006-proposals">Proposal</span><button type="button" value="0" aria-pressed="true">Drawer</button>'
                       '<button type="button" value="1" aria-pressed="false">Chip row</button></div>', page)
         self.assertIn('<p class="mockup-note" data-proposal="1"><strong>Chip row:</strong> Below 640px', page)
         # A mockup without alternatives has no picker and no proposal markers.
@@ -345,8 +370,8 @@ class MockupTests(unittest.TestCase):
         self.assertEqual(frames[5]["srcdoc"], mockups.frame_document("<p>x2</p>", "en"))
         self.assertTrue(all(f["loading"] == "lazy" for f in frames))
         self.assertIn('<figure class="pane after" data-proposal="1" data-state="1">', section)
-        self.assertIn('<div class="group states" role="group" aria-label="State">'
-                      '<button type="button" value="0" aria-pressed="true">Empty</button>'
+        self.assertIn('<div class="group states" role="group" aria-labelledby="U-014-states">'
+                      '<span class="group-label" id="U-014-states">State</span><button type="button" value="0" aria-pressed="true">Empty</button>'
                       '<button type="button" value="1" aria-pressed="false">Error</button></div>', section)
         self.assertIn('<p class="mockup-note" data-state="0"><strong>Empty:</strong> No tasks yet.</p>', section)
         self.assertIn('<button type="button" value="all" aria-pressed="false">All proposals</button>', section)
@@ -374,6 +399,19 @@ class MockupTests(unittest.TestCase):
                 self.assertIn(f'<span class="badge {f["severity"]}">{f["severity"]}</span><a href="#{f["id"]}">', toc)
             self.assertEqual(parsed.links.count("#contents"), len(parsed.sections), lang)
             self.assertIn(f'>{mockups.LABELS[lang]["back"]}</a>', page)
+
+    def test_every_control_group_shows_the_label_that_names_it(self):
+        # Side by side, "Drawer | Chip row" and "360x640 | 768x1024" are told apart only by a visible label.
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        groups = Groups(page)
+        self.assertEqual(len(groups.groups), 8)  # U-006: proposals, views, viewports; U-012: states, views, viewports; U-014: views, viewports
+        self.assertEqual(len(set(groups.ids)), len(groups.ids), "label ids must be unique")
+        for group in groups.groups:
+            self.assertNotIn("aria-label", group)
+            self.assertIn(group["aria-labelledby"], groups.labels)
+        self.assertEqual(sorted(set(groups.labels.values())), ["Proposal", "State", "View", "Viewport"])
+        self.assertIn(".mockup-controls .group-label{", page)
 
     def test_header_names_the_report_and_theme_as_the_dashboard_does(self):
         for lang in ("en", "ja"):

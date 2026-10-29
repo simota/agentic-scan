@@ -106,6 +106,42 @@ class EvidenceTests(unittest.TestCase):
         self.assertIn('<meta name="ux-scan-page-kind" content="evidence.html">', page)
         self.assertIn('href="evidence.html"', (self.out / "dashboard.html").read_text(encoding="utf-8"))
 
+    def test_page_logs_scroll_by_keyboard_and_the_report_logs_stay_plain(self):
+        # A log box scrolls on the page (max-height); without a tab stop a keyboard cannot reach it (WCAG 2.1.1).
+        self.render()
+        page = (self.out / "evidence.html").read_text(encoding="utf-8")
+        logs = [a for tag, a in Elements(page).tags if tag == "pre"]
+        self.assertEqual(len(logs), sum(i["kind"] == "log" for f in self.data["findings"] for i in f.get("evidence", [])))
+        for attrs in logs:
+            self.assertEqual((attrs.get("tabindex"), attrs.get("role")), ("0", "region"))
+            self.assertRegex(attrs.get("aria-label", ""), r"^Log: U-[0-9]{3}-[a-z]+\.log$")
+        report = (self.out / "report.html").read_text(encoding="utf-8")
+        printed = [a for tag, a in Elements(report).tags if tag == "pre"]
+        self.assertTrue(printed)
+        self.assertFalse([a for a in printed if "tabindex" in a])
+
+    def test_contents_show_severity_and_every_section_links_back(self):
+        self.render()
+        page = (self.out / "evidence.html").read_text(encoding="utf-8")
+        shown = evidence.with_evidence(self.data)
+        self.assertIn('<nav id="contents"', page)
+        toc = page[page.index('<ol class="evidence-toc">'):page.index("</ol>")]
+        for f in shown:
+            self.assertIn(f'<li><span class="badge {f["severity"]}">{f["severity"]}</span><a href="#{f["id"]}">', toc)
+        links = [a.get("href") for tag, a in Elements(page).tags if tag == "a"]
+        self.assertEqual(links.count("#contents"), len(shown))
+
+    def test_a_ruled_out_finding_names_its_verdict_beside_its_severity(self):
+        u026 = finding(self.data, "U-026")
+        u026["evidence"] = [{"kind": "log", "file": "U-025-source.log", "caption": "Checked and ruled out"}]
+        self.save()
+        self.render()
+        page = (self.out / "evidence.html").read_text(encoding="utf-8")
+        toc = page[page.index('<ol class="evidence-toc">'):page.index("</ol>")]
+        self.assertIn('<li><span class="badge Info">Info</span><span class="ruled-out">FalsePositive</span> '
+                      '<a href="#U-026">', toc)
+        self.assertNotIn('ruled-out">Valid', page)
+
     def test_screenshots_align_before_logs_so_the_pair_stays_together(self):
         block = evidence._stages(finding(self.data, "U-006"), evidence.load(self.out, self.data),
                                  "evidence", evidence.LABELS["en"], True, "h5")

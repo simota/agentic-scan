@@ -156,7 +156,9 @@ with the chosen proposal, whose note is shown above it under its label, and an
 as stay readable. A mockup with states adds a state picker that switches every
 side and the state's note together. Frames load as they are shown. The
 contents at the top give each mockup's severity, and each mockup ends with a
-link back to them, since most visible findings carry one.
+link back to them, since most visible findings carry one. Each row of
+buttons is labelled on screen (*Proposal*, *State*, *View*, *Viewport*), and
+that label is the row's accessible name.
 Without scripts every side and note is shown. Until
 the viewer picks a view, a comparison is shown side by side, or under the
 slider when side by side would shrink it below half size, where its text is

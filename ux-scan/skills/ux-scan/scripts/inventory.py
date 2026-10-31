@@ -75,7 +75,7 @@ ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br 
                 "ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu".split())
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
-LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))(px|rem|em)\b")
+LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))((?i:px|rem|em))\b")
 # A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
 # or a line with a colon, which starts another declaration (also across masked
 # regions). Indented Sass and Stylus end a declaration at the line break.
@@ -98,15 +98,15 @@ CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_L
 JS_FONT_SIZE = re.compile(r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
                           r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
-_MQ = r"(\d+(?:\.\d+)?)(px|em|rem)"
+_MQ = r"(\d+(?:\.\d+)?)((?i:px|em|rem))"
 MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
                    + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
 CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
 JS_Z = re.compile(r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b"
+CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)(px|rem|em)[\"'])")
+JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
 # A script object that describes a viewport or an image rather than styling an element:
 # use: { viewport: { width: 1280 } } (test runners), openGraph: { images: [{ width: 1200 }] }.
 NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images)[\"']?\s*:\s*"
@@ -116,7 +116,7 @@ NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images)[\"']?\s*:\
 # A CSS string ends at a raw newline, so one stray quote cannot swallow later rules.
 # Sass #{…} and Less @{…} interpolation are part of a selector, not a rule's braces.
 CSS_RULE_TOKEN = re.compile(r'''\\.|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|#\{[^{}]*\}|@\{[\w-]*\}|[{};()[\]]''', re.S)
-SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)(px|rem|em)\b")
+SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b")
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 _NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*" + _NO_OUTLINE)
@@ -275,7 +275,9 @@ def holds_page_sources(directory):
     """Whether a bounded, no-follow walk below directory finds a page source file."""
     seen = 0
     for dirpath, dirnames, filenames in os.walk(directory):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not os.path.islink(os.path.join(dirpath, d))]
+        # A segment name can hold a deeper one (app/build/out/page.tsx is /build/out), as iter_files reads it.
+        dirnames[:] = [d for d in dirnames if (d not in SKIP_DIRS or d in ROUTE_SEGMENT_DIRS)
+                       and not os.path.islink(os.path.join(dirpath, d))]
         if any(PAGE_SOURCE.search(name) for name in filenames):
             return True
         seen += len(dirnames) + len(filenames)
@@ -507,7 +509,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
     With jsx, child_text=False reads every // line as a comment: plain script
     (.ts, .cjs, <script> blocks) has no JSX child text.
     """
-    parts, end, cursor = [], 0, 0
+    parts, end, cursor, resumes = [], 0, 0, MAX_BRACE_RESUMES
     token = (JSX_TOKEN if child_text else SCRIPT_TOKEN) if jsx else TEMPLATE_TOKEN if template else MARKUP_TOKEN
     budget = [JSX_TEXT_BUDGET[0] + JSX_TEXT_BUDGET[1] * len(text)]
     child_memo = {}
@@ -531,8 +533,12 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             continue
         name = None if jsx else match.group(1)
         if name:
-            tag, cursor, _ = read_tag(text, match.end())
-            if tag and not tag[3] and name.lower() in RAW_TEXT_TAGS:
+            tag, cursor, spans = read_tag(text, match.end())
+            resumed = tag is None and spans is None and resumes
+            if resumed:
+                # As in tags(): a brace that never closes is text, so later comments are still comments.
+                cursor, resumes = tag_end(text, match.end()), resumes - 1
+            if (resumed or (tag and not tag[3])) and name.lower() in RAW_TEXT_TAGS:
                 close = RAW_TEXT_CLOSE[name.lower()].search(text, cursor)
                 cursor = close.end() if close else len(text)
         else:
@@ -587,9 +593,9 @@ def embedded_regions(text, parsed):
             if expression:
                 js.append((start, stop, text[start:stop]))
             elif name == "style":
-                # The delimiter keeps an inline declaration out of the next
-                # style block's first selector, without shifting source offsets.
-                css.append((start, stop + 1, mask_css_comments(text[start:stop]) + ";"))
+                # Braces over the delimiters make the declarations one rule of their own, so a
+                # max-width beside a width caps it, without shifting source offsets.
+                css.append((start - 1, stop + 1, "{" + mask_css_comments(text[start:stop]) + "}"))
     return css, js
 
 
@@ -626,7 +632,7 @@ class Tally:
 
 def px(number, unit, warn=None):
     """A CSS length in px (rem and em at 16px), formatted without trailing zeros."""
-    value = float(number) * (16 if unit in ("rem", "em") else 1)
+    value = float(number) * (16 if unit.lower() in ("rem", "em") else 1)
     if not math.isfinite(value):
         if warn:
             warn("length literal exceeds the finite numeric range; candidate skipped")
@@ -863,7 +869,9 @@ def strip_aria_hidden(markup):
     return "".join(parts)
 
 
-ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>.*?</\1\s*>")
+# An icon element never holds another of its own opening tags: an unclosed one stops there
+# instead of scanning to the end of the button for every repeat, keeping the scan linear.
+ICON_ELEMENT = re.compile(r"(?is)<(mat-icon|v-icon|ion-icon|fa-icon|q-icon)\b[^>]*>(?:(?!<\1\b).)*?</\1\s*>")
 # Bindings that set a button's text, so an empty element still has a name unless the value is blank.
 TEXT_BINDINGS = ("v-text", "v-html", "innertext", "textcontent", "innerhtml", "dangerouslysetinnerhtml",
                  "x-text", "x-html", "children")
@@ -1165,7 +1173,9 @@ def label_regions(parsed):
 
 
 def display_width(s):
-    return sum(2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
+    # Combining marks and format characters (ZWJ, ZWSP) take no column of their own.
+    return sum(0 if unicodedata.category(c) in ("Mn", "Me", "Cf") else
+               2 if unicodedata.east_asian_width(c) in ("W", "F") else 1 for c in s)
 
 
 def check_locale_depth(text, where):

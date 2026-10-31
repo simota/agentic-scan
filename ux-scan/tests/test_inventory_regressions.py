@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
+import unicodedata
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -1743,6 +1745,51 @@ class InventoryRegressionTests(unittest.TestCase):
         data = self.scan({"Account.jsx": account,
                           "Guarded.jsx": account.replace("</form>", "<ConfirmDialog /></form>")})
         self.assertEqual([r["location"] for r in data["destructive_actions"]], ["Account.jsx:4"])
+
+    def test_a_route_segment_named_like_a_build_directory_may_hold_another(self):
+        page = "export default function P() { return null }\n"
+        data = self.scan({"app/page.tsx": page, "app/build/out/page.tsx": page, "app/vendor/dist/[id]/page.tsx": page})
+        self.assertEqual(sorted(r["route"] for r in data["routes"]), ["/", "/build/out", "/vendor/dist/[id]"])
+
+    def test_a_stray_brace_in_a_tag_leaves_later_html_comments_masked(self):
+        for name, extra in (("a.html", ""), ("a.vue", '<!-- <div @click="go">x</div> -->\n')):
+            data = self.scan({name: '<p data-x={oops>hi</p>\n<!-- <img src="old.png"> -->\n' + extra
+                                    + '<img src="real.png" alt="r" width="1" height="1">\n'
+                                    + '<script {x>\n// <img src="raw.png">\n</script>\n'})
+            self.assertEqual((data["images"], data["click_handlers"]), ([], []), name)
+
+    def test_an_inline_style_width_capped_by_max_width_fits_the_smallest_viewport(self):
+        data = self.scan_with_flows({"a.html": '<div style="width: 600px; max-width: 100%">x</div>\n'
+                                               '<div style=width:610px>y</div>\n<p style="">z</p>\n'
+                                               '<style>.a { width: 620px; }</style>\n'})
+        wide = {r["value"]: r["wider_than_smallest_viewport"] for r in data["fixed_widths"]}
+        self.assertEqual(wide, {"600px": False, "610px": True, "620px": True})
+
+    def test_combining_marks_and_format_characters_take_no_column(self):
+        data = self.scan({"locales/en.json": json.dumps({"items": "Items", "edit": "Edit"}),
+                          "locales/fr.json": json.dumps({"items": unicodedata.normalize("NFD", "Éléments"),
+                                                         "edit": "Mod​ifier"}, ensure_ascii=False)})
+        self.assertEqual(data["locale_expansion"], [])
+        self.assertEqual(inventory.display_width("é‍日"), 3)
+
+    def test_css_units_are_read_case_insensitively(self):
+        data = self.scan_with_flows({"a.css": ".a{margin:24PX;font-size:1.5REM;width:400Px}\n"
+                                              "@media (min-width: 48EM) { .b { width: 500PX } }\n",
+                                     "B.tsx": 'export const B = () => <div style={{ width: "700PX" }} />;\n'})
+        self.assertEqual([r["value"] for r in data["spacing"]], ["24px"])
+        self.assertEqual([r["value"] for r in data["font_sizes"]], ["24px"])
+        wide = {r["value"]: r["wider_than_smallest_viewport"] for r in data["fixed_widths"]}
+        self.assertEqual(wide, {"400px": True, "500px": False, "700px": True})
+
+    def test_unclosed_icon_tags_in_a_button_keep_the_scan_linear(self):
+        # Each unclosed icon tag scanned to the end of the button's content: 1,900 of them took seconds.
+        data = self.scan({"a.html": "<button>" + "<mat-icon>" * 1900 + "</button>\n"
+                                    "<button><mat-icon>close</mat-icon></button>\n"})
+        self.assertEqual([r["location"] for r in data["icon_buttons"]], ["a.html:1", "a.html:2"])
+        # Quadratic, 4,000 took about 0.6 s; linear, under a millisecond. The bound leaves room for slow runners.
+        started = time.perf_counter()
+        self.assertEqual(inventory.ICON_ELEMENT.sub("", "<mat-icon>" * 4000 + "</mat-icon>"), "<mat-icon>" * 3999)
+        self.assertLess(time.perf_counter() - started, 0.1)
 
 
 if __name__ == "__main__":

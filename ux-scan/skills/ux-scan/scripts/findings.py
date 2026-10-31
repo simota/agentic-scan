@@ -183,8 +183,11 @@ def _mockup(mockup, where):
                           "use fewer states or alternatives")
 
 
-def _evidence(items, where):
-    """Check a finding's evidence list (reference/evidence.md); the files themselves are checked by render.py."""
+def _evidence(items, where, kinds):
+    """Check a finding's evidence list (reference/evidence.md); the files themselves are checked by render.py.
+
+    kinds maps each file named so far in the record to its kind: one file has one kind, as render.py reads it.
+    """
     if not isinstance(items, list) or not 1 <= len(items) <= evidence_files.MAX_ITEMS:
         raise RecordError(f"{where}: expected a list of 1 to {evidence_files.MAX_ITEMS} evidence objects "
                           "(\"evidence\": null in a fragment removes it)")
@@ -195,7 +198,7 @@ def _evidence(items, where):
             raise RecordError(f"{at}: expected an object")
         _known_keys(item, evidence_files.KEYS, at)
         kind = item.get("kind")
-        if kind not in evidence_files.KINDS:
+        if not isinstance(kind, str) or kind not in evidence_files.KINDS:
             raise RecordError(f"{at}.kind: expected one of {', '.join(evidence_files.KINDS)}")
         name = _str(item, "file", at, required=True)
         m = evidence_files.FILE.match(name)
@@ -206,6 +209,8 @@ def _evidence(items, where):
         if name in seen:
             raise RecordError(f"{at}.file: {name!r} is already listed for this finding")
         seen.add(name)
+        if kinds.setdefault(name, kind) != kind:
+            raise RecordError(f"{at}.file: {name!r} is cited as a {kinds[name]} elsewhere; one file has one kind")
         if LINE_BREAKS.search(_str(item, "caption", at, required=True)):
             raise RecordError(f"{at}.caption: expected one line")
         if item.get("stage", "before") not in evidence_files.STAGES:
@@ -449,7 +454,7 @@ def check_findings(data, flow_ids=None, ordered=True):
         raise RecordError("findings: expected a list")
     if len(findings) > 999:
         raise RecordError("findings: at most 999 findings can be numbered U-001 through U-999")
-    seen = set()
+    seen, evidence_kinds = set(), {}
     for i, f in enumerate(findings):
         where = f"findings[{i}]"
         if not isinstance(f, dict):
@@ -506,7 +511,7 @@ def check_findings(data, flow_ids=None, ordered=True):
         if "mockup" in f:
             _mockup(f["mockup"], f"{where}.mockup")
         if "evidence" in f:
-            _evidence(f["evidence"], f"{where}.evidence")
+            _evidence(f["evidence"], f"{where}.evidence", evidence_kinds)
     if ordered:
         mapping = renumber_map(findings)
         if any(old != new for old, new in mapping.items()) or [f["id"] for f in findings] != list(mapping):

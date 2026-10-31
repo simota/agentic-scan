@@ -282,6 +282,9 @@ class EvidenceTests(unittest.TestCase):
             "stage": {"kind": "log", "file": "a.log", "caption": "x", "stage": "during"},
             "key": {"kind": "log", "file": "a.log", "caption": "x", "path": "a.log"},
             "url": {"kind": "log", "file": "a.log", "caption": "x", "url": "javascript:alert(1)"},
+            # Not a string: refused as invalid input, not raised as a TypeError traceback.
+            "kind list": {"kind": ["log"], "file": "a.log", "caption": "x"},
+            "kind object": {"kind": {"log": 1}, "file": "a.log", "caption": "x"},
         }
         for name, item in cases.items():
             with self.subTest(name=name):
@@ -293,6 +296,26 @@ class EvidenceTests(unittest.TestCase):
         finding(data, "U-001")["evidence"] = []
         with self.assertRaises(findings.RecordError):
             findings.check_findings(data)
+
+    def test_one_file_has_one_kind_across_the_record(self):
+        # A .gif can be a screenshot or a video; render.py refuses a file cited as both, so merge must too.
+        data = copy.deepcopy(SAMPLE)
+        finding(data, "U-001")["evidence"] = [{"kind": "screenshot", "file": "shared.gif", "caption": "x"}]
+        finding(data, "U-002")["evidence"] = [{"kind": "video", "file": "shared.gif", "caption": "y"}]
+        with self.assertRaisesRegex(findings.RecordError, "cited as a screenshot elsewhere"):
+            findings.check_findings(data)
+        finding(data, "U-002")["evidence"][0]["kind"] = "screenshot"
+        findings.check_findings(data)
+
+    def test_an_evidence_directory_without_cited_evidence_is_refused_even_when_allowed(self):
+        for f in self.data["findings"]:
+            f.pop("evidence", None)
+        self.save()
+        self.render()
+        self.assertFalse((self.out / "evidence.html").exists())
+        for allow in ((), ("evidence",)):
+            with self.subTest(allow=allow):
+                self.assertIn("evidence/: no finding cites evidence; remove it", self.problems(allow=allow))
 
     def test_renumber_keeps_evidence_file_names(self):
         data = copy.deepcopy(SAMPLE)

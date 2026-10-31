@@ -186,9 +186,12 @@ def problems(out, no_pdf=False, allow=()):
         if mockups.PAGE in found:
             yield f"{mockups.PAGE}: no Valid or Likely finding has a mockup; run {rerender}, which removes it"
     if data is not None and evidence.PAGE not in expected:
-        forbidden.add(evidence.PAGE)
+        forbidden.update((evidence.PAGE, evidence.DIRECTORY))
         if evidence.PAGE in found:
             yield f"{evidence.PAGE}: no finding carries evidence; run {rerender}, which removes it"
+        # Uncited files are refused when findings carry evidence; --allow must not admit them either.
+        if evidence.DIRECTORY in found:
+            yield f"{evidence.DIRECTORY}/: no finding cites evidence; remove it"
     for name in sorted(found - expected - set(allow) - forbidden - unjudged - {OUTPUT_GENERATION}):
         yield (f"{name}: not part of the contract "
                f"(contract_check.py --allow {shlex.quote(name)} if it was asked for)")

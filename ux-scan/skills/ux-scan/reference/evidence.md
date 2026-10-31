@@ -55,7 +55,8 @@ it may have to run outside the host's sandbox.
   recapture a screen that shows real people's data. Log excerpts in the report
   are masked again, but the files in `evidence/` are published as they are
 - **Exactly the cited files** — `evidence/` holds the files the record cites and
-  nothing else; remove a stray capture or cite it. Replacing a file makes every
+  nothing else; remove a stray capture or cite it. When no finding cites evidence,
+  there is no `evidence/`; `--allow` does not admit one. Replacing a file makes every
   page stale until it is rendered again
 - **Never** write evidence inside the reviewed repository
 
@@ -75,5 +76,5 @@ it may have to run outside the host's sandbox.
 `kind`, `file` and a one-line `caption` are required; `stage` (`before` or
 `after`), `viewport` (`WIDTHxHEIGHT`), `url` (http or https) and `captured` are
 optional. A finding cites 1 to 12 files, each once; one file may serve several
-findings. `"evidence": null` in a fragment removes the list. Also name the
+findings, always as the same `kind` (a `.gif` is a screenshot or a video, not both). `"evidence": null` in a fragment removes the list. Also name the
 evidence in `validation.evidence`, so the verdict says what it rests on.

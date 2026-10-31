@@ -364,6 +364,15 @@ class CaptureTests(unittest.TestCase):
         self.assertIn("a log file is named like", err.getvalue())
         self.assertIn("--viewport", err.getvalue())
 
+    def test_a_missing_working_directory_is_named_not_blamed_on_the_command(self):
+        with tempfile.TemporaryDirectory() as tmp, contextlib.redirect_stderr(io.StringIO()) as err:
+            out = Path(tmp) / "U-001-run.log"
+            self.assertEqual(capture.main(["log", "--out", str(out), "--cwd", str(Path(tmp) / "absent"),
+                                           "--", sys.executable, "-c", "print(1)"]), 2)
+            self.assertFalse(out.exists())
+        self.assertIn("--cwd", err.getvalue())
+        self.assertNotIn("cannot run", err.getvalue())
+
 
 if __name__ == "__main__":
     unittest.main()

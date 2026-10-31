@@ -91,6 +91,9 @@ def screenshot(url, out, viewport, wait, timeout):
 def log(command, out, cwd, timeout):
     if not command:
         raise ValueError("log: give the command after --")
+    # Checked first: subprocess reports a missing cwd as the command not being found.
+    if cwd is not None and not Path(cwd).is_dir():
+        raise ValueError(f"--cwd {cwd}: not a directory")
     out = target(out, "log")
     try:
         done = subprocess.run(command, cwd=cwd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,

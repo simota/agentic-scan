@@ -76,5 +76,6 @@ it may have to run outside the host's sandbox.
 `kind`, `file` and a one-line `caption` are required; `stage` (`before` or
 `after`), `viewport` (`WIDTHxHEIGHT`), `url` (http or https) and `captured` are
 optional. A finding cites 1 to 12 files, each once; one file may serve several
-findings, always as the same `kind` (a `.gif` is a screenshot or a video, not both). `"evidence": null` in a fragment removes the list. Also name the
+findings, always as the same `kind` (a `.gif` is a screenshot or a video, not
+both). `"evidence": null` in a fragment removes the list. Also name the
 evidence in `validation.evidence`, so the verdict says what it rests on.

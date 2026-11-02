@@ -102,9 +102,9 @@ class MockupTests(unittest.TestCase):
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         parsed = Frames(page)
         self.assertEqual([s["id"] for s in parsed.sections], ["U-006", "U-012", "U-014"])
-        # U-006 carries one alternative (3 frames), U-012 three states (6), U-014 the two sides.
-        self.assertEqual(len(parsed.frames), 11)
-        self.assertEqual([f["title"] for f in parsed.frames[3:6]],
+        # U-006 carries three tiers (4 frames), U-012 three states (6), U-014 the two sides.
+        self.assertEqual(len(parsed.frames), 12)
+        self.assertEqual([f["title"] for f in parsed.frames[4:7]],
                          ["U-012 Before · Loading", "U-012 Before · Empty", "U-012 Before · Error"])
         for frame in parsed.frames:
             self.assertEqual(frame["sandbox"], "")
@@ -125,7 +125,7 @@ class MockupTests(unittest.TestCase):
         self.render()
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
         self.assertNotIn("<script>alert(1)", page)
-        self.assertEqual(len(Frames(page).frames), 11)
+        self.assertEqual(len(Frames(page).frames), 12)
         self.assertEqual(self.problems(), "")
 
     def test_page_follows_the_record(self):
@@ -222,20 +222,69 @@ class MockupTests(unittest.TestCase):
     def test_alternatives_render_as_proposals_of_one_comparison(self):
         self.render()
         page = (self.out / "mockups.html").read_text(encoding="utf-8")
-        mockup = finding(self.data, "U-006")["mockup"]
-        frames = Frames(page).frames
-        self.assertEqual([f["title"] for f in frames[:3]],
-                         ["U-006 Before", "U-006 After — Drawer", "U-006 Alternative — Chip row"])
-        self.assertEqual(frames[2]["srcdoc"], mockups.frame_document(mockup["alternatives"][0]["after"], "en"))
-        self.assertIn('<div class="group proposals" role="group" aria-labelledby="U-006-proposals">'
-                      '<span class="group-label" id="U-006-proposals">Proposal</span><button type="button" value="0" aria-pressed="true">Drawer</button>'
-                      '<button type="button" value="1" aria-pressed="false">Chip row</button></div>', page)
-        self.assertIn('<p class="mockup-note" data-proposal="1"><strong>Chip row:</strong> Below 640px', page)
+        mockup = finding(self.data, "U-014")["mockup"]
+        mockup["label"] = "Secondary"
+        mockup["alternatives"] = [{"label": "Menu", "after": "<p>menu</p>", "note": "One button fewer."}]
+        self.save()
+        self.render()
+        page = (self.out / "mockups.html").read_text(encoding="utf-8")
+        frames = Frames(page[page.index('id="U-014"'):]).frames
+        self.assertEqual([f["title"] for f in frames],
+                         ["U-014 Before", "U-014 After — Secondary", "U-014 Alternative — Menu"])
+        self.assertEqual(frames[2]["srcdoc"], mockups.frame_document("<p>menu</p>", "en"))
+        self.assertIn('<div class="group proposals" role="group" aria-labelledby="U-014-proposals">'
+                      '<span class="group-label" id="U-014-proposals">Proposal</span><button type="button" value="0" aria-pressed="true">Secondary</button>'
+                      '<button type="button" value="1" aria-pressed="false">Menu</button></div>', page)
+        self.assertIn('data-recommended="0"', page[page.index('id="U-014"'):])
+        self.assertIn('<p class="mockup-note" data-proposal="1"><strong>Menu:</strong> One button fewer.', page)
         # A mockup without alternatives has no picker and no proposal markers.
-        u014 = page[page.index('id="U-014"'):page.index("</section>", page.index('id="U-014"'))]
-        self.assertNotIn("data-proposal", u014)
-        self.assertNotIn("proposals", u014)
+        u012 = page[page.index('id="U-012"'):page.index("</section>", page.index('id="U-012"'))]
+        self.assertNotIn("data-proposal", u012)
+        self.assertNotIn("proposals", u012)
         self.assertEqual(self.problems(), "")
+
+    def test_tiers_render_widest_first_with_the_fix_chosen(self):
+        for lang, heads in (("en", ["Full — Chip row", "Standard (recommended) — Drawer", "Minimal — Stacked"]),
+                            ("ja", ["松 — チップ列", "竹（推奨） — ドロワー", "梅 — 縦積み"])):
+            out = self.out / lang
+            out.mkdir()
+            if lang == "ja":
+                self.data = json.loads((ROOT / "examples" / "findings.sample.ja.json").read_text(encoding="utf-8"))
+                self.save()
+            self.render(lang, out)
+            page = (out / "mockups.html").read_text(encoding="utf-8")
+            section = page[page.index('id="U-006"'):page.index("</section>", page.index('id="U-006"'))]
+            frames = Frames(section).frames
+            self.assertEqual([f["title"] for f in frames[1:]], [f"U-006 {h}" for h in heads], lang)
+            # Proposal 1, the recommended Standard tier, is pressed and chosen when the page loads.
+            self.assertIn('data-recommended="1"', section)
+            self.assertIn(f'<button type="button" value="0" aria-pressed="false">{heads[0]}</button>'
+                          f'<button type="button" value="1" aria-pressed="true">{heads[1]}</button>', section)
+            self.assertIn(f'<p class="mockup-note" data-proposal="2"><strong>{heads[2]}:</strong>', section)
+            self.assertIn("section.dataset.recommended", page)
+
+    def test_schema_rejects_malformed_tiers(self):
+        base = {"before": "<p>a</p>", "after": "<p>b</p>", "label": "Drawer", "tier": "standard"}
+        full, minimal = ({"label": "Chips", "tier": "full", "after": "<p>c</p>"},
+                         {"label": "Stack", "tier": "minimal", "after": "<p>d</p>"})
+        for mockup, message in (
+                ({**base, "tier": "premium"}, r"mockup\.tier: expected one of full, standard, minimal"),
+                ({**base, "alternatives": [{**full, "tier": "Full"}, minimal]},
+                 r"alternatives\[0\]\.tier: expected one of"),
+                ({k: v for k, v in base.items() if k != "tier"} | {"alternatives": [full, minimal]}, "exactly three"),
+                ({**base, "alternatives": [full]}, "exactly three"),
+                ({**base, "alternatives": [full, {**minimal, "tier": "full"}]}, "exactly three"),
+                ({**base, "alternatives": [full, minimal, {"label": "More", "after": "<p>e</p>"}]}, "exactly three"),
+                ({**base, "alternatives": [full, minimal, {**full, "label": "More"}]}, "exactly three"),
+                (base, r"mockup\.tier: a tiered mockup needs two alternatives")):
+            with self.subTest(mockup=mockup):
+                data = copy.deepcopy(SAMPLE)
+                data["findings"][0]["mockup"] = mockup
+                with self.assertRaisesRegex(findings.RecordError, message):
+                    findings.check_findings(data, findings.flow_ids(FLOWS))
+        data = copy.deepcopy(SAMPLE)
+        data["findings"][0]["mockup"] = {**base, "alternatives": [minimal, full]}
+        findings.check_findings(data, findings.flow_ids(FLOWS))
 
     def test_schema_rejects_malformed_alternatives(self):
         base = {"before": "<p>a</p>", "after": "<p>b</p>", "label": "Drawer"}
@@ -428,6 +477,7 @@ class MockupTests(unittest.TestCase):
 
     def test_five_alternatives_are_accepted(self):
         mockup = finding(self.data, "U-006")["mockup"]
+        del mockup["tier"]
         mockup["alternatives"] = [{"label": f"Design {i}", "after": f"<p>{i}</p>"} for i in range(5)]
         self.save()
         self.render()

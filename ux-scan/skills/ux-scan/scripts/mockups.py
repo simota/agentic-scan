@@ -4,7 +4,8 @@ Each mockup side is an HTML fragment written by the reviewer. It is shown in a
 sandboxed iframe (no scripts, no same-origin access, no network fetches), at
 the mockup's viewport, side by side, under a slider, or one side at a time.
 A mockup with alternatives offers each proposal as an after side, one at a time
-or all together; a mockup with states compares each state in turn. A finding can
+or all together; tiered proposals (松竹梅) are ordered widest first, with the
+recommended one chosen; a mockup with states compares each state in turn. A finding can
 carry several mockups, one section each.
 The page is self-contained and offline; it is not part of the PDF.
 Standard library only.
@@ -13,6 +14,8 @@ Standard library only.
 import html
 
 from scan_report_kit import style
+
+from findings import TIERS
 
 PAGE = "mockups.html"
 DEFAULT_VIEWPORT = "360x640"
@@ -32,6 +35,7 @@ LABELS = {
            "screen": "Screen", "location": "Location", "flow": "Flow",
            "observed": "Observed", "expected": "Expected", "fix": "Fix", "field": "Before/After",
            "proposal": "Proposal", "alternative": "Alternative", "state": "State", "all": "All proposals",
+           "tiers": {"full": "Full", "standard": "Standard", "minimal": "Minimal"}, "recommended": " (recommended)",
            "lead": "Mockups illustrate each finding as it is and as its fix proposes. They are drawn for the "
                    "review, not rendered from the app, and are not part of the PDF report.",
            "no_script": "Scripts are off: every side is shown at full size."},
@@ -41,6 +45,7 @@ LABELS = {
            "contents": "モック一覧", "back": "モック一覧へ戻る", "screen": "画面", "location": "箇所", "flow": "フロー",
            "observed": "現状", "expected": "あるべき状態", "fix": "修正", "field": "Before/After",
            "proposal": "案", "alternative": "別案", "state": "状態", "all": "全案を並べる",
+           "tiers": {"full": "松", "standard": "竹", "minimal": "梅"}, "recommended": "（推奨）",
            "lead": "各指摘の現状と修正案をモックで示します。モックは診断のために描いたもので、アプリを実際に"
                    "描画したものではありません。PDF の診断書には含まれません。",
            "no_script": "スクリプトが無効のため、すべての面を原寸で表示しています。"},
@@ -140,7 +145,7 @@ JS = """
     var compare = section.querySelector('.compare'), controls = section.querySelector('.mockup-controls');
     var split = section.querySelector('.split'), modes = controls.querySelector('.modes');
     var proposals = controls.querySelector('.proposals'), states = controls.querySelector('.states');
-    var chosen = {proposal: '0', state: '0'};
+    var chosen = {proposal: section.dataset.recommended, state: '0'};
     controls.hidden = false;
     // One state at a time; one after side at a time, or every proposal under "all".
     function show() {
@@ -220,12 +225,30 @@ def states(mockup):
 
 
 def proposals(mockup, L):
-    """(label, caption, afters, note) per proposal, one after per state: the fix first, then each alternative."""
+    """(label, caption, afters, note) per proposal, one after per state: the fix first, then each alternative.
+
+    Tiered proposals come widest first (松, 竹, 梅), each named by its tier; the fix's is marked recommended.
+    """
     label = mockup.get("label", "").strip()
     first = (label, f'{L["after"]} — {label}' if label else L["after"], [s[2] for s in states(mockup)], "")
-    return [first, *((a["label"].strip(), f'{L["alternative"]} — {a["label"].strip()}',
-                      [s["after"] for s in a["states"]] if "states" in a else [a["after"]], a.get("note", ""))
-                     for a in mockup.get("alternatives", []))]
+    alternatives = mockup.get("alternatives", [])
+    if "tier" not in mockup:
+        return [first, *((a["label"].strip(), f'{L["alternative"]} — {a["label"].strip()}',
+                          [s["after"] for s in a["states"]] if "states" in a else [a["after"]], a.get("note", ""))
+                         for a in alternatives)]
+    tiered = [(mockup["tier"], label, first[2], "", True),
+              *((a["tier"], a["label"].strip(), [s["after"] for s in a["states"]] if "states" in a else [a["after"]],
+                 a.get("note", ""), False) for a in alternatives)]
+    named = []
+    for tier, name, afters, note, recommended in sorted(tiered, key=lambda t: TIERS.index(t[0])):
+        head = L["tiers"][tier] + (L["recommended"] if recommended else "")
+        named.append((f"{head} — {name}", f"{head} — {name}", afters, note))
+    return named
+
+
+def recommended(mockup):
+    """The index of the recommended proposal among proposals(): the fix's own after."""
+    return TIERS.index(mockup["tier"]) if "tier" in mockup else 0
 
 
 def _pane(side, caption, fragment, name, viewport, lang, proposal=None, state=None):
@@ -275,13 +298,15 @@ def _section(f, anchor, mockup, flows, lang, L):
     notes += "".join(f'<p class="mockup-note" data-proposal="{i}"><strong>{esc(label)}:</strong> {esc(note)}</p>'
                      for i, (label, _, _, note) in enumerate(options) if note.strip())
     pickers = _buttons(anchor, L["state"], [(j, s[0]) for j, s in enumerate(sides)], "states", 0) if staged else ""
-    pickers += _buttons(anchor, L["proposal"], [(i, o[0]) for i, o in enumerate(options)], "proposals", 0) if several else ""
+    chosen = recommended(mockup)
+    pickers += _buttons(anchor, L["proposal"], [(i, o[0]) for i, o in enumerate(options)], "proposals", chosen) if several else ""
     modes = _buttons(anchor, L["view"], [(m, L[m]) for m in ("side", "slider", "before", "after", *(("all",) if several else ()))],
                      "modes", "side")
     sizes = _buttons(anchor, L["viewport"], [(v, v) for v in choices], "viewports", viewport)
     details = "".join(f"<dt>{esc(L[k])}</dt><dd>{esc(f[k])}</dd>" for k in ("observed", "expected", "fix") if f.get(k))
     heading = f"{fid} {f['title']}" + (f" — {title}" if title else "")
     return (f'<section class="mockup" id="{esc(anchor)}" data-viewport="{viewport}" data-options="{len(options)}" '
+            f'data-recommended="{chosen}" '
             f'aria-labelledby="{esc(anchor)}-h">'
             f'<span class="badge {esc(f["severity"])}">{esc(f["severity"])}</span>'
             f'<h2 id="{esc(anchor)}-h">{esc(heading)}</h2>'

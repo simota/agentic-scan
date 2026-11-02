@@ -40,8 +40,9 @@ make status
 Then ask the agent, e.g. "ux-scan this repository" or "review the sign-up and
 checkout UI for usability and accessibility problems". Each `Valid` or
 `Likely` finding a user can see gets a before/after mockup in `mockups.html`,
-which compares the screen as it is and as its fix proposes; name the findings
-to mock, or say "no mockups" to skip them.
+which compares the screen as it is with its fix in three tiers, 松竹梅 (full,
+standard, minimal), the recommended one chosen first; name the findings to
+mock, or say "no mockups" to skip them.
 
 Every report carries its evidence: each finding cites screenshots, videos or
 logs saved in `evidence/` next to `findings.json`, marked `before` (the defect)

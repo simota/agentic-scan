@@ -1,8 +1,8 @@
 # Before/after mockups
 
 **Read when:** REPORT — a `Valid` or `Likely` finding changes what a user
-sees, or the requester asked for mockups, more than one design proposal for a
-fix, or a comparison across screen states or screens.
+sees, or the requester asked for mockups, the three tiers (松竹梅), more than
+one design proposal for a fix, or a comparison across screen states or screens.
 
 A mockup shows one finding as the user meets it today (`before`) and as its
 `fix` proposes (`after`). It illustrates the finding; it is not a redesign and
@@ -26,9 +26,13 @@ dashboard. The PDF does not include it.
   which visible High and Medium findings got none
 - When the requester names findings, mock those first; when they decline
   mockups, draw none and say so in `limitations`
+- Each mockup proposes the fix in three tiers, 松 (`full`), 竹 (`standard`)
+  and 梅 (`minimal`), by default (*Three tiers*). Under a tight budget, tier
+  the High findings first; the Medium and Low ones keep one proposal, and
+  `limitations` names them
 - One mockup per finding, unless the defect shows on more than one screen or
-  region (*Several mockups*); alternative proposals and screen states go
-  inside it (*Alternative proposals*, *States*). The state to draw is the one
+  region (*Several mockups*); tiers, alternative proposals and screen states
+  go inside it (*Three tiers*, *Alternative proposals*, *States*). The state to draw is the one
   that carries the defect (the error, the empty list, the 360 px layout), not
   every state of the flow
 
@@ -110,6 +114,41 @@ reasonable shape with different trade-offs, the mockup can carry up to five
 - An alternative is replaced with the whole mockup: merge the full `mockup`
   object to add, change or drop one
 
+## Three tiers
+
+By default every mockup proposes its fix as three tiers of screen change,
+松竹梅, so the team can weigh scope against effort:
+
+```json
+"mockup": {"viewport": "360x640", "label": "Drawer", "tier": "standard",
+           "before": "…", "after": "…", "note": "…",
+           "alternatives": [{"label": "Chip row", "tier": "full", "after": "…", "note": "Full: …"},
+                            {"label": "Stacked", "tier": "minimal", "after": "…", "note": "Minimal: …"}]}
+```
+
+| Tier | Ja | What changes on screen |
+|---|---|---|
+| `minimal` | 梅 | The smallest visible change at the defect: one property, one rule, one element; everything around it stays |
+| `standard` | 竹 | The fix plus what the region needs to stay coherent with it: the sibling controls, the related states, the shared component's other uses on the screen |
+| `full` | 松 | The region reworked for its flow: layout, hierarchy or interaction rebuilt where the defect showed that the current structure is the cause |
+
+- Every tier meets `expected` as fully as the others: 梅 is the narrowest
+  complete fix, not a partial one, and 松 stays within the region the finding
+  is about; a redesign of the screen is out of scope
+- Tiers differ in what the user sees. When a wider tier would draw the same
+  screen (the fix is one token or one attribute and nothing around it moves),
+  the mockup keeps one proposal without tiers, and its `note` says why
+- The mockup's `tier` names its `after`, the recommendation `fix` describes;
+  choose it per finding, from the flow's priority and the cost of each tier.
+  Two `alternatives` carry the other two tiers, one each: `findings.py`
+  refuses any other combination, and more alternatives besides
+- Open each alternative's `note` with its tier and give what it changes and
+  costs against `after`: the components and states it touches, and what it
+  gains or gives up for the user. `fix` names the recommended tier
+- With `states`, each tier gives its `after` in every state, as any
+  alternative does (*States*); with several mockups, each carries its own
+  tiers
+
 ## States
 
 When the defect or its fix differs by screen state (empty, loading, error,
@@ -153,7 +192,9 @@ mockup with alternatives adds a proposal picker, hidden in the views it cannot
 change (*Before* and *All proposals*): every other view compares `before`
 with the chosen proposal, whose note is shown above it under its label, and an
 *All proposals* view sets `before` beside every proposal, in as many columns
-as stay readable. A mockup with states adds a state picker that switches every
+as stay readable. Tiered proposals are listed 松, 竹, 梅 (*Full*, *Standard*,
+*Minimal*), each named by its tier and label, and the recommended one is
+marked and chosen when the page opens. A mockup with states adds a state picker that switches every
 side and the state's note together. Frames load as they are shown. The
 contents at the top give each mockup's severity, and each mockup ends with a
 link back to them, since most visible findings carry one. Each row of

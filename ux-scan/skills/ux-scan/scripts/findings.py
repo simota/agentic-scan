@@ -57,8 +57,10 @@ FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective"
                 "validation", "references", "mockup", "evidence")
 REQUIRED_FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "flow_ref", "screen",
                          "criterion", "location", "validation")
-MOCKUP_KEYS = ("title", "before", "after", "states", "viewport", "note", "label", "alternatives")
-ALTERNATIVE_KEYS = ("label", "after", "states", "note")
+MOCKUP_KEYS = ("title", "before", "after", "states", "viewport", "note", "label", "tier", "alternatives")
+ALTERNATIVE_KEYS = ("label", "tier", "after", "states", "note")
+# 松竹梅: the scope of a proposal's screen change, widest first (reference/mockups.md).
+TIERS = ("full", "standard", "minimal")
 STATE_KEYS = ("label", "before", "after", "note")
 ALTERNATIVE_STATE_KEYS = ("label", "after")
 MAX_MOCKUP_BYTES = 64 * 1024
@@ -229,6 +231,7 @@ def _one_mockup(mockup, where):
     _str(mockup, "title", where)
     _str(mockup, "note", where)
     _str(mockup, "label", where)
+    _tier(mockup, where)
     if _str(mockup, "viewport", where):
         _viewports([mockup["viewport"]], f"{where}.viewport")
     states = _states(mockup, where)
@@ -236,6 +239,8 @@ def _one_mockup(mockup, where):
     size = sum(_fragment(side, key, f"{where}.states[{j}]" if states else where)
                for j, side in enumerate(sides) for key in ("before", "after"))
     if "alternatives" not in mockup:
+        if "tier" in mockup:
+            raise RecordError(f"{where}.tier: a tiered mockup needs two alternatives carrying the other tiers")
         return size
     alternatives = mockup["alternatives"]
     if not isinstance(alternatives, list) or not 0 < len(alternatives) <= MAX_ALTERNATIVES:
@@ -253,10 +258,21 @@ def _one_mockup(mockup, where):
             raise RecordError(f"{at}.label: {label!r} is already used by another proposal of this mockup")
         labels.append(label)
         _str(alternative, "note", at)
+        _tier(alternative, at)
         if not states and "states" in alternative:
             raise RecordError(f"{at}.states: the mockup has no states; give this proposal's after side")
         size += _alternative_states(alternative, states, at) if states else _fragment(alternative, "after", at)
+    # Tiered proposals are three, one per tier: the recommended after and two alternatives.
+    tiers = [mockup.get("tier"), *(a.get("tier") for a in alternatives)]
+    if any(tiers) and sorted(tiers, key=str) != sorted(TIERS):
+        raise RecordError(f"{where}: tiered proposals are exactly three, one each of {', '.join(TIERS)}: "
+                          "the mockup's tier names its after, and two alternatives carry the others")
     return size
+
+
+def _tier(proposal, where):
+    if "tier" in proposal and proposal["tier"] not in TIERS:
+        raise RecordError(f"{where}.tier: expected one of {', '.join(TIERS)}")
 
 
 def _states(mockup, where):

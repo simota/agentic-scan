@@ -18,7 +18,7 @@ checklist tailored to this app.
 
 It does not redesign screens or change code. Fixing is a separate, later
 request. A finding a user can see on screen carries a before/after mockup of
-its fix (`reference/mockups.md`): an illustration kept in the record, not a redesign. It judges against a stated criterion, not taste: "the cards feel
+its fix in three tiers, 松竹梅 (`reference/mockups.md`): an illustration kept in the record, not a redesign. It judges against a stated criterion, not taste: "the cards feel
 cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing scale
 is 4/8/12/16" is. Brand voice, palette canon and naming belong to brand-scan;
 speed and bundle size to performance-scan; vulnerabilities to security-scan.
@@ -93,7 +93,7 @@ only where the app chose and configured them.
 | CHECKLIST | The perspectives that apply to these flows, as a coverage plan; attach early candidates from the inventory marked unverified | `reference/perspectives.md` |
 | REVIEW | One pass per review unit. Walk each flow as its actor would: entry, every step, every state (loading, empty, error, success), the smallest supported viewport, the longest locale, keyboard only, a screen reader's view of names and roles. Then sweep the inventory candidates for this unit and decide each in context | `reference/perspectives.md` |
 | VERIFY | For every finding: is the user reached by it (route linked, component rendered on the flow, viewport and locale supported)? Is it compensated elsewhere (a global focus style, a wrapper that adds the label, a parent error boundary)? Is it intentional and documented? Try to falsify it; record the verdict and its evidence, and capture the evidence files (screenshot or video when rendered, else a log) into `<out>/evidence/` | `reference/validation.md`, `reference/evidence.md` |
-| REPORT | Merge findings with `path:line` locations, `flow_ref`, `screen`, `criterion` and `evidence`; give each `Valid` or `Likely` finding a user can see a before/after `mockup` built from the code read in REVIEW, High and Medium first; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out> --lang <ja\|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py <out>` (both with `--no-pdf` on the no-PDF path); then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md`, `reference/mockups.md` |
+| REPORT | Merge findings with `path:line` locations, `flow_ref`, `screen`, `criterion` and `evidence`; give each `Valid` or `Likely` finding a user can see a before/after `mockup` built from the code read in REVIEW, in three tiers (松竹梅) with the recommended one as `after`, High and Medium first; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py <out>/findings.json --out <out> --lang <ja\|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py <out>` (both with `--no-pdf` on the no-PDF path); then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md`, `reference/mockups.md` |
 
 ## Outputs
 
@@ -106,7 +106,7 @@ only where the app chose and configured them.
 | `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings, each with its screenshots and log excerpts, before and after side by side |
 | `evidence/` / `evidence.html` | The cited screenshots, videos and logs, and a page showing them per finding, before and after, videos playable (`reference/evidence.md`) |
-| `mockups.html` | Before/after mockups, side by side or under a slider, per viewport, with pickers when a mockup has alternative proposals or states and an all-proposals view; for every visible `Valid` or `Likely` finding (`reference/mockups.md`) |
+| `mockups.html` | Before/after mockups, side by side or under a slider, per viewport, with pickers when a mockup has tiers (松竹梅), alternative proposals or states and an all-proposals view; for every visible `Valid` or `Likely` finding (`reference/mockups.md`) |
 
 Skip the files when only a checklist was asked for.
 
@@ -124,7 +124,8 @@ Skip the files when only a checklist was asked for.
 - every flow in `flows.json` was reviewed, or is named in `limitations`
 - every included finding cites its evidence, and `evidence/` holds exactly the cited files
 - every visible `Valid` or `Likely` High or Medium finding has a `mockup`, or
-  `limitations` names it (or says the requester declined mockups)
+  `limitations` names it (or says the requester declined mockups); every
+  mockup carries the three tiers, or its `note` or `limitations` says why not
 - the chat summary follows `reference/report.md`
 
 ## Decide first
@@ -139,7 +140,8 @@ Skip the files when only a checklist was asked for.
 | The requester asks to run the app or open it in a browser | Allowed only as asked: start it from a copy or with the repository's own dev command, install dependencies only with their consent, write nothing inside the repository, and never touch shared or production backends. Save each observation as a screenshot or video in `<out>/evidence/` with its URL and viewport and cite it in the finding's `evidence`; rendering claims seen this way can be `Confirmed`. After a fix the requester applied, capture the same view again as `after`. Name in `limitations` what was run and what was not |
 | Native mobile (SwiftUI, Compose, Flutter) | Read screens by hand with the same perspectives; the inventory covers web markup and styles only — say so in `limitations` |
 | The requester names findings to mock, or declines mockups | Mock those findings first, or draw none and say so in `limitations`; without either, mock every visible `Valid` or `Likely` finding (`reference/mockups.md`) |
-| The requester asks for several design proposals for a fix | Give the finding's `mockup` up to five `alternatives`, each meeting `expected` and noting its trade-off against the recommended `after` (`reference/mockups.md`) |
+| The requester asks for one proposal only, or no tiers | Draw `after` alone, without `tier`, and say so in `limitations` (`reference/mockups.md`) |
+| The requester asks for several design proposals for a fix beyond the tiers | Drop the tiers and give the finding's `mockup` up to five `alternatives`, each meeting `expected` and noting its trade-off against the recommended `after` (`reference/mockups.md`) |
 | The defect or its fix differs by screen state, or shows on more than one screen | Give the `mockup` two to four `states`, or make it a list of two to four titled mockups, one per screen or region (`reference/mockups.md`) |
 | Request is "redesign it" or "make it look better" | Out of scope: report the findings and leave the redesign to a later request |
 | Request is about brand voice, palette or naming | That is brand-scan; record only UI clarity (CP) here |

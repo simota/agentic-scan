@@ -191,18 +191,26 @@
       "observed": ".sidebar { width: 480px; flex-shrink: 0; } で、小さい画面向けのルールがない",
       "expected": "640px 未満ではサイドバーを畳むか縦に積み、横スクロールなしでタスク一覧が見える。",
       "impact": "スマートフォンではタスク一覧が 480px 右から始まり、主要フローを始めるのに横スクロールが要る。",
-      "fix": "640px のブレークポイント未満ではサイドバーをドロワーにし、それ以上では縮められるようにする。",
+      "fix": "640px のブレークポイント未満ではサイドバーをドロワーにし、それ以上では縮められるようにする（竹。モックには松と梅も描いています）。",
       "mockup": {
         "viewport": "360x640",
         "label": "ドロワー",
+        "tier": "standard",
         "before": "<style>body{margin:0;font:14px/1.5 system-ui,sans-serif;color:#1b1b1b;background:#fff}.layout{display:flex}.sidebar{background:#f1f0ec;padding:16px}.sidebar h3{margin:0 0 8px;font-size:16px}.sidebar li{list-style:none;padding:4px 0}.sidebar ul{margin:0;padding:0}section{padding:16px;min-width:0;flex:1}.actions{display:flex;gap:8px;margin-bottom:12px}.btn{padding:8px 16px;border-radius:6px;border:1px solid #1f3f66;font:inherit}.primary{background:#1f3f66;color:#fff}.secondary{background:#fff;color:#1f3f66}.task{border-bottom:1px solid #dcd9d2;padding:12px 0}</style><style>.sidebar{width:480px;flex-shrink:0}</style><div class=\"layout\"><aside class=\"sidebar\"><h3>Lists</h3><ul><li>Inbox</li><li>Work</li><li>Personal</li></ul></aside><section><div class=\"actions\"><button class=\"btn primary\">New task</button></div><div class=\"task\">Draft the Q3 plan</div><div class=\"task\">Review sign-up copy</div><div class=\"task\">Book the venue</div></section></div>",
         "after": "<style>body{margin:0;font:14px/1.5 system-ui,sans-serif;color:#1b1b1b;background:#fff}.layout{display:flex}.sidebar{background:#f1f0ec;padding:16px}.sidebar h3{margin:0 0 8px;font-size:16px}.sidebar li{list-style:none;padding:4px 0}.sidebar ul{margin:0;padding:0}section{padding:16px;min-width:0;flex:1}.actions{display:flex;gap:8px;margin-bottom:12px}.btn{padding:8px 16px;border-radius:6px;border:1px solid #1f3f66;font:inherit}.primary{background:#1f3f66;color:#fff}.secondary{background:#fff;color:#1f3f66}.task{border-bottom:1px solid #dcd9d2;padding:12px 0}</style><style>.sidebar{width:240px;flex-shrink:1}.menu{display:none}@media(max-width:639px){.layout{display:block}.sidebar{display:none}.menu{display:block;padding:12px 16px;border-bottom:1px solid #dcd9d2;background:#f1f0ec}}</style><div class=\"menu\"><button class=\"btn secondary\" aria-expanded=\"false\">&#9776; Lists</button></div><div class=\"layout\"><aside class=\"sidebar\"><h3>Lists</h3><ul><li>Inbox</li><li>Work</li><li>Personal</li></ul></aside><section><div class=\"actions\"><button class=\"btn primary\">New task</button></div><div class=\"task\">Draft the Q3 plan</div><div class=\"task\">Review sign-up copy</div><div class=\"task\">Book the venue</div></section></div>",
         "note": "640px のブレークポイント未満ではサイドバーを「Lists」ボタンで開くドロワーにします。ビューポートを 1280x800 に切り替えると、一覧の横に並ぶ表示を確認できます。",
         "alternatives": [
           {
             "label": "チップ列",
+            "tier": "full",
             "after": "<style>body{margin:0;font:14px/1.5 system-ui,sans-serif;color:#1b1b1b;background:#fff}.layout{display:flex}.sidebar{background:#f1f0ec;padding:16px}.sidebar h3{margin:0 0 8px;font-size:16px}.sidebar li{list-style:none;padding:4px 0}.sidebar ul{margin:0;padding:0}section{padding:16px;min-width:0;flex:1}.actions{display:flex;gap:8px;margin-bottom:12px}.btn{padding:8px 16px;border-radius:6px;border:1px solid #1f3f66;font:inherit}.primary{background:#1f3f66;color:#fff}.secondary{background:#fff;color:#1f3f66}.task{border-bottom:1px solid #dcd9d2;padding:12px 0}</style><style>.sidebar{width:240px;flex-shrink:1}.chips{display:none}@media(max-width:639px){.layout{display:block}.sidebar{display:none}.chips{display:flex;gap:8px;overflow-x:auto;padding:12px 16px;border-bottom:1px solid #dcd9d2;background:#f1f0ec}.chip{flex:none;padding:4px 12px;border-radius:16px;border:1px solid #1f3f66;color:#1f3f66;background:#fff}.chip.on{background:#1f3f66;color:#fff}}</style><div class=\"chips\"><span class=\"chip on\">Inbox</span><span class=\"chip\">Work</span><span class=\"chip\">Personal</span></div><div class=\"layout\"><aside class=\"sidebar\"><h3>Lists</h3><ul><li>Inbox</li><li>Work</li><li>Personal</li></ul></aside><section><div class=\"actions\"><button class=\"btn primary\">New task</button></div><div class=\"task\">Draft the Q3 plan</div><div class=\"task\">Review sign-up copy</div><div class=\"task\">Book the venue</div></section></div>",
-            "note": "640px 未満ではリストをタスクの上に横スクロールのチップ列として並べます。どのリストにも 1 タップで移れますが、高さを 48px 使います。"
+            "note": "松: スマートフォンではリストのナビゲーションをタスクの上の横スクロールするチップ列に作り替え、何も開かずにどのリストへも 1 タップで移れます。チップ部品を新しく作る必要があり、高さを 48px 使います。"
+          },
+          {
+            "label": "縦積み",
+            "tier": "minimal",
+            "after": "<style>body{margin:0;font:14px/1.5 system-ui,sans-serif;color:#1b1b1b;background:#fff}.layout{display:flex}.sidebar{background:#f1f0ec;padding:16px}.sidebar h3{margin:0 0 8px;font-size:16px}.sidebar li{list-style:none;padding:4px 0}.sidebar ul{margin:0;padding:0}section{padding:16px;min-width:0;flex:1}.actions{display:flex;gap:8px;margin-bottom:12px}.btn{padding:8px 16px;border-radius:6px;border:1px solid #1f3f66;font:inherit}.primary{background:#1f3f66;color:#fff}.secondary{background:#fff;color:#1f3f66}.task{border-bottom:1px solid #dcd9d2;padding:12px 0}</style><style>.sidebar{width:240px;flex-shrink:1}@media(max-width:639px){.layout{display:block}.sidebar{width:auto;padding:12px 16px}.sidebar ul{display:flex;gap:16px}}</style><div class=\"layout\"><aside class=\"sidebar\"><h3>Lists</h3><ul><li>Inbox</li><li>Work</li><li>Personal</li></ul></aside><section><div class=\"actions\"><button class=\"btn primary\">New task</button></div><div class=\"task\">Draft the Q3 plan</div><div class=\"task\">Review sign-up copy</div><div class=\"task\">Book the venue</div></section></div>",
+            "note": "梅: メディアクエリ 1 つでリストをタスクの上に全幅で積みます。新しい部品も状態も要りませんが、毎回タスク一覧の始まりが下がります。"
           }
         ]
       },
@@ -926,7 +934,8 @@
   "limitations": [
     "これは描画処理のための架空のサンプルデータで、実在する製品の診断ではありません。",
     "静的な診断のため何も描画しておらず、コントラスト、省略される正確な幅、重なりはコードから推定しています。",
-    "サンプルを小さく保つため、モックは3件の指摘にのみ作成しました。画面に現れる次の High・Medium の指摘にはありません: U-001、U-002、U-005、U-009、U-010、U-011、U-013、U-015、U-016、U-017、U-018。"
+    "サンプルを小さく保つため、モックは3件の指摘にのみ作成しました。画面に現れる次の High・Medium の指摘にはありません: U-001、U-002、U-005、U-009、U-010、U-011、U-013、U-015、U-016、U-017、U-018。",
+    "U-006 には松・竹・梅の 3 案を描きました。サンプルを小さく保つため、U-012 と U-014 は 1 案のままです。"
   ],
   "decisions": [
     "/signup をマーケティングサイトからのみ到達させるのは意図どおりか。アプリ内のリンクがない（inventory orphan_routes）。",

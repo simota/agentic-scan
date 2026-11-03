@@ -16,6 +16,8 @@ import base64
 import hashlib
 import json
 from html import escape
+from itertools import accumulate
+from operator import add, sub
 from pathlib import Path
 import re
 import sys
@@ -1045,26 +1047,54 @@ def arch_layout(arch):
         column = columns[c]
         sides = [{node: i for i, node in enumerate(columns[o])}
                  for o in (c - 1, c + 1) if 0 <= o < len(columns)]
-        rows = {node: [sorted(row[x] for x in neighbours[node] if x in row) for row in sides]
-                for node in column}
+        # The neighbouring columns do not move while column c is sifted, so the
+        # crossings of every pair are counted once, by node index, before the moves:
+        # pairs[u][v] counts the pairs of rows (a, b), one side at a time, with a
+        # of u, b of v and a > b, i.e. the crossings when u stands above v.
+        nodes = list(column)
+        rows = [[sorted(row[x] for x in neighbours[node] if x in row) for row in sides]
+                for node in nodes]
 
-        def cross(u, v):
-            """Crossings among the edges of u and v when u stands above v."""
-            return sum(a > b for side_u, side_v in zip(rows[u], rows[v])
-                       for a in side_u for b in side_v)
+        def greater(node_rows):
+            """For each row k of each side in turn: how many of the node's rows there exceed k."""
+            counts = []
+            for node_side, row in zip(node_rows, sides):
+                start = 0  # sorted, so the count drops by one at each of the node's rows
+                for passed, r in enumerate(node_side):
+                    counts += [len(node_side) - passed] * (r - start)
+                    start = r
+                counts += [0] * (len(row) - start)
+            return counts
 
-        for node in list(column):
-            stood = column.index(node)
-            others = [x for x in column if x != node]
-            cost = sum(cross(node, x) for x in others)
-            at, fewest = 0, cost
-            for i, x in enumerate(others, 1):
-                cost += cross(x, node) - cross(node, x)
+        # by_row[k][u] is greater(rows[u])[k]; below[v][u] == pairs[u][v] sums it
+        # over the rows k of v, in the same numbering.
+        by_row, below = list(zip(*map(greater, rows))), []
+        for node_rows in rows:
+            column_sum, offset = [0] * len(nodes), 0
+            for node_side, row in zip(node_rows, sides):
+                for r in node_side:
+                    column_sum = list(map(add, column_sum, by_row[offset + r]))
+                offset += len(row)
+            below.append(column_sum)
+        pairs = [list(row) for row in zip(*below)]
+        order = list(range(len(nodes)))
+        for node in range(len(nodes)):
+            stood = order.index(node)
+            others = order[:stood] + order[stood + 1:]
+            above = pairs[node]
+            # costs[i]: crossings with node placed at i among the others; moving
+            # it past x swaps which of the two stands above.
+            costs = list(accumulate(
+                map(sub, map(below[node].__getitem__, others), map(above.__getitem__, others)),
+                initial=sum(above) - above[node]))
+            fewest = min(costs)
+            at = costs.index(fewest)
+            if at == stood:
                 # On a tie, move away from where it stood, to leave a plateau.
-                if cost < fewest or (cost == fewest and at == stood and i != stood):
-                    at, fewest = i, cost
+                at = next((i for i in range(stood + 1, len(costs)) if costs[i] == fewest), at)
             others.insert(at, node)
-            column[:] = others
+            order = others
+        column[:] = [nodes[i] for i in order]
 
     best, fewest_total = [list(column) for column in columns], total()
     for _ in range(6):
@@ -1072,8 +1102,9 @@ def arch_layout(arch):
             break
         for c in range(len(columns)):
             sift(c)
-        if total() < fewest_total:
-            best, fewest_total = [list(column) for column in columns], total()
+        crossings = total()
+        if crossings < fewest_total:
+            best, fewest_total = [list(column) for column in columns], crossings
     columns = best
     tallest = max(len(column) for column in columns)
     positions = {}
@@ -1180,13 +1211,23 @@ def label_spot(segments, width, taken, height=LABEL_H):
     """
     def overlap(spot):
         x, y = spot[0] - width / 2, spot[1] - height
-        return sum(weight * max(0, min(x + width, bx + bw) - max(x, bx))
-                   * max(0, min(y + height, by + bh) - max(y, by))
-                   for bx, by, bw, bh, weight in taken)
+        # Only boxes that overlap add to the sum: every term is at least 0, so
+        # leaving out the zeros keeps the sum, in the same order, unchanged.
+        return sum(weight * across * down for bx, by, bw, bh, weight in taken
+                   if (across := min(x + width, bx + bw) - max(x, bx)) > 0
+                   and (down := min(y + height, by + bh) - max(y, by)) > 0)
 
     spots = [bezier(segment, t) for t in (0.5, 0.35, 0.65, 0.2, 0.8, 0.1, 0.9)
              for segment in segments]
-    spot = min(spots, key=overlap)  # min keeps the first of equal spots
+    # As min(spots, key=overlap): the first of equal spots wins, and no spot
+    # can beat one that overlaps nothing, so the search stops there.
+    spot, least = None, None
+    for candidate in spots:
+        cost = overlap(candidate)
+        if least is None or cost < least:
+            spot, least = candidate, cost
+            if not cost:
+                break
     taken.append((spot[0] - width / 2, spot[1] - height, width, height, 1))
     return spot
 

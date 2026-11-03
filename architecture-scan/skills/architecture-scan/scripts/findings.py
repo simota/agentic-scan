@@ -1026,9 +1026,10 @@ def _renumber_file(target):
     validate(renamed)
     # IDs that already hold their final names can still sit in the wrong order
     # (fragments merged A-004 before A-001), so compare the whole record.
-    rewritten = _serialize(renamed) != _serialize(doc)
+    data = _serialize(renamed)
+    rewritten = data != _serialize(doc)
     if rewritten:
-        _atomic_write(target, _serialize(renamed))
+        _atomic_write(target, data)
     return changed, rewritten
 
 

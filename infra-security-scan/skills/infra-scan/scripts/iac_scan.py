@@ -201,6 +201,16 @@ IDENT = re.compile(r"[^\W\d][\w-]*")  # HCL identifiers are Unicode letters, dig
 HEREDOC = re.compile(r"<<(-?)([A-Za-z_][A-Za-z0-9_-]*)[ \t]*\r?\n")
 NUMBER = re.compile(r"-?\d+(?:\.\d+)?(?:[eE][+-]?\d+)?")
 OPEN, CLOSE = "([{", ")]}"
+# The characters each scanner below acts on; every other character only advances
+# the position, so the scanners jump from one of these to the next.
+STRING_STOP = re.compile(r'[\\"$%]')
+BALANCED_STOP = re.compile(r'["#/<()\[\]{}]')
+EXPR_STOP = re.compile(r'[\n}#/"<(\[{]')
+TERM_STOP = re.compile(r'[,\]})\n#/"(\[{<]')
+UNQUOTE_STOP = re.compile(r"[$%\\]")
+INTEGER = re.compile(r"-?\d+")
+FOR_EXPR = re.compile(r"for\s")
+UNICODE_ESCAPE = re.compile(r"[0-9A-Fa-f]{8}")
 
 
 def line_end(t, i):
@@ -222,7 +232,12 @@ def heredoc_span(t, m):
 def skip_string(t, i):
     """t[i] is an opening quote; return the index after the closing one."""
     i += 1
-    while i < len(t):
+    n, stop = len(t), STRING_STOP.search
+    while i < n:
+        m = stop(t, i)
+        if not m:
+            return n
+        i = m.start()
         c = t[i]
         if c == "\\":
             i += 2
@@ -230,17 +245,21 @@ def skip_string(t, i):
             return i + 1
         elif t.startswith(("$${", "%%{"), i):
             i += 3
-        elif c in "$%" and t.startswith("{", i + 1):
+        elif t.startswith("{", i + 1):  # c is $ or %
             i = skip_balanced(t, i + 1)
         else:
             i += 1
-    return len(t)
+    return n
 
 
 def skip_balanced(t, i):
     """t[i] is an opening bracket; return the index after its match."""
-    depth = 0
-    while i < len(t):
+    depth, n, stop = 0, len(t), BALANCED_STOP.search
+    while i < n:
+        m = stop(t, i)
+        if not m:
+            return n
+        i = m.start()
         c = t[i]
         if c == '"':
             i = skip_string(t, i)
@@ -263,12 +282,17 @@ def skip_balanced(t, i):
             if depth == 0:
                 return i + 1
         i += 1
-    return len(t)
+    return n
 
 
 def scan_expr(t, i, end):
     """End of an attribute value starting at i: newline or '}' at depth 0."""
+    stop = EXPR_STOP.search
     while i < end:
+        m = stop(t, i, end)
+        if not m:
+            return end
+        i = m.start()
         c = t[i]
         if c in "\n}" or c == "#" or t.startswith("//", i):
             return i
@@ -277,8 +301,8 @@ def scan_expr(t, i, end):
         elif t.startswith("/*", i):
             j = t.find("*/", i + 2)
             i = end if j < 0 else j + 2
-        elif HEREDOC.match(t, i):
-            i = heredoc_span(t, HEREDOC.match(t, i))[2]
+        elif c == "<" and (h := HEREDOC.match(t, i)):
+            i = heredoc_span(t, h)[2]
         elif c in OPEN:
             i = skip_balanced(t, i)
         else:
@@ -303,7 +327,12 @@ def skip_space(t, i, end, newlines=True):
 
 class LineIndex:
     def __init__(self, text):
-        self.starts = [0] + [i + 1 for i, c in enumerate(text) if c == "\n"]
+        starts, find = [0], text.find
+        i = find("\n")
+        while i >= 0:
+            starts.append(i + 1)
+            i = find("\n", i + 1)
+        self.starts = starts
 
     def __call__(self, pos):
         return bisect.bisect_right(self.starts, pos)
@@ -424,7 +453,7 @@ class _Lit:
             self.i = m.end()
             text = m.group()
             try:
-                return int(text) if re.fullmatch(r"-?\d+", text) else float(text)
+                return int(text) if INTEGER.fullmatch(text) else float(text)
             except (ValueError, OverflowError):
                 return UNKNOWN
         m = IDENT.match(s, i)
@@ -457,7 +486,7 @@ class _Lit:
             if s[self.i] == "]":
                 self.i += 1
                 return out
-            if re.match(r"for\s", s[self.i:self.i + 4]):
+            if FOR_EXPR.match(s[self.i:self.i + 4]):
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             before = self.i
@@ -483,7 +512,7 @@ class _Lit:
             if s[self.i] == "}":
                 self.i += 1
                 return UNKNOWN if unknown_keys else out
-            if re.match(r"for\s", s[self.i:self.i + 4]):
+            if FOR_EXPR.match(s[self.i:self.i + 4]):
                 self.i = skip_balanced(s, start)
                 return UNKNOWN
             if s[self.i] == '"':
@@ -516,8 +545,13 @@ class _Lit:
                 self.i += 1
 
     def skip_term(self, multiline=False):
-        s, i = self.s, self.i
+        s, i, stop = self.s, self.i, TERM_STOP.search
         while i < len(s):
+            m = stop(s, i)
+            if not m:
+                i = len(s)
+                break
+            i = m.start()
             c = s[i]
             if c in self.SEP and (c != "\n" or not multiline):
                 break
@@ -532,8 +566,8 @@ class _Lit:
                 i = skip_string(s, i)
             elif c in OPEN:
                 i = skip_balanced(s, i)
-            elif HEREDOC.match(s, i):
-                i = heredoc_span(s, HEREDOC.match(s, i))[2]
+            elif c == "<" and (h := HEREDOC.match(s, i)):
+                i = heredoc_span(s, h)[2]
             else:
                 i += 1
         self.i = i
@@ -545,15 +579,22 @@ def unquote(raw):
     Scan left to right: $${ and %%{ are escapes for a literal ${ / %{, so
     "100%${var.x}" is a literal % followed by an interpolation.
     """
-    out, i = [], 0
+    out, i, stop = [], 0, UNQUOTE_STOP.search
     while i < len(raw):
+        m = stop(raw, i)
+        if not m:
+            out.append(raw[i:])
+            break
+        if m.start() > i:
+            out.append(raw[i:m.start()])
+            i = m.start()
         if raw.startswith(("$${", "%%{"), i):
             out.append(raw[i + 1:i + 3])
             i += 3
         elif raw.startswith(("${", "%{"), i):
             return UNKNOWN
         elif raw[i] == "\\" and i + 1 < len(raw):
-            if raw[i + 1] == "U" and re.fullmatch(r"[0-9A-Fa-f]{8}", raw[i + 2:i + 10]):
+            if raw[i + 1] == "U" and UNICODE_ESCAPE.fullmatch(raw[i + 2:i + 10]):
                 if int(raw[i + 2:i + 10], 16) > 0x10FFFF:
                     return UNKNOWN  # no such code point: Terraform rejects the string
                 out.append(chr(int(raw[i + 2:i + 10], 16)))
@@ -2236,8 +2277,11 @@ def collect_context(scan, d, type_, view, text, defaults=True):
                 policies["dirs"].add((d, project_scope(view, "parent" if type_ == "google_org_policy_policy"
                                                        else "project")))
     if type_ in ("aws_iam_role", "aws_iam_user"):
-        for m in re.finditer(r"aws_iam_policy\.([\w-]+)", text_of(view, "permissions_boundary")):
+        for m in POLICY_REF.finditer(text_of(view, "permissions_boundary")):
             scan.boundary_policies.add((d, f"aws_iam_policy.{m.group(1)}"))
+
+
+POLICY_REF = re.compile(r"aws_iam_policy\.([\w-]+)")
 
 
 def collect_policy_references(scan, d, block):
@@ -2246,7 +2290,7 @@ def collect_policy_references(scan, d, block):
     def walk(b):
         for key, (raw, _) in b.attrs.items():
             if key != "permissions_boundary":
-                for m in re.finditer(r"aws_iam_policy\.([\w-]+)", raw):
+                for m in POLICY_REF.finditer(raw):
                     scan.attached_policies.add((d, f"aws_iam_policy.{m.group(1)}"))
         for child in b.blocks:
             walk(child)
@@ -2577,6 +2621,15 @@ def terragrunt_remote_state(scan, d):
 
 
 HEREDOC_START = re.compile(r"<<-?([A-Za-z_]\w*)\s*$")
+CODE_STOP = re.compile(r'["#/]')
+# A quoted string's body on one line: a backslash escapes the next character.
+QUOTED_BODY = re.compile(r'[^"\\]*(?:\\.[^"\\]*)*', re.S)
+
+
+def quote_end(line, i):
+    """Index of the quote closing the string whose body starts at i, or len(line)."""
+    j = QUOTED_BODY.match(line, i).end()
+    return j if j < len(line) and line[j] == '"' else len(line)
 
 
 def hcl_code(text, heredocs=False, strings=True):
@@ -2599,11 +2652,16 @@ def hcl_code(text, heredocs=False, strings=True):
                     break
                 in_block, i = False, close + 2
                 continue
+            m = CODE_STOP.search(line, i)
+            if not m:
+                kept.append(line[i:])
+                break
+            if m.start() > i:
+                kept.append(line[i:m.start()])
+                i = m.start()
             c = line[i]
             if c == '"':
-                j = i + 1
-                while j < n and line[j] != '"':
-                    j += 2 if line[j] == "\\" else 1
+                j = quote_end(line, i + 1)
                 kept.append(line[i:j + 1] if strings else '""')
                 i = j + 1
             elif c == "#" or line.startswith("//", i):
@@ -4121,6 +4179,8 @@ def handle_cfn_yaml(scan, rel, lines, start_line=1, doc=None):
 
 SECRET_PATTERNS = [(label, re.compile(rf"\b(?:{pattern})")) for label, pattern in CREDENTIAL_SHAPES]
 SECRET_PATTERNS.append(("private key", KEY_BEGIN))
+# Matches wherever any of SECRET_PATTERNS does: a line it misses needs no per-label pass.
+ANY_SECRET_PATTERN = re.compile("|".join(f"(?:{pattern.pattern})" for _, pattern in SECRET_PATTERNS))
 # The short spellings (db_pass, admin_pw) count only as a whole word, as in
 # redaction's CREDENTIAL_WORD: bypass or compass name no secret.
 SECRET_KEY_NAME = (
@@ -4162,16 +4222,23 @@ VALUE_ONLY = re.compile(r'(?i)^\s*"?value"?\s*[:=]\s*"([^"]*)"')
 VALUE_NAME = re.compile(r'(?i)"?\bvalue"?\s*[:=]\s*"([^"]*)"\s*,?\s*"?name"?\s*[:=]\s*"([^"]+)"')
 
 
+OBJECT_FIELD = re.compile(r'"?(\w+)"?\s*[:=]\s*"((?:\\.|[^"\\])*)"')
+BRACKET = re.compile(r"[{}\[\]]")
+OBJECT_STOP = re.compile(r'["{}]')
+
+
 def innermost_objects(line):
     """The { ... } spans on a line that hold no other object, with braces inside
     quoted strings ignored ("pfx{x}" is a value, not an object)."""
     found, stack, i, n = [], [], 0, len(line)
     while i < n:
+        m = OBJECT_STOP.search(line, i)
+        if not m:
+            break
+        i = m.start()
         c = line[i]
         if c == '"':
-            i += 1
-            while i < n and line[i] != '"':
-                i += 2 if line[i] == "\\" else 1
+            i = quote_end(line, i + 1)
         elif c == "{":
             stack.append([i, False])
         elif c == "}" and stack:
@@ -4193,7 +4260,7 @@ def env_pairs(lines, i):
     # One-line objects: every field of { name = ..., type = ..., value = ... }, in any order.
     objects = []
     for obj in innermost_objects(line):
-        fields = {k.lower(): v for k, v in re.findall(r'"?(\w+)"?\s*[:=]\s*"((?:\\.|[^"\\])*)"', obj)}
+        fields = {k.lower(): v for k, v in OBJECT_FIELD.findall(obj)}
         if "name" in fields and "value" in fields:
             objects.append((fields["name"], fields["value"], obj))
     if objects:
@@ -4206,20 +4273,23 @@ def env_pairs(lines, i):
     if not name:
         return []
     lo = hi = i
-    while lo > 0 and i - lo < 6 and not re.search(r"[{}\[\]]", lines[lo - 1]):
+    while lo > 0 and i - lo < 6 and not BRACKET.search(lines[lo - 1]):
         lo -= 1
-    while hi + 1 < len(lines) and hi - i < 6 and not re.search(r"[{}\[\]]", lines[hi + 1]):
+    while hi + 1 < len(lines) and hi - i < 6 and not BRACKET.search(lines[hi + 1]):
         hi += 1
     entry = lines[lo:hi + 1]
     value = next((m for raw in entry if (m := VALUE_ONLY.match(raw))), None)
     return [(name.group(1), value.group(1), "\n".join(entry))] if value else []
 
 
+MOCK_OUTPUTS = re.compile(r"\s*mock_outputs\s*=\s*\{")
+
+
 def mock_lines(lines):
     """Line numbers inside Terragrunt mock_outputs blocks: stand-ins for plan, not secrets."""
     inside, depth = set(), 0
     for n, line in enumerate(lines, 1):
-        if depth == 0 and not re.match(r"\s*mock_outputs\s*=\s*\{", line):
+        if depth == 0 and not MOCK_OUTPUTS.match(line):
             continue
         inside.add(n)
         depth += line.count("{") - line.count("}")
@@ -4234,6 +4304,8 @@ HEREDOC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*<<-?([A-Za-z_]\w*)\s*
 SECRET_VARIABLE = re.compile(rf'^\s*variable\s+"?({SECRET_KEY_NAME[3:-3]})"?\s*\{{', re.IGNORECASE)
 SECRET_OUTPUT = re.compile(rf'^\s*output\s+"?({SECRET_KEY_NAME[3:-3]})"?\s*\{{', re.IGNORECASE)
 LOCALS_BLOCK = re.compile(r'^\s*locals\s*\{')
+LITERAL_DEFAULT = re.compile(r'(?:^|[\s{])default\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)')
+LITERAL_VALUE = re.compile(r'(?:^|[\s{])value\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)')
 INLINE_LOCALS_SECRET = re.compile(rf'(?:^|[{{\s]){SECRET_KEY_NAME}\s*=\s*"((?:\\.|[^"\\])*)"', re.IGNORECASE)
 
 
@@ -4254,7 +4326,7 @@ def hcl_literal_secrets(scan, res, lines, mocks):
         line = lines[i]
         after = i + 1
         body = None
-        if (opener := re.search(r"<<-?([A-Za-z_]\w*)\s*$", line)):
+        if (opener := HEREDOC_START.search(line)):
             after = next((j for j in range(i + 1, len(lines)) if lines[j].strip() == opener.group(1)), len(lines))
             body = "\n".join(lines[i + 1:after])
             after += 1
@@ -4269,13 +4341,13 @@ def hcl_literal_secrets(scan, res, lines, mocks):
         label = None
         if (m := HEREDOC_SECRET.match(line)):
             label = f"literal value assigned to {m.group(1)}"
-        elif variable and eff_depth == 1 and (m := re.search(r'(?:^|[\s{])default\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)', line)):
+        elif variable and eff_depth == 1 and (m := LITERAL_DEFAULT.search(line)):
             label = f"literal default for variable {variable}"
             if m.group(2) is not None:
                 body = m.group(2)
             elif not opener:
                 body = None
-        elif output and eff_depth == 1 and (m := re.search(r'(?:^|[\s{])value\s*=\s*("((?:\\.|[^"\\])*)"|<<-?[A-Za-z_]\w*)', line)):
+        elif output and eff_depth == 1 and (m := LITERAL_VALUE.search(line)):
             label = f"literal value for output {output}"
             if m.group(2) is not None:
                 body = m.group(2)
@@ -4304,7 +4376,7 @@ def scan_secrets(scan, rel, text, kind):
     # mention a reference type; a heredoc's body (container definitions) is kept.
     code_lines = hcl_code("\n".join(lines), heredocs=True).split("\n") if kind in HCL_KINDS else lines
     for n, line in enumerate(lines, 1):
-        for label, pattern in SECRET_PATTERNS:
+        for label, pattern in SECRET_PATTERNS if ANY_SECRET_PATTERN.search(line) else ():
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
@@ -4888,14 +4960,26 @@ def merge_into(path, findings, inventory, commit):
 def printable(value):
     """Output text: lone surrogates (a "\\ud800" escape in an input) spelled out,
     since the output is UTF-8, and credential shapes in repository-derived names
-    (a resource or directory named like a key) redacted."""
-    if isinstance(value, str):
-        return CREDENTIAL.sub("[redacted]", value.encode("utf-8", "backslashreplace").decode("utf-8"))
-    if isinstance(value, list):
-        return [printable(x) for x in value]
-    if isinstance(value, dict):
-        return {printable(k): printable(v) for k, v in value.items()}
-    return value
+    (a resource or directory named like a key) redacted.
+
+    A report repeats a few thousand distinct strings hundreds of thousands of
+    times, so each distinct string is converted once per call."""
+    seen = {}
+
+    def convert(value):
+        if isinstance(value, str):
+            out = seen.get(value)
+            if out is None:
+                out = value if value.isascii() else value.encode("utf-8", "backslashreplace").decode("utf-8")
+                out = seen[value] = CREDENTIAL.sub("[redacted]", out)
+            return out
+        if isinstance(value, list):
+            return [convert(x) for x in value]
+        if isinstance(value, dict):
+            return {convert(k): convert(v) for k, v in value.items()}
+        return value
+
+    return convert(value)
 
 
 def main(argv=None):

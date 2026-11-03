@@ -171,6 +171,9 @@ make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for J
 
 Requirements: Python 3.9+. No third-party packages. The `make` targets need
 GNU Make 3.81+ and a POSIX shell.
+The Makefile tests isolate their home, agent paths and demo settings in temporary
+fixtures, so exported local configuration does not redirect test installations
+or reports. Explicit per-test overrides still exercise custom paths.
 
 The format follows the sibling `security-scan` skill (same phases, run
 contract, verdicts and report shape), adapted from vulnerabilities to

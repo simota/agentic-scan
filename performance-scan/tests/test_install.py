@@ -9,6 +9,7 @@ import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
+from unittest.mock import patch
 
 
 REPO = Path(__file__).resolve().parents[1]
@@ -265,10 +266,16 @@ class MakefilePathTests(unittest.TestCase):
         if external or preceding:
             args += ["-f", str(self.repo / "Makefile") if external else "Makefile"]
         env = os.environ.copy()
-        env.pop("MAKEFLAGS", None)
-        env.pop("MFLAGS", None)
-        env.pop("MAKEOVERRIDES", None)
-        env.pop("MAKEFILES", None)
+        # Tests must not install into the caller's agent homes or render into
+        # their report paths. Explicit per-test overrides are applied below.
+        for name in (
+            "MAKEFLAGS", "MFLAGS", "MAKEOVERRIDES", "MAKEFILES",
+            "AGENT", "PROJECT", "SKILLS_DIR", "CLAUDE_HOME",
+            "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AGY_HOME",
+            "DEMO_OUT", "DEMO_INPUT", "LANG_OUT", "PYTHON",
+        ):
+            env.pop(name, None)
+        env["HOME"] = str(self.root / "home")
         if preload is not None:
             env["MAKEFILES"] = str(preload)
         env.update(environment or {})
@@ -289,6 +296,56 @@ class MakefilePathTests(unittest.TestCase):
             "    def test_fails(self):\n        self.fail('expected')\n", encoding="utf-8")
         self.run_make("test", expect=1)
         self.assertNotIn("check ok", self.run_make("check", expect=1))
+
+    def test_inherited_host_paths_never_receive_test_links(self):
+        # All simulated user paths are scratch fixtures, never real host homes.
+        outside = self.root / "simulated user configuration"
+        inherited = {"HOME": str(outside)}
+        for name in ("CLAUDE_HOME", "CLAUDE_CONFIG_DIR", "CODEX_HOME", "AGY_HOME"):
+            directory = outside / name
+            directory.mkdir(parents=True)
+            (directory / "sentinel").write_text("keep", encoding="utf-8")
+            inherited[name] = str(directory)
+        home = self.root / "isolated home"
+        (home / ".claude").mkdir(parents=True)
+        for flags in ((), ("-e",)):
+            with self.subTest(flags=flags), patch.dict(os.environ, inherited):
+                self.run_make(*flags, "link", f"HOME={home}")
+                self.assertTrue((home / ".claude" / "skills" / self.skill.name).is_symlink())
+                for name in inherited:
+                    if name != "HOME":
+                        self.assertEqual(list(Path(inherited[name]).iterdir()),
+                                         [Path(inherited[name]) / "sentinel"])
+
+    def test_default_test_home_does_not_inherit_the_callers_home(self):
+        outside = self.root / "simulated home"
+        (outside / ".claude").mkdir(parents=True)
+        with patch.dict(os.environ, {"HOME": str(outside)}):
+            output = self.run_make("status", "AGENT=claude")
+        self.assertNotIn(str(outside), output)
+        self.assertIn(str(self.root / "home" / ".claude"), output)
+        self.assertEqual(list((outside / ".claude").iterdir()), [])
+
+    def test_demo_does_not_inherit_output_or_input_settings(self):
+        outside = self.root / "simulated user reports"
+        outside.mkdir()
+        sentinel = outside / "report.md"
+        sentinel.write_text("keep", encoding="utf-8")
+        inherited = {"DEMO_OUT": str(outside), "DEMO_INPUT": "/missing/input.json",
+                     "LANG_OUT": "invalid", "PYTHON": "/missing/python"}
+        with patch.dict(os.environ, inherited):
+            self.run_make("demo")
+        self.assertTrue((self.repo / ".demo" / "report.md").is_file())
+        self.assertEqual(list(outside.iterdir()), [sentinel])
+        self.assertEqual(sentinel.read_text(encoding="utf-8"), "keep")
+
+    def test_explicit_environment_still_selects_fixture_home(self):
+        home = self.root / "explicit home"
+        host = self.root / "explicit codex"
+        host.mkdir()
+        self.run_make("link", "AGENT=codex",
+                      environment={"HOME": str(home), "CODEX_HOME": str(host)})
+        self.assertEqual((host / "skills" / self.skill.name).readlink(), self.skill)
 
     def test_spaceful_checkout_and_skills_dir_link_status_unlink(self):
         directory = self.root / "custom skills"

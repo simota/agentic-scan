@@ -157,7 +157,7 @@ def reference_title(ref):
 
 
 # `$` too: GitHub renders `$…$` as math, as in `$PATH:$HOME`.
-MARKDOWN_ESCAPES = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#$"})
+MARKDOWN_SPECIALS = "\\`*_[]|~#$"  # each gets a backslash; the backslash stays first
 
 
 # URLs written in prose. GFM links them automatically but keeps our escape
@@ -174,10 +174,23 @@ URL_TRAILING = ".,;:!?'\"*_~"
 AUTOLINK_START = re.compile(r"(?<![A-Za-z])(?i:ftp|https?)(?=://)|(?<![A-Za-z0-9])www(?=\.)")
 
 
+def _escape_markdown(text):
+    """Backslash-escape MARKDOWN_SPECIALS. str.replace is much faster than a
+    translate table on non-ASCII prose; the backslash goes first, so the
+    backslashes added for the other characters are not escaped again."""
+    for char in MARKDOWN_SPECIALS:
+        if char in text:
+            text = text.replace(char, "\\" + char)
+    return text
+
+
 def _literal(text, in_link=False):
-    text = escape(text, quote=False).translate(MARKDOWN_ESCAPES)
-    # Link text is never autolinked, so it keeps its spelling.
-    return text if in_link else AUTOLINK_START.sub(lambda m: m.group() + "\\", text)
+    text = _escape_markdown(escape(text, quote=False))
+    # Link text is never autolinked, so it keeps its spelling. AUTOLINK_START
+    # needs a following '://' or 'www.'; without either there is nothing to do.
+    if in_link or ("://" not in text and "www." not in text):
+        return text
+    return AUTOLINK_START.sub(lambda m: m.group() + "\\", text)
 
 
 def _prose_url(url):
@@ -199,7 +212,9 @@ def markdown_text(value, links=True):
     """
     text = as_text(value)
     parts, pos = [], 0
-    for match in URL_TOKEN.finditer(text) if links else ():
+    # URL_TOKEN needs '://' or 'www.'; skip the scan of prose that has neither.
+    scan = links and ("://" in text or "www." in text)
+    for match in URL_TOKEN.finditer(text) if scan else ():
         url = _prose_url(match.group())
         if not url:
             continue

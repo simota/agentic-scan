@@ -159,7 +159,8 @@ EMAIL_LOCAL_CHAR = re.compile(r'[^\s"(),:;<>@\[\]\\]')
 EMAIL_LITERAL_DOMAIN = re.compile(r"\[(?:[^\[\]\r\n]|(?:\r\n|\n)[ \t])+\]")
 EMAIL_FWS = re.compile(r"[ \t]+|(?:\r\n|\n)[ \t]+")
 EMAIL_COMMENT_MARKERS = re.compile(r"[()\\\r\n]")
-IDNA_DOTS = str.maketrans("\u3002\uff0e\uff61", "...")
+# Ideographic and full/half-width full stops, read as '.' in domains.
+IDNA_DOT_CHARS = "\u3002\uff0e\uff61"
 # Default-ignorable code points (Unicode DerivedCoreProperties) display as
 # nothing, like format characters, but are combining marks, fillers or
 # unassigned: the grapheme joiner, Khmer inherent vowels, Mongolian and other
@@ -311,7 +312,10 @@ PATH_TIMESTAMP = re.compile(r"(?:^|(?<=[/\\]))[Vv]?(?:19|20)\d{2}(?:0[1-9]|1[0-2
 # A semantic version with a prerelease or build suffix (`1.2.3-beta.1`, `2.0.0+build`).
 PACKAGE_VERSION = re.compile(
     r"\d+\.\d+\.\d+[-+](?:alpha|beta|rc|canary|next|pre|preview|dev|snapshot|nightly|build"
-    r"|experimental|insiders)(?:[.-]?[0-9A-Za-z]+)*", re.IGNORECASE)
+    # One character per repetition: `(?:[.-]?[0-9A-Za-z]+)*` accepts the same
+    # strings, but splits a long alphanumeric run in exponentially many ways
+    # before a failed fullmatch (a domain that runs on into Japanese prose).
+    r"|experimental|insiders)(?:[.-]?[0-9A-Za-z])*", re.IGNORECASE)
 # Percent and entity decoding passes over prose (covers double encoding).
 DECODE_ROUNDS = 3
 
@@ -438,14 +442,14 @@ def _email_cfws(value):
             stack.clear()
     starts = {end: start for start, end in spans.items()}
     before, after = {}, {}
-    for pos in range(len(value) + 1):
-        if pos in starts:
-            start = starts[pos]
-            before[pos] = before.get(start, start)
-    for pos in range(len(value) - 1, -1, -1):
-        if pos in spans:
-            end = spans[pos]
-            after[pos] = after.get(end, end)
+    # Visit only the span boundaries, in the order a scan of every position
+    # would reach them (forwards for `before`, backwards for `after`).
+    for pos in sorted(starts):
+        start = starts[pos]
+        before[pos] = before.get(start, start)
+    for pos in sorted(spans, reverse=True):
+        end = spans[pos]
+        after[pos] = after.get(end, end)
     return before, after
 
 
@@ -563,8 +567,16 @@ def _scan_personal_values(value, where):
     # Invisible characters (format characters such as zero-width spaces, word
     # joiners and soft hyphens, and the other default-ignorable code points)
     # are dropped so they cannot split an address or a number.
-    value = unicodedata.normalize("NFKC", value).translate(IDNA_DOTS)
-    value = INVISIBLE.sub("", "".join(c for c in value if unicodedata.category(c) != "Cf"))
+    value = unicodedata.normalize("NFKC", value)
+    # Per-character work in Python dominated long prose: look up each distinct
+    # character once, and use str.replace (fast on any script) instead of a
+    # translate table. The result is the same as translating and filtering.
+    for dot in IDNA_DOT_CHARS:
+        if dot in value:
+            value = value.replace(dot, ".")
+    for char in {c for c in set(value) if unicodedata.category(c) == "Cf"}:
+        value = value.replace(char, "")
+    value = INVISIBLE.sub("", value)
     for domain in _email_domains(value):
         # `react@18.2.0` and `sdk@1.2.3-beta` name package versions, not mail
         # domains. Bracketed literals and four-part numeric hosts still count.
@@ -574,7 +586,12 @@ def _scan_personal_values(value, where):
             continue
         if not _example_domain(domain):
             raise SchemaError(f"{where}: contains an e-mail address; name the field, not the value")
-    if GROUPED_NUMBER.search(value) or LONG_NUMBER.search(_mask_technical_numbers(value)):
+    # Masking only replaces spans with '#' and keeps original digits beside
+    # it, so every digit run it leaves is part of one in the input: without a
+    # long run in the input there is none to find after masking. Skip the
+    # costly masking then; the outcome is unchanged.
+    if GROUPED_NUMBER.search(value) or (LONG_NUMBER.search(value)
+                                        and LONG_NUMBER.search(_mask_technical_numbers(value))):
         raise SchemaError(f"{where}: contains a long number shaped like personal data; use a placeholder")
 
 
@@ -1077,10 +1094,13 @@ def _stale_outputs(out, doc, skip):
     except OSError:
         return [f"unreadable output: {name}" for name in names]
     # Either language is a valid rendering (render.py --lang may override meta.lang).
-    for lang in render.LABELS:
-        expected = {"report.md": render.render_markdown(doc, lang),
-                    "dashboard.html": render.render_html(doc, lang)}
-        if all(current[name] == expected[name].encode("utf-8") for name in names):
+    # The recorded language is the likely one, so it is tried first, and the
+    # dashboard is rendered only when report.md already matches; the verdict
+    # does not depend on the order.
+    recorded = doc.get("meta", {}).get("lang")
+    for lang in sorted(render.LABELS, key=lambda lang: lang != recorded):
+        if (current["report.md"] == render.render_markdown(doc, lang).encode("utf-8")
+                and current["dashboard.html"] == render.render_html(doc, lang).encode("utf-8")):
             return []
     return ["stale outputs: report.md and dashboard.html must both be rendered from the current "
             "findings.json in one language; re-run scripts/render.py"]

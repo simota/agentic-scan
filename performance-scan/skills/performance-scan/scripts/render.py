@@ -24,9 +24,9 @@ import unicodedata
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
-                      escape_unencodable_console, file_mode, read_json, resolve_path,
-                      SchemaError, validate)
+from findings import (BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
+                      SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
+                      read_json, resolve_path, SchemaError, validate)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -166,15 +166,26 @@ def text_lines(value):
     return UNSAFE_CHARS.sub(lambda m: f"\\u{ord(m.group()):04x}", text).split("\n")
 
 
+# Compiled once: markdown_text runs per record line, and the module-level
+# re.sub/re.findall helpers repeat a pattern-cache lookup on every call.
+MD_SPECIAL = re.compile(r"([\\`*_\[\]#!~$])")
+MD_LIST_MARKER = re.compile(r"^([ \t]*)([-+])")
+MD_ORDERED_MARKER = re.compile(r"^([ \t]*[0-9]{1,9})([.)])(?=[ \t]|$)")
+MD_SHORTCODE = re.compile(r":(?=(?:\\.|[A-Za-z0-9_+-])+:)")
+MD_WWW = re.compile(r"www\.", re.IGNORECASE)
+MD_LEADING_BLANKS = re.compile(r"^[ \t]+")
+BACKTICK_RUN = re.compile(r"`+")
+
+
 def markdown_text(value):
     """Keep record strings literal and keep newlines inside their current block."""
     def inline(line):
         line = escape(line, quote=False)
-        line = re.sub(r"([\\`*_\[\]#!~$])", r"\\\1", line)
+        line = MD_SPECIAL.sub(r"\\\1", line)
         # A list value has no static label before it: "- - text", "- 1. text"
         # and "-     text" would otherwise create nested blocks.
-        line = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", line)
-        line = re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=[ \t]|$)", r"\1\\\2", line)
+        line = MD_LIST_MARKER.sub(r"\1\\\2", line)
+        line = MD_ORDERED_MARKER.sub(r"\1\\\2", line)
         # GFM also recognises bare URLs and email addresses. Only references[]
         # should create links; character references retain their visible text.
         # cmark-gfm decodes entities before matching emails, so an empty
@@ -182,10 +193,9 @@ def markdown_text(value):
         line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
         # GitHub turns ":name:" into an emoji; split the first colon off the same way.
         # Escaping ran first, so a shortcode may already contain "\_".
-        line = re.sub(r":(?=(?:\\.|[A-Za-z0-9_+-])+:)", ":<!-- -->", line)
-        line = re.sub(r"www\.", lambda match: match.group()[:-1] + "&#46;", line,
-                      flags=re.IGNORECASE)
-        return re.sub(r"^[ \t]+", lambda match: "".join(
+        line = MD_SHORTCODE.sub(":<!-- -->", line)
+        line = MD_WWW.sub(lambda match: match.group()[:-1] + "&#46;", line)
+        return MD_LEADING_BLANKS.sub(lambda match: "".join(
             "&#32;" if char == " " else "&#9;" for char in match.group()), line)
 
     return "<br>".join(inline(line) for line in text_lines(value))
@@ -201,7 +211,7 @@ def markdown_code(value):
     def span(line):
         if not line:
             return ""
-        fence = "`" * (max((len(run) for run in re.findall(r"`+", line)), default=0) + 1)
+        fence = "`" * (max((len(run) for run in BACKTICK_RUN.findall(line)), default=0) + 1)
         # CommonMark removes one surrounding space only when both are present
         # and the span is not entirely spaces. Padding also separates backticks.
         pad = " " if (line.startswith("`") or line.endswith("`") or
@@ -215,7 +225,7 @@ def markdown_code(value):
 def markdown_fence(value, indent):
     """A fenced block inside a list item; the fence outruns any backtick run in the log."""
     lines = text_lines(value)
-    fence = "`" * max(3, max((len(run) for line in lines for run in re.findall(r"`+", line)),
+    fence = "`" * max(3, max((len(run) for line in lines for run in BACKTICK_RUN.findall(line)),
                              default=0) + 1)
     return [indent + line if line else "" for line in (f"{fence}text", *lines, fence)]
 
@@ -273,15 +283,32 @@ def reference_title(ref):
     return title if visible else ref["url"]
 
 
-def budget_cells(budget, labels, findings):
+def budget_citations(findings):
+    """Map each budget ID to the included findings that cite it, in finding order.
+
+    A finding cites its own budget in `budget` and any other it violates in
+    `impact`. One pass over the findings: matching every budget's ID against
+    every finding made the ledger O(budgets x findings) regex scans.
+    """
+    cited = {}
+    for f in findings:
+        if is_excluded(f):
+            continue
+        ids = set(BUDGET_MENTION.findall(f["impact"]))
+        if "budget" in f:
+            ids.add(f["budget"])
+        for budget_id in ids:
+            cited.setdefault(budget_id, []).append(f["id"])
+    return cited
+
+
+def budget_cells(budget, labels, citations):
+    """citations: budget_citations() of the record's findings."""
     inferred = budget.get("inferred")
     inference = (labels["inferred_yes"] if inferred is True else
                  labels["inferred_no"] if inferred is False else "—")
     # Link each ledger entry to the included findings that cite it.
-    # A finding cites its own budget in `budget` and any other it violates in `impact`.
-    mention = re.compile(rf"(?<![A-Za-z0-9_-]){re.escape(budget['id'])}(?![A-Za-z0-9_-])")
-    cited = ", ".join(f["id"] for f in findings if not is_excluded(f) and (
-        f.get("budget") == budget["id"] or mention.search(f["impact"])))
+    cited = ", ".join(citations.get(budget["id"], ()))
     return (budget["id"], budget.get("family", "").strip() or "—", budget["statement"], budget["source"], shown(budget["status"], labels["lang"]),
             inference, budget.get("reason", "") if budget["status"] in ("partly read", "not checked")
             else "",
@@ -390,8 +417,9 @@ def render_markdown(doc, lang):
             lines += markdown_finding(f, t)
     if doc.get("budgets"):
         lines += [f"## {t['budgets']}", ""]
+        citations = budget_citations(findings)
         lines += markdown_table(budget_headers(t), [
-            [markdown_cell(cell) for cell in budget_cells(b, t, findings)]
+            [markdown_cell(cell) for cell in budget_cells(b, t, citations)]
             for b in doc["budgets"]])
         lines.append("")
     lines += [f"## {t['perspectives']}", ""]
@@ -516,7 +544,7 @@ def llm_line(value):
 def llm_block(label, value):
     """A fence longer than any backtick run keeps record text from closing it."""
     text = "\n".join(text_lines(value))
-    fence = "`" * max(3, max((len(run) for run in re.findall(r"`+", text)), default=0) + 1)
+    fence = "`" * max(3, max((len(run) for run in BACKTICK_RUN.findall(text)), default=0) + 1)
     return ["", f"### {label}", "", f"{fence}text", text, fence]
 
 
@@ -650,9 +678,11 @@ def render_html(doc, lang):
     out += [html_finding(f, t, meta) for f in findings]
     out.append("</section>")
     if doc.get("budgets"):
+        citations = budget_citations(findings)
         out.append(f"<section id='budgets' tabindex='-1'><h2>{e(t['budgets'])}</h2>"
                    + html_table(budget_headers(t),
-                                [budget_cells(b, t, findings) for b in doc["budgets"]], id_column=True)
+                                [budget_cells(b, t, citations) for b in doc["budgets"]],
+                                id_column=True)
                    + "</section>")
     out.append(f"<section id='coverage' tabindex='-1'><h2>{e(t['perspectives'])}</h2>"
                + html_table((t["perspective_col"], t["status_col"], t["note"]),

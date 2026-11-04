@@ -36,9 +36,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 from common import (BASELINE_REFERENCE, CARRY_NOTE, MAX_JSON_DEPTH, RECORD_LISTS, RECORD_REFERENCE, SEV_RANK,
                     SEVERITIES, STATE_FILE, STRING_LISTS, find_references, has_symlink_parent, json_depth,
                     meta_prose, reviewer_fields, shape_problems, split_yaml_documents, unique_object)
-from iac_scan import MAX_BYTES, SKIP_DIRS, UNKNOWN, _YamlSubset, is_export, literal, parse_hcl
-from redaction import (SAFE_VALUE, SETTING_NAME, has_escaped_secret_keys, has_structured_secrets, hide_credentials,
-                       is_secret_name, redact_json_values, redact_lines, scrub_lines, split_lines)
+from iac_scan import (Block, HEREDOC, IDENT, LineIndex, MAX_BYTES, MAX_HCL_DEPTH, SKIP_DIRS, UNKNOWN,
+                      _Lit, _YamlSubset, heredoc_span, is_export, literal, parse_body, parse_hcl,
+                      skip_balanced, skip_space, skip_string, unquote)
+from redaction import (SAFE_VALUE, SETTING_NAME, contextual_secret_fields, has_contextual_secrets,
+                       has_escaped_secret_keys, has_structured_secrets, hide_credentials, is_secret_name,
+                       redact_json_values, redact_lines, scrub_lines, split_lines)
 from scan_report_kit import pdf as kit_pdf, style as kit_style
 from scan_report_kit.output import unsafe_target, write_output
 
@@ -768,6 +771,276 @@ HCL_VALUE = re.compile(r'(?i)(?<![\w.-])"?(?:value|parameter_?value)"?\s*[=:]')
 HCL_EXPR_NAME = re.compile(r'(?i)(?<![\w.-])"?(?:name|key|parameter_?key)"?\s*[=:]\s*[^"\s]')
 
 
+class _HclExpression:
+    """An unresolved leaf, retaining its expression rather than losing its refs."""
+    def __init__(self, raw):
+        self.raw = raw
+
+
+class _HclSet:
+    """Retain set iteration semantics even when its elements are unresolved."""
+    def __init__(self, value):
+        self.value = value
+
+
+_HCL_TEMPLATE = re.compile(r"(?<!\$)\$\{|(?<!%)%\{")
+
+
+class _HclLiteral(_Lit):
+    def primary(self, multiline=False, depth=0):
+        start = self.i
+        value = super().primary(multiline, depth)
+        if self.s.startswith("toset(", start):
+            return _HclSet(value)
+        if self.s.startswith("tolist(", start) and isinstance(value, _HclSet):
+            return value.value
+        if HEREDOC.match(self.s, start) and isinstance(value, str) and _HCL_TEMPLATE.search(value):
+            return _HclExpression(self.s[start:self.i])
+        return value
+
+    def value(self, multiline=False, depth=0):
+        start = self.i
+        value = super().value(multiline, depth)
+        return _HclExpression(self.s[start:self.i]) if value is UNKNOWN else value
+
+    def parse(self):
+        value = super().parse()
+        return _HclExpression(self.s) if value is UNKNOWN else value
+
+
+def hcl_source_blocks(text):
+    """The normal HCL blocks plus top-level attributes, as used by Terragrunt."""
+    attrs, blocks = parse_body(text, 0, len(text), LineIndex(text))
+    if attrs:
+        root = Block("", [], 1, len(split_lines(text)))
+        root.attrs = attrs
+        blocks.append(root)
+    return blocks
+
+
+def hcl_blocks_with_context(blocks):
+    """Carry the generated block type and lexically scoped iterator inputs."""
+    pending = [(block, "", {}) for block in blocks]
+    while pending:
+        block, parent, inherited = pending.pop()
+        context = (unquote(block.labels[0]) if block.type == "dynamic" and block.labels else
+                   parent if block.type == "content" and parent else block.type)
+        bindings = inherited
+        if "for_each" in block.attrs and block.type in ("dynamic", "resource", "data", "module"):
+            iterator = block.attrs.get("iterator", (context, 0))[0] if block.type == "dynamic" else "each"
+            if isinstance(iterator, str):
+                parts, end = _hcl_reference_at(iterator)
+                if len(parts) == 1 and end == len(iterator):
+                    bindings = {**inherited, parts[0]: (block.attrs["for_each"][0], inherited)}
+        yield block, context, bindings
+        pending.extend((child, context if block.type == "dynamic" else "", bindings) for child in block.blocks)
+
+
+_HCL_VALUES, _HCL_KEYS = object(), object()
+
+
+def _hcl_reference_at(raw, start=0):
+    """Read a traversal with HCL whitespace/comments, Unicode names and indexes."""
+    i, n = skip_space(raw, start, len(raw)), len(raw)
+    match = IDENT.match(raw, i)
+    if not match:
+        return (), i
+    parts, i = [match.group()], match.end()
+    while True:
+        i = skip_space(raw, i, n)
+        if i < n and raw[i] == ".":
+            match = IDENT.match(raw, skip_space(raw, i + 1, n))
+            if not match:
+                break
+            parts.append(match.group())
+            i = match.end()
+        elif i < n and raw[i] == "[":
+            end = skip_balanced(raw, i)
+            index = literal(raw[i + 1:end - 1])
+            parts.append(index if isinstance(index, (str, int)) else _HCL_VALUES)
+            i = end
+        else:
+            break
+    return tuple(parts), i
+
+
+def _hcl_template_parts(text, depth):
+    for match in _HCL_TEMPLATE.finditer(text):
+        opening = match.end() - 1
+        close = skip_balanced(text, opening)
+        yield from _hcl_expression_parts(text[opening + 1:close - 1], depth + 1)
+
+
+def _hcl_expression_parts(raw, depth=0, object_body=False):
+    """Recover objects and actual refs within opaque functions/conditionals.
+
+    The scanner owns strings, comments and balanced delimiters. Do not search
+    raw prose for `var.x`, or treat a public sibling of a key as its dependency.
+    """
+    if depth > MAX_HCL_DEPTH:
+        raise RecursionError("HCL expression inspection exceeds maximum depth")
+    i, n = 0, len(raw)
+    while i < n:
+        i = skip_space(raw, i, n)
+        if i >= n:
+            break
+        heredoc = HEREDOC.match(raw, i)
+        if heredoc:
+            start, end, i = heredoc_span(raw, heredoc)
+            body = raw[start:end]
+            if _HCL_TEMPLATE.search(body):
+                yield from _hcl_template_parts(body, depth)
+            else:
+                yield body
+        elif object_body and raw[i] == "(":
+            end = skip_balanced(raw, i)
+            key_start, key_end = i + 1, end - 1
+            for _ in range(MAX_HCL_DEPTH):
+                key_start = skip_space(raw, key_start, key_end)
+                if key_start >= key_end or raw[key_start] != "(":
+                    break
+                close = skip_balanced(raw, key_start)
+                if skip_space(raw, close, key_end) != key_end:
+                    break
+                key_start, key_end = key_start + 1, close - 1
+            else:
+                raise RecursionError("HCL object key exceeds maximum depth")
+            key = literal(raw[key_start:key_end])
+            separator = skip_space(raw, end, n)
+            if isinstance(key, str) and separator < n and raw[separator] in "=:" and \
+                    not raw.startswith("=>", separator):
+                # The scanner intentionally treats computed keys as unknown.
+                # A parenthesized literal still identifies this key's schema.
+                parser = _HclLiteral(raw)
+                parser.i = separator + 1
+                yield {key: parser.value(depth=depth + 1)}
+                i = parser.i
+            else:
+                yield from _hcl_expression_parts(raw[i + 1:end - 1], depth + 1)
+                i = end
+        elif raw[i] in '"[{':
+            end = skip_string(raw, i) if raw[i] == '"' else skip_balanced(raw, i)
+            value = _HclLiteral(raw[i:end]).parse()
+            if isinstance(value, _HclExpression):
+                if raw[i] == '"':
+                    # Only template expressions are code inside a string.
+                    yield from _hcl_template_parts(raw[i:end], depth)
+                else:
+                    yield from _hcl_expression_parts(raw[i + 1:end - 1], depth + 1, raw[i] == "{")
+            else:
+                yield value
+            i = end
+        else:
+            parts, end = _hcl_reference_at(raw, i)
+            if parts:
+                if len(parts) > 1:
+                    yield _HclExpression(raw[i:end])
+                i = end
+            else:
+                i += 1
+
+
+def hcl_contextual_secrets(blocks, indirect=False):
+    """Find contextual key literals, or only their module-local dependencies.
+
+    This does not evaluate HCL: known objects select only their secret children;
+    unresolved expressions are conservative, and external refs remain readable.
+    `indirect` prevents a literal key in one file from hiding unrelated defaults
+    in another file merely because the key's text resembles a variable name.
+    """
+    parsed, declarations = {}, {}
+
+    def value(raw):
+        if raw not in parsed:
+            parsed[raw] = _HclLiteral(raw).parse()
+        return parsed[raw]
+
+    contexts = list(hcl_blocks_with_context(blocks))
+    # Repeated aliases can expand exponentially without increasing source size.
+    # Bound work by the input rather than attempting to expand the HCL value.
+    work_remaining = max(MAX_HCL_DEPTH, sum(len(raw) for block, _, _ in contexts
+                                            for raw, _ in block.attrs.values()))
+    for block, _, _ in contexts:
+        if block.type == "variable" and block.labels and "default" in block.attrs:
+            name = unquote(block.labels[0])
+            if isinstance(name, str):
+                declarations.setdefault(("var", name), []).append(value(block.attrs["default"][0]))
+        if block.type == "locals":
+            for name, (raw, _) in block.attrs.items():
+                declarations.setdefault(("local", name), []).append(value(raw))
+
+    def carries(node, container, bindings, path=(), followed=False, seen=frozenset(), depth=0):
+        nonlocal work_remaining
+        work_remaining -= 1
+        if work_remaining < 0:
+            raise RecursionError("HCL key reference inspection exceeds source work budget")
+        if depth > MAX_HCL_DEPTH:
+            raise RecursionError("HCL key reference inspection exceeds maximum depth")
+        if isinstance(node, _HclSet):
+            if path and path[0] is _HCL_KEYS:
+                path = (_HCL_VALUES,) + path[1:]  # A set iterator's key is its value.
+            return carries(node.value, container, bindings, path, followed, seen, depth + 1)
+        if isinstance(node, _HclExpression):
+            parts, end = _hcl_reference_at(node.raw)
+            if parts and end == len(node.raw):
+                if container is not None and not contextual_secret_fields(container):
+                    return False  # Its declaration is checked once, with its own structure.
+                if len(parts) >= 2 and parts[0] in bindings and parts[1] in ("key", "value"):
+                    raw, outer = bindings[parts[0]]
+                    select = _HCL_VALUES if parts[1] == "value" else _HCL_KEYS
+                    return carries(value(raw), container, outer, (select,) + parts[2:] + path,
+                                   followed, seen, depth + 1)
+                name = parts[:2]
+                if len(name) == 2 and name[0] in ("var", "local"):
+                    if name in seen:
+                        return False
+                    return any(carries(item, container, {}, parts[2:] + path, True, seen | {name}, depth + 1)
+                               for item in declarations.get(name, ()))
+                return False
+            if container is None and (followed or not indirect):
+                return True  # An opaque key expression may itself contain a literal.
+            # An unevaluated transformation can change shape: the output's
+            # selectors cannot safely be applied to its input collection.
+            return any(carries(item, container, bindings, (), followed, seen, depth + 1)
+                       for item in _hcl_expression_parts(node.raw))
+        if path:
+            field, *remaining = path
+            if field is _HCL_VALUES:
+                selected = node.values() if isinstance(node, dict) else node if isinstance(node, list) else ()
+            elif field is _HCL_KEYS:
+                selected = node.keys() if isinstance(node, dict) else range(len(node)) if isinstance(node, list) else ()
+            elif isinstance(node, dict):
+                selected = [node[field]] if field in node else ()
+            elif isinstance(node, list) and isinstance(field, int) and 0 <= field < len(node):
+                selected = [node[field]]
+            else:
+                selected = ()
+            return any(carries(item, container, bindings, tuple(remaining), followed, seen, depth + 1)
+                       for item in selected)
+        if container is None:
+            if indirect and not followed and isinstance(node, (dict, list)):
+                # jsonencode retains its literal object/list in this parser.
+                # Its embedded references still contribute to the key string.
+                items = node.values() if isinstance(node, dict) else node
+                return any(carries(item, None, bindings, (), False, seen, depth + 1) for item in items)
+            return (followed or not indirect) and node not in (None, "", [], {})
+        fields = contextual_secret_fields(container)
+        if isinstance(node, dict):
+            return any(carries(item, None if name.replace("_", "").lower() in fields else name,
+                               bindings, (), followed, seen, depth + 1) for name, item in node.items())
+        if isinstance(node, list):
+            return any(carries(item, container, bindings, (), followed, seen, depth + 1) for item in node)
+        return (followed or not indirect) and has_contextual_secrets(node, container)
+
+    for block, context, bindings in contexts:
+        fields = contextual_secret_fields(context)
+        for name, (raw, _) in block.attrs.items():
+            container = None if name.replace("_", "").lower() in fields else name
+            if carries(value(raw), container, bindings):
+                return True
+    return False
+
+
 def hcl_has_paired_secret(text):
     """Name/value pairs (env blocks, jsonencode lists) and secret-named variables.
 
@@ -803,13 +1076,10 @@ def hcl_has_paired_secret(text):
                                                            + (1 if k > n else 0)]
                 if "{" not in between and "}" not in between:
                     return True
-    top = parse_hcl(text)
-    if hcl_secret_indirection(top):
+    top = hcl_source_blocks(text)
+    if hcl_secret_indirection(top) or hcl_contextual_secrets(top):
         return True
-    pending = list(top)
-    while pending:
-        block = pending.pop()
-        pending.extend(block.blocks)
+    for block, _, _ in hcl_blocks_with_context(top):
         # A secret-named parameter or env block with its value anywhere in the block.
         names = [literal(block.attrs[k][0]) for k in ("name", "key", "parameter_key") if k in block.attrs]
         if ("value" in block.attrs or "parameter_value" in block.attrs) and any(
@@ -856,10 +1126,7 @@ def hcl_secret_indirection(blocks):
     = "..." }` is then the password, though its own name says nothing. So is
     `password = local.creds.admin` over a literal object, or a number."""
     literals, wanted = set(), set()
-    pending = list(blocks)
-    while pending:
-        block = pending.pop()
-        pending.extend(block.blocks)
+    for block, _, _ in hcl_blocks_with_context(blocks):
         if block.type == "variable" and block.labels and "default" in block.attrs:
             if _holds_value(literal(block.attrs["default"][0])):
                 literals.add(("var", block.labels[0]))
@@ -870,7 +1137,7 @@ def hcl_secret_indirection(blocks):
             # password_length = var.n reads a setting, not a secret.
             if is_secret_name(name) and not HCL_NAMES_A_SECRET.search(name) and not SETTING_NAME.search(name):
                 wanted.update(HCL_INDIRECT.findall(HCL_FILE_CALL.sub("", raw)))
-    return bool(literals & wanted)
+    return bool(literals & wanted) or hcl_contextual_secrets(blocks, indirect=True)
 
 
 def hcl_module_sensitive(directory):
@@ -893,7 +1160,7 @@ def hcl_module_sensitive(directory):
                                       hcl_declares_sensitive(sibling.read_text(encoding="utf-8-sig"))):
                 return True
             if sibling.is_file():
-                blocks.extend(parse_hcl(sibling.read_text(encoding="utf-8-sig")))
+                blocks.extend(hcl_source_blocks(sibling.read_text(encoding="utf-8-sig")))
     except (OSError, ValueError, TypeError, RecursionError):
         return True
     # The secret may be read in one file and written in another.

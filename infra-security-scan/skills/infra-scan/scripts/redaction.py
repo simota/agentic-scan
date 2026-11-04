@@ -109,6 +109,48 @@ def is_secret_name(name):
     return _secret_field(probe + ":") is not None or CREDENTIAL_WORD.search(probe) is not None
 
 
+# These values are secrets because of their parent, not their own spelling.
+# Keep ordinary `key`, MD5 key names, KMS references and SHA-256 hashes public.
+CONTEXTUAL_SECRET_FIELDS = {
+    "md5authenticationkey": {"key"},
+    "md5authenticationkeys": {"key"},
+    **{prefix + "encryptionkey": {"rawkey"} for prefix in (
+        "disk", "sourcedisk", "image", "sourceimage", "snapshot", "sourcesnapshot")},
+}
+
+
+def contextual_secret_fields(container):
+    """Secret children of a known Terraform or API credential container."""
+    name = container.replace("_", "").lower() if isinstance(container, str) else ""
+    return CONTEXTUAL_SECRET_FIELDS.get(name, ())
+
+
+def has_contextual_secrets(value, container=""):
+    """Inspect decoded objects without making all fields named `key` secret.
+
+    Lists retain their parent's meaning; nested objects get their own context.
+    An opaque value for a known container may hold a key, so fail closed. HCL
+    callers separately allow references whose literal is not in the module.
+    """
+    fields = contextual_secret_fields(container)
+    if isinstance(value, list):
+        return any(has_contextual_secrets(item, container) for item in value)
+    if isinstance(value, dict):
+        return any((isinstance(name, str) and name.replace("_", "").lower() in fields
+                    and item not in (None, "", [], {})) or has_contextual_secrets(item, name)
+                   for name, item in value.items())
+    if value in (None, ""):
+        return False
+    if fields:
+        return True
+    if isinstance(value, str) and value.lstrip().startswith(("{", "[")):
+        try:
+            return has_contextual_secrets(json.loads(value, object_pairs_hook=unique_object))
+        except (ValueError, RecursionError):
+            pass
+    return False
+
+
 def _secret_refs(value, secret=False):
     """CloudFormation parameters referenced (Ref, Fn::Sub) under secret-named keys."""
     refs = set()
@@ -187,6 +229,9 @@ def has_structured_secrets(value):
         return False
     if not isinstance(value, dict):
         return False
+    if any(contextual_secret_fields(key) and has_contextual_secrets(item, key)
+           for key, item in value.items()):
+        return True
     if "sensitive" in value and value["sensitive"] is not False:
         return True
     if any(_sensitive_mask(value[key]) for key in SENSITIVITY_MASKS if key in value):

@@ -1051,41 +1051,35 @@ def arch_layout(arch):
         # crossings of every pair are counted once, by node index, before the moves:
         # pairs[u][v] counts the pairs of rows (a, b), one side at a time, with a
         # of u, b of v and a > b, i.e. the crossings when u stands above v.
-        nodes = list(column)
-        rows = [[sorted(row[x] for x in neighbours[node] if x in row) for row in sides]
-                for node in nodes]
-
-        def greater(node_rows):
-            """For each row k of each side in turn: how many of the node's rows there exceed k."""
-            counts = []
-            for node_side, row in zip(node_rows, sides):
-                start = 0  # sorted, so the count drops by one at each of the node's rows
-                for passed, r in enumerate(node_side):
-                    counts += [len(node_side) - passed] * (r - start)
-                    start = r
-                counts += [0] * (len(row) - start)
-            return counts
-
-        # by_row[k][u] is greater(rows[u])[k]; below[v][u] == pairs[u][v] sums it
-        # over the rows k of v, in the same numbering.
-        by_row, below = list(zip(*map(greater, rows))), []
-        for node_rows in rows:
-            column_sum, offset = [0] * len(nodes), 0
-            for node_side, row in zip(node_rows, sides):
-                for r in node_side:
-                    column_sum = list(map(add, column_sum, by_row[offset + r]))
-                offset += len(row)
-            below.append(column_sum)
-        pairs = [list(row) for row in zip(*below)]
-        order = list(range(len(nodes)))
-        for node in range(len(nodes)):
+        nodes, n = list(column), len(column)
+        # table[v * n + u] == pairs[u][v], in one flat list. Walking each side's
+        # rows b in order, greater[u] counts the rows of u there below b, and is
+        # added once for each v with an edge to b.
+        table = [0] * (n * n)
+        for row in sides:
+            users = [[] for _ in row]
+            for v, node in enumerate(nodes):
+                for x in neighbours[node]:
+                    if x in row:
+                        users[row[x]].append(v)
+            greater = [0] * n
+            for at in users:
+                for u in at:
+                    greater[u] += 1
+            for at in users:
+                for u in at:
+                    greater[u] -= 1  # u's row b is not below b itself
+                for v in at:
+                    table[v * n:(v + 1) * n] = map(add, table[v * n:(v + 1) * n], greater)
+        order = list(range(n))
+        for node in range(n):
             stood = order.index(node)
             others = order[:stood] + order[stood + 1:]
-            above = pairs[node]
+            above, below = table[node::n], table[node * n:(node + 1) * n]
             # costs[i]: crossings with node placed at i among the others; moving
             # it past x swaps which of the two stands above.
             costs = list(accumulate(
-                map(sub, map(below[node].__getitem__, others), map(above.__getitem__, others)),
+                map(sub, map(below.__getitem__, others), map(above.__getitem__, others)),
                 initial=sum(above) - above[node]))
             fewest = min(costs)
             at = costs.index(fewest)

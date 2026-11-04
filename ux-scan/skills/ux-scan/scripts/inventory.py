@@ -1390,7 +1390,8 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
     labels_for = dynamic_label_pairs(parsed)  # htmlFor={id} names its one id={id}.
-    has_confirmation = bool(CONFIRM.search(clean))
+    # Searched once, and only for a file with a destructive handler attribute to judge.
+    has_confirmation = None
     destructive_offsets = set()
     label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
@@ -1417,6 +1418,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         if not has_confirmation:
             for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
                 if event_name(attr) in DESTRUCTIVE_ATTRS:
+                    if has_confirmation is None:
+                        has_confirmation = bool(CONFIRM.search(clean))
+                    if has_confirmation:
+                        break
                     scan_end = min(handler_end, handler_start + MAX_HANDLER_SCAN)
                     matches = list(DESTRUCTIVE.finditer(clean, handler_start, scan_end))
                     reference = (DESTRUCTIVE_REFERENCE.fullmatch(clean, handler_start, handler_end)
@@ -1500,6 +1505,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             acc["icon_buttons"].append({"element": name, "location": loc})
 
 
+def rtl_locales(flows):
+    return {loc.split("-")[0].split("_")[0].lower() for loc in flows.get("locales", [])} & RTL_LANGS
+
+
 def inventory(root, flows=None):
     root = Path(root).resolve()
     spacing, font_sizes, breakpoints, z_index = Tally(), Tally(), Tally(), Tally()
@@ -1509,6 +1518,10 @@ def inventory(root, flows=None):
     acc = defaultdict(list)
     routes, links, screens, tokens, motion, reduced, locales = [], set(), [], [], [], [], defaultdict(dict)
     scanned = skipped = 0
+    try:  # Physical properties are reported only for an RTL locale; others need no scan for them.
+        scan_physical = bool(flows) and bool(rtl_locales(flows))
+    except Exception:  # Scan anyway; the report step below raises as it always did.
+        scan_physical = True
 
     def directory_warning(error):
         relative = Path(error.filename or root).relative_to(root).as_posix()
@@ -1690,7 +1703,7 @@ def inventory(root, flows=None):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
             truncation.add(re.sub(r"\s+", " ", m.group(0))[:40], at(m.start()))
-        for m in PHYSICAL.finditer(text):
+        for m in PHYSICAL.finditer(text) if scan_physical else ():
             physical.add(re.sub(r"\s+", " ", (m.group(1) or m.group(2)))[:30], at(m.start()))
         link_spans = []
         for m in LINK.finditer(text):
@@ -1715,13 +1728,14 @@ def inventory(root, flows=None):
             screens.append(rel)
         if suffix in MARKUP_EXT:
             scan_markup(rel, text, acc, source_lines, parsed)
-            if FETCH.search(text):
+            fetch = FETCH.search(text)
+            if fetch:
                 missing = [k for k, rx in (("loading", LOADING), ("error", ERROR)) if not rx.search(text)]
                 if LIST_RENDER.search(text) and not EMPTY.search(text):
                     missing.append("empty")
                 if missing:
                     acc["state_branches"].append({"file": rel, "missing": missing,
-                                                  "location": at(FETCH.search(text).start())})
+                                                  "location": at(fetch.start())})
 
     expansion = []
     for bundle, langs in sorted(locales.items()):
@@ -1792,7 +1806,7 @@ def inventory(root, flows=None):
             for row in result["fixed_widths"]:
                 row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest and any(
                     floor <= smallest and not capped for floor, capped in width_conditions_by_value[row["value"]])
-        if {loc.split("-")[0].split("_")[0].lower() for loc in flows.get("locales", [])} & RTL_LANGS:
+        if rtl_locales(flows):
             result["physical_properties"] = physical.rows("property")
     # Caps apply only after off_scale was measured on every row; each cut is counted.
     truncated = {}

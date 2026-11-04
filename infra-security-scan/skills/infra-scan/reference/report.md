@@ -92,3 +92,19 @@ In JSON/YAML, strings resembling Terraform references are still literal values:
 secret fields containing `var.*`, `aws_*` or similar text remain redacted.
 Multiline secret values must stay hidden across adjacent fields, heredocs and
 YAML list entries.
+
+Some key values are secret because of their enclosing schema: Cloud Router
+`md5_authentication_key` / `md5_authentication_keys` hold a secret in `key`, and
+GCP disk, image and snapshot encryption-key blocks hold a customer-supplied key
+in `raw_key`. Their API camelCase forms are treated the same way. Excerpts that
+contain these values are omitted, including HCL objects, dynamic block content
+and JSON/YAML arrays. A variable or local literal read by one of these fields
+also prevents excerpts from the same Terraform module. Bare HCL references
+without a module-local value, ordinary `key` fields, key names, KMS references
+and SHA-256 hashes remain eligible for the existing excerpt checks.
+
+This is a static check, not HCL evaluation. It follows local aliases and
+iterator inputs only to determine whether a key can copy module-local values.
+Unresolved key expressions, excessive reference depth, or a reference graph
+that exceeds the source-sized work budget omit excerpts conservatively.
+Findings and their original `path:line` locations remain available.

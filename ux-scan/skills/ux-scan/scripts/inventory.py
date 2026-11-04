@@ -21,6 +21,7 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import unicodedata
 from bisect import bisect_left, bisect_right
@@ -63,6 +64,11 @@ MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html
 HTML_EXT = {".html", ".htm", ".erb", ".hbs", ".handlebars", ".ejs", ".php", ".njk", ".liquid",
             ".twig", ".mustache", ".jinja", ".jinja2", ".j2"}
 JSX_EXT = {".js", ".jsx", ".tsx", ".mjs", ".mdx"}
+# Unions tested once per file, built once here.
+STYLE_EXT = CSS_EXT | EMBED_CSS_EXT
+RAW_TEXT_EXT = HTML_EXT | EMBED_CSS_EXT
+SOURCE_EXT = MARKUP_EXT | JS_EXT
+SCANNED_EXT = STYLE_EXT | JS_EXT | MARKUP_EXT | {".json"}
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
 LANG = re.compile(r"^[a-z]{2,3}(?:[-_](?:[A-Za-z]{2,4}|\d{3}))?$")
 # ISO 639-1 codes: a two-letter name in this set is preferred as the language
@@ -295,10 +301,17 @@ def iter_files(root, onerror=None):
                                   or (in_routes and d in ROUTE_SEGMENT_DIRS
                                       and holds_page_sources(os.path.join(dirpath, d)))))
         for name in sorted(filenames):
-            path = Path(dirpath) / name
-            if name in SKIP_FILES or path.is_symlink() or not path.is_file():
+            if name in SKIP_FILES:
                 continue
-            yield path
+            path = Path(dirpath) / name
+            # One lstat answers both Path.is_symlink() and Path.is_file(): a path that is not a
+            # link stats the same either way. A failed lookup takes the Path methods' own answer.
+            try:
+                regular = stat.S_ISREG(os.lstat(path).st_mode)
+            except (OSError, ValueError):
+                regular = not path.is_symlink() and path.is_file()
+            if regular:
+                yield path
 
 
 def read_text(path, root=None):
@@ -1230,6 +1243,8 @@ def locale_bundle(rel):
     like tags, an ISO 639-1 name wins, so namespaces such as app.json or
     nav.json are not mistaken for languages.
     """
+    if not str(rel).endswith(".json"):  # Cheaper than a Path for the many other files.
+        return None
     p = Path(rel)
     if p.suffix != ".json":
         return None
@@ -1388,7 +1403,7 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     html_names = suffix in HTML_EXT
     if parsed is None:
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
-                           raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
+                           raw_text=suffix in RAW_TEXT_EXT, jsx=suffix in JSX_EXT))
     labels_for = dynamic_label_pairs(parsed)  # htmlFor={id} names its one id={id}.
     # Searched once, and only for a file with a destructive handler attribute to judge.
     has_confirmation = None
@@ -1532,7 +1547,7 @@ def inventory(root, flows=None):
     for path in iter_files(root, onerror=directory_warning):
         rel = path.relative_to(root).as_posix()
         suffix = path.suffix.lower()
-        if suffix not in CSS_EXT | EMBED_CSS_EXT | JS_EXT | MARKUP_EXT | {".json"}:
+        if suffix not in SCANNED_EXT:
             continue
         try:
             rel.encode("utf-8")
@@ -1575,7 +1590,7 @@ def inventory(root, flows=None):
             if TOKEN_FILE.search("/" + rel):
                 tokens.append({"path": rel, "custom_properties": 0})
             continue
-        css = suffix in CSS_EXT | EMBED_CSS_EXT
+        css = suffix in STYLE_EXT
         js = suffix in JS_EXT or suffix in EMBED_CSS_EXT
         if suffix in MARKUP_EXT:
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT, template=suffix in HTML_EXT)
@@ -1584,7 +1599,7 @@ def inventory(root, flows=None):
         if suffix in CSS_EXT:
             text = mask_css_comments(text, suffix in LINE_COMMENT_EXT)
         parsed = (list(tags(text, vue=suffix == ".vue", html_names=suffix in HTML_EXT,
-                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
+                            raw_text=suffix in RAW_TEXT_EXT, jsx=suffix in JSX_EXT))
                   if suffix in MARKUP_EXT else None)
         css_text, js_text = text, text
         if suffix in EMBED_CSS_EXT:
@@ -1724,7 +1739,7 @@ def inventory(root, flows=None):
                 segs = [s for s in segments if s and not s.startswith("(")
                         and not (next_app and s.startswith("@"))]
                 routes.append({"route": "/" + "/".join(segs), "location": f"{rel}:1"})
-        if SCREEN_DIR.search(rel) and suffix in MARKUP_EXT | JS_EXT:
+        if SCREEN_DIR.search(rel) and suffix in SOURCE_EXT:
             screens.append(rel)
         if suffix in MARKUP_EXT:
             scan_markup(rel, text, acc, source_lines, parsed)

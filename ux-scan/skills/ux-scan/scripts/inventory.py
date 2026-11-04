@@ -26,7 +26,6 @@ import sys
 import unicodedata
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -1063,17 +1062,32 @@ def has_name(attrs, names=NAME_ATTRS):
     return False
 
 
-@dataclass
-class MarkupTag:
-    name: str
-    attrs: dict
-    spread: bool
-    start: int
-    end: int
-    self_closing: bool
-    closing: bool
-    attribute_spans: dict
-    body: tuple | None = None
+class Record:
+    """Equality and repr by field, as a dataclass gives them, for classes that list their fields
+    in __slots__. Importing dataclasses loads inspect, which costs every run more than these need."""
+
+    __slots__ = ()
+    __hash__ = None
+
+    def _fields(self):
+        return tuple(getattr(self, name) for name in self.__slots__)
+
+    def __eq__(self, other):
+        return self._fields() == other._fields() if other.__class__ is self.__class__ else NotImplemented
+
+    def __repr__(self):
+        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.__slots__)
+        return f"{type(self).__qualname__}({fields})"
+
+
+class MarkupTag(Record):
+    # Declaration order, as the dataclass had it: positional arguments and repr follow it.
+    __slots__ = ("name", "attrs", "spread", "start", "end", "self_closing", "closing", "attribute_spans", "body")  # noqa: RUF023
+
+    def __init__(self, name: str, attrs: dict, spread: bool, start: int, end: int, self_closing: bool,
+                 closing: bool, attribute_spans: dict, body: tuple | None = None):
+        self.name, self.attrs, self.spread, self.start, self.end = name, attrs, spread, start, end
+        self.self_closing, self.closing, self.attribute_spans, self.body = self_closing, closing, attribute_spans, body
 
 
 def expression_tags(text, start, stop, *, html_names=False, vue=False):
@@ -1274,14 +1288,13 @@ def locale_bundle(rel):
     return None
 
 
-@dataclass
-class CssRule:
-    start: int
-    selector: str
-    declarations: list
-    closed: bool = False
-    body_start: int = 0
-    end: int | None = None
+class CssRule(Record):
+    __slots__ = ("start", "selector", "declarations", "closed", "body_start", "end")  # noqa: RUF023
+
+    def __init__(self, start: int, selector: str, declarations: list, closed: bool = False,
+                 body_start: int = 0, end: int | None = None):
+        self.start, self.selector, self.declarations = start, selector, declarations
+        self.closed, self.body_start, self.end = closed, body_start, end
 
 
 def css_blocks(text):

@@ -81,6 +81,19 @@ ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br 
                 "ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu".split())
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
+
+def leading(chars, pattern):
+    """Compile pattern behind a lookahead for the characters every one of its matches starts with.
+
+    The lookahead never changes what matches or where. It lets the search reject other
+    positions at once, which the engine cannot do by itself for a pattern that opens with a
+    lookbehind or \\b. A global flag group such as (?i) stays first and applies to chars too.
+    """
+    flags = re.match(r"\(\?[aiLmsux]+\)", pattern)
+    head = flags.group(0) if flags else ""
+    return re.compile(f"{head}(?={chars})(?:{pattern[len(head):]})")
+
+
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))((?i:px|rem|em))\b")
 # A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
 # or a line with a colon, which starts another declaration (also across masked
@@ -92,27 +105,27 @@ INDENTED_CSS_EXT = {".sass", ".styl"}
 INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
 _CSS_SPACING_NAME = (r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
                      r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
-CSS_SPACING = re.compile(_CSS_SPACING_NAME + _CSS_VALUE)
+CSS_SPACING = leading(r"[mpgrc]", _CSS_SPACING_NAME + _CSS_VALUE)
 CSS_SPACING_LINE = re.compile(_CSS_SPACING_NAME.replace(r"\s*:\s*", r"[^\S\n]*:[^\S\n]*") + _CSS_LINE_VALUE)
 # Style-object keys may be quoted, and Vue style bindings use kebab-case names.
-JS_SPACING = re.compile(r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
+JS_SPACING = leading(r"[mpgrc]", r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
                         r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
                         r"(?:Start|End|-start|-end)?[\"']?\s*:\s*"
                         r"(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
-CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
+CSS_FONT_SIZE = leading(r"f", r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
 CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
-JS_FONT_SIZE = re.compile(r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
+JS_FONT_SIZE = leading(r"f", r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
                           r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
 _MQ = r"(\d+(?:\.\d+)?)((?i:px|em|rem))"
 MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
                    + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
-CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
-JS_Z = re.compile(r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
+CSS_Z = leading(r"z", r"(?<![\w-])z-index\s*:\s*(-?\d+)")
+JS_Z = leading(r"z", r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
+CSS_WIDTH = leading(r"[wm]", r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
+JS_WIDTH = leading(r"[wm]", r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
 # A script object that describes a viewport or an image rather than styling an element:
 # use: { viewport: { width: 1280 } } (test runners), openGraph: { images: [{ width: 1200 }] }.
 NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images)[\"']?\s*:\s*"
@@ -126,7 +139,7 @@ SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 _NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*" + _NO_OUTLINE)
-JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
+JS_OUTLINE_NONE = leading(r"o", r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
 # A visible replacement sets a box shadow, border, background, underline or
 # outline to something other than nothing.
 FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
@@ -135,19 +148,19 @@ FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|
                                r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?![\d.])(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
                                r"\s*)+(?:!important\s*)?(?:;|$))",
                                re.M)
-CSS_MOTION = re.compile(r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
+CSS_MOTION = leading(r"[ta]", r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
 JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
 REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|reducedMotion|ReducedMotion")
-TRUNCATION = re.compile(r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
+TRUNCATION = leading(r"[tlwWcv:]", r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
                         r"textOverflow\s*:\s*[\"']ellipsis|WebkitLineClamp|whiteSpace\s*:\s*[\"']nowrap|"
                         r"class(?:Name)?\s*=\s*(?:\{[^}]{0,200}?)?[\"'`][^\"'`]*\b(?:truncate|line-clamp-\d)\b|"
                         # Vue :class="['truncate', …]" or "{ 'line-clamp-2': on }"; Svelte class:truncate={on}.
                         r"(?<![\w-])(?:v-bind)?:class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b|"
                         r"\bclass:(?:truncate|line-clamp-\d)\b")
-PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
+PHYSICAL = leading(r"[mpbtflr]", r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
                       r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w.#-])(?:left|right)(?=\s*:))|"
                       r"\b(marginLeft|marginRight|paddingLeft|paddingRight|borderLeft|borderRight)\s*:")
-CUSTOM_PROPERTY = re.compile(r"(?<![\w-])--[\w-]+\s*:")
+CUSTOM_PROPERTY = leading(r"-", r"(?<![\w-])--[\w-]+\s*:")
 # A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
 TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
                         # Below such a folder, style and data files and index modules; below a
@@ -156,15 +169,15 @@ TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-syst
                         r"/(?:tokens|design-tokens|theme|design-system)/(?:[^/]+/)*"
                         r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$|"
                         r"/(?:design-tokens|theme|design-system)/(?:[^/]+/)*[^/]+\.[cm]?[jt]s$")
-FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
+FETCH = leading(r"[fau$c]", r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
-LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
+LOADING = leading(r"[ilps<{]", r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
                      r"\bstatus\s*===?\s*[\"'](?:loading|pending)|"
                      # A Svelte {#await p} block whose pending branch comes before {:then}.
                      r"\{#await\b(?![^{}]*\bthen\b)")
-ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b|\{:catch\b")
-LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
-EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
+ERROR = leading(r"[ie.cof{]", r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b|\{:catch\b")
+LIST_RENDER = leading(r"[.v{*]", r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
+EMPTY = leading(r"[.!ein]", r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
 # A destructive verb leads the callee (deleteTask, Remove) or follows a camelCase
 # prefix (handleDelete, onRemove, props.onDiscard). "dropdown", drag-and-drop
@@ -186,13 +199,13 @@ NOT_DESTRUCTIVE = re.compile(r"(?:^|\.)(?:classList|searchParams|params|headers|
 MAX_HANDLER_SCAN = 4000
 MAX_HANDLER_REFERENCE = 200
 # A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
-CONFIRM = re.compile(r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
+CONFIRM = leading(r"[cudma]", r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
-ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+ROUTE = leading(r"[<p]", r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
 # A location object ({ path: "/x" }) passed to to=, href= or push() is a link, not a route.
-LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
+LINK = leading(r"(?i:[\[:thr])|[np]", r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)|"
                   r"(?:(?<![\w-]):?(?i:to|href)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
                   r"[^{}]{0,200}?\bpath(?:name)?\s*:\s*[\"'`](/[^\"'`?#]*)")
@@ -229,7 +242,7 @@ VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 # Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false },
 # also around one level of nested objects (themeColor: [{ media, color }]).
-NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
+NEXT_VIEWPORT = leading(r"e", r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
 # The whole value of maximumScale, when it is a lone numeric literal (not an expression).
 NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
 JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")

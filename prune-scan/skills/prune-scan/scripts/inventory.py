@@ -29,7 +29,7 @@ import stat
 import sys
 from array import array
 from bisect import bisect_left
-from collections import Counter, defaultdict
+from collections import Counter, defaultdict, deque
 from contextlib import ExitStack, contextmanager
 from functools import lru_cache
 from itertools import islice
@@ -41,6 +41,18 @@ from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E
 from safe_paths import descriptor_within, open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
+
+
+
+def word_start(*words):
+    r"""\b(?:word|...) for words that open with a word character, as a pattern that opens with that
+    character: re then skips straight to candidate positions instead of trying every one. Each
+    boundary is checked just after the first character, with the same meaning as \b before it.
+    """
+    if not all(re.fullmatch(r"\w", word[:1]) for word in words):
+        raise ValueError(f"word_start needs words opening with a word character: {words}")
+    return "(?:%s)" % "|".join(f"{word[0]}(?<!\\w{word[0]}){word[1:]}" for word in words)
+
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
              ".svelte-kit", "coverage", ".venv", "venv", "__pycache__", "Pods", ".gradle", "target",
@@ -108,7 +120,7 @@ QUOTED = re.compile(r"[\"'`]([A-Za-z0-9_][\w.-]*)[\"'`]")
 # Any short single-line literal: natural-language keys ("Delete item") and
 # namespaced lookups ("common:save") are locale keys too.
 STRING_LITERAL = re.compile(r"\"([^\"\\\n]{1,200})\"|'([^'\\\n]{1,200})'|`([^`\\$\n]{1,200})`")
-PYTHON_MODULE_RUN = re.compile(r"\bpython[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
+PYTHON_MODULE_RUN = re.compile(word_start("python") + r"[\d.]*\s+(?:-\w+\s+)*-m\s+([A-Za-z_]\w*(?:\.\w+)*)")
 # Dotted module paths loaded by name: "mysite.urls" (ROOT_URLCONF), "polls.apps.PollsConfig"
 # (INSTALLED_APPS), "pkg.mod:app" (also a factory call, "pkg.mod:create_app()") and an
 # unquoted gunicorn/uvicorn pkg.mod:app. A logger name (getLogger("app.billing")) is not a
@@ -118,7 +130,8 @@ PYTHON_MODULE_STRING = re.compile(r"(?<!getLogger\()[\"']([A-Za-z_]\w*(?:\.[A-Za
                                   r"(?<![\w.:/-])([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)+):[A-Za-z_]\w*(?![\w.:/-])")
 # A server command names a single module too (gunicorn 'hello:create_app()', uvicorn service:app);
 # only on such a line, so a container tag ("redis:alpine") names no module.
-SERVER_COMMAND = re.compile(r"\b(?:gunicorn|uvicorn|hypercorn|daphne|granian|waitress-serve)\b")
+SERVER_COMMAND = re.compile(word_start("gunicorn", "uvicorn", "hypercorn", "daphne", "granian", "waitress-serve")
+                            + r"\b")
 SERVER_MODULE = re.compile(r"(?<![\w.:/$-])[\"']?([A-Za-z_]\w*):[A-Za-z_]\w*(?:\([^\"'()\n]*\))?(?![\w.:/-])")
 # "config.json" and "logo.png" name files, not modules (named_in covers those).
 NOT_MODULE_SUFFIX = {"json", "yaml", "yml", "toml", "ini", "cfg", "conf", "txt", "md", "rst", "html", "htm", "css",
@@ -138,7 +151,7 @@ SCOPED_TRANSLATOR = re.compile(r"\b(?:useTranslations|getTranslations)\(\s*(?:\{
 # i18next resolves t("item", {count}) to item_one / item_other (and item_plural in v3),
 # and t("friend", {context}) to friend_male.
 PLURAL_SUFFIX = re.compile(r"_(?:ordinal_)?(?:zero|one|two|few|many|other|plural|[0-9]+)\Z")
-CONTEXT_CALL = re.compile(r"\bt\(\s*[\"'`]([\w.:-]+)[\"'`]\s*,\s*\{[^{}]*?\bcontext\s*:")
+CONTEXT_CALL = re.compile(word_start("t") + r"\(\s*[\"'`]([\w.:-]+)[\"'`]\s*,\s*\{[^{}]*?\bcontext\s*:")
 MAX_SCOPED_KEYS = 100_000  # Per file; beyond it a scope hides every key below it, unlisted.
 DYNAMIC_CLASS = re.compile(r"(?<![\w-])([A-Za-z_][\w-]*-)\$\{")
 CONCAT_CLASS = re.compile(r"[\"']([A-Za-z_][\w-]*-)[\"']\s*\+")
@@ -207,7 +220,8 @@ ENV_READ = re.compile(
     r"process\.env\.([A-Z_][A-Z0-9_]*)|process\.env\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
     r"import\.meta\.env\.([A-Z_][A-Z0-9_]*)|os\.environ\[\s*[\"']([A-Z_][A-Z0-9_]*)[\"']\s*\]|"
     r"os\.environ\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
-    r"(?:os\.|(?<![\w.]))getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
+    # getenv opens the pattern, so re can skip to candidate characters; its lookbehind is (?<![\w.]) before it.
+    r"os\.getenv\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|getenv(?<![\w.]getenv)\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"Deno\.env\.get\(\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|os\.(?:Getenv|LookupEnv)\(\s*\"([A-Z_][A-Z0-9_]*)\"|"
     r"env::var(?:_os)?\(\s*\"([A-Z_][A-Z0-9_]*)\"|ENV(?:\.fetch\(|\[)\s*[\"']([A-Z_][A-Z0-9_]*)[\"']|"
     r"System\.getenv\(\s*\"([A-Z_][A-Z0-9_]*)\"")
@@ -234,18 +248,19 @@ FLAG_PARENT = re.compile(r"^[^\S\r\n]*(?:[\"']?([A-Za-z][\w.-]*)[\"']?[^\S\r\n]*
                          r"\[+[\"']?([\w.-]+?)[\"']?\]+)[^\S\r\n]*(?:(?:#|//).*)?\r?$")
 # Fields of a nested flag definition: the flag is the key that encloses them.
 FLAG_FIELDS = {"enabled", "enable", "value", "default", "defaultvalue", "default_value", "on", "active", "state"}
-HTTP_CLIENT_API = re.compile(r"\b(?:const|let|var)\s+api\b(?:\s*:[^=;\n]+)?\s*=\s*(?:axios|ky|ofetch)\b")
+HTTP_CLIENT_API = re.compile(word_start("const", "let", "var")
+                             + r"\s+api\b(?:\s*:[^=;\n]+)?\s*=\s*(?:axios|ky|ofetch)\b")
 # Bindings are checked for api afterwards; excluding braces keeps the scan linear.
 API_IMPORT = re.compile(r"\bimport\s+(?:type\s+)?(api\b|\{[^{}]*\})\s*from\s*[\"']([^\"']+)[\"']|"
                         r"\b(?:const|let|var)\s+(api)\s*=\s*require\(\s*[\"']([^\"']+)[\"']\s*\)")
-API_CALL = re.compile(r"\bapi\.(?:get|post|put|patch|delete|all|head|options)\(")
+API_CALL = re.compile(word_start("api") + r"\.(?:get|post|put|patch|delete|all|head|options)\(")
 ROUTE_DEFS = (
     ("server", re.compile(r"@\w+(?:\.\w+)*\.(route|get|post|put|patch|delete|api_route|websocket)\(\s*[\"']([^\"']*)[\"']")),
     ("server", re.compile(r"\b(?:app|router|server|api|routes)\.(get|post|put|patch|delete|all|head|options)\(\s*"
                           r"[\"'`](/[^\"'`]*)[\"'`]")),
-    ("server", re.compile(r"\b(re_path|path)\(\s*r?[\"']([^\"']*)[\"']\s*,")),
+    ("server", re.compile("(" + word_start("re_path", "path") + r")\(\s*r?[\"']([^\"']*)[\"']\s*,")),
     ("client", re.compile(r"<(Route)\b[^>]*?\bpath\s*=\s*[\"']([^\"']+)[\"']")),
-    ("client", re.compile(r"\b(path)\s*:\s*[\"'](/[^\"']*)[\"']")),
+    ("client", re.compile("(" + word_start("path") + r")\s*:\s*[\"'](/[^\"']*)[\"']")),
 )
 PARAM = re.compile(r"<[^>]+>|:[A-Za-z_]\w*\??|\{[^}]+\}|\[[^\]]+\]|\*\w*|\(\?P<[^>]+>[^)]*\)")
 # A Django re_path pattern: groups, classes, \d-style escapes and a bare . (each
@@ -1082,17 +1097,36 @@ def dynamic_class_prefixes(text):
     """Retain every literal class prefix, including several in one template."""
     # Treat each backtick as a possible opening, conservatively including nested templates.
     # Segments are disjoint, and prefixes cannot restart inside the same hyphenated token.
-    for template in re.finditer(r"`[^`]*", text):
+    # A prefix ends in -${, so a segment without one holds none.
+    for template in re.finditer(r"`[^`]*", text) if "-${" in text else ():
+        if text.find("-${", template.start() + 1, template.end()) < 0:
+            continue
         for match in DYNAMIC_CLASS.finditer(text, template.start() + 1, template.end()):
             yield match.group(1)
     for match in CONCAT_CLASS.finditer(text):
         yield match.group(1)
 
 
+# Only statements hold imports, and no statement sits inside an expression.
+STATEMENT_HOLDERS = (ast.stmt, ast.excepthandler, ast.match_case)
+
+
+def statement_nodes(tree):
+    """The statements of tree in ast.walk's breadth-first order, without entering expressions."""
+    todo = deque([tree])
+    while todo:
+        node = todo.popleft()
+        yield node
+        for field in node._fields:
+            value = getattr(node, field, None)
+            if isinstance(value, list):
+                todo.extend(item for item in value if isinstance(item, STATEMENT_HOLDERS))
+
+
 def py_import_specs(text, *, tree=None):
     """Keep valid Python imports in inline suites and continued statements; fall back for newer syntax."""
     if tree is not None:
-        for node in ast.walk(tree):
+        for node in statement_nodes(tree):
             if isinstance(node, ast.Import):
                 for alias in node.names:
                     yield "", alias.name, []
@@ -1374,8 +1408,8 @@ def sql_table_specs(text):
         position = closing.end()
 
 
-MAKE_CALL = re.compile(r"(?:\bmake|\$\(MAKE\)|\$\{MAKE\})(?=[^\S\n])")
-NPM_CALL = re.compile(r"\b(?:npm|pnpm|yarn|bun)(?=[^\S\n])")
+MAKE_CALL = re.compile("(?:" + word_start("make") + r"|\$\(MAKE\)|\$\{MAKE\})(?=[^\S\n])")
+NPM_CALL = re.compile(word_start("npm", "pnpm", "yarn", "bun") + r"(?=[^\S\n])")
 MAKE_VALUE_OPTIONS = {"-C", "-f", "-I", "-o", "-W"}
 # Long spellings of the options above, whose value is the next word.
 MAKE_LONG_OPTIONS = {"--directory": "-C", "--file": "-f", "--makefile": "-f", "--include-dir": "-I",
@@ -1667,6 +1701,8 @@ def inventory(root, units=None, today=None):
                 python_imports[rel] = list(py_import_specs(text, tree=tree))
             except (SyntaxError, ValueError, RecursionError, MemoryError):
                 pass  # Unsupported syntax and parser resource limits retain the best-effort scan.
+            finally:
+                tree = None  # Release each tree before the next parse: at most one is held.
         if is_test(rel):
             continue
         regex = {**{e: PY_DEF for e in PY_EXT}, **{e: JS_DEF for e in JS_EXT}, **{e: GO_DEF for e in GO_EXT},
@@ -2080,6 +2116,7 @@ def inventory(root, units=None, today=None):
                     continue  # Its definitions are not mentions, but its literals are never output.
                 route_rows.append({"route": route, "method": m.group(1).upper() if kind == "server" else "",
                                    "kind": kind, "location": where})
+    mentions_by_pattern = {}
     for row in route_rows:
         # Strip Django's regex anchors (^api/items/$) here, before escaping: the
         # joiner below holds a literal \$ for ${...} that must stay intact.
@@ -2112,19 +2149,23 @@ def inventory(root, units=None, today=None):
         route_pattern = pattern.rstrip("/").rstrip("\\/")
         # Every match holds the route's longest literal piece; skip files without it.
         needle = max((piece.strip("/") for piece in PARAM.split(route)), key=len)
-        rx = re.compile(r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
-                        r"(?:/(?=[\s?#)\]}>,;<]|\Z|[\x22\x27`](?!\s*\+))|(?![\w/-]))" % (mount, route_pattern))
-        where = []
-        for rel, text in texts.items():
-            if needle not in text:
-                continue
-            hits = [m for m in rx.finditer(text)]
-            # A route's own path literal, or another route's (/api/items holds
-            # /items), is not a mention; a redirect on a definition line is.
-            spans = definition_spans.get(rel, ())
-            hits = [m for m in hits if not any(m.start() < end and start < m.end() for start, end in spans)]
-            if hits:
-                where.append(rel)
+        source = (r"(?<![\w/.:@~$-])(?:(?:https?:)?//[\w.:@-]+)?%s%s"
+                  r"(?:/(?=[\s?#)\]}>,;<]|\Z|[\x22\x27`](?!\s*\+))|(?![\w/-]))" % (mount, route_pattern))
+        # The same route defined again (GET and POST /users) has the same mentions.
+        where = mentions_by_pattern.get((source, needle))
+        if where is None:
+            rx = re.compile(source)
+            where = mentions_by_pattern[source, needle] = []
+            for rel, text in texts.items():
+                if needle not in text:
+                    continue
+                # A route's own path literal, or another route's (/api/items holds
+                # /items), is not a mention; a redirect on a definition line is.
+                # One mention is enough: stop scanning the file at the first.
+                spans = definition_spans.get(rel, ())
+                if any(not any(m.start() < end and start < m.end() for start, end in spans)
+                       for m in rx.finditer(text)):
+                    where.append(rel)
         row["mentions"], row["mentioned_in"] = len(where), sorted(where)[:MAX_LOCATIONS]
     route_rows.sort(key=lambda r: loc_key(r["location"]))
     rows["routes"] = route_rows
@@ -2228,16 +2269,23 @@ def inventory(root, units=None, today=None):
         ext = suffix(rel)
         # Preserve candidates and their metadata, but do not export arbitrary
         # source text when a value elsewhere in the file may continue here.
-        omitted_text = ("[omitted: source may contain secrets]"
-                        if sensitive_source(text) or secret_named(Path(rel).parts) else None)
+        # Decided once per file, and only for a file that yields a row.
+        omitted = []
+
+        def omitted_text(text=text, rel=rel, omitted=omitted):
+            if not omitted:
+                omitted.append("[omitted: source may contain secrets]"
+                               if sensitive_source(text) or secret_named(Path(rel).parts) else None)
+            return omitted[0]
         if rel in code_files and is_test(rel):
             for m in SKIPPED_TEST.finditer(text):
                 line = text[text.rfind("\n", 0, m.start()) + 1:].split("\n", 1)[0].strip()
-                skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": omitted_text or line[:120]})
+                skipped.append({"location": f"{rel}:{line_of(text, m.start())}", "text": omitted_text() or line[:120]})
         comment_line = COMMENT_LINE.get(ext)
+        lines = physical_lines(text) if comment_line else None
         if comment_line:
             run = []
-            for n, line in enumerate(physical_lines(text) + [""], 1):
+            for n, line in enumerate([*lines, ""], 1):
                 m = comment_line.match(line)
                 if m and not line.lstrip().startswith(("#!", "# -*-")):
                     run.append((n, m.group(1)))
@@ -2249,15 +2297,22 @@ def inventory(root, units=None, today=None):
                 run = []
         if ext in PROSE_EXT or rel in locale_files or ext == ".json":
             continue
-        for n, line in enumerate(physical_lines(text), 1):
-            m = MARKER.search(line)
-            if not m:
+        # A marker never spans a newline, so the first match on each line is the
+        # one a per-line search finds; lines without one are never visited.
+        previous = 0
+        for m in MARKER.finditer(text):
+            n = line_of(text, m.start())
+            if n == previous:
                 continue
+            previous = n
+            if lines is None:
+                lines = physical_lines(text)
+            line = lines[n - 1]
             word = m.group(1).lower()
             date = DATE.search(line)
             if not date and word not in ALWAYS_MARKERS and not word.startswith("remove"):
                 continue
-            row = {"marker": word, "location": f"{rel}:{n}", "text": omitted_text or line.strip()[:120]}
+            row = {"marker": word, "location": f"{rel}:{n}", "text": omitted_text() or line.strip()[:120]}
             if date:
                 row["date"] = date.group(1)
                 row["overdue"] = date.group(1) < today[:len(date.group(1))]

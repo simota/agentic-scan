@@ -779,14 +779,15 @@ def _record_problems(doc):
     holding = {b["id"] for b in doc.get("budgets", []) if b["status"] == "holds"}
     for f in findings:
         # Further violated budgets are named in impact; they must exist too.
-        for named in sorted(set(BUDGET_MENTION.findall(f["impact"])) - budget_ids):
+        mentioned = set(BUDGET_MENTION.findall(f["impact"]))
+        for named in sorted(mentioned - budget_ids):
             problems.append(f"{f['id']}.impact: {named} is not in budgets")
         budget = f.get("budget", "")
         if budget.strip() and budget not in budget_ids:
             problems.append(f"{f['id']}.budget: {_show(budget)} is not in budgets")
         # Every budget the finding violates, in budget or named in impact.
         violated = sorted(({budget} if budget in budget_ids else set())
-                          | (set(BUDGET_MENTION.findall(f["impact"])) & budget_ids))
+                          | (mentioned & budget_ids))
         if f.get("status", "Open") != "Fixed" and f["validation"]["verdict"] == "Valid":
             for held in (b for b in violated if b in holding):
                 problems.append(f"{held}: status holds, but {f['id']} is a Valid, unfixed "

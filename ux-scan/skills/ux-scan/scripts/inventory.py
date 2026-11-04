@@ -21,11 +21,11 @@ import json
 import math
 import os
 import re
+import stat
 import sys
 import unicodedata
 from bisect import bisect_left, bisect_right
 from collections import defaultdict
-from dataclasses import dataclass
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -63,6 +63,11 @@ MARKUP_EXT = {".js", ".jsx", ".tsx", ".mjs", ".vue", ".svelte", ".astro", ".html
 HTML_EXT = {".html", ".htm", ".erb", ".hbs", ".handlebars", ".ejs", ".php", ".njk", ".liquid",
             ".twig", ".mustache", ".jinja", ".jinja2", ".j2"}
 JSX_EXT = {".js", ".jsx", ".tsx", ".mjs", ".mdx"}
+# Unions tested once per file, built once here.
+STYLE_EXT = CSS_EXT | EMBED_CSS_EXT
+RAW_TEXT_EXT = HTML_EXT | EMBED_CSS_EXT
+SOURCE_EXT = MARKUP_EXT | JS_EXT
+SCANNED_EXT = STYLE_EXT | JS_EXT | MARKUP_EXT | {".json"}
 LOCALE_DIR = re.compile(r"(?i)(?:^|/)(?:locales?|i18n|l10n|lang|langs|languages|translations|messages)(?:/|$)")
 LANG = re.compile(r"^[a-z]{2,3}(?:[-_](?:[A-Za-z]{2,4}|\d{3}))?$")
 # ISO 639-1 codes: a two-letter name in this set is preferred as the language
@@ -75,6 +80,19 @@ ISO_639_1 = set("aa ab ae af ak am an ar as av ay az ba be bg bh bi bm bn bo br 
                 "ti tk tl tn to tr ts tt tw ty ug uk ur uz ve vi vo wa wo xh yi yo za zh zu".split())
 RTL_LANGS = {"ar", "he", "iw", "fa", "ur", "yi", "ps", "sd", "ug", "dv", "ckb"}
 
+
+def leading(chars, pattern):
+    """Compile pattern behind a lookahead for the characters every one of its matches starts with.
+
+    The lookahead never changes what matches or where. It lets the search reject other
+    positions at once, which the engine cannot do by itself for a pattern that opens with a
+    lookbehind or \\b. A global flag group such as (?i) stays first and applies to chars too.
+    """
+    flags = re.match(r"\(\?[aiLmsux]+\)", pattern)
+    head = flags.group(0) if flags else ""
+    return re.compile(f"{head}(?={chars})(?:{pattern[len(head):]})")
+
+
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))((?i:px|rem|em))\b")
 # A declaration's value may wrap onto whole later lines; it ends at ";", a brace,
 # or a line with a colon, which starts another declaration (also across masked
@@ -86,27 +104,27 @@ INDENTED_CSS_EXT = {".sass", ".styl"}
 INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
 _CSS_SPACING_NAME = (r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
                      r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
-CSS_SPACING = re.compile(_CSS_SPACING_NAME + _CSS_VALUE)
+CSS_SPACING = leading(r"[mpgrc]", _CSS_SPACING_NAME + _CSS_VALUE)
 CSS_SPACING_LINE = re.compile(_CSS_SPACING_NAME.replace(r"\s*:\s*", r"[^\S\n]*:[^\S\n]*") + _CSS_LINE_VALUE)
 # Style-object keys may be quoted, and Vue style bindings use kebab-case names.
-JS_SPACING = re.compile(r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
+JS_SPACING = leading(r"[mpgrc]", r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
                         r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
                         r"(?:Start|End|-start|-end)?[\"']?\s*:\s*"
                         r"(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
-CSS_FONT_SIZE = re.compile(r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
+CSS_FONT_SIZE = leading(r"f", r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
 CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
-JS_FONT_SIZE = re.compile(r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
+JS_FONT_SIZE = leading(r"f", r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
                           r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
 _MQ = r"(\d+(?:\.\d+)?)((?i:px|em|rem))"
 MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
                    + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
-CSS_Z = re.compile(r"(?<![\w-])z-index\s*:\s*(-?\d+)")
-JS_Z = re.compile(r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
+CSS_Z = leading(r"z", r"(?<![\w-])z-index\s*:\s*(-?\d+)")
+JS_Z = leading(r"z", r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
-CSS_WIDTH = re.compile(r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
+CSS_WIDTH = leading(r"[wm]", r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = re.compile(r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
+JS_WIDTH = leading(r"[wm]", r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
 # A script object that describes a viewport or an image rather than styling an element:
 # use: { viewport: { width: 1280 } } (test runners), openGraph: { images: [{ width: 1200 }] }.
 NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images)[\"']?\s*:\s*"
@@ -120,7 +138,7 @@ SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 _NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*" + _NO_OUTLINE)
-JS_OUTLINE_NONE = re.compile(r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
+JS_OUTLINE_NONE = leading(r"o", r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
 # A visible replacement sets a box shadow, border, background, underline or
 # outline to something other than nothing.
 FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
@@ -129,19 +147,19 @@ FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|
                                r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?![\d.])(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
                                r"\s*)+(?:!important\s*)?(?:;|$))",
                                re.M)
-CSS_MOTION = re.compile(r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
+CSS_MOTION = leading(r"[ta]", r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
 JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
 REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|reducedMotion|ReducedMotion")
-TRUNCATION = re.compile(r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
+TRUNCATION = leading(r"[tlwWcv:]", r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
                         r"textOverflow\s*:\s*[\"']ellipsis|WebkitLineClamp|whiteSpace\s*:\s*[\"']nowrap|"
                         r"class(?:Name)?\s*=\s*(?:\{[^}]{0,200}?)?[\"'`][^\"'`]*\b(?:truncate|line-clamp-\d)\b|"
                         # Vue :class="['truncate', …]" or "{ 'line-clamp-2': on }"; Svelte class:truncate={on}.
                         r"(?<![\w-])(?:v-bind)?:class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b|"
                         r"\bclass:(?:truncate|line-clamp-\d)\b")
-PHYSICAL = re.compile(r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
+PHYSICAL = leading(r"[mpbtflr]", r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
                       r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w.#-])(?:left|right)(?=\s*:))|"
                       r"\b(marginLeft|marginRight|paddingLeft|paddingRight|borderLeft|borderRight)\s*:")
-CUSTOM_PROPERTY = re.compile(r"(?<![\w-])--[\w-]+\s*:")
+CUSTOM_PROPERTY = leading(r"-", r"(?<![\w-])--[\w-]+\s*:")
 # A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
 TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
                         # Below such a folder, style and data files and index modules; below a
@@ -150,15 +168,15 @@ TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-syst
                         r"/(?:tokens|design-tokens|theme|design-system)/(?:[^/]+/)*"
                         r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$|"
                         r"/(?:design-tokens|theme|design-system)/(?:[^/]+/)*[^/]+\.[cm]?[jt]s$")
-FETCH = re.compile(r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
+FETCH = leading(r"[fau$c]", r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
                    r"\bcreateResource\b|\buseAsyncData\b")
-LOADING = re.compile(r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
+LOADING = leading(r"[ilps<{]", r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
                      r"\bstatus\s*===?\s*[\"'](?:loading|pending)|"
                      # A Svelte {#await p} block whose pending branch comes before {:then}.
                      r"\{#await\b(?![^{}]*\bthen\b)")
-ERROR = re.compile(r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b|\{:catch\b")
-LIST_RENDER = re.compile(r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
-EMPTY = re.compile(r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
+ERROR = leading(r"[ie.cof{]", r"(?i)\b(?:is)?error\b|\.catch\(|\bcatch\s*[({]|ErrorBoundary|onError\b|\bfailed\b|\{:catch\b")
+LIST_RENDER = leading(r"[.v{*]", r"\.map\(|\bv-for=|\{#each\b|\*ngFor=")
+EMPTY = leading(r"[.!ein]", r"(?i)\.length\s*===?\s*0|!\s*[\w.?]+\.length\b|\.length\s*<\s*1|\bEmpty\w*|\bisEmpty\b|"
                    r"\bno \w+ yet\b|\bnothing\b")
 # A destructive verb leads the callee (deleteTask, Remove) or follows a camelCase
 # prefix (handleDelete, onRemove, props.onDiscard). "dropdown", drag-and-drop
@@ -180,13 +198,13 @@ NOT_DESTRUCTIVE = re.compile(r"(?:^|\.)(?:classList|searchParams|params|headers|
 MAX_HANDLER_SCAN = 4000
 MAX_HANDLER_REFERENCE = 200
 # A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
-CONFIRM = re.compile(r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
+CONFIRM = leading(r"[cudma]", r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
-ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+ROUTE = leading(r"[<p]", r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
 # A location object ({ path: "/x" }) passed to to=, href= or push() is a link, not a route.
-LINK = re.compile(r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
+LINK = leading(r"(?i:[\[:thr])|[np]", r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\s*[=:]\s*\{?\s*[\"'`]\[?\s*[\"'`]?(/[^\"'`?#]*)|"
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)|"
                   r"(?:(?<![\w-]):?(?i:to|href)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
                   r"[^{}]{0,200}?\bpath(?:name)?\s*:\s*[\"'`](/[^\"'`?#]*)")
@@ -223,7 +241,7 @@ VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 # Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false },
 # also around one level of nested objects (themeColor: [{ media, color }]).
-NEXT_VIEWPORT = re.compile(r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
+NEXT_VIEWPORT = leading(r"e", r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
 # The whole value of maximumScale, when it is a lone numeric literal (not an expression).
 NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
 JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
@@ -295,10 +313,17 @@ def iter_files(root, onerror=None):
                                   or (in_routes and d in ROUTE_SEGMENT_DIRS
                                       and holds_page_sources(os.path.join(dirpath, d)))))
         for name in sorted(filenames):
-            path = Path(dirpath) / name
-            if name in SKIP_FILES or path.is_symlink() or not path.is_file():
+            if name in SKIP_FILES:
                 continue
-            yield path
+            path = Path(dirpath) / name
+            # One lstat answers both Path.is_symlink() and Path.is_file(): a path that is not a
+            # link stats the same either way. A failed lookup takes the Path methods' own answer.
+            try:
+                regular = stat.S_ISREG(os.lstat(path).st_mode)
+            except (OSError, ValueError):
+                regular = not path.is_symlink() and path.is_file()
+            if regular:
+                yield path
 
 
 def read_text(path, root=None):
@@ -1037,17 +1062,32 @@ def has_name(attrs, names=NAME_ATTRS):
     return False
 
 
-@dataclass
-class MarkupTag:
-    name: str
-    attrs: dict
-    spread: bool
-    start: int
-    end: int
-    self_closing: bool
-    closing: bool
-    attribute_spans: dict
-    body: tuple | None = None
+class Record:
+    """Equality and repr by field, as a dataclass gives them, for classes that list their fields
+    in __slots__. Importing dataclasses loads inspect, which costs every run more than these need."""
+
+    __slots__ = ()
+    __hash__ = None
+
+    def _fields(self):
+        return tuple(getattr(self, name) for name in self.__slots__)
+
+    def __eq__(self, other):
+        return self._fields() == other._fields() if other.__class__ is self.__class__ else NotImplemented
+
+    def __repr__(self):
+        fields = ", ".join(f"{name}={getattr(self, name)!r}" for name in self.__slots__)
+        return f"{type(self).__qualname__}({fields})"
+
+
+class MarkupTag(Record):
+    # Declaration order, as the dataclass had it: positional arguments and repr follow it.
+    __slots__ = ("name", "attrs", "spread", "start", "end", "self_closing", "closing", "attribute_spans", "body")  # noqa: RUF023
+
+    def __init__(self, name: str, attrs: dict, spread: bool, start: int, end: int, self_closing: bool,
+                 closing: bool, attribute_spans: dict, body: tuple | None = None):
+        self.name, self.attrs, self.spread, self.start, self.end = name, attrs, spread, start, end
+        self.self_closing, self.closing, self.attribute_spans, self.body = self_closing, closing, attribute_spans, body
 
 
 def expression_tags(text, start, stop, *, html_names=False, vue=False):
@@ -1230,6 +1270,8 @@ def locale_bundle(rel):
     like tags, an ISO 639-1 name wins, so namespaces such as app.json or
     nav.json are not mistaken for languages.
     """
+    if not str(rel).endswith(".json"):  # Cheaper than a Path for the many other files.
+        return None
     p = Path(rel)
     if p.suffix != ".json":
         return None
@@ -1246,14 +1288,13 @@ def locale_bundle(rel):
     return None
 
 
-@dataclass
-class CssRule:
-    start: int
-    selector: str
-    declarations: list
-    closed: bool = False
-    body_start: int = 0
-    end: int | None = None
+class CssRule(Record):
+    __slots__ = ("start", "selector", "declarations", "closed", "body_start", "end")  # noqa: RUF023
+
+    def __init__(self, start: int, selector: str, declarations: list, closed: bool = False,
+                 body_start: int = 0, end: int | None = None):
+        self.start, self.selector, self.declarations = start, selector, declarations
+        self.closed, self.body_start, self.end = closed, body_start, end
 
 
 def css_blocks(text):
@@ -1388,9 +1429,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
     html_names = suffix in HTML_EXT
     if parsed is None:
         parsed = list(tags(clean, vue=suffix == ".vue", html_names=html_names,
-                           raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
+                           raw_text=suffix in RAW_TEXT_EXT, jsx=suffix in JSX_EXT))
     labels_for = dynamic_label_pairs(parsed)  # htmlFor={id} names its one id={id}.
-    has_confirmation = bool(CONFIRM.search(clean))
+    # Searched once, and only for a file with a destructive handler attribute to judge.
+    has_confirmation = None
     destructive_offsets = set()
     label_spans = label_regions(parsed)
     label_starts = [s for s, _ in label_spans]
@@ -1417,6 +1459,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
         if not has_confirmation:
             for attr, (handler_start, handler_end, _) in tag.attribute_spans.items():
                 if event_name(attr) in DESTRUCTIVE_ATTRS:
+                    if has_confirmation is None:
+                        has_confirmation = bool(CONFIRM.search(clean))
+                    if has_confirmation:
+                        break
                     scan_end = min(handler_end, handler_start + MAX_HANDLER_SCAN)
                     matches = list(DESTRUCTIVE.finditer(clean, handler_start, scan_end))
                     reference = (DESTRUCTIVE_REFERENCE.fullmatch(clean, handler_start, handler_end)
@@ -1500,6 +1546,10 @@ def scan_markup(rel, text, acc, source_lines=None, parsed=None):
             acc["icon_buttons"].append({"element": name, "location": loc})
 
 
+def rtl_locales(flows):
+    return {loc.split("-")[0].split("_")[0].lower() for loc in flows.get("locales", [])} & RTL_LANGS
+
+
 def inventory(root, flows=None):
     root = Path(root).resolve()
     spacing, font_sizes, breakpoints, z_index = Tally(), Tally(), Tally(), Tally()
@@ -1509,6 +1559,10 @@ def inventory(root, flows=None):
     acc = defaultdict(list)
     routes, links, screens, tokens, motion, reduced, locales = [], set(), [], [], [], [], defaultdict(dict)
     scanned = skipped = 0
+    try:  # Physical properties are reported only for an RTL locale; others need no scan for them.
+        scan_physical = bool(flows) and bool(rtl_locales(flows))
+    except Exception:  # Scan anyway; the report step below raises as it always did.
+        scan_physical = True
 
     def directory_warning(error):
         relative = Path(error.filename or root).relative_to(root).as_posix()
@@ -1519,7 +1573,7 @@ def inventory(root, flows=None):
     for path in iter_files(root, onerror=directory_warning):
         rel = path.relative_to(root).as_posix()
         suffix = path.suffix.lower()
-        if suffix not in CSS_EXT | EMBED_CSS_EXT | JS_EXT | MARKUP_EXT | {".json"}:
+        if suffix not in SCANNED_EXT:
             continue
         try:
             rel.encode("utf-8")
@@ -1562,7 +1616,7 @@ def inventory(root, flows=None):
             if TOKEN_FILE.search("/" + rel):
                 tokens.append({"path": rel, "custom_properties": 0})
             continue
-        css = suffix in CSS_EXT | EMBED_CSS_EXT
+        css = suffix in STYLE_EXT
         js = suffix in JS_EXT or suffix in EMBED_CSS_EXT
         if suffix in MARKUP_EXT:
             text = mask_markup_comments(text, jsx=suffix in JSX_EXT, template=suffix in HTML_EXT)
@@ -1571,7 +1625,7 @@ def inventory(root, flows=None):
         if suffix in CSS_EXT:
             text = mask_css_comments(text, suffix in LINE_COMMENT_EXT)
         parsed = (list(tags(text, vue=suffix == ".vue", html_names=suffix in HTML_EXT,
-                            raw_text=suffix in HTML_EXT | EMBED_CSS_EXT, jsx=suffix in JSX_EXT))
+                            raw_text=suffix in RAW_TEXT_EXT, jsx=suffix in JSX_EXT))
                   if suffix in MARKUP_EXT else None)
         css_text, js_text = text, text
         if suffix in EMBED_CSS_EXT:
@@ -1690,7 +1744,7 @@ def inventory(root, flows=None):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
             truncation.add(re.sub(r"\s+", " ", m.group(0))[:40], at(m.start()))
-        for m in PHYSICAL.finditer(text):
+        for m in PHYSICAL.finditer(text) if scan_physical else ():
             physical.add(re.sub(r"\s+", " ", (m.group(1) or m.group(2)))[:30], at(m.start()))
         link_spans = []
         for m in LINK.finditer(text):
@@ -1711,17 +1765,18 @@ def inventory(root, flows=None):
                 segs = [s for s in segments if s and not s.startswith("(")
                         and not (next_app and s.startswith("@"))]
                 routes.append({"route": "/" + "/".join(segs), "location": f"{rel}:1"})
-        if SCREEN_DIR.search(rel) and suffix in MARKUP_EXT | JS_EXT:
+        if SCREEN_DIR.search(rel) and suffix in SOURCE_EXT:
             screens.append(rel)
         if suffix in MARKUP_EXT:
             scan_markup(rel, text, acc, source_lines, parsed)
-            if FETCH.search(text):
+            fetch = FETCH.search(text)
+            if fetch:
                 missing = [k for k, rx in (("loading", LOADING), ("error", ERROR)) if not rx.search(text)]
                 if LIST_RENDER.search(text) and not EMPTY.search(text):
                     missing.append("empty")
                 if missing:
                     acc["state_branches"].append({"file": rel, "missing": missing,
-                                                  "location": at(FETCH.search(text).start())})
+                                                  "location": at(fetch.start())})
 
     expansion = []
     for bundle, langs in sorted(locales.items()):
@@ -1792,7 +1847,7 @@ def inventory(root, flows=None):
             for row in result["fixed_widths"]:
                 row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest and any(
                     floor <= smallest and not capped for floor, capped in width_conditions_by_value[row["value"]])
-        if {loc.split("-")[0].split("_")[0].lower() for loc in flows.get("locales", [])} & RTL_LANGS:
+        if rtl_locales(flows):
             result["physical_properties"] = physical.rows("property")
     # Caps apply only after off_scale was measured on every row; each cut is counted.
     truncated = {}

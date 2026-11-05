@@ -8,6 +8,12 @@ is opened from a pinned parent. The returned descriptor belongs to the caller.
 import os
 from pathlib import Path
 
+# The runtime capabilities every pinned open relies on, decided once for all scripts.
+# Without them callers take their documented pathname fallbacks.
+NOFOLLOW_DIR_FD = os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
+# Open a directory for search only where the runtime can: then ancestors need no read permission.
+SEARCH = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
+
 
 def open_directory(path, *, readable=True, expected_stat=None):
     """Pin an absolute directory without following symlinks in any component.
@@ -27,7 +33,7 @@ def open_directory(path, *, readable=True, expected_stat=None):
     """
     path = Path(path).absolute()
     protection = os.O_DIRECTORY | os.O_NOFOLLOW
-    search = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | protection
+    search = SEARCH | protection
     final = (os.O_RDONLY | protection) if readable else search
     descriptor = os.open(path.anchor, final if len(path.parts) == 1 else search)
     try:
@@ -76,11 +82,10 @@ def descriptor_within(descriptor, root):
     """
     try:
         root_stat = os.stat(root)
-        current = os.open(".", getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY,
-                          dir_fd=descriptor)
+        current = os.open(".", SEARCH | os.O_DIRECTORY, dir_fd=descriptor)
     except OSError:
         return False
-    search = getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY)) | os.O_DIRECTORY
+    search = SEARCH | os.O_DIRECTORY
     try:
         while True:
             info = os.fstat(current)

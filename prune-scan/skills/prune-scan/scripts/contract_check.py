@@ -28,10 +28,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FAMILIES, RecordError, check_findings, check_units,  # noqa: E402
                       finding_references, parse_json)
-from render import (NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
+from render import (STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
                     pdf_complete as stored_pdf_complete, pdf_envelope_complete)
 from safe_output import tolerant_stdout  # noqa: E402
-from safe_paths import open_directory  # noqa: E402
+from safe_paths import NOFOLLOW_DIR_FD, open_directory  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"

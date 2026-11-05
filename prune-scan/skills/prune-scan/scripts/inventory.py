@@ -38,7 +38,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
-from safe_paths import descriptor_within, open_directory, within  # noqa: E402
+from safe_paths import NOFOLLOW_DIR_FD as SAFE_DIR_OPEN, SEARCH, descriptor_within, open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
@@ -82,7 +82,6 @@ ENV_DECL_FILE = re.compile(r"(?i)^(?:\.env\.(?:example|sample|template|dist)|exa
 MAX_BYTES = 2 * 1024 * 1024
 MAX_LOCATIONS = 5
 MAX_ROWS = 200
-SAFE_DIR_OPEN = os.open in os.supports_dir_fd and hasattr(os, "O_DIRECTORY") and hasattr(os, "O_NOFOLLOW")
 
 PY_EXT = {".py"}
 JS_EXT = {".js", ".jsx", ".ts", ".tsx", ".mts", ".cts", ".mjs", ".cjs", ".vue", ".svelte"}
@@ -416,8 +415,7 @@ def open_source(path, root, *, root_fd=None, root_stat=None):
     flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_NOFOLLOW", 0)
     dir_fd = None
     if SAFE_DIR_OPEN:
-        directory_flags = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
-                           | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory_flags = SEARCH | os.O_DIRECTORY | os.O_NOFOLLOW
         try:
             dir_fd = (os.dup(root_fd) if root_fd is not None
                       else open_directory(root, readable=False, expected_stat=root_stat))

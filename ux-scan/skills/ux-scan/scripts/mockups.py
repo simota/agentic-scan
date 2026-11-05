@@ -13,9 +13,9 @@ Standard library only.
 
 import html
 
-from scan_report_kit import style
-
+import page_shell
 from findings import TIERS
+from page_shell import esc
 
 PAGE = "mockups.html"
 DEFAULT_VIEWPORT = "360x640"
@@ -25,7 +25,6 @@ PUBLISHED = ("Valid", "Likely")
 FRAME_POLICY = "default-src 'none'; style-src 'unsafe-inline'; img-src data:; font-src data:"
 PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data:; "
                "font-src data:; frame-src 'self'; base-uri 'none'; form-action 'none'")
-DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
 
 LABELS = {
     "en": {"title": "Before / After", "dashboard": "Dashboard", "before": "Before", "after": "After",
@@ -86,7 +85,7 @@ CSS = """
 .compare[data-mode="slider"] .pane.after figcaption{text-align:right}
 .compare[data-mode="slider"] .pane.before .stage{position:relative}
 .compare[data-mode="slider"] .pane.before .stage::after{content:"";position:absolute;top:0;bottom:0;left:calc(var(--split,50%) - 2px);border-left:2px solid var(--accent);pointer-events:none}
-.split{display:none;width:100%;margin:10px 0 0}
+.split{display:none;width:100%;height:24px;margin:10px 0 0}
 .compare[data-mode="slider"] + .split{display:block}
 .mockup dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:16px 0 0;font-size:13px}
 .mockup dt{color:var(--muted);font-family:var(--sans)}
@@ -97,16 +96,6 @@ CSS = """
 JS = """
 (function () {
   'use strict';
-  var root = document.documentElement, THEME_KEY = 'scan-report-kit.theme';
-  try {
-    var saved = window.localStorage.getItem(THEME_KEY);
-    if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
-  } catch (e) { /* follow the OS theme */ }
-  document.getElementById('theme').onclick = function () {
-    var dark = root.dataset.theme ? root.dataset.theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'light' : 'dark';
-    try { window.localStorage.setItem(THEME_KEY, root.dataset.theme); } catch (e) { /* not remembered */ }
-  };
   var sections = Array.prototype.slice.call(document.querySelectorAll('.mockup'));
   // Below this, side-by-side text is too small to read (15px becomes 7px); use the slider instead.
   var MIN_SIDE_SCALE = 0.5, ONE_COLUMN = window.matchMedia('(max-width: 700px)');
@@ -183,10 +172,6 @@ JS = """
   window.addEventListener('resize', function () { sections.forEach(function (section) { section.fit(); }); });
 })();
 """
-
-
-def esc(text):
-    return html.escape(str(text or ""))
 
 
 def with_mockups(data):
@@ -320,11 +305,7 @@ def _section(f, anchor, mockup, flows, lang, L):
 
 
 def render_page(data, flows, lang, chrome):
-    """mockups.html for the Valid and Likely findings with a mockup.
-
-    chrome holds the dashboard's own labels (scan_report_kit.report.labels_for), so
-    the app bar names the report link and the theme toggle exactly as the dashboard does.
-    """
+    """mockups.html for the Valid and Likely findings with a mockup; chrome as in page_shell.page."""
     L = LABELS[lang]
     items = with_mockups(data)
     project = data["meta"]["project"]
@@ -336,41 +317,11 @@ def render_page(data, flows, lang, chrome):
                   f'{esc(" — " + m["title"].strip()) if m.get("title", "").strip() else ""}</a></li>'
                   for f, anchor, m in entries)
     sections = "".join(_section(f, anchor, m, flows, lang, L) for f, anchor, m in entries)
-    return f"""<!doctype html>
-<html lang="{esc(lang)}" class="app-shell">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="{esc(PAGE_POLICY)}">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(f"{L['title']} - {project}")}</title>
-<style>
-{style.dashboard_css()}
-{CSS}
-</style>
-</head>
-<body>
-<header class="appbar"><div class="appbar-in"><span class="brand"><span>{esc(chrome["kind"])}</span> <span class="appbar-project">{esc(project)}</span></span><div class="tools"><a class="button" href="dashboard.html">{esc(L["dashboard"])}</a><a class="button" href="report.html">{esc(chrome["report_link"])}</a><button id="theme" type="button">{esc(chrome["theme"])}</button></div></div></header>
-<main>
-<h1>{esc(L["title"])}</h1>
-<p class="mockups-lead">{esc(L["lead"])}</p>
-<noscript><p class="mockups-lead">{esc(L["no_script"])}</p></noscript>
-<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="mockup-toc">{toc}</ol></nav>
-{sections}
-</main>
-<script>
-{JS}
-</script>
-</body>
-</html>
-"""
-
-
-def link_dashboard(page, lang):
-    """The dashboard with a link to mockups.html beside its report link."""
-    if page.count(DASHBOARD_REPORT_LINK) != 1:
-        raise RuntimeError("dashboard template changed: cannot place the mockups link")
-    link = f'<a class="button" href="{PAGE}">{esc(LABELS[lang]["title"])}</a>'
-    return page.replace(DASHBOARD_REPORT_LINK, DASHBOARD_REPORT_LINK + link, 1)
+    body = (f'<h1>{esc(L["title"])}</h1>\n<p class="mockups-lead">{esc(L["lead"])}</p>\n'
+            f'<noscript><p class="mockups-lead">{esc(L["no_script"])}</p></noscript>\n'
+            f'<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="mockup-toc">{toc}</ol></nav>\n{sections}')
+    return page_shell.page(lang=lang, title=f"{L['title']} - {project}", policy=PAGE_POLICY, css=CSS,
+                           chrome=chrome, project=project, dashboard=L["dashboard"], body=body, script=JS)
 
 
 def field(finding, lang):

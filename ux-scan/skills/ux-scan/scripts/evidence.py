@@ -11,13 +11,13 @@ Standard library only.
 
 import base64
 import hashlib
-import html
 import os
 import re
 import stat
 from pathlib import Path
 
-from scan_report_kit import style
+import page_shell
+from page_shell import esc
 from secret_lines import SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line
 
 DIRECTORY = "evidence"
@@ -39,7 +39,6 @@ MIME = {"png": "image/png", "jpg": "image/jpeg", "jpeg": "image/jpeg", "webp": "
 # Screenshots are embedded; recordings (including GIF images) load beside the page.
 PAGE_POLICY = ("default-src 'none'; style-src 'unsafe-inline'; script-src 'unsafe-inline'; img-src data: 'self' file:; "
                "media-src 'self' file:; base-uri 'none'; form-action 'none'")
-DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
 ARTICLE = re.compile(r"<article class='[^']*' id='[^']*'><div class='finding-header'><span class='finding-id'>"
                      r"(?P<id>U-[0-9]{3})</span>.*?</article>", re.S)
 
@@ -62,11 +61,14 @@ LABELS = {
                    "After は修正後の状態を示します。ファイルは findings.json と同じ場所の evidence ディレクトリにあります。"},
 }
 
+# The report CSS (document.css) names its colours --ink/--link/--muted and its code font
+# --mono; the dashboard CSS has --accent and no --mono, so evidence.html names the font
+# stack the kit uses for code.
 REPORT_CSS = """
 .evidence{margin:0 0 3mm}
 .evidence-stages{display:grid;grid-template-columns:repeat(var(--stages,1),minmax(0,1fr));gap:3mm}
 .evidence-stage h5{font:700 7.4pt/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin:1mm 0}
-.evidence-stage.after h5{color:var(--accent,#0b6)}
+.evidence-stage.after h5{color:var(--link,#1f3f66)}
 .evidence figure{margin:0 0 2.5mm;break-inside:avoid;page-break-inside:avoid}
 .evidence img{display:block;max-width:100%;max-height:110mm;height:auto;border:.6pt solid var(--rule,#ccc)}
 .evidence video{display:block;max-width:100%;max-height:110mm}
@@ -89,30 +91,9 @@ PAGE_CSS = """
 .evidence figure{margin:0 0 16px}
 .evidence img,.evidence video{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
 .evidence figcaption{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
-.evidence pre{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;font:12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto}
+.evidence pre{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto}
 @media(max-width:700px){.evidence-stages{grid-template-columns:minmax(0,1fr)}}
 """
-THEME_JS = """
-(function () {
-  'use strict';
-  var root = document.documentElement, THEME_KEY = 'scan-report-kit.theme';
-  try {
-    var saved = window.localStorage.getItem(THEME_KEY);
-    if (saved === 'light' || saved === 'dark') root.dataset.theme = saved;
-  } catch (e) { /* follow the OS theme */ }
-  document.getElementById('theme').onclick = function () {
-    var dark = root.dataset.theme ? root.dataset.theme === 'dark' : window.matchMedia('(prefers-color-scheme: dark)').matches;
-    root.dataset.theme = dark ? 'light' : 'dark';
-    try { window.localStorage.setItem(THEME_KEY, root.dataset.theme); } catch (e) { /* not remembered */ }
-  };
-})();
-"""
-
-
-def esc(text):
-    return html.escape(str(text or ""))
-
-
 def items(finding):
     return finding.get("evidence", [])
 
@@ -316,14 +297,6 @@ def inject_report(page, data, files, lang, href):
     return page.replace("</head>", f"<style>{REPORT_CSS}</style></head>", 1)
 
 
-def link_dashboard(page, lang):
-    """The dashboard with a link to evidence.html beside its report link."""
-    if page.count(DASHBOARD_REPORT_LINK) != 1:
-        raise RuntimeError("dashboard template changed: cannot place the evidence link")
-    link = f'<a class="button" href="{PAGE}">{esc(LABELS[lang]["title"])}</a>'
-    return page.replace(DASHBOARD_REPORT_LINK, DASHBOARD_REPORT_LINK + link, 1)
-
-
 def render_page(data, files, lang, chrome, href):
     """evidence.html: every finding's evidence, before and after side by side, videos playable."""
     L = LABELS[lang]
@@ -338,29 +311,7 @@ def render_page(data, files, lang, chrome, href):
         f'<p class="evidence-lead">{esc(f["screen"])} · <code>{esc(f["location"])}</code></p>'
         f'{_stages(f, files, href, L, False, "h3")}'
         f'<p class="evidence-back"><a href="#contents">{esc(L["back"])}</a></p></section>' for f in findings)
-    return f"""<!doctype html>
-<html lang="{esc(lang)}" class="app-shell">
-<head>
-<meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="{esc(PAGE_POLICY)}">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(f"{L['title']} - {project}")}</title>
-<style>
-{style.dashboard_css()}
-{PAGE_CSS}
-</style>
-</head>
-<body>
-<header class="appbar"><div class="appbar-in"><span class="brand"><span>{esc(chrome["kind"])}</span> <span class="appbar-project">{esc(project)}</span></span><div class="tools"><a class="button" href="dashboard.html">{esc(L["dashboard"])}</a><a class="button" href="report.html">{esc(chrome["report_link"])}</a><button id="theme" type="button">{esc(chrome["theme"])}</button></div></div></header>
-<main>
-<h1>{esc(L["title"])}</h1>
-<p class="evidence-lead">{esc(L["lead"])}</p>
-<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="evidence-toc">{toc}</ol></nav>
-{sections}
-</main>
-<script>
-{THEME_JS}
-</script>
-</body>
-</html>
-"""
+    body = (f'<h1>{esc(L["title"])}</h1>\n<p class="evidence-lead">{esc(L["lead"])}</p>\n'
+            f'<nav id="contents" aria-label="{esc(L["contents"])}"><ol class="evidence-toc">{toc}</ol></nav>\n{sections}')
+    return page_shell.page(lang=lang, title=f"{L['title']} - {project}", policy=PAGE_POLICY, css=PAGE_CSS,
+                           chrome=chrome, project=project, dashboard=L["dashboard"], body=body)

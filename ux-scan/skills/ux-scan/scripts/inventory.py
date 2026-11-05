@@ -1778,26 +1778,6 @@ def inventory(root, flows=None):
                     acc["state_branches"].append({"file": rel, "missing": missing,
                                                   "location": at(fetch.start())})
 
-    expansion = []
-    for bundle, langs in sorted(locales.items()):
-        if len(langs) < 2:
-            continue
-        english = sorted(lang for lang in langs if re.split(r"[-_]", lang)[0].lower() == "en")
-        base = "en" if "en" in langs else (english or sorted(langs))[0]
-        base_strings = langs[base][1]
-        for lang, (rel, strings) in sorted(langs.items()):
-            if lang == base:
-                continue
-            rows = []
-            for key, src in base_strings.items():
-                if key in strings and src.strip():
-                    a, b = display_width(src), display_width(strings[key])
-                    if b >= a * 1.4 and b - a >= 5:
-                        rows.append({"key": key, "base_width": a, "width": b, "ratio": round(b / a, 2)})
-            if rows:
-                rows.sort(key=lambda r: (-r["ratio"], r["key"]))
-                expansion.append({"bundle": bundle, "base": base, "lang": lang, "file": rel, "keys": rows})
-
     linked = {r["route"] for r in routes if r["route"].rstrip("/") in links or r["route"] in links}
     result = {
         "tool": "inventory.py", "version": 1, "repository": root.name,
@@ -1819,37 +1799,81 @@ def inventory(root, flows=None):
         "motion": {"declarations": len(motion), "locations": motion[:MAX_LOCATIONS],
                    "reduced_motion": reduced},
         "truncation": truncation.rows("pattern"),
-        "locale_expansion": expansion,
+        "locale_expansion": locale_expansion(locales),
     }
     if flows:
-        scales = flows.get("tokens", {})
-        off = {}
-        for key, tally in (("spacing", result["spacing"]), ("font_sizes", result["font_sizes"]),
-                           ("breakpoints", result["breakpoints"])):
-            if key in scales:
-                allowed = {float(x) for x in scales[key]}
-                # An upper bound written just below a breakpoint (max-width: 767.98px or 767px) is
-                # that breakpoint; a value also used as a lower bound gets no tolerance.
-                def near(row):
-                    v = float(row["value"][:-2])
-                    return (key == "breakpoints" and row["value"] not in lower_breakpoints
-                            and any(0 < t - v <= 1 for t in allowed))
-                off[key] = [row for row in tally if abs(float(row["value"][:-2])) not in allowed and not near(row)]
-        if "z_index" in scales:
-            allowed = set(scales["z_index"]) | {0, -1, 1}
-            off["z_index"] = [row for row in result["z_index"] if row["value"] not in allowed]
-        result["off_scale"] = off
-        viewports = [int(v.split("x")[0]) for v in flows.get("viewports", [])]
-        if viewports:
-            smallest = min(viewports)
-            result["smallest_viewport"] = smallest
-            # Wider only where a declaration applies at that viewport and is not capped.
-            for row in result["fixed_widths"]:
-                row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest and any(
-                    floor <= smallest and not capped for floor, capped in width_conditions_by_value[row["value"]])
+        result.update(against_flows(result, flows, lower_breakpoints, width_conditions_by_value))
         if rtl_locales(flows):
             result["physical_properties"] = physical.rows("property")
-    # Caps apply only after off_scale was measured on every row; each cut is counted.
+    # Caps apply only after off_scale was measured on every row.
+    return cap_rows(result)
+
+
+def locale_expansion(locales):
+    """Keys whose translation is much wider than the base locale's, per bundle and language.
+
+    locales maps bundle -> lang -> (file, flattened strings). The base is en, else
+    the first English variant, else the first language in sort order.
+    """
+    expansion = []
+    for bundle, langs in sorted(locales.items()):
+        if len(langs) < 2:
+            continue
+        english = sorted(lang for lang in langs if re.split(r"[-_]", lang)[0].lower() == "en")
+        base = "en" if "en" in langs else (english or sorted(langs))[0]
+        base_strings = langs[base][1]
+        for lang, (rel, strings) in sorted(langs.items()):
+            if lang == base:
+                continue
+            rows = []
+            for key, src in base_strings.items():
+                if key in strings and src.strip():
+                    a, b = display_width(src), display_width(strings[key])
+                    if b >= a * 1.4 and b - a >= 5:
+                        rows.append({"key": key, "base_width": a, "width": b, "ratio": round(b / a, 2)})
+            if rows:
+                rows.sort(key=lambda r: (-r["ratio"], r["key"]))
+                expansion.append({"bundle": bundle, "base": base, "lang": lang, "file": rel, "keys": rows})
+    return expansion
+
+
+def off_scale(rows, key, scale, lower_breakpoints):
+    """The rows of one measured property whose value is not on its token scale."""
+    if key == "z_index":
+        allowed = set(scale) | {0, -1, 1}
+        return [row for row in rows if row["value"] not in allowed]
+    allowed = {float(x) for x in scale}
+
+    # An upper bound written just below a breakpoint (max-width: 767.98px or 767px) is
+    # that breakpoint; a value also used as a lower bound gets no tolerance.
+    def near(row):
+        v = float(row["value"][:-2])
+        return (key == "breakpoints" and row["value"] not in lower_breakpoints
+                and any(0 < t - v <= 1 for t in allowed))
+    return [row for row in rows if abs(float(row["value"][:-2])) not in allowed and not near(row)]
+
+
+def against_flows(result, flows, lower_breakpoints, width_conditions):
+    """off_scale and smallest_viewport for result; also marks fixed widths wider than that viewport.
+
+    width_conditions maps a width value to (media floor, capped) for every declaration of it.
+    """
+    scales = flows.get("tokens", {})
+    measured = {"off_scale": {key: off_scale(result[key], key, scales[key], lower_breakpoints)
+                              for key in ("spacing", "font_sizes", "breakpoints", "z_index") if key in scales}}
+    viewports = [int(v.split("x")[0]) for v in flows.get("viewports", [])]
+    if viewports:
+        smallest = min(viewports)
+        measured["smallest_viewport"] = smallest
+        # Wider only where a declaration applies at that viewport and is not capped.
+        for row in result["fixed_widths"]:
+            row["wider_than_smallest_viewport"] = float(row["value"][:-2]) > smallest and any(
+                floor <= smallest and not capped for floor, capped in width_conditions[row["value"]])
+    return measured
+
+
+def cap_rows(result):
+    """result with its long row lists cut to the limits, each cut counted in truncated."""
     truncated = {}
 
     def cap(rows, limit, name):

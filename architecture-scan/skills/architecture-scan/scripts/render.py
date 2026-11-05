@@ -26,7 +26,7 @@ import unicodedata
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (CONFIDENCES, DIAGRAMS, EXCLUDED, PERSPECTIVES, RULE_LIST, SEVERITIES,  # noqa: E402
-                      STATUSES, VERDICTS, SchemaError, _atomic_write_all, as_locations, read_json,
+                      STATUSES, VERDICTS, SchemaError, atomic_write_all, as_locations, read_json,
                       safe_output, validate, visible)
 from scan_report_kit import style as kit_style  # noqa: E402
 
@@ -1661,7 +1661,7 @@ def main(argv=None):
     try:
         out.mkdir(parents=True, exist_ok=True)
         # Both outputs are staged before either replaces the previous file.
-        _atomic_write_all({out / name: data for name, data in rendered_outputs(doc, lang).items()})
+        atomic_write_all({out / name: data for name, data in rendered_outputs(doc, lang).items()})
     except (OSError, RuntimeError) as exc:
         print(f"write failed: {exc}", file=sys.stderr)
         return 1

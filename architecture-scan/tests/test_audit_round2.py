@@ -99,7 +99,7 @@ class PairWriteTests(unittest.TestCase):
 
         with mock.patch.object(findings.os, "replace", side_effect=replace):
             with self.assertRaises(OSError):
-                findings._atomic_write_all({d / "report.md": b"new report",
+                findings.atomic_write_all({d / "report.md": b"new report",
                                             d / "dashboard.html": b"new dashboard"})
 
     def test_a_failed_second_replacement_restores_the_first(self):
@@ -137,7 +137,7 @@ class PairWriteTests(unittest.TestCase):
             with mock.patch.object(findings.os, "link", side_effect=link), \
                     mock.patch.object(findings.shutil, "copy2", side_effect=copy2):
                 with self.assertRaises(OSError):
-                    findings._atomic_write_all({d / "report.md": b"new", d / "dashboard.html": b"new"})
+                    findings.atomic_write_all({d / "report.md": b"new", d / "dashboard.html": b"new"})
             self.assertEqual(sorted(p.name for p in d.iterdir()), ["dashboard.html", "report.md"])
             self.assertEqual((d / "report.md").read_bytes(), b"old report")
 
@@ -145,7 +145,7 @@ class PairWriteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             d = Path(tmp)
             (d / "report.md").write_bytes(b"old")
-            findings._atomic_write_all({d / "report.md": b"new", d / "dashboard.html": b"new"})
+            findings.atomic_write_all({d / "report.md": b"new", d / "dashboard.html": b"new"})
             self.assertEqual(sorted(p.name for p in d.iterdir()), ["dashboard.html", "report.md"])
             self.assertEqual((d / "report.md").read_bytes(), b"new")
 

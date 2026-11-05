@@ -720,7 +720,7 @@ def merge(doc, fragment, where):
 
 
 def _atomic_write(target, data):
-    _atomic_write_all({target: data})
+    atomic_write_all({target: data})
 
 
 def _stage(target, data):
@@ -776,7 +776,7 @@ def _backup(target):
         return backup
 
 
-def _atomic_write_all(files):
+def atomic_write_all(files):
     """Replace every target only after all of them are staged, keeping links and modes.
 
     When one replacement fails, those already made are undone, so a failed

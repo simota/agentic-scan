@@ -106,7 +106,7 @@ contains an e-mail address outside the reserved example domains (`example.com`,
 including spaced, dashed, encoded and invisibly split forms. Dates, UUIDs and
 hex digests are not counted. The checks run on a temporary copy; accepted text
 keeps its spelling. Name fields and use placeholders; the full rules are in the
-docstring of `scripts/findings.py`. A source path whose name holds a long
+docstring of `scripts/personal_values.py`. A source path whose name holds a long
 number, such as a timestamped migration, is accepted only in `location` and
 only as a compact date-time at the start of a segment
 (`db/migrate/20261009123045_add_phone.rb:3`, Flyway's `V20261009123045__…`).

@@ -13,6 +13,8 @@ Exit codes: 0 written, 1 an output could not be saved, 2 the record does not
 match the schema (the field is named on stderr) or the command line is invalid.
 """
 import argparse
+from base64 import b64encode
+from hashlib import sha256
 from html import escape
 from pathlib import Path
 import re
@@ -22,10 +24,11 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (LINE_BREAKS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+from findings import (PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
-from findings import excluded as is_excluded  # noqa: E402
+from findings import counts as record_counts, excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
+from personal_values import LINE_BREAKS  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -52,6 +55,8 @@ LABELS = {
                       "whether the application complies with any law.",
         "perspective": "perspective",
         "perspective_columns": ("Perspective", "Status", "Note"),
+        "filter": "Filter findings by severity",
+        "showing": "Showing {shown} of {total}",
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
@@ -96,6 +101,8 @@ LABELS = {
                       "アプリケーションが法令に適合しているかどうかは述べていない。",
         "perspective": "観点",
         "perspective_columns": ("観点", "ステータス", "メモ"),
+        "filter": "重要度で検出事項を絞り込む",
+        "showing": "{total}件中{shown}件を表示",
     },
 }
 FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditions",
@@ -103,8 +110,9 @@ FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditi
 
 
 def counts(findings):
-    active = [f for f in findings if not is_excluded(f)]
-    return {s: sum(f["severity"] == s for f in active) for s in SEVERITIES}, len(findings) - len(active)
+    """Reported findings per severity, and the excluded count: `findings.py counts`."""
+    recorded = record_counts({"findings": findings})
+    return {s: recorded[f"n_{s.lower()}"] for s in SEVERITIES}, recorded["n_excluded"]
 
 
 def verdict_summary(findings):
@@ -437,18 +445,44 @@ table.ledger>tbody>tr>td:before{content:attr(data-label);display:block;font-fami
 .commitments td:nth-child(2){grid-column:1/-1}
 table.coverage-table>tbody>tr{grid-template-columns:max-content minmax(0,1fr)}
 .coverage-table td:nth-child(1){grid-column:1/-1}}
+.filter-buttons .n{font-variant-numeric:tabular-nums;color:var(--muted);margin-left:4px}
+.register-count{margin:0 0 8px}
+/* A ledger status that needs action reads apart from the ones that hold; the
+   word itself still carries the meaning. */
+.status[data-status="violated"]{color:var(--high);font-weight:700}
+.status[data-status="not checked"],.status[data-status="partly read"]{color:var(--medium)}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
+# The theme choice is a per-viewer convenience shared with the other *-scan
+# dashboards (scan-report-kit's key and behaviour). Storage may be absent or
+# throw; the page then follows the system theme.
+THEME_KEY = "scan-report-kit.theme"
 JS = """
+try{const t=localStorage.getItem('%s');if(t==='light'||t==='dark')document.documentElement.dataset.theme=t}catch(e){}
 document.getElementById('theme').addEventListener('click',()=>{const root=document.documentElement,
 dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;
-root.dataset.theme=dark?'light':'dark';});
+root.dataset.theme=dark?'light':'dark';try{localStorage.setItem('%s',root.dataset.theme)}catch(e){}});
+const count=document.getElementById('register-count'),all=document.querySelectorAll('details[data-sev]');
 document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
 const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-let shown=0;document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s;shown+=!d.hidden});
-const empty=document.querySelector('[data-empty]');if(empty)empty.hidden=shown>0;}));
-"""
+let shown=0;all.forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s;shown+=!d.hidden});
+const empty=document.querySelector('[data-empty]');if(empty)empty.hidden=shown>0;
+if(count)count.textContent=count.dataset.template.replace('{shown}',shown).replace('{total}',all.length);}));
+""" % (THEME_KEY, THEME_KEY)
+
+
+def _csp_source(code):
+    return "'sha256-" + b64encode(sha256(code.encode("utf-8")).digest()).decode("ascii") + "'"
+
+
+# The dashboard needs nothing outside itself: no fetches, images, frames, fonts
+# or forms. Hashes pin the page's own style and scripts ('unsafe-inline' is
+# ignored where hashes are understood), so markup that ever slipped past the
+# escaping could neither run nor send what the page shows anywhere.
+CSP = (f"default-src 'none'; style-src {_csp_source(CSS)} 'unsafe-inline'; "
+       f"script-src {_csp_source(JS)} 'unsafe-inline'; "
+       "base-uri 'none'; form-action 'none'")
 
 
 def html_head(columns):
@@ -459,12 +493,21 @@ def html_head(columns):
 NOWRAP = " class='nowrap'"
 
 
-def html_row(columns, cells, nowrap=()):
-    """A ledger row; each cell names its column for the narrow-screen card layout."""
+def html_row(columns, cells, nowrap=(), status=None):
+    """A ledger row; each cell names its column for the narrow-screen card layout.
+
+    `status` is (column index, recorded status, shown term, text after it): that
+    cell marks the term with the recorded value, so states that need action can
+    stand out, and keeps the rest of its text.
+    """
+    html = [escape(as_text(cell)) for cell in cells]
+    if status is not None:
+        index, value, label, rest = status
+        html[index] = (f"<span class='status' data-status='{escape(value)}'>"
+                       f"{escape(label)}</span>{escape(as_text(rest))}")
     return "<tr>" + "".join(
-        f"<td{NOWRAP if i in nowrap else ''} data-label='{escape(column)}'>"
-        f"{escape(as_text(cell))}</td>"
-        for i, (column, cell) in enumerate(zip(columns, cells))) + "</tr>"
+        f"<td{NOWRAP if i in nowrap else ''} data-label='{escape(column)}'>{cell}</td>"
+        for i, (column, cell) in enumerate(zip(columns, html))) + "</tr>"
 
 
 def render_html(doc, lang):
@@ -476,6 +519,7 @@ def render_html(doc, lang):
     byline = " · ".join(as_text(meta.get(k, "")) for k in ("date", "assessor")
                         if shown(meta.get(k, "")))
     out = [f"<!doctype html><html lang='{lang}'><head><meta charset='utf-8'>",
+           f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
            "<meta name='viewport' content='width=device-width,initial-scale=1'>",
            # A document title cannot show a break, so its lines are joined visibly.
            f"<title>{e(t['title'])}: {e(as_text(meta.get('project', '')).replace(chr(10), ' · '))}</title>"
@@ -501,13 +545,23 @@ def render_html(doc, lang):
     out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"
                + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
                + "</dl></section>")
+    def filter_button(key, label, n, pressed=False):
+        # The count tells what a filter will show before it is pressed.
+        return (f"<button type='button' data-filter='{key}' aria-pressed='{str(pressed).lower()}'>"
+                f"{e(label)} <span class='n'>{n}</span></button>")
+
+    total = len(findings)
     out.append(f"<section id='findings'><div class='section-head'><div><h2>{e(t['findings'])}</h2>"
-               f"</div></div><div class='filter-buttons'><button data-filter='all' aria-pressed='true'>"
-               f"{e(t['all'])}</button> "
-               + " ".join(f"<button data-filter='{s}' aria-pressed='false'>{s}</button>" for s in SEVERITIES)
-               + (f" <button data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
-                  if excluded else "")
-               + "</div><div class='register'>")
+               f"</div></div><div class='filter-buttons' role='group' aria-label='{e(t['filter'])}'>"
+               + filter_button("all", t["all"], total, pressed=True) + " "
+               + " ".join(filter_button(s, s, by_sev[s]) for s in SEVERITIES)
+               + (" " + filter_button("excluded", t["excluded"], excluded) if excluded else "")
+               + "</div>"
+               # Announced after each filter change (a status message, WCAG 4.1.3).
+               + f"<p class='register-count muted' id='register-count' role='status' "
+               f"data-template='{e(t['showing'])}'{'' if findings else ' hidden'}>"
+               + e(t["showing"].replace("{shown}", str(total)).replace("{total}", str(total)))
+               + "</p><div class='register'>")
     # Shown when there are no findings, and by the filter when none match.
     out.append(f"<p data-empty{'' if not findings else ' hidden'}>{e(t['none'])}</p>")
     for f in findings:
@@ -548,13 +602,18 @@ def render_html(doc, lang):
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
             cells = (r["id"], statement, r.get("family", ""), r["source"], status)
-            out.append(html_row(t["commitment_columns"], cells, nowrap=(0,)))
+            label = term(t, r["status"])  # commitment_text's status starts with it
+            out.append(html_row(t["commitment_columns"], cells, nowrap=(0,),
+                                status=(4, r["status"], label, status[len(label):])))
         out.append("</table></div></section>")
     out.append(f"<section><div class='section-head'><div><h2>{e(t['perspectives'])}</h2></div></div>"
                f"<div class='tablewrap'><table class='ledger coverage-table'>"
                f"{html_head(t['perspective_columns'])}")
-    for row in perspective_rows(doc, t):
-        out.append(html_row(t["perspective_columns"], row))
+    recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
+    for name, row in zip(PERSPECTIVES, perspective_rows(doc, t)):
+        status = recorded.get(name)
+        out.append(html_row(t["perspective_columns"], row,
+                            status=(1, status, row[1], "") if status else None))
     out.append("</table></div></section><div class='lists'>")
     for key in ("checked_ok", "limitations", "decisions", "next_steps"):
         items = doc.get(key, [])

@@ -1,4 +1,6 @@
 <!--
+`scripts/drafts.py` fills this template from findings.json by these rules; check its output, then write what
+no field holds.
 Files one finding as one issue (one root cause = one fix location or design decision = one issue).
 Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty, and a
 section whose only content is empty (e.g. References when the finding has none).

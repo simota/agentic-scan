@@ -1,4 +1,5 @@
 <!--
+`scripts/drafts.py` がこの規則どおりに findings.json から埋める。出力を確認し、フィールドにない内容だけを書き足す。
 設計上の検出事項を、オーナー、テックリード、管理者に報告するテンプレート。1 通に複数の finding を載せてよい。
 件数と各 finding は findings.json から転記し、ダッシュボードと食い違わないようにする。
 {{n_*}} の値はすべて `python3 scripts/findings.py counts <out>/findings.json` の出力から転記する。

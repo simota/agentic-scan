@@ -76,6 +76,21 @@ python3 skills/architecture-scan/scripts/findings.py check out --repo /path/to/a
 python3 skills/architecture-scan/scripts/findings.py counts out/findings.json  # n_* for the report template
 ```
 
+After the run, three tools hand the record on (each reads `findings.json`
+and changes nothing in it):
+
+```sh
+python3 skills/architecture-scan/scripts/drafts.py out/findings.json --out scratch/drafts   # issue per finding + owner-report.md
+python3 skills/architecture-scan/scripts/compare.py earlier/findings.json out/findings.json # new / resolved / persisting since a run
+python3 skills/architecture-scan/scripts/sarif.py out/findings.json --out architecture.sarif # SARIF 2.1.0 for code scanning
+```
+
+| Tool | What it gives you |
+|---|---|
+| `drafts.py` | `templates/issue.<lang>.md` filled for every finding worth filing (one `A-NNN.md` each; excluded, `Fixed` and `Accepted` ones left out) and `templates/report.<lang>.md` filled as `owner-report.md` (counts, High/Medium findings, both Mermaid diagrams, rules, lists). Only the judgment stays for you: open questions, the conclusion, issue URLs. `--only A-001,A-003` drafts some |
+| `compare.py` | An earlier assessment against a later one, paired by content because IDs are renumbered: new, resolved (not found again, with a warning when scopes differ), persisting with each change of severity, verdict, status or location, findings marked `Fixed` that reappeared, rule status and coverage changes, counts per severity. Markdown, or `--format json` |
+| `sarif.py` | One SARIF result per finding to act on, at its `path:line`, levels by severity, rules by hunt step, stable fingerprints across runs, `Accepted` findings suppressed; `--min-severity` trims it. Upload it to GitHub code scanning or open it in an IDE's SARIF viewer |
+
 | Output | What it is |
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
@@ -101,8 +116,8 @@ again replaces its value. Merges may run in parallel
 time).
 
 To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
-cause per issue) or `templates/report.{ja,en}.md` (one report covering several).
-Filing or sending stays with you.
+cause per issue) or `templates/report.{ja,en}.md` (one report covering several),
+filled by `scripts/drafts.py`. Filing, sending or uploading stays with you.
 
 ## Layout
 
@@ -117,6 +132,9 @@ skills/architecture-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; renumbers; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
+  scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting
+  scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
   scripts/scan_report_kit/     vendored scan-report-kit: the shared dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
@@ -130,7 +148,8 @@ tests/                         offline tests for the scripts and the documents
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, the vendored scan-report-kit matches its MANIFEST,
-             # sample renders in ja/en and passes the run contract
+             # sample renders in ja/en and passes the run contract, and
+             # drafts, compare and sarif run on it
 make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
 ```
 

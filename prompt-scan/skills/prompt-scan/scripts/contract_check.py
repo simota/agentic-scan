@@ -114,11 +114,24 @@ def scan_problems(inventory, data):
 
 
 def check(out, no_pdf=False, allow=()):
-    problems = []
+    """Every contract violation in the finished output directory out, in a stable order."""
     raw = record.read_regular(out / "findings.json")
     data = record.load(out / "findings.json", raw)
     digest = hashlib.sha256(raw).hexdigest()
+    problems = output_problems(out, digest, no_pdf, allow)
+    problems += inventory_problems(out, data)
+    problems += meta_problems(data.get("meta", {}))
+    problems += id_problems(data.get("findings", []))
+    canonical = perspective_names()
+    problems += field_problems(data, canonical)
+    problems += perspective_problems(data.get("perspectives", []), canonical)
+    problems += limitation_problems(data, no_pdf)
+    return problems
 
+
+def output_problems(out, digest, no_pdf, allow):
+    """The output file set, and that each page was rendered from this findings.json."""
+    problems = []
     present = {p.name for p in out.iterdir()}
     expected = OUTPUTS - ({"report.pdf"} if no_pdf else set())
     for name in sorted(expected - present):
@@ -137,28 +150,38 @@ def check(out, no_pdf=False, allow=()):
             problems += copy_problems(out, name, digest, no_pdf)
         elif (out / name).is_dir():
             problems += stamp_problems(out / name, digest, f"{name}/")
+    return problems
 
-    if (out / "inventory.json").is_file():
-        try:
-            inventory = json.loads((out / "inventory.json").read_text(encoding="utf-8"))
-        except (OSError, ValueError, RecursionError) as e:
-            problems.append(f"inventory.json is unreadable: {e}")
-            inventory = {}
-        if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
-            problems.append("inventory.json was not written by inventory.py")
-        else:
-            if inventory.get("prompt_files") and not data.get("prompts"):
-                problems.append("inventory.json lists prompt files but findings.json records no prompts")
-            problems += scan_problems(inventory, data)
 
-    meta = data.get("meta", {})
-    for key in ("target", "date", "assessor"):
-        if not str(meta.get(key) or "").strip():
-            problems.append(f"meta.{key} is missing")
+def inventory_problems(out, data):
+    if not (out / "inventory.json").is_file():
+        return []
+    problems = []
+    try:
+        inventory = json.loads((out / "inventory.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as e:
+        problems.append(f"inventory.json is unreadable: {e}")
+        inventory = {}
+    if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
+        problems.append("inventory.json was not written by inventory.py")
+    else:
+        if inventory.get("prompt_files") and not data.get("prompts"):
+            problems.append("inventory.json lists prompt files but findings.json records no prompts")
+        problems += scan_problems(inventory, data)
+    return problems
+
+
+def meta_problems(meta):
+    problems = [f"meta.{key} is missing" for key in ("target", "date", "assessor")
+                if not str(meta.get(key) or "").strip()]
     if "commit" not in meta:
         problems.append("meta.commit is missing: run inventory.py <repo> --into <out>/findings.json")
+    return problems
 
-    findings = data.get("findings", [])
+
+def id_problems(findings):
+    """F-* numbering and order, which records come from inventory.py, and High/Medium verdicts."""
+    problems = []
     code = [f for f in findings if f["id"].startswith("F-")]
     if sorted((f["id"] for f in code), key=record.id_key) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
@@ -176,10 +199,16 @@ def check(out, no_pdf=False, allow=()):
                 problems.append(f"{f['id']}: a {f['severity']} finding needs a verdict other than Unverified")
             elif not str(f["validation"].get("evidence") or "").strip():
                 problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence")
+    return problems
 
-    canonical = perspective_names()
+
+def field_problems(data, canonical):
+    """The fields every F-* finding must carry."""
+    problems = []
     has_prompts = bool(data.get("prompts"))
-    for f in code:
+    for f in data.get("findings", []):
+        if not f["id"].startswith("F-"):
+            continue
         ident = f["id"]
         for key in REQUIRED_TEXT:
             if not str(f.get(key) or "").strip():
@@ -197,19 +226,30 @@ def check(out, no_pdf=False, allow=()):
             problems.append(f"{ident}: prompt (the P-NN it affects) is missing")
         if f["category"] not in canonical:
             problems.append(f"{ident}: category {f['category']!r} is not a perspective name")
+    return problems
 
-    recorded = [p["name"] for p in data.get("perspectives", [])]
+
+def perspective_problems(perspectives, canonical):
+    problems = []
+    recorded = [p["name"] for p in perspectives]
     for name in canonical:
         if recorded.count(name) != 1:
             problems.append(f"perspective {name!r} must be recorded exactly once (applied, N/A or not checked)")
     for name in sorted(set(recorded) - set(canonical)):
         problems.append(f"unknown perspective {name!r}")
-    for p in data.get("perspectives", []):
+    for p in perspectives:
         if p["result"] != "applied" and not str(p.get("note") or "").strip():
             problems.append(f"perspective {p['name']!r} is {p['result']} without a reason in note")
+    return problems
 
+
+def limitation_problems(data, no_pdf):
+    """The limitations the contract requires: no eval run, no PDF."""
+    problems = []
     limitations = data.get("limitations", [])
-    has_line = lambda text: any(text in line for line in limitations)  # noqa: E731
+
+    def has_line(text):
+        return any(text in line for line in limitations)
     if data.get("eval_runs"):
         if has_line(NO_EVAL):
             problems.append(f"eval_runs are recorded, so drop the limitation {NO_EVAL!r}")

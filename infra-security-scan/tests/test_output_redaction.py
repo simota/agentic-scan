@@ -13,6 +13,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import iac_scan  # noqa: E402
 import redaction  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 
@@ -62,7 +63,7 @@ class OutputTest(unittest.TestCase):
                 for name in ("dashboard.html", "assessment.html")]
 
     def excerpt(self, location):
-        return render.attach_sources(self.record(location), self.repo)["F-001"]
+        return excerpts.attach_sources(self.record(location), self.repo)["F-001"]
 
 
 class SourceRedactionTest(OutputTest):
@@ -76,7 +77,7 @@ class SourceRedactionTest(OutputTest):
                     text = json.dumps({"settings": {key: value}, "publicly_accessible": True})
                     self.write("resource." + suffix, text.replace(key, encoded))
                     record = self.record("resource." + suffix + ":1")
-                    self.assertEqual(render.attach_sources(record, self.repo), {})
+                    self.assertEqual(excerpts.attach_sources(record, self.repo), {})
                     for page in self.pages(record):
                         self.assertNotIn(value, page)
 
@@ -91,7 +92,7 @@ class SourceRedactionTest(OutputTest):
             for n, text in enumerate(variants):
                 with self.subTest(suffix=suffix, text=text):
                     self.write("resource." + suffix, text)
-                    rows = render.attach_sources(self.record("resource." + suffix + ":1"), self.repo).get("F-001")
+                    rows = excerpts.attach_sources(self.record("resource." + suffix + ":1"), self.repo).get("F-001")
                     if n == 0:
                         self.assertEqual(rows, [(1, text, True)])
                     elif rows is not None:
@@ -109,7 +110,7 @@ class SourceRedactionTest(OutputTest):
                 self.write("resource.yaml", before + '\n"pass\\u0077ord": "' + value + '"\n' +
                            after + "\npublicly_accessible: true\n")
                 record = self.record("resource.yaml:4")
-                self.assertEqual(render.attach_sources(record, self.repo), {})
+                self.assertEqual(excerpts.attach_sources(record, self.repo), {})
                 for page in self.pages(record):
                     self.assertNotIn(value, page)
 
@@ -124,7 +125,7 @@ class SourceRedactionTest(OutputTest):
                 self.assertTrue(any(f["rule"] == "K8S-003" for f in baseline))
                 record = self.record("resources.yaml:6")
                 record["findings"] += baseline
-                self.assertEqual(render.attach_sources(record, self.repo), {})
+                self.assertEqual(excerpts.attach_sources(record, self.repo), {})
                 for page in self.pages(record):
                     self.assertNotIn(value, page)
                     self.assertNotIn(plaintext, page)
@@ -141,7 +142,7 @@ class SourceRedactionTest(OutputTest):
         self.assertTrue(any(f["rule"] == "SEC-001" for f in baseline))
         record = self.record("project-12345.json:5")
         record["findings"] += baseline
-        sources = render.attach_sources(record, self.repo)
+        sources = excerpts.attach_sources(record, self.repo)
         self.assertIn("F-001", sources)
         self.assertTrue(all(f["id"] not in sources for f in baseline if f["rule"] == "SEC-001"))
         outputs = self.pages(record) + [json.dumps(iac_scan.report(scan, self.repo, "", baseline)),
@@ -238,7 +239,7 @@ class StructuredSourceRedactionTest(OutputTest):
            "      securityContext:\n        privileged: true\n")
 
     def assert_source_omitted(self, record, value):
-        self.assertEqual(render.attach_sources(record, self.repo), {})
+        self.assertEqual(excerpts.attach_sources(record, self.repo), {})
         for page in self.pages(record):
             self.assertNotIn(value, page)
             self.assertNotIn('class="snippet"', page)
@@ -325,7 +326,7 @@ class StructuredSourceRedactionTest(OutputTest):
                 text = json.dumps({"env": {"LOG_LEVEL": "visible-configuration"}, "privileged": True})
                 self.write("resource." + suffix, text.replace("LOG_LEVEL", "LOG\\u005fLEVEL"))
                 record = self.record("resource." + suffix + ":1")
-                self.assertIn("F-001", render.attach_sources(record, self.repo))
+                self.assertIn("F-001", excerpts.attach_sources(record, self.repo))
                 for page in self.pages(record):
                     self.assertIn("visible-configuration", page)
                     self.assertIn('class="snippet"', page)
@@ -438,7 +439,7 @@ class CloudFormationSourceRedactionTest(OutputTest):
                 "Resources: " + json.dumps(template["Resources"]) + "\n")
 
     def assert_source_omitted(self, record, value):
-        self.assertEqual(render.attach_sources(record, self.repo), {})
+        self.assertEqual(excerpts.attach_sources(record, self.repo), {})
         for page in self.pages(record):
             self.assertNotIn(value, page)
             self.assertNotIn('class="snippet"', page)
@@ -496,7 +497,7 @@ class CloudFormationSourceRedactionTest(OutputTest):
                     text = self.yaml_text(self.template(True, value, default_first), flow=False)
                     text = text.replace("    NoEcho: true\n", f"    NoEcho: {style}\n      true\n")
                     self.write("template.yaml", text)
-                    self.assertIsNone(render.source_lines(self.repo / "template.yaml"))
+                    self.assertIsNone(excerpts.source_lines(self.repo / "template.yaml"))
                     line = next(n for n, row in enumerate(text.splitlines(), 1) if "Resources" in row)
                     self.assert_source_omitted(self.record(f"template.yaml:{line}"), value)
 
@@ -505,7 +506,7 @@ class CloudFormationSourceRedactionTest(OutputTest):
         for no_echo in (None, 0, "", {"Ref": "DisplayMode"}):
             with self.subTest(no_echo=no_echo):
                 self.write("template.json", json.dumps(self.template(no_echo, value, default_first=True)))
-                self.assertIsNone(render.source_lines(self.repo / "template.json"))
+                self.assertIsNone(excerpts.source_lines(self.repo / "template.json"))
                 self.assert_source_omitted(self.record("template.json:1"), value)
 
     def test_default_referenced_by_a_secret_property_is_omitted(self):
@@ -533,7 +534,7 @@ class CloudFormationSourceRedactionTest(OutputTest):
                         self.write(filename, text)
                         line = next(n for n, row in enumerate(text.splitlines(), 1) if value in row)
                         record = self.record(f"{filename}:{line}")
-                        self.assertIn("F-001", render.attach_sources(record, self.repo))
+                        self.assertIn("F-001", excerpts.attach_sources(record, self.repo))
                         for page in self.pages(record):
                             self.assertIn(value, page)
                             self.assertIn('class="snippet"', page)

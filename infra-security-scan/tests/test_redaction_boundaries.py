@@ -10,6 +10,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import iac_scan  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 
@@ -65,7 +66,7 @@ class RedactionBoundaryTest(unittest.TestCase):
 
     def assert_hidden(self, record, *values, omitted=False):
         if omitted:
-            self.assertEqual(render.attach_sources(record, self.repo), {})
+            self.assertEqual(excerpts.attach_sources(record, self.repo), {})
         pages = self.pages(record)
         for page in pages:
             for value in values:
@@ -85,7 +86,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                     path = self.write("main.tf", f'{kind} "bootstrap" {{\n' + "\n".join(attrs) + "\n}\n" + self.EBS)
                     record = self.record()
                     self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-EBS-001"])
-                    self.assertIsNone(render.source_lines(path))
+                    self.assertIsNone(excerpts.source_lines(path))
                     # Keep the value in range even if a baseline's property
                     # location moves farther from the neighboring declaration.
                     record["findings"] += self.record("main.tf:2-3")["findings"]
@@ -102,7 +103,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                 record = self.record()
                 self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-EBS-001"])
                 self.assert_hidden(record, value, omitted=True)
-                self.assertIsNone(render.source_lines(path))
+                self.assertIsNone(excerpts.source_lines(path))
 
     def test_bom_sibling_and_override_sensitivity_omit_public_file_excerpts(self):
         value = "synthetic-" + "bom-module-value"
@@ -174,7 +175,7 @@ class RedactionBoundaryTest(unittest.TestCase):
         self.write("variables.tf", 'variable "bootstrap" { sensitive = true }\n')
         self.write("child/main.tf", 'output "status" { value = "' + value + '" }\n' + self.EBS)
         record = self.record("child/main.tf:1")
-        self.assertIn("F-001", render.attach_sources(record, self.repo))
+        self.assertIn("F-001", excerpts.attach_sources(record, self.repo))
         for page in self.pages(record):
             self.assertIn(value, page)
 
@@ -186,7 +187,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                     with self.subTest(kind=kind, flag=flag, bom=bool(prefix)):
                         text = (f'{kind} "public_label" {{\n  {field} = "{value}"\n' + flag + '}\n' + self.EBS)
                         path = self.write("main.tf", prefix + text)
-                        self.assertEqual(render.source_lines(path), text.splitlines())
+                        self.assertEqual(excerpts.source_lines(path), text.splitlines())
                         for page in self.pages(self.record("main.tf:1-10")):
                             self.assertIn(value, page)
                             self.assertIn('class="snippet"', page)
@@ -196,7 +197,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                 'locals { note = "sensitive = true" }\n'
                 'output "status" {\n  value = "visible-configuration"\n  sensitive = false\n}\n' + self.EBS)
         path = self.write("main.tf", text)
-        self.assertEqual(render.source_lines(path), text.splitlines())
+        self.assertEqual(excerpts.source_lines(path), text.splitlines())
         for page in self.pages(self.record("main.tf:1-10")):
             self.assertIn("visible-configuration", page)
 
@@ -219,7 +220,7 @@ class RedactionBoundaryTest(unittest.TestCase):
             self.assertIn("password = var.db_password", page)
         text = 'log_level: var.visible_configuration\npublicly_accessible: true\n'
         path = self.write("settings.yaml", text)
-        self.assertEqual(render.source_lines(path), text.splitlines())
+        self.assertEqual(excerpts.source_lines(path), text.splitlines())
         for page in self.pages(self.record("settings.yaml:2")):
             self.assertIn("var.visible_configuration", page)
 
@@ -254,14 +255,14 @@ class RedactionBoundaryTest(unittest.TestCase):
         # pass (redaction.scrub_lines); booleans and null stay visible.
         prose = json.dumps({"note": '"password": "synthetic-prose-value"'}, indent=2)
         path = self.write("resource.json", prose)
-        lines = render.source_lines(path)
+        lines = excerpts.source_lines(path)
         self.assertEqual(len(lines), len(prose.splitlines()))
         self.assertNotIn("synthetic-prose-value", "\n".join(lines))
         texts = [json.dumps({"password": False, "token": None, "public": "visible-configuration"}, indent=2)]
         for text in texts:
             with self.subTest(text=text):
                 path = self.write("resource.json", text)
-                self.assertEqual(render.source_lines(path), text.splitlines())
+                self.assertEqual(excerpts.source_lines(path), text.splitlines())
                 for page in self.pages(self.record("resource.json:1-10")):
                     self.assertIn("visible-configuration", page)
 
@@ -282,7 +283,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                         '  metadata_options { http_tokens = "optional" }\n'
                         '  ami = "ami-example"\n  instance_type = "t3.micro"\n}\n')
                 path = self.write("main.tf", text)
-                lines = render.source_lines(path)
+                lines = excerpts.source_lines(path)
                 self.assertEqual(len(lines), len(text.splitlines()))
                 record = self.record()
                 self.assertEqual([f["rule"] for f in record["findings"]], ["AWS-EC2-001"])
@@ -298,7 +299,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                     text = ('credentials:\n' + indent + '- user: public\n' + comment + indent +
                             '- value: ' + value + '\npublicly_accessible: true\n')
                     path = self.write("settings.yaml", text)
-                    lines = render.source_lines(path)
+                    lines = excerpts.source_lines(path)
                     self.assertEqual(len(lines), len(text.splitlines()))
                     self.assertEqual(lines[-1], 'publicly_accessible: true')
                     for page in self.assert_hidden(self.record("settings.yaml:1-10"), value):
@@ -331,7 +332,7 @@ class RedactionBoundaryTest(unittest.TestCase):
         }
         for name, text in cases.items():
             with self.subTest(name=name):
-                lines = render.source_lines(self.write(name, text))
+                lines = excerpts.source_lines(self.write(name, text))
                 self.assertEqual(len(lines), len(text.splitlines()))
                 self.assertNotIn("[redacted]", lines)
                 for line in visible[name]:
@@ -355,7 +356,7 @@ class RedactionBoundaryTest(unittest.TestCase):
             "k.tf": 'locals {\n  x = "app/dbpassword:4815' + '1623"\n}\n',
         }.items():
             with self.subTest(name=name):
-                lines = render.source_lines(self.write(name, text))
+                lines = excerpts.source_lines(self.write(name, text))
                 self.assertNotIn(value, "\n".join(lines or []))
                 self.assertNotIn("4815" + "1623", "\n".join(lines or []))
 
@@ -372,13 +373,13 @@ class RedactionBoundaryTest(unittest.TestCase):
             "cmd.tf": ('locals {\n  command = ["sh", "-c", "PASSWORD=",\n    "' + value + '"]\n}\n'),
         }.items():
             with self.subTest(name=name):
-                lines = render.source_lines(self.write(name, text))
+                lines = excerpts.source_lines(self.write(name, text))
                 self.assertNotIn(value, "\n".join(lines or []))
 
     def test_an_apostrophe_in_a_comment_does_not_hide_the_file(self):
         text = ('// don\'t hardcode password = "changeme" here\n'
                 'resource "aws_db_instance" "d" {\n  publicly_accessible = true\n}\n')
-        lines = render.source_lines(self.write("main.tf", text))
+        lines = excerpts.source_lines(self.write("main.tf", text))
         self.assertEqual(lines[1:], text.splitlines()[1:])
 
     def test_16_byte_base64_keys_are_scrubbed(self):
@@ -412,7 +413,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                      '    environment = [for k, v in var.environment : { name = k, value = v }]\n  }])\n}\n',
                      'locals {\n  tags = [for k, v in var.tags : { key = k, value = v }]\n}\n'):
             with self.subTest(text=text[:30]):
-                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
+                self.assertEqual(excerpts.source_lines(self.write("main.tf", text)), text.splitlines())
 
     def test_a_resource_name_does_not_pair_with_a_nested_block_value(self):
         for text in ('resource "aws_ecs_cluster" "c" {\n  name = var.cluster_name\n'
@@ -420,7 +421,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                      'resource "aws_autoscaling_group" "g" {\n  name = local.name\n'
                      '  tag {\n    key   = "Name"\n    value = "web"\n    propagate_at_launch = true\n  }\n}\n'):
             with self.subTest(text=text[:30]):
-                self.assertEqual(render.source_lines(self.write("main.tf", text)), text.splitlines())
+                self.assertEqual(excerpts.source_lines(self.write("main.tf", text)), text.splitlines())
 
     def test_object_literal_with_a_computed_name_hides_its_value(self):
         value = "plain" + "objectvalue"
@@ -430,7 +431,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                         '  container_definitions = jsonencode([{\n    environment = [{\n'
                         f'      name  = {name_expr}\n      value = "{value}"\n'
                         '    }]\n  }])\n}\n')
-                lines = render.source_lines(self.write("task.tf", text))
+                lines = excerpts.source_lines(self.write("task.tf", text))
                 self.assertNotIn(value, "\n".join(lines or []))
 
     def test_object_literal_with_a_computed_name_and_reference_value_keeps_excerpts(self):
@@ -438,7 +439,7 @@ class RedactionBoundaryTest(unittest.TestCase):
                 '  container_definitions = jsonencode([{\n    environment = [{\n'
                 '      name  = local.region_name\n      value = var.region\n'
                 '    }]\n  }])\n}\n')
-        self.assertEqual(render.source_lines(self.write("task.tf", text)), text.splitlines())
+        self.assertEqual(excerpts.source_lines(self.write("task.tf", text)), text.splitlines())
 
     def test_base64_keys_under_unlisted_names_are_scrubbed_whole(self):
         # ENTROPY split a base64 key at "/" and "=", and pieces without a
@@ -461,7 +462,7 @@ class RedactionBoundaryTest(unittest.TestCase):
         for line in (5, 7, 50):  # the file has four lines; 5-7 would show context only
             with self.subTest(line=line):
                 record["findings"] = [{"id": "F-001", "location": f"a.tf:{line}", "resources": ["x"]}]
-                self.assertEqual(render.attach_sources(record, self.repo), {})
+                self.assertEqual(excerpts.attach_sources(record, self.repo), {})
 
 
 if __name__ == "__main__":

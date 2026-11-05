@@ -15,6 +15,7 @@ import common
 import findings
 import iac_scan
 import redaction
+import excerpts
 import render
 
 
@@ -251,7 +252,7 @@ class SecurityHardeningWish1Tests(unittest.TestCase):
                 f'resource "custom" "x" {{\n  parameter_key = "db_password"\n  parameter_value = "{s_paired}"\n}}\n',
                 encoding="utf-8",
             )
-            self.assertIsNone(render.source_lines(paired_hcl))
+            self.assertIsNone(excerpts.source_lines(paired_hcl))
 
             # Non-literal output/locals references (var.x -> UNKNOWN) must NOT suppress source excerpts.
             ref_tf = root / "outputs.tf"
@@ -260,7 +261,7 @@ class SecurityHardeningWish1Tests(unittest.TestCase):
                 'locals {\n  api_token = var.api_token\n}\n',
                 encoding="utf-8",
             )
-            ref_lines = render.source_lines(ref_tf)
+            ref_lines = excerpts.source_lines(ref_tf)
             self.assertIsNotNone(ref_lines)
             self.assertIn("var.db_password", "\n".join(ref_lines))
 
@@ -270,7 +271,7 @@ class SecurityHardeningWish1Tests(unittest.TestCase):
                 f'output "db_password" {{\n  value = "{_dyn_val("out_lit", "s2")}"\n}}\n',
                 encoding="utf-8",
             )
-            self.assertIsNone(render.source_lines(lit_tf))
+            self.assertIsNone(excerpts.source_lines(lit_tf))
 
             s_tg = _dyn_val("tg_direct", "s3")
             hcl_path = root / "terragrunt.hcl"
@@ -289,11 +290,11 @@ class SecurityHardeningWish1Tests(unittest.TestCase):
                 f'      MasterUserPassword: "{s_cfn}"\n',
                 encoding="utf-8",
             )
-            hcl_lines = render.source_lines(hcl_path)
+            hcl_lines = excerpts.source_lines(hcl_path)
             self.assertIsNotNone(hcl_lines)
             self.assertNotIn(s_tg, "\n".join(hcl_lines))
 
-            tpl_lines = render.source_lines(tpl_path)
+            tpl_lines = excerpts.source_lines(tpl_path)
             self.assertIsNotNone(tpl_lines)
             self.assertNotIn(s_cfn, "\n".join(tpl_lines))
 
@@ -316,7 +317,7 @@ class SecurityHardeningWish1Tests(unittest.TestCase):
                     {"id": "I-002", "rule": "AWS-S3-001", "location": ".terraform/cached.tf:1"},
                 ]
             }
-            sources = render.attach_sources(data, repo)
+            sources = excerpts.attach_sources(data, repo)
             self.assertEqual(sources, {})
 
             # output_dir_problem must reject symlinked --out and symlinked parent of --out.

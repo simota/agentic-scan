@@ -13,6 +13,7 @@ SCRIPTS = REPO / "skills" / "infra-scan" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import findings  # noqa: E402
 import iac_scan  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 BUCKET = 'resource "aws_s3_bucket_acl" "b" {\n  acl = "public-read"\n}\n'
@@ -96,7 +97,7 @@ class WorkflowTest(unittest.TestCase):
             with self.subTest(name=name):
                 path = self.repo / name
                 path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-                self.assertIsNone(render.source_lines(path))
+                self.assertIsNone(excerpts.source_lines(path))
 
     def test_hand_written_configuration_keeps_its_excerpts(self):
         for name, doc in (("lifecycle.json", {"Rules": [{"ID": "expire", "Status": "Enabled"}]}),
@@ -104,7 +105,7 @@ class WorkflowTest(unittest.TestCase):
             with self.subTest(name=name):
                 path = self.repo / name
                 path.write_text(json.dumps(doc, indent=2), encoding="utf-8")
-                self.assertIsNotNone(render.source_lines(path))
+                self.assertIsNotNone(excerpts.source_lines(path))
 
     def test_every_baseline_title_has_a_japanese_title(self):
         for rule, (title, *_rest) in iac_scan.RULES.items():

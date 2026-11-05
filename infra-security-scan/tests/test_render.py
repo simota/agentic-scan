@@ -11,6 +11,7 @@ from unittest.mock import patch
 
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 SAMPLE = REPO / "examples" / "findings.sample.json"
@@ -34,6 +35,24 @@ def run(argv):
     with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
         code = render.main(argv)
     return code, err.getvalue()
+
+
+class ModuleBoundaryTest(unittest.TestCase):
+    """The record tools validate and render without the scanner's parsers."""
+
+    def loaded(self, module):
+        import subprocess
+        code = f"import sys, {module}; print(' '.join(sorted(m for m in ('iac_scan', 'excerpts') if m in sys.modules)))"
+        return subprocess.run([sys.executable, "-I", "-c", f"import sys; sys.path.insert(0, {str(render.SKILL / 'scripts')!r}); {code}"],
+                              capture_output=True, text=True, check=True).stdout.strip()
+
+    def test_record_tools_do_not_load_the_scanner(self):
+        for module in ("render", "findings", "contract_check"):
+            with self.subTest(module=module):
+                self.assertEqual(self.loaded(module), "")
+
+    def test_excerpts_reuse_the_scanner_parsers(self):
+        self.assertEqual(self.loaded("excerpts"), "excerpts iac_scan")
 
 
 class ValidateTest(unittest.TestCase):
@@ -346,7 +365,7 @@ class ExcerptTest(unittest.TestCase):
         return data
 
     def test_excerpt_redacts_secret_values(self):
-        sources = render.attach_sources(self.record("envs/db.tf:5"), self.repo)
+        sources = excerpts.attach_sources(self.record("envs/db.tf:5"), self.repo)
         text = "\n".join(t for _, t, _ in sources["F-001"])
         self.assertIn("publicly_accessible = true", text)
         self.assertIn("password = [redacted]", text)
@@ -356,13 +375,13 @@ class ExcerptTest(unittest.TestCase):
     def test_credential_shape_redacted(self):
         key = "AKIA" + "ABCDEFGHIJKLMNOP"
         (self.repo / "envs" / "p.tf").write_text(f'provider "aws" {{\n  region = "{key}"\n}}\n', encoding="utf-8")
-        sources = render.attach_sources(self.record("envs/p.tf:2"), self.repo)
+        sources = excerpts.attach_sources(self.record("envs/p.tf:2"), self.repo)
         self.assertNotIn(key, "\n".join(t for _, t, _ in sources["F-001"]))
 
     def test_sensitive_files_and_escapes_skipped(self):
         for location in ("prod.tfvars:1", "../outside.tf:1", "envs/missing.tf:1"):
             with self.subTest(location=location):
-                self.assertEqual(render.attach_sources(self.record(location), self.repo), {})
+                self.assertEqual(excerpts.attach_sources(self.record(location), self.repo), {})
 
     def test_excerpt_embedded_in_both_outputs(self):
         with tempfile.TemporaryDirectory() as out:

@@ -723,14 +723,25 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
    widen the table past its status column; below the register's breakpoint each row
    stacks, its ID or perspective beside its status, each value under its column label. */
 table.rules td,table.coverage-table td{overflow-wrap:anywhere}
+/* A rule or perspective status is read as a word first; a broken rule and a gap in what
+   was checked (partly read, not checked, not recorded) also stand out from the rows that hold. */
+.state{font-family:var(--sans);font-size:13px}
+.state.bad{color:var(--high);font-weight:700}
+.state.gap{font-weight:700;font-style:italic}
+.state.na{color:var(--muted)}
 @media(max-width:850px){table.rules,table.rules>tbody,table.coverage-table,table.coverage-table>tbody{display:block}table.rules>thead,table.coverage-table>thead{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}table.rules>tbody>tr,table.coverage-table>tbody>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;padding:14px 12px;border-bottom:1px solid var(--line)}table.rules>tbody>tr:last-child,table.coverage-table>tbody>tr:last-child{border-bottom:0}table.rules>tbody>tr>td,table.coverage-table>tbody>tr>td{border:0;padding:0}table.rules>tbody>tr>td:before,table.coverage-table>tbody>tr>td:before{content:attr(data-label);display:block;color:var(--muted);font-size:10px;font-family:var(--sans);margin-bottom:3px}table.rules>tbody>tr>td:nth-child(2),table.rules>tbody>tr>td:nth-child(3),table.coverage-table>tbody>tr>td:nth-child(3){grid-column:1/-1}table.rules>tbody>tr>td:nth-child(4){grid-column:2;grid-row:1}table.rules>tbody>tr>td.nowrap{white-space:normal}}
 /* Application shell: the register is a list of details, not the kit's table, so
    its head row and focused finding get the shell's pinning and focus marks here. */
 .app-shell #decisions-section:focus,.app-shell #rules-section:focus{outline:0}
-.app-shell .filters{grid-template-columns:minmax(0,2fr) repeat(3,minmax(0,1fr))}
+/* Each column is as wide as its widest control needs (search and perspective, record set and
+   status, severity and verdict, confidence and order), so no chosen value is cut off; on a wide
+   screen the count and reset sit under the filters, leaving them the panel's full width. */
+.app-shell .filters{grid-template-columns:minmax(0,1.3fr) minmax(0,1.45fr) minmax(0,.8fr) minmax(0,1fr)}
+@media(min-width:1100px){.app-shell .filters-panel{display:block}.app-shell .filters-panel .filter-bottom{flex-direction:row;align-items:center;gap:12px;margin-top:8px}}
 .app-shell .finding:focus-within>details>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
 @media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+@media(max-width:480px){.app-shell .filters .wide{grid-column:1/-1}}
 @media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
 @media print{.app-shell .reg-head{position:static}.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}}
 /* Before/after architecture: a wide diagram scrolls inside its frame, never the page. */
@@ -756,6 +767,8 @@ table.rules td,table.coverage-table td{overflow-wrap:anywhere}
 .arch-svg .elabel{fill:var(--text);font-size:11px;paint-order:stroke;stroke:var(--bg);stroke-width:4px;stroke-linejoin:round}
 .arch-svg .elabel.violation{fill:var(--high)}
 .arch-text{margin-top:8px;font-family:var(--sans);font-size:13px}
+.arch-text>summary{padding:4px 0;cursor:pointer}
+.arch>h3{margin-top:24px}
 .arch-text li,.arch-changes li{overflow-wrap:anywhere}
 @media print{.arch-scroll{overflow:visible;border:0}.arch-svg{max-width:100%;height:auto}.arch-figure{break-inside:avoid}.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """
@@ -1420,6 +1433,16 @@ def html_priority(doc, lang, status):
     return out
 
 
+# Rule and perspective statuses: a broken rule, a gap in what was checked, or not applicable.
+STATE_CLASS = {"violated": "bad", "partly read": "gap", "not checked": "gap", "—": "gap", "N/A": "na"}
+
+
+def html_state(status):
+    """A status word, marked by its meaning so a broken rule or a coverage gap stands out."""
+    cls = STATE_CLASS.get(status)
+    return f"<span class='state{' ' + cls if cls else ''}'>{html_text(status)}</span>"
+
+
 def html_coverage(doc, lang):
     """Scope, method and revision, the recorded limitations and the perspective coverage table."""
     t, d, e = LABELS[lang], DASH[lang], html_text
@@ -1440,7 +1463,7 @@ def html_coverage(doc, lang):
            f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>"]
     for name, p in rows:
         out.append(f"<tr><td data-label='{escape(t['perspective'])}'>{e(name)}</td>"
-                   f"<td data-label='{escape(t['rule_status'])}'>{e(p['status'])}</td>"
+                   f"<td data-label='{escape(t['rule_status'])}'>{html_state(p['status'])}</td>"
                    f"<td data-label='{escape(t['note'])}'>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
     return out
@@ -1456,7 +1479,7 @@ def html_rules(doc, lang):
            f"<th>{e(t['id'])}</th><th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
            f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>"]
     for r in doc["rules"]:
-        rule_state = e(r["status"])
+        rule_state = html_state(r["status"])
         if filled(r, "reason"):
             rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
         out.append(f"<tr><td class='nowrap' data-label='{escape(t['id'])}'>{e(rule_id(r))}</td>"
@@ -1497,13 +1520,13 @@ def html_filters(findings, lang):
         + options([(s, s) for s in SEVERITIES], t["all"]) + "</select></label>"
         f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
         + options([(c, c) for c in CONFIDENCES], t["all"]) + "</select></label>"
-        f"<label><span>{e(d['category'])}</span><select id='f-cat'>"
+        f"<label class='wide'><span>{e(d['category'])}</span><select id='f-cat'>"
         + options([(c, c) for c in all_cats], t["all"]) + "</select></label>"
         f"<label><span>{e(d['status'])}</span><select id='f-status'>"
         + options([(s, s) for s in STATUSES], t["all"]) + "</select></label>"
         f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
         + options([(v, v) for v in VERDICTS], t["all"]) + "</select></label>"
-        f"<label><span>{e(d['sort'])}</span><select id='f-sort'>"
+        f"<label class='wide'><span>{e(d['sort'])}</span><select id='f-sort'>"
         + options([("priority", d["priority_sort"]), ("severity", d["severity_sort"])]) + "</select></label>"
         f"<label class='search'><span>{e(d['search'])}</span><input id='f-q' type='search' "
         f"placeholder='{escape(d['search'])}'></label></div><div class='filter-bottom'>"

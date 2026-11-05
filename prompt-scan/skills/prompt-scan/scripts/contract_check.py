@@ -25,7 +25,7 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as merge_tool  # noqa: E402
 import inventory as inventory_tool  # noqa: E402
-import render  # noqa: E402
+import record  # noqa: E402
 
 SKILL = Path(__file__).resolve().parents[1]
 OUTPUTS = {"findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf"}
@@ -107,7 +107,7 @@ def scan_problems(inventory, data):
     except (KeyError, TypeError, AttributeError):
         expected = None
     recorded = sorted((scanned(f) for f in data.get("findings", []) if f["id"].startswith("L-")),
-                      key=lambda f: render.id_key(f["id"]))
+                      key=lambda f: record.id_key(f["id"]))
     if recorded != expected:
         problems.append(f"L-* findings do not match inventory.json lint: {rerun}")
     return problems
@@ -115,8 +115,8 @@ def scan_problems(inventory, data):
 
 def check(out, no_pdf=False, allow=()):
     problems = []
-    raw = merge_tool.read_regular(out / "findings.json")
-    data = render.load(out / "findings.json", raw)
+    raw = record.read_regular(out / "findings.json")
+    data = record.load(out / "findings.json", raw)
     digest = hashlib.sha256(raw).hexdigest()
 
     present = {p.name for p in out.iterdir()}
@@ -133,7 +133,7 @@ def check(out, no_pdf=False, allow=()):
         problems.append("--no-pdf given but report.pdf exists")
     problems += stamp_problems(out, digest, "")
     for name in allow:
-        if name in render.LABELS:
+        if name in record.LANGS:
             problems += copy_problems(out, name, digest, no_pdf)
         elif (out / name).is_dir():
             problems += stamp_problems(out / name, digest, f"{name}/")
@@ -160,9 +160,9 @@ def check(out, no_pdf=False, allow=()):
 
     findings = data.get("findings", [])
     code = [f for f in findings if f["id"].startswith("F-")]
-    if sorted((f["id"] for f in code), key=render.id_key) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
+    if sorted((f["id"] for f in code), key=record.id_key) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
         problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
+    active = sorted((f for f in code if f["validation"]["verdict"] not in record.EXCLUDED), key=lambda f: record.id_key(f["id"]))
     if active != sorted(active, key=merge_tool.order_key):
         problems.append("F-* ids are not in severity order, then path and line (excluded findings are exempt): "
                         "run findings.py renumber <out>/findings.json")
@@ -187,7 +187,7 @@ def check(out, no_pdf=False, allow=()):
         test = f.get("test")
         if not (test.strip() if isinstance(test, str) else any(str(t).strip() for t in test or [])):
             problems.append(f"{ident}: test (an eval or test assertion of the good outcome) is missing")
-        if not render.LOC_RE.match(f["location"]):
+        if not record.LOC_RE.match(f["location"]):
             problems.append(f"{ident}: location must be path:line")
         if f["kind"] == "improvement":
             for key in ("before", "after"):
@@ -230,7 +230,7 @@ def main(argv=None):
     a = p.parse_args(argv)
     try:
         problems = check(a.out, a.no_pdf, a.allow)
-    except (render.SchemaError, OSError) as e:
+    except (record.SchemaError, OSError) as e:
         print(f"contract_check.py: {e}", file=sys.stderr)
         return 2
     if problems:

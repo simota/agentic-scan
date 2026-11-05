@@ -3,7 +3,8 @@
 **Read when:** REPORT, before writing the first fragment; whenever a fragment
 is refused by `scripts/findings.py merge`.
 
-`render.py` validates the structure; `contract_check.py` adds the run
+`scripts/record.py` holds the structural schema; `render.py`, `findings.py merge`
+and `inventory.py --into` refuse a record that fails it. `contract_check.py` adds the run
 contract's completeness rules. `examples/findings.sample.json` (English) and
 `examples/findings.sample.ja.json` (Japanese) are complete examples.
 

@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, render, run, sample, write_json
+from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, excerpt, record, render, run, sample, write_json
 
 
 class RenderTest(unittest.TestCase):
@@ -175,7 +175,7 @@ class RenderTest(unittest.TestCase):
                  "https://user:p@ss@host/x": "https://user:[REDACTED]@host/x",
                  "postgres://u:ab/c@d@db/app": "postgres://u:[REDACTED]@db/app"}
         for line, masked in cases.items():
-            self.assertEqual(render.mask_excerpt(line), masked)
+            self.assertEqual(excerpt.mask_excerpt(line), masked)
 
     def test_a_commit_git_cannot_read_gives_no_excerpt(self):
         # Never fall back to the working tree, which may hold later edits the scan never saw.
@@ -189,7 +189,7 @@ class RenderTest(unittest.TestCase):
         for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000, "token=" * 20000 + " x",
                      "?" + "&".join(f"access_token=t{n}" for n in range(8000)) + " (cb)"):
             started = time.monotonic()
-            render.mask_excerpt(line)
+            excerpt.mask_excerpt(line)
             self.assertLess(time.monotonic() - started, 2, line[:20])
 
     def test_runs_in_isolated_mode(self):
@@ -200,7 +200,7 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_line_numbers_split_on_newlines_only(self):
-        self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
+        self.assertEqual(excerpt.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
 
     def test_too_deep_json_is_a_schema_error(self):
         out = Path(tempfile.mkdtemp())
@@ -379,7 +379,7 @@ class RenderTest(unittest.TestCase):
             data = clone(sample())
             mutate(data)
             with self.assertRaises(render.SchemaError) as ctx:
-                render.validate_data(data)
+                record.validate_data(data)
             self.assertIn(message, str(ctx.exception))
 
 

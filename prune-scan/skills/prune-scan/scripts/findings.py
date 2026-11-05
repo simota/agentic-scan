@@ -890,6 +890,9 @@ def dump(data):
 def main(argv=None):
     tolerant_stdout()
     argv = sys.argv[1:] if argv is None else argv
+    if argv in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return 0
     if (len(argv) < 2 or argv[0] not in ("check", "merge", "units", "renumber")
             or (argv[0] in ("merge", "units") and len(argv) < 3)
             or (argv[0] in ("check", "renumber") and len(argv) != 2)):

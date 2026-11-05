@@ -541,9 +541,11 @@ def allowed_name(value):
 def main(argv=None):
     tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("out")
-    p.add_argument("--no-pdf", action="store_true")
-    p.add_argument("--allow", action="append", default=[], type=allowed_name)
+    p.add_argument("out", help="output directory holding the contracted files")
+    p.add_argument("--no-pdf", action="store_true",
+                   help="accept a run without report.pdf when a limitation records why")
+    p.add_argument("--allow", action="append", default=[], type=allowed_name, metavar="NAME",
+                   help="tolerate one extra file name in the output directory (repeatable)")
     a = p.parse_args(argv)
     if not Path(a.out).is_dir():
         print(f"contract_check.py: {a.out} is not a directory", file=sys.stderr)

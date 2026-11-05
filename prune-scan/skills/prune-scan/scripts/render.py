@@ -506,9 +506,10 @@ def render_outputs(a, resources):
 def main(argv=None):
     tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("findings")
-    p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="en")
+    p.add_argument("findings", help="findings.json to render; units.json beside it is read when present")
+    p.add_argument("--out", required=True,
+                   help="directory for dashboard.html, report.html and report.pdf; outside the reviewed repository")
+    p.add_argument("--lang", choices=sorted(LABELS), default="en", help="report language (default: en)")
     p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
     p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
     a = p.parse_args(argv)

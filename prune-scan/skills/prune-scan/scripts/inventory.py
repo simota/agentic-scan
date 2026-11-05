@@ -2429,9 +2429,10 @@ def output_is_source(directory, name, source):
 def main(argv=None):
     tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("repo")
-    p.add_argument("--out", required=True)
-    p.add_argument("--units")
+    p.add_argument("repo", help="root of the repository to inventory (read only)")
+    p.add_argument("--out", required=True,
+                   help="inventory.json to write; must be outside the reviewed repository")
+    p.add_argument("--units", help="units.json (reference/units.md): tags each row with its review unit")
     p.add_argument("--today", help="date that markers are judged overdue against (default: today)")
     a = p.parse_args(argv)
     if not Path(a.repo).is_dir():

@@ -1613,11 +1613,80 @@ def suffix(rel):
     return Path(rel).suffix.lower()
 
 
-def inventory(root, units=None, today=None):
-    root = Path(root)
-    root_stat = root.stat()  # Capture the caller's selected repository before resolving any aliases.
-    root = root.resolve()
-    today = today or datetime.date.today().isoformat()
+class Scan:
+    """What every inventory family reads: the collected sources and views derived from them once."""
+
+    def __init__(self, col):
+        self.today, self.assets, self.locales = col.today, col.assets, col.locales
+        self.texts = texts = col.texts
+        self.files = set(texts)
+        self.locale_files = locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
+        self.code_files = code_files = [r for r in texts
+                                        if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
+        # Read only for imports and identifiers: no literal from these reaches the output.
+        self.secret_sources = {r for r in texts if secret_named(Path(r).parts)}
+
+        # Identifier counts over code and config (string contents included: names built from strings count as uses).
+        self.idents = idents = Counter()
+        for rel in code_files:
+            idents.update(IDENT.findall(texts[rel]))
+
+        # File names mentioned anywhere: a file named elsewhere (HTML script src, Makefile, config) is referenced.
+        self.named_in, self.module_runs = named_in, module_runs = defaultdict(set), defaultdict(set)
+        for rel, text in texts.items():
+            for tok in set(FILE_TOKEN.findall(text)):
+                named_in[tok].add(rel)
+            # python -m server.nightly runs server/nightly.py (or a package's __main__).
+            for module in set(PYTHON_MODULE_RUN.findall(text)):
+                stem = module.replace(".", "/")
+                for path in (stem + ".py", stem + "/__main__.py"):
+                    module_runs[path].add(rel)
+            # A dotted name loads every package on its path and the module inside one; a trailing
+            # attribute (a class) names no file. A lone first part names only a package, so a host
+            # such as "api.example.com" leaves api.py a candidate.
+            # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
+            scanned = MODULE_STRING_FILE.search(rel) and not is_test(rel)
+            for line in (physical_lines(text) if scanned and SERVER_COMMAND.search(text) else ()):
+                for single in SERVER_MODULE.findall(line) if SERVER_COMMAND.search(line) else ():
+                    module_runs[single + ".py"].add(rel)
+                    module_runs[single + "/__init__.py"].add(rel)
+            for quoted, served in set(PYTHON_MODULE_STRING.findall(text)) if scanned else ():
+                parts = (quoted or served).split(".")
+                if parts[-1].lower() in NOT_MODULE_SUFFIX:
+                    continue
+                for end in range(1, len(parts) + 1):
+                    stem = "/".join(parts[:end])
+                    module_runs[stem + "/__init__.py"].add(rel)
+                    if end > 1:
+                        module_runs[stem + ".py"].add(rel)
+        self.framework_files = framework_loaded(texts, code_files)
+
+    def named_elsewhere(self, rel):
+        parts = rel.split("/")
+        if any(self.module_runs.get("/".join(parts[i:]), set()) - {rel} for i in range(len(parts))):
+            return True
+        return bool(self.named_in.get(Path(rel).name, set()) - {rel})
+
+    def resolve_js(self, rel, spec):
+        base = (Path(rel).parent / spec).as_posix() if spec.startswith(".") else spec.lstrip("/")
+        base = os.path.normpath(base).replace(os.sep, "/")
+        ext = Path(base).suffix
+        candidates = ([base[:-len(ext)] + replacement for replacement in JS_SUBSTITUTIONS[ext]]
+                      if ext in JS_SUBSTITUTIONS else [base + ending for ending in JS_RESOLVE])
+        # A dotted stem such as helper.client can still omit its source extension.
+        single_target = ext in JS_EXT or ext == ".json" or (bool(ext) and base in self.files)
+        targets = []
+        for candidate in candidates:
+            if candidate in self.files:
+                targets.append(candidate)
+                if single_target:
+                    break  # Preserve known-extension substitution and existing exact-file imports.
+        # Extensionless resolution depends on the bundler; each possible target is a reference.
+        return targets
+
+
+def collect(root, root_stat, today):
+    """Read every file below the selected repository once, pinned to the identity captured before resolving."""
     root_fd = None
     try:
         if SAFE_DIR_OPEN and hasattr(os, "fwalk"):
@@ -1632,56 +1701,13 @@ def inventory(root, units=None, today=None):
     finally:
         if root_fd is not None:
             os.close(root_fd)
-    texts = col.texts
-    locale_files = {rel for langs in col.locales.values() for rel, _ in langs.values()}
-    code_files = [r for r in texts if suffix(r) not in PROSE_EXT | {".sql"} and r not in locale_files]
-    # Read only for imports and identifiers: no literal from these reaches the output.
-    secret_sources = {r for r in texts if secret_named(Path(r).parts)}
+    return col
 
-    # Identifier counts over code and config (string contents included: names built from strings count as uses).
-    idents = Counter()
-    for rel in code_files:
-        idents.update(IDENT.findall(texts[rel]))
 
-    # File names mentioned anywhere: a file named elsewhere (HTML script src, Makefile, config) is referenced.
-    named_in, module_runs = defaultdict(set), defaultdict(set)
-    for rel, text in texts.items():
-        for tok in set(FILE_TOKEN.findall(text)):
-            named_in[tok].add(rel)
-        # python -m server.nightly runs server/nightly.py (or a package's __main__).
-        for module in set(PYTHON_MODULE_RUN.findall(text)):
-            stem = module.replace(".", "/")
-            for path in (stem + ".py", stem + "/__main__.py"):
-                module_runs[path].add(rel)
-        # A dotted name loads every package on its path and the module inside one; a trailing
-        # attribute (a class) names no file. A lone first part names only a package, so a host
-        # such as "api.example.com" leaves api.py a candidate.
-        # Tests patch modules by name (monkeypatch.setattr("pkg.mod.fn")); that keeps nothing in use.
-        scanned = MODULE_STRING_FILE.search(rel) and not is_test(rel)
-        for line in (physical_lines(text) if scanned and SERVER_COMMAND.search(text) else ()):
-            for single in SERVER_MODULE.findall(line) if SERVER_COMMAND.search(line) else ():
-                module_runs[single + ".py"].add(rel)
-                module_runs[single + "/__init__.py"].add(rel)
-        for quoted, served in set(PYTHON_MODULE_STRING.findall(text)) if scanned else ():
-            parts = (quoted or served).split(".")
-            if parts[-1].lower() in NOT_MODULE_SUFFIX:
-                continue
-            for end in range(1, len(parts) + 1):
-                stem = "/".join(parts[:end])
-                module_runs[stem + "/__init__.py"].add(rel)
-                if end > 1:
-                    module_runs[stem + ".py"].add(rel)
-
-    def named_elsewhere(rel):
-        parts = rel.split("/")
-        if any(module_runs.get("/".join(parts[i:]), set()) - {rel} for i in range(len(parts))):
-            return True
-        return bool(named_in.get(Path(rel).name, set()) - {rel})
-
+def scan_symbols(scan):
+    """Unreferenced definitions; also each Python file's imports, parsed from the same tree."""
+    texts, code_files, idents, framework_files = scan.texts, scan.code_files, scan.idents, scan.framework_files
     rows = {}
-    framework_files = framework_loaded(texts, code_files)
-
-    # Symbols.
     defs = defaultdict(list)
     python_imports = {}
     decorated_skipped = 0
@@ -1732,28 +1758,16 @@ def inventory(root, units=None, today=None):
     rows["unreferenced_symbols"] = sorted(
         (d for name, ds in defs.items() if idents[name] - len(ds) <= 0 for d in ds),
         key=lambda d: loc_key(d["location"]))
+    return rows, python_imports, decorated_skipped
 
-    # Imports and orphan files.
-    files = set(texts)
+
+def scan_imports(scan, python_imports):
+    """Orphan files, and the packages and modules every source imports."""
+    texts, files, code_files, framework_files = scan.texts, scan.files, scan.code_files, scan.framework_files
+    named_elsewhere, resolve_js = scan.named_elsewhere, scan.resolve_js
+    rows = {}
     inbound = defaultdict(set)
     js_packages, py_modules, go_imports, rs_crates = Counter(), Counter(), Counter(), Counter()
-
-    def resolve_js(rel, spec):
-        base = (Path(rel).parent / spec).as_posix() if spec.startswith(".") else spec.lstrip("/")
-        base = os.path.normpath(base).replace(os.sep, "/")
-        ext = Path(base).suffix
-        candidates = ([base[:-len(ext)] + replacement for replacement in JS_SUBSTITUTIONS[ext]]
-                      if ext in JS_SUBSTITUTIONS else [base + ending for ending in JS_RESOLVE])
-        # A dotted stem such as helper.client can still omit its source extension.
-        single_target = ext in JS_EXT or ext == ".json" or (bool(ext) and base in files)
-        targets = []
-        for candidate in candidates:
-            if candidate in files:
-                targets.append(candidate)
-                if single_target:
-                    break  # Preserve known-extension substitution and existing exact-file imports.
-        # Extensionless resolution depends on the bundler; each possible target is a reference.
-        return targets
 
     alias_rules = js_alias_rules(texts)
 
@@ -1871,8 +1885,14 @@ def inventory(root, units=None, today=None):
             continue
         orphans.append({"path": rel, "test_importers": sorted(importers)[:MAX_LOCATIONS]})
     rows["orphan_files"] = orphans
+    return rows, (js_packages, py_modules, go_imports, rs_crates)
 
-    # Dependencies.
+
+def scan_dependencies(scan, imported):
+    """Declared dependencies nothing imports, duplicated or replaced by the platform."""
+    texts = scan.texts
+    rows = {}
+    js_packages, py_modules, go_imports, rs_crates = imported
     tool_text = "\n".join(t for r, t in texts.items() if TOOL_FILES.search(r))
 
     def mentions_of(pattern, name, haystack):
@@ -1946,8 +1966,13 @@ def inventory(root, units=None, today=None):
     rows["unimported_dependencies"] = unimported
     rows["duplicate_purpose"] = dup_rows
     rows["platform_replaceable"] = platform_rows
+    return rows
 
-    # Environment variables: names only, never values.
+
+def scan_env(scan):
+    """Environment variables read versus declared, by name only."""
+    texts, code_files = scan.texts, scan.code_files
+    rows = {}
     reads = defaultdict(list)
     decl, decl_files = {}, []
     for rel, text in sorted(texts.items()):
@@ -1970,8 +1995,13 @@ def inventory(root, units=None, today=None):
     rows["env_declared_not_read"] = [{"name": n, "location": loc} for n, loc in sorted(decl.items()) if n not in reads]
     rows["env_read_not_declared"] = ([{"name": n, "locations": reads[n][:MAX_LOCATIONS]}
                                       for n in sorted(reads) if n not in decl] if decl_files else [])
+    return rows, reads, decl_files
 
-    # Feature flags.
+
+def scan_flags(scan, reads):
+    """Feature flags, their defined values and checks."""
+    texts, code_files, secret_sources = scan.texts, scan.code_files, scan.secret_sources
+    rows = {}
     flags = defaultdict(lambda: {"definitions": [], "values": set(), "checks": []})
     secret_checks = []
     for rel in code_files:
@@ -2001,8 +2031,13 @@ def inventory(root, units=None, today=None):
          "source": f.get("source", "code"), "definitions": f["definitions"][:MAX_LOCATIONS],
          "checks": len(f["checks"]), "locations": f["checks"][:MAX_LOCATIONS]}
         for n, f in sorted(flags.items())]
+    return rows
 
-    # Locale keys.
+
+def scan_locales(scan):
+    """Locale keys no source looks up."""
+    texts, code_files, secret_sources = scan.texts, scan.code_files, scan.secret_sources
+    rows = {}
     # Prefixes from secret-named sources, and oversized translator scopes, suppress
     # candidates but are never listed.
     quoted, prefixes, secret_prefixes = set(), set(), set()
@@ -2035,7 +2070,7 @@ def inventory(root, units=None, today=None):
         return bool(head and tail) and head in contexts
     i18n = []
     locale_lines = {}
-    for bundle, langs in sorted(col.locales.items()):
+    for bundle, langs in sorted(scan.locales.items()):
         keys = defaultdict(list)
         for lang, (rel, flat) in sorted(langs.items()):
             for key in flat:
@@ -2050,13 +2085,23 @@ def inventory(root, units=None, today=None):
                          "location": f"{first}:{key_line(texts[first], key, lines=locale_lines[first])}"})
     rows["i18n_unreferenced"] = i18n
     rows["i18n_dynamic_prefixes"] = sorted(prefixes)
+    return rows
 
-    # Assets.
+
+def scan_assets(scan):
+    """Images, fonts and media nothing names."""
+    named_elsewhere = scan.named_elsewhere
+    rows = {}
     rows["assets_unreferenced"] = [
         {"path": rel, "bytes": size, "public": bool(re.match(r"(?:.*/)?(?:public|static|www)/", rel))}
-        for rel, size in sorted(col.assets) if not named_elsewhere(rel)]
+        for rel, size in sorted(scan.assets) if not named_elsewhere(rel)]
+    return rows
 
-    # CSS classes.
+
+def scan_css(scan):
+    """CSS classes no markup or code names."""
+    texts, code_files, secret_sources = scan.texts, scan.code_files, scan.secret_sources
+    rows = {}
     css_tokens, class_prefixes, secret_class_prefixes = set(), set(), set()
     for rel in code_files:
         if suffix(rel) in CSS_EXT:
@@ -2087,8 +2132,13 @@ def inventory(root, units=None, today=None):
                 css_rows.append({"class": name, "location": f"{rel}:{line_of(text, m.start(1) + c.start())}"})
     rows["css_unreferenced"] = css_rows
     rows["css_dynamic_prefixes"] = sorted(class_prefixes)
+    return rows
 
-    # Routes.
+
+def scan_routes(scan):
+    """Server and client routes, and those nothing names."""
+    texts, code_files, secret_sources, resolve_js = scan.texts, scan.code_files, scan.secret_sources, scan.resolve_js
+    rows = {}
     route_rows, seen_routes, definition_spans = [], set(), defaultdict(list)
     # api.get("/users/me") on an axios, ky or ofetch instance is a client call,
     # not a route, whether the instance is made in this file or imported from
@@ -2168,8 +2218,13 @@ def inventory(root, units=None, today=None):
     route_rows.sort(key=lambda r: loc_key(r["location"]))
     rows["routes"] = route_rows
     rows["unreferenced_routes"] = [r for r in route_rows if r["mentions"] == 0]
+    return rows
 
-    # Make targets and package scripts.
+
+def scan_scripts(scan):
+    """Make targets and package scripts, and those nothing invokes."""
+    texts, files = scan.texts, scan.files
+    rows = {}
     script_rows = []
     # A Makefile and the files it includes (or that include it) form one
     # project: their targets share command lines (make deps build) and
@@ -2248,8 +2303,13 @@ def inventory(root, units=None, today=None):
                                     "invocations": hits, "default": lifecycle})
     rows["scripts"] = script_rows
     rows["uninvoked_scripts"] = [r for r in script_rows if r["invocations"] == 0 and not r["default"]]
+    return rows
 
-    # Loose files: scripts, SQL and docs nothing names.
+
+def scan_loose_files(scan):
+    """Scripts, SQL and docs in loose directories nothing names."""
+    texts, named_elsewhere = scan.texts, scan.named_elsewhere
+    rows = {}
     loose = []
     for rel in sorted(texts):
         p = Path(rel)
@@ -2260,8 +2320,13 @@ def inventory(root, units=None, today=None):
         loose.append({"path": rel, "kind": {".sql": "sql", ".md": "doc", ".rst": "doc", ".txt": "doc"}.get(
             p.suffix.lower(), "script")})
     rows["unreferenced_files"] = loose
+    return rows
 
-    # Skipped tests, commented-out code, dated markers.
+
+def scan_source_notes(scan):
+    """Skipped tests, commented-out code and deprecation markers."""
+    texts, code_files, locale_files, today = scan.texts, scan.code_files, scan.locale_files, scan.today
+    rows = {}
     skipped, commented, markers = [], [], []
     for rel, text in sorted(texts.items()):
         ext = suffix(rel)
@@ -2318,8 +2383,13 @@ def inventory(root, units=None, today=None):
     rows["skipped_tests"] = skipped
     rows["commented_code"] = commented
     rows["markers"] = markers
+    return rows
 
-    # SQL schema: tables and columns no non-SQL code names.
+
+def scan_sql(scan):
+    """SQL tables and columns no non-SQL code names."""
+    texts, idents = scan.texts, scan.idents
+    rows = {}
     # Unquoted SQL identifiers are case-insensitive, so names are compared folded.
     tables, columns = [], []
     sql_files = sorted(r for r in texts if suffix(r) == ".sql")
@@ -2341,6 +2411,24 @@ def inventory(root, units=None, today=None):
                                 "location": f"{rel}:{line_of(text, body_start + c.start(1))}"})
     rows["sql_tables_unreferenced"] = tables
     rows["sql_columns_unreferenced"] = columns
+    return rows
+
+
+def inventory(root, units=None, today=None):
+    """Every family's candidates below root, capped after measuring; units tag each row with its review unit."""
+    root = Path(root)
+    root_stat = root.stat()  # Capture the caller's selected repository before resolving any aliases.
+    root = root.resolve()
+    today = today or datetime.date.today().isoformat()
+    col = collect(root, root_stat, today)
+    scan = Scan(col)
+    symbols, python_imports, decorated_skipped = scan_symbols(scan)
+    imports, imported = scan_imports(scan, python_imports)
+    env, reads, decl_files = scan_env(scan)
+    # Each family reads the shared views and returns its own keys; this order is the output's.
+    rows = {**symbols, **imports, **scan_dependencies(scan, imported), **env, **scan_flags(scan, reads),
+            **scan_locales(scan), **scan_assets(scan), **scan_css(scan), **scan_routes(scan),
+            **scan_scripts(scan), **scan_loose_files(scan), **scan_source_notes(scan), **scan_sql(scan)}
 
     if units:
         tag_units(rows, units)
@@ -2355,7 +2443,7 @@ def inventory(root, units=None, today=None):
     return {
         "tool": "inventory.py", "version": 1,
         "repository": root.name.encode("utf-8", "backslashreplace").decode("utf-8"), "today": today,
-        "files_scanned": len(texts), "files_skipped": col.skipped,
+        "files_scanned": len(scan.texts), "files_skipped": col.skipped,
         "env_declaration_files": decl_files, "decorated_symbols_skipped": decorated_skipped,
         **rows,
         "limits": {"rows": MAX_ROWS, "locations_per_row": MAX_LOCATIONS, "file_bytes": MAX_BYTES},

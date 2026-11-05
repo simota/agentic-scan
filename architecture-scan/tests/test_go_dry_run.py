@@ -1,6 +1,5 @@
 """Findings from a Go service run (with GUARD) and a fresh whole-repo review."""
 import io
-import json
 import re
 from pathlib import Path
 import subprocess

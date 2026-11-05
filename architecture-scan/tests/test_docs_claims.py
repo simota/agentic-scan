@@ -3,14 +3,13 @@ import io
 import json
 import re
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
-from test_architecture_scan import SKILL, complete_doc, finding, findings, render
+from test_architecture_scan import SKILL, complete_doc, findings, render
 
 
 class MergeOrderTests(unittest.TestCase):

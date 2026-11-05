@@ -720,7 +720,7 @@ def merge(doc, fragment, where):
 
 
 def _atomic_write(target, data):
-    _atomic_write_all({target: data})
+    atomic_write_all({target: data})
 
 
 def _stage(target, data):
@@ -776,7 +776,7 @@ def _backup(target):
         return backup
 
 
-def _atomic_write_all(files):
+def atomic_write_all(files):
     """Replace every target only after all of them are staged, keeping links and modes.
 
     When one replacement fails, those already made are undone, so a failed
@@ -1129,37 +1129,9 @@ def cited_rules(f):
     return [rid for rid in RULE_LIST.split(f.get("rule", "")) if rid]
 
 
-def contract_problems(out, allow=()):
-    """Return the run-contract violations for an output directory."""
-    out = Path(out)
-    if not out.is_dir():
-        return [f"output directory does not exist or is not a directory: {out}"]
-    try:
-        present = {p.name for p in out.iterdir()}
-    except OSError as exc:
-        return [f"output directory cannot be listed: {exc}"]
+def _order_problems(findings):
+    """IDs gapless and in renumber's order: severity, then path and line, excluded last."""
     problems = []
-    for name in sorted(OUTPUTS - present):
-        problems.append(f"missing output: {name}")
-    # `drafts/` and `./drafts`, as a shell completes them, name `drafts`.
-    allow = {os.path.normpath(name) for name in allow}
-    for name in sorted(present - OUTPUTS - allow):
-        if TEMPORARY.fullmatch(name):
-            problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
-                            "write; delete it once no merge or render is running")
-        else:
-            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
-    not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
-    for name in sorted(not_files):
-        problems.append(f"output is not a file: {name}")
-    if "findings.json" not in present or "findings.json" in not_files:
-        return problems
-    try:
-        doc = read_json(out / "findings.json")
-        validate(doc, complete=True)
-    except SchemaError as exc:
-        return problems + [f"findings.json: {exc}"]
-    findings = doc.get("findings", [])
     expected = [f"A-{i:03d}" for i in range(1, len(findings) + 1)]
     if [f["id"] for f in findings] != expected:
         problems.append(f"IDs must be gapless in order: expected {', '.join(expected) or 'none'}; "
@@ -1179,10 +1151,14 @@ def contract_problems(out, allow=()):
         if keys != sorted(keys):
             problems.append("findings must be numbered by severity, then path and line of "
                             "the first location (excluded ones too); run renumber")
+    return problems
+
+
+def _finding_problems(doc):
+    """Per finding: locations name a file, cited rules exist and fit the verdict, evidence, tracing."""
+    problems = []
+    findings = doc.get("findings", [])
     recorded = {p["name"]: p["status"] for p in doc.get("perspectives", [])}
-    for name in PERSPECTIVES:
-        if name not in recorded:
-            problems.append(f"perspective not recorded: {name}")
     rule_status = {r["id"]: r["status"] for r in doc.get("rules", [])}
     kept = {f["id"] for f in findings if f["validation"]["verdict"] not in EXCLUDED}
     for f in findings:
@@ -1227,6 +1203,13 @@ def contract_problems(out, allow=()):
             elif not visible(evidence):
                 problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence "
                                 "naming what the trace found")
+    return problems
+
+
+def _ledger_problems(doc):
+    """Per rule: a violated rule is cited, a reason only where the rule is not closed."""
+    problems = []
+    findings = doc.get("findings", [])
     # Only a finding that establishes the break, and says so in `rule`, backs
     # a `violated` entry; prose in a trace can mention a rule it does not break.
     named = {rid for f in findings if f["validation"]["verdict"] in ("Valid", "Likely")
@@ -1246,9 +1229,12 @@ def contract_problems(out, allow=()):
             reason = r.get("reason")
             if not isinstance(reason, str) or not visible(reason):
                 problems.append(f"{r['id']}: a not-checked rule needs a nonblank string reason")
-    for where, fid in unknown_mentions(doc):
-        problems.append(f"{where}: mentions {fid}, which no finding holds; name a recorded "
-                        "finding (after renumber, only the new IDs)")
+    return problems
+
+
+def _completeness_problems(doc):
+    """The run records what held, what could not be checked and both diagrams."""
+    problems = []
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
@@ -1258,6 +1244,50 @@ def contract_problems(out, allow=()):
             problems.append(f"architecture.{key}: draw the {key} diagram (module graph "
                             + ("at the assessed revision)" if key == "before" else
                                "with the recorded fix directions applied)"))
+    return problems
+
+
+def contract_problems(out, allow=()):
+    """Return the run-contract violations for an output directory."""
+    out = Path(out)
+    if not out.is_dir():
+        return [f"output directory does not exist or is not a directory: {out}"]
+    try:
+        present = {p.name for p in out.iterdir()}
+    except OSError as exc:
+        return [f"output directory cannot be listed: {exc}"]
+    problems = []
+    for name in sorted(OUTPUTS - present):
+        problems.append(f"missing output: {name}")
+    # `drafts/` and `./drafts`, as a shell completes them, name `drafts`.
+    allow = {os.path.normpath(name) for name in allow}
+    for name in sorted(present - OUTPUTS - allow):
+        if TEMPORARY.fullmatch(name):
+            problems.append(f"unexpected output: {name} is a temporary file from an interrupted "
+                            "write; delete it once no merge or render is running")
+        else:
+            problems.append(f"unexpected output: {name} (pass --allow {name} if requested)")
+    not_files = {name for name in OUTPUTS & present if not (out / name).is_file()}
+    for name in sorted(not_files):
+        problems.append(f"output is not a file: {name}")
+    if "findings.json" not in present or "findings.json" in not_files:
+        return problems
+    try:
+        doc = read_json(out / "findings.json")
+        validate(doc, complete=True)
+    except SchemaError as exc:
+        return problems + [f"findings.json: {exc}"]
+    problems += _order_problems(doc.get("findings", []))
+    recorded = {p["name"] for p in doc.get("perspectives", [])}
+    for name in PERSPECTIVES:
+        if name not in recorded:
+            problems.append(f"perspective not recorded: {name}")
+    problems += _finding_problems(doc)
+    problems += _ledger_problems(doc)
+    for where, fid in unknown_mentions(doc):
+        problems.append(f"{where}: mentions {fid}, which no finding holds; name a recorded "
+                        "finding (after renumber, only the new IDs)")
+    problems += _completeness_problems(doc)
     return problems + _stale_outputs(out, doc, not_files | (OUTPUTS - present))
 
 

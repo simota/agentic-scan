@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from test_architecture_scan import REPO, complete_doc, make_env, render
+from test_architecture_scan import REPO, complete_doc, findings, make_env, render
 
 
 def page_style(doc=None):
@@ -78,6 +78,44 @@ class DashboardTests(unittest.TestCase):
         self.assertEqual(len(re.findall(r"<button type='button' class='facet'", nav)), len(render.SEVERITIES))
         empty = render.render_html({**complete_doc(), "findings": []}, "en")
         self.assertNotIn("class='facet'", empty)
+
+    def test_a_broken_rule_and_a_coverage_gap_are_marked_beside_their_word(self):
+        doc = complete_doc()
+        doc["rules"][0]["status"] = "partly read"
+        doc["perspectives"][0]["status"] = "not checked"
+        doc["perspectives"][1]["status"] = "N/A"
+        html = render.render_html(doc, "en")
+        rules = html.split("id='rules-section'", 1)[1].split("</table>", 1)[0]
+        coverage = html.split("class='coverage-table'", 1)[1].split("</table>", 1)[0]
+        self.assertIn("<span class='state gap'>partly read</span>", rules)
+        self.assertIn("<span class='state gap'>not checked</span>", coverage)
+        self.assertIn("<span class='state na'>N/A</span>", coverage)
+        self.assertIn("<span class='state'>applied</span>", coverage)
+        self.assertEqual(render.html_state("violated"), "<span class='state bad'>violated</span>")
+        self.assertEqual(render.html_state("holds"), "<span class='state'>holds</span>")
+        # The word carries the meaning; colour and weight only reinforce it.
+        style = page_style()
+        self.assertRegex(style, r"\.state\.bad\{color:var\(--high\);font-weight:700\}")
+        self.assertRegex(style, r"\.state\.gap\{font-weight:700;font-style:italic\}")
+        # Every status either schema allows is plain or has a style.
+        for status in findings.RULE_STATUSES + findings.PERSPECTIVE_STATUSES + ("—",):
+            cls = render.STATE_CLASS.get(status)
+            self.assertTrue(cls is None or f".state.{cls}{{" in style, status)
+
+    def test_wide_filter_values_are_given_room(self):
+        style = page_style()
+        # On a wide screen the count and reset move under the filters, which keep the full width.
+        self.assertRegex(style, r"@media\(min-width:1100px\)\{\.app-shell \.filters-panel\{display:block\}")
+        # On a phone the perspective and order controls take a whole row.
+        self.assertIn("@media(max-width:480px){.app-shell .filters .wide{grid-column:1/-1}}", style)
+        html = render.render_html(complete_doc(), "en")
+        self.assertRegex(html, r"<label class='wide'><span>[^<]*</span><select id='f-cat'>")
+        self.assertRegex(html, r"<label class='wide'><span>[^<]*</span><select id='f-sort'>")
+
+    def test_the_diagram_text_list_is_a_full_size_target_apart_from_the_next_heading(self):
+        style = page_style()
+        self.assertIn(".arch-text>summary{padding:4px 0;cursor:pointer}", style)
+        self.assertIn(".arch>h3{margin-top:24px}", style)
 
 class MakefileEdgeTests(unittest.TestCase):
     def make(self, *args):

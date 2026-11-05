@@ -1,13 +1,10 @@
 """Renumber scope, concurrent merges, blank optional fields, autolinks, excluded filter."""
-import io
 import json
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
 import unittest
-from contextlib import redirect_stdout
 
 from test_architecture_scan import SKILL, complete_doc, finding, findings, render
 

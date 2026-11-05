@@ -131,7 +131,7 @@ class RenderRegressionTests(unittest.TestCase):
                 row = table_rows(markdown, render.LABELS[lang]["rules"])[0]
                 self.assertEqual(row[3], "violated")
                 html = render.render_html(doc, lang)
-                self.assertRegex(html, r"<td[^>]*>violated</td></tr>")
+                self.assertRegex(html, r"<td[^>]*><span class='state bad'>violated</span></td></tr>")
 
 
 if __name__ == "__main__":

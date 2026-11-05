@@ -48,6 +48,30 @@ Write in the requester's language.
 8. **Files** — link `dashboard.html` and `assessment.pdf` (or say the PDF was
    not generated, as `limitations` does)
 
+## Re-assessment (chat summary)
+
+When the run compares with an earlier assessment (`SKILL.md` *Decide first*),
+the findings report opens with the comparison, from
+`scripts/compare.py <previous-out> <out>` (`--format markdown` pastes as is):
+
+1. **First line** — severity counts and open attack paths, previous → current,
+   and the dates and commits compared
+2. **Resolved** — each with its earlier ID and location, stated as "no longer in
+   the configuration", not "fixed in production", unless a plan or snapshot of
+   the deployed state was read
+3. **New, reopened and regraded** — current IDs, worst first; a reopened finding
+   says why the earlier exclusion no longer holds
+4. **Attack paths** — paths now `blocked` and the edge that closed them; paths
+   newly `open`
+5. **No longer in the inputs** — findings whose file this run did not read: out
+   of scope or removed, not resolved; say which
+
+Then the ordinary findings report. Findings are matched by content, since IDs
+are renumbered each run: check a surprising pair (a "new" finding that is an
+old one reworded on other resources) before reporting it. `--fail-on
+<severity>` exits 1 on a new, reopened or raised finding at that severity or a
+newly open path, for a retest gate.
+
 Keep the chat, dashboard and PDF consistent: all are views of `findings.json`.
 Re-rendering invalidates the previous `assessment.pdf`, including with
 `--no-pdf`. If PDF generation is skipped or fails, no old PDF is retained beside

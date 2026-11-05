@@ -547,7 +547,7 @@ LABELS = {
     "en": {
         "doc_title": "Infrastructure security assessment", "brand": "INFRA-SCAN",
         "running_footer": "INFRASTRUCTURE SECURITY ASSESSMENT",
-        "assessment": "Assessment report", "theme": "Theme",
+        "assessment": "Assessment report", "theme": "Dark theme",
         "summary": "Summary", "findings": "Findings", "attack_paths": "Attack paths",
         "perspectives": "Perspective coverage", "checked_ok": "Checked and sound",
         "decisions": "Decisions for a human", "limitations": "Limitations", "next_steps": "Next steps",
@@ -576,11 +576,12 @@ LABELS = {
         "md_covered": "Infrastructure configuration hit from a static review, covered by review finding %s: fix that finding's root cause instead.",
         "contents": "Contents", "nav_lists": "Decisions, limits, next steps", "shortcuts": "Keyboard",
         "key_search": "Search", "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
+        "no_match": "No findings match these filters.", "clear_filters": "Clear filters",
     },
     "ja": {
         "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
         "running_footer": "インフラ セキュリティ診断",
-        "assessment": "診断報告書", "theme": "テーマ",
+        "assessment": "診断報告書", "theme": "ダークテーマ",
         "summary": "概要", "findings": "検出事項", "attack_paths": "攻撃経路",
         "perspectives": "観点ごとの実施状況", "checked_ok": "確認して問題なし",
         "decisions": "判断が必要な事項", "limitations": "制約事項", "next_steps": "次の対応",
@@ -609,11 +610,13 @@ LABELS = {
         "md_covered": "設定の静的レビューで検出した項目で、検出事項 %s に統合されています。その根本原因を修正してください。",
         "contents": "目次", "nav_lists": "判断事項・制約・次の対応", "shortcuts": "キー操作",
         "key_search": "検索", "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
+        "no_match": "この条件に一致する検出事項はありません。", "clear_filters": "絞り込みを解除",
     },
 }
 
 DISPLAY = {
-    "en": {},
+    # The record keeps the canonical spellings; these are only what a reader sees.
+    "en": {"FalsePositive": "False positive", "NotApplicable": "Not applicable"},
     "ja": {
         "High": "高", "Medium": "中", "Low": "低", "Info": "情報",
         "Confirmed": "確認済み", "Environment-dependent": "環境依存", "Suspected": "疑い",
@@ -891,6 +894,8 @@ DASH_CSS = """
 .note{color:var(--muted)}
 .card .n{color:var(--text)}.card.High .n{color:var(--high)}.card.Medium .n{color:var(--medium)}.card.Low .n{color:var(--low)}
 .perspective .st{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;color:var(--muted);margin-left:8px}
+.perspective .st.gap{color:var(--medium)}
+tr.no-match .empty{text-align:left}tr.no-match .empty p{margin:0 0 10px}
 .lists section{min-width:0}
 tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
 @media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
@@ -916,21 +921,28 @@ ASSESSMENT_CSS = """
 .report-header .small{margin:3mm 0 0}
 .finding.covered{border-left-style:dashed}
 .finding-state code{font-size:7.8pt}
+.coverage .gap{color:var(--medium);font-weight:700}
 """
 
 DASH_JS = r"""
 (function(){
 var root=document.documentElement;
 try{var t=localStorage.getItem('infra-scan-theme');if(t)root.setAttribute('data-theme',t);}catch(e){}
-document.getElementById('theme').addEventListener('click',function(){
-  var dark=root.getAttribute('data-theme')==='dark'||(!root.getAttribute('data-theme')&&matchMedia('(prefers-color-scheme: dark)').matches);
-  var next=dark?'light':'dark';root.setAttribute('data-theme',next);
+// The toggle is pressed while the dark theme shows, chosen here or by the system.
+var themeBtn=document.getElementById('theme'),scheme=matchMedia('(prefers-color-scheme: dark)');
+function dark(){var t=root.getAttribute('data-theme');return t?t==='dark':scheme.matches;}
+function syncTheme(){themeBtn.setAttribute('aria-pressed',String(dark()));}
+themeBtn.addEventListener('click',function(){
+  var next=dark()?'light':'dark';root.setAttribute('data-theme',next);
   try{localStorage.setItem('infra-scan-theme',next);}catch(e){}
+  syncTheme();
 });
+if(scheme.addEventListener)scheme.addEventListener('change',syncTheme);
+syncTheme();
 var md=JSON.parse(document.getElementById('md').textContent);
 var rows=[].slice.call(document.querySelectorAll('tr.row'));
 var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),q:document.getElementById('f-q')};
-var count=document.getElementById('result-count');
+var count=document.getElementById('result-count'),noMatch=document.querySelector('tr.no-match');
 function aside(r){return r.classList.contains('excluded')||r.classList.contains('covered');}
 var active=rows.filter(function(r){return !aside(r);}).length;
 function apply(){
@@ -945,6 +957,7 @@ function apply(){
   // Match the severity cards: excluded and covered findings are counted on their own.
   count.textContent=n+' / '+active+' '+count.dataset.l+(xe?' + '+xe+' '+count.dataset.e:'')+
     (xc?' + '+xc+' '+count.dataset.c:'');
+  if(noMatch)noMatch.hidden=n+xe+xc>0;
   facets.forEach(function(b){b.setAttribute('aria-pressed',String(f.sev.value===b.dataset.sev));});
 }
 // Sidebar facets: a press filters the register by severity, a second press clears it.
@@ -969,6 +982,10 @@ document.addEventListener('click',function(e){
   if(a&&a.hash===location.hash&&reveal())e.preventDefault();
 });
 Object.keys(f).forEach(function(k){f[k].addEventListener('input',apply);});
+// One press undoes every filter, the sidebar facet included, and returns to the search box.
+if(noMatch)noMatch.querySelector('.clear-filters').addEventListener('click',function(){
+  Object.keys(f).forEach(function(k){f[k].value='';});apply();f.q.focus();
+});
 document.querySelectorAll('.finding-toggle').forEach(function(b){b.addEventListener('click',function(){
   var open=b.getAttribute('aria-expanded')==='true';b.setAttribute('aria-expanded',String(!open));
   b.closest('tr').nextElementSibling.hidden=open;
@@ -1056,11 +1073,15 @@ def render_dashboard(data, L, lang, sources):
             f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}'
             f'<div class="detail-actions"><button class="copy" type="button" data-id="{esc(f["id"])}" '
             f'data-done="{esc(L["copied"])}">{L["copy"]}</button></div></td></tr>')
-    table = "".join(rows) or f'<tr><td colspan="7" class="empty">{L["none"]}</td></tr>'
+    # Shown by the filters when they hide every finding: say so, and undo them in one press.
+    no_match = (f'<tr class="no-match" hidden><td colspan="7" class="empty"><p>{L["no_match"]}</p>'
+                f'<button class="clear-filters" type="button">{L["clear_filters"]}</button></td></tr>')
+    table = "".join(rows) + no_match if rows else f'<tr><td colspan="7" class="empty">{L["none"]}</td></tr>'
     names = perspective_names()
     present = {p.get("name"): p for p in data.get("perspectives", [])}
+    gap = lambda n: " gap" if present.get(n, {}).get("status") == "Not checked" else ""
     persp = "".join(
-        f'<div class="perspective"><strong>{esc(shown(n, lang))}<span class="st">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span></strong>'
+        f'<div class="perspective"><strong>{esc(shown(n, lang))}<span class="st{gap(n)}">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</span></strong>'
         f'<p>{esc(present.get(n, {}).get("note", ""))}</p></div>' for n in names)
     used = lambda key: sorted({f.get(key) for f in fs if f.get(key)})
     lists = "".join(f'<section><h2>{L[k]}</h2>{list_block(data.get(k, []), L)}</section>' for k in STRING_LISTS)
@@ -1078,7 +1099,7 @@ def render_dashboard(data, L, lang, sources):
 <title>{esc(title)}</title><style>{kit_style.dashboard_css()}{DASH_CSS}</style></head>
 <body>
 <header class="appbar"><div class="appbar-in"><span class="brand"><span>{L["brand"]}</span><span class="appbar-project">{esc(meta.get("project", ""))}</span></span><div class="tools">
-<a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button">{L["theme"]}</button></div></div></header>
+<a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button" aria-pressed="false">{L["theme"]}</button></div></div></header>
 <div class="shell">
 <nav class="sidebar" id="nav" aria-label="{L["contents"]}"><h2 class="nav-title">{L["contents"]}</h2><ol class="nav-links">{nav}</ol>
 <div class="facets"><h2 class="nav-title">{L["severity"]}</h2>{facets}</div>
@@ -1168,12 +1189,13 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
         for s in SEVERITIES if any(f.get("severity") == s for f in active)) or none
     excl = "".join(doc_finding(f, L, lang, sources, covered.get(f["id"], ())) for f in excluded) or none
     present = {p.get("name"): p for p in data.get("perspectives", [])}
-    persp = "".join(f'<tr><td>{esc(shown(n, lang))}</td><td>{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</td>'
+    gap = lambda n: " gap" if present.get(n, {}).get("status") == "Not checked" else ""
+    persp = "".join(f'<tr><td>{esc(shown(n, lang))}</td><td class="{gap(n).strip()}">{esc(shown(present[n].get("status"), lang)) if n in present else "—"}</td>'
                     f'<td>{esc(present.get(n, {}).get("note", ""))}</td></tr>' for n in perspective_names())
     sev_head = "".join(f'<th scope="col" class="{s}">{esc(shown(s, lang))}</th>' for s in SEVERITIES)
     sev_cells = "".join(f'<td class="metric-urgent">{c[s]}</td>' if s in ("High", "Medium") and c[s] else f"<td>{c[s]}</td>"
                         for s in SEVERITIES)
-    metrics = (f'<table class="metrics"><caption>{L["counts"]}</caption><thead><tr><th scope="col"></th>{sev_head}</tr></thead>'
+    metrics = (f'<table class="metrics"><caption>{L["counts"]}</caption><thead><tr><td></td>{sev_head}</tr></thead>'
                f'<tbody><tr><th scope="row">{L["findings"]}</th>{sev_cells}</tr></tbody></table>')
     aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or none
     scope = "".join(f'<p class="meta-line"><strong>{k}</strong><span>{v}</span></p>' for k, v in meta_pairs(data, L, lang))

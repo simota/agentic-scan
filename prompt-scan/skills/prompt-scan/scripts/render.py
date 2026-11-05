@@ -600,8 +600,25 @@ REPORT_CSS = """
 .proposal figure{margin:0;min-width:0}
 .proposal figcaption{font:700 7.4pt/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin-bottom:1mm}
 .proposal pre{margin:0;padding:1.5mm 0 1.5mm 3mm;border-left:.6pt solid var(--rule);font:7.6pt/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;word-wrap:break-word;word-break:break-all}
-@media screen and (max-width:600px){.proposal{grid-template-columns:minmax(0,1fr)}.inv,.evals{table-layout:auto}}
+@media screen and (max-width:600px){.proposal{grid-template-columns:minmax(0,1fr)}.index td.num{text-align:left}}
 """
+
+
+def stacked_row(L, columns, cells):
+    """A row of a table that stacks into labelled cards on narrow screens (the kit's `.index` pattern):
+    each cell carries its column label, and explicit roles keep the table semantics once CSS sets
+    display:block on it."""
+    return "<tr role='row'>" + "".join(
+        f'<td role="cell" data-label="{esc(L[col])}"' + (f' class="{cls}"' if cls else "") + f'>{value}</td>'
+        for col, (value, cls) in zip(columns, cells)) + "</tr>"
+
+
+def stacked_table(name, caption, L, columns, col_classes, rows, numeric=()):
+    cols = "".join(f'<col class="{c}">' for c in col_classes)
+    head = "".join(f'<th scope="col" role="columnheader"' + (' class="num"' if col in numeric else "") +
+                   f'>{esc(L[col])}</th>' for col in columns)
+    return (f'<table class="{name} index" role="table"><caption>{esc(caption)}</caption><colgroup>{cols}</colgroup>'
+            f'<thead role="rowgroup"><tr role="row">{head}</tr></thead><tbody role="rowgroup">{rows}</tbody></table>')
 
 
 def table_or_none(rows, html_table, L):
@@ -611,16 +628,14 @@ def table_or_none(rows, html_table, L):
 def render_report_html(data, L, lang, excerpts):
     findings = ordered(data.get("findings", []))
     prompts = data.get("prompts", [])
-    prompt_rows = "".join(
-        f'<tr><td class="fid">{esc(p["id"])}</td><td>{esc(p["name"])}</td><td>{esc(p.get("kind", ""))}</td>'
-        f'<td><code>{esc(p["location"])}</code></td><td><code>{esc(p.get("consumer", ""))}</code></td>'
-        f'<td>{esc(p.get("model", ""))}</td></tr>' for p in prompts)
-    prompt_table = table_or_none(prompts, (
-        f'<table class="inv"><caption>{esc(L["cap_inventory"])}</caption><colgroup><col class="id-col"><col class="name-col">'
-        '<col class="kind-col"><col class="loc-col"><col class="consumer-col"><col class="model-col"></colgroup>'
-        f'<thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["name"]}</th><th scope="col">{L["kind"]}</th>'
-        f'<th scope="col">{L["location"]}</th><th scope="col">{L["consumer"]}</th><th scope="col">{L["model"]}</th></tr></thead>'
-        f'<tbody>{prompt_rows}</tbody></table>'), L)
+    inv_cols = ("id", "name", "kind", "location", "consumer", "model")
+    prompt_rows = "".join(stacked_row(L, inv_cols, (
+        (esc(p["id"]), "fid"), (esc(p["name"]), ""), (esc(p.get("kind", "")), ""),
+        (f'<code>{esc(p["location"])}</code>', ""), (f'<code>{esc(p.get("consumer", ""))}</code>', ""),
+        (esc(p.get("model", "")), ""))) for p in prompts)
+    prompt_table = table_or_none(prompts, stacked_table(
+        "inv", L["cap_inventory"], L, inv_cols,
+        ("id-col", "name-col", "kind-col", "loc-col", "consumer-col", "model-col"), prompt_rows), L)
     persp_rows = "".join(
         f'<tr><td>{esc(p["name"])}</td><td>{esc(L["results"][p["result"]])}</td><td>{esc(p.get("note", ""))}</td></tr>'
         for p in data.get("perspectives", []))
@@ -631,18 +646,14 @@ def render_report_html(data, L, lang, excerpts):
     finding_parts = "".join(finding_html(f, L, excerpts) for f in findings) \
         or f'<p class="small">{esc(L["none"])}</p>'
     runs = data.get("eval_runs", [])
-    eval_rows = "".join(
-        f'<tr><td class="fid">{esc(r["id"])}</td><td class="fid">{esc(r["finding"])}</td><td>{esc(r["model"])}</td>'
-        f'<td>{esc(r["date"])}</td><td class="num">{r["cases"]}</td><td class="num">{r["passed"]}</td>'
-        f'<td class="num">{r["failed"]}</td><td>{esc(r.get("note", ""))}</td></tr>' for r in runs)
-    eval_part = table_or_none(runs, (
-        f'<table class="evals"><caption>{esc(L["cap_evals"])}</caption><colgroup><col class="id-col"><col class="finding-col">'
-        '<col class="model-col"><col class="date-col"><col class="num-col"><col class="num-col"><col class="num-col">'
-        '<col class="note-col"></colgroup>'
-        f'<thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["finding"]}</th><th scope="col">{L["model"]}</th>'
-        f'<th scope="col">{L["date"]}</th><th scope="col" class="num">{L["cases"]}</th>'
-        f'<th scope="col" class="num">{L["passed"]}</th><th scope="col" class="num">{L["failed"]}</th>'
-        f'<th scope="col">{L["note"]}</th></tr></thead><tbody>{eval_rows}</tbody></table>'), L)
+    eval_cols = ("id", "finding", "model", "date", "cases", "passed", "failed", "note")
+    eval_rows = "".join(stacked_row(L, eval_cols, (
+        (esc(r["id"]), "fid"), (esc(r["finding"]), "fid"), (esc(r["model"]), ""), (esc(r["date"]), ""),
+        (r["cases"], "num"), (r["passed"], "num"), (r["failed"], "num"), (esc(r.get("note", "")), ""))) for r in runs)
+    eval_part = table_or_none(runs, stacked_table(
+        "evals", L["cap_evals"], L, eval_cols,
+        ("id-col", "finding-col", "model-col", "date-col", "num-col", "num-col", "num-col", "note-col"), eval_rows,
+        numeric={"cases", "passed", "failed"}), L)
     sections = [
         ("summary", L["abstract"], f'<p class="lead">{esc(summary_line(data, L))}</p>{counts_table(data, L)}'),
         ("inventory", L["s_inventory"], prompt_table), ("perspectives", L["s_perspectives"], persp_table),

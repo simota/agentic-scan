@@ -60,6 +60,26 @@ class RenderTest(unittest.TestCase):
         self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; y", report)
         self.assertNotIn("<b>x</b>", report)
 
+    def test_inventory_and_eval_tables_stack_with_labelled_cells(self):
+        # On narrow screens the kit's .index rules turn these tables into labelled cards, so a wide
+        # column (a long model line) is never cut off; every cell names its column for that layout.
+        data = sample()
+        data["eval_runs"] = [{"id": "E-001", "finding": "F-001", "model": "m <x>", "date": "2026-11-05",
+                              "cases": 3, "passed": 2, "failed": 1, "note": "n"}]
+        report = (self.render(data, "--lang", "en") / "report.html").read_text(encoding="utf-8")
+        L = render.LABELS["en"]
+        for name, labels in (("inv", ("id", "name", "kind", "location", "consumer", "model")),
+                             ("evals", ("id", "finding", "model", "date", "cases", "passed", "failed", "note"))):
+            table = re.search(rf'<table class="{name} index" role="table">.*?</table>', report, re.S)
+            self.assertIsNotNone(table, name)
+            body = table.group(0).split("<tbody", 1)[1]
+            cells = re.findall(r'<td role="cell" data-label="([^"]*)"', body)
+            rows = body.count("<tr ")
+            self.assertEqual(cells, [L[k] for k in labels] * rows, name)
+            self.assertNotIn("<td>", body)
+        self.assertIn('data-label="Cases" class="num">3</td>', report)
+        self.assertIn("m &lt;x&gt;", report)
+
     def test_previous_validation_without_evidence_renders(self):
         data = sample()
         data["findings"][-1]["previous_validation"] = {"verdict": "Likely", "evidence": None, "method": "static"}

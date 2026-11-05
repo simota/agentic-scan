@@ -1,0 +1,20 @@
+// Usage: node tasks.js DEMO_EN_DIR — runs T1–T6 of docs/quality/sqi.md (AI-operated; not a user test).
+const { chromium } = require('playwright');
+(async()=>{const dir=process.argv[2]; const b=await chromium.launch();
+ const ctx=await b.newContext({viewport:{width:1280,height:900},permissions:['clipboard-read','clipboard-write']});
+ const p=await ctx.newPage(); await p.goto('file://'+dir+'/dashboard.html'); const r={};
+ const visible=()=>p.evaluate(()=>[...document.querySelectorAll('tr.row')].filter(x=>!x.hidden).map(x=>x.dataset.sev+':'+x.id));
+ await p.click('.facet[data-sev="High"]'); const v1=await visible(); r.T1=v1.length>0&&v1.every(x=>x.startsWith('High'))?'ok '+v1.length+' High':'FAIL';
+ await p.click('.facet[data-sev="High"]');
+ await p.click('tr.row .finding-toggle'); r.T2=await p.evaluate(()=>{const d=document.querySelector('tr.row').nextElementSibling;return !d.hidden&&d.innerText.includes('Evidence')?'ok':'FAIL';});
+ await p.selectOption('#f-cat','Kubernetes'); const v3=await visible(); r.T3=v3.length===1?'ok '+v3:'FAIL '+v3;
+ await p.selectOption('#f-prov','aws'); const v3b=await visible();
+ r.T3_dead_end=v3b.length===0?(await p.$('tr.no-match:not([hidden]) .clear-filters')?'recoverable in 1 action':'dead end: empty table, no recovery control'):'n/a';
+ await p.selectOption('#f-cat',''); await p.selectOption('#f-prov','');
+ await p.click('tr.row .finding-toggle'); await p.click('tr.row .finding-toggle');
+ await p.click('tr.detail:not([hidden]) .copy'); const clip=await p.evaluate(()=>navigator.clipboard.readText());
+ r.T4=clip.includes('## F-001')?'ok':'FAIL';
+ r.T5=await p.evaluate(()=>[...document.querySelectorAll('#perspectives .perspective')].filter(x=>x.innerText.includes('Not checked')).length+' not-checked shown');
+ const href=await p.getAttribute('a.button','href'); const q=await ctx.newPage(); await q.goto('file://'+dir+'/'+href);
+ r.T6=(await q.title()).startsWith('Assessment')?'ok':'FAIL';
+ console.log(JSON.stringify(r,null,1)); await b.close();})();

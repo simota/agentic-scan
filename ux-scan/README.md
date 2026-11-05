@@ -44,6 +44,11 @@ which compares the screen as it is with its fix in three tiers, 松竹梅 (full,
 standard, minimal), the recommended one chosen first; name the findings to
 mock, or say "no mockups" to skip them.
 
+After the review, ask for the findings as issues, SARIF or a spreadsheet
+(`export.py`), or, after fixes, for a comparison with the earlier review
+(`compare.py`): what was fixed, what regressed and what is new, optionally as a
+release gate. See `skills/ux-scan/reference/follow-up.md`.
+
 Every report carries its evidence: each finding cites screenshots, videos or
 logs saved in `evidence/` next to `findings.json`, marked `before` (the defect)
 or `after` (the fix). The report and PDF embed screenshots and log excerpts side
@@ -73,6 +78,8 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 | `scripts/findings.py flows\|merge\|check\|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/capture.py screenshot URL --viewport WxH --out FILE` / `log --out FILE -- CMD…` | Evidence files: a PNG from headless Chrome, or a command's output with its command line and exit status, secrets masked |
 | `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, with each finding's screenshots and log excerpts (before/after) embedded, plus `evidence.html` when findings cite evidence and `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
+| `scripts/export.py sarif\|markdown\|csv findings.json --out FILE` | Hand the findings on: SARIF 2.1.0 for GitHub code scanning (stable fingerprints across re-reviews), one Markdown issue draft per open finding, or a CSV triage sheet (formula cells neutralized); `--min-severity`, `--ids`, `--prefix` |
+| `scripts/compare.py BASELINE CURRENT --out FILE [--fail-on SEVERITY]` | Compare two reviews of the same app: new, regressed, resolved, fixed, ruled-out and persisting findings matched by content across renumbering and moved lines, open counts by severity, and a gate that exits 1 on new or regressed findings at or above a severity |
 | `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]…` | Contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, evidence on every included finding (and `after` evidence on `Fixed` ones) with `evidence/` holding exactly the cited files, pages stamped with the current record; `--allow` (repeatable) admits an extra file that was asked for, and an allowed `ja` or `en` directory must be a current second-language render; detects concurrent renders |
 
 ## Develop

@@ -127,7 +127,8 @@ class ReportRenderingTests(unittest.TestCase):
             for name, output in outputs.items():
                 with self.subTest(lang=lang, output=name):
                     expected = f"{status} — {label}: {reason}"
-                    self.assertIn(escape(expected), output)
+                    # The dashboard marks the status term; compare the visible text.
+                    self.assertIn(escape(expected), re.sub(r"<[^>]+>", "", output))
                     self.assertNotIn("<region>", output)
 
     def test_markdown_commitment_cells_keep_special_characters_in_one_row(self):
@@ -161,9 +162,10 @@ class ReportRenderingTests(unittest.TestCase):
                                   outputs["report.md"])
                     columns = render.LABELS[lang]["commitment_columns"]
                     cells = ("C-01", "no PII in errors", "", "policy", status)
+                    marked = f"<span class='status' data-status='violated'>{status}</span>"
                     self.assertIn("<tr><td class='nowrap' data-label='ID'>C-01</td>"
                                   + "".join(f"<td data-label='{c}'>{v}</td>"
-                                            for c, v in zip(columns[1:], cells[1:]))
+                                            for c, v in zip(columns[1:], cells[1:-1] + (marked,)))
                                   + "</tr>",
                                   outputs["dashboard.html"])
 

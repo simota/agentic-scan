@@ -3,6 +3,7 @@ import copy
 import io
 import json
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -187,7 +188,8 @@ class JapaneseTermTests(unittest.TestCase):
         doc = complete_doc()
         doc["commitments"][0].update(status="holds", reason="checked in api/app.py:22")
         markdown = render.render_markdown(doc, "ja")
-        html = render.render_html(doc, "ja")
+        # The dashboard marks the status term; its visible text is compared.
+        html = re.sub(r"<[^>]+>", "", render.render_html(doc, "ja"))
         for text in (markdown, html):
             self.assertIn("ログ・テレメトリ・エラー（Logs, telemetry and errors）", text)
             self.assertIn("守られている — 理由: checked in api/app.py:22", text)

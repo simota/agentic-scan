@@ -149,6 +149,7 @@ skills/performance-scan/
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
+  scripts/citations.py         tells a path:line citation in evidence from look-alikes (used by check)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue

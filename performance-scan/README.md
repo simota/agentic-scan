@@ -113,7 +113,7 @@ concurrent updates.
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard in the kit's application shell (app bar, contents sidebar with severity facets, j/k keys, pinned filter bar): counts, findings filterable by severity or Excluded, budgets, perspective coverage; a Copy-for-LLM button per finding; light and dark themes |
+| `dashboard.html` | Self-contained dashboard in the kit's application shell (app bar, contents sidebar with severity facets, j/k keys, pinned filter bar): counts, findings filterable by severity or Excluded with a live count of what the filter shows, budgets, perspective coverage (tables scroll by keyboard on narrow screens); a Copy-for-LLM button per finding whose result is announced; excluded findings badged as Excluded; light and dark themes |
 | `report.md` | Severity and verification counts, scope and method, a findings index, one block per finding, excluded findings, budgets with the findings citing them, perspective coverage, checked and sound, limitations, decisions, next steps |
 
 `findings.py check` enforces the run contract: exactly these three readable,
@@ -149,6 +149,7 @@ skills/performance-scan/
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
+  scripts/citations.py         tells a path:line citation in evidence from look-alikes (used by check)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue

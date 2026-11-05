@@ -26,7 +26,8 @@ from urllib.parse import quote, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
                       SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
-                      read_json, resolve_path, SchemaError, validate)
+                      finding_locations, finding_status, read_json, resolve_path,
+                      SchemaError, validate)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -62,6 +63,7 @@ LABELS = {
         "jump_findings": "Jump to findings", "contents": "Contents", "nav_summary": "Summary",
         "nav_lists": "Checks, limits and next steps", "shortcuts": "Keyboard",
         "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
+        "filter_shown": "{shown} of {total} findings shown", "filter_empty": "No findings match this filter.",
     },
     "ja": {
         "title": "パフォーマンス診断", "scope": "対象と方法",
@@ -94,6 +96,7 @@ LABELS = {
         "jump_findings": "検出事項へ移動", "contents": "目次", "nav_summary": "概要",
         "nav_lists": "確認結果・制約・次の作業", "shortcuts": "キー操作",
         "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
+        "filter_shown": "{total} 件中 {shown} 件を表示", "filter_empty": "この条件に該当する検出事項はありません。",
     },
 }
 # Display names for fixed values. Severity, confidence and verdict names stay as
@@ -222,11 +225,17 @@ def markdown_code(value):
     return "<br>".join(span(line) for line in text_lines(value))
 
 
+def block_fence(lines):
+    """A code fence of at least three backticks, longer than any backtick run in lines,
+    so record text can never close the block it is shown in."""
+    return "`" * max(3, max((len(run) for line in lines for run in BACKTICK_RUN.findall(line)),
+                            default=0) + 1)
+
+
 def markdown_fence(value, indent):
     """A fenced block inside a list item; the fence outruns any backtick run in the log."""
     lines = text_lines(value)
-    fence = "`" * max(3, max((len(run) for line in lines for run in BACKTICK_RUN.findall(line)),
-                             default=0) + 1)
+    fence = block_fence(lines)
     return [indent + line if line else "" for line in (f"{fence}text", *lines, fence)]
 
 
@@ -331,9 +340,7 @@ def perspective_rows(doc, lang):
 
 
 def first_location(finding):
-    location = finding["location"]
-    if not isinstance(location, list):
-        return location
+    location = finding_locations(finding)
     return location[0] + (f" (+{len(location) - 1})" if len(location) > 1 else "")
 
 
@@ -348,8 +355,7 @@ def markdown_finding(f, t):
     for key in FIELDS:
         if key == "location":
             # Code spans keep paths copyable (no snake\_case escapes) and inert.
-            locations = f[key] if isinstance(f[key], list) else [f[key]]
-            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
+            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in finding_locations(f)))
         elif str(f.get(key, "")).strip():  # optional contrast/budget may be blank
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
@@ -363,7 +369,7 @@ def markdown_finding(f, t):
             lines.append(f"  - **{t[run]}:** {markdown_text(r['result'])} ({markdown_code(r['command'])})")
             lines += markdown_fence(r["log"], "    ")
     if not excluded:
-        lines.append(f"- **{t['status']}:** {shown(f.get('status', 'Open'), t['lang'])}")
+        lines.append(f"- **{t['status']}:** {shown(finding_status(f), t['lang'])}")
     for ref in f.get("references", []):
         lines.append(f"- **{t['references']}:** "
                      f"{markdown_link(reference_title(ref), ref['url'])}")
@@ -450,6 +456,9 @@ dt,.meta,.hero-aside,.section-note{font-family:var(--sans)}
 .cards{margin:20px 0}
 .card .l.High{color:var(--high)}.card .l.Medium{color:var(--medium)}.card .l.Low{color:var(--low)}.card .l.Info{color:var(--info)}
 .badge{margin-right:6px}
+/* An excluded finding is not an open risk: its badge names the exclusion, not a severity. */
+.badge.excluded{color:var(--muted)}
+.sr-only{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}
 .section-note{margin:0 0 10px}
 .filters{display:flex;flex-wrap:wrap;gap:8px;margin:0 0 12px}
 button{font-size:13px;padding:6px 12px}
@@ -485,10 +494,15 @@ tr:last-child td{border-bottom:0}
 CSS = kit_style.dashboard_css() + CSS
 
 JS = """
-const filters=[...document.querySelectorAll('[data-filter]')],facets=[...document.querySelectorAll('.facet')];
+const filters=[...document.querySelectorAll('[data-filter]')],facets=[...document.querySelectorAll('.facet')],
+count=document.getElementById('result-count');
 function filter(s){filters.forEach(x=>x.setAttribute('aria-pressed',x.dataset.filter===s));
 facets.forEach(x=>x.setAttribute('aria-pressed',x.dataset.sev===s));
-document.querySelectorAll('details[data-sev]').forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});}
+const all=[...document.querySelectorAll('details[data-sev]')];
+all.forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s});
+// The polite status says how many findings the filter left, or that it left none.
+if(count){const n=all.filter(d=>!d.hidden).length;
+count.textContent=n?count.dataset.shown.replace('{shown}',n).replace('{total}',all.length):count.dataset.empty;}}
 filters.forEach(b=>b.addEventListener('click',()=>filter(b.dataset.filter)));
 // Sidebar facets: a press filters the findings by severity, a second press clears it.
 facets.forEach(b=>b.addEventListener('click',()=>{filter(b.getAttribute('aria-pressed')==='true'?'all':b.dataset.sev);
@@ -517,18 +531,25 @@ t.remove();if(prev&&prev.focus)prev.focus({preventScroll:true});
 return ok?Promise.resolve():Promise.reject(new Error('copy'));}
 function copyText(text){return navigator.clipboard&&window.isSecureContext
 ?navigator.clipboard.writeText(text).catch(()=>copyFallback(text)):copyFallback(text);}
+const announce=document.getElementById('announce');
 document.querySelectorAll('[data-llm]').forEach(b=>{const label=b.textContent;let timer;
 b.addEventListener('click',()=>{const done=s=>{b.textContent=s;clearTimeout(timer);
+// A changed button label is not reliably read aloud; the status region is.
+announce.textContent='';setTimeout(()=>{announce.textContent=s;},50);
 timer=setTimeout(()=>{b.textContent=label;},2000);};
 copyText(b.dataset.llm).then(()=>done(b.dataset.copied),()=>done(b.dataset.failed));});});
 """
 
 
-def html_table(headers, rows, id_column=False):
-    """id_column: the first column holds IDs (B-01), which never wrap at the hyphen."""
+def html_table(headers, rows, label, id_column=False):
+    """id_column: the first column holds IDs (B-01), which never wrap at the hyphen.
+
+    The wrapper scrolls sideways on narrow screens, so it is a focusable region
+    named label: keyboard users can then scroll it (WCAG 2.1.1).
+    """
     e = html_text
     first = "<td class='nowrap'>" if id_column else "<td>"
-    return ("<div class='tablewrap'><table><thead><tr>"
+    return (f"<div class='tablewrap' role='region' tabindex='0' aria-label='{e(label)}'><table><thead><tr>"
             + "".join(f"<th scope='col'>{e(header)}</th>" for header in headers)
             + "</tr></thead><tbody>"
             + "".join("<tr>" + "".join(f"{first if i == 0 else '<td>'}{e(cell)}</td>" for i, cell in enumerate(row))
@@ -543,8 +564,8 @@ def llm_line(value):
 
 def llm_block(label, value):
     """A fence longer than any backtick run keeps record text from closing it."""
-    text = "\n".join(text_lines(value))
-    fence = "`" * max(3, max((len(run) for run in BACKTICK_RUN.findall(text)), default=0) + 1)
+    lines = text_lines(value)
+    text, fence = "\n".join(lines), block_fence(lines)
     return ["", f"### {label}", "", f"{fence}text", text, fence]
 
 
@@ -558,7 +579,7 @@ def llm_finding(f, t, meta):
            f"- {t['revision']}: {llm_line(meta.get('commit', '').strip() or 'UNKNOWN')}",
            f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
            f"- {t['perspective']}: {f['category']}{step}"]
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    locations = finding_locations(f)
     if len(locations) == 1:
         out.append(f"- {t['location']}: {llm_line(locations[0])}")
     else:
@@ -566,7 +587,7 @@ def llm_finding(f, t, meta):
     verdict = f"{v['verdict']} ({shown(v['method'], lang)})"
     out.append(f"- {t['verdict']}: {verdict}" + (f" · {t['excluded']}" if is_excluded(f) else ""))
     if not is_excluded(f):
-        out.append(f"- {t['status']}: {shown(f.get('status', 'Open'), lang)}")
+        out.append(f"- {t['status']}: {shown(finding_status(f), lang)}")
     if str(f.get("budget", "")).strip():
         out.append(f"- {t['budget']}: {llm_line(f['budget'])}")
     for key in FIELDS:
@@ -592,23 +613,26 @@ def html_finding(f, t, meta):
     v = f["validation"]
     group = finding_group(f)
     excluded = is_excluded(f)
-    exclusion = (f" <span class='small'>· {e(t['excluded'])}: {e(v['verdict'])}</span>"
-                 if excluded else "")
     step = f" ({e(f['step'])})" if f.get("step", "").strip() else ""
+    # An excluded finding's badge names the exclusion, as report.md's [verdict]
+    # does; its recorded severity stays readable beside the verdict.
+    if excluded:
+        badge = f"<span class='badge excluded'>{e(t['excluded'])}</span>"
+        facts = f"{e(v['verdict'])} · {f['severity']} · "
+    else:
+        badge, facts = f"<span class='badge {f['severity']}'>{f['severity']}</span>", ""
     # One location per line: a path may itself contain ", ".
-    rows = [(t[k], "\n".join(f[k]) if k == "location" and isinstance(f[k], list) else f[k])
+    rows = [(t[k], "\n".join(finding_locations(f)) if k == "location" else f[k])
             for k in FIELDS if str(f.get(k, "")).strip()]
     rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
     if v.get("evidence", "").strip():
         rows.append((t["evidence"], v["evidence"]))
     if not excluded:
-        rows.append((t["status"], shown(f.get("status", "Open"), lang)))
+        rows.append((t["status"], shown(finding_status(f), lang)))
     if "measurement" in f:
         rows.append((t["environment"], f["measurement"]["environment"]))
-    out = [f"<details data-sev='{group}'><summary><span class='badge {f['severity']}'>"
-           f"{f['severity']}</span> {e(f['id'])} {e(f['title'])} "
-           f"<span class='small'>· {e(f['confidence'])} · {e(f['category'])}{step}</span>"
-           f"{exclusion}</summary>"
+    out = [f"<details data-sev='{group}'><summary>{badge} {e(f['id'])} {e(f['title'])} "
+           f"<span class='small'>· {facts}{e(f['confidence'])} · {e(f['category'])}{step}</span></summary>"
            f"<div class='detail-actions'><button type='button' class='copy-finding' "
            f"data-llm='{escape(llm_finding(f, t, meta))}' data-copied='{e(t['copied'])}' "
            f"data-failed='{e(t['copy_failed'])}'>{e(t['copy_llm'])}</button></div><dl>"]
@@ -672,7 +696,12 @@ def render_html(doc, lang):
                + "".join(f"<button type='button' data-filter='{s}' aria-pressed='false'>{s}</button>"
                          for s in SEVERITIES)
                + f"<button type='button' data-filter='excluded' aria-pressed='false'>{e(t['excluded'])}</button>"
-               + "</div></div>")
+               + "</div>"
+               + (f"<div class='filter-bottom'><p class='result-count' id='result-count' role='status' "
+                  f"data-shown='{e(t['filter_shown'])}' data-empty='{e(t['filter_empty'])}'>"
+                  f"{e(t['filter_shown'].format(shown=len(findings), total=len(findings)))}</p></div>"
+                  if findings else "")
+               + "</div>")
     if not findings:
         out.append(f"<p>{e(t['none'])}</p>")
     out += [html_finding(f, t, meta) for f in findings]
@@ -682,18 +711,19 @@ def render_html(doc, lang):
         out.append(f"<section id='budgets' tabindex='-1'><h2>{e(t['budgets'])}</h2>"
                    + html_table(budget_headers(t),
                                 [budget_cells(b, t, citations) for b in doc["budgets"]],
-                                id_column=True)
+                                t["budgets"], id_column=True)
                    + "</section>")
     out.append(f"<section id='coverage' tabindex='-1'><h2>{e(t['perspectives'])}</h2>"
                + html_table((t["perspective_col"], t["status_col"], t["note"]),
-                            perspective_rows(doc, lang)) + "</section>")
+                            perspective_rows(doc, lang), t["perspectives"]) + "</section>")
     out.append("<div class='lists' id='lists' tabindex='-1'>")
     for key in LIST_SECTIONS:
         items = doc.get(key, [])
         out.append(f"<section><h2>{e(t[key])}</h2>"
                    + ("<ul>" + "".join(f"<li>{e(i)}</li>" for i in items) + "</ul>" if items
                       else f"<p class='muted'>{e(t['none'])}</p>") + "</section>")
-    out.append(f"</div></main></div><script>{JS}</script></body></html>")
+    out.append("</div></main></div><p class='sr-only' id='announce' role='status'></p>"
+               f"<script>{JS}</script></body></html>")
     return "".join(out)
 
 

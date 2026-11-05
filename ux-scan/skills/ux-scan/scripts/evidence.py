@@ -61,11 +61,14 @@ LABELS = {
                    "After は修正後の状態を示します。ファイルは findings.json と同じ場所の evidence ディレクトリにあります。"},
 }
 
+# The report CSS (document.css) names its colours --ink/--link/--muted and its code font
+# --mono; the dashboard CSS has --accent and no --mono, so evidence.html names the font
+# stack the kit uses for code.
 REPORT_CSS = """
 .evidence{margin:0 0 3mm}
 .evidence-stages{display:grid;grid-template-columns:repeat(var(--stages,1),minmax(0,1fr));gap:3mm}
 .evidence-stage h5{font:700 7.4pt/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin:1mm 0}
-.evidence-stage.after h5{color:var(--accent,#0b6)}
+.evidence-stage.after h5{color:var(--link,#1f3f66)}
 .evidence figure{margin:0 0 2.5mm;break-inside:avoid;page-break-inside:avoid}
 .evidence img{display:block;max-width:100%;max-height:110mm;height:auto;border:.6pt solid var(--rule,#ccc)}
 .evidence video{display:block;max-width:100%;max-height:110mm}
@@ -88,7 +91,7 @@ PAGE_CSS = """
 .evidence figure{margin:0 0 16px}
 .evidence img,.evidence video{display:block;max-width:100%;height:auto;border:1px solid var(--line);border-radius:6px;background:#fff}
 .evidence figcaption{font-size:12px;color:var(--muted);margin-top:4px;overflow-wrap:anywhere}
-.evidence pre{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;font:12px/1.5 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto}
+.evidence pre{margin:0;padding:10px;border:1px solid var(--line);border-radius:6px;font:12px/1.5 ui-monospace,SFMono-Regular,Menlo,monospace;white-space:pre-wrap;overflow-wrap:anywhere;max-height:480px;overflow:auto}
 @media(max-width:700px){.evidence-stages{grid-template-columns:minmax(0,1fr)}}
 """
 def items(finding):

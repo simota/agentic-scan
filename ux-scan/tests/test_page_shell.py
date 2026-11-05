@@ -4,6 +4,7 @@ import contextlib
 import copy
 import io
 import json
+import re
 import shutil
 import sys
 import tempfile
@@ -13,7 +14,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "ux-scan" / "scripts"))
 
+import evidence  # noqa: E402
 import findings  # noqa: E402
+import mockups  # noqa: E402
 import page_shell  # noqa: E402
 import render  # noqa: E402
 
@@ -105,6 +108,30 @@ class ShellTests(unittest.TestCase):
             self.assertEqual(page.count("THEME_KEY = 'scan-report-kit.theme'"), 1, name)
             self.assertIn('<button id="theme" type="button">', page)
             self.assertIn('<a class="button" href="dashboard.html">Dashboard</a>', toolbar(page))
+
+
+# Set per element in the markup (style="--split:…"), not by any stylesheet.
+INLINE_PROPERTIES = {"--columns", "--split", "--stages"}
+# A fallback hides a misspelt or missing name, so it does not excuse one.
+VAR = re.compile(r"var\((--[\w-]+)")
+DEFINED = re.compile(r"(--[\w-]+)\s*:")
+
+
+class StylesheetTests(unittest.TestCase):
+    """A var() naming a property the page never defines drops its declaration or falls back silently."""
+
+    def assert_defined(self, css, base, name):
+        defined = set(DEFINED.findall(base + css)) | INLINE_PROPERTIES
+        self.assertEqual(sorted(set(VAR.findall(css)) - defined), [], name)
+
+    def test_companion_page_css_uses_only_properties_the_dashboard_css_defines(self):
+        base = render.report.style.dashboard_css()
+        for name, css in (("evidence.PAGE_CSS", evidence.PAGE_CSS), ("mockups.CSS", mockups.CSS),
+                          ("page_shell.NARROW_TOOLBAR_CSS", page_shell.NARROW_TOOLBAR_CSS)):
+            self.assert_defined(css, base, name)
+
+    def test_report_evidence_css_uses_only_properties_the_document_css_defines(self):
+        self.assert_defined(evidence.REPORT_CSS, render.report.style.document_css("UX REVIEW"), "evidence.REPORT_CSS")
 
 
 if __name__ == "__main__":

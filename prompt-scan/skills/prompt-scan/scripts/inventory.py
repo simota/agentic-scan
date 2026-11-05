@@ -88,6 +88,12 @@ video""".split())
 INLINE_CODE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")  # Markdown code span: an example, not markup
 # XXX inside a hyphenated run is a format mask (XXX-XXX-XXXX), not a placeholder.
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD)\b|(?<![\w-])XXX(?![\w-])|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
+# Names a template defines or the engine provides, which no caller has to fill.
+TEMPLATE_BUILTINS = {"loop", "self", "super", "caller", "varargs", "kwargs", "range", "else", "this", "true",
+                     "false", "none", "null"}
+TEMPLATE_DEFINES = re.compile(r"\{%-?\s*(?:set|for|with)\s+([A-Za-z_][\w, ]*?)\s*(?:=|\bin\b|%\})|"
+                              r"\{%-?\s*macro\s+\w+\s*\(([^)]*)\)|\{\{#each\s+[\w.]+\s+as\s+\|([\w ]+)\|")
+CODE_WORD = re.compile(r"[A-Za-z_][A-Za-z0-9_]*")
 LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
 
@@ -127,6 +133,13 @@ RULES = {
         impact="The model may follow or echo the placeholder, or the intended instruction is missing.",
         fix="Replace the placeholder with the intended text, or move the note into a template comment.",
         test="Assert the rendered prompt contains no placeholder markers."),
+    "unreferenced-variable": dict(
+        kind="defect", severity="Medium", confidence="Suspected", category="Variables and assembly",
+        title="Template variable named nowhere in the code",
+        symptom="The variable may reach the model empty, as a literal placeholder, or fail the render.",
+        impact="The prompt is sent without the content the variable was meant to carry.",
+        fix="Fill the variable at the call site that renders this template, or remove it from the template.",
+        test="Render the template from its call site with strict undefined-variable handling and assert it succeeds."),
     "duplicate-line": dict(
         kind="improvement", severity="Info", confidence="Confirmed", category="Context budget",
         title="Repeated line in a prompt",
@@ -292,6 +305,38 @@ def lint_tags(lines, fenced):
             for name, numbers in sorted(opened.items(), key=lambda kv: kv[1][0] if kv[1] else 0) if numbers]
 
 
+def template_uses(text):
+    """(line, names) for each line outside code fences that uses a template variable the template itself
+    does not define: what a caller has to fill."""
+    lines = source_lines(text)
+    fenced = fenced_lines(lines)
+    defined = set(TEMPLATE_BUILTINS)
+    for groups in TEMPLATE_DEFINES.findall(text):
+        defined |= set(CODE_WORD.findall(" ".join(groups)))
+    uses = []
+    for number, line in enumerate(lines, 1):
+        if number in fenced:
+            continue
+        names = [n.split(".")[0] for n in variables(INLINE_CODE.sub("", line))]
+        names = [n for n in dict.fromkeys(names) if n.lower() not in defined and n not in defined]
+        if names:
+            uses.append((number, names))
+    return uses
+
+
+def lint_unreferenced(templates, code_words):
+    """One unreferenced-variable hit per template file whose variables some name no code file contains."""
+    hits = []
+    for rel, uses in templates:
+        missing = [(number, name) for number, names in uses for name in names if name not in code_words]
+        if missing:
+            names = list(dict.fromkeys(name for _, name in missing))
+            hits.append(dict(rule="unreferenced-variable", location=f"{rel}:{missing[0][0]}",
+                             detail=f"{len(names)} variable(s) no code file names: {', '.join(names)}", **{
+                                 k: RULES["unreferenced-variable"][k] for k in ("kind", "severity", "confidence", "category")}))
+    return hits
+
+
 def lint_file(rel, text, tokens):
     lines = source_lines(text)
     fenced = fenced_lines(lines)
@@ -412,6 +457,7 @@ def git_state(root, read=()):
 def scan(root):
     root = Path(root).resolve()
     prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
+    templates, code_words = [], set()
     for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
@@ -430,7 +476,11 @@ def scan(root):
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
                                  "est_tokens": tokens, "variables": variables(text)})
             lint += lint_file(rel, text, tokens)
+            if kind == "template":
+                templates.append((rel, template_uses(text)))
             read.add(on_disk)
+        if is_code:
+            code_words.update(CODE_WORD.findall(text))
         if is_code or suffix in CONFIG_SUFFIXES:
             for number, line in enumerate(lines, 1):
                 if is_code:
@@ -441,6 +491,9 @@ def scan(root):
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
                     read.add(on_disk)
+    # Without any code there is no caller to check against: a prompt-only repository is filled elsewhere.
+    if code_words:
+        lint += lint_unreferenced(templates, code_words)
     commit, dirty = git_state(root, sorted(read))
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))

@@ -39,6 +39,16 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("</script>", payload)
         self.assertEqual(json.loads(payload)["findings"][0]["title"], "</script><b>x</b>")
 
+    def test_dashboard_remembers_the_theme_as_the_kit_does(self):
+        # Same storage key as the kit's dashboard runtime, so the choice carries across *-scan dashboards;
+        # both reads and writes are guarded, since storage can throw.
+        dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
+        kit = (SCRIPTS / "scan_report_kit" / "assets" / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("'scan-report-kit.theme'", kit)
+        self.assertIn("THEME_KEY='scan-report-kit.theme'", dashboard)
+        self.assertIn("try{var saved=window.localStorage.getItem(THEME_KEY)", dashboard)
+        self.assertIn("try{window.localStorage.setItem(THEME_KEY,root.dataset.theme);}catch(e){}", dashboard)
+
     def test_dashboard_proposal_text_wraps_like_the_report(self):
         # The kit's .snippet scrolls sideways to keep code lines whole; proposal text is prose to read and paste.
         dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")

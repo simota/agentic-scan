@@ -741,7 +741,10 @@ function listInto(box,items,empty){if(!items.length){box.appendChild(el('p',{'cl
 document.title=L.dash_title+' - '+D.meta.target;byId('h').textContent=D.meta.target;
 byId('meta').textContent=[D.meta.date,D.meta.assessor].filter(Boolean).join(' · ');
 document.querySelectorAll('[data-l]').forEach(function(e){e.textContent=L[e.getAttribute('data-l')];});
-byId('theme').onclick=function(){var root=document.documentElement,dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';};
+// The theme choice is remembered under the kit's key, as sibling *-scan dashboards do. Storage may be
+// absent or throw (private windows, blocked site data); the page then follows the system theme.
+var THEME_KEY='scan-report-kit.theme';try{var saved=window.localStorage.getItem(THEME_KEY);if(saved==='light'||saved==='dark')document.documentElement.dataset.theme=saved;}catch(e){}
+byId('theme').onclick=function(){var root=document.documentElement,dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';try{window.localStorage.setItem(THEME_KEY,root.dataset.theme);}catch(e){}};
 var summary=byId('summary');
 summary.appendChild(el('strong',null,D.headline));
 summary.appendChild(el('p',null,F.length?(R.open_hm?pl('risk_summary',R.open_hm):(R.open_count?pl('open_summary',R.open_count):L.no_open)):L.no_findings));

@@ -159,3 +159,81 @@ Measured:
 | VQI | 82 | 100 % |
 | UXQI | 82 | 100 % |
 | **SQI** | **77.75** | |
+
+## After (commit following 549a57c)
+
+Same rubric, weights, pages, viewports, themes, tasks and tools as above.
+
+Measured:
+
+- `make check`: 98 tests pass (93 kept, 5 added: stacked tables, theme memory,
+  import layout ×3); ruff (F, E, W, B) clean — the two B905 `zip()` notes are
+  suppressed with a reason, since `strict=` needs Python 3.10 and CI runs 3.9
+- radon: 2 functions above CC 30 (`inventory.git_state` 42,
+  `findings.fragment_problems` 36; `record._validate_finding` is 30);
+  average CC 9.7 → 8.3; render.py maintainability index C (2.0) → A (27.2)
+- Branch coverage 92 % overall (unchanged)
+- Import graph (enforced by `tests/test_layout.py`): acyclic;
+  `record → ∅`, `excerpt → record`, `render → record, excerpt`,
+  `findings → record, excerpt`, `inventory → record, excerpt`,
+  `contract_check → record, findings, inventory`. No module imports render.py
+- Behaviour preserved: dashboard, report and inventory.json byte-identical for
+  both samples; 3000 mutated records give the same schema verdict and message;
+  600 mutated output directories give the same contract problems in the same
+  order; printed report (Chromium `page.pdf`) pixel-identical, 13 pages each
+- UI: axe 0 violations in 16/16 configurations; page-level horizontal overflow
+  0/16 (was 2/16); CLS 0; no console errors. Desktop screenshots of report.html
+  pixel-identical; only the 390 px layout of the inventory and eval tables
+  changed
+- Tasks T1–T4 complete in scripted runs (keyboard for T1–T3) at 1440 and 390 px
+  in both languages; before, T4 failed at 390 px in English
+- Theme choice survives a reload; with storage blocked the toggle still works
+  and no error is thrown
+- CLI wall time, `python3 -B`, median of 40 runs (p95):
+  `findings.py --help` 73 → 50 ms (87 → 64), `render.py --no-pdf` 71 → 62 ms
+  (107 → 78), `inventory.py examples/sample-app` 97 → 69 ms (113 → 94); the
+  tools no longer compile the renderer
+
+| Area | Item | W | Before | After | Δ weighted | Evidence | Basis for the change |
+|---|---|---:|---:|---:|---:|---|---|
+| DQI | Separation of responsibilities | 20 | 3 | 4 | +4 | E2 | render.py renders only; inventory.py still scans, lints and reads Git state |
+| DQI | Cohesion | 15 | 3 | 5 | +6 | E2 | no module serves another's purpose; import graph test |
+| DQI | Interface and contract clarity | 15 | 4 | 4 | 0 | E2 | unchanged |
+| DQI | Changeability | 15 | 3 | 5 | +6 | E2 | S1 excerpt.py, S2 record.py (CC ≤ 30) + render.py, S3 render.py, S4 inventory.py, S5 record.py |
+| DQI | Readability | 10 | 3 | 4 | +2 | E2 | 4 → 2 functions above CC 30 |
+| DQI | Testability | 15 | 5 | 5 | 0 | E2 | unchanged |
+| DQI | Invariants and error handling | 10 | 4 | 4 | 0 | E2 | B904 fixed (cosmetic); not every boundary error separately tested |
+| AQI | Module boundaries | 20 | 3 | 4 | +4 | E2 | no tool depends on presentation; contract_check → findings, inventory remain |
+| AQI | Layers and data flow | 15 | 4 | 4 | 0 | E1 | contract_check still calls `inventory.lint_findings` |
+| AQI | Locality of change | 15 | 3 | 5 | +6 | E2 | a render.py change reaches no other tool (test-enforced) |
+| AQI | Contracts and data integrity | 15 | 5 | 5 | 0 | E2 | unchanged |
+| AQI | Fault tolerance | 10 | 4 | 4 | 0 | E3 | unchanged |
+| AQI | Security boundary | 10 | 4 | 4 | 0 | E2 | redaction now one module, but inventory keeps its own walk confinement and the masking tests sit in test_render |
+| AQI | Observability | 10 | 4 | 4 | 0 | E1 | unchanged |
+| AQI | Scalability | 5 | 4 | 4 | 0 | E1 | unchanged |
+| VQI | Visual hierarchy | 20 | 4 | 4 | 0 | E1 | unchanged |
+| VQI | Consistency | 20 | 4 | 4 | 0 | E2 | tables now use the kit pattern; the proposal collapse stays local |
+| VQI | Typography | 15 | 4 | 4 | 0 | E1 | unchanged |
+| VQI | Layout and responsiveness | 15 | 4 | 5 | +3 | E2 | 0/16 configurations scroll sideways |
+| VQI | Interaction states | 10 | 4 | 4 | 0 | E1 | theme state still not shown on the button |
+| VQI | Colour and contrast | 10 | 5 | 5 | 0 | E2 | unchanged |
+| VQI | Whitespace and density | 10 | 4 | 4 | 0 | E1 | unchanged |
+| UXQI | Task completion | 25 | 4 | 5 | +5 | E2 | T1–T4 pass at both viewports (scripted, not users) |
+| UXQI | Discoverability | 15 | 4 | 4 | 0 | E1 | unchanged |
+| UXQI | Predictability | 15 | 4 | 4 | 0 | E1 | theme now as the kit; the kit's app shell (facets, shortcuts) still differs |
+| UXQI | Feedback | 10 | 4 | 4 | 0 | E1 | unchanged |
+| UXQI | Error prevention and recovery | 10 | 4 | 4 | 0 | E1 | unchanged |
+| UXQI | Accessibility | 15 | 4 | 4 | 0 | E2 | axe 0/16, keyboard T1–T3; no screen reader run |
+| UXQI | Perceived performance | 10 | 5 | 5 | 0 | E3 | unchanged |
+
+| Index | Before | After | Δ points | Coverage |
+|---|---:|---:|---:|---:|
+| DQI | 71 | 89 | +18 | 100 % |
+| AQI | 76 | 86 | +10 | 100 % |
+| VQI | 82 | 85 | +3 | 100 % |
+| UXQI | 82 | 87 | +5 | 100 % |
+| **SQI** | **77.75** | **86.75** | **+9.00** | |
+
+Not verified: screen-reader use, 200 % zoom, real-user task success, the
+kit's own Chrome PDF path in this container (it timed out before and after the
+changes; the printed layout was compared with Playwright instead).

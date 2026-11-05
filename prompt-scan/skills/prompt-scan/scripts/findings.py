@@ -47,7 +47,7 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
-from record import MergeConflict, SchemaError, read_json, read_regular, write_report  # noqa: E402,F401
+from record import MergeConflict, SchemaError, read_json, read_regular, write_report  # noqa: E402
 from excerpt import SECRET_RE  # noqa: E402
 
 OBJECTS = ("meta",)

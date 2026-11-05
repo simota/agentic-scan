@@ -6,6 +6,7 @@
 #   make test      run the offline regression tests
 #   make check     verify the skill is self-contained and internally consistent
 #   make inventory removal-candidate inventory of TARGET (UNITS=units.json OUT=inventory.json)
+#   make compare   follow-up: compare LATER's review with EARLIER's (TARGET=repo checks removed files)
 #   make demo      render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
@@ -67,7 +68,7 @@ LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 NO_PDF   ?=
 
-.PHONY: help link unlink status check demo inventory test
+.PHONY: help link unlink status check demo inventory compare test
 
 help: ## list targets
 	@echo "$(NAME) - skill install, tests and demo"
@@ -76,7 +77,7 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 	@echo
 	@printf '  skill:  %s\n' $(call shell_quote,$(SKILL))
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET UNITS OUT"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET UNITS OUT EARLIER LATER"
 	@echo "          DEMO_OUT DEMO_INPUT LANG_OUT NO_PDF PYTHON"
 
 link: ## symlink the skill into every installed host's skills dir
@@ -165,6 +166,11 @@ inventory: ## removal-candidate inventory of TARGET (UNITS=units.json, OUT=inven
 	@[ -n $(call shell_quote,$(TARGET)) ] || { echo "usage: make inventory TARGET=/path/to/repo [UNITS=units.json] [OUT=inventory.json]" >&2; exit 2; }
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/inventory.py) $(call shell_quote,$(TARGET)) \
 	  $(if $(UNITS),--units $(call shell_quote,$(UNITS)),) --out $(call shell_quote,$(or $(OUT),inventory.json))
+
+compare: ## follow-up review: compare LATER's outputs with EARLIER's (TARGET=repo optional)
+	@[ -n $(call shell_quote,$(EARLIER)) ] && [ -n $(call shell_quote,$(LATER)) ] || { echo "usage: make compare EARLIER=/path/to/old-out LATER=/path/to/new-out [TARGET=/path/to/repo]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/compare.py) $(call shell_quote,$(EARLIER)) $(call shell_quote,$(LATER)) \
+	  $(if $(TARGET),--repo $(call shell_quote,$(TARGET)),)
 
 demo: ## render the sample (dashboard + report + PDF) into DEMO_OUT
 	@out=$(call shell_quote,$(DEMO_OUT)); skill=$(call shell_quote,$(SKILL)); repo=$(call shell_quote,$(REPO)); \

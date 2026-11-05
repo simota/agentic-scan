@@ -132,6 +132,8 @@ Satisfy SKILL.md *Done when* first. First line: status and counts, e.g.
 `prune-scan complete: 5 High, 9 Medium, 21 Low, 1 Info (36 open); remove now 25, reduce 3, decide 8`.
 Then:
 
+- in a follow-up review, the first line `compare.py` prints and what it
+  reports (`reference/follow-up.md`)
 - the High findings, one line each with `path:line` and what to subtract
 - decisions that need a human (`decisions`), Purpose-dependent ones first
 - what was not reviewed (`limitations`), in one line

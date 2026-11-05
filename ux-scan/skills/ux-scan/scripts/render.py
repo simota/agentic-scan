@@ -35,6 +35,7 @@ from findings import EXCLUDED, RecordError, canonical_digest, check_findings, ch
 from scan_report_kit import output, pdf, report  # noqa: E402
 import evidence  # noqa: E402
 import mockups  # noqa: E402
+import page_shell  # noqa: E402
 
 OUTPUTS = ("dashboard.html", "report.html", "report.pdf", mockups.PAGE, evidence.PAGE)
 OUTPUT_LOCK = ".ux-scan-render.lock"
@@ -293,13 +294,15 @@ def main(argv=None):
         common = report.validate(to_common(data, a.lang, flows, repo))
         pages = {"dashboard.html": report.render_dashboard(common, a.lang),
                  "report.html": report.render_document(common, a.lang)}
-        if mockups.with_mockups(data):
-            pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang, report.labels_for(common, a.lang))
-            pages["dashboard.html"] = mockups.link_dashboard(pages["dashboard.html"], a.lang)
+        companions = []  # (page, label) linked from the dashboard's app bar, in this order
         if files:
             pages["report.html"] = evidence.inject_report(pages["report.html"], data, files, a.lang, href)
             pages[evidence.PAGE] = evidence.render_page(data, files, a.lang, report.labels_for(common, a.lang), href)
-            pages["dashboard.html"] = evidence.link_dashboard(pages["dashboard.html"], a.lang)
+            companions.append((evidence.PAGE, evidence.LABELS[a.lang]["title"]))
+        if mockups.with_mockups(data):
+            pages[mockups.PAGE] = mockups.render_page(data, flows, a.lang, report.labels_for(common, a.lang))
+            companions.append((mockups.PAGE, mockups.LABELS[a.lang]["title"]))
+        pages["dashboard.html"] = page_shell.link_dashboard(pages["dashboard.html"], companions)
         stamps = {STAMP: source_stamp(source),
                   FLOWS_STAMP: canonical_digest(flows) if flows is not None else "absent",
                   evidence.STAMP: evidence.digest(files),

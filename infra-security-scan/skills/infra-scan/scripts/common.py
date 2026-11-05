@@ -48,6 +48,9 @@ def reviewer_fields(finding):
         return {k: v for k, v in finding.items() if k == "id" or k in REVIEW_FIELDS}
     return finding
 
+# Repository paths may contain spaces and colons ("env prod/main.tf"); only
+# the trailing :line or :line-line is structure.
+LOCATION = re.compile(r"^(\S(?:.*\S)?):([0-9]{1,9})(?:-([0-9]{1,9}))?\Z")
 # terraform.tfstate, .tfstate.backup and the timestamped backups that
 # `terraform state` subcommands write (terraform.tfstate.1700000000.backup).
 STATE_FILE = re.compile(r"\.tfstate(\.[^/]*)?$")

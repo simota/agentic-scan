@@ -16,6 +16,7 @@ import contract_check  # noqa: E402
 import findings  # noqa: E402
 import iac_scan  # noqa: E402
 import redaction  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 KEY = "AKIA" + "Q" * 16
@@ -101,10 +102,10 @@ class ToolSecurityTest(unittest.TestCase):
 
     def test_render_skips_files_the_scanner_skipped(self):
         big = self.write("big.yaml", "a: 1\n" * (iac_scan.MAX_BYTES // 4))
-        self.assertIsNone(render.source_lines(big))
+        self.assertIsNone(excerpts.source_lines(big))
         self.write("mod/main.tf", 'resource "aws_s3_bucket" "b" {\n  bucket = "x"\n}\n')
         self.write("mod/zz.tf", "# " + "x" * iac_scan.MAX_BYTES)
-        self.assertTrue(render.hcl_module_sensitive(self.repo / "mod"))
+        self.assertTrue(excerpts.hcl_module_sensitive(self.repo / "mod"))
 
     def test_planted_bare_repository_is_not_read(self):
         bare = self.repo / "infra"

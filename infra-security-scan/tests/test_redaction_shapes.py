@@ -11,7 +11,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import redaction  # noqa: E402
-import render  # noqa: E402
+import excerpts  # noqa: E402
 
 # Below every entropy threshold, so only the shape rules can hide it.
 SECRET = "zq" + "vk" + "17" + "mw"
@@ -30,7 +30,7 @@ class ExcerptShapeTest(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         record = {"findings": [{"id": "F-001", "location": f"{name}:{line}"}]}
-        rows = render.attach_sources(record, self.repo).get("F-001")
+        rows = excerpts.attach_sources(record, self.repo).get("F-001")
         return None if rows is None else "\n".join(text for _, text, _ in rows)
 
     def assertHidden(self, name, text, line):

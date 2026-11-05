@@ -15,6 +15,7 @@ import contract_check  # noqa: E402
 import findings  # noqa: E402
 import iac_scan  # noqa: E402
 import redaction  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 META = {"project": "p", "scope": "s", "date": "2026-10-09", "assessor": "test"}
@@ -187,7 +188,7 @@ class RecordRobustnessTest(unittest.TestCase):
                      f"echo '{pw}' | sudo chpasswd", f"admin:{apr1}"):
             self.assertNotIn(pw if pw in line else apr1, redaction.scrub_line(line, "yaml"))
         self.assertEqual(redaction.scrub_line("echo hello | grep x"), "echo hello | grep x")
-        self.assertTrue(render.SENSITIVE_NAME.search("deploy/.htpasswd"))
+        self.assertTrue(excerpts.SENSITIVE_NAME.search("deploy/.htpasswd"))
         for line in (f"run: echo {pw} | sudo -S systemctl restart app", f'command = "echo {pw} | vault login -"',
                      f"run: htpasswd -bc /etc/nginx/.htpasswd admin {pw}"):
             self.assertNotIn(pw, redaction.scrub_line(line, "yaml"), line)

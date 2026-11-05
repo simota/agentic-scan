@@ -98,6 +98,42 @@ class ReportViewTest(unittest.TestCase):
         self.assertIn("深刻度: 高", ja)
         self.assertNotIn(": High", ja)
 
+    def test_english_pages_spell_out_camel_case_verdicts(self):
+        dash, report = pages(SAMPLE, "en")
+        row = re.search(r'<tr class="row excluded" id="F-003"[^>]*>(.*?)</tr>', dash).group(1)
+        self.assertIn('data-label="Verdict">False positive</td>', row)
+        self.assertIn('data-ver="FalsePositive"', dash)  # the filter still matches the canonical value
+        self.assertIn('<option value="NotApplicable">Not applicable</option>', dash)
+        self.assertNotIn(">FalsePositive<", dash + report)
+
+    def test_filters_that_hide_every_finding_offer_one_step_back(self):
+        dash, _ = pages(SAMPLE, "en")
+        self.assertRegex(dash, r'<tr class="no-match" hidden><td colspan="7" class="empty"><p>No findings match these filters\.</p>'
+                               r'<button class="clear-filters" type="button">Clear filters</button></td></tr></tbody>')
+        self.assertIn("noMatch.hidden=n+xe+xc>0", dash)
+        data = render.empty_record()
+        data["meta"] = json.loads(SAMPLE.read_text(encoding="utf-8"))["meta"]
+        with tempfile.TemporaryDirectory() as tmp:
+            empty = Path(tmp) / "findings.json"
+            empty.write_text(json.dumps(data), encoding="utf-8")
+            dash, _ = pages(empty, "ja")
+        # An empty register says so once; there is nothing to clear.
+        self.assertNotIn('class="no-match"', dash)
+        self.assertIn('<td colspan="7" class="empty">記録なし。</td>', dash)
+
+    def test_theme_toggle_exposes_its_state(self):
+        dash, _ = pages(SAMPLE, "en")
+        self.assertIn('<button id="theme" type="button" aria-pressed="false">Dark theme</button>', dash)
+        self.assertIn("themeBtn.setAttribute('aria-pressed',String(dark()))", dash)
+
+    def test_unchecked_perspectives_stand_out_and_the_counts_corner_heads_nothing(self):
+        dash, report = pages(SAMPLE, "en")
+        self.assertIn('Governance and guardrails<span class="st gap">Not checked</span>', dash)
+        self.assertIn('Network exposure<span class="st">Applied</span>', dash)
+        self.assertIn('<td>Governance and guardrails</td><td class="gap">Not checked</td>', report)
+        self.assertIn('<thead><tr><td></td><th scope="col" class="High">', report)
+        self.assertNotIn('<th scope="col"></th>', report)
+
 
 if __name__ == "__main__":
     unittest.main()

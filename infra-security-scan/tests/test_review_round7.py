@@ -14,6 +14,7 @@ sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import findings  # noqa: E402
 import iac_scan  # noqa: E402
 import redaction  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 from test_output_redaction import OutputTest, finding  # noqa: E402
@@ -32,7 +33,7 @@ class ExcerptLeakTest(OutputTest):
     def assert_hidden(self, name, text, line, value):
         self.write(name, text)
         record = self.record(f"{name}:{line}")
-        self.assertEqual(render.attach_sources(record, self.repo), {})
+        self.assertEqual(excerpts.attach_sources(record, self.repo), {})
         for page in self.pages(record):
             self.assertNotIn(value, page)
 
@@ -63,12 +64,12 @@ class ExcerptLeakTest(OutputTest):
     def test_numeric_secret_named_variable_keeps_the_excerpt(self):
         self.write("kms.tf", 'variable "secret_recovery_window_in_days" {\n  default = 7\n}\n'
                              'resource "x" "y" {\n  a = 1\n}\n')
-        self.assertIn("F-001", render.attach_sources(self.record("kms.tf:4"), self.repo))
+        self.assertIn("F-001", excerpts.attach_sources(self.record("kms.tf:4"), self.repo))
 
     def test_public_name_value_pairs_keep_the_excerpt(self):
         self.write("tags.tf", 'resource "x" "y" {\n  env {\n    name  = "REGION"\n'
                               '    value = "eu-west-1"\n  }\n}\n')
-        self.assertIn("F-001", render.attach_sources(self.record("tags.tf:1"), self.repo))
+        self.assertIn("F-001", excerpts.attach_sources(self.record("tags.tf:1"), self.repo))
 
     def test_cloudformation_capitalized_name_value_hides_the_file(self):
         value = "synthetic-" + "cfn-value"
@@ -89,7 +90,7 @@ class ExcerptLeakTest(OutputTest):
                      ".ssh/id_ed25519", "config/kubeconfig"):
             with self.subTest(name=name):
                 self.write(name, f"result = \"{value}\"\nother = 1\n")
-                self.assertEqual(render.attach_sources(self.record(f"{name}:1"), self.repo), {})
+                self.assertEqual(excerpts.attach_sources(self.record(f"{name}:1"), self.repo), {})
 
 
 class OutputPathTest(unittest.TestCase):

@@ -10,7 +10,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import iac_scan  # noqa: E402
-import render  # noqa: E402
+import excerpts  # noqa: E402
 
 OPEN_SG = ('resource "aws_security_group_rule" "r" {\n  type = "ingress"\n  from_port = 22\n'
            '  to_port = 22\n  protocol = "tcp"\n  cidr_blocks = ["0.0.0.0/0"]\n}\n')
@@ -56,9 +56,9 @@ class InputKindTest(unittest.TestCase):
         # No excerpt of the state, also for a reviewer's finding in that file.
         record = {"findings": [{"id": "I-001", "rule": "SEC-002", "location": "backup/prod-state.json:1"},
                                {"id": "F-001", "location": "backup/prod-state.json:5"}]}
-        self.assertEqual(render.attach_sources(record, self.root), {})
+        self.assertEqual(excerpts.attach_sources(record, self.root), {})
         record["findings"][0]["rule"] = "AWS-RDS-001"
-        self.assertIn('"lineage"', str(render.attach_sources(record, self.root)))  # what SEC-002 now prevents
+        self.assertIn('"lineage"', str(excerpts.attach_sources(record, self.root)))  # what SEC-002 now prevents
 
     def test_state_shapes_and_look_alikes(self):
         legacy = {"version": 3, "terraform_version": "0.11.14", "serial": 2, "lineage": "x", "modules": []}

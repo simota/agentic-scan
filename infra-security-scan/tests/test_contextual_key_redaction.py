@@ -14,6 +14,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import iac_scan  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 from test_output_redaction import OutputTest  # noqa: E402
@@ -46,7 +47,7 @@ class ContextualKeyRedactionTest(OutputTest):
     def outputs(self, rel, text, needle):
         line = next(n for n, row in enumerate(text.split("\n"), 1) if needle in row)
         record = self.record(f"{rel}:{line}")
-        return {"excerpts": json.dumps(render.attach_sources(record, self.repo)),
+        return {"excerpts": json.dumps(excerpts.attach_sources(record, self.repo)),
                 **dict(zip(("dashboard.html", "assessment.html"), self.pages(record)))}
 
     def assert_hidden(self, name, text, value, companions=None):
@@ -239,7 +240,7 @@ class ContextualKeyRedactionTest(OutputTest):
         record = self.record(f"{rel}:7")
         record["findings"] = iac_scan.build_findings(iac_scan.run(self.repo).hits)
         self.assertTrue(any(f["rule"] == "AWS-EBS-001" for f in record["findings"]))
-        outputs = {"excerpts": json.dumps(render.attach_sources(record, self.repo)),
+        outputs = {"excerpts": json.dumps(excerpts.attach_sources(record, self.repo)),
                    **dict(zip(("dashboard.html", "assessment.html"), self.pages(record)))}
         self.assertEqual([sink for sink, output in outputs.items() if MD5_VALUE in output], [])
 

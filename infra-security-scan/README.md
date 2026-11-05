@@ -125,6 +125,7 @@ skills/infra-scan/
   scripts/iac_scan.py      inventory + baseline rules (I-*)
   scripts/findings.py      merge finding fragments into findings.json
   scripts/render.py        dashboard.html, assessment.html, assessment.pdf
+  scripts/excerpts.py      which cited lines render.py --repo may show, redacted
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts
   scripts/common.py        shared constants, JSON loading and atomic writes

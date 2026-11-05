@@ -11,7 +11,7 @@ import unittest
 REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
 import redaction  # noqa: E402
-import render  # noqa: E402
+import excerpts  # noqa: E402
 
 from test_output_redaction import OutputTest  # noqa: E402
 
@@ -119,7 +119,7 @@ class ExcerptScrubTest(OutputTest):
             for spelling in (f"{name}/.", f"./{name}"):
                 with self.subTest(spelling=spelling):
                     self.write(name, text)
-                    self.assertEqual(render.attach_sources(self.record(f"{spelling}:1"), self.repo), {})
+                    self.assertEqual(excerpts.attach_sources(self.record(f"{spelling}:1"), self.repo), {})
 
     def test_public_lines_keep_their_values(self):
         text = ('resource "aws_lambda_function_url" "u" {\n  authorization_type = "NONE"\n}\n'
@@ -169,7 +169,7 @@ class ScrubPrecisionTest(OutputTest):
         for name, text in cases.items():
             with self.subTest(name=name):
                 self.write(name, text)
-                self.assertIn("F-001", render.attach_sources(self.record(f"{name}:2"), self.repo))
+                self.assertIn("F-001", excerpts.attach_sources(self.record(f"{name}:2"), self.repo))
 
     def test_openers_in_comments_open_nothing(self):
         text = '# usage: cat <<EOF\nresource "aws_s3_bucket" "b" {\n  bucket = "visible-bucket"\n}\n'

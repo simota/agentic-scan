@@ -15,6 +15,7 @@ import contract_check  # noqa: E402
 import findings  # noqa: E402
 import iac_scan  # noqa: E402
 import redaction  # noqa: E402
+import excerpts  # noqa: E402
 import render  # noqa: E402
 
 MARK = "Zq" + "x9" * 3 + "Wp"  # low entropy: only the structural rules can hide it
@@ -83,7 +84,7 @@ class ExcerptLeakTest(unittest.TestCase):
     def test_secret_forms_never_reach_an_excerpt(self):
         for name, text in LEAKS.items():
             with self.subTest(name=name):
-                lines = render.source_lines(self.write(name, text))
+                lines = excerpts.source_lines(self.write(name, text))
                 shown = "\n".join(line for line in lines or [] if isinstance(line, str))
                 self.assertNotIn(MARK, shown)
 
@@ -93,7 +94,7 @@ class ExcerptLeakTest(unittest.TestCase):
                 self.write(name, text)
                 record = render.empty_record()
                 record["findings"] = [{"id": "F-001", "location": f"{name}:1", "resources": ["x"]}]
-                rows = render.attach_sources(record, self.repo).get("F-001") or []
+                rows = excerpts.attach_sources(record, self.repo).get("F-001") or []
                 self.assertNotIn(MARK, "\n".join(str(r) for r in rows))
 
     def test_ordinary_lines_stay_visible(self):

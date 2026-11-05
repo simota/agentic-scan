@@ -28,7 +28,8 @@ to the stylesheets it governs.
 - The running footer and the report kicker are `PROMPT REVIEW` (ja
   `プロンプト診断`), passed to `document_css()` from the `running_footer` label.
 - The PDF engine is the kit's (`PROMPT_SCAN_PDF_TIMEOUT` overrides its
-  timeout); engine stderr is masked with `render.mask` before it is reported.
+  timeout); engine stderr is masked with `excerpt.mask` (`skills/prompt-scan/scripts/excerpt.py`)
+  before it is reported.
 
 ## Readers
 

@@ -29,8 +29,8 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import findings as merge_tool  # noqa: E402
-import render  # noqa: E402
+import record  # noqa: E402
+from excerpt import SECRET_RE, sensitive, source_lines  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 VCS_DIRS = {".git", ".hg", ".svn"}
@@ -88,7 +88,6 @@ video""".split())
 INLINE_CODE = re.compile(r"(`+)(?!`).+?(?<!`)\1(?!`)")  # Markdown code span: an example, not markup
 # XXX inside a hyphenated run is a format mask (XXX-XXX-XXXX), not a placeholder.
 PLACEHOLDER_RE = re.compile(r"\b(?:TODO|FIXME|TBD)\b|(?<![\w-])XXX(?![\w-])|(?i:lorem ipsum)|(?i:\[(?:insert|placeholder)\b[^\]]*\])")
-SECRET_RE = render.SECRET_RE
 LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
 
@@ -150,7 +149,7 @@ RULES = {
         fix="Move rarely needed material to on-demand context, or cache the static prefix.",
         test="Assert the rendered prompt's estimated token count stays under the agreed budget."),
 }
-SEVERITY_RANK = {s: i for i, s in enumerate(render.SEVERITIES)}
+SEVERITY_RANK = {s: i for i, s in enumerate(record.SEVERITIES)}
 
 
 def walk(root, skipped=None, unread=None):
@@ -163,9 +162,9 @@ def walk(root, skipped=None, unread=None):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
             path = Path(dirpath) / name
-            if path.is_symlink() or not path.is_file() or render.sensitive(name):
+            if path.is_symlink() or not path.is_file() or sensitive(name):
                 rel = path.relative_to(root).as_posix()
-                if unread is not None and path.is_symlink() and not render.sensitive(name) and prompt_kind(shown(rel)):
+                if unread is not None and path.is_symlink() and not sensitive(name) and prompt_kind(shown(rel)):
                     unread.append({"path": shown(rel), "reason": "symlink"})
                 continue
             yield path, path.relative_to(root).as_posix()
@@ -294,7 +293,7 @@ def lint_tags(lines, fenced):
 
 
 def lint_file(rel, text, tokens):
-    lines = render.source_lines(text)
+    lines = source_lines(text)
     fenced = fenced_lines(lines)
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [INLINE_CODE.sub("", line) for line in lines]
@@ -387,7 +386,7 @@ def git_state(root, read=()):
             return commit, None
         names = {key[len("filter."):].rpartition(".")[0] for key in keys}
         fields = attrs.split("\0")
-        if {path for path, value in zip(fields[0::3], fields[2::3]) if value in names} >= set(unsure):
+        if {path for path, value in zip(fields[0::3], fields[2::3]) if value in names} >= set(unsure):  # noqa: B905 - the trailing NUL leaves a short last triple; 3.9 has no strict=
             unknown, changed = True, []
     if changed:
         return commit, True
@@ -425,7 +424,7 @@ def scan(root):
             if kind is not None:
                 unread.append({"path": rel, "reason": why})
             continue
-        lines = render.source_lines(text)
+        lines = source_lines(text)
         if kind is not None:
             tokens = estimate_tokens(text)
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
@@ -478,12 +477,12 @@ def hit_key(rule, location, text):
 
 
 def merge_into(findings_path, inventory):
-    original = merge_tool.read_regular(findings_path)
-    data = merge_tool.read_json(findings_path, original)
+    original = record.read_regular(findings_path)
+    data = record.read_json(findings_path, original)
     try:
-        render.validate_data(data)
-    except render.SchemaError as e:
-        raise render.SchemaError(f"{findings_path}: {e}") from None
+        record.validate_data(data)
+    except record.SchemaError as e:
+        raise record.SchemaError(f"{findings_path}: {e}") from None
     old = {hit_key(f.get("rule"), f.get("location"), f.get("cause")): f for f in data.get("findings", [])
            if isinstance(f, dict) and str(f.get("id", "")).startswith("L-")}
     new = lint_findings(inventory["lint"])
@@ -499,14 +498,14 @@ def merge_into(findings_path, inventory):
                         if not (isinstance(f, dict) and str(f.get("id", "")).startswith("L-"))] + new
     meta = data.setdefault("meta", {})
     meta["commit"], meta["dirty"] = inventory["commit"], inventory["dirty"]
-    render.validate_data(copy.deepcopy(data))
-    merge_tool.write_report(Path(findings_path), data, original)
+    record.validate_data(copy.deepcopy(data))
+    record.write_report(Path(findings_path), data, original)
     return len(new)
 
 
 def is_inventory(path):
     try:
-        value = json.loads(merge_tool.read_regular(path).decode("utf-8"))
+        value = json.loads(record.read_regular(path).decode("utf-8"))
     except (OSError, UnicodeError, ValueError, RecursionError):
         return False
     return isinstance(value, dict) and value.get("tool") == "inventory.py"
@@ -544,7 +543,7 @@ def main(argv=None):
     if a.into:
         try:
             count = merge_into(a.into, inventory)
-        except (render.SchemaError, merge_tool.MergeConflict, OSError) as e:
+        except (record.SchemaError, record.MergeConflict, OSError) as e:
             print(f"inventory.py: {e}", file=sys.stderr)
             return 2
         print(f"merged {count} L-* finding(s) into {a.into}", file=sys.stderr if not a.out else sys.stdout)

@@ -81,6 +81,8 @@ review of it.
 | `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`) |
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
+| `skills/prompt-scan/scripts/record.py` | The `findings.json` contract every script shares: vocabulary, strict parsing, schema, atomic replacement |
+| `skills/prompt-scan/scripts/excerpt.py` | What a report may quote from the reviewed repository, and the redaction applied to it |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |
 | `skills/prompt-scan/scripts/scan_report_kit/` | Vendored [scan-report-kit](https://github.com/simota/scan-report-kit): shared stylesheets, PDF engine, safe writes |
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |

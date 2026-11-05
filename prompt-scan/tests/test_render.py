@@ -9,7 +9,7 @@ import time
 import unittest
 from unittest import mock
 
-from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, render, run, sample, write_json
+from helpers import EXAMPLES, SAMPLE_APP, SCRIPTS, clone, excerpt, record, render, run, sample, write_json
 
 
 class RenderTest(unittest.TestCase):
@@ -39,6 +39,16 @@ class RenderTest(unittest.TestCase):
         self.assertNotIn("</script>", payload)
         self.assertEqual(json.loads(payload)["findings"][0]["title"], "</script><b>x</b>")
 
+    def test_dashboard_remembers_the_theme_as_the_kit_does(self):
+        # Same storage key as the kit's dashboard runtime, so the choice carries across *-scan dashboards;
+        # both reads and writes are guarded, since storage can throw.
+        dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
+        kit = (SCRIPTS / "scan_report_kit" / "assets" / "dashboard.js").read_text(encoding="utf-8")
+        self.assertIn("'scan-report-kit.theme'", kit)
+        self.assertIn("THEME_KEY='scan-report-kit.theme'", dashboard)
+        self.assertIn("try{var saved=window.localStorage.getItem(THEME_KEY)", dashboard)
+        self.assertIn("try{window.localStorage.setItem(THEME_KEY,root.dataset.theme);}catch(e){}", dashboard)
+
     def test_dashboard_proposal_text_wraps_like_the_report(self):
         # The kit's .snippet scrolls sideways to keep code lines whole; proposal text is prose to read and paste.
         dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
@@ -59,6 +69,26 @@ class RenderTest(unittest.TestCase):
         self.assertIn('<article class="finding sev-High" id="F-001">', report)
         self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; y", report)
         self.assertNotIn("<b>x</b>", report)
+
+    def test_inventory_and_eval_tables_stack_with_labelled_cells(self):
+        # On narrow screens the kit's .index rules turn these tables into labelled cards, so a wide
+        # column (a long model line) is never cut off; every cell names its column for that layout.
+        data = sample()
+        data["eval_runs"] = [{"id": "E-001", "finding": "F-001", "model": "m <x>", "date": "2026-11-05",
+                              "cases": 3, "passed": 2, "failed": 1, "note": "n"}]
+        report = (self.render(data, "--lang", "en") / "report.html").read_text(encoding="utf-8")
+        L = render.LABELS["en"]
+        for name, labels in (("inv", ("id", "name", "kind", "location", "consumer", "model")),
+                             ("evals", ("id", "finding", "model", "date", "cases", "passed", "failed", "note"))):
+            table = re.search(rf'<table class="{name} index" role="table">.*?</table>', report, re.S)
+            self.assertIsNotNone(table, name)
+            body = table.group(0).split("<tbody", 1)[1]
+            cells = re.findall(r'<td role="cell" data-label="([^"]*)"', body)
+            rows = body.count("<tr ")
+            self.assertEqual(cells, [L[k] for k in labels] * rows, name)
+            self.assertNotIn("<td>", body)
+        self.assertIn('data-label="Cases" class="num">3</td>', report)
+        self.assertIn("m &lt;x&gt;", report)
 
     def test_previous_validation_without_evidence_renders(self):
         data = sample()
@@ -145,7 +175,7 @@ class RenderTest(unittest.TestCase):
                  "https://user:p@ss@host/x": "https://user:[REDACTED]@host/x",
                  "postgres://u:ab/c@d@db/app": "postgres://u:[REDACTED]@db/app"}
         for line, masked in cases.items():
-            self.assertEqual(render.mask_excerpt(line), masked)
+            self.assertEqual(excerpt.mask_excerpt(line), masked)
 
     def test_a_commit_git_cannot_read_gives_no_excerpt(self):
         # Never fall back to the working tree, which may hold later edits the scan never saw.
@@ -159,7 +189,7 @@ class RenderTest(unittest.TestCase):
         for line in ("a." * 100000, "a-" * 100000, "http://" * 30000, "secret=" * 30000, "token=" * 20000 + " x",
                      "?" + "&".join(f"access_token=t{n}" for n in range(8000)) + " (cb)"):
             started = time.monotonic()
-            render.mask_excerpt(line)
+            excerpt.mask_excerpt(line)
             self.assertLess(time.monotonic() - started, 2, line[:20])
 
     def test_runs_in_isolated_mode(self):
@@ -170,7 +200,7 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
 
     def test_line_numbers_split_on_newlines_only(self):
-        self.assertEqual(render.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
+        self.assertEqual(excerpt.source_lines("a\x0cb\u2028c\r\nd\n"), ["a\x0cb\u2028c", "d"])
 
     def test_too_deep_json_is_a_schema_error(self):
         out = Path(tempfile.mkdtemp())
@@ -349,7 +379,7 @@ class RenderTest(unittest.TestCase):
             data = clone(sample())
             mutate(data)
             with self.assertRaises(render.SchemaError) as ctx:
-                render.validate_data(data)
+                record.validate_data(data)
             self.assertIn(message, str(ctx.exception))
 
 

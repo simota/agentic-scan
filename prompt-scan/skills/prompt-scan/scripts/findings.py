@@ -33,23 +33,22 @@ path or file name, `meta`, the prompt records and the scanner fields of `L-*` fi
 left as written.
 
 FINDINGS is created when absent and replaced atomically, only if no other
-writer changed it meanwhile. The merged report must pass render.py's schema.
+writer changed it meanwhile. The merged report must pass record.py's schema.
 
 Exit codes: 0 merged or renumbered, 1 a fragment was refused (reason on
 stderr), 2 unreadable input or schema error.
 """
 import argparse
 import copy
-import json
 import os
 from pathlib import Path
 import re
-import stat
 import sys
-import tempfile
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-import render  # noqa: E402
+import record  # noqa: E402
+from record import MergeConflict, SchemaError, read_json, read_regular, write_report  # noqa: E402
+from excerpt import SECRET_RE  # noqa: E402
 
 OBJECTS = ("meta",)
 RECORDS = ("prompts", "findings", "eval_runs")
@@ -68,22 +67,6 @@ PAYLOAD = re.compile(
     r"(?:以前|前|上記|これまで)の(?:指示|命令|ルール|プロンプト)を(?:すべて|全て)?(?:無視|忘れ)",
     re.IGNORECASE,
 )
-
-
-def read_regular(path):
-    """Read a regular file, never a FIFO, device or symlink."""
-    path = Path(path)
-    if not stat.S_ISREG(os.lstat(str(path)).st_mode):
-        raise OSError(f"{path}: not a regular file")
-    return path.read_bytes()
-
-
-def read_json(path, raw=None):
-    try:
-        raw = read_regular(path) if raw is None else raw
-    except OSError as e:
-        raise render.SchemaError(f"{path}: {e}") from None
-    return render.parse_json(raw, path)
 
 
 def strings(value, path):
@@ -124,8 +107,8 @@ def fragment_problems(fragment, name, base):
     new = 0
     for key in RECORDS:
         seen = set()
-        for record in fragment.get(key, []):
-            ident = record.get("id") if isinstance(record, dict) else None
+        for entry in fragment.get(key, []):
+            ident = entry.get("id") if isinstance(entry, dict) else None
             if not isinstance(ident, str) or not ident.strip():
                 problems.append(f"{name}: {key} records need a nonblank id")
                 continue
@@ -137,12 +120,12 @@ def fragment_problems(fragment, name, base):
             if ident.startswith("L-"):
                 if ident not in known:
                     problems.append(f"{name}: {ident}: L-* findings are created only by inventory.py --into")
-                elif record.keys() - LINT_REVIEW:
-                    problems.append(f"{name}: {ident}: L-* scanner fields {sorted(record.keys() - LINT_REVIEW)} "
+                elif entry.keys() - LINT_REVIEW:
+                    problems.append(f"{name}: {ident}: L-* scanner fields {sorted(entry.keys() - LINT_REVIEW)} "
                                     "come only from inventory.py; merge only validation")
             else:
                 new += ident not in known
-                if {"source", "rule", "previous_validation"} & record.keys():
+                if {"source", "rule", "previous_validation"} & entry.keys():
                     problems.append(f"{name}: {ident}: source, rule and previous_validation belong to inventory.py")
     if new > MAX_NEW_FINDINGS:
         problems.append(f"{name}: {new} new findings in one fragment; write at most {MAX_NEW_FINDINGS} "
@@ -151,16 +134,16 @@ def fragment_problems(fragment, name, base):
         if PAYLOAD.search(value):
             problems.append(f"{where} contains a literal instruction-override string; describe the weakness "
                             "and name the variable instead")
-        if render.SECRET_RE.search(value):
+        if SECRET_RE.search(value):
             problems.append(f"{where} contains a credential-shaped value; give its location and kind only")
     return problems
 
 
 def repairable(base):
-    """base as checked before a merge: a meta.lang recorded before render.py checked it is left for this merge
+    """base as checked before a merge: a meta.lang recorded before record.py checked it is left for this merge
     to set, and the merged report is validated in full."""
     meta = base.get("meta") if isinstance(base, dict) else None
-    if isinstance(meta, dict) and isinstance(meta.get("lang"), str) and meta["lang"] not in render.LABELS:
+    if isinstance(meta, dict) and isinstance(meta.get("lang"), str) and meta["lang"] not in record.LANGS:
         return dict(base, meta={k: v for k, v in meta.items() if k != "lang"})
     return base
 
@@ -213,16 +196,16 @@ LINT_REVIEWED = {"validation", "previous_validation"}
 
 def order_key(f):
     """The run contract's F-* order: severity, then path and line (the old id breaks ties)."""
-    m = render.LOC_RE.match(f["location"])
+    m = record.LOC_RE.match(f["location"])
     path, line = (m["path"], int(m["start"])) if m else (f["location"], 0)
-    return render.SEVERITIES.index(f["severity"]), path, line, render.id_key(f["id"])
+    return record.SEVERITIES.index(f["severity"]), path, line, record.id_key(f["id"])
 
 
 def renumber_map(findings):
     """Old F-* id -> new id: order_key; excluded findings last, in their old order."""
     code = [f for f in findings if f["id"].startswith("F-")]
-    active = sorted((f for f in code if f["validation"]["verdict"] not in render.EXCLUDED), key=order_key)
-    excluded = sorted((f for f in code if f["validation"]["verdict"] in render.EXCLUDED), key=lambda f: render.id_key(f["id"]))
+    active = sorted((f for f in code if f["validation"]["verdict"] not in record.EXCLUDED), key=order_key)
+    excluded = sorted((f for f in code if f["validation"]["verdict"] in record.EXCLUDED), key=lambda f: record.id_key(f["id"]))
     return {f["id"]: f"F-{n:03d}" for n, f in enumerate(active + excluded, 1)}
 
 
@@ -269,43 +252,9 @@ def renumber(data, mapping):
                 {k: rewrite(v) if k in LINT_REVIEWED else v for k, v in f.items()} for f in data["findings"]]
     data = {k: v if k in UNTOUCHED else rewrite(v) for k, v in data.items() if k != "findings"}
     data["findings"] = findings
-    code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: render.id_key(f["id"]))
+    code = sorted((f for f in data["findings"] if f["id"].startswith("F-")), key=lambda f: record.id_key(f["id"]))
     data["findings"] = code + [f for f in data["findings"] if not f["id"].startswith("F-")]
     return data
-
-
-class MergeConflict(Exception):
-    pass
-
-
-def write_report(path, data, original):
-    """Replace path atomically unless another writer changed it since it was read."""
-    path = Path(path)
-    lock = path.with_name(path.name + ".lock")
-    try:
-        fd = os.open(str(lock), os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-    except FileExistsError:
-        raise MergeConflict(f"{lock}: a writer lock exists; check the other writer before removing a stale lock")
-    os.close(fd)
-    temp = None
-    try:
-        current = path.read_bytes() if path.exists() else None
-        if path.is_symlink() or current != original:
-            raise MergeConflict(f"{path}: file changed concurrently; no update written")
-        # Keep an existing file's permissions; a new one is private, like the rendered outputs.
-        mode = stat.S_IMODE(os.stat(str(path)).st_mode) if current is not None else 0o600
-        fd, temp = tempfile.mkstemp(prefix="." + path.name + ".", dir=str(path.parent))
-        with os.fdopen(fd, "wb") as stream:
-            stream.write((json.dumps(data, ensure_ascii=False, indent=2) + "\n").encode("utf-8"))
-            stream.flush()
-            os.fsync(stream.fileno())
-        os.chmod(temp, mode)
-        os.replace(temp, path)
-        temp = None
-    finally:
-        if temp is not None and os.path.exists(temp):
-            os.unlink(temp)
-        lock.unlink(missing_ok=True)
 
 
 def main(argv=None):
@@ -324,11 +273,11 @@ def main(argv=None):
         base = read_json(a.findings, original) if original is not None else {}
         if original is not None:
             try:
-                render.validate_data(repairable(base))
-            except render.SchemaError as e:
-                raise render.SchemaError(f"{a.findings}: {e}") from None
+                record.validate_data(repairable(base))
+            except SchemaError as e:
+                raise SchemaError(f"{a.findings}: {e}") from None
         fragments = [(str(path), read_json(path)) for path in a.fragments]
-    except (render.SchemaError, OSError) as e:
+    except (SchemaError, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     refused = []
@@ -346,9 +295,9 @@ def main(argv=None):
             return 1
         base = merge(base, fragment)
     try:
-        render.validate_data(copy.deepcopy(base))
+        record.validate_data(copy.deepcopy(base))
         write_report(a.findings, base, original)
-    except render.SchemaError as e:
+    except SchemaError as e:
         print(f"error: merged report does not match the schema: {e}", file=sys.stderr)
         return 2
     except (MergeConflict, OSError) as e:
@@ -361,15 +310,15 @@ def main(argv=None):
 def main_renumber(path):
     try:
         original = read_regular(path)
-        data = render.validate_data(read_json(path, original))
+        data = record.validate_data(read_json(path, original))
         mapping = renumber_map(data.get("findings", []))
         if all(old == new for old, new in mapping.items()):
             print(f"{path}: F-* findings already in order")
             return 0
         data = renumber(data, mapping)
-        render.validate_data(copy.deepcopy(data))
+        record.validate_data(copy.deepcopy(data))
         write_report(path, data, original)
-    except (render.SchemaError, MergeConflict, OSError) as e:
+    except (SchemaError, MergeConflict, OSError) as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
     moved = ", ".join(f"{old}->{new}" for old, new in sorted(mapping.items()) if old != new)

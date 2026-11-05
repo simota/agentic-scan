@@ -4,6 +4,10 @@ Copy each finding from findings.json, verbatim and in the record's language, so 
 with the dashboard. Take every {{n_…}} count from `python3 scripts/findings.py counts <out>/findings.json`
 (severity counts cover reported findings; excluded ones are counted separately). Delete optional lines left
 empty. Write <to fill in> where the record has no source (issue URLs, decisions on data already sent).
+A blank meta.commit is written UNKNOWN and a blank meta.method as the review-method line of report.md.
+Lines with a {{list[]}} placeholder repeat once per entry; {{commitments[]}} is one ledger entry with its
+family, source, status, reason and the findings that cite it. `scripts/drafts.py` fills this template by
+these rules and leaves every <to fill in> for you.
 
 Before sending:
 - No personal data values anywhere; field names and placeholders only
@@ -16,6 +20,7 @@ Before sending:
 ## 1. Summary
 
 <!-- Conclusion first, e.g. "Checkout errors send customers' addresses to the error tracker; turn request capture off before anything else." -->
+<to fill in: the conclusion first>
 
 
 | Severity | Count | Of which Valid |
@@ -33,8 +38,8 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Not yet verified — L
 |---|---|
 | System | {{meta.project}} |
 | Scope | {{meta.scope}} |
-| Revision | {{meta.commit}} (blank: UNKNOWN, as in report.md) |
-| Method | {{meta.method}} (when absent, the review-method line of report.md) |
+| Revision | {{meta.commit}} |
+| Method | {{meta.method}} |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 Source code was read; no data store, log or backup was accessed. This is a technical review, not legal advice.
@@ -49,7 +54,7 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 - **Location:** `{{location}}`
 - **Personal data / subjects:** {{data}} / {{subjects}}
 - **Broken commitment:** {{commitment}} — {{commitments[id].statement}}
-- **Conditions (Environment-dependent only):** {{conditions}}
+- **Conditions:** {{conditions}}
 - **Impact:** {{impact}}
 - **Fix direction:** {{fix}}
 - **Guard:** {{guard}}
@@ -59,27 +64,27 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 ## 4. Commitments
 
 <!-- commitments[]: id, statement, family, source and status, with the reason whenever one is recorded (required for not checked); mark inferred ones, which are questions for the owner. -->
-- 
+- {{commitments[]}}
 
 ## 5. Checked and sound
 
 <!-- checked_ok: what was examined and held. -->
-- 
+- {{checked_ok[]}}
 
 ## 6. What could not be checked
 
 <!-- limitations: vendor-side settings, contracts, data actually present, deployed regions. -->
-- 
+- {{limitations[]}}
 
 ## 7. Decisions needed
 
 <!-- decisions: commitments to confirm, recipients whose contracts are unknown, data already sent or retained. -->
-- 
+- {{decisions[]}}
 
 ## 8. Recommended order of work
 
 <!-- next_steps. -->
-1. 
+1. {{next_steps[]}}
 
 ## Attachments
 

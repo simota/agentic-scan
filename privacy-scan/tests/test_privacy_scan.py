@@ -43,6 +43,7 @@ def finding(fid="PV-001", severity="High", **extra) -> dict:
         "data": "shipping_address, phone", "subjects": "Customers at checkout",
         "flow": "1. POST /api/checkout. 2. Error captured with body", "impact": "Addresses sent",
         "fix": "Turn body capture off", "guard": "Captured event has no body for user@example.com",
+        "commitment": "C-01",
         "validation": {"verdict": "Valid", "method": "static", "evidence": "app.py:22"},
     }
     record.update(extra)

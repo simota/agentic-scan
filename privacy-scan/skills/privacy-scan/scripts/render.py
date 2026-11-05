@@ -26,7 +26,7 @@ sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
-from findings import counts as record_counts, excluded as is_excluded  # noqa: E402
+from findings import commitment_citations, counts as record_counts, excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 from personal_values import LINE_BREAKS  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
@@ -49,7 +49,7 @@ LABELS = {
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
-        "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status"),
+        "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status", "Findings"),
         "conditions": "conditions",
         "disclaimer": "Technical review of source code, not legal advice; it does not state "
                       "whether the application complies with any law.",
@@ -57,6 +57,7 @@ LABELS = {
         "perspective_columns": ("Perspective", "Status", "Note"),
         "filter": "Filter findings by severity",
         "showing": "Showing {shown} of {total}",
+        "search": "Search findings", "search_hint": "field, path, ID, commitment…",
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
@@ -75,7 +76,7 @@ LABELS = {
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
-        "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス"),
+        "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス", "検出事項"),
         "conditions": "前提条件",
         # Enumerations shown in Japanese; perspective names keep the English name
         # used in `category` so findings and coverage can be matched.
@@ -103,6 +104,7 @@ LABELS = {
         "perspective_columns": ("観点", "ステータス", "メモ"),
         "filter": "重要度で検出事項を絞り込む",
         "showing": "{total}件中{shown}件を表示",
+        "search": "検出事項を検索", "search_hint": "フィールド名・パス・ID・約束…",
     },
 }
 FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditions",
@@ -379,10 +381,12 @@ def render_markdown(doc, lang):
     if not doc.get("commitments"):
         lines += [t["none"], ""]
     else:
-        lines += [markdown_row(t["commitment_columns"]), "|---|---|---|---|---|"]
+        lines += [markdown_row(t["commitment_columns"]), "|---|---|---|---|---|---|"]
+        citing = commitment_citations(doc)
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
+            cells = (r["id"], statement, r.get("family", ""), r["source"], status,
+                     ", ".join(citing.get(r["id"], [])))
             lines.append(markdown_row(cells))
         lines.append("")
     lines += [f"## {t['perspectives']}", "", markdown_row(t["perspective_columns"]), "|---|---|---|"]
@@ -420,11 +424,12 @@ details[data-sev] summary,.hero h1,.hero .meta,.footer{white-space:pre-line}
 li{white-space:pre-line}
 td{white-space:pre-line}
 details[data-sev] .snippet{margin:6px 0 0;white-space:pre-wrap;overflow-wrap:anywhere}
-.commitments th:nth-child(1){width:9%}
-.commitments th:nth-child(2){width:33%}
-.commitments th:nth-child(3){width:12%}
-.commitments th:nth-child(4){width:22%}
-.commitments th:nth-child(5){width:24%}
+.commitments th:nth-child(1){width:8%}
+.commitments th:nth-child(2){width:30%}
+.commitments th:nth-child(3){width:10%}
+.commitments th:nth-child(4){width:20%}
+.commitments th:nth-child(5){width:20%}
+.commitments th:nth-child(6){width:12%}
 .coverage-table th:nth-child(1){width:42%}
 .coverage-table th:nth-child(2){width:14%}
 .coverage-table th:nth-child(3){width:44%}
@@ -440,12 +445,17 @@ table.ledger>tbody>tr{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))
 table.ledger>tbody>tr:last-child{border-bottom:0}
 table.ledger>tbody>tr>td{border:0;padding:0;overflow-wrap:anywhere}
 table.ledger>tbody>tr>td:before{content:attr(data-label);display:block;font-family:var(--sans);font-size:11px;color:var(--muted);margin-bottom:2px}
+table.ledger>tbody>tr>td:empty{display:none}
 .commitments td:nth-child(1){grid-area:1/1}
 .commitments td:nth-child(5){grid-area:1/2}
 .commitments td:nth-child(2){grid-column:1/-1}
+.commitments td:nth-child(6){grid-column:1/-1}
 table.coverage-table>tbody>tr{grid-template-columns:max-content minmax(0,1fr)}
 .coverage-table td:nth-child(1){grid-column:1/-1}}
 .filter-buttons .n{font-variant-numeric:tabular-nums;color:var(--muted);margin-left:4px}
+.finding-search{font:inherit;font-family:var(--sans);font-size:14px;flex:1 1 14em;max-width:26em;min-width:0;
+background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:7px;padding:8px 12px}
+.finding-search:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
 .register-count{margin:0 0 8px}
 /* A ledger status that needs action reads apart from the ones that hold; the
    word itself still carries the meaning. */
@@ -463,12 +473,15 @@ try{const t=localStorage.getItem('%s');if(t==='light'||t==='dark')document.docum
 document.getElementById('theme').addEventListener('click',()=>{const root=document.documentElement,
 dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;
 root.dataset.theme=dark?'light':'dark';try{localStorage.setItem('%s',root.dataset.theme)}catch(e){}});
-const count=document.getElementById('register-count'),all=document.querySelectorAll('details[data-sev]');
-document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
-const s=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));
-let shown=0;all.forEach(d=>{d.hidden=s!=='all'&&d.dataset.sev!==s;shown+=!d.hidden});
+const count=document.getElementById('register-count'),all=document.querySelectorAll('details[data-sev]'),
+search=document.getElementById('finding-search');let sev='all',q='';
+const apply=()=>{let shown=0;all.forEach(d=>{d.hidden=(sev!=='all'&&d.dataset.sev!==sev)||
+(q!==''&&!d.textContent.toLowerCase().includes(q));shown+=!d.hidden});
 const empty=document.querySelector('[data-empty]');if(empty)empty.hidden=shown>0;
-if(count)count.textContent=count.dataset.template.replace('{shown}',shown).replace('{total}',all.length);}));
+if(count)count.textContent=count.dataset.template.replace('{shown}',shown).replace('{total}',all.length);};
+document.querySelectorAll('[data-filter]').forEach(b=>b.addEventListener('click',()=>{
+sev=b.dataset.filter;document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',x===b));apply();}));
+if(search)search.addEventListener('input',()=>{q=search.value.trim().toLowerCase();apply();});
 """ % (THEME_KEY, THEME_KEY)
 
 
@@ -556,6 +569,10 @@ def render_html(doc, lang):
                + filter_button("all", t["all"], total, pressed=True) + " "
                + " ".join(filter_button(s, s, by_sev[s]) for s in SEVERITIES)
                + (" " + filter_button("excluded", t["excluded"], excluded) if excluded else "")
+               # Text search narrows the severity filter's result (a field, path, ID or C-01).
+               + (f" <input type='search' id='finding-search' class='finding-search' "
+                  f"aria-label='{e(t['search'])}' placeholder='{e(t['search_hint'])}' "
+                  "autocomplete='off' spellcheck='false'>" if findings else "")
                + "</div>"
                # Announced after each filter change (a status message, WCAG 4.1.3).
                + f"<p class='register-count muted' id='register-count' role='status' "
@@ -599,9 +616,12 @@ def render_html(doc, lang):
         out.append(f"<section><div class='section-head'><div><h2>{e(t['commitments'])}</h2></div></div>"
                    f"<div class='tablewrap'><table class='ledger commitments'>"
                    f"{html_head(t['commitment_columns'])}")
+        citing = commitment_citations(doc)
         for r in doc["commitments"]:
             statement, status = commitment_text(r, t)
-            cells = (r["id"], statement, r.get("family", ""), r["source"], status)
+            # The findings that break a commitment, so the ledger leads to them.
+            cells = (r["id"], statement, r.get("family", ""), r["source"], status,
+                     ", ".join(citing.get(r["id"], [])))
             label = term(t, r["status"])  # commitment_text's status starts with it
             out.append(html_row(t["commitment_columns"], cells, nowrap=(0,),
                                 status=(4, r["status"], label, status[len(label):])))

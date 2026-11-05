@@ -92,12 +92,24 @@ python3 skills/privacy-scan/scripts/findings.py check "$out"   # exit 1 lists ea
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity (each filter shows its count; the shown count is announced), commitments and perspective coverage with statuses that need action marked. Its content security policy admits only its own style and script |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity and by text search (a field name, path, ID or ledger ID; each filter shows its count; the shown count is announced), commitments with the findings that break them, and perspective coverage, with statuses that need action marked. Its content security policy admits only its own style and script |
 | `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
 
+After a run, two helpers write outside the output directory:
+
+```sh
+python3 skills/privacy-scan/scripts/drafts.py "$out/findings.json" --out "$scratch/drafts"
+python3 skills/privacy-scan/scripts/findings.py diff "$earlier/findings.json" "$out/findings.json"
+```
+
+| Helper | What it gives you |
+|---|---|
+| `drafts.py` | One issue draft per open finding (`issue-PV-NNN.md`) and an owner or DPO report (`owner-report.md`), filled from the templates with the record's values and counts; only the summary, issue URLs and decisions on data already sent are left `<to fill in>`. Unfixed High drafts open with a private-tracker line |
+| `findings.py diff` | A re-assessment against an earlier record: new, reopened, resolved and persisting findings (matched by perspective, location and title, since IDs change), severity, verdict and status changes, active counts by severity and commitment status changes, as Markdown or `--json` |
+
 `findings.py check` enforces the run contract (exactly these three files, a
-complete record, ordered IDs, consistent references and reports rendered from
-the current record; the full list is in
+complete record, ordered IDs, consistent references, a ledger whose statuses
+agree with the findings citing it and reports rendered from the current record; the full list is in
 `skills/privacy-scan/reference/findings-schema.md`). It checks shape, not
 whether a finding is true.
 
@@ -117,9 +129,9 @@ is vendored in `skills/privacy-scan/scripts/scan_report_kit/`; change it
 upstream and re-vendor, never in place (`make check` verifies the copy
 against its MANIFEST).
 
-To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
-cause per issue) or `templates/report.{ja,en}.md` (one report for an owner or
-DPO). An unfixed High (status `Open` or `Accepted`) goes to a private tracker.
+To file findings, the skill drafts with `scripts/drafts.py` from
+`templates/issue.{ja,en}.md` (one root cause per issue) and
+`templates/report.{ja,en}.md` (one report for an owner or DPO). An unfixed High (status `Open` or `Accepted`) goes to a private tracker.
 Filing or sending stays with you.
 
 ## Layout
@@ -133,7 +145,9 @@ skills/privacy-scan/
   reference/validation.md      verdicts, the four claims, read-only analysis, guards
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
-  scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract
+  scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract; diffs runs
+  scripts/compare.py           matches findings across two assessments for `findings.py diff`
+  scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
   scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files

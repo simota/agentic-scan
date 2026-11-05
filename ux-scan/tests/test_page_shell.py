@@ -130,6 +130,10 @@ class StylesheetTests(unittest.TestCase):
                           ("page_shell.NARROW_TOOLBAR_CSS", page_shell.NARROW_TOOLBAR_CSS)):
             self.assert_defined(css, base, name)
 
+    def test_the_split_slider_is_a_24px_target(self):
+        # WCAG 2.5.8: the browser's range input is 16px tall, too small to drag by touch.
+        self.assertRegex(mockups.CSS, r"\.split\{[^}]*height:24px")
+
     def test_report_evidence_css_uses_only_properties_the_document_css_defines(self):
         self.assert_defined(evidence.REPORT_CSS, render.report.style.document_css("UX REVIEW"), "evidence.REPORT_CSS")
 

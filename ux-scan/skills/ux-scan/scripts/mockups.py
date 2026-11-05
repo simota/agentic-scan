@@ -85,7 +85,7 @@ CSS = """
 .compare[data-mode="slider"] .pane.after figcaption{text-align:right}
 .compare[data-mode="slider"] .pane.before .stage{position:relative}
 .compare[data-mode="slider"] .pane.before .stage::after{content:"";position:absolute;top:0;bottom:0;left:calc(var(--split,50%) - 2px);border-left:2px solid var(--accent);pointer-events:none}
-.split{display:none;width:100%;margin:10px 0 0}
+.split{display:none;width:100%;height:24px;margin:10px 0 0}
 .compare[data-mode="slider"] + .split{display:block}
 .mockup dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:4px 14px;margin:16px 0 0;font-size:13px}
 .mockup dt{color:var(--muted);font-family:var(--sans)}

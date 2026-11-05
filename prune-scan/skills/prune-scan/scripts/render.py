@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
                       record_exists)
-from safe_paths import descriptor_within, open_directory, within  # noqa: E402
+from safe_paths import NOFOLLOW_DIR_FD, SEARCH, descriptor_within, open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
 from safe_source import PRIVATE_KEY, SECRET_NAME, SECRET_VALUE, physical_lines, sensitive_source  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
@@ -54,7 +54,6 @@ LOC = re.compile(r"^(?P<path>[^:]+):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 CONTEXT = 3
 MAX_SNIPPET_LINES = 80
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
-NOFOLLOW_DIR_FD = os.open in os.supports_dir_fd and hasattr(os, "O_NOFOLLOW") and hasattr(os, "O_DIRECTORY")
 
 FAMILIES = {
     "en": {"DC": "Dead code", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
@@ -106,8 +105,7 @@ def read_source(root, relative, *, expected_stat, directory=None):
     if NOFOLLOW_DIR_FD:
         parent = (open_directory(root, readable=False, expected_stat=expected_stat)
                   if directory is None else os.dup(directory))
-        directories = (getattr(os, "O_PATH", getattr(os, "O_SEARCH", os.O_RDONLY))
-                       | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directories = SEARCH | os.O_DIRECTORY | os.O_NOFOLLOW
         try:
             for part in relative.parts[:-1]:
                 child = os.open(part, directories, dir_fd=parent)
@@ -506,9 +504,10 @@ def render_outputs(a, resources):
 def main(argv=None):
     tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("findings")
-    p.add_argument("--out", required=True)
-    p.add_argument("--lang", choices=sorted(LABELS), default="en")
+    p.add_argument("findings", help="findings.json to render; units.json beside it is read when present")
+    p.add_argument("--out", required=True,
+                   help="directory for dashboard.html, report.html and report.pdf; outside the reviewed repository")
+    p.add_argument("--lang", choices=sorted(LABELS), default="en", help="report language (default: en)")
     p.add_argument("--repo", help="reviewed repository root: embeds excerpts for path:line locations")
     p.add_argument("--no-pdf", action="store_true", help="skip PDF generation")
     a = p.parse_args(argv)

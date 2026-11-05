@@ -28,10 +28,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (EXCLUDED, FAMILIES, RecordError, check_findings, check_units,  # noqa: E402
                       finding_references, parse_json)
-from render import (NOFOLLOW_DIR_FD, STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
+from render import (STAMP, UNITS_STAMP, open_artifact,  # noqa: E402
                     pdf_complete as stored_pdf_complete, pdf_envelope_complete)
 from safe_output import tolerant_stdout  # noqa: E402
-from safe_paths import open_directory  # noqa: E402
+from safe_paths import NOFOLLOW_DIR_FD, open_directory  # noqa: E402
 
 REQUIRED = ("findings.json", "units.json", "inventory.json", "dashboard.html", "report.html")
 NO_PDF = "report.pdf not produced"
@@ -541,9 +541,11 @@ def allowed_name(value):
 def main(argv=None):
     tolerant_stdout()
     p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    p.add_argument("out")
-    p.add_argument("--no-pdf", action="store_true")
-    p.add_argument("--allow", action="append", default=[], type=allowed_name)
+    p.add_argument("out", help="output directory holding the contracted files")
+    p.add_argument("--no-pdf", action="store_true",
+                   help="accept a run without report.pdf when a limitation records why")
+    p.add_argument("--allow", action="append", default=[], type=allowed_name, metavar="NAME",
+                   help="tolerate one extra file name in the output directory (repeatable)")
     a = p.parse_args(argv)
     if not Path(a.out).is_dir():
         print(f"contract_check.py: {a.out} is not a directory", file=sys.stderr)

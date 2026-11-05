@@ -49,6 +49,24 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 Ask "what should we check" and it stops after the checklist. Ask it to review
 or improve prompts and it runs all phases.
 
+## After the review
+
+The record is built to be acted on, not only read:
+
+- **Re-review** — after changing prompts, run a new review and compare it with
+  the earlier one: `scripts/compare.py` lists new, reopened, persisting
+  (with severity and verdict changes), resolved and dismissed findings,
+  matched by file, perspective and title, since IDs are renumbered. Risks
+  accepted earlier (`status: Accepted`) can be carried into the new record
+- **Issues** — `scripts/export.py issues` writes one issue body per finding
+  from the issue template, ready for `gh issue create --body-file`
+- **Code scanning and CI** — `scripts/export.py sarif` writes SARIF 2.1.0 for
+  GitHub code scanning or an IDE; `--fail-on High` (on `export.py` or
+  `compare.py`) makes the job fail on Open, or only on new, findings at that
+  severity
+- **Chat summary** — `scripts/export.py summary` prints the summary format of
+  `reference/report.md` with the record's own counts and verdicts
+
 ## Install
 
 ```sh
@@ -66,6 +84,15 @@ Then invoke `prompt-scan` (or `/prompt-scan`).
 make demo                       # Japanese sample → $TMPDIR/prompt-scan-demo (PDF needs Chrome or WeasyPrint)
 make demo LANG_OUT=en NO_PDF=1  # English, HTML only
 make inventory TARGET=examples/sample-app
+make compare BASE=examples/findings.sample.ja.json FINDINGS=examples/findings.sample.json
+make export FORMAT=sarif FINDINGS=examples/findings.sample.json OUT=/tmp/prompt-scan.sarif
+```
+
+In CI, after a review was committed or produced as an artifact:
+
+```sh
+python3 skills/prompt-scan/scripts/export.py sarif out/findings.json --out prompt-scan.sarif
+python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/findings.json --fail-on High
 ```
 
 `examples/sample-app` is a small synthetic app with deliberate prompt defects;
@@ -81,6 +108,8 @@ review of it.
 | `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`) |
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
+| `skills/prompt-scan/scripts/compare.py` | What changed between two reviews; `--fail-on` gates on new findings, `--accepted-fragment` carries accepted risks forward |
+| `skills/prompt-scan/scripts/export.py` | `summary` (chat), `sarif` (code scanning, IDEs), `issues` (one issue body per finding); `--fail-on` gates on Open findings |
 | `skills/prompt-scan/scripts/record.py` | The `findings.json` contract every script shares: vocabulary, strict parsing, schema, atomic replacement |
 | `skills/prompt-scan/scripts/excerpt.py` | What a report may quote from the reviewed repository, and the redaction applied to it |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |

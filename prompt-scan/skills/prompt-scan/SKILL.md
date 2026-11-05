@@ -52,7 +52,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Item | Fixed choice |
 |---|---|
-| Independence | Never read another review's outputs (an earlier `findings.json`, other report directories) unless the request is to merge or compare them. A second language is a re-render: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>` (with `--no-pdf` only when the main run has no PDF), then `contract_check.py <out> --allow <lang>` (plus `--no-pdf` in that case), which fails unless `<out>/<lang>/` holds the complete copy |
+| Independence | Never read another review's outputs (an earlier `findings.json`, other report directories) unless the request is to merge or compare them; a comparison reads only the earlier `findings.json`, with `scripts/compare.py`, after this review is finished. A second language is a re-render: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>` (with `--no-pdf` only when the main run has no PDF), then `contract_check.py <out> --allow <lang>` (plus `--no-pdf` in that case), which fails unless `<out>/<lang>/` holds the complete copy |
 | Review units | One unit per prompt family from the inventory (prompts that share a consumer or template), plus one cross-cutting unit for assembly code (message building, truncation, retries, parsing). Each unit sweeps every applicable perspective once |
 | Granularity | One finding per root cause, i.e. per fix location. The same flaw copied into several prompts is one finding listing every location in `cause`; flaws needing different fixes are separate findings |
 | IDs | `F-001`… for agent findings, numbered without gaps in severity order (then path and line; `FalsePositive`/`NotApplicable` are exempt from the order). Number new findings in merge order while reviewing; once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every reference. `L-*` only from `inventory.py --into`. No other prefixes |
@@ -98,10 +98,18 @@ one level.
 | `report.html` | The report document, print-styled for A4 (the source of the PDF) |
 | `report.pdf` | Cover, summary, prompt inventory, perspectives, findings with proposals, sound items, limitations, next steps |
 
-Skip the files when only a checklist was asked for. When asked to file findings
-as issues or to send the report to the prompt owners, start from
-`templates/issue.<lang>.md` or `templates/report.<lang>.md`, filled from
-`findings.json`.
+Skip the files when only a checklist was asked for. When asked to send the
+report to the prompt owners, start from `templates/report.<lang>.md`, filled
+from `findings.json`. Exports for acting on findings are written outside the
+output directory and the reviewed repository, after `contract_check.py`
+passes:
+
+| Asked for | Run |
+|---|---|
+| The chat summary | `scripts/export.py summary <out>/findings.json`, then add what it cannot know: what remains unknown, the scratch directory and the file links |
+| Findings as issues | `scripts/export.py issues <out>/findings.json --out <dir>`: one body per finding from `templates/issue.<lang>.md`, plus `index.md`. File them only when asked to, and say first where they go |
+| Code scanning, an IDE or CI | `scripts/export.py sarif <out>/findings.json --out <file>.sarif`; `--fail-on <severity>` exits 1 while an Open finding at that severity remains |
+| What changed since an earlier review | A new, complete review, then `scripts/compare.py <earlier>/findings.json <out>/findings.json`: new, reopened, persisting, resolved and dismissed findings. `--accepted-fragment <scratch>/accepted.json` carries the earlier `Accepted` statuses forward as a fragment to merge; `--fail-on <severity>` fails only on new or reopened findings |
 
 ## Decide first
 
@@ -109,6 +117,7 @@ as issues or to send the report to the prompt owners, start from
 |---|---|
 | Asked "what should we check" or for a checklist | RECON and CHECKLIST only, then deliver the checklist |
 | Asked to review, audit, scan or improve prompts | All five phases |
+| Asked whether earlier findings were fixed, or to re-review after changes | A new review in a new output directory, run blind to the earlier one; then `scripts/compare.py` against the earlier `findings.json`. A finding no longer reported is *resolved*, not verified fixed: name the eval case or test that would show it |
 | Asked to rewrite or fix the prompts | Out of scope here: report first; the rewrite is a later request that can start from each finding's `proposal` |
 | The prompt is assembled at runtime from many pieces | Reconstruct the full message list as sent, in order, from the code; review that, and cite each piece's own `path:line` |
 | A variable comes from end users, documents, web pages or tool results | Treat it as untrusted; check delimiting, the instruction hierarchy and what the model can do while reading it (*Untrusted input* perspective) |

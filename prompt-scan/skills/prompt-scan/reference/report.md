@@ -26,6 +26,11 @@ unless that directory holds both pages rendered from the current
 
 ## Findings report (chat summary)
 
+`scripts/export.py summary <out>/findings.json` writes items 1 and 3–6 below
+from the record (`--min-severity Medium` for a long list, which it says it cut);
+start from it, so the chat shows the record's own counts and verdicts, and add
+the rest.
+
 1. **First line** — counts by kind (defects / improvements) and by severity,
    and the scope: static only, or with requested eval runs. Name any High
    finding not yet `Valid`
@@ -56,6 +61,23 @@ unless that directory holds both pages rendered from the current
 
 The chat summary, dashboard and PDF show the same verdicts and counts:
 `findings.json` is the record, and every finding in chat exists there.
+
+## Re-reviews
+
+When the request is to check fixes or changes since an earlier review, finish
+this review first, then compare:
+
+```
+python3 scripts/compare.py <earlier>/findings.json <out>/findings.json [--lang ja|en] [--out <scratch>/compare.md]
+```
+
+Report the counts by class first (new, reopened, persisting, resolved,
+dismissed), then the new and reopened findings, then persisting findings whose
+severity or verdict changed, and a persisting finding the earlier review marked
+`Fixed` as a fix that did not hold. A resolved finding was not reported again:
+call it resolved, never verified, unless an eval run or test shows it.
+Matching is by file, perspective and title (lint findings by rule), not by ID;
+a moved or renamed file reads as one resolved and one new finding.
 
 ## Required limitation lines
 

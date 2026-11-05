@@ -7,6 +7,8 @@
 #   make check       tests + verify the skill is self-contained and internally consistent
 #   make inventory   prompt inventory and lint of TARGET
 #   make demo        render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
+#   make compare     what changed between BASE and FINDINGS (two findings.json files)
+#   make export      FORMAT=summary|sarif|issues export of FINDINGS (OUT=file or directory)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
@@ -54,7 +56,7 @@ LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 NO_PDF   ?=
 
-.PHONY: help link unlink status check demo inventory test
+.PHONY: help link unlink status check demo inventory test compare export
 
 help: ## list targets
 	@echo "$(NAME) - skill install"
@@ -63,7 +65,7 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 	@echo
 	@echo "  skill:  $(SKILL)"
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET OUT"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET OUT BASE FINDINGS FORMAT FAIL_ON"
 	@echo "          DEMO_OUT DEMO_INPUT LANG_OUT NO_PDF PYTHON"
 
 link: ## symlink the skill into every installed host's skills dir
@@ -134,8 +136,16 @@ check: test ## verify the skill is self-contained and internally consistent
 	done; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" examples/sample-app --out "$$out/inventory.json" >/dev/null \
 	  || { echo "MISS inventory.py fails on examples/sample-app" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/compare.py" examples/findings.sample.ja.json examples/findings.sample.json >/dev/null \
+	  || { echo "MISS compare.py fails on the samples" >&2; fail=1; }; \
+	for fmt in summary sarif; do \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/export.py" $$fmt examples/findings.sample.json --out "$$out/export.$$fmt" >/dev/null \
+	    || { echo "MISS export.py $$fmt fails on the sample" >&2; fail=1; }; \
+	done; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/export.py" issues examples/findings.sample.ja.json --out "$$out/issues" >/dev/null \
+	  || { echo "MISS export.py issues fails on the sample" >&2; fail=1; }; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, inventory runs"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, inventory, compare and export run"; \
 	exit $$fail
 
 inventory: ## prompt inventory and lint of TARGET (OUT=inventory.json to write a file)
@@ -145,3 +155,13 @@ inventory: ## prompt inventory and lint of TARGET (OUT=inventory.json to write a
 demo: ## render the sample findings into DEMO_OUT (dashboard + PDF)
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$(DEMO_INPUT)" \
 	  --out "$(DEMO_OUT)" --lang $(LANG_OUT) --repo "$(REPO)/examples/sample-app" $(if $(NO_PDF),--no-pdf,)
+
+compare: ## what changed between BASE and FINDINGS (FAIL_ON=High exits 1 on a new High)
+	@[ -n "$(BASE)" ] && [ -n "$(FINDINGS)" ] || { echo "usage: make compare BASE=old/findings.json FINDINGS=new/findings.json [OUT=compare.md] [FAIL_ON=High]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/compare.py" "$(BASE)" "$(FINDINGS)" \
+	  $(if $(OUT),--out "$(OUT)",) $(if $(FAIL_ON),--fail-on $(FAIL_ON),)
+
+export: ## FORMAT=summary|sarif|issues export of FINDINGS (FAIL_ON=High exits 1 on an Open High)
+	@[ -n "$(FORMAT)" ] && [ -n "$(FINDINGS)" ] || { echo "usage: make export FORMAT=summary|sarif|issues FINDINGS=out/findings.json [OUT=path] [FAIL_ON=High]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/export.py" $(FORMAT) "$(FINDINGS)" \
+	  $(if $(OUT),--out "$(OUT)",) $(if $(FAIL_ON),--fail-on $(FAIL_ON),)

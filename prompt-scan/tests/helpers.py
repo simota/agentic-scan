@@ -11,8 +11,10 @@ EXAMPLES = REPO / "examples"
 SAMPLE_APP = EXAMPLES / "sample-app"
 sys.path.insert(0, str(SCRIPTS))
 
+import compare  # noqa: E402,F401
 import contract_check  # noqa: E402,F401
 import excerpt  # noqa: E402,F401
+import export  # noqa: E402,F401
 import findings  # noqa: E402,F401
 import inventory  # noqa: E402,F401
 import record  # noqa: E402,F401

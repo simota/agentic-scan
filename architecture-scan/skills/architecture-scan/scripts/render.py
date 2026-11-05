@@ -1310,20 +1310,9 @@ def html_architecture(doc, lang):
     return "".join(out)
 
 
-def render_html(doc, lang):
-    t, d = LABELS[lang], DASH[lang]
-    e = html_text
-    meta, findings = doc["meta"], doc.get("findings", [])
-    by_sev, excluded = counts(findings)
-    included = [f for f in findings if not is_excluded(f)]
-    status = {f["id"]: f.get("status", "Open") for f in findings}
-    open_ = [f for f in included if status[f["id"]] == "Open"]
-    open_hm = sum(f["severity"] in ("High", "Medium") for f in open_)
-    rank = {s: i for i, s in enumerate(SEVERITIES)}
-    queue = sorted(open_, key=lambda f: (rank[f["severity"]], action(f) != "fix_now", f["id"]))
-    fix_now = sum(action(f) == "fix_now" for f in open_)
-    pending = sum(f["validation"]["verdict"] != "Valid" for f in included)
-
+def html_sidebar(doc, lang, by_sev):
+    """Contents links, then, with findings, the severity facets and keys that act on the register."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
            ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"])]
     nav += [("rules-section", t["rules"])] if doc.get("rules") else []
@@ -1332,7 +1321,7 @@ def render_html(doc, lang):
     sidebar = [f"<nav class='sidebar' id='nav' aria-label='{escape(d['contents'])}'>"
                f"<h2 class='nav-title'>{e(d['contents'])}</h2><ol class='nav-links'>"
                + "".join(f"<li><a href=\"#{i}\">{e(label)}</a></li>" for i, label in nav) + "</ol>"]
-    if findings:
+    if doc.get("findings", []):
         # Facets and keys act on the register through the script, so they appear with it.
         sidebar.append(f"<div class='facets' data-js hidden><h2 class='nav-title'>{e(d['severity'])}</h2>"
                        + "".join(f"<button type='button' class='facet' data-sev='{s}' aria-controls='register-list' "
@@ -1342,21 +1331,21 @@ def render_html(doc, lang):
                        f"<dd><kbd>/</kbd> {e(d['key_search'])}</dd><dd><kbd>j</kbd> <kbd>k</kbd> {e(d['key_move'])}</dd>"
                        f"<dd><kbd>Enter</kbd> {e(d['key_toggle'])}</dd></dl>")
     sidebar.append("</nav>")
+    return sidebar
+
+
+def html_overview(doc, lang, status, by_sev, excluded):
+    """The hero, the headline banner and the count cards."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    meta, findings = doc["meta"], doc.get("findings", [])
+    included = [f for f in findings if not is_excluded(f)]
+    open_ = [f for f in included if status[f["id"]] == "Open"]
+    open_hm = sum(f["severity"] in ("High", "Medium") for f in open_)
+    fix_now = sum(action(f) == "fix_now" for f in open_)
+    pending = sum(f["validation"]["verdict"] != "Valid" for f in included)
     # A recorded method (e.g. a GUARD step) supersedes the read-only note.
     note = "report_note_method" if visible(as_text(meta.get("method", ""))) else "report_note"
-
-    out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
-           f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
-           "<meta name='viewport' content='width=device-width,initial-scale=1'>",
-           f"<title>{escape(t['title'])}: {escape(' '.join(as_text(meta.get('project', '')).split()))}</title>"
-           f"<style>{CSS}</style></head><body>",
-           f"<a class='skip' href=\"#findings\">{e(d['jump_findings'])}</a>",
-           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(d['eyebrow'])}</span>"
-           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span><div class='tools'>"
-           f"<a class='button' href=\"report.md\">{e(d['report_link'])}</a>"
-           f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button></div></div></header>",
-           "<div class='shell'>", *sidebar,
-           "<main><section id='overview' tabindex='-1' aria-labelledby='h'>",
+    out = ["<section id='overview' tabindex='-1' aria-labelledby='h'>",
            f"<div class='hero'><div><div class='eyebrow'>{e(t['title'])}</div>"
            f"<h1 id='h'>{e(meta.get('project', ''))}</h1>"
            f"<div class='meta'>{e(meta.get('scope', ''))} · {e(revision(meta))} · "
@@ -1385,14 +1374,22 @@ def render_html(doc, lang):
         f"<div class='card {cls}'><span class='l'>{e(label)}</span><div class='n'>{n}</div>"
         f"<div class='sub'>{e(sub)}</div></div>" for label, n, cls, sub in cards) + "</div>")
     out.append(f"<p class='report-note'>{e(d['counts_note'])}</p></section>")
+    return out
 
-    # The priority queue: every open High, at least four items, at most twelve.
+
+def html_priority(doc, lang, status):
+    """The priority queue: every open High, at least four items, at most twelve."""
+    d, e = DASH[lang], html_text
+    included = [f for f in doc.get("findings", []) if not is_excluded(f)]
+    open_ = [f for f in included if status[f["id"]] == "Open"]
+    rank = {s: i for i, s in enumerate(SEVERITIES)}
+    queue = sorted(open_, key=lambda f: (rank[f["severity"]], action(f) != "fix_now", f["id"]))
     highs = sum(f["severity"] == "High" for f in queue)
     top = queue[:max(4, min(highs, 12))]
-    out.append(f"<section id='priority-section' tabindex='-1' aria-labelledby='priority-heading'>"
-               f"<div class='section-head'><div>"
-               f"<h2 id='priority-heading'>{e(d['priority'])}</h2><p>{e(d['priority_note'])}</p></div>"
-               f"<a href=\"#findings\">{e(d['view_all'])}</a></div>")
+    out = [f"<section id='priority-section' tabindex='-1' aria-labelledby='priority-heading'>"
+           f"<div class='section-head'><div>"
+           f"<h2 id='priority-heading'>{e(d['priority'])}</h2><p>{e(d['priority_note'])}</p></div>"
+           f"<a href=\"#findings\">{e(d['view_all'])}</a></div>"]
     if any(action(f) == "verify_first" for f in top):
         out.append(f"<p class='section-note'><span class='action-label'>{e(d['verify_first'])}</span> "
                    f"{e(d['verify_first_note'])}</p>")
@@ -1420,83 +1417,159 @@ def render_html(doc, lang):
     if len(top) < len(queue):
         out.append(f"<p class='section-note'>{e(d['queue_more'].format(shown=len(top), total=len(queue)))}</p>")
     out.append("</section>")
+    return out
 
-    out.append(f"<section class='panel' id='decisions-section' tabindex='-1'><h2>{e(t['decisions'])}</h2>"
-               f"<div id='decisions'>"
-               f"{bullet_list(doc.get('decisions', []), t['none'])}</div></section>")
 
+def html_coverage(doc, lang):
+    """Scope, method and revision, the recorded limitations and the perspective coverage table."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    meta = doc["meta"]
     rows = perspective_rows(doc, lang)
     applied = sum(p["status"] == "applied" for _, p in rows)
     limitations = doc.get("limitations", [])
-    out.append(f"<section class='panel coverage' id='coverage' tabindex='-1'><h2>{e(d['coverage_heading'])}<span class='small'>"
-               f"{e(d['limitations_count'])}: {len(limitations)}</span></h2>"
-               f"<p>{e(d['coverage_note'])}</p><dl class='scope-meta'>"
-               f"<dt>{e(t['scope_row'])}</dt><dd>{e(meta.get('scope', ''))}</dd>"
-               f"<dt>{e(d['method_row'])}</dt><dd>{e(review_method(doc, lang))}</dd>"
-               f"<dt>{e(t['revision'])}</dt><dd>{e(revision(meta))}</dd></dl>"
-               f"<h3>{e(t['limitations'])}</h3>{bullet_list(limitations, d['limitations_empty'])}"
-               f"<h3>{e(t['perspectives'])}</h3><p class='section-note'>"
-               f"{e(d['perspective_count'].format(applied=applied, total=len(rows)))}</p>"
-               f"<div class='tablewrap'><table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
-               f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>")
+    out = [f"<section class='panel coverage' id='coverage' tabindex='-1'><h2>{e(d['coverage_heading'])}<span class='small'>"
+           f"{e(d['limitations_count'])}: {len(limitations)}</span></h2>"
+           f"<p>{e(d['coverage_note'])}</p><dl class='scope-meta'>"
+           f"<dt>{e(t['scope_row'])}</dt><dd>{e(meta.get('scope', ''))}</dd>"
+           f"<dt>{e(d['method_row'])}</dt><dd>{e(review_method(doc, lang))}</dd>"
+           f"<dt>{e(t['revision'])}</dt><dd>{e(revision(meta))}</dd></dl>"
+           f"<h3>{e(t['limitations'])}</h3>{bullet_list(limitations, d['limitations_empty'])}"
+           f"<h3>{e(t['perspectives'])}</h3><p class='section-note'>"
+           f"{e(d['perspective_count'].format(applied=applied, total=len(rows)))}</p>"
+           f"<div class='tablewrap'><table class='coverage-table'><thead><tr><th>{e(t['perspective'])}</th>"
+           f"<th>{e(t['rule_status'])}</th><th>{e(t['note'])}</th></tr></thead><tbody>"]
     for name, p in rows:
         out.append(f"<tr><td data-label='{escape(t['perspective'])}'>{e(name)}</td>"
                    f"<td data-label='{escape(t['rule_status'])}'>{e(p['status'])}</td>"
                    f"<td data-label='{escape(t['note'])}'>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
+    return out
 
-    if doc.get("rules"):
-        out.append(f"<section class='panel' id='rules-section' tabindex='-1'><h2>{e(t['rules'])}</h2><p class='section-note'>"
-                   f"{e(d['rules_note'])}</p><div class='tablewrap'><table class='rules'><thead><tr>"
-                   f"<th>{e(t['id'])}</th><th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
-                   f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>")
-        for r in doc["rules"]:
-            rule_state = e(r["status"])
-            if filled(r, "reason"):
-                rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
-            out.append(f"<tr><td class='nowrap' data-label='{escape(t['id'])}'>{e(rule_id(r))}</td>"
-                       f"<td data-label='{escape(t['statement'])}'>{e(rule_statement(r, lang))}</td>"
-                       f"<td data-label='{escape(t['source'])}'>{e(r['source'])}</td>"
-                       f"<td data-label='{escape(t['rule_status'])}'>{rule_state}</td></tr>")
-        out.append("</tbody></table></div></section>")
 
+def html_rules(doc, lang):
+    """The design rules ledger; nothing when no rule is recorded."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    if not doc.get("rules"):
+        return []
+    out = [f"<section class='panel' id='rules-section' tabindex='-1'><h2>{e(t['rules'])}</h2><p class='section-note'>"
+           f"{e(d['rules_note'])}</p><div class='tablewrap'><table class='rules'><thead><tr>"
+           f"<th>{e(t['id'])}</th><th>{e(t['statement'])}</th><th>{e(t['source'])}</th>"
+           f"<th>{e(t['rule_status'])}</th></tr></thead><tbody>"]
+    for r in doc["rules"]:
+        rule_state = e(r["status"])
+        if filled(r, "reason"):
+            rule_state += f"<br>{e(t['reason'])}: {e(r['reason'])}"
+        out.append(f"<tr><td class='nowrap' data-label='{escape(t['id'])}'>{e(rule_id(r))}</td>"
+                   f"<td data-label='{escape(t['statement'])}'>{e(rule_statement(r, lang))}</td>"
+                   f"<td data-label='{escape(t['source'])}'>{e(r['source'])}</td>"
+                   f"<td data-label='{escape(t['rule_status'])}'>{rule_state}</td></tr>")
+    out.append("</tbody></table></div></section>")
+    return out
+
+
+def html_charts(doc, lang, status, by_sev):
+    """Count bars by severity, confidence, perspective, status and verdict."""
+    d, e = DASH[lang], html_text
+    findings = doc.get("findings", [])
+    included = [f for f in findings if not is_excluded(f)]
     cats = sorted(tally(included, lambda f: f["category"]).items(), key=lambda kv: (-kv[1], kv[0]))
-    out.append(f"<section class='panel'><h2>{e(d['overview'])}</h2><p class='section-note'>"
-               f"{e(d['count_basis'])}</p><div class='grid'>"
-               f"<div><h3>{e(d['by_sev'])}</h3>{bars(SEVERITIES, by_sev, colored=True)}</div>"
-               f"<div><h3>{e(d['by_conf'])}</h3>{bars(CONFIDENCES, tally(included, lambda f: f['confidence']))}</div>"
-               f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats))}</div>"
-               f"<div><h3>{e(d['by_status'])}</h3>{bars(STATUSES, tally(included, lambda f: status[f['id']]))}</div>"
-               f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings))}"
-               f"<p class='section-note'>{e(d['excluded_note'])}</p></div></div></section>")
+    return [f"<section class='panel'><h2>{e(d['overview'])}</h2><p class='section-note'>"
+            f"{e(d['count_basis'])}</p><div class='grid'>"
+            f"<div><h3>{e(d['by_sev'])}</h3>{bars(SEVERITIES, by_sev, colored=True)}</div>"
+            f"<div><h3>{e(d['by_conf'])}</h3>{bars(CONFIDENCES, tally(included, lambda f: f['confidence']))}</div>"
+            f"<div><h3>{e(d['by_cat'])}</h3>{bars([k for k, _ in cats], dict(cats))}</div>"
+            f"<div><h3>{e(d['by_status'])}</h3>{bars(STATUSES, tally(included, lambda f: status[f['id']]))}</div>"
+            f"<div><h3>{e(d['by_verdict'])}</h3>{bars(VERDICTS, verdict_counts(findings))}"
+            f"<p class='section-note'>{e(d['excluded_note'])}</p></div></div></section>"]
 
-    out.append(f"<section id='findings' tabindex='-1' aria-labelledby='findings-heading'><div class='section-head'><div>"
-               f"<h2 id='findings-heading'>{e(d['findings_register'])}</h2><p>{e(d['findings_note'])}</p>"
-               f"</div></div>")
+
+def html_filters(findings, lang):
+    """The register's filter bar (shown by the script, which applies it)."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    excluded_values = " ".join(EXCLUDED)
+    all_cats = sorted({f["category"] for f in findings})
+    return (
+        "<div class='panel filters-panel' data-js hidden><div class='filters'>"
+        f"<label><span>{e(d['record_set'])}</span><select id='f-scope'>"
+        + options([("included", d["included_set"]), ("excluded", d["excluded_set"]),
+                   ("all", d["all_records"])]) + "</select></label>"
+        f"<label><span>{e(d['severity'])}</span><select id='f-sev'>"
+        + options([(s, s) for s in SEVERITIES], t["all"]) + "</select></label>"
+        f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
+        + options([(c, c) for c in CONFIDENCES], t["all"]) + "</select></label>"
+        f"<label><span>{e(d['category'])}</span><select id='f-cat'>"
+        + options([(c, c) for c in all_cats], t["all"]) + "</select></label>"
+        f"<label><span>{e(d['status'])}</span><select id='f-status'>"
+        + options([(s, s) for s in STATUSES], t["all"]) + "</select></label>"
+        f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
+        + options([(v, v) for v in VERDICTS], t["all"]) + "</select></label>"
+        f"<label><span>{e(d['sort'])}</span><select id='f-sort'>"
+        + options([("priority", d["priority_sort"]), ("severity", d["severity_sort"])]) + "</select></label>"
+        f"<label class='search'><span>{e(d['search'])}</span><input id='f-q' type='search' "
+        f"placeholder='{escape(d['search'])}'></label></div><div class='filter-bottom'>"
+        "<p class='result-count' id='result-count' role='status' aria-live='polite'></p>"
+        f"<button type='button' id='reset'>{e(d['reset'])}</button></div></div>")
+
+
+def html_finding(f, lang, status, order):
+    """One register row: the summary line and, inside the details, every recorded field."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    v = f["validation"]
+    x = is_excluded(f)
+    fields = [(t["category"], e(category(f)))]
+    fields += [(t[k], e(f[k])) for k in FIELDS if filled(f, k)]
+    fields.append((t["verdict"], e(f"{v['verdict']} ({v['method']})")))
+    if filled(v, "evidence"):
+        fields.append((t["evidence"], e(v["evidence"])))
+    fields.append((t["status"], e(status)))
+    if "analysis" in f:
+        a = f["analysis"]
+        fields.append((t["analysis"], e(f"{a['result']} — {a['tool']}: {a['command']}")))
+    if f.get("references"):
+        # Every reference keeps its own row label.
+        fields += [(t["references"], html_reference(ref)) for ref in f["references"]]
+    guidance = ""
+    if status == "Open" and not x:
+        a = action(f)
+        guidance = (f"<div class='action-guidance'><strong>{e(d[a])}</strong>"
+                    f"<p>{e(d[a + '_note'])}</p></div>")
+    elif x:
+        guidance = f"<p class='muted'>{e(d['excluded_note'])}</p>"
+    # Excluded findings are not in the severity counts, so not in their filters.
+    group = "excluded' class='excluded" if x else f["severity"]
+    attrs = {"sev": f["severity"], "conf": f["confidence"], "cat": f["category"],
+             "status": status, "verdict": v["verdict"], "x": "1" if x else "0",
+             "p": order["p"], "s": order["s"]}
+    data = "".join(f" data-{k}='{escape(as_text(val))}'" for k, val in attrs.items())
+    locations = "".join(f"<code class='location'>{e(p)}</code>" for p in as_locations(f["location"]))
+    return (
+        f"<div class='finding' id='{anchor(f)}'{data}><details data-sev='{group}'><summary>"
+        f"<span data-label='ID'>{e(f['id'])}</span>"
+        f"<span data-label='{escape(d['severity'])}'><span class='badge {f['severity']}'>{f['severity']}</span></span>"
+        f"<span class='reg-meta' data-label='{escape(d['confidence'])}'>{e(f['confidence'])}</span>"
+        f"<span class='reg-meta' data-label='{escape(d['status'])}'>{e(status)}</span>"
+        f"<span class='reg-meta' data-label='{escape(d['verdict'])}'>{e(v['verdict'])}</span>"
+        f"<span class='reg-title'><span>{e(f['title'])}</span>{locations}"
+        f"<span class='toggle-label' aria-hidden='true'><span class='closed-label'>{e(d['expand'])}</span>"
+        f"<span class='open-label'>{e(d['collapse'])}</span></span></span>"
+        f"<span class='reg-meta reg-cat' data-label='{escape(d['category'])}'>{e(f['category'])}</span>"
+        f"</summary><div class='detail'><div class='detail-actions'><strong>{e(f['id'])} · {e(f['title'])}</strong>"
+        f"<span class='detail-links'><button type='button' class='copy-finding' data-js hidden "
+        f"data-copy='{escape(f['id'])}' aria-live='polite'>{e(d['copy_llm'])}</button>"
+        f"<a href=\"#{anchor(f)}\">{e(d['permalink'])}</a></span></div>{guidance}<dl>"
+        + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in fields) + "</dl></div></details></div>")
+
+
+def html_register(doc, lang, status):
+    """The findings register: filters, head row and one row per finding, in priority order."""
+    t, d, e = LABELS[lang], DASH[lang], html_text
+    findings = doc.get("findings", [])
+    rank = {s: i for i, s in enumerate(SEVERITIES)}
+    out = [f"<section id='findings' tabindex='-1' aria-labelledby='findings-heading'><div class='section-head'><div>"
+           f"<h2 id='findings-heading'>{e(d['findings_register'])}</h2><p>{e(d['findings_note'])}</p>"
+           f"</div></div>"]
     if findings:
-        excluded_values = " ".join(EXCLUDED)
-        all_cats = sorted({f["category"] for f in findings})
-        out.append(
-            "<div class='panel filters-panel' data-js hidden><div class='filters'>"
-            f"<label><span>{e(d['record_set'])}</span><select id='f-scope'>"
-            + options([("included", d["included_set"]), ("excluded", d["excluded_set"]),
-                       ("all", d["all_records"])]) + "</select></label>"
-            f"<label><span>{e(d['severity'])}</span><select id='f-sev'>"
-            + options([(s, s) for s in SEVERITIES], t["all"]) + "</select></label>"
-            f"<label><span>{e(d['confidence'])}</span><select id='f-conf'>"
-            + options([(c, c) for c in CONFIDENCES], t["all"]) + "</select></label>"
-            f"<label><span>{e(d['category'])}</span><select id='f-cat'>"
-            + options([(c, c) for c in all_cats], t["all"]) + "</select></label>"
-            f"<label><span>{e(d['status'])}</span><select id='f-status'>"
-            + options([(s, s) for s in STATUSES], t["all"]) + "</select></label>"
-            f"<label><span>{e(d['verdict'])}</span><select id='f-verdict' data-excluded='{excluded_values}'>"
-            + options([(v, v) for v in VERDICTS], t["all"]) + "</select></label>"
-            f"<label><span>{e(d['sort'])}</span><select id='f-sort'>"
-            + options([("priority", d["priority_sort"]), ("severity", d["severity_sort"])]) + "</select></label>"
-            f"<label class='search'><span>{e(d['search'])}</span><input id='f-q' type='search' "
-            f"placeholder='{escape(d['search'])}'></label></div><div class='filter-bottom'>"
-            "<p class='result-count' id='result-count' role='status' aria-live='polite'></p>"
-            f"<button type='button' id='reset'>{e(d['reset'])}</button></div></div>")
+        out.append(html_filters(findings, lang))
     heads = ("ID", d["severity"], d["confidence"], d["status"], d["verdict"], d["title_col"], d["category"])
     out.append("<div class='register'><div class='reg-head' aria-hidden='true'>"
                + "".join(f"<span>{e(h)}</span>" for h in heads) + "</div><div id='register-list'>")
@@ -1515,54 +1588,39 @@ def render_html(doc, lang):
     p_order = {f["id"]: i for i, f in enumerate(sorted(findings, key=priority))}
     s_order = {f["id"]: i for i, f in enumerate(sorted(
         findings, key=lambda f: (is_excluded(f), rank[f["severity"]], f["id"])))}
-    copy = {}
     for f in findings:
-        v = f["validation"]
-        x = is_excluded(f)
-        copy[f["id"]] = finding_markdown(f, lang)
-        fields = [(t["category"], e(category(f)))]
-        fields += [(t[k], e(f[k])) for k in FIELDS if filled(f, k)]
-        fields.append((t["verdict"], e(f"{v['verdict']} ({v['method']})")))
-        if filled(v, "evidence"):
-            fields.append((t["evidence"], e(v["evidence"])))
-        fields.append((t["status"], e(status[f["id"]])))
-        if "analysis" in f:
-            a = f["analysis"]
-            fields.append((t["analysis"], e(f"{a['result']} — {a['tool']}: {a['command']}")))
-        if f.get("references"):
-            # Every reference keeps its own row label.
-            fields += [(t["references"], html_reference(ref)) for ref in f["references"]]
-        guidance = ""
-        if status[f["id"]] == "Open" and not x:
-            a = action(f)
-            guidance = (f"<div class='action-guidance'><strong>{e(d[a])}</strong>"
-                        f"<p>{e(d[a + '_note'])}</p></div>")
-        elif x:
-            guidance = f"<p class='muted'>{e(d['excluded_note'])}</p>"
-        # Excluded findings are not in the severity counts, so not in their filters.
-        group = "excluded' class='excluded" if x else f["severity"]
-        attrs = {"sev": f["severity"], "conf": f["confidence"], "cat": f["category"],
-                 "status": status[f["id"]], "verdict": v["verdict"], "x": "1" if x else "0",
-                 "p": p_order[f["id"]], "s": s_order[f["id"]]}
-        data = "".join(f" data-{k}='{escape(as_text(val))}'" for k, val in attrs.items())
-        locations = "".join(f"<code class='location'>{e(p)}</code>" for p in as_locations(f["location"]))
-        out.append(
-            f"<div class='finding' id='{anchor(f)}'{data}><details data-sev='{group}'><summary>"
-            f"<span data-label='ID'>{e(f['id'])}</span>"
-            f"<span data-label='{escape(d['severity'])}'><span class='badge {f['severity']}'>{f['severity']}</span></span>"
-            f"<span class='reg-meta' data-label='{escape(d['confidence'])}'>{e(f['confidence'])}</span>"
-            f"<span class='reg-meta' data-label='{escape(d['status'])}'>{e(status[f['id']])}</span>"
-            f"<span class='reg-meta' data-label='{escape(d['verdict'])}'>{e(v['verdict'])}</span>"
-            f"<span class='reg-title'><span>{e(f['title'])}</span>{locations}"
-            f"<span class='toggle-label' aria-hidden='true'><span class='closed-label'>{e(d['expand'])}</span>"
-            f"<span class='open-label'>{e(d['collapse'])}</span></span></span>"
-            f"<span class='reg-meta reg-cat' data-label='{escape(d['category'])}'>{e(f['category'])}</span>"
-            f"</summary><div class='detail'><div class='detail-actions'><strong>{e(f['id'])} · {e(f['title'])}</strong>"
-            f"<span class='detail-links'><button type='button' class='copy-finding' data-js hidden "
-            f"data-copy='{escape(f['id'])}' aria-live='polite'>{e(d['copy_llm'])}</button>"
-            f"<a href=\"#{anchor(f)}\">{e(d['permalink'])}</a></span></div>{guidance}<dl>"
-            + "".join(f"<dt>{e(k)}</dt><dd>{val}</dd>" for k, val in fields) + "</dl></div></details></div>")
+        out.append(html_finding(f, lang, status[f["id"]], {"p": p_order[f["id"]], "s": s_order[f["id"]]}))
     out.append("</div></div></section>")
+    return out
+
+
+def render_html(doc, lang):
+    t, d = LABELS[lang], DASH[lang]
+    e = html_text
+    meta, findings = doc["meta"], doc.get("findings", [])
+    by_sev, excluded = counts(findings)
+    status = {f["id"]: f.get("status", "Open") for f in findings}
+
+    out = [f"<!doctype html><html lang='{lang}' class='app-shell'><head><meta charset='utf-8'>",
+           f"<meta http-equiv='Content-Security-Policy' content=\"{CSP}\">",
+           "<meta name='viewport' content='width=device-width,initial-scale=1'>",
+           f"<title>{escape(t['title'])}: {escape(' '.join(as_text(meta.get('project', '')).split()))}</title>"
+           f"<style>{CSS}</style></head><body>",
+           f"<a class='skip' href=\"#findings\">{e(d['jump_findings'])}</a>",
+           f"<header class='appbar'><div class='appbar-in'><span class='brand'><span>{e(d['eyebrow'])}</span>"
+           f"<span class='appbar-project'>{e(meta.get('project', ''))}</span></span><div class='tools'>"
+           f"<a class='button' href=\"report.md\">{e(d['report_link'])}</a>"
+           f"<button type='button' id='theme' data-js hidden>{e(d['theme'])}</button></div></div></header>",
+           "<div class='shell'>", *html_sidebar(doc, lang, by_sev), "<main>"]
+    out += html_overview(doc, lang, status, by_sev, excluded)
+    out += html_priority(doc, lang, status)
+    out.append(f"<section class='panel' id='decisions-section' tabindex='-1'><h2>{e(t['decisions'])}</h2>"
+               f"<div id='decisions'>"
+               f"{bullet_list(doc.get('decisions', []), t['none'])}</div></section>")
+    out += html_coverage(doc, lang)
+    out += html_rules(doc, lang)
+    out += html_charts(doc, lang, status, by_sev)
+    out += html_register(doc, lang, status)
     # After the register: the after diagram is where the fix directions lead.
     out.append(html_architecture(doc, lang))
 
@@ -1571,6 +1629,7 @@ def render_html(doc, lang):
         for k in ("next_steps", "checked_ok")) + "</div>")
     out.append(f"<footer class='footer'>{e(d['footer'])}</footer></main></div>")
     labels = {k: d[k] for k in ("showing", "copy_llm", "copied", "copy_failed")}
+    copy = {f["id"]: finding_markdown(f, lang) for f in findings}
     out.append(f"<script type='application/json' id='labels'>{json_data(labels)}</script>"
                f"<script type='application/json' id='copy-data'>{json_data(copy)}</script>"
                f"<script>{JS}</script></body></html>")

@@ -93,6 +93,63 @@ class AppShellTests(unittest.TestCase):
                 self.assertEqual(facets, shown)
 
 
+class DashboardFeedbackTests(unittest.TestCase):
+    """Keyboard reach, filter feedback and exclusion marks on the dashboard."""
+
+    def doc_with_excluded(self):
+        doc = complete_doc()
+        doc["findings"].append(finding("P-003", "Medium", validation={
+            "verdict": "FalsePositive", "method": "static", "evidence": "x.py:3"}))
+        return doc
+
+    def test_tables_are_named_focusable_regions(self):
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                labels = render.LABELS[lang]
+                root = HtmlTreeReader(render.render_html(complete_doc(), lang)).root
+                wraps = root.findall(".//div[@class='tablewrap']")
+                self.assertTrue(wraps)
+                for wrap in wraps:
+                    # A sideways-scrolling table must be reachable without a pointer.
+                    self.assertEqual((wrap.get("role"), wrap.get("tabindex")), ("region", "0"))
+                self.assertEqual({w.get("aria-label") for w in wraps},
+                                 {labels["perspectives"]} | ({labels["budgets"]} if complete_doc().get("budgets") else set()))
+
+    def test_filter_status_counts_findings_and_names_an_empty_result(self):
+        doc = self.doc_with_excluded()
+        for lang in ("en", "ja"):
+            with self.subTest(lang=lang):
+                labels = render.LABELS[lang]
+                root = HtmlTreeReader(render.render_html(doc, lang)).root
+                status = root.find(".//*[@id='result-count']")
+                self.assertEqual(status.get("role"), "status")
+                total = len(doc["findings"])
+                self.assertEqual(element_text(status), labels["filter_shown"].format(shown=total, total=total))
+                self.assertEqual(status.get("data-shown"), labels["filter_shown"])
+                self.assertEqual(status.get("data-empty"), labels["filter_empty"])
+        doc["findings"] = []
+        root = HtmlTreeReader(render.render_html(doc, "en")).root
+        # With nothing to filter, the section already says None.
+        self.assertIsNone(root.find(".//*[@id='result-count']"))
+
+    def test_copy_results_have_a_polite_announcer(self):
+        root = HtmlTreeReader(render.render_html(complete_doc(), "en")).root
+        announcer = root.find(".//*[@id='announce']")
+        self.assertEqual((announcer.get("role"), announcer.get("class")), ("status", "sr-only"))
+        self.assertIn("getElementById('announce')", render.JS)
+
+    def test_an_excluded_summary_is_badged_as_excluded_not_by_severity(self):
+        root = HtmlTreeReader(render.render_html(self.doc_with_excluded(), "en")).root
+        badges = {d.get("data-sev"): d.find("summary/span").get("class")
+                  for d in root.findall(".//details")}
+        self.assertEqual(badges["High"], "badge High")
+        self.assertEqual(badges["excluded"], "badge excluded")
+        excluded = next(d for d in root.findall(".//details") if d.get("data-sev") == "excluded")
+        # The recorded severity and verdict stay readable beside the exclusion mark.
+        self.assertEqual(element_text(excluded.find("summary/span[@class='small']")),
+                         "· FalsePositive · Medium · Confirmed · Database access (DB1)")
+
+
 class AllExcludedLayoutTests(unittest.TestCase):
     def test_an_all_excluded_record_does_not_say_none_under_its_index(self):
         doc = complete_doc()

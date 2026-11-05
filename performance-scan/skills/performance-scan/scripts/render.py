@@ -26,7 +26,8 @@ from urllib.parse import quote, urlsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
                       SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
-                      read_json, resolve_path, SchemaError, validate)
+                      finding_locations, finding_status, read_json, resolve_path,
+                      SchemaError, validate)
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {
@@ -224,11 +225,17 @@ def markdown_code(value):
     return "<br>".join(span(line) for line in text_lines(value))
 
 
+def block_fence(lines):
+    """A code fence of at least three backticks, longer than any backtick run in lines,
+    so record text can never close the block it is shown in."""
+    return "`" * max(3, max((len(run) for line in lines for run in BACKTICK_RUN.findall(line)),
+                            default=0) + 1)
+
+
 def markdown_fence(value, indent):
     """A fenced block inside a list item; the fence outruns any backtick run in the log."""
     lines = text_lines(value)
-    fence = "`" * max(3, max((len(run) for line in lines for run in BACKTICK_RUN.findall(line)),
-                             default=0) + 1)
+    fence = block_fence(lines)
     return [indent + line if line else "" for line in (f"{fence}text", *lines, fence)]
 
 
@@ -333,9 +340,7 @@ def perspective_rows(doc, lang):
 
 
 def first_location(finding):
-    location = finding["location"]
-    if not isinstance(location, list):
-        return location
+    location = finding_locations(finding)
     return location[0] + (f" (+{len(location) - 1})" if len(location) > 1 else "")
 
 
@@ -350,8 +355,7 @@ def markdown_finding(f, t):
     for key in FIELDS:
         if key == "location":
             # Code spans keep paths copyable (no snake\_case escapes) and inert.
-            locations = f[key] if isinstance(f[key], list) else [f[key]]
-            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in locations))
+            lines.append(f"- **{t[key]}:** " + ", ".join(markdown_code(loc) for loc in finding_locations(f)))
         elif str(f.get(key, "")).strip():  # optional contrast/budget may be blank
             lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     lines.append(f"- **{t['verdict']}:** {v['verdict']} · **{t['method']}:** {shown(v['method'], t['lang'])}")
@@ -365,7 +369,7 @@ def markdown_finding(f, t):
             lines.append(f"  - **{t[run]}:** {markdown_text(r['result'])} ({markdown_code(r['command'])})")
             lines += markdown_fence(r["log"], "    ")
     if not excluded:
-        lines.append(f"- **{t['status']}:** {shown(f.get('status', 'Open'), t['lang'])}")
+        lines.append(f"- **{t['status']}:** {shown(finding_status(f), t['lang'])}")
     for ref in f.get("references", []):
         lines.append(f"- **{t['references']}:** "
                      f"{markdown_link(reference_title(ref), ref['url'])}")
@@ -560,8 +564,8 @@ def llm_line(value):
 
 def llm_block(label, value):
     """A fence longer than any backtick run keeps record text from closing it."""
-    text = "\n".join(text_lines(value))
-    fence = "`" * max(3, max((len(run) for run in BACKTICK_RUN.findall(text)), default=0) + 1)
+    lines = text_lines(value)
+    text, fence = "\n".join(lines), block_fence(lines)
     return ["", f"### {label}", "", f"{fence}text", text, fence]
 
 
@@ -575,7 +579,7 @@ def llm_finding(f, t, meta):
            f"- {t['revision']}: {llm_line(meta.get('commit', '').strip() or 'UNKNOWN')}",
            f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
            f"- {t['perspective']}: {f['category']}{step}"]
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    locations = finding_locations(f)
     if len(locations) == 1:
         out.append(f"- {t['location']}: {llm_line(locations[0])}")
     else:
@@ -583,7 +587,7 @@ def llm_finding(f, t, meta):
     verdict = f"{v['verdict']} ({shown(v['method'], lang)})"
     out.append(f"- {t['verdict']}: {verdict}" + (f" · {t['excluded']}" if is_excluded(f) else ""))
     if not is_excluded(f):
-        out.append(f"- {t['status']}: {shown(f.get('status', 'Open'), lang)}")
+        out.append(f"- {t['status']}: {shown(finding_status(f), lang)}")
     if str(f.get("budget", "")).strip():
         out.append(f"- {t['budget']}: {llm_line(f['budget'])}")
     for key in FIELDS:
@@ -618,13 +622,13 @@ def html_finding(f, t, meta):
     else:
         badge, facts = f"<span class='badge {f['severity']}'>{f['severity']}</span>", ""
     # One location per line: a path may itself contain ", ".
-    rows = [(t[k], "\n".join(f[k]) if k == "location" and isinstance(f[k], list) else f[k])
+    rows = [(t[k], "\n".join(finding_locations(f)) if k == "location" else f[k])
             for k in FIELDS if str(f.get(k, "")).strip()]
     rows.append((t["verdict"], f"{v['verdict']} ({shown(v['method'], lang)})"))
     if v.get("evidence", "").strip():
         rows.append((t["evidence"], v["evidence"]))
     if not excluded:
-        rows.append((t["status"], shown(f.get("status", "Open"), lang)))
+        rows.append((t["status"], shown(finding_status(f), lang)))
     if "measurement" in f:
         rows.append((t["environment"], f["measurement"]["environment"]))
     out = [f"<details data-sev='{group}'><summary>{badge} {e(f['id'])} {e(f['title'])} "

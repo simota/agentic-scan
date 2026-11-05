@@ -44,6 +44,8 @@ DEFINITIVE = ("Valid", "FalsePositive", "NotApplicable")
 EXCLUDED = ("FalsePositive", "NotApplicable")
 METHODS = ("static", "measured")
 STATUSES = ("Open", "Fixed", "Accepted")
+# A finding without a status is open; check, render and the schema share this default.
+DEFAULT_STATUS = "Open"
 BUDGET_FAMILIES = ("QRY", "SIZE", "CPLX", "LAT", "RES", "FE")
 BUDGET_STATUSES = ("holds", "violated", "partly read", "not checked")
 PERSPECTIVE_STATUSES = ("applied", "N/A", "not checked")
@@ -99,6 +101,16 @@ LOCATION = re.compile(r"(?P<path>[^\r\n\x0b\x0c\x1c-\x1e\x85\u2028\u2029]+)"
 
 class SchemaError(ValueError):
     pass
+
+
+def finding_locations(finding):
+    """A finding's location as a list: the schema takes one path:line or a list of them."""
+    location = finding["location"]
+    return location if isinstance(location, list) else [location]
+
+
+def finding_status(finding):
+    return finding.get("status", DEFAULT_STATUS)
 
 
 # Final labels that mark a dotted name as a host rather than a file name.
@@ -417,8 +429,8 @@ def validate_finding(f, where):
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
-    _choice(f.get("status", "Open"), STATUSES, f"{where}.status")
-    locations = f["location"] if isinstance(f["location"], list) else [f["location"]]
+    _choice(finding_status(f), STATUSES, f"{where}.status")
+    locations = finding_locations(f)
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
     for loc in locations:
@@ -788,7 +800,7 @@ def _record_problems(doc):
         # Every budget the finding violates, in budget or named in impact.
         violated = sorted(({budget} if budget in budget_ids else set())
                           | (mentioned & budget_ids))
-        if f.get("status", "Open") != "Fixed" and f["validation"]["verdict"] == "Valid":
+        if finding_status(f) != "Fixed" and f["validation"]["verdict"] == "Valid":
             for held in (b for b in violated if b in holding):
                 problems.append(f"{held}: status holds, but {f['id']} is a Valid, unfixed "
                                 "violation of it")

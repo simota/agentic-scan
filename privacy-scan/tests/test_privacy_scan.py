@@ -32,6 +32,7 @@ def import_module(path: Path, name: str) -> ModuleType:
 
 findings = import_module(SKILL / "scripts" / "findings.py", "priv_findings")
 render = import_module(SKILL / "scripts" / "render.py", "priv_render")
+personal_values = import_module(SKILL / "scripts" / "personal_values.py", "priv_personal_values")
 
 
 def finding(fid="PV-001", severity="High", **extra) -> dict:

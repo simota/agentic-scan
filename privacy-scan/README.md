@@ -45,7 +45,7 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 - **No values** — `findings.py merge` refuses e-mail addresses (outside the
   reserved example domains) and runs of 12 or more digits in any prose,
   including spaced, encoded and invisibly split forms (full rules in the
-  `scripts/findings.py` docstring). Use field names and placeholders
+  `scripts/personal_values.py` docstring). Use field names and placeholders
   throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
@@ -92,7 +92,7 @@ python3 skills/privacy-scan/scripts/findings.py check "$out"   # exit 1 lists ea
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity, commitments, perspective coverage |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity (each filter shows its count; the shown count is announced), commitments and perspective coverage with statuses that need action marked. Its content security policy admits only its own style and script |
 | `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
 
 `findings.py check` enforces the run contract (exactly these three files, a
@@ -134,6 +134,7 @@ skills/privacy-scan/
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract
+  scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files
   scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet

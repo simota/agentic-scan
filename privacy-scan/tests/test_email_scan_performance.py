@@ -5,7 +5,7 @@ import sys
 import textwrap
 import unittest
 
-from test_privacy_scan import findings
+from test_privacy_scan import personal_values
 
 
 class EmailCandidateScanningTests(unittest.TestCase):
@@ -25,7 +25,7 @@ class EmailCandidateScanningTests(unittest.TestCase):
         )
         for value, domains in cases:
             with self.subTest(value=value):
-                self.assertEqual(list(findings._email_domains(value)), domains)
+                self.assertEqual(list(personal_values._email_domains(value)), domains)
 
     def test_large_public_fields_finish_with_mixed_candidate_shapes(self):
         # A generous process deadline catches repeated suffix rescans while

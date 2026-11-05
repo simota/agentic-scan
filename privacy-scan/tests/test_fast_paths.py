@@ -16,7 +16,7 @@ import unicodedata
 import unittest
 
 from test_contract_consistency import build
-from test_privacy_scan import complete_doc, findings, render
+from test_privacy_scan import complete_doc, findings, personal_values, render
 
 
 class GuardShortcutTests(unittest.TestCase):
@@ -43,7 +43,7 @@ class GuardShortcutTests(unittest.TestCase):
             value = "".join(rng.choice(pool) for _ in range(rng.randint(0, 30)))
             expected = "".join(c for c in value.translate(dots) if unicodedata.category(c) != "Cf")
             shortcut = value
-            for dot in findings.IDNA_DOT_CHARS:
+            for dot in personal_values.IDNA_DOT_CHARS:
                 shortcut = shortcut.replace(dot, ".")
             for char in {c for c in set(shortcut) if unicodedata.category(c) == "Cf"}:
                 shortcut = shortcut.replace(char, "")
@@ -56,9 +56,9 @@ class GuardShortcutTests(unittest.TestCase):
                  "123e4567-e89b-12d3-a456-426614174000", "ab12" * 8, "sha256", "x", "#"]
         for _ in range(3000):
             value = "".join(rng.choice(atoms) for _ in range(rng.randint(0, 30)))
-            if not findings.LONG_NUMBER.search(value):
-                self.assertIsNone(findings.LONG_NUMBER.search(
-                    findings._mask_technical_numbers(value)), value)
+            if not personal_values.LONG_NUMBER.search(value):
+                self.assertIsNone(personal_values.LONG_NUMBER.search(
+                    personal_values._mask_technical_numbers(value)), value)
 
     def test_long_numbers_beside_technical_values_are_still_refused(self):
         for value in ("id 123e4567-e89b-12d3-a456-426614174000 123456789012",
@@ -74,7 +74,7 @@ class GuardShortcutTests(unittest.TestCase):
         atoms = [" ", "\t", "\r\n ", "\n\t", "\n", "(", ")", "\\", "a", "@", "x(c)", "( n )"]
         for _ in range(2000):
             value = "".join(rng.choice(atoms) for _ in range(rng.randint(0, 25)))
-            before, after = findings._email_cfws(value)
+            before, after = personal_values._email_cfws(value)
             expected_after, expected_before = {}, {}
             hops = _direct_spans(value)
             for pos in range(len(value) - 1, -1, -1):
@@ -99,7 +99,7 @@ class PackageVersionBacktrackingTests(unittest.TestCase):
                 itertools.product("a1.-_日", repeat=k) for k in range(6)):
             for head in ("1.2.3-beta", "1.2.3+BUILD", "1.2-beta", "1.2.3-"):
                 value = head + "".join(suffix)
-                self.assertEqual(bool(findings.PACKAGE_VERSION.fullmatch(value)),
+                self.assertEqual(bool(personal_values.PACKAGE_VERSION.fullmatch(value)),
                                  bool(self.FORMER.fullmatch(value)), value)
 
     def test_version_running_on_into_prose_is_judged_without_backtracking(self):
@@ -127,9 +127,9 @@ class PackageVersionBacktrackingTests(unittest.TestCase):
 
 def _direct_spans(value):
     """The comment and folding-whitespace spans `_email_cfws` indexes, before chaining."""
-    spans = {m.start(): m.end() for m in findings.EMAIL_FWS.finditer(value)}
+    spans = {m.start(): m.end() for m in personal_values.EMAIL_FWS.finditer(value)}
     stack, escaped_until = [], 0
-    for marker in findings.EMAIL_COMMENT_MARKERS.finditer(value):
+    for marker in personal_values.EMAIL_COMMENT_MARKERS.finditer(value):
         pos = marker.start()
         if pos < escaped_until:
             continue
@@ -145,7 +145,7 @@ def _direct_spans(value):
                     stack.clear()
                 else:
                     escaped_until = pos + 2
-        elif not findings._email_fold(value, pos):
+        elif not personal_values._email_fold(value, pos):
             stack.clear()
     return spans
 

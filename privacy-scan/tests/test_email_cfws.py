@@ -9,7 +9,7 @@ import tempfile
 import textwrap
 import unittest
 
-from test_privacy_scan import complete_doc, finding, findings, render
+from test_privacy_scan import complete_doc, finding, findings, personal_values, render
 
 
 # Synthetic mailboxes only, outside the reserved example domains.
@@ -87,7 +87,7 @@ class EmailCfwsTests(unittest.TestCase):
                     doc = {"findings": [finding(title=value)]}
                     findings.validate(doc)
                     self.assertEqual(doc["findings"][0]["title"], value)
-                    self.assertEqual(list(findings._email_domains(value)), [domain])
+                    self.assertEqual(list(personal_values._email_domains(value)), [domain])
 
     def test_reserved_cfws_spelling_survives_merge_and_render(self):
         value = "synthetic-user (fixture (nested)) \t@ (domain) EXAMPLE.COM"

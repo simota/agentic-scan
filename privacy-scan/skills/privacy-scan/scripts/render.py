@@ -24,10 +24,11 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (LINE_BREAKS, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+from findings import (PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import counts as record_counts, excluded as is_excluded  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
+from personal_values import LINE_BREAKS  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
 
 LABELS = {

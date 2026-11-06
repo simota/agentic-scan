@@ -164,9 +164,16 @@ UNSAFE_CHARS = re.compile("[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f"
                           "\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]")
 
 
+def _visible_escape(match):
+    return f"\\u{ord(match.group()):04x}"
+
+
 def text_lines(value):
-    text = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
-    return UNSAFE_CHARS.sub(lambda m: f"\\u{ord(m.group()):04x}", text).split("\n")
+    text = as_text(value)
+    # Most record strings hold no carriage return; skip both copies for them.
+    if "\r" in text:
+        text = text.replace("\r\n", "\n").replace("\r", "\n")
+    return UNSAFE_CHARS.sub(_visible_escape, text).split("\n")
 
 
 # Compiled once: markdown_text runs per record line, and the module-level
@@ -196,10 +203,16 @@ def markdown_text(value):
         line = line.replace("://", "&#58;//").replace("@", "@<!-- -->")
         # GitHub turns ":name:" into an emoji; split the first colon off the same way.
         # Escaping ran first, so a shortcode may already contain "\_".
-        line = MD_SHORTCODE.sub(":<!-- -->", line)
-        line = MD_WWW.sub(lambda match: match.group()[:-1] + "&#46;", line)
-        return MD_LEADING_BLANKS.sub(lambda match: "".join(
-            "&#32;" if char == " " else "&#9;" for char in match.group()), line)
+        # Each pattern below needs a character that many lines lack (a colon, a
+        # dot, a leading blank): test for it before paying for the regex pass.
+        if ":" in line:
+            line = MD_SHORTCODE.sub(":<!-- -->", line)
+        if "." in line:
+            line = MD_WWW.sub(lambda match: match.group()[:-1] + "&#46;", line)
+        if line[:1] in (" ", "\t"):
+            line = MD_LEADING_BLANKS.sub(lambda match: "".join(
+                "&#32;" if char == " " else "&#9;" for char in match.group()), line)
+        return line
 
     return "<br>".join(inline(line) for line in text_lines(value))
 

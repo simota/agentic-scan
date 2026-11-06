@@ -95,7 +95,10 @@ LABELS = {
 }
 # "1. A tenant ... 2. GET /api/..." holds one step per number; split before each.
 STEP_START = re.compile(r"(?:(?<=\s)|^)(?=[0-9]{1,3}[.)]\s)")
-FINDING_MENTION = r"(?<![A-Za-z0-9_-]){}(?![0-9])"
+# A finding ID (P- and three digits, as the schema requires) not glued to a
+# longer identifier or number. One scan of each line finds every ID it names:
+# matches cannot overlap, since the only P in "P-123" is its first character.
+FINDING_MENTION = re.compile(r"(?<![A-Za-z0-9_-])P-[0-9]{3}(?![0-9])")
 
 
 def issue_title(f):
@@ -119,12 +122,27 @@ def request_steps(request):
     return steps
 
 
-def mentions(items, finding_id):
-    pattern = re.compile(FINDING_MENTION.format(re.escape(finding_id)))
-    return [item for item in items if pattern.search(item)]
+def record_index(doc):
+    """What every draft looks up in the record, gathered in one pass over it.
+
+    mentioned: finding ID -> the `decisions`, then `limitations`, lines that
+    name it, in record order; statements: budget ID -> statement. Scanning the
+    lists and budgets once per draft made a run O(findings x lines).
+    """
+    mentioned = {}
+    for key in ("decisions", "limitations"):
+        for item in doc.get(key, []):
+            for finding_id in dict.fromkeys(FINDING_MENTION.findall(item)):
+                mentioned.setdefault(finding_id, []).append(item)
+    statements = {}
+    for b in doc.get("budgets", []):
+        statements.setdefault(b["id"], b["statement"])
+    return {"mentioned": mentioned, "statements": statements}
 
 
-def open_questions(f, doc, t):
+def open_questions(f, doc, t, index=None):
+    """index: record_index(doc), when drafting several findings of one record."""
+    index = record_index(doc) if index is None else index
     questions = []
     verdict = f["validation"]["verdict"]
     if verdict != "Valid":
@@ -132,12 +150,13 @@ def open_questions(f, doc, t):
         questions.append(t[key].format(verdict=verdict))
     if f["confidence"] == "Environment-dependent":
         questions.append(t["q_environment"].format(scale_driver=f["scale_driver"]))
-    for key in ("decisions", "limitations"):
-        questions += mentions(doc.get(key, []), f["id"])
+    questions += index["mentioned"].get(f["id"], [])
     return questions
 
 
-def render_issue(f, doc, lang):
+def render_issue(f, doc, lang, index=None):
+    """index: record_index(doc), when drafting several findings of one record."""
+    index = record_index(doc) if index is None else index
     t = LABELS[lang]
     meta = doc["meta"]
     v = f["validation"]
@@ -160,8 +179,7 @@ def render_issue(f, doc, lang):
         lines.append(f"- **{t[key]}:** {markdown_text(f[key])}")
     budget = f.get("budget", "").strip()
     if budget:
-        statement = next((b["statement"] for b in doc.get("budgets", []) if b["id"] == budget),
-                         "")
+        statement = index["statements"].get(budget, "")
         lines.append(f"- **{t['budget']}:** {markdown_text(budget)}"
                      + (f" — {markdown_text(statement)}" if statement else ""))
     lines += ["", f"## {t['reproduction']}"]
@@ -188,7 +206,7 @@ def render_issue(f, doc, lang):
         lines += ["", f"## {t['references']}", ""]
         lines += [f"- {markdown_link(reference_title(ref), ref['url'])}"
                   for ref in f["references"]]
-    questions = open_questions(f, doc, t)
+    questions = open_questions(f, doc, t, index)
     if questions:
         lines += ["", f"## {t['open_questions']}", ""]
         lines += [f"- {markdown_text(q)}" for q in questions]
@@ -248,7 +266,8 @@ def main(argv=None):
                               "three run outputs; write drafts to scratch or a directory "
                               "of their own")
         lang = args.lang or doc["meta"]["lang"]
-        drafts = [(out / f"{f['id']}.md", render_issue(f, doc, lang).encode("utf-8"), f)
+        index = record_index(doc)
+        drafts = [(out / f"{f['id']}.md", render_issue(f, doc, lang, index).encode("utf-8"), f)
                   for f in chosen]
         existing = [str(path) for path, _, _ in drafts
                     if out.exists() and file_mode(resolve_path(path)) is not None]

@@ -120,6 +120,28 @@ class Buckets(unittest.TestCase):
         self.assertIn({"baseline_id": None, "current_id": "B-03", "statement": "Fresh",
                        "from": None, "to": "holds"}, rows)
 
+    def test_budget_matching_takes_the_first_unmatched_budget_in_record_order(self):
+        # Two baseline budgets share a statement: each takes the next current budget
+        # with it. A taken budget is not offered again to the ID fallback.
+        budget = lambda bid, statement, status: {  # noqa: E731
+            "id": bid, "statement": statement, "source": "baseline", "status": status}
+        self.old["budgets"] = [budget("B-01", "Same", "holds"), budget("B-02", "same ", "holds"),
+                               budget("B-03", "Gone", "holds"), budget("B-04", "Old", "holds")]
+        self.new["budgets"] = [budget("B-03", "Same", "violated"), budget("B-09", "Other", "holds"),
+                               budget("B-02", "SAME", "violated"), budget("B-04", "New", "violated")]
+        rows = compare.compare(self.old, self.new)["budgets"]
+        self.assertEqual(rows, [
+            {"baseline_id": "B-01", "current_id": "B-03", "statement": "Same",
+             "from": "holds", "to": "violated"},
+            {"baseline_id": "B-02", "current_id": "B-02", "statement": "SAME",
+             "from": "holds", "to": "violated"},
+            {"baseline_id": "B-04", "current_id": "B-04", "statement": "New",
+             "from": "holds", "to": "violated"},
+            {"baseline_id": "B-03", "current_id": None, "statement": "Gone",
+             "from": "holds", "to": None},
+            {"baseline_id": None, "current_id": "B-09", "statement": "Other",
+             "from": None, "to": "holds"}])
+
     def test_perspective_and_scope_changes(self):
         self.new["perspectives"][3]["status"] = "N/A"
         self.new["meta"]["scope"] = "orders API only"

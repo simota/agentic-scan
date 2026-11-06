@@ -76,6 +76,7 @@ skills/bug-scan/
 examples/                  fictional acme-shop record, for make demo and make check
 tests/                     offline tests
 docs/plans/                the design and a diagram sample
+docs/quality/              the SQI rubric, its measured report and the audit scripts (development only)
 ```
 
 ## Development

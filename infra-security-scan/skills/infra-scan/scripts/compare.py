@@ -144,14 +144,57 @@ def score(old, new):
     return points + (3 if same_title else 0)
 
 
+def candidates(old, new):
+    """For each old finding, the ascending indexes of the new findings score() can pair
+    it with: the same kind and rule (I-) or provider and category, and a shared
+    resource or the same file (I-) or title. A superset: score() still decides.
+    Raises TypeError for unhashable values, which only an unvalidated record holds."""
+    def group(f):
+        kind = str(f.get("id", ""))[:2]
+        return (kind, f.get("rule")) if kind == "I-" else (kind, f.get("provider"), f.get("category"))
+
+    def alike(f, kind):
+        return location_file(f.get("location")) if kind == "I-" else norm(f.get("title"))
+
+    index = {}
+    for j, n in enumerate(new):
+        key = group(n)
+        by_resource, by_alike = index.setdefault(key, ({}, {}))
+        for r in set(n.get("resources", [])):
+            by_resource.setdefault(r, []).append(j)
+        by_alike.setdefault(alike(n, key[0]), []).append(j)
+    out = []
+    for o in old:
+        key = group(o)
+        found = set()
+        if key in index:
+            by_resource, by_alike = index[key]
+            for r in set(o.get("resources", [])):
+                found.update(by_resource.get(r, ()))
+            found.update(by_alike.get(alike(o, key[0]), ()))
+        out.append(sorted(found))
+    return out
+
+
 def match(old, new):
     """Greedy one-to-one pairs, best score first; ties in ID order so the result is stable."""
-    pairs = []
-    for o in old:
-        for n in new:
+    try:
+        # Scoring every pair is quadratic: 6,000 findings a side took a minute.
+        within = candidates(old, new)
+    except TypeError:
+        within = None  # every pair, as score() alone would decide
+    pairs, new_keys = [], {}
+    for i, o in enumerate(old):
+        o_key = None
+        for j in range(len(new)) if within is None else within[i]:
+            n = new[j]
             s = score(o, n)
             if s is not None:
-                pairs.append((-s, render.id_key(o["id"]), render.id_key(n["id"]), o, n))
+                if o_key is None:
+                    o_key = render.id_key(o["id"])
+                if j not in new_keys:
+                    new_keys[j] = render.id_key(n["id"])
+                pairs.append((-s, o_key, new_keys[j], o, n))
     pairs.sort(key=lambda p: p[:3])
     taken_o, taken_n, out = set(), set(), []
     for _, _, _, o, n in pairs:

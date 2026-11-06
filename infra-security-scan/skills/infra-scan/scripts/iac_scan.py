@@ -42,6 +42,7 @@ import bisect
 import codecs
 import copy
 import fnmatch
+import functools
 import ipaddress
 import json
 import os
@@ -1348,6 +1349,26 @@ def caller_set_keys(stmts, assume):
     return keys
 
 
+@functools.lru_cache(maxsize=1024)
+def _cached_network(value):
+    try:
+        return ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+
+
+def ip_network_or_none(value):
+    """ipaddress.ip_network(value, strict=False), or None where it raises ValueError.
+    Rules re-read the same few CIDRs; short strings (any address with a prefix
+    fits) are parsed once, longer ones every time so the cache holds no large text."""
+    if len(value) <= 64:
+        return _cached_network(value)
+    try:
+        return ipaddress.ip_network(value, strict=False)
+    except ValueError:
+        return None
+
+
 def world_cidrs(values):
     """Canonical /0 ranges, and narrower ranges in the same list that together
     cover a whole address family (0.0.0.0/1 + 128.0.0.0/1); unknown, invalid
@@ -1356,15 +1377,16 @@ def world_cidrs(values):
     for value in aslist(values):
         if not isinstance(value, str):
             continue
-        try:
-            network = ipaddress.ip_network(value, strict=False)
-        except ValueError:
+        network = ip_network_or_none(value)
+        if network is None:
             continue
         if network.prefixlen == 0:
             out.append(str(network))
         elif network not in parts[network.version]:
             parts[network.version].append(network)
     for version, nets in parts.items():
+        if not nets:  # nothing to cover the family with
+            continue
         world = ipaddress.ip_network("0.0.0.0/0" if version == 4 else "::/0")
         if str(world) in out or world not in ipaddress.collapse_addresses(nets):
             continue
@@ -2368,21 +2390,22 @@ def handle_terraform(scan, parsed):
                     scan.not_run.append("IAM policy composition not evaluated; final document unknown: "
                                         f"data.aws_iam_policy_document.{b.labels[1]} at {rel}:{b.line}")
     for rel, blocks in parsed:
+        parent = str(Path(rel).parent)
         for b in blocks:
             try:
                 if b.type == "resource" and len(b.labels) == 2 and b not in uncertain:
                     b_view = HclView(b)
-                    collect_context(scan, str(Path(rel).parent), b.labels[0], b_view, block_text(b))
+                    collect_context(scan, parent, b.labels[0], b_view, block_text(b))
                     if b.labels[0] == "aws_s3_bucket" and isinstance(b_view.get("bucket"), str):
-                        d, address = str(Path(rel).parent), f"aws_s3_bucket.{b.labels[1]}"
+                        d, address = parent, f"aws_s3_bucket.{b.labels[1]}"
                         scan.bucket_aliases[(d, b_view.get("bucket"))] = address
                         scan.bucket_aliases[(d, address)] = b_view.get("bucket")
                     if b.labels[0] == "aws_launch_template" and not never_created(b_view):
-                        scan.launch_templates.add((str(Path(rel).parent), b.labels[1]))
+                        scan.launch_templates.add((parent, b.labels[1]))
                     if b.labels[0] in VPC_DOMAIN_TYPES and b_view.blocks("vpc_options"):
-                        scan.vpc_domains.add((str(Path(rel).parent), ".".join(b.labels)))
-                        add_vpc_domain_name(scan, str(Path(rel).parent), b_view)
-                collect_policy_references(scan, str(Path(rel).parent), b)
+                        scan.vpc_domains.add((parent, ".".join(b.labels)))
+                        add_vpc_domain_name(scan, parent, b_view)
+                collect_policy_references(scan, parent, b)
             except RecursionError:
                 pass  # reported once by the checks below
     declared = {}
@@ -3495,6 +3518,8 @@ def _yaml_marks(text):
 
 
 def _yaml_comment(text):
+    if "#" not in text:  # the scan below only stops at a #
+        return text.rstrip(" \t")
     for i, c, _ in _yaml_marks(text):
         if c == "#" and (i == 0 or text[i - 1] in " \t"):
             return text[:i].rstrip(" \t")
@@ -3502,6 +3527,8 @@ def _yaml_comment(text):
 
 
 def _yaml_pair(text):
+    if ":" not in text:  # the scan below only splits at a :
+        return None
     for i, c, depth in _yaml_marks(text):
         if c == ":" and depth == 0 and (i + 1 == len(text) or text[i + 1] in " \t"):
             return text[:i].strip(" \t"), text[i + 1:].strip(" \t")
@@ -4202,6 +4229,10 @@ GENERIC_SECRET = re.compile(rf'^\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORE
 # The same inside a one-line object: variables = { LOG = "x", DB_PASSWORD = "..." }.
 INLINE_SECRET = re.compile(rf'[{{,]\s*{SECRET_KEY_NAME}\s*=\s*"([^"]*)"', re.IGNORECASE)
 GENERIC_SECRET_JSON = re.compile(rf'(?:^|[{{,])\s*{SECRET_KEY_NAME}\s*:\s*"([^"]*)"', re.IGNORECASE)  # .tfvars.json
+# Each pattern above holds one of these, so a line without it cannot match; the
+# key-name alternation backtracks at every word, so most lines skip it this way.
+ASSIGNS_STRING = re.compile(r'=\s*"')
+MAPS_STRING = re.compile(r':\s*"')
 # Values that are not secrets even under a secret-looking key: placeholders,
 # references and time units (Cognito token_validity_units).
 PLACEHOLDER = re.compile(r"^(|<.*>|[xX*._-]+|todo|tbd|replace[_-]?me|arn:.*|projects/.*|"
@@ -4257,6 +4288,11 @@ def env_pairs(lines, i):
     is free). The entry text is that line, or the block's attribute lines between
     its braces, so a sibling entry's attributes never count."""
     line = lines[i]
+    # Every shape below needs "name" on line i: an object field, the patterns'
+    # \bname, or NAME_ONLY. Only ASCII letters fold to n, a, m or e, both in
+    # str.lower() and in re.IGNORECASE, so this test skips no line they match.
+    if "name" not in line.lower():
+        return []
     # One-line objects: every field of { name = ..., type = ..., value = ... }, in any order.
     objects = []
     for obj in innermost_objects(line):
@@ -4339,7 +4375,8 @@ def hcl_literal_secrets(scan, res, lines, mocks):
                 in_locals = True
         eff_depth = 1 if depth == 0 and (variable or output or in_locals) else depth
         label = None
-        if (m := HEREDOC_SECRET.match(line)):
+        # The key-name patterns backtrack at every word: test first for what each needs (<<, = ").
+        if "<<" in line and (m := HEREDOC_SECRET.match(line)):
             label = f"literal value assigned to {m.group(1)}"
         elif variable and eff_depth == 1 and (m := LITERAL_DEFAULT.search(line)):
             label = f"literal default for variable {variable}"
@@ -4353,8 +4390,8 @@ def hcl_literal_secrets(scan, res, lines, mocks):
                 body = m.group(2)
             elif not opener:
                 body = None
-        elif in_locals and eff_depth == 1 and not GENERIC_SECRET.match(line) and not INLINE_SECRET.search(line) \
-                and (m := INLINE_LOCALS_SECRET.search(line)):
+        elif in_locals and eff_depth == 1 and ASSIGNS_STRING.search(line) and not GENERIC_SECRET.match(line) \
+                and not INLINE_SECRET.search(line) and (m := INLINE_LOCALS_SECRET.search(line)):
             label = f"literal value assigned to {m.group(1)}"
             body = m.group(2)
         if label and body is not None and i + 1 not in mocks and literal(body):
@@ -4369,14 +4406,21 @@ def hcl_literal_secrets(scan, res, lines, mocks):
 def scan_secrets(scan, rel, text, kind):
     res = Res("file", rel, rel, 1)
     lines = split_lines(text)
-    generic = GENERIC_SECRET_JSON.finditer if rel.endswith(".json") else (
-        lambda line: filter(None, [GENERIC_SECRET.match(line)]))
+    is_json = rel.endswith(".json")
+
+    def generic(line):
+        if is_json:
+            return GENERIC_SECRET_JSON.finditer(line) if MAPS_STRING.search(line) else ()
+        return filter(None, [GENERIC_SECRET.match(line)]) if ASSIGNS_STRING.search(line) else ()
+
     mocks = mock_lines(lines) if kind == "terragrunt" else set()
     # Environment entries are read without comments, which may sit beside a name or
     # mention a reference type; a heredoc's body (container definitions) is kept.
     code_lines = hcl_code("\n".join(lines), heredocs=True).split("\n") if kind in HCL_KINDS else lines
+    # No shape spans a newline, so a file without one has no line with one.
+    shaped = ANY_SECRET_PATTERN.search(text) is not None
     for n, line in enumerate(lines, 1):
-        for label, pattern in SECRET_PATTERNS if ANY_SECRET_PATTERN.search(line) else ():
+        for label, pattern in SECRET_PATTERNS if shaped and ANY_SECRET_PATTERN.search(line) else ():
             # AWS documentation keys end in EXAMPLE (AKIAIOSFODNN7EXAMPLE).
             if any(not m.group().endswith("EXAMPLE") for m in pattern.finditer(line)):
                 scan.hit("SEC-001", res, n, label, strong=True)
@@ -4389,7 +4433,8 @@ def scan_secrets(scan, rel, text, kind):
                     and not SECRET_REFERENCE.search(entry):
                 scan.hit("SEC-001", res, n, f"literal value for {name}")
         # Inline objects are read without comments, which may show such a shape as an example.
-        inline = INLINE_SECRET.finditer(code_lines[n - 1]) if kind in HCL_KINDS and n <= len(code_lines) else ()
+        inline = INLINE_SECRET.finditer(code_lines[n - 1]) \
+            if kind in HCL_KINDS and n <= len(code_lines) and ASSIGNS_STRING.search(code_lines[n - 1]) else ()
         for m in [*generic(line), *inline]:
             if SECRET_NAME_VALUE.match(m.group(2)) and (
                     m.group(1).lower() in ("secret_id", "secret_name") or (
@@ -4957,14 +5002,15 @@ def merge_into(path, findings, inventory, commit):
     write_json_atomic(path, data, mkdir=True)
 
 
-def printable(value):
+def printable(value, seen=None):
     """Output text: lone surrogates (a "\\ud800" escape in an input) spelled out,
     since the output is UTF-8, and credential shapes in repository-derived names
     (a resource or directory named like a key) redacted.
 
     A report repeats a few thousand distinct strings hundreds of thousands of
-    times, so each distinct string is converted once per call."""
-    seen = {}
+    times, so each distinct string is converted once per call, or once per run
+    when the calls share seen (a dict of input string to its output)."""
+    seen = {} if seen is None else seen
 
     def convert(value):
         if isinstance(value, str):
@@ -5030,8 +5076,10 @@ def main(argv=None):
             return 2
     scan = run(root, args.snapshots)
     commit = git_commit(root)
-    findings = printable(build_findings(scan.hits))
-    result = printable(report(scan, root, commit, findings, args.snapshots))
+    # The report repeats the findings and the inventory: convert each string once.
+    seen = {}
+    findings = printable(build_findings(scan.hits), seen)
+    result = printable(report(scan, root, commit, findings, args.snapshots), seen)
     # Write the inventory first: a failed --out must not leave findings.json
     # describing a scan whose inventory was never saved.
     if args.out:
@@ -5045,7 +5093,7 @@ def main(argv=None):
         sys.stdout.write("\n")
     if args.into:
         try:
-            merge_into(args.into, findings, printable(inventory_of(scan)), commit)
+            merge_into(args.into, findings, printable(inventory_of(scan), seen), commit)
         except (OSError, ValueError, RecursionError) as e:
             print(f"iac_scan: cannot update {args.into}: {e}", file=sys.stderr)
             return 2

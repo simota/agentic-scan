@@ -25,12 +25,13 @@ import json
 import os
 from pathlib import Path
 import re
+import stat
 import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
-from excerpt import SECRET_RE, sensitive, source_lines  # noqa: E402
+from excerpt import SECRET_RE, has_secret_needle, sensitive, source_lines  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
 
 VCS_DIRS = {".git", ".hg", ".svn"}
@@ -50,17 +51,23 @@ AGENT_NAMES = {"AGENTS.md", "CLAUDE.md", "GEMINI.md", ".cursorrules", ".windsurf
 PROMPT_DIRS = {"prompts", "prompt", "system_prompts", "system-prompts", "instructions"}
 AGENT_DIRS = (".claude/agents", ".claude/commands", ".cursor/rules", ".github/prompts", ".codex/agents")
 
+# (api, pattern, needles): every match of the pattern contains one of its needles, so a file holding none
+# is skipped without the pattern's word-boundary tests at each character. Keep the two in step;
+# tests/test_inventory.py checks that the needles cover each pattern.
 CALL_PATTERNS = [
-    ("anthropic.messages", re.compile(r"\.messages\.(?:create|stream|count_tokens)\s*\(")),
-    ("openai.chat.completions", re.compile(r"\.chat\.completions\.(?:create|parse)\s*\(")),
-    ("openai.responses", re.compile(r"\.responses\.(?:create|parse)\s*\(")),
-    ("gemini.generate_content", re.compile(r"\b(?:generate_content|generateContent)\s*\(")),
-    ("ai-sdk", re.compile(r"\b(?:generateText|streamText|generateObject|streamObject)\s*\(")),
+    ("anthropic.messages", re.compile(r"\.messages\.(?:create|stream|count_tokens)\s*\("), (".messages.",)),
+    ("openai.chat.completions", re.compile(r"\.chat\.completions\.(?:create|parse)\s*\("), (".chat.completions.",)),
+    ("openai.responses", re.compile(r"\.responses\.(?:create|parse)\s*\("), (".responses.",)),
+    ("gemini.generate_content", re.compile(r"\b(?:generate_content|generateContent)\s*\("),
+     ("generate_content", "generateContent")),
+    ("ai-sdk", re.compile(r"\b(?:generateText|streamText|generateObject|streamObject)\s*\("),
+     ("generateText", "streamText", "generateObject", "streamObject")),
     ("langchain", re.compile(r"\b(?:ChatPromptTemplate|PromptTemplate|SystemMessagePromptTemplate|"
-                             r"SystemMessage|HumanMessage)\b")),
-    ("role:system", re.compile(r"""["']?role["']?\s*[:=]\s*["']system["']""")),
+                             r"SystemMessage|HumanMessage)\b"), ("PromptTemplate", "SystemMessage", "HumanMessage")),
+    ("role:system", re.compile(r"""["']?role["']?\s*[:=]\s*["']system["']"""), ("role",)),
     ("prompt-variable", re.compile(r"\b(?:SYSTEM_PROMPT|system_prompt|systemPrompt|PROMPT_TEMPLATE|"
-                                   r"prompt_template|promptTemplate)\b\s*[:=]")),
+                                   r"prompt_template|promptTemplate)\b\s*[:=]"),
+     ("SYSTEM_PROMPT", "system_prompt", "systemPrompt", "PROMPT_TEMPLATE", "prompt_template", "promptTemplate")),
 ]
 # Bare IDs plus the forms clouds use: Bedrock `us.anthropic.claude-…-v1:0`, Vertex `claude-…@20240620`,
 # Gemini `models/gemini-…`.
@@ -169,18 +176,28 @@ def walk(root, skipped=None, unread=None):
     """Files under root, sorted; each directory pruned by name (VCS metadata aside) or not followed because it
     is a symlink is added to skipped, and each symlink that would be a prompt file to unread."""
     for dirpath, dirnames, filenames in os.walk(root, followlinks=False):
+        here = Path(dirpath)
+        # Once per directory: the relative path of each entry is this one's plus its name.
+        prefix = here.relative_to(root).as_posix() + "/"
+        prefix = "" if prefix == "./" else prefix
         if skipped is not None:
-            skipped += [(Path(dirpath) / d).relative_to(root).as_posix() for d in sorted(dirnames)
-                        if d in SKIP_DIRS - VCS_DIRS or d not in SKIP_DIRS and (Path(dirpath) / d).is_symlink()]
+            skipped += [prefix + d for d in sorted(dirnames)
+                        if d in SKIP_DIRS - VCS_DIRS or d not in SKIP_DIRS and (here / d).is_symlink()]
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for name in sorted(filenames):
-            path = Path(dirpath) / name
-            if path.is_symlink() or not path.is_file() or sensitive(name):
-                rel = path.relative_to(root).as_posix()
-                if unread is not None and path.is_symlink() and not sensitive(name) and prompt_kind(shown(rel)):
+            path = here / name
+            # One lstat answers both is_symlink() and is_file(): a path that is not a link stats as itself.
+            try:
+                mode = os.lstat(path).st_mode
+            except OSError:
+                mode = 0  # As is_symlink() and is_file() answer for a path that cannot be stat'ed.
+            link = stat.S_ISLNK(mode)
+            if link or not stat.S_ISREG(mode) or sensitive(name):
+                rel = prefix + name
+                if unread is not None and link and not sensitive(name) and prompt_kind(shown(rel)):
                     unread.append({"path": shown(rel), "reason": "symlink"})
                 continue
-            yield path, path.relative_to(root).as_posix()
+            yield path, prefix + name
 
 
 def shown(rel):
@@ -219,8 +236,37 @@ def prompt_kind(rel):
 
 def estimate_tokens(text):
     """A rough estimate: about four ASCII characters per token, one per other character."""
-    ascii_chars = sum(1 for c in text if ord(c) < 128)
+    # Encoding to ASCII and dropping the rest keeps exactly the characters below 128, counted in C; a slice
+    # at a time, so no copy of a whole large file is made.
+    ascii_chars = len(text) if text.isascii() else sum(
+        len(text[i:i + 1024].encode("ascii", "ignore")) for i in range(0, len(text), 1024))
     return ascii_chars // 4 + (len(text) - ascii_chars)
+
+
+def match_lines(pattern, text):
+    """Indices (0-based) of the lines, as source_lines() splits text, on which some match of pattern starts.
+
+    One search of the whole text replaces a search of every line. Each line pattern.search(line) matches is
+    among them: that match is also one of the whole text, since the line breaks around it (\\n, and a \\r
+    source_lines strips) satisfy every boundary the patterns test as the ends of the line do. A match running
+    over a line break may add a line no per-line search matches, so callers still test each line returned.
+    """
+    found, pos, line = [], 0, 0
+    while True:
+        m = pattern.search(text, pos)
+        if m is None:
+            return found
+        line += text.count("\n", pos, m.start())
+        found.append(line)
+        end = text.find("\n", m.start())
+        if end < 0:
+            return found
+        pos, line = end + 1, line + 1
+
+
+def without_code_spans(line):
+    """The line with its Markdown code spans removed; a line without a backtick has none to remove."""
+    return INLINE_CODE.sub("", line) if "`" in line else line
 
 
 def variables(text):
@@ -305,19 +351,21 @@ def lint_tags(lines, fenced):
             for name, numbers in sorted(opened.items(), key=lambda kv: kv[1][0] if kv[1] else 0) if numbers]
 
 
-def template_uses(text):
+def template_uses(text, *, lines=None, fenced=None):
     """(line, names) for each line outside code fences that uses a template variable the template itself
-    does not define: what a caller has to fill."""
-    lines = source_lines(text)
-    fenced = fenced_lines(lines)
+    does not define: what a caller has to fill. lines and fenced, when given, are source_lines(text) and
+    fenced_lines() of them, which scan() has already worked out."""
+    lines = source_lines(text) if lines is None else lines
+    fenced = fenced_lines(lines) if fenced is None else fenced
     defined = set(TEMPLATE_BUILTINS)
     for groups in TEMPLATE_DEFINES.findall(text):
         defined |= set(CODE_WORD.findall(" ".join(groups)))
     uses = []
     for number, line in enumerate(lines, 1):
-        if number in fenced:
+        # Every VARIABLE_RES pattern opens a brace, so a line without one uses no variable.
+        if number in fenced or "{" not in line:
             continue
-        names = [n.split(".")[0] for n in variables(INLINE_CODE.sub("", line))]
+        names = [n.split(".")[0] for n in variables(without_code_spans(line))]
         names = [n for n in dict.fromkeys(names) if n.lower() not in defined and n not in defined]
         if names:
             uses.append((number, names))
@@ -337,11 +385,12 @@ def lint_unreferenced(templates, code_words):
     return hits
 
 
-def lint_file(rel, text, tokens):
-    lines = source_lines(text)
-    fenced = fenced_lines(lines)
+def lint_file(rel, text, tokens, *, lines=None, fenced=None):
+    """Lint hits for one prompt file; lines and fenced as template_uses() takes them."""
+    lines = source_lines(text) if lines is None else lines
+    fenced = fenced_lines(lines) if fenced is None else fenced
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
-    prose = [INLINE_CODE.sub("", line) for line in lines]
+    prose = [without_code_spans(line) for line in lines]
     hits = []
     suffix = Path(rel).suffix.lower()
     for number, detail in lint_template(prose, fenced, suffix in ENGINE_SUFFIXES, suffix in CONFIG_SUFFIXES):
@@ -361,7 +410,7 @@ def lint_file(rel, text, tokens):
                 seen[key] = number
     if repeats:
         hits.append(("duplicate-line", repeats[0], f"{len(repeats)} repeated line(s)"))
-    secrets = [n for n, line in enumerate(lines, 1) if SECRET_RE.search(line)]
+    secrets = [n for n, line in enumerate(lines, 1) if SECRET_RE.search(line)] if has_secret_needle(text) else []
     if secrets:
         # Location and kind only; the value is never copied.
         hits.append(("secret-literal", secrets[0], f"{len(secrets)} line(s) with a credential-shaped value"))
@@ -475,16 +524,22 @@ def scan(root):
             tokens = estimate_tokens(text)
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
                                  "est_tokens": tokens, "variables": variables(text)})
-            lint += lint_file(rel, text, tokens)
+            fenced = fenced_lines(lines)
+            lint += lint_file(rel, text, tokens, lines=lines, fenced=fenced)
             if kind == "template":
-                templates.append((rel, template_uses(text)))
+                templates.append((rel, template_uses(text, lines=lines, fenced=fenced)))
             read.add(on_disk)
         if is_code:
             code_words.update(CODE_WORD.findall(text))
         if is_code or suffix in CONFIG_SUFFIXES:
-            for number, line in enumerate(lines, 1):
+            # Only lines on which some pattern's match starts can match it; most code lines match none.
+            patterns = [pattern for _, pattern, needles in CALL_PATTERNS
+                        if any(needle in text for needle in needles)] if is_code else []
+            candidates = sorted({i for pattern in [*patterns, MODEL_RE] for i in match_lines(pattern, text)
+                                 if i < len(lines)})
+            for number, line in ((i + 1, lines[i]) for i in candidates):
                 if is_code:
-                    for api, pattern in CALL_PATTERNS:
+                    for api, pattern, _needles in CALL_PATTERNS:
                         if pattern.search(line):
                             call_sites.append({"path": rel, "line": number, "api": api})
                             read.add(on_disk)

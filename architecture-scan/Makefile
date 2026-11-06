@@ -204,11 +204,17 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { echo "MISS render.py fails on $$sample (meta.lang)" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py check "$$out" >/dev/null \
 	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
-	  rm -f "$$out"/*; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/drafts.py "$$out/findings.json" --out "$$out/drafts" >/dev/null \
+	    || { echo "MISS drafts.py fails on $$sample" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/compare.py "$$sample" "$$out/findings.json" >/dev/null \
+	    || { echo "MISS compare.py fails on $$sample" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/sarif.py "$$out/findings.json" --out "$$out/drafts/a.sarif" >/dev/null \
+	    || { echo "MISS sarif.py fails on $$sample" >&2; fail=1; }; \
+	  rm -f "$$out"/drafts/*; rmdir "$$out"/drafts 2>/dev/null; rm -f "$$out"/*; \
 	done; \
 	rm -rf "$$out"; \
 	command -v pandoc >/dev/null 2>&1 || echo "note: pandoc is not installed, so the GFM parser tests were skipped"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, pass the contract and hand off"; \
 	exit $$fail
 
 demo: ## render the sample into DEMO_OUT, or a new private temp dir

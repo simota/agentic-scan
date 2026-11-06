@@ -1,4 +1,5 @@
 <!--
+`scripts/drafts.py` がこの規則どおりに findings.json から埋める。出力を確認し、フィールドにない内容だけを書き足す。
 1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所または 1 設計判断 = 1 issue）。
 各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除し、中身が空になる
 節（finding に references がないときの「参考」など）は見出しごと削除する。

@@ -1,4 +1,6 @@
 <!--
+`scripts/drafts.py` fills this template from findings.json by these rules; check its output, then write what
+no field holds.
 Reports design findings to the owner, a tech lead or a manager. One report can carry several findings.
 Copy the counts and each finding from findings.json so the report never disagrees with the dashboard.
 Every {{n_*}} value comes from `python3 scripts/findings.py counts <out>/findings.json`, counted as the

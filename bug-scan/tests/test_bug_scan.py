@@ -2,6 +2,7 @@
 import copy
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -526,6 +527,172 @@ class CompareAndImportTests(TempDir):
             import_findings.to_fragment(dict(proposals=[]), "brand-feature-scan")
         with self.assertRaises(common.RecordError):
             import_findings.to_fragment(dict(findings=[]), "../evil")
+
+
+class BoundaryTests(TempDir):
+    """Malformed input from a fragment or file is refused by name; it neither crashes nor gets half-read."""
+
+    def merge_text(self, text):
+        fragment = self.dir / "f.json"
+        fragment.write_text(text, encoding="utf-8")
+        findings.merge(self.dir / "findings.json", [fragment])
+
+    def test_each_malformed_fragment_is_refused(self):
+        one = '{"id":"BG-001","title":"t","status":"Open"'
+        for text in ('{"gates": 3}', '{"findings": "x"}', '{"meta": "x"}', "[]", '{"summary": 3}', '{"next_steps": "do"}', '{"remove": []}',
+                     '{"remove": {"next_steps": "x"}}', '{"perspectives": ["x"]}', '{"perspectives": "x"}',
+                     '{"findings":[' + one + ',"pattern":"BP01","surfaces":[{"op":"x"}]}]}', '{"findings":[' + one + ',"surfaces":3}]}',
+                     '{"findings":[' + one + ',"pattern":["x"]}]}', '{"findings":[{"id":"BG-001","title":"t","status":["Open"]}]}',
+                     '{"findings":[' + one + ',"location":3}]}', '{"findings":[{"id":["x"],"title":"t","status":"Open"}]}',
+                     '{"findings":[' + one + ',"relations":3}]}', '{"findings":[' + one + ',"path":"x"}]}', '{"findings":[' + one + ',"sibling_sites":3}]}',
+                     '{"issues":[{"id":"I-1","kind":"k","at":"a","feeds":3}]}'):
+            with self.subTest(text=text), self.assertRaises(common.RecordError):
+                self.merge_text(text)
+        self.assertFalse((self.dir / "findings.json").exists())
+
+    def test_contract_check_survives_a_structurally_wrong_record(self):
+        self.assertTrue(findings.contract_errors(dict(gates=3, meta="x")))
+
+    def test_concurrent_merges_keep_every_update(self):
+        script = ("import json,sys;sys.dont_write_bytecode=True;sys.path.insert(0,sys.argv[1]);import findings\n"
+                  "for i in range(15):\n"
+                  "    p=f'{sys.argv[2]}/{sys.argv[3]}_{i}.json';json.dump({'next_steps':[f'{sys.argv[3]}-{i}']},open(p,'w'));findings.merge(sys.argv[2]+'/findings.json',[p])\n")
+        workers = [subprocess.Popen([sys.executable, "-c", script, str(SCRIPTS), str(self.dir), str(w)]) for w in range(5)]
+        self.assertEqual([w.wait() for w in workers], [0] * 5)
+        self.assertEqual(len(common.load_json(self.dir / "findings.json")["next_steps"]), 75)
+        self.assertFalse((self.dir / ".findings.lock").exists())
+
+    def test_render_names_a_reference_that_points_nowhere(self):
+        record, surface_data, history_data = sample()
+        broken = copy.deepcopy(record)
+        broken["findings"][0]["relations"] = [dict(type="blocks", to="BG-099", strength="Traced", evidence="x")]
+        with self.assertRaisesRegex(common.RecordError, "BG-099"):
+            render.build(broken, surface_data, history_data, "en")
+        broken = copy.deepcopy(record)
+        next(e for e in broken["fix_events"] if e.get("gate_missed"))["gate_missed"] = ["G-99"]
+        with self.assertRaisesRegex(common.RecordError, "G-99"):
+            render.build(broken, surface_data, history_data, "en")
+
+    def test_ledger_refuses_entries_and_records_it_cannot_track(self):
+        path = self.dir / "ledger.json"
+        common.write_json(path, dict(version=1, entries=[dict(key="k")]))
+        with self.assertRaisesRegex(common.RecordError, "status_log"):
+            ledger.read_ledger(path)
+        with self.assertRaisesRegex(common.RecordError, "BG-001"):
+            ledger.reconcile(dict(version=1, entries=[]), dict(findings=[dict(id="BG-001", title="t", status="Open")]), "2026-01-01")
+
+    def test_surface_merge_refuses_a_bad_fragment(self):
+        path = self.dir / "s.json"
+        common.write_json(path, dict(surfaces=[], links=[]))
+        fragment = self.dir / "f.json"
+        for text in ("[]", '{"surfaces": ["x"]}', '{"surfaces": [{"name": "n"}]}', '{"remove_links": ["ab"]}'):
+            fragment.write_text(text, encoding="utf-8")
+            with self.subTest(text=text), self.assertRaises(common.RecordError):
+                surfaces.merge(path, [fragment])
+
+
+class FigureIntegrityTests(unittest.TestCase):
+    """A figure and its table say what the record says: nothing dropped silently, no false record counted."""
+
+    def setUp(self):
+        self.record, self.surfaces, self.history = sample()
+        self.t = diagrams.TEXT["en"]
+
+    def falsify(self, record):
+        target = record["findings"][0]
+        target["validation"]["verdict"] = "FalsePositive"
+        return target
+
+    def test_a_false_positive_is_not_counted_or_highlighted(self):
+        def open_count(record, surface):
+            drawing = diagrams.d8(record, self.surfaces, self.t)["svg"]
+            return int(re.search(r"(\d+) open", drawing.split(f'data-s="{surface}"')[1]).group(1))
+
+        record = copy.deepcopy(self.record)
+        surface = record["findings"][0]["surfaces"][0]["id"]
+        before = open_count(record, surface)
+        target = self.falsify(record)
+        self.assertEqual(open_count(record, surface), before - 1)
+        self.assertNotIn(f"#{diagrams.record_links(record)[target['id']]}", diagrams.d6(record, self.t, "en")["svg"])
+        self.assertNotIn("box-hi", diagrams.d7(record, self.surfaces, self.t)["svg"].split(target["title"][:10])[0][-400:])
+
+    def test_feeds_may_be_a_single_string(self):
+        record = copy.deepcopy(self.record)
+        record["issues"][0]["feeds"] = "BP01"
+        self.assertEqual(findings.shape_errors(record), [])
+        self.assertEqual(diagrams.d6(record, self.t, "en")["rows"][0][2], "BP01")
+
+    def test_tables_hold_what_the_drawing_leaves_out(self):
+        self.assertEqual(len(diagrams.d3(self.record, self.history, self.t)["rows"]), sum(len(g["edges"]) for g in diagrams.chains(self.record, self.history)))
+        record = copy.deepcopy(self.record)
+        base = next(f for f in record["findings"] if f.get("path"))
+        record["findings"] += [dict(copy.deepcopy(base), id=f"BG-{100 + i}") for i in range(12)]
+        d5 = diagrams.d5(record, self.t)
+        self.assertEqual(len({row[0] for row in d5["rows"]}), sum(1 for f in record["findings"] if f.get("path")))
+        self.assertIn("Only the top 10", d5["foot"])
+        many = copy.deepcopy(self.history)
+        many["modules"] = [dict(module=f"m{i}", commits=i + 1, fix_candidates=0, test_files=0) for i in range(40)]
+        d4 = diagrams.d4(self.record, many, self.t)
+        self.assertEqual(len(d4["rows"]), 40)
+        self.assertIn("top 30 of 40", d4["foot"])
+
+    def test_english_pages_use_english_separators_and_labels(self):
+        figure = {f["number"]: f for f in diagrams.figures(self.record, self.surfaces, self.history, "en")}
+        self.assertNotIn(" ・ ", figure[5]["svg"] + figure[6]["svg"] + figure[7]["svg"] + figure[8]["svg"])
+        japanese = {f["number"]: f for f in diagrams.figures(self.record, self.surfaces, self.history, "ja")}
+        self.assertNotIn(" commits,", japanese[4]["svg"])
+
+
+class PageStructureTests(unittest.TestCase):
+    def setUp(self):
+        self.record, self.surfaces, self.history = sample()
+        self.dashboard, self.document = render.build(self.record, self.surfaces, self.history, "ja")
+
+    def test_the_register_leads_and_contents_follow_page_order(self):
+        page = [self.dashboard.index(mark) for mark in ('<section id="findings"', '<section id="figures"', '<div class="lists"')]
+        self.assertEqual(page, sorted(page))
+        nav = self.dashboard[self.dashboard.index('class="nav-links"'):self.dashboard.index('class="facets"')]
+        self.assertEqual(re.findall(r'href="#([a-z-]+)"', nav), ["overview", "priority-section", "coverage", "findings", "figures", "lists"])
+
+    def test_the_printable_report_has_no_focus_stop_that_does_nothing(self):
+        self.assertNotIn('tabindex="0"', self.document)
+        self.assertIn('tabindex="0"', self.dashboard)
+
+    def test_every_figure_part_has_a_name_and_every_record_link_lands(self):
+        for page in (self.dashboard, self.document):
+            parts = re.findall(r"<[a-z]+ [^<>]*data-tip=[^<>]*>", page[page.index('id="figures"'):])
+            self.assertGreater(len(parts), 50)
+            self.assertTrue(all("aria-label=" in part for part in parts))
+        hrefs = set(re.findall(r'<a href="#(finding-\d+)" aria-label', self.document))
+        self.assertTrue(hrefs)
+        for href in hrefs:
+            self.assertIn(f"id='{href}'", self.document)
+
+    def test_figures_are_groups_and_table_heads_are_scoped(self):
+        self.assertNotIn('role="img" aria-label="' + diagrams.TEXT["ja"]["d7"] + '"', self.dashboard)
+        self.assertNotRegex(self.dashboard, r"<th>")
+
+    def test_figure_text_meets_aa_on_every_shade_in_both_themes(self):
+        def tokens(block):
+            return dict(item.split(":") for item in block.split(";"))
+
+        def luminance(colour):
+            digits = colour[1:] if len(colour) == 7 else "".join(c * 2 for c in colour[1:])
+            channels = [int(digits[i:i + 2], 16) / 255 for i in (0, 2, 4)]
+            r, g, b = [c / 12.92 if c <= .03928 else ((c + .055) / 1.055) ** 2.4 for c in channels]
+            return .2126 * r + .7152 * g + .0722 * b
+
+        def ratio(a, b):
+            high, low = sorted((luminance(a), luminance(b)), reverse=True)
+            return (high + .05) / (low + .05)
+
+        pairs = [("ink", "h0"), ("ink", "h1"), ("ink", "h2"), ("on3", "h3"), ("on4", "h4"), ("ink", "surface"), ("ink2", "surface"), ("muted", "surface"),
+                 ("ink", "tint"), ("ink2", "tint"), ("ink2", "off")]
+        for name, block in (("light", diagrams.LIGHT), ("dark", diagrams.DARK)):
+            theme = tokens(block)
+            for text_token, shade in pairs:
+                with self.subTest(theme=name, text=text_token, shade=shade):
+                    self.assertGreaterEqual(ratio(theme[f"--bs-{text_token}"], theme[f"--bs-{shade}"]), 4.5)
 
 
 class RealRepositoryIsUntouched(TempDir):

@@ -11,8 +11,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from common import LOCATION, RecordError, as_list, load_json  # noqa: E402
-from findings import closed, contract_errors, excluded  # noqa: E402
+from common import LOCATION, RecordError, as_list, closed, excluded, load_json  # noqa: E402
+from findings import contract_errors  # noqa: E402
 import render  # noqa: E402
 
 REQUIRED = ("findings.json", "surfaces.json", "history.json", "dashboard.html", "report.html")

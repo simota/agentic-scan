@@ -197,6 +197,14 @@ def merge(path, fragments):
     data = load_json(path) if Path(path).exists() else dict(surfaces=[], links=[])
     for fragment in fragments:
         part = load_json(fragment)
+        if not isinstance(part, dict):
+            raise RecordError(f"{fragment}: must be a JSON object")
+        for item in part.get("surfaces", []):
+            if not isinstance(item, dict) or not isinstance(item.get("id"), str):
+                raise RecordError(f"{fragment}: surface {item!r} needs a string id")
+        for pair in part.get("remove_links", []):
+            if not isinstance(pair, list) or len(pair) != 2:
+                raise RecordError(f"{fragment}: remove_links entry {pair!r} must be [from, to]")
         by_id = {s["id"]: s for s in data["surfaces"]}
         for item in part.get("surfaces", []):
             if item.get("id") in by_id:

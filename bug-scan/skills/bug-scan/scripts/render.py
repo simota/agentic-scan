@@ -14,8 +14,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import diagrams  # noqa: E402
-from common import RecordError, as_list, load_json, pattern_name  # noqa: E402
-from findings import closed, excluded, shape_errors  # noqa: E402
+from common import RecordError, as_list, closed, excluded, load_json, pattern_name  # noqa: E402
+from findings import reference_errors, shape_errors  # noqa: E402
 from scan_report_kit import output, pdf, report  # noqa: E402
 
 TEXT = {
@@ -150,16 +150,16 @@ def to_common(record, surfaces, lang):
     return data
 
 
-def insert_once(html, anchor, addition, before=True):
-    if html.count(anchor) < 1:
+def insert_before(html, anchor, addition):
+    if anchor not in html:
         raise RecordError(f"scan-report-kit output has no {anchor!r}; re-check the vendored kit")
     index = html.index(anchor)
-    return html[:index] + addition + html[index:] if before else html[:index + len(anchor)] + addition + html[index + len(anchor):]
+    return html[:index] + addition + html[index:]
 
 
 def build(record, surfaces, history, lang):
     """Return (dashboard, report) as text. Deterministic, so the contract can compare a fresh render."""
-    errors = shape_errors(record)
+    errors = shape_errors(record) or reference_errors(record)
     if errors:
         raise RecordError("; ".join(errors[:8]))
     if not record.get("meta", {}).get("project") or not record.get("meta", {}).get("date"):
@@ -168,13 +168,14 @@ def build(record, surfaces, history, lang):
     figs = diagrams.figures(record, surfaces, history, lang)
     t = TEXT[lang]
     dashboard = report.render_dashboard(common, lang)
-    dashboard = insert_once(dashboard, "</head>", f"<style>{diagrams.dashboard_css()}</style>")
-    dashboard = insert_once(dashboard, '<section id="findings"', diagrams.section_html(figs, lang, printable=False))
-    dashboard = insert_once(dashboard, '</ol><div class="facets">', f'<li><a href="#figures">{diagrams.e(t["figures"])}</a></li>')
-    dashboard = insert_once(dashboard, "</body>", f'<div id="bs-tip" role="status"></div><script>{diagrams.SCRIPT}</script>')
+    dashboard = insert_before(dashboard, "</head>", f"<style>{diagrams.dashboard_css()}</style>")
+    # The register leads the dashboard (docs/plans/bug-scan-design.md); contents follow page order, which the kit's scroll spy relies on.
+    dashboard = insert_before(dashboard, '<div class="lists"', diagrams.section_html(figs, lang, printable=False))
+    dashboard = insert_before(dashboard, '<li><a href="#lists"', f'<li><a href="#figures">{diagrams.e(t["figures"])}</a></li>')
+    dashboard = insert_before(dashboard, "</body>", f'<div id="bs-tip" aria-hidden="true"></div><script>{diagrams.SCRIPT}</script>')
     document = report.render_document(common, lang)
-    document = insert_once(document, "</head>", f"<style>{diagrams.document_css()}</style>")
-    document = insert_once(document, '<section id="finding-register"', diagrams.section_html(figs, lang, printable=True))
+    document = insert_before(document, "</head>", f"<style>{diagrams.document_css()}</style>")
+    document = insert_before(document, '<section id="finding-register"', diagrams.section_html(figs, lang, printable=True))
     return dashboard, document
 
 

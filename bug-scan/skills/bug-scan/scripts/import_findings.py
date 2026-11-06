@@ -11,13 +11,9 @@ import argparse
 import re
 import sys
 
-from common import EMAIL, EXCLUDED, LOCATION, RecordError, SEVERITIES, as_list, load_json, redact, write_json
+from common import EXCLUDED, LOCATION, RecordError, SEVERITIES, as_list, clean, load_json, write_json
 
 SCAN = re.compile(r"^[a-z0-9][a-z0-9-]*$")
-
-
-def clean(text):
-    return EMAIL.sub("[email]", redact(str(text)))
 
 
 def to_fragment(data, scan):

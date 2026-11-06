@@ -12,7 +12,7 @@ and no diff body; subjects are masked for secrets and e-mail addresses.
 
 | Key | Holds |
 |---|---|
-| `quality` | Shallow, commits, merges, prefix share, tags, candidates by prefix and by word |
+| `quality` | Shallow, commits, whether `--max-commits` was reached, merges, prefix share, tags, candidates by prefix and by word |
 | `kinds` | Commits per kind: the base rate that fix chains are read against |
 | `commits` | Date, kind and subject per commit in the window |
 | `modules` | Commits, fix candidates and test files per module. Test files are judged from names |

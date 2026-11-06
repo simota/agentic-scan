@@ -12,16 +12,15 @@ import sys
 from collections import Counter
 from pathlib import Path
 
-from common import DEFECT_TYPES, RecordError, load_json
-
-
-def is_excluded(finding):
-    return finding.get("validation", {}).get("verdict") in ("FalsePositive", "NotApplicable")
+from common import DEFECT_TYPES, RecordError, excluded, load_json
 
 
 def load(out):
     path = Path(out) / "findings.json" if Path(out).is_dir() else Path(out)
-    return load_json(path)
+    data = load_json(path)
+    if not isinstance(data, dict):
+        raise RecordError(f"{path}: must be a JSON object")
+    return data
 
 
 def pattern_counts(record):
@@ -37,8 +36,8 @@ def delta(before, after):
 
 
 def compare(earlier, later):
-    old = {f["key"]: f for f in earlier.get("findings", []) if not is_excluded(f) and "key" in f}
-    new = {f["key"]: f for f in later.get("findings", []) if not is_excluded(f) and "key" in f}
+    old = {f["key"]: f for f in earlier.get("findings", []) if not excluded(f) and "key" in f}
+    new = {f["key"]: f for f in later.get("findings", []) if not excluded(f) and "key" in f}
     changed = []
     for key in sorted(set(old) & set(new)):
         changes = {name: dict(before=old[key].get(name), after=new[key].get(name))

@@ -110,6 +110,24 @@ def redact(text):
     return SECRET.sub("[redacted]", text)
 
 
+def clean(text):
+    """Recorded text taken from outside the review: no secrets, no addresses."""
+    return EMAIL.sub("[email]", redact(str(text)))
+
+
+def excluded(finding):
+    return (finding.get("validation") or {}).get("verdict") in EXCLUDED
+
+
+def closed(finding):
+    return finding.get("status") in CLOSED
+
+
+def unresolved(finding):
+    """Still needs someone: neither judged false nor fixed."""
+    return not excluded(finding) and not closed(finding)
+
+
 def personal_email(text):
     """The first address in text that is not on a domain reserved for examples."""
     for match in EMAIL.finditer(text):

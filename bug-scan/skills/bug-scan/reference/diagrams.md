@@ -3,7 +3,11 @@
 **Read when:** REPORT, and when a figure looks wrong; the fix is in the record, not the drawing.
 
 Every figure is generated from the record, with a table of the same facts. A figure is presentation, never
-evidence. Labels cut to fit stay whole in the table.
+evidence. Labels cut to fit stay whole in the table, and a drawing that holds only the top rows says so while the
+table keeps them all. Records judged `FalsePositive` or `NotApplicable` never count as open or get highlighted.
+
+On the dashboard the figures follow the register. Tab enters a figure and the arrow keys move inside it; each part
+has an accessible name, and a defect ID opens its record. The printable report has the same links and no focus stops.
 
 | Figure | Question | Comes from |
 |---|---|---|

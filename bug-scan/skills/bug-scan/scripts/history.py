@@ -13,7 +13,7 @@ import re
 import sys
 from collections import Counter
 
-from common import EMAIL, RecordError, git, redact, write_json
+from common import RecordError, clean, git, redact, write_json
 
 STRICT_FIX = re.compile(r"^(fix|bugfix|hotfix)(\([^)]*\))?!?:", re.I)
 LOOSE_FIX = re.compile(r"\b(fix(es|ed)?|bug|regression|hotfix)\b|修正|不具合|バグ", re.I)
@@ -28,10 +28,6 @@ GENERATED = re.compile(r"(^|/)(node_modules|vendor|dist|build|\.git)/|(^|/)(pack
 HUNK = re.compile(r"^@@ -(\d+)(?:,(\d+))? \+")
 FIELD = "\x1f"
 RECORD = "\x1e"
-
-
-def clean(subject):
-    return EMAIL.sub("[email]", redact(subject))
 
 
 def kind_of(subject):
@@ -157,7 +153,7 @@ def mine(repo, since, max_fixes, depth, max_commits):
         meta=dict(head=git(repo, "rev-parse", "HEAD", check=False).strip(), since=since, module_depth=depth,
                   blame_limit=max_fixes),
         quality=dict(shallow=git(repo, "rev-parse", "--is-shallow-repository", check=False).strip() == "true",
-                     commits=len(commits), merges=int(merges or 0), prefix_share=round(prefixed / len(commits), 3) if commits else 0,
+                     commits=len(commits), reached_max_commits=len(commits) >= max_commits, merges=int(merges or 0), prefix_share=round(prefixed / len(commits), 3) if commits else 0,
                      tags=len(tags), fix_by_prefix=sum(1 for _, m in candidates if m == "prefix"), fix_by_word=sum(1 for _, m in candidates if m == "word")),
         kinds=dict(kinds.most_common()),
         commits=index_refs,

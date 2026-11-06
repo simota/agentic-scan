@@ -12,6 +12,7 @@ import argparse
 import contextlib
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
@@ -21,14 +22,16 @@ try:
 except ImportError:
     fcntl = None
 
-from common import (CHANNELS, CLOSED, CONFIDENCES, DEFECT_TYPES, EVENT_TYPES, EXCLUDED, HEX_REF, ISO_DATE, LEVELS, LOCATION,
+from common import (CHANNELS, CONFIDENCES, DEFECT_TYPES, EVENT_TYPES, EXCLUDED, HEX_REF, ISO_DATE, LEVELS, LOCATION,
                     PATH_STATES, PATTERNS, PERSPECTIVES, RELATION_TYPES, REPRO_STATES, RISK_TABLE, RecordError, SECRET, SEVERITIES,
-                    SIBLING_STATES, STAGES, STATUSES, STRENGTHS, YES_NO, as_list, load_json, location_path, personal_email,
-                    walk_strings, write_json)
+                    SIBLING_STATES, STAGES, STATUSES, STRENGTHS, YES_NO, as_list, closed, excluded, load_json, location_path,
+                    personal_email, walk_strings, write_json)
 
 TOP_KEYS = {"meta", "summary", "gates", "fix_events", "findings", "issues", "imports", "perspectives",
             "checked_ok", "limitations", "decisions", "next_steps"}
 STRING_LISTS = ("checked_ok", "limitations", "decisions", "next_steps")
+SECTIONS = {"gates": "id", "fix_events": "id", "findings": "id", "issues": "id", "imports": "key"}
+FINDING_LISTS = ("relations", "surfaces", "sibling_sites", "path", "events")
 META_KEYS = {"project", "scope", "commit", "date", "assessor", "method", "lang", "history_window", "sample"}
 FINDING_KEYS = {"id", "key", "variant", "title", "status", "pattern", "module", "first_seen", "last_seen", "status_log", "introduced_in",
                 "fixed_in", "severity", "confidence", "validation", "risk", "hazard", "relations", "repro", "surfaces", "actors",
@@ -60,14 +63,6 @@ ID_MENTION = re.compile(r"(?<![A-Za-z0-9_/-])BG-[0-9]{3}(?![A-Za-z0-9_-])")
 RENUMBER_LITERAL = {"meta", "location", "key", "external_refs", "imports", "at", "commit"}
 
 
-def excluded(finding):
-    return finding.get("validation", {}).get("verdict") in EXCLUDED
-
-
-def closed(finding):
-    return finding.get("status") in CLOSED
-
-
 def _keys(where, value, known, errors, required=()):
     if not isinstance(value, dict):
         errors.append(f"{where}: must be an object")
@@ -88,7 +83,7 @@ def _string_list(where, value, errors, nonempty=False):
 
 
 def _enum(where, value, allowed, errors):
-    if value not in allowed:
+    if value not in tuple(allowed):
         errors.append(f"{where}: {value!r} is not one of {', '.join(map(str, allowed))}")
 
 
@@ -107,9 +102,21 @@ def key_of(finding):
     return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
 
+def _structure_errors(record):
+    """The top-level types everything else relies on."""
+    errors = [f"{name}: must be a list" for name in (*SECTIONS, "perspectives") if not isinstance(record.get(name, []), list)]
+    if not isinstance(record.get("meta", {}), dict):
+        errors.append("meta: must be an object")
+    if "summary" in record and not isinstance(record["summary"], str):
+        errors.append("summary: must be a string")
+    return errors
+
+
 def shape_errors(record):
     """What every merged state must satisfy. Completeness comes later, in contract_errors."""
-    errors = []
+    errors = _structure_errors(record)
+    if errors:
+        return errors
     for key in sorted(set(record) - TOP_KEYS):
         errors.append(f"unknown top-level key {key!r}")
     meta = record.get("meta", {})
@@ -136,7 +143,7 @@ def shape_errors(record):
             where = f"{section}[{index}]"
             if not _keys(where, item, known, errors, required):
                 continue
-            identity = item.get("key" if section == "imports" else "id")
+            identity = str(item.get(SECTIONS[section]))
             if (section, identity) in seen:
                 errors.append(f"{where}: duplicate {identity}")
             seen[(section, identity)] = True
@@ -204,6 +211,11 @@ def _event_shape(event, errors):
 
 def _finding_shape(finding, errors):
     where = str(finding.get("id"))
+    for name in FINDING_LISTS:
+        if not isinstance(finding.get(name, []), list):
+            errors.append(f"{where}.{name}: must be a list")
+            return
+    _string_list(f"{where}.events", finding.get("events", []), errors)
     _enum(f"{where}.status", finding.get("status"), STATUSES, errors)
     if not re.fullmatch(r"BG-[0-9]{3}", str(finding.get("id"))):
         errors.append(f"{where}: id must be BG-NNN")
@@ -279,9 +291,33 @@ def tier_of(finding):
 REQUIRED_BY_TIER = dict(full=ALL_OPEN, basic=LOW_OPEN, closed=CLOSED_REQUIRED, excluded=EXCLUDED_REQUIRED)
 
 
+def reference_errors(record):
+    """IDs inside the record that name nothing. Fragments may arrive in any order, so this holds only for a finished record."""
+    errors = []
+    gates = {g.get("id") for g in record.get("gates", [])}
+    ids = {f.get("id") for f in record.get("findings", [])}
+    for event in record.get("fix_events", []):
+        for gate in as_list(event.get("gate_missed")):
+            if gate not in gates:
+                errors.append(f"{event.get('id')}: gate {gate} is not recorded")
+    for finding in record.get("findings", []):
+        where = finding.get("id")
+        for relation in finding.get("relations", []):
+            if relation.get("to") not in ids:
+                errors.append(f"{where}: relation points at {relation.get('to')}, which is not recorded")
+            if relation.get("to") == where:
+                errors.append(f"{where}: a record cannot relate to itself")
+    return errors
+
+
 def contract_errors(record, surfaces=None, history=None):
     """Whether a finished run keeps the contract. It checks shape and consistency, not whether a finding is true."""
+    if _structure_errors(record):
+        return _structure_errors(record)
     errors = shape_errors(record)
+    if errors:
+        return errors
+    errors.extend(reference_errors(record))
     meta = record.get("meta", {})
     for key in ("project", "scope", "date", "assessor", "lang"):
         if not str(meta.get(key, "")).strip():
@@ -298,7 +334,6 @@ def contract_errors(record, surfaces=None, history=None):
     ids = {f.get("id") for f in findings}
     surface_ids = {s.get("id") for s in (surfaces or {}).get("surfaces", [])}
     commits = (history or {}).get("commits", {})
-    gates = {g.get("id") for g in record.get("gates", []) if isinstance(g, dict)}
 
     def known_commit(ref):
         return any(sha.startswith(ref) for sha in commits)
@@ -312,9 +347,6 @@ def contract_errors(record, surfaces=None, history=None):
         for ref in (event.get("origin") or {}).get("commits", []):
             if not known_commit(str(ref)):
                 errors.append(f"{event.get('id')}: origin commit {ref} is not in history.json")
-        for gate in event.get("gate_missed", []):
-            if gate not in gates:
-                errors.append(f"{event.get('id')}: gate {gate} is not recorded")
     candidates = len((history or {}).get("fix_candidates", []))
     sample = meta.get("sample")
     if not isinstance(sample, dict):
@@ -343,11 +375,6 @@ def contract_errors(record, surfaces=None, history=None):
             risk_required = isinstance(finding.get("risk"), dict)
             if not risk_required:
                 errors.append(f"{where}: an unresolved record needs a risk judgement")
-        for relation in finding.get("relations", []):
-            if relation.get("to") not in ids:
-                errors.append(f"{where}: relation points at {relation.get('to')}, which is not recorded")
-            if relation.get("to") == where:
-                errors.append(f"{where}: a record cannot relate to itself")
         for surface in finding.get("surfaces", []):
             if surface.get("id") not in surface_ids:
                 errors.append(f"{where}: surface {surface.get('id')} is not in surfaces.json")
@@ -406,13 +433,36 @@ def _mention_errors(record, ids):
     return errors
 
 
+def _check_fragment(fragment):
+    """Types the merge itself relies on, so a bad fragment is refused by name instead of crashing or being half-read."""
+    for name in (*SECTIONS, "perspectives", *STRING_LISTS):
+        if name in fragment and not isinstance(fragment[name], list):
+            raise RecordError(f"{name}: must be a list")
+    for section, identity in SECTIONS.items():
+        for item in fragment.get(section, []):
+            if not isinstance(item, dict):
+                raise RecordError(f"{section}: entries must be objects")
+            if not isinstance(item.get(identity, ""), str):
+                raise RecordError(f"{section}: {identity} must be a string")
+    if any(not isinstance(item, dict) for item in fragment.get("perspectives", [])):
+        raise RecordError("perspectives: entries must be objects")
+    if "meta" in fragment and not isinstance(fragment["meta"], dict):
+        raise RecordError("meta: must be an object")
+    for finding in fragment.get("findings", []):
+        if "key" in finding:
+            raise RecordError("key is computed from the pattern, file and surfaces; do not send it")
+
+
 def merge_fragment(record, fragment):
+    _check_fragment(fragment)
     removal = fragment.pop("remove", {})
     if not isinstance(removal, dict):
         raise RecordError("remove: must be an object")
     for name, items in removal.items():
         if name not in STRING_LISTS:
             raise RecordError(f"remove: {name} is not a string list")
+        if not isinstance(items, list):
+            raise RecordError(f"remove.{name}: must be a list")
         for item in items:
             if item not in record.get(name, []):
                 raise RecordError(f"remove: {item!r} is not recorded in {name}")
@@ -429,15 +479,13 @@ def merge_fragment(record, fragment):
                 record.pop("summary", None)
             else:
                 record["summary"] = value
-        elif key in ("gates", "fix_events", "findings", "issues", "imports"):
-            identity = "key" if key == "imports" else "id"
-            given = [i.get(identity) for i in value if isinstance(i, dict)]
+        elif key in SECTIONS:
+            identity = SECTIONS[key]
+            given = [i.get(identity) for i in value]
             if len(given) != len(set(given)):
                 raise RecordError(f"{key}: a fragment repeats an id")
             existing = {i.get(identity): i for i in record.setdefault(key, [])}
             for item in value:
-                if not isinstance(item, dict):
-                    raise RecordError(f"{key}: entries must be objects")
                 target = existing.get(item.get(identity))
                 if target is None:
                     record[key].append({k: v for k, v in item.items() if v is not None})
@@ -473,13 +521,23 @@ def locked(path):
     if fcntl is None:
         yield
         return
-    with open(Path(path).parent / ".findings.lock", "w", encoding="utf-8") as handle:
+    lock = Path(path).parent / ".findings.lock"
+    while True:
+        handle = open(lock, "w", encoding="utf-8")
         fcntl.flock(handle, fcntl.LOCK_EX)
+        # The holder before us unlinks the file on release, so this lock may be on a name nobody else will open.
+        # Holding it would let a newcomer lock the new file at the same time, and one merge would overwrite the other.
         try:
-            yield
-        finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
-            Path(handle.name).unlink(missing_ok=True)
+            if os.fstat(handle.fileno()).st_ino == os.stat(lock).st_ino:
+                break
+        except FileNotFoundError:
+            pass
+        handle.close()
+    try:
+        yield
+    finally:
+        lock.unlink(missing_ok=True)
+        handle.close()
 
 
 def merge(path, fragments):
@@ -494,14 +552,14 @@ def merge(path, fragments):
             fragment = load_json(fragment_path)
             if not isinstance(fragment, dict):
                 raise RecordError(f"{fragment_path}: must be a JSON object")
-            for finding in fragment.get("findings", []) or []:
-                if isinstance(finding, dict) and "key" in finding:
-                    raise RecordError(f"{fragment_path}: key is computed from the pattern, file and surfaces; do not send it")
-            merge_fragment(record, fragment)
-            assign_keys(record)
+            try:
+                merge_fragment(record, fragment)
+            except RecordError as error:
+                raise RecordError(f"{fragment_path}: {error}") from None
             errors = shape_errors(record)
             if errors:
                 raise RecordError(f"{fragment_path}: " + "; ".join(errors[:8]) + (f" (and {len(errors) - 8} more)" if len(errors) > 8 else ""))
+            assign_keys(record)
         write_json(path, record)
 
 

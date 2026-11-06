@@ -13,14 +13,10 @@ import datetime
 import sys
 from pathlib import Path
 
-from common import RecordError, as_list, load_json, location_path, write_json
+from common import CLOSED, RecordError, as_list, excluded, load_json, location_path, write_json
 
 HUMAN_STATUSES = ("Accepted",)
-CLOSED = ("Fixed", "Verified")
-
-
-def is_excluded(finding):
-    return finding.get("validation", {}).get("verdict") in ("FalsePositive", "NotApplicable")
+ENTRY_KEYS = ("key", "title", "status", "status_log", "first_seen", "last_seen")
 
 
 def read_ledger(path):
@@ -29,6 +25,10 @@ def read_ledger(path):
     data = load_json(path)
     if not isinstance(data, dict) or not isinstance(data.get("entries"), list):
         raise RecordError(f"{path}: not a ledger")
+    for index, entry in enumerate(data["entries"]):
+        missing = [k for k in ENTRY_KEYS if not isinstance(entry, dict) or k not in entry]
+        if missing:
+            raise RecordError(f"{path}: entries[{index}] needs {', '.join(missing)}")
     return data
 
 
@@ -43,8 +43,10 @@ def reconcile(ledger, record, today):
     fragment_findings, decisions, changes = [], [], dict(new=[], continuing=[], reopened=[], not_seen=[], fixed=[])
     seen = set()
     for finding in record.get("findings", []):
-        if is_excluded(finding):
+        if excluded(finding):
             continue
+        if "key" not in finding:
+            raise RecordError(f"{finding.get('id')}: has no tracking key; merge it with a pattern first")
         key = finding["key"]
         seen.add(key)
         status = finding["status"]
@@ -127,6 +129,8 @@ def main(argv=None):
             if inside(args.ledger, args.repo):
                 raise RecordError("the ledger must live outside the reviewed repository")
             record = load_json(args.findings)
+            if not isinstance(record, dict):
+                raise RecordError(f"{args.findings}: must be a JSON object")
             today = record.get("meta", {}).get("date")
             if not today:
                 raise RecordError("findings.json has no meta.date")

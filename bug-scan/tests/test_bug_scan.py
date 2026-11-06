@@ -8,6 +8,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from collections import Counter
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,6 +118,44 @@ class HistoryTests(TempDir):
         with self.assertRaises(common.RecordError):
             history.mine(self.dir, "", 200, 2, 5000)
 
+    def test_one_blame_per_file_matches_one_blame_per_hunk(self):
+        repo = self.dir / "hunks"
+        repo.mkdir()
+        run_git(repo, "init", "-q", "-b", "main")
+        self.commit(repo, "a.py", "".join(f"line{i}\n" for i in range(1, 21)), "feat: a", "2026-01-01T00:00:00")
+        self.commit(repo, "a.py", "".join(f"line{i}\n" if i % 7 else f"LINE{i}\n" for i in range(1, 21)), "feat: b", "2026-01-02T00:00:00")
+        parent = common.git(repo, "rev-parse", "HEAD").strip()
+        ranges = [(2, 2), (7, 1), (14, 3)]
+        one_each = [row.split()[0] for start, count in ranges
+                    for row in common.git(repo, "blame", "-s", "-l", f"-L{start},{start + count - 1}", parent, "--", "a.py").splitlines()]
+        combined = history.blame_ranges(repo, parent, "a.py", ranges)
+        self.assertEqual(combined, Counter(one_each))
+        self.assertEqual(list(combined), list(dict.fromkeys(one_each)))  # first-seen order breaks most_common ties
+        # A range past the end refuses the combined call; the ranges that do resolve are kept.
+        kept = history.blame_ranges(repo, parent, "a.py", [(2, 2), (500, 3)])
+        self.assertEqual(sum(kept.values()), 2)
+
+    def test_describe_all_matches_describe_and_falls_back(self):
+        repo = self.repo()
+        shas = common.git(repo, "rev-list", "HEAD").split()
+        expected = {sha: history.describe(repo, sha) for sha in shas}
+        self.assertEqual(history.describe_all(repo, shas), expected)
+        self.assertEqual(list(history.describe_all(repo, shas[::-1])), shas[::-1])
+        short = shas[0][:12]
+        self.assertEqual(history.describe_all(repo, [short, shas[1]]), {short: history.describe(repo, short), shas[1]: expected[shas[1]]})
+        self.assertEqual(history.describe_all(repo, []), {})
+        batch, history.DESCRIBE_BATCH = history.DESCRIBE_BATCH, 3
+        self.addCleanup(setattr, history, "DESCRIBE_BATCH", batch)
+        self.assertEqual(history.describe_all(repo, shas + [short]), {**expected, short: history.describe(repo, short)})
+
+    def test_full_hashes_skip_rev_parse_and_boundaries_still_resolve(self):
+        repo = self.repo()
+        head = common.git(repo, "rev-parse", "HEAD").strip()
+        cache = {}
+        self.assertEqual(history.full_sha(repo, head, cache, len(head)), head)
+        self.assertEqual(history.full_sha(repo, "^" + head[:39], cache, len(head)), head)
+        self.assertEqual(history.full_sha(repo, head[:12], {}, len(head)), head)
+
 
 class SurfaceTests(TempDir):
     def test_scan_finds_each_kind_and_links(self):
@@ -154,6 +193,35 @@ class SurfaceTests(TempDir):
         data = surfaces.scan(root)
         self.assertEqual([s["name"] for s in data["surfaces"]], ["GET /real"])
         self.assertNotIn("DO-NOT-STORE", json.dumps(data))
+
+    def test_line_numbers_match_a_full_count_in_any_order(self):
+        text = "a\nbb\n\nccc\nd" * 50
+        line = surfaces.Lines(text)
+        for offset in [0, 3, 3, 9, 120, 7, 0, len(text), 40]:
+            self.assertEqual(line(offset), text.count("\n", 0, offset) + 1)
+
+    def test_literal_gates_never_hide_a_match(self):
+        for patterns in (surfaces.API_PATTERNS, surfaces.JOB_PATTERNS, surfaces.TABLE_PATTERNS, surfaces.CFG_PATTERNS):
+            for pattern, literal in patterns:
+                if literal is None:
+                    continue
+                self.assertFalse(pattern.flags & re.IGNORECASE, pattern.pattern)
+                samples = ['path("a/", v)', "re_path(r'^x', v)", "class A < ApplicationJob", "class B < ActiveJob::Base",
+                           "cron.schedule('* * * * *', tick)", "create_table :orders", "model User {", "class O(models.Model):",
+                           "process.env.API_KEY"]
+                for sample in samples:
+                    for match in pattern.finditer(sample):
+                        self.assertIn(literal, match.group(0), pattern.pattern)
+
+    def test_each_kind_stops_at_its_cap_and_counts_the_rest(self):
+        catalog = surfaces.Catalog()
+        for i in range(surfaces.MAX_PER_KIND + 5):
+            catalog.add("cfg", f"V{i}", "n", "a.py:1")
+            catalog.add("cfg", f"v{i}", "n", "a.py:1")  # same name, other case: not a new surface
+        catalog.add("api", "GET /x", "n", "a.py:1")
+        self.assertEqual(sum(1 for i in catalog.items if i["kind"] == "cfg"), surfaces.MAX_PER_KIND)
+        self.assertEqual(catalog.dropped, {"cfg": 10})  # a dropped name is not remembered, so its other case counts too
+        self.assertEqual(catalog.items[-1]["name"], "GET /x")
 
     def test_merge_confirms_and_removes_links_and_refuses_bad_ones(self):
         path = self.dir / "s.json"

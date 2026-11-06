@@ -126,8 +126,19 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
 	  rm -f "$$out"/*; \
 	done; \
+	PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/compare.py) \
+	  examples/findings.sample.baseline.json examples/findings.sample.json --fail-on High >/dev/null 2>&1 \
+	  || { echo "MISS compare.py fails on the sample baseline and sample" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/summary.py) \
+	  examples/findings.sample.json --baseline examples/findings.sample.baseline.json >/dev/null \
+	  || { echo "MISS summary.py fails on the sample" >&2; fail=1; }; \
+	for lang in ja en; do \
+	  PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/issues.py) \
+	    examples/findings.sample.json --out "$$out/issues-$$lang" --lang $$lang >/dev/null \
+	    || { echo "MISS issues.py fails on the sample ($$lang)" >&2; fail=1; }; \
+	done; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(call shell_quote,$(SKILL))/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(call shell_quote,$(SKILL))/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract, compare/summary/issues run"; \
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)

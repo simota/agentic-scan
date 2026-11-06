@@ -1,5 +1,6 @@
 <!--
 Files one finding as one issue (one root cause = one fix location = one issue).
+scripts/issues.py fills this template from findings.json; edit its drafts rather than starting here.
 Copy each {{field}} from the field of the same name in findings.json. Delete optional lines left empty,
 and a whole section (heading included) when all of it is empty, e.g. References with no references.
 Wrap code identifiers in backticks (`*sql.Tx`, `order_items`) so Markdown keeps * and _ literal.

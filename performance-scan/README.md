@@ -133,9 +133,51 @@ Exit codes: `render.py` 0 written, 1 an output could not be written, 2 bad
 input or usage; `findings.py` 0 ok, 1 merge refused or contract violated
 (reasons on stderr), 2 usage.
 
-To file findings, the skill drafts from `templates/issue.{ja,en}.md` (one root
-cause per issue) or `templates/report.{ja,en}.md` (one report covering several).
-Filing or sending stays with you.
+## After the run: summary, issues and re-scans
+
+Three more scripts work on a finished record. None of them changes it, and
+each escapes record text the way `report.md` does.
+
+```sh
+S=skills/performance-scan/scripts
+python3 $S/summary.py out/findings.json --scratch "$SCRATCH"      # chat summary from the record
+python3 $S/issues.py  out/findings.json --out "$SCRATCH/issues"   # one issue draft per open finding
+python3 $S/compare.py old/findings.json out/findings.json         # what changed since an earlier run
+```
+
+- **`summary.py`** prints the chat summary of `reference/report.md` (status and
+  verification counts, revision and method, one line per finding, the full
+  block of each High finding, checked and sound, decisions, next steps and the
+  rendered files), so the counts and IDs in chat are the record's.
+  `--baseline OLD` adds one line with what changed since that run.
+- **`issues.py`** writes `P-NNN.md` drafts that follow
+  `templates/issue.{ja,en}.md` section by section, filled from the record:
+  the budget statement, request steps one per paragraph, evidence, the
+  measurement log when recorded, references, and *Open questions* built from an
+  incomplete verdict, an Environment-dependent condition and the `decisions`
+  and `limitations` lines that name the finding's ID. It selects every `Open`
+  finding that is not excluded (`--id`, `--min-severity`,
+  `--include-accepted`), keeps existing drafts unless `--force`, refuses the
+  record's own run directory, and prints each file with its issue title, ready
+  for e.g. `gh issue create --title ... --body-file ...`.
+  `templates/report.{ja,en}.md` remains the frame for one report covering
+  several findings. Filing or sending stays with you.
+- **`compare.py`** compares two records of the same application. IDs are
+  renumbered every run, so findings are matched by root cause: same
+  perspective, then a shared location file (line numbers are ignored), the hunt
+  step and title similarity. Each active finding is *new*, *resolved* (Fixed,
+  excluded, or absent while the new run applied its perspective), *not
+  re-checked* (absent, but its perspective was not applied this time) or
+  *persisting*, with severity, confidence, verdict, status and file changes
+  listed; budget and perspective status changes and a scope or same-revision
+  note follow. Output is Markdown (`--lang`) or `--format json`.
+  `--fail-on High` (or another severity) exits 1 when a new or escalated `Open`
+  finding reaches that severity, for a CI job that compares against an
+  accepted baseline.
+
+Exit codes: `summary.py` 0 printed, 2 bad input; `issues.py` 0 written, 1 a
+draft could not be written, 2 bad input, an unusable `--id` or an existing
+draft; `compare.py` 0 compared, 1 the `--fail-on` gate failed, 2 bad input.
 
 ## Layout
 
@@ -151,10 +193,14 @@ skills/performance-scan/
   scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
   scripts/citations.py         tells a path:line citation in evidence from look-alikes (used by check)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/summary.py           findings.json -> the chat summary on stdout
+  scripts/issues.py            findings.json -> one issue draft per open finding
+  scripts/compare.py           two findings.json -> new / resolved / changed, with a CI gate
   scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
 examples/findings.sample.json  fictional sample for make demo / make check
+examples/findings.sample.baseline.json  an earlier fictional run of it, for compare.py
 scripts/install.py             path-safe install helper used by Makefile
 tests/                         offline tests for the scripts and the documents
 ```
@@ -166,7 +212,8 @@ make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, description <= 400 bytes, no cited ../ paths,
              # vendored scan_report_kit matches its MANIFEST,
-             # sample renders in ja/en and passes the run contract
+             # sample renders in ja/en and passes the run contract,
+             # compare, summary and issue drafts run on the samples
 make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
 ```
 

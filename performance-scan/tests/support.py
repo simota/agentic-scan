@@ -178,3 +178,16 @@ class HtmlTreeReader(HTMLParser):
 
 def element_text(element):
     return "".join(element.itertext())
+
+
+compare = import_module(SKILL / "scripts" / "compare.py", "perf_compare")
+issues = import_module(SKILL / "scripts" / "issues.py", "perf_issues")
+summary = import_module(SKILL / "scripts" / "summary.py", "perf_summary")
+
+
+def write_record(directory, name, doc) -> Path:
+    """Write doc as a JSON record named name under directory and return its path."""
+    path = Path(directory) / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc, ensure_ascii=False), encoding="utf-8")
+    return path

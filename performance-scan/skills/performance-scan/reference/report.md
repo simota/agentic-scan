@@ -24,6 +24,11 @@ Write in the requester's language.
 
 ## Findings report (chat summary)
 
+`scripts/summary.py <out>/findings.json --scratch <scratch>` prints items 1–7
+from the record (items 1 and 2 only as far as the record states them; add what
+was read and traced end to end). With `--baseline <earlier findings.json>` it
+adds what changed since that run.
+
 1. **First line** — severity counts and review scope; whether the work was
    static or included authorised local measurements; the `Likely`,
    `Unverified` and `Unlikely` counts and how many High findings are not

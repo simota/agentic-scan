@@ -228,6 +228,25 @@ LINK = leading(r"(?i:[\[:thr])|[np]", r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\
 # A file without that has no link, and this search is far cheaper than LINK's own.
 LINK_TARGET = re.compile(r"[\"'`]\[?\s*[\"'`]?/")
 FRONTMATTER = re.compile(r"---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", re.S)
+# A literal that every match of the pattern holds, starting at most reach characters after the match
+# does: (needle, reach). No match starts before the needle's first occurrence less reach.
+NEEDLES = {
+    JS_WIDTH: ("idth", 5),  # min-width
+    REDUCED_MOTION: ("educed", 9),  # prefers-reduced-motion
+}
+
+
+def finditer(pattern, text):
+    """pattern.finditer(text), with the search started where the pattern's needle first allows.
+
+    Finding a literal reads text several times faster than the pattern's search, and it reads
+    no further than the needle's first occurrence, before which that search can now skip.
+    """
+    needle, reach = NEEDLES[pattern]
+    first = text.find(needle)
+    return pattern.finditer(text, max(0, first - reach)) if first >= 0 else iter(())
+
+
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
@@ -1742,7 +1761,7 @@ def inventory(root, flows=None):
                 value = integer(m.group(1), warn_at(m.start()))
                 if value is not None:
                     z_index.add(value, at(m.start()))
-            for m in JS_WIDTH.finditer(js_text):
+            for m in finditer(JS_WIDTH, js_text):
                 if NOT_ELEMENT_WIDTH.search(js_text, max(0, m.start() - 400), m.start()):
                     continue
                 v = px(m.group(2) or m.group(3), m.group(4) or "px", warn_at(m.start()))
@@ -1779,7 +1798,7 @@ def inventory(root, flows=None):
                     breakpoints.add(fmt(value), at(m.start()))
                     if not upper:
                         lower_breakpoints.add(fmt(value))
-        for m in REDUCED_MOTION.finditer(text):
+        for m in finditer(REDUCED_MOTION, text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
             truncation.add(re.sub(r"\s+", " ", m.group(0))[:40], at(m.start()))

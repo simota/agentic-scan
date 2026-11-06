@@ -285,6 +285,34 @@ class CheaperEquivalentTests(unittest.TestCase):
             self.assertEqual([r["route"] for r in inventory.inventory(tmp)["routes"]], ["/build"])
 
 
+class NeedleTests(unittest.TestCase):
+    EXAMPLES = ["width: 400, minWidth: '480px', min-width: '20rem'",
+                "prefers-reduced-motion useReducedMotion reducedMotion ReducedMotion"]
+
+    def test_every_match_holds_its_needle_within_reach_of_its_start(self):
+        texts = [path.read_text(encoding="utf-8") for path in sorted((ROOT / "examples" / "tasklane").rglob("*"))
+                 if path.is_file()] + word_texts(3000, seed=5) + self.EXAMPLES
+        self.assertEqual(len(inventory.NEEDLES), 2)
+        for pattern, (needle, reach) in inventory.NEEDLES.items():
+            found = 0
+            with self.subTest(pattern=pattern.pattern[:40]):
+                for text in texts:
+                    for m in pattern.finditer(text):
+                        found += 1
+                        self.assertGreaterEqual(m.group(0).find(needle, 0, reach + len(needle)), 0, m.group(0))
+                    self.assertEqual([(m.span(), m.groups()) for m in inventory.finditer(pattern, text)],
+                                     [(m.span(), m.groups()) for m in pattern.finditer(text)])
+                self.assertGreaterEqual(found, 3)  # The examples exercise the pattern.
+
+    def test_the_search_starts_no_later_than_the_first_match(self):
+        for text in ["x" * 50 + "min-width: 400,", "width: 1, " + "y" * 50 + "minWidth: 500,", "", "idth",
+                     "zz prefers-reduced-motion", "prefers-reduced-motion"]:
+            for pattern in inventory.NEEDLES:
+                with self.subTest(text=text, pattern=pattern.pattern[:20]):
+                    self.assertEqual([m.span() for m in inventory.finditer(pattern, text)],
+                                     [m.span() for m in pattern.finditer(text)])
+
+
 class SkippedWorkTests(unittest.TestCase):
     def test_physical_properties_are_reported_for_rtl_locales_only(self):
         with tempfile.TemporaryDirectory() as tmp:

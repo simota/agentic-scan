@@ -866,8 +866,9 @@ def _url_spans(text):
         prose = end
     parts.append(text[prose:])
     # Addresses in the prose parts: EMAIL.split alternates prose and address.
+    # An address holds an `@`, so prose without one is a single piece.
     return [piece for i, part in enumerate(parts)
-            for piece in (EMAIL.split(part) if i % 2 == 0 else [part])]
+            for piece in (EMAIL.split(part) if i % 2 == 0 and "@" in part else [part])]
 
 
 def _first_location(f):
@@ -885,9 +886,11 @@ def _rewrite_ids(value, mapping, key=None):
     if key in LITERAL_KEYS:
         return value
     if isinstance(value, str):
+        if "A-" not in value:
+            return value  # no ID to rewrite, and the spans would rejoin to value
         # A URL in prose (`browse?key=A-001`, `#A-001`) is a link, not a mention.
         return "".join(part if i % 2 else ID_RUN.sub(
-            lambda run: re.sub(r"A-[0-9]{3}", lambda m: mapping.get(m[0], m[0]), run[0]), part)
+            lambda run: FINDING_ID.sub(lambda m: mapping.get(m[0], m[0]), run[0]), part)
             for i, part in enumerate(_url_spans(value)))
     if isinstance(value, list):
         return [_rewrite_ids(v, mapping, key) for v in value]
@@ -901,9 +904,11 @@ def _mentions(value, where, key=None):
     if key in LITERAL_KEYS:
         return
     if isinstance(value, str):
+        if "A-" not in value:
+            return  # every mention holds `A-`
         for part in _url_spans(value)[::2]:
             for run in ID_RUN.finditer(part):
-                for fid in re.findall(r"A-[0-9]{3}", run[0]):
+                for fid in FINDING_ID.findall(run[0]):
                     yield where, fid
     elif isinstance(value, list):
         for i, v in enumerate(value):

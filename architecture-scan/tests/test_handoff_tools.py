@@ -53,6 +53,20 @@ class DraftTests(TempDir):
                     self.assertNotRegex(text, r"\{\{[a-z_.\[\]]+\}\}", name)
                     self.assertTrue(text.endswith("\n") and not text.endswith("\n\n"), name)
 
+    def test_shared_cache_and_parsed_template_change_no_draft(self):
+        # drafts() fills each finding once for its issue and the owner report;
+        # the drafts must match filling every one afresh.
+        doc = sample()
+        for lang in ("ja", "en"):
+            with self.subTest(lang=lang):
+                files, _ = drafts.drafts(doc, lang)
+                issue = (drafts.TEMPLATES / f"issue.{lang}.md").read_text(encoding="utf-8")
+                report = (drafts.TEMPLATES / f"report.{lang}.md").read_text(encoding="utf-8")
+                for f in doc["findings"]:
+                    self.assertEqual(files[f"{f['id']}.md"], drafts.issue_draft(f, doc, lang, issue))
+                self.assertEqual(files["owner-report.md"], drafts.owner_report(doc, lang, report))
+        self.assertEqual(sample(), doc)  # nothing in the record was changed
+
     def test_issue_carries_the_record_fields(self):
         doc = sample()
         text = drafts.drafts(doc, "en")[0]["A-001.md"]

@@ -23,6 +23,7 @@ draftable finding, 2 the record cannot be read or does not match the schema,
 or the command line is wrong.
 """
 import argparse
+from functools import lru_cache
 from pathlib import Path
 import re
 import sys
@@ -176,9 +177,23 @@ def substitute(line, values):
     return PLACEHOLDER.sub(lambda m: values[m[1]], line)
 
 
-def issue_draft(f, doc, lang, template):
-    values = finding_values(f, doc, lang)
-    parts = sections(COMMENT.sub("", template, count=1).lstrip("\n"))
+@lru_cache(maxsize=8)
+def template_sections(template):
+    """The template's sections without its leading note, parsed once per template.
+
+    Read-only tuples, so every draft filled from the cached parse sees the same text.
+    """
+    return tuple((heading, tuple(body))
+                 for heading, body in sections(COMMENT.sub("", template, count=1).lstrip("\n")))
+
+
+def issue_draft(f, doc, lang, template, cache=None):
+    # The owner report, filled first, leaves its findings' values in cache;
+    # each is taken out here, so the cache shrinks as the drafts grow.
+    values = cache.pop(f["id"], None) if cache is not None else None
+    if values is None:
+        values = finding_values(f, doc, lang)
+    parts = template_sections(template)
     out = []
     for heading, body in parts:
         fills = any(PLACEHOLDER.search(line) for line in body) or (
@@ -213,10 +228,12 @@ def issue_draft(f, doc, lang, template):
     return join_sections(out)
 
 
-def report_finding_block(block, f, doc, lang):
+def report_finding_block(block, f, doc, lang, cache=None, stripped=None):
     values = finding_values(f, doc, lang)
+    if cache is not None:
+        cache[f["id"]] = values  # for its issue draft
     lines = []
-    for line in strip_comments(block):
+    for line in strip_comments(block) if stripped is None else stripped:
         filled_line = substitute(line, values)
         if filled_line is not None:
             lines.append(filled_line)
@@ -271,7 +288,7 @@ REPORT_LISTS = {"5": None, "6": "checked_ok", "7": "limitations", "8": "decision
                 "9": "next_steps"}
 
 
-def owner_report(doc, lang, template):
+def owner_report(doc, lang, template, cache=None):
     meta = doc["meta"]
     values = {f"meta.{k}": inline(meta[k]) for k in ("project", "scope", "date", "assessor")}
     values["meta.commit"] = inline(revision(meta))
@@ -280,7 +297,8 @@ def owner_report(doc, lang, template):
     active = [f for f in doc.get("findings", [])
               if f["validation"]["verdict"] not in EXCLUDED and f["severity"] in SEVERITIES[:2]]
     out = []
-    for heading, body in sections(COMMENT.sub("", template, count=1).lstrip("\n")):
+    for heading, body in template_sections(template):
+        body = list(body)
         number = re.match(r"## ([0-9]+)\.", heading or "")
         number = number[1] if number else None
         if heading is not None and heading.startswith("## ") and number is None:
@@ -305,8 +323,9 @@ def owner_report(doc, lang, template):
             start = next(i for i, line in enumerate(body) if line.startswith("### "))
             intro, block = body[:start], body[start:]
             lines = strip_comments(intro)
+            stripped = strip_comments(block)  # the same template block for every finding
             for f in active:
-                lines += report_finding_block(block, f, doc, lang) + [""]
+                lines += report_finding_block(block, f, doc, lang, cache, stripped) + [""]
             if not active:
                 lines += [WORDS[lang]["none"], ""]
             out.append((heading, lines))
@@ -332,6 +351,10 @@ def drafts(doc, lang, only=None):
     issue = (TEMPLATES / f"issue.{lang}.md").read_text(encoding="utf-8")
     report = (TEMPLATES / f"report.{lang}.md").read_text(encoding="utf-8")
     files, skipped = {}, []
+    # A High or Medium finding is filled for the owner report and for its issue:
+    # the report goes first and hands its values on to the issue drafts.
+    cache = {}
+    owner = owner_report(doc, lang, report, cache)
     for f in doc.get("findings", []):
         if only is not None and f["id"] not in only:
             continue
@@ -340,8 +363,9 @@ def drafts(doc, lang, only=None):
                 else f.get("status")
             skipped.append((f["id"], reason))
             continue
-        files[f"{f['id']}.md"] = issue_draft(f, doc, lang, issue)
-    files["owner-report.md"] = owner_report(doc, lang, report)
+        files[f"{f['id']}.md"] = issue_draft(f, doc, lang, issue, cache)
+    cache.clear()  # values of findings not drafted (closed, or not in --only)
+    files["owner-report.md"] = owner
     return files, skipped
 
 

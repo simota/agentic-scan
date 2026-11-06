@@ -21,7 +21,10 @@ rendered with the shared [scan-report-kit](https://github.com/simota/scan-report
 Its layout mirrors the siblings [ux-scan](https://github.com/simota/ux-scan) and
 [brand-scan](https://github.com/simota/brand-scan).
 
-It is read-only and never deletes anything; removal is a later request.
+It is read-only and never deletes anything; removal is a later request. After
+removals, a follow-up review is compared with the earlier one: what was
+resolved, what persists or changed, what is new, which inventory candidates the
+removals orphaned, and a fragment that records confirmed removals as `Fixed`.
 
 ```
 RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT
@@ -65,6 +68,7 @@ the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 | `scripts/inventory.py REPO --out inventory.json [--units units.json]` | Unreferenced symbols, orphan files, unimported / duplicated / platform-replaceable dependencies, env vars read versus declared, feature flags and their values, unreferenced locale keys, assets and CSS classes, routes nothing names, uninvoked scripts and targets, loose files, skipped tests, commented-out code, dated deprecation markers, unreferenced tables and columns; capped after measuring, with `limits` and `truncated` |
 | `scripts/findings.py units\|merge\|check\|renumber` | Validate the units and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
+| `scripts/compare.py EARLIER LATER [--repo REPO] [--json OUT] [--fragment OUT]` | Follow-up review: match findings across two reviews by what they name (ids are renumbered every time) into resolved, accepted, ruled out, persisting with changes, missing, new and reopened; inventory candidates that appeared or are gone; whether missing findings' files still exist; a merge fragment that carries them as `Fixed` |
 | `scripts/contract_check.py OUT [--no-pdf] [--allow NAME]...` | Exactly the contracted outputs, valid records, every perspective family recorded, no `Unverified` finding, every open `Purpose-dependent` finding in decisions, pages stamped with the current record |
 
 ## Develop
@@ -74,6 +78,7 @@ make test       # unit tests
 make check      # tests + doc refs + skill consistency + sample inventory and render
 make demo       # render the sample (examples/larder) with PDF into $TMPDIR/prune-scan-demo
 make inventory TARGET=/path/to/repo UNITS=units.json OUT=inventory.json
+make compare EARLIER=/path/to/old-out LATER=/path/to/new-out [TARGET=/path/to/repo]
 ```
 
 The [CI workflow](.github/workflows/ci.yml) runs `make check` on Linux with

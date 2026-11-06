@@ -83,6 +83,22 @@ class Drafts(unittest.TestCase):
         self.assertIn("````text\n$ pytest -q tests/test_q.py\n```\nqueries=52\n````", text)
         self.assertIn("| Assessed revision | UNKNOWN |", text)
 
+    def test_open_questions_list_each_line_naming_the_id_once_in_record_order(self):
+        doc = complete_doc()
+        doc["decisions"] = ["P-001 and again P-001", "xP-001 glued", "P-0011 longer",
+                            "（P-001）全角", "P-002 only"]
+        doc["limitations"] = ["P-001: not measured", "P-001 and again P-001"]
+        t = issues.LABELS["en"]
+        expected = ["P-001 and again P-001", "（P-001）全角", "P-001: not measured",
+                    "P-001 and again P-001"]
+        self.assertEqual(issues.open_questions(doc["findings"][0], doc, t), expected)
+        # One index serves every draft of the record and gives the same answers.
+        index = issues.record_index(doc)
+        self.assertEqual(issues.open_questions(doc["findings"][0], doc, t, index), expected)
+        self.assertEqual(issues.render_issue(doc["findings"][1], doc, "en", index),
+                         issues.render_issue(doc["findings"][1], doc, "en"))
+        self.assertIn("- P-002 only", issues.render_issue(doc["findings"][1], doc, "en", index))
+
     def test_selected_ids_and_refusals(self):
         doc = complete_doc()
         doc["findings"].append(finding("P-003", "Low", validation={

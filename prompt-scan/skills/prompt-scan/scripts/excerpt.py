@@ -22,6 +22,11 @@ SECRET_RE = re.compile(r"sk-ant-[A-Za-z0-9_-]{20,}|\bsk-(?:proj-)?[A-Za-z0-9_-]{
                        r"\bhf_[A-Za-z0-9]{30,}|\b[rs]k_(?:live|test)_[A-Za-z0-9]{16,}|"
                        r"\bxox[abprs]-[A-Za-z0-9-]{10,}|\bAIza[0-9A-Za-z_-]{35}|"
                        r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----")
+# Every match of SECRET_RE contains one of these, so a text holding none has no credential-shaped value
+# and is passed over without SECRET_RE's word-boundary tests at each character. Keep the two in step;
+# tests/test_inventory.py checks that the needles cover the pattern.
+SECRET_NEEDLES = ("sk-", "AKIA", "ASIA", "ghp_", "gho_", "ghu_", "ghs_", "ghr_", "github_pat_", "glpat-", "hf_",
+                  "k_live_", "k_test_", "xox", "AIza", "-----BEGIN ")
 # Values with no recognisable format sit next to ones that have one (an AWS secret key under its key id):
 # an excerpt masks the value assigned to a credential-named key, and the password in a URL. A key starts a
 # line (after indent, `- ` or declaration keywords such as `export const`, `private static final String`,
@@ -50,8 +55,14 @@ KEY_BLOCK_RE = re.compile(r"-----BEGIN (?:[A-Z0-9]+ )*PRIVATE KEY-----.*?(?:----
                           re.S)
 
 
+def has_secret_needle(text):
+    """False when SECRET_RE cannot match anywhere in text; True when it may."""
+    return any(needle in text for needle in SECRET_NEEDLES)
+
+
 def mask(text):
-    return SECRET_RE.sub("[REDACTED]", text)
+    # A text without a needle has nothing to replace: sub() would return it unchanged.
+    return SECRET_RE.sub("[REDACTED]", text) if has_secret_needle(text) else text
 
 
 def mask_excerpt(line):

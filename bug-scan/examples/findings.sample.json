@@ -1,0 +1,1754 @@
+{
+  "meta": {
+    "project": "acme-shop（架空）",
+    "scope": "モノレポ全体: api/, worker/, web/, lib/",
+    "commit": "90a5276",
+    "date": "2026-11-06",
+    "assessor": "Claude Code (sample)",
+    "method": "git 履歴 12 か月の読み取りと静的レビュー",
+    "lang": "ja",
+    "history_window": "12 months ago",
+    "sample": {
+      "read": 48,
+      "candidates": 48
+    }
+  },
+  "summary": "架空のプロジェクト acme-shop の見本。部分修正の再発が api/orders に集中し、同じ入口が現在のコードに残っている。実在のコードや監査結果ではない。",
+  "gates": [
+    {
+      "id": "G-01",
+      "kind": "test",
+      "name": "単体テスト",
+      "status": "present",
+      "evidence": "tests/orders/test_validate.py:1"
+    },
+    {
+      "id": "G-02",
+      "kind": "ci",
+      "name": "CI 型検査",
+      "status": "present",
+      "evidence": ".github/workflows/ci.yml:12"
+    },
+    {
+      "id": "G-03",
+      "kind": "test",
+      "name": "E2E テスト",
+      "status": "absent"
+    },
+    {
+      "id": "G-04",
+      "kind": "ci",
+      "name": "依存更新の検査",
+      "status": "absent"
+    },
+    {
+      "id": "G-05",
+      "kind": "review",
+      "name": "レビュー規則",
+      "status": "unknown"
+    }
+  ],
+  "fix_events": [
+    {
+      "id": "E-001",
+      "commit": "a7e6bef900b59b349cd0c647d7fb4f5a2957029a",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486"
+        ],
+        "channel": "fix",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-001)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-002",
+      "commit": "28a339713111e9acfdcba2471493f40a5b96194b",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "a7e6bef900b59b349cd0c647d7fb4f5a2957029a"
+        ],
+        "channel": "fix",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-002)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-003",
+      "commit": "7c91b33febac2cfe97b749d8f4500d947d22c81a",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "9fa2c4b7b6a7e7025cf2d3e5891089afb204a630"
+        ],
+        "channel": "fix",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-003)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-004",
+      "commit": "11f23710c3a83ea97028f53b28f452e70f3abbfc",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "3f9fdfbc97635b70e25eccb19ca222da89ca7e6c"
+        ],
+        "channel": "fix",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-004)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-005",
+      "commit": "00d850492b9b5f4410efeff633714d3fc03f46ef",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "a7e6bef900b59b349cd0c647d7fb4f5a2957029a"
+        ],
+        "channel": "fix",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-006",
+      "commit": "32fa87c4718692c0d4b0056974082533d975c21a",
+      "type": "commission",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "f1dbe12889768154430dd91849faa6e8fcf67070"
+        ],
+        "channel": "fix",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-007",
+      "commit": "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486",
+      "type": "commission",
+      "pattern": "BP01",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "a19e5b10053c74da131ae70901ebd279d20550a1"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-007)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-008",
+      "commit": "eae0a917f4b522dedb30b56002a2f4fd45b521b4",
+      "type": "commission",
+      "pattern": "BP01",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "a0df0faf4292f7e56d3239e19146f43f1a781245"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-008)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-009",
+      "commit": "0733d5b26122ae9957858d2e583dd390da508fd7",
+      "type": "commission",
+      "pattern": "BP01",
+      "module": "api/orders",
+      "origin": {
+        "commits": [
+          "92a8572f80a792650a2c84fdc6bcc163a3476027"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-009)"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-010",
+      "commit": "483e1c0b92acd21bb605200c9274a77bd15d92f2",
+      "type": "omission",
+      "pattern": "BP01",
+      "module": "api/orders",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-011",
+      "commit": "1ae3ff8fa8ce4d7db6d2a70b8e39bb50f3ed7cf7",
+      "type": "omission",
+      "pattern": "BP01",
+      "module": "api/orders",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-012",
+      "commit": "aea804c2d9e105d3b3df247a241ebfc0ced1dbae",
+      "type": "commission",
+      "pattern": "BP04",
+      "module": "api/billing",
+      "origin": {
+        "commits": [
+          "541bfe743064f232d05980387d4f3dfad3dd01cd"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-012)"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-013",
+      "commit": "514e023bb51c2150c98f4fa8b8e05b602a7676fe",
+      "type": "commission",
+      "pattern": "BP04",
+      "module": "api/billing",
+      "origin": {
+        "commits": [
+          "f98f91b2ea2fb6f6b1c03689eda1370ff0a65352"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-013)"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-014",
+      "commit": "0905c32909b78e0b8e1d7bb032843d9f3cd78558",
+      "type": "commission",
+      "pattern": "BP04",
+      "module": "api/billing",
+      "origin": {
+        "commits": [
+          "03dd8547fbebeb9878b51f6ed026dfbf1f0466a9"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-014)"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-015",
+      "commit": "d5168c476a89f88cdbe4ef8369df74eea4f6d924",
+      "type": "omission",
+      "pattern": "BP02",
+      "module": "api/billing",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-016",
+      "commit": "e8e1b993fb38cda90f4f068a1b9fe697c99a5987",
+      "type": "omission",
+      "pattern": "BP02",
+      "module": "api/billing",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-017",
+      "commit": "d4717e5a88f62ac8513cb583cffc8b1fde57b9ed",
+      "type": "omission",
+      "pattern": "BP05",
+      "module": "worker/refunds",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-018",
+      "commit": "5281f0bf2dcdad16ef6125a980d454bef5ac347c",
+      "type": "omission",
+      "pattern": "BP05",
+      "module": "worker/refunds",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-019",
+      "commit": "4d4f9c78532a756394b6ddef9e094655d429493f",
+      "type": "omission",
+      "pattern": "BP05",
+      "module": "worker/refunds",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-020",
+      "commit": "8629d1b22db8233ad0c4f9bf835dfd160be5508d",
+      "type": "commission",
+      "pattern": "BP05",
+      "module": "worker/refunds",
+      "origin": {
+        "commits": [
+          "e4e1e2f84d8425f04f986642a31ac27818706079"
+        ],
+        "channel": "refactor",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-020)"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-021",
+      "commit": "f33bd0ac96073af41ef996546c6ae3f976a32fc3",
+      "type": "commission",
+      "pattern": "BP04",
+      "module": "worker/refunds",
+      "origin": {
+        "commits": [
+          "48faa3ddcf5ad2f02ab9cf817689fc08888da354"
+        ],
+        "channel": "feature",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-022",
+      "commit": "702a8a22645dc94bd1ff9b56eb55b4b4d043f455",
+      "type": "commission",
+      "pattern": "BP03",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [
+          "c81f8028295abc96951561d977a78fbce354ae5e"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-022)"
+      },
+      "gate_missed": [
+        "G-02"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-023",
+      "commit": "11317e15962521e0710a476cf3681fc53dc3778c",
+      "type": "commission",
+      "pattern": "BP03",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [
+          "586840c2226d6ee974e7fa3e93fd746ad287af10"
+        ],
+        "channel": "feature",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-023)"
+      },
+      "gate_missed": [
+        "G-02"
+      ],
+      "regression_test": true,
+      "detected": "ci"
+    },
+    {
+      "id": "E-024",
+      "commit": "2fc591dc094f99e511ee19c2f18db4be138f83d7",
+      "type": "omission",
+      "pattern": "BP08",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-025",
+      "commit": "eb58b3a86d6e4c83ddc8c7784fa2c09ec50923e3",
+      "type": "omission",
+      "pattern": "BP08",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-026",
+      "commit": "dbc7ae8d9fe2a61563e13e35abe5ecefcf4d708f",
+      "type": "commission",
+      "pattern": "BP06",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [
+          "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17"
+        ],
+        "channel": "dependency",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-026)"
+      },
+      "gate_missed": [
+        "G-04"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-027",
+      "commit": "86be1db316cf4c591b7fc07f475121a5360384da",
+      "type": "commission",
+      "pattern": "BP06",
+      "module": "web/checkout",
+      "origin": {
+        "commits": [
+          "864349ce78358613afb837c77d44e0311c9d2adb"
+        ],
+        "channel": "dependency",
+        "strength": "Traced",
+        "reason": "修正と混入元の差分を読み、同じ判定の行に欠陥があることを確認した (E-027)"
+      },
+      "gate_missed": [
+        "G-04"
+      ],
+      "regression_test": true,
+      "detected": "release"
+    },
+    {
+      "id": "E-028",
+      "commit": "617ad9215743a4d94d477b6fdd67dcf1e1eacdd8",
+      "type": "commission",
+      "pattern": "BP10",
+      "module": "lib/auth",
+      "origin": {
+        "commits": [
+          "4797ffd6311131c7feca2b8ec6c811c911516cbc"
+        ],
+        "channel": "config",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": false,
+      "detected": "release"
+    },
+    {
+      "id": "E-029",
+      "commit": "f30e397013585371e342c7065c1b5566363d829d",
+      "type": "omission",
+      "pattern": "BP01",
+      "module": "lib/auth",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-01"
+      ],
+      "regression_test": false,
+      "detected": "ci"
+    },
+    {
+      "id": "E-030",
+      "commit": "73b843b93a3c5b5469aee17b6edba09909b5a616",
+      "type": "commission",
+      "pattern": "BP09",
+      "module": "api/search",
+      "origin": {
+        "commits": [
+          "a494f7a6c4d35ddd79c92783c8f58b0f48584584"
+        ],
+        "channel": "feature",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "ci"
+    },
+    {
+      "id": "E-031",
+      "commit": "54cdc8bc313352c0f11024855eb984a9bfcb0c88",
+      "type": "omission",
+      "pattern": "BP07",
+      "module": "worker/notify",
+      "origin": {
+        "commits": [],
+        "channel": "none",
+        "strength": "Unattributable"
+      },
+      "gate_missed": [
+        "G-03"
+      ],
+      "regression_test": false,
+      "detected": "dev"
+    },
+    {
+      "id": "E-032",
+      "commit": "7538ee107c4d4da5888d8b4382f44df4c46e0594",
+      "type": "commission",
+      "pattern": "Unclassified",
+      "module": "web/admin",
+      "origin": {
+        "commits": [
+          "3e4ccaa28ce35981181dea5da5d0989fffd02297"
+        ],
+        "channel": "refactor",
+        "strength": "Blamed"
+      },
+      "gate_missed": [
+        "G-05"
+      ],
+      "regression_test": false,
+      "detected": "unknown"
+    },
+    {
+      "id": "E-033",
+      "commit": "db9d9bb2eb689518a7519292b6c7f27917f11740",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-034",
+      "commit": "7ac626017c91ac445f2a8e5a50e03f26eee807b4",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-035",
+      "commit": "2faaa5f1ecceb58bd2a5b9158a16eaac20f0e85e",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-036",
+      "commit": "61a15f97f3cbd1d46c4992d95168a96ca45383a4",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-037",
+      "commit": "4f86e789253caabe88b6eceba5c0b61724c54be0",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-038",
+      "commit": "9384dbe397816433e547a30ad4e674d7c2414a81",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-039",
+      "commit": "c42a1db82424dad910a5a611f06e6773e280f931",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-040",
+      "commit": "8780a83a8e7ccd72ff3d6ed21018dd8f321d8b3c",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-041",
+      "commit": "e32b1577d64d2a4e7594424303740a1645e6302d",
+      "type": "requirement",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-042",
+      "commit": "f9b5815003a72256ec9191b4e1c38cd909b1ec6c",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-043",
+      "commit": "39568ff9ab6c39c76f8e004c85dbb6df4306d969",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-044",
+      "commit": "eb1998171c6fcf5348860ff24e00a03f0efd5410",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-045",
+      "commit": "b5685faa6114845c45624a2a424032814a7a4ddb",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-046",
+      "commit": "c1eca595013dae63569e99cd8d83928fe5880ee6",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-047",
+      "commit": "aeaf141924ce3169131010a042469cb5a4faa693",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    },
+    {
+      "id": "E-048",
+      "commit": "b8f8ecc3f7e6fcd3913e26c7c179c86c2f533ab7",
+      "type": "not-defect",
+      "note": "読んだ結果、欠陥ではなかった"
+    }
+  ],
+  "findings": [
+    {
+      "id": "BG-001",
+      "title": "ゼロ幅空白のクーポンで注文が確定する",
+      "status": "Open",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "first_seen": "2026-07-02",
+      "last_seen": "2026-11-06",
+      "introduced_in": {
+        "commit": "28a339713111e9acfdcba2471493f40a5b96194b",
+        "strength": "Traced",
+        "reason": "77aa が NBSP だけを足し、ゼロ幅空白を判定に入れなかった"
+      },
+      "severity": "High",
+      "confidence": "Confirmed",
+      "location": [
+        "api/orders/validate.py:42",
+        "api/orders/routes.py:31"
+      ],
+      "events": [
+        "E-001",
+        "E-002",
+        "E-003"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-02"
+        },
+        {
+          "id": "API-01"
+        },
+        {
+          "id": "DB-01",
+          "op": "W: discount_total"
+        },
+        {
+          "id": "DB-02",
+          "op": "R: code"
+        }
+      ],
+      "actors": [
+        "ログイン済みの購入者"
+      ],
+      "conditions": [],
+      "relations": [
+        {
+          "type": "regression_of",
+          "to": "BG-007",
+          "strength": "Traced",
+          "evidence": "77aa の差分で同じ api/orders/validate.py:42 を確認"
+        }
+      ],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "api/orders/validate.py:42 を読み、経路を端から端までたどった"
+      },
+      "risk": {
+        "likelihood": "Medium",
+        "impact": "High",
+        "level": "High",
+        "detectability": "低い（エラーにならない）",
+        "basis": "入力は誰でも可能。発生頻度の実測なし"
+      },
+      "hazard": {
+        "classes": [
+          "金銭"
+        ],
+        "irreversible": "no",
+        "silent": "yes",
+        "reach": "全購入者",
+        "recovery": "注文の取消と再請求"
+      },
+      "repro": {
+        "state": "static",
+        "preconditions": [
+          "有効な商品がカートにある",
+          "テスト用アカウント（架空データ）"
+        ],
+        "steps": [
+          "チェックアウト画面を開く",
+          "クーポン欄にゼロ幅空白（U+200B）だけを入力する",
+          "注文を確定する"
+        ],
+        "expected": "クーポン不正のエラーで止まる",
+        "actual": "割引 0 円の注文が検証を通って確定する（コードから導出）",
+        "last_run": "未実行"
+      },
+      "tests": "なし",
+      "tests_missing": "空白クラスの property test",
+      "fix": "Unicode の空白を統一して判定する",
+      "guard": "空白クラスの property test",
+      "regression_test": "空白クラスの property test",
+      "path": [
+        {
+          "from": "POST /orders（ゼロ幅空白）",
+          "to": "ルートが検証へ渡す",
+          "state": "allowed",
+          "at": "api/orders/routes.py:31",
+          "why": "認証済みなら到達"
+        },
+        {
+          "from": "ルートが検証へ渡す",
+          "to": "strip() がゼロ幅空白を残す",
+          "state": "allowed",
+          "at": "api/orders/validate.py:42",
+          "why": "guard なし"
+        },
+        {
+          "from": "strip() がゼロ幅空白を残す",
+          "to": "無効クーポンで注文確定",
+          "state": "allowed",
+          "at": "api/orders/routes.py:40",
+          "why": "E2E なし"
+        }
+      ],
+      "sibling_sites": [
+        {
+          "location": "api/orders/validate.py:67",
+          "state": "affected",
+          "evidence": "ギフトコードも同じ strip() で判定"
+        },
+        {
+          "location": "api/admin/coupons.py:27",
+          "state": "affected",
+          "evidence": "管理画面の登録時も同じ判定"
+        },
+        {
+          "location": "web/checkout/CouponForm.tsx:44",
+          "state": "safe",
+          "evidence": "画面側の補助チェックで、確定の判定はサーバー側"
+        }
+      ],
+      "affected_releases": {
+        "first": "v1.5",
+        "last": "v1.6（最新）",
+        "basis": "tag: 77aa を含む最初のタグから"
+      },
+      "data_remediation": {
+        "needed": "yes",
+        "locate": "orders で discount_total が 0 かつ coupon_code が空白文字だけの行（SQL 案、未実行）",
+        "method": "注文ごとに取消か再請求を人が判断",
+        "count": "未確認（実データは読まない）"
+      },
+      "detection": {
+        "source": "bug-scan の前回実行",
+        "stage": "dev",
+        "detected_at": "2026-07-02",
+        "basis": "git と依頼者提供の issue",
+        "days_to_detect": 11
+      },
+      "key": "a49271f4abd9"
+    },
+    {
+      "id": "BG-002",
+      "title": "課金失敗が 0 円の請求として記録される",
+      "status": "Open",
+      "pattern": "BP02",
+      "module": "api/billing",
+      "first_seen": "2026-08-11",
+      "last_seen": "2026-11-06",
+      "introduced_in": {
+        "commit": "aea804c2d9e105d3b3df247a241ebfc0ced1dbae",
+        "strength": "Blamed"
+      },
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "location": [
+        "api/billing/client.py:77"
+      ],
+      "events": [
+        "E-015",
+        "E-016"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-02"
+        },
+        {
+          "id": "SC-09"
+        },
+        {
+          "id": "API-02"
+        },
+        {
+          "id": "API-04"
+        },
+        {
+          "id": "DB-03",
+          "op": "W: total"
+        },
+        {
+          "id": "EXT-01"
+        }
+      ],
+      "actors": [
+        "購入者"
+      ],
+      "conditions": [],
+      "relations": [
+        {
+          "type": "caused_by",
+          "to": "BG-006",
+          "strength": "Blamed",
+          "evidence": "修正 18fa の行を blame。因果は未確認"
+        },
+        {
+          "type": "blocks",
+          "to": "BG-003",
+          "strength": "Traced",
+          "evidence": "請求額が正しくないと二重返金を照合できない"
+        }
+      ],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "api/billing/client.py:77 を読み、経路を端から端までたどった"
+      },
+      "risk": {
+        "likelihood": "Medium",
+        "impact": "Medium",
+        "level": "Medium",
+        "detectability": "中（請求額の確認で分かる）",
+        "basis": "決済 API の失敗時に発生。失敗率は未測定"
+      },
+      "hazard": {
+        "classes": [
+          "金銭",
+          "データ不整合"
+        ],
+        "irreversible": "no",
+        "silent": "yes",
+        "reach": "決済失敗時の購入者",
+        "recovery": "対象請求書の再計算"
+      },
+      "repro": {
+        "state": "static",
+        "preconditions": [
+          "決済サンドボックスがエラーを返す設定"
+        ],
+        "steps": [
+          "商品を購入する",
+          "請求書画面を開く"
+        ],
+        "expected": "支払い失敗として表示される",
+        "actual": "合計 0 円の請求書が作られる（コードから導出）",
+        "last_run": "未実行"
+      },
+      "tests": "なし",
+      "tests_missing": "決済失敗時の請求状態を確認するテスト",
+      "fix": "失敗を 0 と区別して呼び出し元へ返す",
+      "guard": "決済失敗時の請求状態を確認するテスト",
+      "regression_test": "決済失敗時の請求状態を確認するテスト",
+      "path": [
+        {
+          "from": "決済 API の失敗",
+          "to": "except が 0 を返す",
+          "state": "allowed",
+          "at": "api/billing/client.py:77",
+          "why": "例外を握りつぶす"
+        },
+        {
+          "from": "except が 0 を返す",
+          "to": "0 円の請求書",
+          "state": "allowed",
+          "at": "api/billing/routes.py:14",
+          "why": "呼び出し元が検査しない"
+        }
+      ],
+      "sibling_sites": [
+        {
+          "location": "api/billing/client.py:102",
+          "state": "affected",
+          "evidence": "返金経路にも同じ except がある"
+        },
+        {
+          "location": "api/orders/shipping.py:55",
+          "state": "unknown",
+          "evidence": "配送料 API の失敗時の値を追跡できていない"
+        }
+      ],
+      "affected_releases": {
+        "first": "v1.4",
+        "last": "v1.6（最新）",
+        "basis": "tag: 混入元が Blamed のため暫定"
+      },
+      "data_remediation": {
+        "needed": "yes",
+        "locate": "invoices で total が 0 かつ支払い状態が失敗の行（SQL 案、未実行）",
+        "method": "対象の請求書を再計算して再発行",
+        "count": "未確認（実データは読まない）"
+      },
+      "detection": {
+        "source": "bug-scan の前回実行",
+        "stage": "dev",
+        "detected_at": "2026-08-11",
+        "basis": "git と依頼者提供の issue",
+        "days_to_detect": 101
+      },
+      "key": "6900670d40db"
+    },
+    {
+      "id": "BG-003",
+      "title": "返金ジョブの再配信で二重に返金される",
+      "status": "Triaged",
+      "pattern": "BP05",
+      "module": "worker/refunds",
+      "first_seen": "2026-07-16",
+      "last_seen": "2026-11-06",
+      "introduced_in": {
+        "strength": "Unattributable",
+        "reason": "最初から冪等処理が無い（欠落）"
+      },
+      "severity": "Medium",
+      "confidence": "Environment-dependent",
+      "location": [
+        "worker/refunds/job.py:58"
+      ],
+      "events": [
+        "E-017",
+        "E-018"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-07"
+        },
+        {
+          "id": "API-03"
+        },
+        {
+          "id": "JOB-01"
+        },
+        {
+          "id": "DB-04",
+          "op": "W: status"
+        },
+        {
+          "id": "DB-03",
+          "op": "W: total"
+        },
+        {
+          "id": "EXT-01"
+        }
+      ],
+      "actors": [
+        "サポート担当"
+      ],
+      "conditions": [],
+      "relations": [],
+      "validation": {
+        "verdict": "Likely",
+        "method": "static",
+        "evidence": "worker/refunds/job.py:58 を読み、経路を端から端までたどった"
+      },
+      "risk": {
+        "likelihood": "Low",
+        "impact": "High",
+        "level": "Medium",
+        "detectability": "低い（照合まで見えない）",
+        "basis": "ブローカーが at-least-once の場合のみ。設定はリポジトリ外"
+      },
+      "hazard": {
+        "classes": [
+          "金銭",
+          "データ不整合"
+        ],
+        "irreversible": "yes",
+        "silent": "yes",
+        "reach": "返金対象の注文",
+        "recovery": "決済側との手動照合"
+      },
+      "repro": {
+        "state": "unknown",
+        "preconditions": [
+          "ブローカーが同じメッセージを再配信する",
+          "ステージング環境と決済サンドボックス"
+        ],
+        "steps": [
+          "管理画面で返金を実行する",
+          "完了前にワーカーを停止する",
+          "ワーカーを再起動して再配信させる"
+        ],
+        "expected": "返金は 1 回だけ",
+        "actual": "2 回送金される可能性（配信保証が未確認）",
+        "last_run": "未実行"
+      },
+      "tests": "なし",
+      "tests_missing": "同じメッセージを 2 回流すテスト",
+      "fix": "冪等キーで 1 回に限定する",
+      "guard": "同じメッセージを 2 回流すテスト",
+      "regression_test": "同じメッセージを 2 回流すテスト",
+      "path": [
+        {
+          "from": "返金ジョブの再配信",
+          "to": "冪等キーなしで更新",
+          "state": "allowed",
+          "at": "worker/refunds/job.py:58",
+          "why": "再実行で到達"
+        },
+        {
+          "from": "冪等キーなしで更新",
+          "to": "ブローカー設定",
+          "state": "unknown",
+          "why": "配信保証はリポジトリ外"
+        },
+        {
+          "from": "ブローカー設定",
+          "to": "二重返金",
+          "state": "unknown",
+          "why": "前の判定で停止"
+        }
+      ],
+      "sibling_sites": [
+        {
+          "location": "worker/notify/app.py:40",
+          "state": "safe",
+          "evidence": "重複しても通知が 2 通届くだけで、金額は動かない"
+        },
+        {
+          "location": "worker/billing/sync.py:33",
+          "state": "safe",
+          "evidence": "冪等キーで 1 回に限定済み"
+        }
+      ],
+      "affected_releases": {
+        "first": "UNKNOWN",
+        "last": "v1.6（最新）",
+        "basis": "混入元なしのためタグを特定できない"
+      },
+      "data_remediation": {
+        "needed": "unknown",
+        "locate": "refunds と決済ゲートウェイの取引履歴を照合（照合方法の案、未実行）",
+        "method": "過剰な返金の回収方法は人が判断",
+        "count": "未確認（実データは読まない）"
+      },
+      "detection": {
+        "source": "修正 d4e2 のレビュー（修正後も別経路が残存）",
+        "stage": "dev",
+        "detected_at": "2026-07-16",
+        "basis": "git と依頼者提供の issue"
+      },
+      "key": "32098a9c2ae4"
+    },
+    {
+      "id": "BG-004",
+      "title": "依存更新で日付ピッカーの初期値が空になる",
+      "status": "Reopened",
+      "pattern": "BP06",
+      "module": "web/checkout",
+      "first_seen": "2026-06-03",
+      "last_seen": "2026-11-06",
+      "introduced_in": {
+        "commit": "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17",
+        "strength": "Traced",
+        "reason": "b7c1 の更新で既定値が変わった"
+      },
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "location": [
+        "web/checkout/DatePicker.tsx:27"
+      ],
+      "events": [
+        "E-026"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-02"
+        }
+      ],
+      "actors": [
+        "購入者"
+      ],
+      "conditions": [],
+      "relations": [],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "web/checkout/DatePicker.tsx:27 を読み、経路を端から端までたどった"
+      },
+      "risk": {
+        "likelihood": "Medium",
+        "impact": "Low",
+        "level": "Low",
+        "detectability": "高い（画面で分かる）",
+        "basis": "再入力で回避できる。一度修正後に再発"
+      },
+      "hazard": {
+        "classes": [
+          "操作不能（一時）"
+        ],
+        "irreversible": "no",
+        "silent": "no",
+        "reach": "配送日を選ぶ購入者",
+        "recovery": "手入力で回避可"
+      },
+      "repro": {
+        "state": "static",
+        "preconditions": [
+          "配送日の入力がある商品"
+        ],
+        "steps": [
+          "チェックアウト画面を開く",
+          "配送日欄を確認する"
+        ],
+        "expected": "翌日が初期表示",
+        "actual": "空欄（コードから導出）",
+        "last_run": "未実行"
+      },
+      "tests": "なし",
+      "tests_missing": "初期表示を確認する画面テスト",
+      "fix": "初期値を明示して渡す",
+      "guard": "初期表示を確認する画面テスト",
+      "regression_test": "初期表示を確認する画面テスト",
+      "key": "e443d2199f6c"
+    },
+    {
+      "id": "BG-005",
+      "title": "注文通知のリスナーが未登録の可能性がある",
+      "status": "Unverified",
+      "pattern": "BP07",
+      "module": "worker/notify",
+      "first_seen": "2026-09-30",
+      "last_seen": "2026-11-06",
+      "introduced_in": {
+        "strength": "Unattributable",
+        "reason": "登録箇所を特定できていない"
+      },
+      "severity": "Info",
+      "confidence": "Suspected",
+      "location": [
+        "worker/notify/app.py:15"
+      ],
+      "events": [
+        "E-031"
+      ],
+      "surfaces": [
+        {
+          "id": "API-01"
+        }
+      ],
+      "actors": [
+        "購入者"
+      ],
+      "conditions": [],
+      "relations": [],
+      "validation": {
+        "verdict": "Unverified",
+        "method": "static",
+        "evidence": "worker/notify/app.py:15 を読み、経路を端から端までたどった"
+      },
+      "risk": {
+        "likelihood": "Low",
+        "impact": "Low",
+        "level": "Low",
+        "detectability": "中（通知が届かないと分かる）",
+        "basis": "登録箇所を静的に特定できていない"
+      },
+      "hazard": {
+        "classes": [
+          "機能不全"
+        ],
+        "irreversible": "no",
+        "silent": "yes",
+        "reach": "通知を受ける購入者",
+        "recovery": "通知の再送"
+      },
+      "repro": {
+        "state": "unknown",
+        "preconditions": [
+          "不明"
+        ],
+        "steps": [
+          "手順未確定（通知の登録箇所を確認する必要あり）"
+        ],
+        "expected": "注文確定で通知される",
+        "actual": "未確認",
+        "last_run": "未実行"
+      },
+      "tests": "なし",
+      "tests_missing": "通知まで通す E2E",
+      "fix": "登録を起動時に検査する",
+      "guard": "通知まで通す E2E",
+      "regression_test": "通知まで通す E2E",
+      "key": "21a6c49712af"
+    },
+    {
+      "id": "BG-006",
+      "title": "返金時に税額が再計算されない",
+      "status": "Fixed",
+      "pattern": "BP04",
+      "module": "api/billing",
+      "first_seen": "2026-04-10",
+      "last_seen": "2026-05-02",
+      "introduced_in": {
+        "commit": "541bfe743064f232d05980387d4f3dfad3dd01cd",
+        "strength": "Traced",
+        "reason": "4c7d が税計算を返金経路に通さなかった"
+      },
+      "confidence": "Confirmed",
+      "location": [
+        "api/billing/tax.py:120"
+      ],
+      "events": [
+        "E-012"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-07"
+        },
+        {
+          "id": "SC-09"
+        },
+        {
+          "id": "JOB-01"
+        },
+        {
+          "id": "API-04"
+        },
+        {
+          "id": "DB-03",
+          "op": "W: total"
+        }
+      ],
+      "actors": [
+        "サポート担当"
+      ],
+      "conditions": [],
+      "relations": [],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "api/billing/tax.py:120 を読み、経路を端から端までたどった"
+      },
+      "hazard": {
+        "classes": [
+          "金銭",
+          "法令"
+        ],
+        "irreversible": "no",
+        "silent": "yes",
+        "reach": "返金された請求書",
+        "recovery": "請求書の再発行"
+      },
+      "repro": {
+        "state": "test",
+        "preconditions": [
+          "税込み請求書がある"
+        ],
+        "steps": [
+          "一部返金を実行する",
+          "請求書を開く"
+        ],
+        "expected": "返金後の税額",
+        "actual": "修正前は返金前の税額が残った",
+        "last_run": "18fa の回帰テスト"
+      },
+      "tests": "tests/test_tax.py:44",
+      "tests_missing": "tests/test_tax.py:44",
+      "fix": "税計算を 1 か所に集約",
+      "guard": "tests/test_tax.py:44",
+      "regression_test": "tests/test_tax.py:44",
+      "fixed_in": "aea804c2d9e105d3b3df247a241ebfc0ced1dbae",
+      "path": [
+        {
+          "from": "別通貨の返金",
+          "to": "税を再計算",
+          "state": "allowed",
+          "at": "api/billing/tax.py:120",
+          "why": "返金経由で到達"
+        },
+        {
+          "from": "税を再計算",
+          "to": "通貨別のテストが固定",
+          "state": "blocked",
+          "at": "tests/test_tax.py:44",
+          "why": "テストと guard で停止"
+        },
+        {
+          "from": "通貨別のテストが固定",
+          "to": "税額の誤り",
+          "state": "blocked",
+          "why": "前の判定で停止"
+        }
+      ],
+      "detection": {
+        "source": "サポートへの問い合わせ（issue の参照つき）",
+        "stage": "release",
+        "detected_at": "2026-04-10",
+        "basis": "git と依頼者提供の issue",
+        "days_to_detect": 60,
+        "days_to_fix": 22
+      },
+      "key": "c6219a3ec94a"
+    },
+    {
+      "id": "BG-007",
+      "title": "空白のみのクーポンで注文が確定する",
+      "status": "Fixed",
+      "pattern": "BP11",
+      "module": "api/orders",
+      "first_seen": "2026-03-18",
+      "last_seen": "2026-03-31",
+      "introduced_in": {
+        "commit": "a5bf7d2a1bdc86d66fa9bd6cce92db6f7f5a5486",
+        "strength": "Traced",
+        "reason": "c3d4 が空文字だけを拒否した"
+      },
+      "confidence": "Confirmed",
+      "location": [
+        "api/orders/validate.py:42"
+      ],
+      "events": [
+        "E-001"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-02"
+        },
+        {
+          "id": "API-01"
+        },
+        {
+          "id": "DB-01",
+          "op": "W: discount_total"
+        },
+        {
+          "id": "DB-02",
+          "op": "R: code"
+        }
+      ],
+      "actors": [
+        "ログイン済みの購入者"
+      ],
+      "conditions": [],
+      "relations": [],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "api/orders/validate.py:42 を読み、経路を端から端までたどった"
+      },
+      "hazard": {
+        "classes": [
+          "金銭"
+        ],
+        "irreversible": "no",
+        "silent": "yes",
+        "reach": "全購入者",
+        "recovery": "注文の取消と再請求"
+      },
+      "repro": {
+        "state": "test",
+        "preconditions": [
+          "有効な商品がカートにある"
+        ],
+        "steps": [
+          "クーポン欄に半角空白だけを入力する",
+          "注文を確定する"
+        ],
+        "expected": "クーポン不正のエラー",
+        "actual": "修正前は確定していた",
+        "last_run": "e5f6 の回帰テスト"
+      },
+      "tests": "tests/orders/test_validate.py:88",
+      "tests_missing": "tests/orders/test_validate.py:88",
+      "fix": "strip() 後に空を拒否",
+      "guard": "tests/orders/test_validate.py:88",
+      "regression_test": "tests/orders/test_validate.py:88",
+      "fixed_in": "a7e6bef900b59b349cd0c647d7fb4f5a2957029a",
+      "variant": "blank-only-input",
+      "detection": {
+        "source": "利用者報告（issue の参照つき）",
+        "stage": "release",
+        "detected_at": "2026-03-18",
+        "basis": "git と依頼者提供の issue",
+        "days_to_detect": 9,
+        "days_to_fix": 13
+      },
+      "key": "822411cb2041"
+    },
+    {
+      "id": "BG-008",
+      "title": "API のキー変更で合計金額が未定義と表示される",
+      "status": "Fixed",
+      "pattern": "BP03",
+      "module": "web/checkout",
+      "first_seen": "2026-06-05",
+      "last_seen": "2026-06-20",
+      "introduced_in": {
+        "commit": "88ed9d786c58a098e6f7dfcd5b0457a5d9e34f17",
+        "strength": "Traced",
+        "reason": "b7c1 の更新でキー名が変わった"
+      },
+      "confidence": "Confirmed",
+      "location": [
+        "web/checkout/api.ts:41"
+      ],
+      "events": [
+        "E-022",
+        "E-023"
+      ],
+      "surfaces": [
+        {
+          "id": "SC-02"
+        },
+        {
+          "id": "API-01"
+        }
+      ],
+      "actors": [
+        "購入者"
+      ],
+      "conditions": [],
+      "relations": [
+        {
+          "type": "caused_by",
+          "to": "BG-004",
+          "strength": "Traced",
+          "evidence": "依存更新 b7c1 がキー名も変更"
+        }
+      ],
+      "validation": {
+        "verdict": "Valid",
+        "method": "static",
+        "evidence": "web/checkout/api.ts:41 を読み、経路を端から端までたどった"
+      },
+      "hazard": {
+        "classes": [
+          "表示誤り"
+        ],
+        "irreversible": "no",
+        "silent": "no",
+        "reach": "全購入者",
+        "recovery": "画面の再読込では直らない"
+      },
+      "repro": {
+        "state": "test",
+        "preconditions": [
+          "カートに商品がある"
+        ],
+        "steps": [
+          "チェックアウト画面を開く",
+          "合計金額を確認する"
+        ],
+        "expected": "合計金額を表示",
+        "actual": "修正前は undefined を表示",
+        "last_run": "d91e の契約テスト"
+      },
+      "tests": "tests/checkout/contract.test.ts:12",
+      "tests_missing": "tests/checkout/contract.test.ts:12",
+      "fix": "キー名を型で共有",
+      "guard": "tests/checkout/contract.test.ts:12",
+      "regression_test": "tests/checkout/contract.test.ts:12",
+      "fixed_in": "dbc7ae8d9fe2a61563e13e35abe5ecefcf4d708f",
+      "detection": {
+        "source": "CI の型検査",
+        "stage": "ci",
+        "detected_at": "2026-06-05",
+        "basis": "git と依頼者提供の issue",
+        "days_to_detect": 3,
+        "days_to_fix": 15
+      },
+      "key": "98a02a9f5862"
+    }
+  ],
+  "issues": [
+    {
+      "id": "I-01",
+      "kind": "テスト不在",
+      "at": "worker/refunds/",
+      "feeds": [
+        "BP05"
+      ]
+    },
+    {
+      "id": "I-02",
+      "kind": "ルール重複",
+      "at": "billing/tax と refunds/job",
+      "feeds": [
+        "BP04"
+      ]
+    },
+    {
+      "id": "I-03",
+      "kind": "例外の握りつぶし",
+      "at": "api/billing/client.py:77",
+      "feeds": [
+        "BP02"
+      ]
+    },
+    {
+      "id": "I-04",
+      "kind": "E2E ゲート不在",
+      "at": "リポジトリ全体",
+      "feeds": [
+        "BP05",
+        "BP08",
+        "BP07"
+      ]
+    },
+    {
+      "id": "I-05",
+      "kind": "高 churn・高複雑度",
+      "at": "api/orders/validate.py",
+      "feeds": [
+        "BP11",
+        "BP01"
+      ]
+    },
+    {
+      "id": "I-06",
+      "kind": "暗黙の契約",
+      "at": "web/checkout/api.ts",
+      "feeds": [
+        "BP03"
+      ]
+    }
+  ],
+  "imports": [
+    {
+      "key": "security-scan:F-001",
+      "scan": "security-scan",
+      "title": "（架空）クーポン適用の認可を確認していない",
+      "severity": "Medium",
+      "location": [
+        "api/orders/routes.py:31"
+      ]
+    }
+  ],
+  "perspectives": [
+    {
+      "name": "BP01",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP02",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP03",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP04",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP05",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP06",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP07",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP08",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP09",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP10",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP11",
+      "status": "applied",
+      "note": "修正履歴を分類し、現在のコードを読んだ"
+    },
+    {
+      "name": "BP12",
+      "status": "N/A",
+      "note": "該当する修正が無かった"
+    }
+  ],
+  "checked_ok": [
+    "税計算の重複は api/billing/tax.py:120 に集約済みで、tests/test_tax.py:44 が固定している"
+  ],
+  "limitations": [
+    "見本のため、すべて架空のデータである",
+    "実データとログは読んでいないため、発生頻度と影響件数は未確認"
+  ],
+  "decisions": [
+    "ブローカーの配信保証を確認する"
+  ],
+  "next_steps": [
+    "BG-001 と横展開先を同じ修正で直す"
+  ]
+}

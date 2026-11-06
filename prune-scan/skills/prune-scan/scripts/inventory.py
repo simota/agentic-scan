@@ -720,17 +720,64 @@ def key_line(text, key, *, lines=None):
     return lines.get(key.rsplit(".", 1)[-1], 1)
 
 
-# Strings first, so comment markers and commas inside them are kept.
-# The lookahead's comment cannot run past its own */, so each comma scans only
-# the comments directly after it.
-JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|'
-                        r',(?=\s*(?:(?://[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)\s*)*[}\]]))')
+# Strings first, so comment markers and commas inside them are kept; a comma is
+# dropped only when jsonc_closes_after says it is trailing.
+JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z))|,')
+JSONC_SPACE = re.compile(r"\s*")
+JSONC_CLOSE = re.compile(r"[}\]]")
 TS_CONFIG = re.compile(r"(?:^|/)(?:tsconfig(?:\.[\w-]+)?|jsconfig)\.json$")
+
+
+def jsonc_closes_after(text, start):
+    """Whether text matches \\s*(?:(?://[^\\n]*|/\\*(?:[^*]|\\*(?!/))*\\*/)\\s*)*[}\\]] at start.
+
+    A line comment may end anywhere on its line, so a backtracking regex tries
+    every split of every commented line: tsc --init's template, a /* */ note
+    after each // line, takes exponential time. Each position is visited once here.
+    """
+    todo, seen = [start], set()
+    while todo:
+        i = todo.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        j = JSONC_SPACE.match(text, i).end()
+        if j < len(text) and text[j] in "}]":
+            return True
+        if text.startswith("/*", j):
+            end = text.find("*/", j + 2)
+            if end >= 0:
+                todo.append(end + 2)
+        elif text.startswith("//", j):
+            eol = text.find("\n", j + 2)
+            eol = len(text) if eol < 0 else eol
+            # Ending the line comment early reaches a } or ], or a /* comment, on the same line.
+            if JSONC_CLOSE.search(text, j + 2, eol):
+                return True
+            todo.append(eol)
+            block = text.find("/*", j + 2, eol)
+            while block >= 0:
+                end = text.find("*/", block + 2)
+                if end >= 0:
+                    todo.append(end + 2)
+                block = text.find("/*", block + 1, eol)
+    return False
+
+
+def jsonc_cleaned(text):
+    """text without comments and trailing commas, outside strings."""
+    def drop(m):
+        if m.group(1):
+            return ""
+        if m.group(0) == ",":
+            return "" if jsonc_closes_after(text, m.end()) else ","
+        return m.group(0)
+    return JSONC_DROP.sub(drop, text)
 
 
 def jsonc_object(text):
     """tsconfig.json allows comments and trailing commas; drop them outside strings."""
-    cleaned = JSONC_DROP.sub(lambda m: "" if m.group(1) else m.group(0), text)
+    cleaned = jsonc_cleaned(text)
     try:
         data = parse_json(cleaned, "tsconfig")
     except (RecordError, RecursionError):
@@ -1888,6 +1935,24 @@ def scan_imports(scan, python_imports):
     return rows, (js_packages, py_modules, go_imports, rs_crates)
 
 
+WORD_RUN = re.compile(r"\w+")
+# Below this many names, testing each name against the tool text is cheaper than one indexing pass.
+INDEX_MIN_NAMES = 64
+
+
+def word_runs_present(haystack, names):
+    """The word runs of names that occur as whole word runs of haystack, or None to test each name directly.
+
+    A mention pattern refuses a word character on either side of the name, so each word run of
+    the name is a whole word run of the text it matches in: a run missing here rules the name
+    out without a scan of its own. Only the runs of names are kept, so memory follows the names.
+    """
+    if len(names) < INDEX_MIN_NAMES or not haystack:
+        return None
+    needed = {run for name in names for run in WORD_RUN.findall(name)}
+    return {run for m in WORD_RUN.finditer(haystack) if (run := m.group()) in needed}
+
+
 def scan_dependencies(scan, imported):
     """Declared dependencies nothing imports, duplicated or replaced by the platform."""
     texts = scan.texts
@@ -1895,9 +1960,16 @@ def scan_dependencies(scan, imported):
     js_packages, py_modules, go_imports, rs_crates = imported
     tool_text = "\n".join(t for r, t in texts.items() if TOOL_FILES.search(r))
 
-    def mentions_of(pattern, name, haystack):
+    def mentions_of(before, name, haystack, present=None):
+        """Matches of name with no word character after it and none of before ahead of it."""
         # Most packages are never named in tool files: skip the regex scan when the name is absent.
-        return len(re.findall(pattern % re.escape(name), haystack)) if name in haystack else 0
+        if present is not None and not all(run in present for run in WORD_RUN.findall(name)):
+            return 0
+        if name not in haystack:
+            return 0
+        # The name leads and the lookbehind follows it, so the scan jumps between occurrences of the name.
+        literal = re.escape(name)
+        return len(re.findall(r"%s(?<!%s%s)(?![\w-])" % (literal, before, literal), haystack))
 
     declared, unimported, dup_rows, platform_rows = [], [], [], []
     for rel, text in sorted(texts.items()):
@@ -1917,17 +1989,21 @@ def scan_dependencies(scan, imported):
             # next imports react and react-dom itself; the application need not.
             names_here = declared_packages(text)
             peers = {peer for framework, needs in FRAMEWORK_PEERS.items() if framework in names_here for peer in needs}
+            present = word_runs_present(haystack, [dep.split("/")[-1] for section in (
+                "dependencies", "devDependencies", "optionalDependencies") for dep in pkg.get(section, {})])
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
                     loc = f"{rel}:{key_lines.get((section, dep), 1)}"
                     configured = sum(v == dep or v.startswith(dep + "/") for v in config)
                     deps.append((dep, section, loc, js_packages[dep] + (dep in peers),
-                                 mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack) + configured))
+                                 mentions_of(r"[\w@/-]", dep.split("/")[-1], haystack, present)
+                                 + configured))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
             ecosystem = "python"
-            parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
+            parsed = list(parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text))
             if name == "pyproject.toml":
                 other_tools += "\n" + pyproject_tool_text(text)
+            present = word_runs_present(other_tools, [dep for dep, _, _ in parsed])
             for dep, section, loc in parsed:
                 modules = {py_dist_module(dep).lower(), re.sub(r"[-.]", "_", dep.lower())}
                 if re.search(r"[-.]", dep):
@@ -1937,7 +2013,7 @@ def scan_dependencies(scan, imported):
                     if bare != dep.lower():
                         modules.update({re.sub(r"[-.]", "_", bare), re.sub(r"[-.]", "", bare)})
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
-                             mentions_of(r"(?<![\w-])%s(?![\w-])", dep, other_tools)))
+                             mentions_of(r"[\w-]", dep, other_tools, present)))
         elif name == "go.mod":
             for dep, section, loc in parse_go_mod(rel, text):
                 deps.append((dep, section, loc, sum(n for p, n in go_imports.items() if p == dep or p.startswith(dep + "/")),

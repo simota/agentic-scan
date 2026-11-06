@@ -293,7 +293,11 @@ TEMPLATE_TOKEN = re.compile(r"<!--|\{/\*|(?<!\{)\{#(?![#/])|\{\{!--|\{\{!|<%#|\{
 TEMPLATE_CLOSE = {"{#": "#}", "{{!--": "--}}", "{{!": "}}", "<%#": "%>", "<!--": "-->", "{/*": "*/}"}
 ENDCOMMENT = re.compile(r"\{%-?\s*endcomment\s*-?%\}")
 # JSX files: {/* */}, a // comment line (commented-out markup) and a /* */ comment, beside JS strings.
-JSX_TOKEN = re.compile(r"""\{/\*|^[ \t]*//[^\n]*|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""",
+# A // line is one whose first non-blank characters are "//". Each form opens with a literal and then
+# looks back for the line's start, as ^ would, so a search can skip to the characters that can open a token.
+_LINE_COMMENT = ("|".join(rf"{c}(?<![^\n]{c})[ \t]*//[^\n]*" for c in (" ", r"\t"))
+                 + r"|//(?<![^\n]//)[^\n]*")
+JSX_TOKEN = re.compile(r"\{/\*|" + _LINE_COMMENT + r"""|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""",
                        re.S | re.M)
 # Plain script: the JSX tokens without {/*, so "{/* note */ a: 1}" ends its comment at "*/".
 SCRIPT_TOKEN = re.compile(JSX_TOKEN.pattern.removeprefix(r"\{/\*|"), re.S | re.M)
@@ -324,8 +328,9 @@ def holds_page_sources(directory):
 
 
 def iter_files(root, onerror=None):
+    depth = len(Path(root).parts)  # Each walked directory's parts below root, without relative_to's search.
     for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
-        in_routes = not ROUTE_TREES.isdisjoint(Path(dirpath).relative_to(root).parts)
+        in_routes = not ROUTE_TREES.isdisjoint(Path(dirpath).parts[depth:])
         dirnames[:] = sorted(d for d in dirnames
                              if not os.path.islink(os.path.join(dirpath, d))
                              and (d not in SKIP_DIRS
@@ -378,9 +383,17 @@ class SourceLines:
         return bisect_left(self.newlines, index) + 1
 
 
+def blank(text):
+    """text with every character but a newline turned into a space, so every offset stays put.
+
+    The same as re.sub(r"[^\\n]", " ", text), which builds the result a character at a time.
+    """
+    return "\n".join(" " * len(line) for line in text.split("\n"))
+
+
 def blank_comment(match):
     """Mask a comment while preserving every source offset and newline."""
-    return re.sub(r"[^\n]", " ", match.group(0))
+    return blank(match.group(0))
 
 
 def mask_css_comments(text, line_comments=False):
@@ -563,7 +576,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             if child_text and jsx_text_line(text, match.start(), budget):
                 cursor = match.end()  # "//" in JSX child text is visible text, not a comment.
                 continue
-            parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
+            parts.extend((text[end:match.start()], blank(found)))
             cursor = end = match.end()
             continue
         if jsx and found == "/*" and inside_regex(text, match.start(), budget):
@@ -595,7 +608,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             if close < 0:
                 break  # Do not erase the remaining source on ambiguous syntax.
             cursor = close + len(marker)
-            parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", text[match.start():cursor])))
+            parts.extend((text[end:match.start()], blank(text[match.start():cursor])))
             end = cursor
     parts.append(text[end:])
     return "".join(parts)
@@ -607,9 +620,9 @@ def keep_regions(text, regions):
     for start, stop, body in sorted(regions):
         if start < end:
             continue
-        parts.extend((re.sub(r"[^\n]", " ", text[end:start]), body))
+        parts.extend((blank(text[end:start]), body))
         end = stop
-    parts.append(re.sub(r"[^\n]", " ", text[end:]))
+    parts.append(blank(text[end:]))
     return "".join(parts)
 
 
@@ -749,6 +762,9 @@ CONTROL_WORDS = {"if", "while", "for", "with"}
 REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
 
 
+JS_WORD = re.compile(r"[A-Za-z_$][\w$]*")
+
+
 def inside_regex(text, i, budget=None):
     """Whether the "/" at text[i] lies inside a regular-expression literal opened earlier on its line.
 
@@ -802,7 +818,7 @@ def inside_regex(text, i, budget=None):
                 return True  # i is the literal's closing "/".
             j, previous = j + 1, "a"
             continue
-        word = re.match(r"[A-Za-z_$][\w$]*", text[j:j + 64])
+        word = JS_WORD.match(text, j, j + 64)
         if word:
             dotted = previous == "."  # obj.return is a property, not the keyword.
             previous = "" if word.group(0) in REGEX_WORDS and not dotted else "a"
@@ -1065,9 +1081,12 @@ def dynamic_label_pairs(parsed):
     return {key for key, count in labels.items() if count == 1 and fields.get(key) == 1}
 
 
+EVENT_MODIFIERS = re.compile(r"[.|][^)]*")
+
+
 def event_name(attr):
     """An event attribute without modifiers: (keyup.enter) -> (keyup), on:click|once -> on:click."""
-    return re.sub(r"[.|][^)]*", "", attr)
+    return EVENT_MODIFIERS.sub("", attr)
 
 
 def has_name(attrs, names=NAME_ATTRS):
@@ -1589,8 +1608,9 @@ def inventory(root, flows=None):
         reason = str(error.strerror or error).encode("utf-8", errors="backslashreplace").decode("utf-8")
         parse_warning(acc, location, f"directory could not be scanned; contents skipped: {reason[:200]}")
 
+    depth = len(root.parts)
     for path in iter_files(root, onerror=directory_warning):
-        rel = path.relative_to(root).as_posix()
+        rel = "/".join(path.parts[depth:])  # path.relative_to(root).as_posix(): iter_files walks below root.
         suffix = path.suffix.lower()
         if suffix not in SCANNED_EXT:
             continue
@@ -1678,7 +1698,7 @@ def inventory(root, flows=None):
                           if tag.name == "style" and tag.body is not None
                           and (literal(tag.attrs.get("lang")) or "").lower() in INDENTED_STYLE_LANGS
                           for start, stop in [tag.body]]
-                by_syntax = [(replace_regions(css_text, [(a, b, re.sub(r"[^\n]", " ", t)) for a, b, t in blocks]), False)]
+                by_syntax = [(replace_regions(css_text, [(a, b, blank(t)) for a, b, t in blocks]), False)]
                 if blocks:
                     by_syntax.append((keep_regions(css_text, blocks), True))
             for measured, indented in by_syntax:

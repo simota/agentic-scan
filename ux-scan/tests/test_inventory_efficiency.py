@@ -235,6 +235,56 @@ class WordLedPatternTests(unittest.TestCase):
         self.assertGreaterEqual(found, 11)
 
 
+# The JSX comment tokenizer as written before its // line form opened with literal characters.
+JSX_TOKEN_BEFORE = r"""\{/\*|^[ \t]*//[^\n]*|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`"""
+TOKEN_PIECES = ["//", "/*", "*/", "{/*", " ", "  ", "\t", "\n", "\r", "\u2028", "x", '"', "'", "`", "\\", "a//b",
+                "  //c", "\n//", "\n \t//"]
+
+
+class CheaperEquivalentTests(unittest.TestCase):
+    def test_comment_tokens_are_found_where_they_were_before(self):
+        rng = random.Random(3)
+        texts = [path.read_text(encoding="utf-8") for path in sorted((ROOT / "examples" / "tasklane").rglob("*"))
+                 if path.is_file()]
+        texts += ["".join(rng.choice(TOKEN_PIECES) for _ in range(rng.randint(0, 12))) for _ in range(6000)]
+        for name, before in (("JSX_TOKEN", JSX_TOKEN_BEFORE), ("SCRIPT_TOKEN", JSX_TOKEN_BEFORE.removeprefix(r"\{/\*|"))):
+            compiled, plain = getattr(inventory, name), re.compile(before, re.S | re.M)
+            with self.subTest(pattern=name):
+                self.assertEqual(compiled.flags, plain.flags)
+                self.assertTrue(fast_scan(compiled))
+                for text in texts:
+                    # mask_markup_comments resumes its search at any offset, so compare from each one.
+                    for pos in range(len(text) + 1) if len(text) < 80 else (0, 1, len(text) // 2):
+                        got, want = compiled.search(text, pos), plain.search(text, pos)
+                        self.assertEqual(got and got.span(), want and want.span(), (text[:80], pos))
+
+    def test_blank_keeps_newlines_and_spaces_out_everything_else(self):
+        rng = random.Random(4)
+        for text in ["", "\n", "a", "\n\n", "/* x */"] + ["".join(rng.choice("ab \n\r\t\u2028\x85\u00e9\U0001d11e\0")
+                                                        for _ in range(rng.randint(0, 30))) for _ in range(3000)]:
+            self.assertEqual(inventory.blank(text), re.sub(r"[^\n]", " ", text), repr(text))
+
+    def test_walked_paths_are_read_below_root_however_root_is_spelled(self):
+        with tempfile.TemporaryDirectory() as parent:
+            # A repository named app is not a route tree; only directories below root are read as one.
+            tmp = os.path.join(parent, "app")
+            (Path(tmp) / "app" / "build").mkdir(parents=True)
+            (Path(tmp) / "app" / "build" / "page.tsx").write_text("export default 1\n", encoding="utf-8")
+            (Path(tmp) / "build").mkdir()
+            (Path(tmp) / "build" / "page.tsx").write_text("export default 1\n", encoding="utf-8")
+            expected = [Path(tmp, "app", "build", "page.tsx")]
+            cwd = os.getcwd()
+            try:
+                os.chdir(tmp)
+                for spelling in (tmp, tmp + os.sep, tmp + os.sep + ".", ".", "." + os.sep):
+                    with self.subTest(root=spelling):
+                        found = [Path(tmp, p.relative_to(spelling)) for p in inventory.iter_files(spelling)]
+                        self.assertEqual(found, expected)
+            finally:
+                os.chdir(cwd)
+            self.assertEqual([r["route"] for r in inventory.inventory(tmp)["routes"]], ["/build"])
+
+
 class SkippedWorkTests(unittest.TestCase):
     def test_physical_properties_are_reported_for_rtl_locales_only(self):
         with tempfile.TemporaryDirectory() as tmp:

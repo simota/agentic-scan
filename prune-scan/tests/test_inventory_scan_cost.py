@@ -1,4 +1,4 @@
-"""Scan cost that grows with the input's shape, not its size: tsconfig comments.
+"""Scan cost that grows with the input's shape, not its size: tsconfig comments and many dependencies.
 
 Each fast path is checked against the slower reading it replaces, so the speed-up changes no result.
 """
@@ -9,6 +9,7 @@ import sys
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "skills" / "prune-scan" / "scripts"))
@@ -59,6 +60,50 @@ class JsoncCommentTests(unittest.TestCase):
         cases += ["".join(rnd.choice(alphabet) for _ in range(rnd.randint(0, 12))) for _ in range(20000)]
         for text in cases:
             self.assertEqual(inventory.jsonc_cleaned(text), backtracking_cleaned(text), repr(text))
+
+
+class DependencyIndexTests(unittest.TestCase):
+    def files(self):
+        rnd = random.Random(5)
+        alphabet = ["a", "b", "x", "-", ".", "_", "1", "é", "@", "~"]
+        names = sorted({"".join(rnd.choice(alphabet) for _ in range(rnd.randint(1, 6))).strip("@") or "a"
+                        for _ in range(150)})
+        words = [rnd.choice(["", "@", "/", "x", ".", "-"]) + rnd.choice(names) + rnd.choice(["", "-", ".", "x", "/"])
+                 for _ in range(400)]
+        return {
+            "package.json": '{"scripts": {"t": "%s"}, "devDependencies": {%s}}' % (
+                " ".join(words[:40]), ", ".join(f'"{n}": "1"' for n in names)),
+            "requirements.txt": "".join(n + "\n" for n in names if n[0].isalnum()),
+            "Makefile": "all:\n\t" + " ".join(words) + "\n",
+        }
+
+    def test_indexed_mentions_equal_per_name_mentions(self):
+        files = self.files()
+        indexed = scan(files)["unimported_dependencies"]
+        with mock.patch.object(inventory, "INDEX_MIN_NAMES", 10 ** 9):
+            direct = scan(files)["unimported_dependencies"]
+        self.assertEqual(indexed, direct)
+        self.assertTrue(any(row["mentions"] for row in direct))
+        # Both ecosystems are listed: the names are taken without consuming the parsed manifest.
+        self.assertEqual({row["manifest"] for row in direct}, {"package.json", "requirements.txt"})
+
+    def test_name_first_patterns_count_what_lookbehind_first_patterns_count(self):
+        rnd = random.Random(9)
+        alphabet = ["a", "b", "-", ".", "_", "@", "/", "é", " ", "\n", "x1"]
+        for _ in range(3000):
+            name = "".join(rnd.choice(alphabet[:8]) for _ in range(rnd.randint(0, 4)))
+            text = "".join(rnd.choice(alphabet + [name] * 4) for _ in range(rnd.randint(0, 30)))
+            literal = re.escape(name)
+            for before in (r"[\w@/-]", r"[\w-]"):
+                self.assertEqual(
+                    len(re.findall(r"%s(?<!%s%s)(?![\w-])" % (literal, before, literal), text)),
+                    len(re.findall(r"(?<!%s)%s(?![\w-])" % (before, literal), text)), (name, text, before))
+
+    def test_word_runs_present_keeps_only_runs_of_the_names(self):
+        names = [f"pkg-{i}" for i in range(inventory.INDEX_MIN_NAMES)]
+        self.assertEqual(inventory.word_runs_present("run pkg-7 and other words", names), {"pkg", "7"})
+        self.assertIsNone(inventory.word_runs_present("pkg-7", names[:3]))
+        self.assertIsNone(inventory.word_runs_present("", names))
 
 
 if __name__ == "__main__":

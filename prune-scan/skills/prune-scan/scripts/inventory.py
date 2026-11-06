@@ -1935,6 +1935,24 @@ def scan_imports(scan, python_imports):
     return rows, (js_packages, py_modules, go_imports, rs_crates)
 
 
+WORD_RUN = re.compile(r"\w+")
+# Below this many names, testing each name against the tool text is cheaper than one indexing pass.
+INDEX_MIN_NAMES = 64
+
+
+def word_runs_present(haystack, names):
+    """The word runs of names that occur as whole word runs of haystack, or None to test each name directly.
+
+    A mention pattern refuses a word character on either side of the name, so each word run of
+    the name is a whole word run of the text it matches in: a run missing here rules the name
+    out without a scan of its own. Only the runs of names are kept, so memory follows the names.
+    """
+    if len(names) < INDEX_MIN_NAMES or not haystack:
+        return None
+    needed = {run for name in names for run in WORD_RUN.findall(name)}
+    return {run for m in WORD_RUN.finditer(haystack) if (run := m.group()) in needed}
+
+
 def scan_dependencies(scan, imported):
     """Declared dependencies nothing imports, duplicated or replaced by the platform."""
     texts = scan.texts
@@ -1942,9 +1960,16 @@ def scan_dependencies(scan, imported):
     js_packages, py_modules, go_imports, rs_crates = imported
     tool_text = "\n".join(t for r, t in texts.items() if TOOL_FILES.search(r))
 
-    def mentions_of(pattern, name, haystack):
+    def mentions_of(before, name, haystack, present=None):
+        """Matches of name with no word character after it and none of before ahead of it."""
         # Most packages are never named in tool files: skip the regex scan when the name is absent.
-        return len(re.findall(pattern % re.escape(name), haystack)) if name in haystack else 0
+        if present is not None and not all(run in present for run in WORD_RUN.findall(name)):
+            return 0
+        if name not in haystack:
+            return 0
+        # The name leads and the lookbehind follows it, so the scan jumps between occurrences of the name.
+        literal = re.escape(name)
+        return len(re.findall(r"%s(?<!%s%s)(?![\w-])" % (literal, before, literal), haystack))
 
     declared, unimported, dup_rows, platform_rows = [], [], [], []
     for rel, text in sorted(texts.items()):
@@ -1964,17 +1989,21 @@ def scan_dependencies(scan, imported):
             # next imports react and react-dom itself; the application need not.
             names_here = declared_packages(text)
             peers = {peer for framework, needs in FRAMEWORK_PEERS.items() if framework in names_here for peer in needs}
+            present = word_runs_present(haystack, [dep.split("/")[-1] for section in (
+                "dependencies", "devDependencies", "optionalDependencies") for dep in pkg.get(section, {})])
             for section in ("dependencies", "devDependencies", "optionalDependencies"):
                 for dep in pkg.get(section, {}):
                     loc = f"{rel}:{key_lines.get((section, dep), 1)}"
                     configured = sum(v == dep or v.startswith(dep + "/") for v in config)
                     deps.append((dep, section, loc, js_packages[dep] + (dep in peers),
-                                 mentions_of(r"(?<![\w@/-])%s(?![\w-])", dep.split("/")[-1], haystack) + configured))
+                                 mentions_of(r"[\w@/-]", dep.split("/")[-1], haystack, present)
+                                 + configured))
         elif re.match(r"requirements[\w.-]*\.(?:txt|in)$", name) or name == "pyproject.toml":
             ecosystem = "python"
-            parsed = parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text)
+            parsed = list(parse_requirements(rel, text) if name != "pyproject.toml" else parse_toml_lists(rel, text))
             if name == "pyproject.toml":
                 other_tools += "\n" + pyproject_tool_text(text)
+            present = word_runs_present(other_tools, [dep for dep, _, _ in parsed])
             for dep, section, loc in parsed:
                 modules = {py_dist_module(dep).lower(), re.sub(r"[-.]", "_", dep.lower())}
                 if re.search(r"[-.]", dep):
@@ -1984,7 +2013,7 @@ def scan_dependencies(scan, imported):
                     if bare != dep.lower():
                         modules.update({re.sub(r"[-.]", "_", bare), re.sub(r"[-.]", "", bare)})
                 deps.append((dep, section, loc, sum(py_modules[module] for module in modules),
-                             mentions_of(r"(?<![\w-])%s(?![\w-])", dep, other_tools)))
+                             mentions_of(r"[\w-]", dep, other_tools, present)))
         elif name == "go.mod":
             for dep, section, loc in parse_go_mod(rel, text):
                 deps.append((dep, section, loc, sum(n for p, n in go_imports.items() if p == dep or p.startswith(dep + "/")),

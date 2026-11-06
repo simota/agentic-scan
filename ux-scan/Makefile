@@ -153,9 +153,15 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { echo "MISS $$sample is not numbered in severity order" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$$skill/scripts/contract_check.py" "$$o" --no-pdf >/dev/null \
 	    || { echo "MISS $$sample does not satisfy the output contract" >&2; fail=1; }; \
+	  for fmt in sarif markdown csv; do \
+	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$$skill/scripts/export.py" $$fmt "$$o/findings.json" --out "$$out/export-$$lang.$$fmt" >/dev/null \
+	      || { echo "MISS export.py $$fmt fails on $$sample" >&2; fail=1; }; \
+	  done; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$$skill/scripts/compare.py" "$$o/findings.json" "$$o/findings.json" --out - --format json --fail-on Info | grep -q '"blocking": \[\]' \
+	    || { echo "MISS compare.py does not find $$sample identical to itself" >&2; fail=1; }; \
 	done; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$$skill"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, doc refs resolve, sample output contracts pass"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$$skill"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, doc refs resolve, sample output contracts, exports and comparison pass"; \
 	exit $$fail
 
 inventory: ## UI/UX inventory of TARGET (FLOWS=flows.json, OUT=inventory.json)

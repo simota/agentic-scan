@@ -146,9 +146,14 @@ def verdict_counts(findings):
 BIDI_CONTROLS = re.compile("[\u202a-\u202e\u2066-\u2069]")
 
 
+def _code_point(match):
+    return f"[U+{ord(match[0]):04X}]"
+
+
 def as_text(value):
     text = ", ".join(value) if isinstance(value, list) else str(value)
-    return BIDI_CONTROLS.sub(lambda m: f"[U+{ord(m[0]):04X}]", text)
+    # Every bidi control is outside ASCII, so ASCII text needs no scan.
+    return text if text.isascii() else BIDI_CONTROLS.sub(_code_point, text)
 
 
 def review_method(doc, lang):
@@ -163,14 +168,16 @@ def review_method(doc, lang):
 # Inside `<code>` GFM still parses inline syntax, so these are encoded; the rest
 # of a path or command (`/`, `.`, `:`, `-`) stays readable in the raw file.
 CODE_LITERAL = {ord(char): f"&#{ord(char)};" for char in "\\`*_~[]<&|!$\t"}
+# Runs of spaces and edge spaces would collapse or be trimmed.
+CODE_SPACES = re.compile(r"^ +| {2,}| +$")
 
 
 def markdown_code(value):
     """Keep a literal command or code span intact, even with backticks."""
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
     literal = disarm_autolinks(value.translate(CODE_LITERAL))
-    # Runs of spaces and edge spaces would collapse or be trimmed.
-    literal = re.sub(r"^ +| {2,}| +$", lambda m: "&#32;" * len(m[0]), literal)
+    if " " in literal:
+        literal = CODE_SPACES.sub(lambda m: "&#32;" * len(m[0]), literal)
     literal = literal.replace("\n", "<br>")
     return f"<code>{literal}</code>"
 
@@ -205,6 +212,10 @@ def _disarm_at(match):
     return "&#64;<!-- -->"
 
 
+def _disarm_autolink(match):
+    return match[0][:-1] + f"&#{ord(match[0][-1])};"
+
+
 def disarm_autolinks(text):
     """Encode one character of each autolink trigger.
 
@@ -213,12 +224,29 @@ def disarm_autolinks(text):
     which no autolinker reads through. An `@` that starts a word (`@scope/pkg`,
     `@decorator`) has no local part, cannot be an address, and stays readable.
     """
-    text = AUTOLINK.sub(lambda m: m[0][:-1] + f"&#{ord(m[0][-1])};", text)
-    return EMAIL_AT.sub(_disarm_at, text)
+    # Each trigger holds a `:` or a `.`, and an address an `@`: text without
+    # them has nothing to disarm, so the scans are skipped.
+    if ":" in text or "." in text:
+        text = AUTOLINK.sub(_disarm_autolink, text)
+    return EMAIL_AT.sub(_disarm_at, text) if "@" in text else text
 # Outside code spans these stay literal: a backslash, a stray backtick, the
 # brackets of a link or image (whose target could be any scheme), a cell pipe.
 LITERAL = {ord("\\"): "&#92;", ord("`"): "&#96;", ord("["): "&#91;", ord("]"): "&#93;",
            ord("|"): "&#124;", ord("$"): "&#36;"}  # `$` opens math on GitHub and in pandoc
+
+
+# A backtick after an odd run of backslashes is escaped in the source.
+ESCAPED_BACKTICK = re.compile(r"(\\+)`")
+# An odd backslash prefix escapes the opening backtick; delimiter lengths match.
+CODE_SPAN = re.compile(r"(?<![\\`])((?:\\\\)*)(`+)(?!`)(.+?)(?<!`)\2(?!`)", re.DOTALL)
+
+
+def _escaped_backtick(match):
+    return match[1][:-1] + "&#96;" if len(match[1]) % 2 else match[0]
+
+
+def _after_backslash(match):
+    return f"&#{ord(match[0])};"
 
 
 def markdown_inline(value):
@@ -230,17 +258,17 @@ def markdown_inline(value):
     value = as_text(value).replace("\r\n", "\n").replace("\r", "\n")
 
     def text(part):
-        part = re.sub(r"(\\+)`", lambda m: m[1][:-1] + "&#96;" if len(m[1]) % 2 else m[0],
-                      # `>` stays readable (`a -> b`): without `<` it opens
-                      # no tag, and block_safe stops it quoting a list item.
-                      escape(part, quote=False).replace("&gt;", ">"))
-        part = AFTER_BACKSLASH.sub(lambda m: f"&#{ord(m[0])};", part)
+        # `>` stays readable (`a -> b`): without `<` it opens
+        # no tag, and block_safe stops it quoting a list item.
+        part = escape(part, quote=False).replace("&gt;", ">")
+        if "\\" in part:  # both rewrites start at a backslash
+            part = AFTER_BACKSLASH.sub(_after_backslash, ESCAPED_BACKTICK.sub(_escaped_backtick, part))
         return disarm_autolinks(part.translate(LITERAL)).replace("\n", "<br>")
 
+    if "`" not in value:
+        return text(value)
     parts, end = [], 0
-    # An odd backslash prefix escapes the opening backtick; delimiter lengths match.
-    spans = r"(?<![\\`])((?:\\\\)*)(`+)(?!`)(.+?)(?<!`)\2(?!`)"
-    for match in re.finditer(spans, value, re.DOTALL):
+    for match in CODE_SPAN.finditer(value):
         parts.append(text(value[end:match.start()] + match[1]))
         code = match[3].replace("\n", " ")
         if code.startswith(" ") and code.endswith(" ") and code.strip(" "):

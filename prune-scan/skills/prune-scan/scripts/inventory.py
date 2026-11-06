@@ -720,17 +720,64 @@ def key_line(text, key, *, lines=None):
     return lines.get(key.rsplit(".", 1)[-1], 1)
 
 
-# Strings first, so comment markers and commas inside them are kept.
-# The lookahead's comment cannot run past its own */, so each comma scans only
-# the comments directly after it.
-JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|'
-                        r',(?=\s*(?:(?://[^\n]*|/\*(?:[^*]|\*(?!/))*\*/)\s*)*[}\]]))')
+# Strings first, so comment markers and commas inside them are kept; a comma is
+# dropped only when jsonc_closes_after says it is trailing.
+JSONC_DROP = re.compile(r'"(?:\\.|[^"\\\n])*"|(//[^\n]*|/\*[\s\S]*?(?:\*/|\Z))|,')
+JSONC_SPACE = re.compile(r"\s*")
+JSONC_CLOSE = re.compile(r"[}\]]")
 TS_CONFIG = re.compile(r"(?:^|/)(?:tsconfig(?:\.[\w-]+)?|jsconfig)\.json$")
+
+
+def jsonc_closes_after(text, start):
+    """Whether text matches \\s*(?:(?://[^\\n]*|/\\*(?:[^*]|\\*(?!/))*\\*/)\\s*)*[}\\]] at start.
+
+    A line comment may end anywhere on its line, so a backtracking regex tries
+    every split of every commented line: tsc --init's template, a /* */ note
+    after each // line, takes exponential time. Each position is visited once here.
+    """
+    todo, seen = [start], set()
+    while todo:
+        i = todo.pop()
+        if i in seen:
+            continue
+        seen.add(i)
+        j = JSONC_SPACE.match(text, i).end()
+        if j < len(text) and text[j] in "}]":
+            return True
+        if text.startswith("/*", j):
+            end = text.find("*/", j + 2)
+            if end >= 0:
+                todo.append(end + 2)
+        elif text.startswith("//", j):
+            eol = text.find("\n", j + 2)
+            eol = len(text) if eol < 0 else eol
+            # Ending the line comment early reaches a } or ], or a /* comment, on the same line.
+            if JSONC_CLOSE.search(text, j + 2, eol):
+                return True
+            todo.append(eol)
+            block = text.find("/*", j + 2, eol)
+            while block >= 0:
+                end = text.find("*/", block + 2)
+                if end >= 0:
+                    todo.append(end + 2)
+                block = text.find("/*", block + 1, eol)
+    return False
+
+
+def jsonc_cleaned(text):
+    """text without comments and trailing commas, outside strings."""
+    def drop(m):
+        if m.group(1):
+            return ""
+        if m.group(0) == ",":
+            return "" if jsonc_closes_after(text, m.end()) else ","
+        return m.group(0)
+    return JSONC_DROP.sub(drop, text)
 
 
 def jsonc_object(text):
     """tsconfig.json allows comments and trailing commas; drop them outside strings."""
-    cleaned = JSONC_DROP.sub(lambda m: "" if m.group(1) else m.group(0), text)
+    cleaned = jsonc_cleaned(text)
     try:
         data = parse_json(cleaned, "tsconfig")
     except (RecordError, RecursionError):

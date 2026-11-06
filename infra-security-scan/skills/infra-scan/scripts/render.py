@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Render findings.json into the dashboard, the assessment and its PDF.
 
-    python3 render.py FINDINGS --out DIR [--lang ja|en] [--no-pdf] [--repo REPO]
+    python3 render.py FINDINGS --out DIR [--lang ja|en] [--no-pdf] [--repo REPO] [--previous PREVIOUS]
 
 Writes DIR/dashboard.html (interactive, self-contained), DIR/assessment.html
 (the formal, print-oriented report) and DIR/assessment.pdf (headless Chrome,
@@ -10,7 +10,9 @@ embedded as a short source excerpt; state files, variable files and
 secret-looking files are never read, and lines that look like they assign a
 secret are redacted. JSON/YAML with sensitive metadata, secret environment
 values or unsupported syntax has no excerpt. Other redaction is heuristic:
-inspect before sharing.
+inspect before sharing. With --previous (an earlier assessment's findings.json
+or output directory), both reports open with what changed since it
+(compare.py) and the dashboard can filter the register by that change.
 
 `validate()` is the executable form of reference/findings-schema.md and is
 imported by findings.py and contract_check.py.
@@ -577,6 +579,10 @@ LABELS = {
         "contents": "Contents", "nav_lists": "Decisions, limits, next steps", "shortcuts": "Keyboard",
         "key_search": "Search", "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
         "no_match": "No findings match these filters.", "clear_filters": "Clear filters",
+        "changes": "Changes", "change": "Change", "previous_id": "Previous ID",
+        "chg_counts": "Counted findings and open attack paths, previous and current assessment",
+        "chg_findings": "Findings that changed", "chg_paths": "Attack paths that changed",
+        "chg_none": "No finding or attack path changed.", "chg_persisting_n": "persisting without a change",
     },
     "ja": {
         "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
@@ -611,6 +617,10 @@ LABELS = {
         "contents": "目次", "nav_lists": "判断事項・制約・次の対応", "shortcuts": "キー操作",
         "key_search": "検索", "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
         "no_match": "この条件に一致する検出事項はありません。", "clear_filters": "絞り込みを解除",
+        "changes": "変化", "change": "変化", "previous_id": "前回の ID",
+        "chg_counts": "前回と今回の件数と開いている攻撃経路",
+        "chg_findings": "変化した検出事項", "chg_paths": "変化した攻撃経路",
+        "chg_none": "検出事項と攻撃経路に変化はありません。", "chg_persisting_n": "件は変化なく継続",
     },
 }
 
@@ -848,6 +858,73 @@ def list_block(items, L, empty="muted"):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>"
 
 
+# Register markers for --previous: a persisting finding whose severity,
+# confidence or verdict moved reads "changed"; a move of its line alone does not.
+GRADED = ("severity", "confidence", "verdict")
+
+
+def change_marks(result):
+    """{current finding ID: change kind} for the register's change filter."""
+    marks = {}
+    for kind in ("new", "reopened", "excluded", "persisting"):
+        for item in result["findings"][kind]:
+            changed = kind == "persisting" and any(c["field"] in GRADED for c in item.get("changes", []))
+            marks[item["current"]["id"]] = "changed" if changed else kind
+    return marks
+
+
+def changes_html(result, L, lang, CL):
+    """The comparison with the previous assessment: counts, then each finding and attack path that changed."""
+    cp, cc = result["counts"]["previous"], result["counts"]["current"]
+    op = result["open_attack_paths"]
+    head = "".join(f'<th scope="col" class="{s}">{esc(shown(s, lang))}</th>' for s in SEVERITIES)
+    row = lambda label, c, n, side: (f'<tr><th scope="row">{esc(label)} <span class="chg-side">{esc(side["date"])}'
+                                     f'{(" · " + esc(side["commit"][:12])) if side["commit"] else ""}</span></th>'
+                                     + "".join(f"<td>{c[s]}</td>" for s in SEVERITIES) + f"<td>{n}</td></tr>")
+    metrics = (f'<table class="metrics changes-metrics"><caption>{L["chg_counts"]}</caption><thead><tr><td></td>{head}'
+               f'<th scope="col">{esc(CL["open_paths"])}</th></tr></thead><tbody>'
+               + row(CL["previous"], cp, op["previous"], result["previous"])
+               + row(CL["current"], cc, op["current"], result["current"]) + "</tbody></table>")
+    fs = result["findings"]
+    items = [(k, i) for k in ("new", "reopened", "resolved", "out_of_inputs", "excluded") for i in fs[k]]
+    items += [("changed", i) for i in fs["persisting"] if i["changes"]]
+    unchanged = sum(1 for i in fs["persisting"] if not i["changes"])
+    rows = []
+    for kind, item in items:
+        o, n = item.get("previous"), item.get("current")
+        f = n or o
+        ident = (f'<a href="#{esc(n["id"])}">{esc(n["id"])}</a>' if n else "—")
+        moved = ", ".join(f'{esc(CL[c["field"]])} {esc(shown(c["from"], lang))} → {esc(shown(c["to"], lang))}'
+                          for c in item.get("changes", []))
+        rows.append(f'<tr class="chg-{kind}"><td><span class="chg chg-{kind}">{esc(CL[kind])}</span></td>'
+                    f'<td class="nowrap">{ident}</td><td class="nowrap">{esc(o["id"]) if o else "—"}</td>'
+                    f'<td><span class="badge {esc(f["severity"])}">{esc(shown(f["severity"], lang))}</span></td>'
+                    f'<td>{esc(shown(f["title"], lang))}<br><code>{esc(f["location"])}</code></td><td>{moved}</td></tr>')
+    cols = '<colgroup><col class="c-kind"><col class="c-id"><col class="c-id"><col class="c-sev"><col class="c-title"><col class="c-detail"></colgroup>'
+    table = (f'<table class="changes"><caption>{L["chg_findings"]}</caption>{cols}<thead><tr><th scope="col">{L["change"]}</th>'
+             f'<th scope="col">{L["id"]}</th><th scope="col">{L["previous_id"]}</th><th scope="col">{L["severity"]}</th>'
+             f'<th scope="col">{L["title"]} / {L["location"]}</th><th scope="col">{L["detail"]}</th></tr></thead>'
+             f'<tbody>{"".join(rows)}</tbody></table>') if rows else ""
+    aps = result["attack_paths"]
+    ap_rows = [(CL["ap_new"], a, None) for a in aps["new"]] + [(CL["ap_changed"], c["current"], c["previous"])
+                                                              for c in aps["changed"]] \
+        + [(CL["ap_removed"], a, None) for a in aps["removed"]]
+    ap_table = "".join(
+        f'<tr><td>{esc(label)}</td><td>{esc(a["id"])}</td><td>{esc(a["entry"])} → {esc(a["target"])}</td>'
+        f'<td>{(esc(shown(was["status"], lang)) + " → ") if was else ""}<span class="pill st-{esc(a["status"])}">'
+        f'{esc(shown(a["status"], lang))}</span></td></tr>' for label, a, was in ap_rows)
+    if ap_table:
+        ap_table = (f'<table class="changes"><caption>{L["chg_paths"]}</caption><thead><tr><th scope="col">{L["change"]}</th>'
+                    f'<th scope="col">{L["id"]}</th><th scope="col">{L["attack_paths"]}</th><th scope="col">{L["status"]}</th>'
+                    f'</tr></thead><tbody>{ap_table}</tbody></table>')
+    from compare import note_text
+    notes = [CL["resolved_note"]] + [note_text(n, CL) for n in result["notes"]]
+    summary = f'<p class="muted">{unchanged} {L["chg_persisting_n"]}</p>' if unchanged else ""
+    empty = "" if rows or ap_table else f'<p>{L["chg_none"]}</p>'
+    return (metrics + empty + table + summary + ap_table
+            + "".join(f'<p class="note small">{esc(n)}</p>' for n in notes))
+
+
 def meta_rows(data, L, lang="en"):
     """Scope and method as <dt>/<dd> pairs (the dashboard's scope list)."""
     return "".join(f"<dt>{k}</dt><dd>{v}</dd>" for k, v in meta_pairs(data, L, lang))
@@ -904,6 +981,22 @@ tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:li
 .app-shell .filters{grid-template-columns:minmax(0,2.2fr) repeat(4,minmax(0,1fr))}
 @media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
+.app-shell .filters.has-change{grid-template-columns:minmax(0,2fr) repeat(5,minmax(0,1fr))}
+@media(max-width:1099px){.app-shell .filters.has-change{grid-template-columns:repeat(3,minmax(0,1fr))}}
+@media(max-width:850px){.app-shell .filters.has-change{grid-template-columns:repeat(2,minmax(0,1fr))}}
+/* --previous: what changed since the earlier assessment. */
+#changes:focus{outline:0}
+.changes-wrap{overflow-x:auto}.changes-wrap table.changes{min-width:640px}
+table.changes .nowrap{white-space:nowrap}
+col.c-kind{width:15%}col.c-id{width:8%}col.c-sev{width:7%}col.c-title{width:44%}col.c-detail{width:18%}
+table.changes,table.changes-metrics{width:100%;border-collapse:collapse;margin:8px 0 16px;font-size:14px}
+table.changes caption,table.changes-metrics caption{text-align:left;font-weight:700;padding:6px 0;color:var(--muted)}
+table.changes th,table.changes td,table.changes-metrics th,table.changes-metrics td{border-bottom:1px solid var(--line);padding:6px 8px;text-align:left;vertical-align:top}
+.chg-side{display:block;font-weight:400;color:var(--muted);font-size:12px}
+.chg{font-family:var(--sans);font-size:11px;font-weight:700;letter-spacing:.06em;white-space:nowrap;color:var(--muted)}
+.chg.chg-new,.chg.chg-reopened{color:var(--high)}.chg.chg-changed{color:var(--medium)}
+.chg.chg-resolved{color:var(--low)}
+.finding-toggle+.chg{margin-left:8px}
 """
 
 ASSESSMENT_CSS = """
@@ -922,6 +1015,11 @@ ASSESSMENT_CSS = """
 .finding.covered{border-left-style:dashed}
 .finding-state code{font-size:7.8pt}
 .coverage .gap{color:var(--medium);font-weight:700}
+.changes td,.changes th{vertical-align:top}.changes .nowrap{white-space:nowrap}
+.changes col.c-kind{width:15%}.changes col.c-id{width:9%}.changes col.c-sev{width:8%}.changes col.c-title{width:41%}.changes col.c-detail{width:18%}
+.chg-side{display:block;font-weight:400;color:var(--muted);font-size:7.5pt}
+.chg{font:700 7.2pt/1.5 var(--sans);letter-spacing:.06em;color:var(--muted);white-space:nowrap}
+.chg.chg-new,.chg.chg-reopened{color:var(--high)}.chg.chg-changed{color:var(--medium)}
 """
 
 DASH_JS = r"""
@@ -941,7 +1039,9 @@ if(scheme.addEventListener)scheme.addEventListener('change',syncTheme);
 syncTheme();
 var md=JSON.parse(document.getElementById('md').textContent);
 var rows=[].slice.call(document.querySelectorAll('tr.row'));
-var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),q:document.getElementById('f-q')};
+var f={sev:document.getElementById('f-sev'),prov:document.getElementById('f-prov'),cat:document.getElementById('f-cat'),ver:document.getElementById('f-ver'),chg:document.getElementById('f-chg'),q:document.getElementById('f-q')};
+// The change filter exists only in a dashboard rendered with --previous.
+Object.keys(f).forEach(function(k){if(!f[k])delete f[k];});
 var count=document.getElementById('result-count'),noMatch=document.querySelector('tr.no-match');
 function aside(r){return r.classList.contains('excluded')||r.classList.contains('covered');}
 var active=rows.filter(function(r){return !aside(r);}).length;
@@ -950,6 +1050,7 @@ function apply(){
   rows.forEach(function(r){
     var ok=(!f.sev.value||r.dataset.sev===f.sev.value)&&(!f.prov.value||r.dataset.prov===f.prov.value)&&
       (!f.cat.value||r.dataset.cat===f.cat.value)&&(!f.ver.value||r.dataset.ver===f.ver.value)&&
+      (!f.chg||!f.chg.value||r.dataset.chg===f.chg.value)&&
       (!q||r.dataset.text.indexOf(q)>=0);
     r.hidden=!ok;var d=r.nextElementSibling;if(!ok)d.hidden=true;else if(r.querySelector('.finding-toggle').getAttribute('aria-expanded')==='true')d.hidden=false;
     if(ok){if(r.classList.contains('excluded'))xe++;else if(r.classList.contains('covered'))xc++;else n++;}
@@ -1027,8 +1128,14 @@ def options(values, L, lang):
         f'<option value="{esc(v)}">{esc(shown(v, lang))}</option>' for v in values)
 
 
-def render_dashboard(data, L, lang, sources):
+def render_dashboard(data, L, lang, sources, changes=None):
     meta = data.get("meta", {})
+    CL = None
+    marks = {}
+    if changes is not None:
+        from compare import LABELS as COMPARE_LABELS
+        CL = COMPARE_LABELS[lang]
+        marks = change_marks(changes)
     c = counts(data)
     covered = covered_by(data)
     fs = ordered(data.get("findings", []))
@@ -1056,18 +1163,22 @@ def render_dashboard(data, L, lang, sources):
         for key in ("severity", "confidence", "category", "provider"):
             searchable += [f.get(key), shown(f.get(key), lang)]
         searchable += [val, shown(val, lang)]
+        mark = marks.get(f["id"], "")
+        if mark:
+            searchable.append(CL[mark])
         text = " ".join(str(x) for x in searchable if x).lower()
+        badge = f'<span class="chg chg-{mark}">{esc(CL[mark])}</span>' if mark and mark != "persisting" else ""
         cls = "row excluded" if is_excluded(f) else "row covered" if f["id"] in covered else "row"
         rows.append(
             f'<tr class="{cls}" id="{esc(f["id"])}" data-sev="{esc(f.get("severity"))}" data-prov="{esc(f.get("provider"))}" '
-            f'data-cat="{esc(f.get("category"))}" data-ver="{esc(val)}" data-text="{esc(text)}">'
+            f'data-cat="{esc(f.get("category"))}" data-ver="{esc(val)}" data-chg="{esc(mark)}" data-text="{esc(text)}">'
             f'<td data-label="{L["id"]}">{esc(f["id"])}</td>'
             f'<td data-label="{L["severity"]}"><span class="badge {esc(f.get("severity"))}">{esc(shown(f.get("severity"), lang))}</span></td>'
             f'<td data-label="{L["confidence"]}">{esc(shown(f.get("confidence"), lang))}</td>'
             f'<td data-label="{L["provider"]}">{esc(f.get("provider"))}</td>'
             f'<td data-label="{L["verdict"]}">{esc(shown(val, lang))}</td>'
             f'<td><button class="finding-toggle" type="button" aria-expanded="false" '
-            f'aria-controls="{esc(f["id"])}-detail">{esc(shown(f.get("title"), lang))}</button>'
+            f'aria-controls="{esc(f["id"])}-detail">{esc(shown(f.get("title"), lang))}</button>{badge}'
             f'<span class="location">{esc(f.get("location"))}</span></td>'
             f'<td data-label="{L["category"]}">{esc(shown(f.get("category"), lang))}</td></tr>'
             f'<tr class="detail" id="{esc(f["id"])}-detail" hidden><td colspan="7">{detail_dl(f, L, lang, sources, covered.get(f["id"], ()))}'
@@ -1091,8 +1202,17 @@ def render_dashboard(data, L, lang, sources):
                      f'<span class="facet-name {s}">{esc(shown(s, lang))}</span><span class="facet-n">{c[s]}</span></button>'
                      for s in SEVERITIES)
     nav = "".join(f'<li><a href="#{anchor}">{L[key]}</a></li>' for anchor, key in (
-        ("overview", "summary"), ("attack-paths", "attack_paths"), ("findings", "findings"),
+        ("overview", "summary"), *((("changes", "changes"),) if changes is not None else ()),
+        ("attack-paths", "attack_paths"), ("findings", "findings"),
         ("perspectives-section", "perspectives"), ("scope-section", "scope_method"), ("lists", "nav_lists")))
+    change_section = ""
+    change_filter = ""
+    if changes is not None:
+        change_section = (f'<section id="changes" tabindex="-1"><div class="section-head"><div><h2>{esc(CL["heading"])}</h2>'
+                          f'</div></div><div class="changes-wrap">{changes_html(changes, L, lang, CL)}</div></section>\n')
+        kinds = [k for k in ("new", "reopened", "changed", "persisting", "excluded") if k in marks.values()]
+        change_filter = (f'<label>{L["change"]}<select id="f-chg"><option value="">{L["all"]}</option>'
+                         + "".join(f'<option value="{k}">{esc(CL[k])}</option>' for k in kinds) + "</select></label>\n")
     return f"""<!doctype html>
 <html lang="{lang}" class="app-shell">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -1111,14 +1231,14 @@ def render_dashboard(data, L, lang, sources):
 <div class="summary-banner"><strong>{esc(banner)}</strong></div>
 <div class="cards">{cards}</div>
 </section>
-<section id="attack-paths" tabindex="-1"><div class="section-head"><div><h2>{L["attack_paths"]}</h2></div></div><div class="aps">{aps}</div></section>
+{change_section}<section id="attack-paths" tabindex="-1"><div class="section-head"><div><h2>{L["attack_paths"]}</h2></div></div><div class="aps">{aps}</div></section>
 <section id="findings" tabindex="-1"><div class="section-head"><div><h2 id="findings-h">{L["findings"]}</h2></div></div>
-<div class="panel filters-panel"><div class="filters">
+<div class="panel filters-panel"><div class="filters{" has-change" if change_filter else ""}">
 <label>{L["severity"]}<select id="f-sev">{options(SEVERITIES, L, lang)}</select></label>
 <label>{L["provider"]}<select id="f-prov">{options(used("provider"), L, lang)}</select></label>
 <label>{L["category"]}<select id="f-cat">{options(used("category"), L, lang)}</select></label>
 <label>{L["verdict"]}<select id="f-ver">{options(VERDICTS, L, lang)}</select></label>
-<label class="search">{L["search"]}<input id="f-q" type="search"></label>
+{change_filter}<label class="search">{L["search"]}<input id="f-q" type="search"></label>
 </div><div class="filter-bottom"><p class="result-count" id="result-count" data-l="{L["shown"]}" data-e="{L["excluded_n"]}" data-c="{L["covered_n"]}" aria-live="polite"></p></div></div>
 <div class="tablewrap"><table class="register" aria-labelledby="findings-h"><thead><tr><th scope="col">{L["id"]}</th><th scope="col">{L["severity"]}</th>
 <th scope="col">{L["confidence"]}</th><th scope="col">{L["provider"]}</th><th scope="col">{L["verdict"]}</th><th scope="col">{L["title"]}</th>
@@ -1174,11 +1294,13 @@ def doc_finding(f, L, lang, sources, covered=()):
             f'<table class="finding-state"><tbody>{rows}</tbody></table></div>{body}</article>')
 
 
-def render_assessment(data, L, lang, sources, pdf_note=""):
+def render_assessment(data, L, lang, sources, pdf_note="", changes=None):
     meta = data.get("meta", {})
     c = counts(data)
     covered = covered_by(data)
     fs = ordered(data.get("findings", []))
+    if changes is not None:
+        from compare import LABELS as COMPARE_LABELS
     active = [f for f in fs if not is_excluded(f)]
     excluded = [f for f in fs if is_excluded(f)]
     none = f'<p class="small">{L["none"]}</p>'
@@ -1204,6 +1326,8 @@ def render_assessment(data, L, lang, sources, pdf_note=""):
                                   f'{L["excluded_n"]} {c["excluded"]}, {L["covered_n"]} {c["covered"]}, '
                                   f'{L["unverified_n"]} {c["unverified"]}</p>{metrics}<p>{L["static_note"]}</p>'
                                   + (f'<p class="small">{esc(pdf_note)}</p>' if pdf_note else "")),
+        *((("changes", COMPARE_LABELS[lang]["heading"], changes_html(changes, L, lang, COMPARE_LABELS[lang])),)
+          if changes is not None else ()),
         ("scope", L["scope_method"], scope),
         ("attack-paths", L["attack_paths"], aps),
         ("finding-details", L["findings"], by_sev),
@@ -1288,6 +1412,8 @@ def main(argv=None):
     p.add_argument("--lang", choices=sorted(LABELS), default="en")
     p.add_argument("--no-pdf", action="store_true", help="skip PDF generation and remove any previous PDF")
     p.add_argument("--repo", help="assessed repository root: embeds redacted source excerpts for path:line locations")
+    p.add_argument("--previous", metavar="PREVIOUS",
+                   help="an earlier assessment's findings.json or output directory: open both reports with what changed")
     a = p.parse_args(argv)
     try:
         data = load_record(a.findings)
@@ -1306,6 +1432,23 @@ def main(argv=None):
     if problem:
         print(f"render: {problem}", file=sys.stderr)
         return 2
+    changes = None
+    if a.previous:
+        import compare
+        try:
+            prev, prev_files, prev_digest = compare.load_side(a.previous)
+            _, cur_files, _ = compare.load_side(a.findings)
+        except compare.CompareError as e:
+            print(f"render: --previous: {e}", file=sys.stderr)
+            return 2
+        except SchemaError as e:
+            for problem in e.problems:
+                print(f"schema: --previous: {problem}", file=sys.stderr)
+            return 2
+        if prev_digest == digest:
+            print("render: --previous is this same record; pass the earlier assessment", file=sys.stderr)
+            return 2
+        changes = compare.compare(prev, data, prev_files, cur_files, (prev_digest, digest))
     sources = {}
     if a.repo:
         # Here, not at the top: findings.py and contract_check.py import this
@@ -1315,8 +1458,8 @@ def main(argv=None):
     pdf, assessment = out / "assessment.pdf", out / "assessment.html"
     # Build both pages before touching the output directory, so a failure
     # leaves the previous outputs as they were.
-    dashboard = stamp(render_dashboard(data, L, a.lang, sources), digest)
-    page = stamp(render_assessment(data, L, a.lang, sources), digest)
+    dashboard = stamp(render_dashboard(data, L, a.lang, sources, changes), digest)
+    page = stamp(render_assessment(data, L, a.lang, sources, changes=changes), digest)
     try:
         out.mkdir(parents=True, exist_ok=True)
         pdf.unlink(missing_ok=True)  # Previous findings must not survive an HTML-only render.
@@ -1334,7 +1477,7 @@ def main(argv=None):
         else:
             note = L["pdf_failed"] if failed else L["pdf_missing"]
             try:
-                write_output(assessment, stamp(render_assessment(data, L, a.lang, sources, note), digest))
+                write_output(assessment, stamp(render_assessment(data, L, a.lang, sources, note, changes), digest))
             except OSError as e:
                 print(f"render: cannot write {assessment}: {e.strerror or e}", file=sys.stderr)
                 return 2

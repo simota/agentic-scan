@@ -69,6 +69,16 @@ baseline                perspectives         └─ chat summary
   account defaults for IMDSv2 and EBS encryption, an org policy enforcing
   public access prevention, policies used only as permissions boundaries,
   Terragrunt-generated backends and Google-managed service agents
+- **Re-assessment** — after a remediation round, `scripts/compare.py` matches
+  the new record against the earlier one by content (IDs are renumbered each
+  run) and lists what was resolved, what is new, reopened or regraded, and
+  which attack paths opened or closed; `render.py --previous` opens both
+  reports with that comparison and adds a change filter to the register, and
+  `--fail-on <severity>` gates a retest on regressions
+- **Issue drafts** — `scripts/issues.py` fills `templates/issue.<lang>.md` once
+  per counted finding, with an index saying which drafts belong in a private
+  tracker only (unfixed High and Medium); `--mask` hides account IDs and IPv4
+  addresses. Drafts are written to scratch for a human to file
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`); the
   exports join the baseline with `iac_scan.py --snapshots DIR`
@@ -92,6 +102,10 @@ make check                                 # tests + skill self-consistency
 make scan TARGET=../my-infra OUT=/tmp/infra-out   # baseline only; OUT outside TARGET
 make scan TARGET=../my-infra SNAPSHOTS=/tmp/exports OUT=/tmp/infra-out  # with exports
 make demo LANG_OUT=ja                      # render the sample report
+python3 skills/infra-scan/scripts/compare.py /tmp/infra-out-oct /tmp/infra-out   # what changed
+python3 skills/infra-scan/scripts/render.py /tmp/infra-out/findings.json --out /tmp/infra-out \
+  --previous /tmp/infra-out-oct           # reports open with the comparison
+python3 skills/infra-scan/scripts/issues.py /tmp/infra-out/findings.json --out /tmp/drafts --lang ja
 ```
 
 Python 3.10+, standard library only. PDF output uses headless Chrome / Chromium
@@ -125,6 +139,8 @@ skills/infra-scan/
   scripts/iac_scan.py      inventory + baseline rules (I-*)
   scripts/findings.py      merge finding fragments into findings.json
   scripts/render.py        dashboard.html, assessment.html, assessment.pdf
+  scripts/compare.py       what changed between two assessments (render.py --previous)
+  scripts/issues.py        issue drafts from templates/issue.<lang>.md
   scripts/excerpts.py      which cited lines render.py --repo may show, redacted
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts

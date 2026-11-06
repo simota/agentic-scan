@@ -64,7 +64,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `proposal` | improvements | `{before, after}`: the current text (short quote) and the proposed text |
 | `test` | contract | String or list: an eval or test assertion of the good outcome |
 | `validation` | yes | `{verdict, evidence, method}` |
-| `status` | | `Open` (default), `Fixed`, `Accepted` |
+| `status` | | `Open` (default), `Fixed` (the fix is merged), `Accepted` (the risk is accepted by its owner). `scripts/export.py` leaves `Fixed` findings out, marks `Accepted` ones as suppressed in SARIF and gates only on `Open` ones; `scripts/compare.py` can carry `Accepted` into the next review |
 | `references` | | `[{title, url}]`, http(s) only |
 | `source`, `rule`, `previous_validation` | | Written only by `inventory.py` on `L-*` |
 

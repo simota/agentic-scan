@@ -28,8 +28,24 @@ class InventoryTest(unittest.TestCase):
                          [("app/llm/answer.py", 15, "anthropic.messages")])
         self.assertEqual(result["models"], [{"id": "claude-haiku-5-5", "locations": ["app/llm/answer.py:16"]}])
         self.assertEqual([(h["rule"], h["location"]) for h in result["lint"]],
-                         [("unclosed-tag", "app/llm/prompts/support_system.md:3"),
+                         [("unreferenced-variable", "app/llm/prompts/answer.prompt:4"),
+                          ("unclosed-tag", "app/llm/prompts/support_system.md:3"),
                           ("placeholder", "app/llm/prompts/support_system.md:7")])
+
+    def test_unreferenced_variable(self):
+        root = make_repo({
+            "prompts/a.prompt": "Hi {{ user.name }}, {{ missing }}\n{% for doc in docs %}{{ doc }}{% endfor %}\n"
+                                "{{ loop.index }} `{{ example }}`\n",
+            "prompts/b.md": "Ticket: {ticket}\n```\n{fenced}\n```\n",
+            "AGENTS.md": "Use {never_filled} here\n",
+            "app.py": "render(user=u, docs=d)\nfmt(ticket=t)\n",
+        })
+        hits = [(h["rule"], h["location"], h["detail"]) for h in inventory.scan(root)["lint"]]
+        self.assertEqual(hits, [("unreferenced-variable", "prompts/a.prompt:1", "1 variable(s) no code file names: missing")])
+
+    def test_unreferenced_variable_needs_code_to_check_against(self):
+        root = make_repo({"prompts/a.prompt": "{{ only_prompts }}\n"})
+        self.assertEqual(inventory.scan(root)["lint"], [])
 
     def test_prompt_file_detection(self):
         root = make_repo({
@@ -385,7 +401,7 @@ class InventoryTest(unittest.TestCase):
             self.assertEqual(code, 0, err)
         merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
         lint = [f for f in merged["findings"] if f["id"].startswith("L-")]
-        self.assertEqual([f["previous_validation"]["verdict"] for f in lint], ["Valid", "Valid"])
+        self.assertEqual([f["previous_validation"]["verdict"] for f in lint], ["Valid", "Valid", "Valid"])
 
     def test_into_replaces_lint_findings_and_keeps_review(self):
         out = Path(tempfile.mkdtemp())
@@ -395,7 +411,7 @@ class InventoryTest(unittest.TestCase):
         self.assertEqual(code, 0, err)
         merged = json.loads((out / "findings.json").read_text(encoding="utf-8"))
         lint = [f for f in merged["findings"] if f["id"].startswith("L-")]
-        self.assertEqual([f["id"] for f in lint], ["L-001", "L-002"])
+        self.assertEqual([f["id"] for f in lint], ["L-001", "L-002", "L-003"])
         self.assertTrue(all(f["validation"]["verdict"] == "Unverified" for f in lint))
         self.assertEqual(lint[0]["previous_validation"]["verdict"], "Valid")
         self.assertEqual(len([f for f in merged["findings"] if f["id"].startswith("F-")]), 8)

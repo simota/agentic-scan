@@ -4,7 +4,9 @@ Each shortcut skips work only when that work cannot change the outcome. These
 tests compare the shortcut with the computation it replaces, so a later change
 to a pattern that breaks that premise fails here.
 """
+from difflib import SequenceMatcher
 import itertools
+import os
 from pathlib import Path
 import random
 import re
@@ -14,9 +16,12 @@ import tempfile
 import textwrap
 import unicodedata
 import unittest
+from unittest import mock
 
 from test_contract_consistency import build
-from test_privacy_scan import complete_doc, findings, personal_values, render
+from test_privacy_scan import SKILL, complete_doc, findings, import_module, personal_values, render
+
+compare = import_module(SKILL / "scripts" / "compare.py", "priv_compare_fast_paths")
 
 
 class GuardShortcutTests(unittest.TestCase):
@@ -150,6 +155,27 @@ def _direct_spans(value):
     return spans
 
 
+class AsciiNormalisationTests(unittest.TestCase):
+    def test_ascii_text_is_already_normalised(self):
+        # The guard skips normalising ASCII text; that is only sound while the
+        # normalisation leaves every ASCII character and pair unchanged.
+        ascii_chars = [chr(i) for i in range(128)]
+        self.assertTrue("".join(ascii_chars).isascii())
+        for a in ascii_chars:
+            self.assertEqual(personal_values._normalised(a), a)
+            for b in ascii_chars:
+                self.assertEqual(personal_values._normalised(a + b), a + b)
+
+    def test_scan_matches_scanning_the_normalised_copy(self):
+        rng = random.Random(17)
+        pool = ["a", "1", "1234", "@", ".", "-", " ", "\n", "(", ")", '"', "example.com",
+                "privacy-scan.localhost", "2026-10-09", "\u3002", "\u200b", "\u00a0", "\uff11", "日"]
+        for _ in range(3000):
+            value = "".join(rng.choice(pool) for _ in range(rng.randint(0, 20)))
+            normalised = personal_values._normalised(value)
+            self.assertEqual(personal_values._scan(value), personal_values._scan(normalised), value)
+
+
 class RenderShortcutTests(unittest.TestCase):
     def test_markdown_escapes_match_a_translate_table(self):
         table = str.maketrans({c: "\\" + c for c in "\\`*_[]|~#$"})
@@ -171,6 +197,140 @@ class RenderShortcutTests(unittest.TestCase):
         self.assertEqual(render.markdown_text("see www.x.example"),
                          "see [www.x.example](<http://www.x.example>)")
         self.assertEqual(render.markdown_text("日本語_*x*"), "日本語\\_\\*x\\*")
+
+
+def _reference_match(old, new):
+    """The comparison's matching as first written: every old-new pair is examined."""
+    def path_line(location):
+        path, _, lines = location.rpartition(":")
+        return path, int(lines.split("-")[0])
+
+    def locs(f):
+        return f["location"] if isinstance(f["location"], list) else [f["location"]]
+
+    def normal(text):
+        return re.sub(r"\s+", " ", text).strip().casefold()
+
+    def eligible(kind, a, b):
+        if a["category"] != b["category"]:
+            return False
+        if kind == "location":
+            return (path_line(locs(a)[0])[0] == path_line(locs(b)[0])[0]
+                    and a.get("step", "").strip() == b.get("step", "").strip())
+        if kind == "path":
+            return bool({path_line(x)[0] for x in locs(a)} & {path_line(x)[0] for x in locs(b)})
+        return normal(a["title"]) == normal(b["title"])
+
+    def distance(a, b):
+        (pa, la), (pb, lb) = path_line(locs(a)[0]), path_line(locs(b)[0])
+        return (abs(la - lb) if pa == pb else 10 ** 9,
+                -SequenceMatcher(None, normal(a["title"]), normal(b["title"])).ratio())
+
+    pairs, used_old, used_new = [], set(), set()
+    for kind in compare.PASSES:
+        candidates = sorted((distance(a, b), i, j)
+                            for i, a in enumerate(old) if i not in used_old
+                            for j, b in enumerate(new) if j not in used_new and eligible(kind, a, b))
+        for _, i, j in candidates:
+            if i not in used_old and j not in used_new:
+                used_old.add(i)
+                used_new.add(j)
+                pairs.append((i, j, kind))
+    return pairs
+
+
+class ComparisonShortcutTests(unittest.TestCase):
+    def test_indexed_matching_equals_examining_every_pair(self):
+        rng = random.Random(21)
+        paths = ["a.py", "b.py", "c d.py", "x/y.py", "p:q.py"]
+        titles = ["Leak", "leak ", "Leak  of email", "Other", "Δ  title", "LEAK", "x" * 250, "x" * 249 + "y"]
+
+        def sample(n):
+            rows = []
+            for k in range(n):
+                locations = [f"{rng.choice(paths)}:{rng.randint(1, 30)}"
+                             + (f"-{rng.randint(30, 40)}" if rng.random() < .2 else "")
+                             for _ in range(rng.randint(1, 3))]
+                f = {"id": f"PV-{k + 1:03d}", "category": rng.choice("ABC"), "title": rng.choice(titles),
+                     "location": locations if rng.random() < .7 else locations[0]}
+                if rng.random() < .6:
+                    f["step"] = rng.choice(["LT1", " LT1", "LT2", ""])
+                rows.append(f)
+            return rows
+
+        for _ in range(1500):
+            old, new = sample(rng.randint(0, 12)), sample(rng.randint(0, 12))
+            self.assertEqual(compare.match(old, new), _reference_match(old, new))
+
+    def test_equal_short_titles_have_a_ratio_of_one(self):
+        # The distance skips SequenceMatcher for equal titles below its autojunk size.
+        rng = random.Random(23)
+        for _ in range(3000):
+            title = "".join(rng.choice("aab c日\t") for _ in range(rng.randint(0, 199)))
+            self.assertEqual(SequenceMatcher(None, title, title).ratio(), 1.0)
+
+
+class ContractShortcutTests(unittest.TestCase):
+    def test_broken_commitments_match_a_scan_per_commitment(self):
+        rng = random.Random(29)
+        for _ in range(500):
+            doc = complete_doc()
+            doc["commitments"] = [{"id": f"C-0{n}", "statement": "s", "source": "p.md:1",
+                                   "status": rng.choice(findings.COMMITMENT_STATUSES), "reason": "r"}
+                                  for n in range(1, 5)]
+            for f in doc["findings"]:
+                f["validation"]["verdict"] = rng.choice(findings.VERDICTS)
+                f["status"] = rng.choice(findings.STATUSES)
+                f["commitment"] = " ".join(rng.sample(["C-01", "C-02", "C-03", "C-09"], rng.randint(0, 2)))
+            citing = findings.commitment_citations(doc)
+            expected = []
+            for r in doc["commitments"]:
+                cited_by = citing.get(r["id"], [])
+                broken = [f["id"] for f in doc["findings"] if f["id"] in cited_by
+                          and f["validation"]["verdict"] == "Valid" and f.get("status", "Open") != "Fixed"]
+                if r["status"] == "holds" and broken:
+                    expected.append(f"{r['id']} is recorded as holds, but {', '.join(broken)} ")
+            found = [p for p in findings.record_problems(doc) if "is recorded as holds" in p]
+            self.assertEqual(len(found), len(expected))
+            for problem, prefix in zip(found, expected):
+                self.assertIn(prefix, problem)
+
+
+class ReadShortcutTests(unittest.TestCase):
+    def test_reads_by_file_size_return_what_one_read_up_to_the_limit_would(self):
+        with tempfile.TemporaryDirectory() as directory:
+            for size in (0, 1, 99, 100, 101, 4096):
+                path = Path(directory) / f"record-{size}"
+                path.write_bytes(bytes(range(256)) * (size // 256) + bytes(size % 256))
+                for limit in (0, 1, 100, 4095, 4096, 1 << 20):
+                    with self.subTest(size=size, limit=limit):
+                        if size > limit:
+                            with self.assertRaises(findings.SchemaError):
+                                findings.read_limited(path, limit)
+                        else:
+                            self.assertEqual(findings.read_limited(path, limit), path.read_bytes())
+
+    def test_a_file_larger_than_fstat_reported_is_still_read_to_the_limit(self):
+        # Files that grow after fstat, or report size 0 (procfs), are read on.
+        real_fstat = os.fstat
+
+        def understated(reported):
+            def fstat(fd):
+                info = real_fstat(fd)
+                return os.stat_result((info.st_mode, info.st_ino, info.st_dev, info.st_nlink,
+                                       info.st_uid, info.st_gid, reported, info.st_atime,
+                                       info.st_mtime, info.st_ctime))
+            return fstat
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "record"
+            path.write_bytes(b"x" * 300)
+            for reported in (0, 10, 299):
+                with self.subTest(reported=reported), \
+                        mock.patch.object(findings.os, "fstat", understated(reported)):
+                    self.assertEqual(findings.read_limited(path, 300), b"x" * 300)
+                    with self.assertRaises(findings.SchemaError):
+                        findings.read_limited(path, 299)
 
 
 class StaleOutputShortcutTests(unittest.TestCase):

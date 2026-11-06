@@ -203,15 +203,19 @@ def _literal(text, in_link=False):
     return AUTOLINK_START.sub(lambda m: m.group() + "\\", text)
 
 
+AUTHORITY_END = re.compile(r"[/?#]")
+DOTTED_HOST = re.compile(r"[A-Za-z0-9]\.[A-Za-z0-9]")
+
+
 def _prose_url(url):
     """Trim trailing punctuation the way GFM does; return '' when nothing is left."""
     while url and (url[-1] in URL_TRAILING
                    or (url[-1] == ")" and url.count(")") > url.count("("))):
         url = url[:-1]
     # GFM links only a host with a dot; a dotless one stays literal whatever follows.
-    authority = re.split(r"[/?#]", url.split("//", 1)[-1], maxsplit=1)[0]
+    authority = AUTHORITY_END.split(url.split("//", 1)[-1], maxsplit=1)[0]
     host = authority.rpartition("@")[2].partition(":")[0]
-    return url if re.search(r"[A-Za-z0-9]\.[A-Za-z0-9]", host) else ""
+    return url if DOTTED_HOST.search(host) else ""
 
 
 def markdown_text(value, links=True):
@@ -250,14 +254,22 @@ def markdown_row(values):
     return "| " + " | ".join(markdown_cell(value) for value in values) + " |"
 
 
+BULLET_MARKER = re.compile(r"^([ \t]*)([-+])")
+ORDERED_MARKER = re.compile(r"^([ \t]*[0-9]{1,9})([.)])(?=\s|$)")
+LEADING_BLANKS = re.compile(r"^[ \t]+")
+
+
 def markdown_item(value):
     """Keep leading whitespace and list markers from starting Markdown blocks."""
     text = markdown_text(value)
-    text = re.sub(r"^([ \t]*)([-+])", r"\1\\\2", text)
-    text = re.sub(r"^([ \t]*[0-9]{1,9})([.)])(?=\s|$)", r"\1\\\2", text)
+    text = BULLET_MARKER.sub(r"\1\\\2", text)
+    text = ORDERED_MARKER.sub(r"\1\\\2", text)
     # Character references preserve spaces and tabs without making the list
     # body an indented code block. Add them after escaping supplied markup.
-    return re.sub(r"^[ \t]+", lambda match: "".join(f"&#{ord(c)};" for c in match[0]), text)
+    return LEADING_BLANKS.sub(lambda match: "".join(f"&#{ord(c)};" for c in match[0]), text)
+
+
+BACKTICK_RUN = re.compile(r"`+")
 
 
 def markdown_code(value):
@@ -268,7 +280,7 @@ def markdown_code(value):
         if not line:
             spans.append("")
             continue
-        fence = "`" * (max((len(run) for run in re.findall(r"`+", line)), default=0) + 1)
+        fence = "`" * (max((len(run) for run in BACKTICK_RUN.findall(line)), default=0) + 1)
         if line.strip(" ") and (line.startswith(("`", " ")) or line.endswith(("`", " "))):
             # CommonMark removes one padding space at each end of a code span.
             line = " " + line + " "

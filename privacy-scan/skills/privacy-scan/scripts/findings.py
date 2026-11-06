@@ -139,7 +139,12 @@ def read_limited(path, limit=MAX_INPUT_BYTES):
             raise SchemaError(f"{path}: must be a regular file")
         if info.st_size > limit:
             raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
-        data = stream.read(limit + 1)
+        # Size the read by the file, not the limit: reading `limit + 1` at once
+        # reserves a 16 MiB buffer for every record. A file that grew since
+        # fstat is read on, up to the same `limit + 1` bytes in total.
+        data = stream.read(info.st_size + 1)
+        if len(data) > info.st_size:
+            data += stream.read(limit + 1 - len(data))
     if len(data) > limit:
         raise SchemaError(f"{path}: larger than {limit // (1024 * 1024)} MiB")
     return data
@@ -699,6 +704,9 @@ def record_problems(doc):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
                             "not applied")
     citing = commitment_citations(doc)
+    # Valid, unfixed findings in record order, gathered once rather than once per commitment.
+    unfixed_valid = [f["id"] for f in findings
+                     if f["validation"]["verdict"] == "Valid" and f.get("status", "Open") != "Fixed"]
     for i, r in enumerate(doc.get("commitments", [])):
         if r["status"] == "not checked" and not r.get("reason", "").strip():
             problems.append(f"commitments[{i}]: a not-checked commitment needs a nonblank reason")
@@ -707,9 +715,10 @@ def record_problems(doc):
             problems.append(f"commitments[{i}]: {r['id']} is recorded as violated, but no reported "
                             "finding cites it in `commitment`; cite it from the finding that "
                             "breaks it, or correct the status")
-        broken = [f["id"] for f in findings if f["id"] in cited_by
-                  and f["validation"]["verdict"] == "Valid" and f.get("status", "Open") != "Fixed"]
-        if r["status"] == "holds" and broken:
+        # Only a commitment recorded as holding, and cited, can be contradicted.
+        cited = set(cited_by) if r["status"] == "holds" else ()
+        broken = [fid for fid in unfixed_valid if fid in cited]
+        if broken:
             problems.append(f"commitments[{i}]: {r['id']} is recorded as holds, but {', '.join(broken)} "
                             "(Valid, not Fixed) cites it as broken; set the status to violated, "
                             "or correct the finding")

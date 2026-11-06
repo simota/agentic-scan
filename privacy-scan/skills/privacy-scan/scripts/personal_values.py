@@ -387,12 +387,13 @@ def find(value):
     return None
 
 
-def _scan(value):
-    # Inspect a normalised copy: non-breaking spaces and width variants must
-    # not evade the guard, and accepted text must keep its original spelling.
-    # Invisible characters (format characters such as zero-width spaces, word
-    # joiners and soft hyphens, and the other default-ignorable code points)
-    # are dropped so they cannot split an address or a number.
+def _normalised(value):
+    """Non-breaking spaces and width variants must not evade the guard.
+
+    Invisible characters (format characters such as zero-width spaces, word
+    joiners and soft hyphens, and the other default-ignorable code points)
+    are dropped so they cannot split an address or a number.
+    """
     value = unicodedata.normalize("NFKC", value)
     # Per-character work in Python dominated long prose: look up each distinct
     # character once, and use str.replace (fast on any script) instead of a
@@ -402,7 +403,17 @@ def _scan(value):
             value = value.replace(dot, ".")
     for char in {c for c in set(value) if unicodedata.category(c) == "Cf"}:
         value = value.replace(char, "")
-    value = INVISIBLE.sub("", value)
+    return INVISIBLE.sub("", value)
+
+
+def _scan(value):
+    # Inspect a normalised copy (see _normalised); accepted text keeps its
+    # original spelling. ASCII text is already in that form: NFKC leaves every
+    # ASCII character and pair unchanged, and the full stops, format characters
+    # and invisible code points it removes are all outside ASCII. Most fields
+    # are ASCII, so they skip the per-character work.
+    if not value.isascii():
+        value = _normalised(value)
     for domain in _email_domains(value):
         # `react@18.2.0` and `sdk@1.2.3-beta` name package versions, not mail
         # domains. Bracketed literals and four-part numeric hosts still count.

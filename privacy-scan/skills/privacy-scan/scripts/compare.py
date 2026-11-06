@@ -87,36 +87,58 @@ def active(f):
     return reported(f) and f.get("status", "Open") != "Fixed"
 
 
+WHITESPACE = re.compile(r"\s+")
+
+
 def _normal(text):
-    return re.sub(r"\s+", " ", text).strip().casefold()
+    return WHITESPACE.sub(" ", text).strip().casefold()
 
 
-def _eligible(kind, a, b):
-    if a["category"] != b["category"]:
-        return False
+def _keys(kind, f):
+    """Two findings are eligible in a pass exactly when they share a key of it:
+    the perspective with the first path and hunt step, with any location path,
+    or with the normalised title."""
     if kind == "location":
-        return (_path_line(_locations(a)[0])[0] == _path_line(_locations(b)[0])[0]
-                and a.get("step", "").strip() == b.get("step", "").strip())
+        return ((f["category"], _path_line(_locations(f)[0])[0], f.get("step", "").strip()),)
     if kind == "path":
-        return bool({_path_line(x)[0] for x in _locations(a)}
-                    & {_path_line(x)[0] for x in _locations(b)})
-    return _normal(a["title"]) == _normal(b["title"])
+        return {(f["category"], _path_line(x)[0]) for x in _locations(f)}
+    return ((f["category"], _normal(f["title"])),)
 
 
 def _distance(a, b):
     (path_a, line_a), (path_b, line_b) = _path_line(_locations(a)[0]), _path_line(_locations(b)[0])
     lines = abs(line_a - line_b) if path_a == path_b else 10 ** 9
-    return (lines, -SequenceMatcher(None, _normal(a["title"]), _normal(b["title"])).ratio())
+    title_a, title_b = _normal(a["title"]), _normal(b["title"])
+    # Equal titles shorter than SequenceMatcher's 200-element autojunk threshold
+    # match as one block, so their ratio is exactly 1.0. Persisting findings
+    # usually keep their title, so this skips most of the work.
+    if title_a == title_b and len(title_b) < 200:
+        return (lines, -1.0)
+    return (lines, -SequenceMatcher(None, title_a, title_b).ratio())
 
 
 def match(old, new):
     """Pair old and new findings one-to-one; return [(old_index, new_index, pass)]."""
     pairs, used_old, used_new = [], set(), set()
     for kind in PASSES:
-        candidates = sorted(
-            (_distance(a, b), i, j)
-            for i, a in enumerate(old) if i not in used_old
-            for j, b in enumerate(new) if j not in used_new and _eligible(kind, a, b))
+        # Index the unpaired new findings by this pass's keys, so only eligible
+        # pairs are visited instead of every old-new pair. Keys are derived per
+        # pass and dropped after it, so no parsed copy of either record is kept.
+        index = {}
+        for j, b in enumerate(new):
+            if j not in used_new:
+                for key in _keys(kind, b):
+                    index.setdefault(key, []).append(j)
+        candidates = []
+        for i, a in enumerate(old):
+            if i in used_old:
+                continue
+            # A pair sharing several paths is still one candidate.
+            eligible = {j for key in _keys(kind, a) for j in index.get(key, ())}
+            candidates += [(_distance(a, new[j]), i, j) for j in eligible]
+        del index
+        # The sort fixes the order; the order in which candidates were found does not matter.
+        candidates.sort()
         for _, i, j in candidates:
             if i not in used_old and j not in used_new:
                 used_old.add(i)

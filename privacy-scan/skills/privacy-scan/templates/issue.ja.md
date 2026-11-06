@@ -4,6 +4,9 @@
 （conditions、references がない場合）は削除する。step がなければ ` — {{step}}` だけを
 省き、観点の行は残す。
 `location` がリストのときは 1 件ずつコードスパンにしてカンマで区切る。先頭が修正箇所。
+meta.commit が空なら report.md と同じく UNKNOWN と書く。推定（inferred）の約束は本文に（推定）と明記する。
+{{open_questions[]}} は finding の conditions と、その ID に触れている decisions・limitations の行。
+`scripts/drafts.py` はこの規則でテンプレートを findings.json から埋める。登録前に下書きを確認する。
 
 登録前に確認すること:
 - 個人データの値を書かない。フィールド名とプレースホルダー（<顧客のメールアドレス> など）で示す
@@ -24,7 +27,7 @@
 | 検証判定 | {{validation.verdict}}（方法: {{validation.method}}） |
 | 観点 | {{category}} — {{step}} |
 | 場所 | `{{location}}` |
-| 対象リビジョン | {{meta.commit}}（空なら report.md と同じく UNKNOWN） |
+| 対象リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
 ## 何が起きるか
@@ -33,7 +36,7 @@
 
 - **個人データ:** {{data}}
 - **データ主体:** {{subjects}}
-- **破られている約束:** {{commitment}} — {{commitments[id].statement}}（根拠: {{commitments[id].source}}。`inferred` が true なら推定と明記）
+- **破られている約束:** {{commitment}} — {{commitments[id].statement}}（根拠: {{commitments[id].source}}）
 
 ## データの流れ
 
@@ -59,8 +62,8 @@
 
 ## 未確定事項
 
-<!-- finding の conditions と、この finding に触れている decisions・limitations の行から書く: 委託先側の設定、契約や DPA、実際に保存されているデータ、デプロイ先のリージョン。 -->
-- 
+<!-- ほかに未確定のことを書き足す: 委託先側の設定、契約や DPA、実際に保存されているデータ、デプロイ先のリージョン。 -->
+- {{open_questions[]}}
 
 ## 対応完了の条件
 

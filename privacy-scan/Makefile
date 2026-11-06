@@ -206,7 +206,14 @@ check: test ## verify the skill is self-contained and internally consistent
 	( cd $(QSKILL)/scripts/scan_report_kit && shasum -a 256 -c --quiet MANIFEST ) >&2 \
 	  || { printf '%s\n' "MISS scripts/scan_report_kit differs from its MANIFEST - change scan-report-kit upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
+	drafts=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-drafts.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py diff "$$sample" "$$sample" >/dev/null \
+	    || { printf '%s\n' "MISS findings.py diff fails on $$sample" >&2; fail=1; }; \
+	  for lang in ja en; do \
+	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/drafts.py "$$sample" --out "$$drafts/$$lang" --lang $$lang >/dev/null \
+	      || { printf '%s\n' "MISS drafts.py fails on $$sample ($$lang)" >&2; fail=1; }; \
+	  done; \
 	  for lang in ja en; do \
 	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py "$$sample" --out "$$out" --lang $$lang >/dev/null \
 	      || { printf '%s\n' "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
@@ -216,8 +223,8 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { printf '%s\n' "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
 	  rm -f "$$out"/*; \
 	done; \
-	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract"; \
+	rm -rf "$$out" "$$drafts"; \
+	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, pass the contract, diff and draft"; \
 	exit $$fail
 
 # The default DEMO_OUT under a shared /tmp can be created first by another user,

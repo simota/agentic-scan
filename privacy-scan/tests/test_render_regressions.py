@@ -147,7 +147,7 @@ class ReportRenderingTests(unittest.TestCase):
                     row,
                     r"| C-01 | No PII &lt;email&gt; \| storage |  | docs\\policy.md:3 | "
                     r"not checked — reason: Missing IAM permission \| no account access<br>"
-                    r"See C:\\config\\\|regions &lt;region&gt; &amp; policy |",
+                    r"See C:\\config\\\|regions &lt;region&gt; &amp; policy | PV-001, PV-002 |",
                 )
 
     def test_optional_inferred_flag_preserves_unqualified_commitments(self):
@@ -158,14 +158,14 @@ class ReportRenderingTests(unittest.TestCase):
             for lang, status in (("en", "violated"), ("ja", "違反")):
                 with self.subTest(inferred=inferred, lang=lang):
                     outputs = self.render_outputs(doc, lang)
-                    self.assertIn(f"| C-01 | no PII in errors |  | policy | {status} |",
+                    self.assertIn(f"| C-01 | no PII in errors |  | policy | {status} | PV-001, PV-002 |",
                                   outputs["report.md"])
                     columns = render.LABELS[lang]["commitment_columns"]
-                    cells = ("C-01", "no PII in errors", "", "policy", status)
+                    cells = ("C-01", "no PII in errors", "", "policy", status, "PV-001, PV-002")
                     marked = f"<span class='status' data-status='violated'>{status}</span>"
                     self.assertIn("<tr><td class='nowrap' data-label='ID'>C-01</td>"
                                   + "".join(f"<td data-label='{c}'>{v}</td>"
-                                            for c, v in zip(columns[1:], cells[1:-1] + (marked,)))
+                                            for c, v in zip(columns[1:], cells[1:-2] + (marked, cells[-1])))
                                   + "</tr>",
                                   outputs["dashboard.html"])
 
@@ -408,8 +408,11 @@ class NarrowLedgerTests(unittest.TestCase):
                         self.assertEqual([label for label, _ in row], list(columns))
                 # The status a reader scans for stays in the commitment card.
                 commitment = tables["ledger commitments"]["rows"][1]
-                self.assertEqual(commitment[-1], (labels["commitment_columns"][-1],
+                self.assertEqual(commitment[-2], (labels["commitment_columns"][-2],
                                                   render.term(labels, "violated")))
+                # The last cell leads from the commitment to the findings that break it.
+                self.assertEqual(commitment[-1], (labels["commitment_columns"][-1],
+                                                  "PV-001, PV-002"))
 
     def test_card_layout_applies_to_narrow_screens_but_not_print(self):
         media = re.search(r"@media screen and \(max-width:850px\)\{(.*?)\}\}", render.CSS, re.S)

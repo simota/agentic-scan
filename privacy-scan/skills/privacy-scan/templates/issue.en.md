@@ -4,6 +4,9 @@ Copy each {{field}} from the field of the same name in findings.json, verbatim a
 language. Delete optional rows, lines and sections left empty (no conditions, no references); without a step, drop
 ` — {{step}}` and keep the Perspective row.
 `location` may be a list: write each entry as its own code span, comma-separated; the first is the fix location.
+A blank meta.commit is written UNKNOWN, as in report.md. Mark an inferred commitment's statement (inferred).
+{{open_questions[]}}: the finding's conditions, then the decisions and limitations lines that name its ID.
+`scripts/drafts.py` fills this template from findings.json by these rules; review the draft before filing.
 
 Before filing:
 - No personal data values: name fields and use placeholders (<customer email>)
@@ -24,7 +27,7 @@ Before filing:
 | Verdict | {{validation.verdict}} (method: {{validation.method}}) |
 | Perspective | {{category}} — {{step}} |
 | Location | `{{location}}` |
-| Assessed revision | {{meta.commit}} (blank: UNKNOWN, as in report.md) |
+| Assessed revision | {{meta.commit}} |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 ## What happens
@@ -33,7 +36,7 @@ Before filing:
 
 - **Personal data:** {{data}}
 - **Data subjects:** {{subjects}}
-- **Broken commitment:** {{commitment}} — {{commitments[id].statement}} (source: {{commitments[id].source}}; mark it inferred when `inferred` is true)
+- **Broken commitment:** {{commitment}} — {{commitments[id].statement}} (source: {{commitments[id].source}})
 
 ## Flow
 
@@ -59,8 +62,8 @@ Before filing:
 
 ## Open questions
 
-<!-- From the finding's conditions and the decisions and limitations lines that name this finding: vendor-side settings, contracts and DPAs, data actually present, deployed regions. -->
-- 
+<!-- Add what else is open: vendor-side settings, contracts and DPAs, data actually present, deployed regions. -->
+- {{open_questions[]}}
 
 ## Done when
 

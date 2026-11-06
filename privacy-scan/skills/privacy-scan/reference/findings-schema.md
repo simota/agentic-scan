@@ -43,6 +43,9 @@ point here. `check` refuses an output directory unless:
 - every perspective is recorded, and reported findings sit only under one
   recorded as `applied` or `partly applied`
 - each `not checked` commitment has a nonblank `reason`
+- each `violated` commitment is cited in `commitment` by at least one reported
+  finding, and no `holds` commitment is cited by a reported `Valid` finding
+  that is not `Fixed`
 - `checked_ok` and `limitations` are nonempty
 - `report.md` and `dashboard.html` are exactly what `render.py` produces from
   the current `findings.json` in one language
@@ -68,6 +71,27 @@ personal data goes.
 Before staging, the renderer rejects output paths that resolve to the input
 record or to each other. A rejected collision preserves the input, existing
 outputs and links.
+
+## Drafts and comparisons
+
+Neither writes into the output directory.
+
+```
+python3 scripts/drafts.py <out>/findings.json --out <scratch>/drafts [--lang ja|en] [--id PV-001]...
+python3 scripts/findings.py diff <earlier>/findings.json <out>/findings.json [--json] [--lang ja|en]
+```
+
+`drafts.py` fills the templates by the rules in their header comments and
+writes `issue-PV-NNN.md` per finding and `owner-report.md`. It refuses a record
+whose IDs are not renumbered, an `--id` not in the record, and an `--out` that
+is the record's directory or holds `findings.json`, `dashboard.html` or
+`report.md`. `diff` validates both records and prints Markdown (or JSON). A
+finding is active when it is reported and not `Fixed`; active in both records
+is persisting (with severity, confidence, verdict and status changes), active
+only before is resolved (gone, `Fixed` or excluded), only now is new or, when it
+matches an inactive earlier finding, reopened. Pairs are matched one-to-one by
+the same perspective with the same step and first path, then a shared path,
+then the same title; each pair names the pass that matched it.
 
 ## Writing the file
 
@@ -162,7 +186,10 @@ before a URL stays text and never makes the link an image. Prose in a reference
 whose URL is not linked is treated the same way. Excluded findings (`FalsePositive`,
 `NotApplicable`) are labelled in both reports and have their own dashboard
 filter instead of appearing under their severity; a filter that matches nothing says so. An
-empty commitments ledger is shown as `None.` in both reports rather than omitted. Dashboard cells wrap
+empty commitments ledger is shown as `None.` in both reports rather than omitted. The
+ledger's last column lists the reported findings citing each commitment. The
+dashboard's search box narrows the severity filter to findings containing the
+typed text (a field name, path, ID or ledger ID). Dashboard cells wrap
 long paths and keep line breaks.
 
 ## Shape

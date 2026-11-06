@@ -4,6 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
+    python3 findings.py diff OLD NEW [--json] [--lang ja|en]
     python3 findings.py check OUT_DIR [--allow NAME]...   (one --allow per name)
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -22,6 +23,12 @@ findings last), and rewrites `PV-NNN` references in IDs and prose (never in
 locations, commitment sources, URLs, also those written in prose, commands or
 revisions). Run it after the last merge; IDs
 change, so read them back before writing another fragment.
+
+`diff` compares an earlier assessment's record with the current one and prints
+new, reopened, resolved and persisting findings, active counts by severity and
+commitment status changes, as Markdown (or JSON with `--json`). IDs change
+between runs, so findings are matched by perspective, location and title
+(`scripts/compare.py`); each pair names how it was matched.
 
 `check` is the run contract; its complete rule list is in
 `reference/findings-schema.md`.
@@ -484,6 +491,30 @@ def cmd_counts(args):
     return 0
 
 
+def cmd_diff(args):
+    try:
+        old, new = read_json(args.old), read_json(args.new)
+        validate(old, complete=True)
+    except SchemaError as exc:
+        print(f"refused: earlier record: {exc}", file=sys.stderr)
+        return 1
+    try:
+        validate(new, complete=True)
+    except SchemaError as exc:
+        print(f"refused: current record: {exc}", file=sys.stderr)
+        return 1
+    compare = _import_sibling("compare")
+    result = compare.compare(old, new)
+    if args.json:
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+    else:
+        render = _import_sibling("render")  # render imports this module, so load it lazily
+        print(compare.render_markdown(result, args.lang or new["meta"]["lang"], render.markdown_text,
+                                     render.markdown_code),
+              end="")
+    return 0
+
+
 def _record_exists(path):
     """Whether the record exists; a path that cannot be checked is refused."""
     try:
@@ -667,14 +698,40 @@ def record_problems(doc):
         if not excluded(f) and status not in (None, *APPLIED):
             problems.append(f"findings[{i}].category: its perspective is recorded as {status}, "
                             "not applied")
+    citing = commitment_citations(doc)
     for i, r in enumerate(doc.get("commitments", [])):
         if r["status"] == "not checked" and not r.get("reason", "").strip():
             problems.append(f"commitments[{i}]: a not-checked commitment needs a nonblank reason")
+        cited_by = citing.get(r["id"], [])
+        if r["status"] == "violated" and not cited_by:
+            problems.append(f"commitments[{i}]: {r['id']} is recorded as violated, but no reported "
+                            "finding cites it in `commitment`; cite it from the finding that "
+                            "breaks it, or correct the status")
+        broken = [f["id"] for f in findings if f["id"] in cited_by
+                  and f["validation"]["verdict"] == "Valid" and f.get("status", "Open") != "Fixed"]
+        if r["status"] == "holds" and broken:
+            problems.append(f"commitments[{i}]: {r['id']} is recorded as holds, but {', '.join(broken)} "
+                            "(Valid, not Fixed) cites it as broken; set the status to violated, "
+                            "or correct the finding")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
     return problems
+
+
+def commitment_citations(doc):
+    """Ledger ID -> IDs of the reported findings whose `commitment` cites it, in record order.
+
+    Excluded findings break no commitment, so they are not counted.
+    """
+    citing = {}
+    for f in doc.get("findings", []):
+        if excluded(f):
+            continue
+        for cited in dict.fromkeys(COMMITMENT_REF.findall(f.get("commitment", ""))):
+            citing.setdefault(cited, []).append(f["id"])
+    return citing
 
 
 def _stale_outputs(out, doc, skip):
@@ -732,6 +789,11 @@ def main(argv=None):
     m.add_argument("fragments", nargs="+")
     n = sub.add_parser("counts", help="print the counts the report templates use ({{n_high}}…)")
     n.add_argument("findings")
+    d = sub.add_parser("diff", help="compare an earlier record with the current one")
+    d.add_argument("old")
+    d.add_argument("new")
+    d.add_argument("--json", action="store_true", help="print the comparison as JSON")
+    d.add_argument("--lang", choices=("ja", "en"), help="labels; defaults to the current meta.lang")
     r = sub.add_parser("renumber", help="number findings in severity order and rewrite PV- references")
     r.add_argument("findings")
     c = sub.add_parser("check", help="check the run contract of an output directory")
@@ -739,7 +801,7 @@ def main(argv=None):
     c.add_argument("--allow", action="append", default=[])
     args = parser.parse_args(argv)
     return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
-            "check": cmd_check}[args.cmd](args)
+            "check": cmd_check, "diff": cmd_diff}[args.cmd](args)
 
 
 if __name__ == "__main__":

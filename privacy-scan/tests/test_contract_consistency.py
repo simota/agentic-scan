@@ -101,6 +101,8 @@ class RecordConsistencyTests(unittest.TestCase):
                 doc["findings"][0]["validation"] = {
                     "verdict": "FalsePositive", "method": "static", "evidence": "scrubber at app.py:30"}
                 doc["findings"][1]["validation"] = copy.deepcopy(doc["findings"][0]["validation"])
+                # With both excluded, nothing breaks the commitment any longer.
+                doc["commitments"][0]["status"] = "holds"
                 self.assertEqual(self.problems(doc), [])
 
 
@@ -123,14 +125,14 @@ class RenderConsistencyTests(unittest.TestCase):
         doc = complete_doc()
         markdown = render.render_markdown(doc, "ja")
         html = render.render_html(doc, "ja")
-        self.assertIn("| ID | 約束 | 分類 | 出典 | ステータス |", markdown)
+        self.assertIn("| ID | 約束 | 分類 | 出典 | ステータス | 検出事項 |", markdown)
         self.assertIn("| 観点 | ステータス | メモ |", markdown)
         self.assertNotIn("| Source |", markdown)
         self.assertIn("<thead><tr><th>ID</th><th>約束</th><th>分類</th><th>出典</th><th>ステータス</th>"
-                      "</tr></thead>",
+                      "<th>検出事項</th></tr></thead>",
                       html)
         self.assertIn("<th>観点</th>", html)
-        self.assertIn("| ID | Commitment | Family | Source | Status |",
+        self.assertIn("| ID | Commitment | Family | Source | Status | Findings |",
                       render.render_markdown(doc, "en"))
 
     def test_step_and_family_are_shown_in_both_reports(self):

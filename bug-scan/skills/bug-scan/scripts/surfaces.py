@@ -24,31 +24,34 @@ MAX_FILE = 1_000_000
 MAX_PER_KIND = 300
 PREFIX = dict(screen="SC", api="API", job="JOB", db="DB", ext="EXT", cfg="CFG")
 
+# Each pattern is paired with a literal every match must contain, or None. A pattern that opens
+# with \b gives the regex engine no prefix to scan for, so a file without the literal is skipped
+# with one substring test instead of a full regex pass. Case-insensitive patterns get None.
 API_PATTERNS = [
-    re.compile(r"""@(?:\w+\.)?(?:route|get|post|put|patch|delete)\(\s*["'](?P<path>/[^"']*)["'](?P<rest>[^\n]*)""", re.I),
-    re.compile(r"""\b(?:app|router|server)\.(?P<method>get|post|put|patch|delete|all)\(\s*["'`](?P<path>/[^"'`]*)["'`]""", re.I),
-    re.compile(r"""\b(?:path|re_path)\(\s*r?["'](?P<path>[^"']+)["']\s*,""" ),
+    (re.compile(r"""@(?:\w+\.)?(?:route|get|post|put|patch|delete)\(\s*["'](?P<path>/[^"']*)["'](?P<rest>[^\n]*)""", re.I), None),
+    (re.compile(r"""\b(?:app|router|server)\.(?P<method>get|post|put|patch|delete|all)\(\s*["'`](?P<path>/[^"'`]*)["'`]""", re.I), None),
+    (re.compile(r"""\b(?:path|re_path)\(\s*r?["'](?P<path>[^"']+)["']\s*,""" ), "path("),
 ]
 METHOD_DECORATOR = re.compile(r"@(?:\w+\.)?(get|post|put|patch|delete)\(", re.I)
 JOB_PATTERNS = [
-    re.compile(r"@(?:\w+\.)?(?:task|shared_task|periodic_task|scheduled_job)\b[^\n]*\n\s*(?:async\s+)?def\s+(?P<name>\w+)"),
-    re.compile(r"""new\s+Worker\(\s*["'](?P<name>[^"']+)["']"""),
-    re.compile(r"\bclass\s+(?P<name>\w+)\s*<\s*(?:ApplicationJob|ActiveJob::Base)"),
-    re.compile(r"""\bcron\.schedule\(\s*["'][^"']+["']\s*,\s*(?P<name>\w+)"""),
+    (re.compile(r"@(?:\w+\.)?(?:task|shared_task|periodic_task|scheduled_job)\b[^\n]*\n\s*(?:async\s+)?def\s+(?P<name>\w+)"), None),
+    (re.compile(r"""new\s+Worker\(\s*["'](?P<name>[^"']+)["']"""), None),
+    (re.compile(r"\bclass\s+(?P<name>\w+)\s*<\s*(?:ApplicationJob|ActiveJob::Base)"), "Job"),
+    (re.compile(r"""\bcron\.schedule\(\s*["'][^"']+["']\s*,\s*(?P<name>\w+)"""), "cron.schedule("),
 ]
 TABLE_PATTERNS = [
-    re.compile(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<name>\w+)", re.I),
-    re.compile(r"""\bcreate_table\s+[:"'](?P<name>\w+)"""),
-    re.compile(r"""__tablename__\s*=\s*["'](?P<name>\w+)["']"""),
-    re.compile(r"^model\s+(?P<name>\w+)\s*\{", re.M),
-    re.compile(r"\bclass\s+(?P<name>\w+)\((?:[\w.]*\.)?Model\)\s*:"),
+    (re.compile(r"\bCREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[`\"\[]?(?P<name>\w+)", re.I), None),
+    (re.compile(r"""\bcreate_table\s+[:"'](?P<name>\w+)"""), "create_table"),
+    (re.compile(r"""__tablename__\s*=\s*["'](?P<name>\w+)["']"""), None),
+    (re.compile(r"^model\s+(?P<name>\w+)\s*\{", re.M), "model"),
+    (re.compile(r"\bclass\s+(?P<name>\w+)\((?:[\w.]*\.)?Model\)\s*:"), "Model)"),
 ]
 EXT_PATTERN = re.compile(r"""["'`]https?://(?P<host>[a-z0-9.-]+\.[a-z]{2,})(?:[:/"'`])""", re.I)
 LOCAL_HOST = re.compile(r"(^|\.)(localhost|example\.(com|org|net)|w3\.org|schemas?\.\w+|json-schema\.org|github\.com|npmjs\.(com|org)|pypi\.org)$", re.I)
 CFG_PATTERNS = [
-    re.compile(r"""os\.environ(?:\.get\(|\[)\s*["'](?P<name>[A-Z][A-Z0-9_]+)["']"""),
-    re.compile(r"""os\.getenv\(\s*["'](?P<name>[A-Z][A-Z0-9_]+)["']"""),
-    re.compile(r"\bprocess\.env\.(?P<name>[A-Z][A-Z0-9_]+)"),
+    (re.compile(r"""os\.environ(?:\.get\(|\[)\s*["'](?P<name>[A-Z][A-Z0-9_]+)["']"""), None),
+    (re.compile(r"""os\.getenv\(\s*["'](?P<name>[A-Z][A-Z0-9_]+)["']"""), None),
+    (re.compile(r"\bprocess\.env\.(?P<name>[A-Z][A-Z0-9_]+)"), "process.env."),
 ]
 ROUTE_COMPONENT = re.compile(r"""<Route\b[^>]*\bpath=["'](?P<path>[^"']+)["']""")
 SCREEN_FILE = [
@@ -58,8 +61,22 @@ SCREEN_FILE = [
 ]
 
 
-def line_of(text, offset):
-    return text.count("\n", 0, offset) + 1
+class Lines:
+    """1-based line of an offset in one file, counting only the newlines since the previous answer.
+
+    Each pattern's matches arrive in ascending order, so a file is scanned about once per
+    pattern that matches rather than once per match.
+    """
+
+    def __init__(self, text):
+        self.text, self.offset, self.line = text, 0, 1
+
+    def __call__(self, offset):
+        if offset < self.offset:
+            self.offset, self.line = 0, 1
+        self.line += self.text.count("\n", self.offset, offset)
+        self.offset = offset
+        return self.line
 
 
 def repo_files(repo):
@@ -75,20 +92,28 @@ def repo_files(repo):
 
 class Catalog:
     def __init__(self):
-        self.items, self.seen, self.dropped = [], set(), {}
+        self.items, self.seen, self.dropped, self.per_kind = [], set(), {}, {}
 
     def add(self, kind, name, note, where):
         key = (kind, name.lower())
         if key in self.seen:
             return
-        if sum(1 for i in self.items if i["kind"] == kind) >= MAX_PER_KIND:
+        if self.per_kind.get(kind, 0) >= MAX_PER_KIND:
             self.dropped[kind] = self.dropped.get(kind, 0) + 1
             return
         self.seen.add(key)
+        self.per_kind[kind] = self.per_kind.get(kind, 0) + 1
         self.items.append(dict(kind=kind, name=redact(name), note=note, location=where))
 
 
+def _matches(patterns, text):
+    for pattern, literal in patterns:
+        if literal is None or literal in text:
+            yield from pattern.finditer(text)
+
+
 def scan_file(rel, text, catalog):
+    line = Lines(text)
     for pattern in SCREEN_FILE:
         match = pattern.search(rel)
         if match:
@@ -97,53 +122,61 @@ def scan_file(rel, text, catalog):
             catalog.add("screen", route, "file route", f"{rel}:1")
             break
     for match in ROUTE_COMPONENT.finditer(text):
-        catalog.add("screen", match.group("path"), "<Route>", f"{rel}:{line_of(text, match.start())}")
-    for pattern in API_PATTERNS:
-        for match in pattern.finditer(text):
-            path = match.group("path")
-            groups = match.groupdict()
-            method = (groups.get("method") or "").upper()
-            if not method:
-                decorator = METHOD_DECORATOR.match(match.group(0))
-                method = decorator.group(1).upper() if decorator else "ANY"
-            catalog.add("api", f"{method} {path if path.startswith('/') else '/' + path}", "route", f"{rel}:{line_of(text, match.start())}")
-    for pattern in JOB_PATTERNS:
-        for match in pattern.finditer(text):
-            catalog.add("job", match.group("name"), "job", f"{rel}:{line_of(text, match.start())}")
-    for pattern in TABLE_PATTERNS:
-        for match in pattern.finditer(text):
-            catalog.add("db", match.group("name"), "table or model", f"{rel}:{line_of(text, match.start())}")
+        catalog.add("screen", match.group("path"), "<Route>", f"{rel}:{line(match.start())}")
+    for match in _matches(API_PATTERNS, text):
+        path = match.group("path")
+        groups = match.groupdict()
+        method = (groups.get("method") or "").upper()
+        if not method:
+            decorator = METHOD_DECORATOR.match(match.group(0))
+            method = decorator.group(1).upper() if decorator else "ANY"
+        catalog.add("api", f"{method} {path if path.startswith('/') else '/' + path}", "route", f"{rel}:{line(match.start())}")
+    for match in _matches(JOB_PATTERNS, text):
+        catalog.add("job", match.group("name"), "job", f"{rel}:{line(match.start())}")
+    for match in _matches(TABLE_PATTERNS, text):
+        catalog.add("db", match.group("name"), "table or model", f"{rel}:{line(match.start())}")
     for match in EXT_PATTERN.finditer(text):
         if not LOCAL_HOST.search(match.group("host")):
-            catalog.add("ext", match.group("host").lower(), "absolute URL", f"{rel}:{line_of(text, match.start())}")
-    for pattern in CFG_PATTERNS:
-        for match in pattern.finditer(text):
-            catalog.add("cfg", match.group("name"), "environment variable", f"{rel}:{line_of(text, match.start())}")
+            catalog.add("ext", match.group("host").lower(), "absolute URL", f"{rel}:{line(match.start())}")
+    for match in _matches(CFG_PATTERNS, text):
+        catalog.add("cfg", match.group("name"), "environment variable", f"{rel}:{line(match.start())}")
 
 
 def infer_links(items, texts):
     """Propose an edge when a file that defines one surface names another. A proposal, not a trace."""
     links = []
     by_file = {}
+    files, shared = [], {}  # each item's file, held once per file rather than once per item
     for item in items:
-        by_file.setdefault(item["location"].rsplit(":", 1)[0], []).append(item)
+        rel = item["location"].rsplit(":", 1)[0]
+        rel = shared.setdefault(rel, rel)
+        by_file.setdefault(rel, []).append(item)
+        files.append(rel)
 
     def mention(text, item):
         if item["kind"] == "api":
             needle = item["name"].split(" ", 1)[-1].split("{")[0].split("<")[0].split(":")[0].rstrip("/")
             return len(needle) > 1 and needle in text
         if item["kind"] == "db":
-            return re.search(rf"\b{re.escape(item['name'])}\b", text) is not None
+            # The substring test is a cheap gate: a \b-anchored regex has no prefix to scan for.
+            return item["name"] in text and re.search(rf"\b{re.escape(item['name'])}\b", text) is not None
         return item["name"] in text
 
     order = {"screen": ("api",), "api": ("job", "db", "ext"), "job": ("db", "ext")}
     for rel, sources in by_file.items():
         text = texts.get(rel, "")
+        named = {}  # target index -> whether this file mentions it; the same for every source here
         for source in sources:
-            for target in items:
-                if target["kind"] in order.get(source["kind"], ()) and target["location"].rsplit(":", 1)[0] != rel and mention(text, target):
-                    links.append(dict(**{"from": source["id"], "to": target["id"]}, basis="inferred"))
-                elif target["kind"] in order.get(source["kind"], ()) and target["location"].rsplit(":", 1)[0] == rel and source["kind"] != "api":
+            wanted = order.get(source["kind"], ())
+            for index, target in enumerate(items):
+                if target["kind"] not in wanted:
+                    continue
+                if files[index] != rel:
+                    if index not in named:
+                        named[index] = mention(text, target)
+                    if named[index]:
+                        links.append(dict(**{"from": source["id"], "to": target["id"]}, basis="inferred"))
+                elif source["kind"] != "api":
                     links.append(dict(**{"from": source["id"], "to": target["id"]}, basis="inferred"))
     unique = {(l["from"], l["to"]): l for l in links}
     return [unique[k] for k in sorted(unique)]

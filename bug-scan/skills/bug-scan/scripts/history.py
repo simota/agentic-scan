@@ -70,24 +70,52 @@ def blame_origins(repo, commit):
         return origins, changed_lines
     for path in source_files(commit["files"]):
         diff = git(repo, "show", "--no-ext-diff", "--no-textconv", "--unified=0", "--format=", commit["sha"], "--", path, check=False)
+        ranges = []
         for line in diff.splitlines():
             match = HUNK.match(line)
             if not match or match.group(2) == "0":
                 continue
             start, count = int(match.group(1)), int(match.group(2) or 1)
             changed_lines += count
-            blame = git(repo, "blame", "--no-textconv", "-w", "-s", "-l", f"-L{start},{start + count - 1}", parent, "--", path, check=False)
-            for row in blame.splitlines():
-                if row.strip():
-                    origins[row.split()[0]] += 1
+            ranges.append((start, count))
+        if ranges:
+            origins.update(blame_ranges(repo, parent, path, ranges))
     return origins, changed_lines
 
 
-def full_sha(repo, ref, cache):
-    """Blame marks a boundary commit with ^ and a shortened hash, so resolve what it printed."""
+def _blame_rows(repo, parent, path, ranges):
+    spans = [f"-L{start},{start + count - 1}" for start, count in ranges]
+    blame = git(repo, "blame", "--no-textconv", "-w", "-s", "-l", *spans, parent, "--", path, check=False)
+    return [row.split()[0] for row in blame.splitlines() if row.strip()]
+
+
+def blame_ranges(repo, parent, path, ranges):
+    """Last-touching commit per changed line, one blame for all of a file's hunks.
+
+    Blame refuses the whole call when any one range is out of bounds, so a short answer
+    falls back to one call per hunk and keeps every range that does resolve.
+    """
+    rows = _blame_rows(repo, parent, path, ranges)
+    if len(ranges) > 1 and len(rows) != sum(count for _, count in ranges):
+        rows = [ref for one in ranges for ref in _blame_rows(repo, parent, path, [one])]
+    return Counter(rows)
+
+
+FULL_HASH = re.compile(r"^(?:[0-9a-f]{40}|[0-9a-f]{64})$")
+
+
+def full_sha(repo, ref, cache, hash_len=None):
+    """Blame marks a boundary commit with ^ and a shortened hash, so resolve what it printed.
+
+    `blame -l` prints every other commit in full; one already as long as HEAD's hash is
+    returned as is, since rev-parse would only echo it back.
+    """
     bare = ref.lstrip("^")
     if bare not in cache:
-        cache[bare] = git(repo, "rev-parse", "--verify", "--quiet", f"{bare}^{{commit}}", check=False).strip() or bare
+        if hash_len and bare == ref and len(bare) == hash_len and FULL_HASH.match(bare):
+            cache[bare] = bare
+        else:
+            cache[bare] = git(repo, "rev-parse", "--verify", "--quiet", f"{bare}^{{commit}}", check=False).strip() or bare
     return cache[bare]
 
 
@@ -95,6 +123,24 @@ def describe(repo, sha):
     """Date and subject of a commit outside the mined window, so an old origin can still be cited."""
     day, _, subject = git(repo, "show", "-s", f"--format=%cs{FIELD}%s", sha, check=False).strip().partition(FIELD)
     return dict(date=day or None, subject=subject)
+
+
+DESCRIBE_BATCH = 100  # commits per git call: keeps the command line far below Windows' 32K limit
+
+
+def describe_all(repo, shas):
+    """describe() for many commits in a few git calls, falling back to one call each if a batch is off."""
+    shas = list(dict.fromkeys(shas))
+    out = {}
+    for at in range(0, len(shas), DESCRIBE_BATCH):
+        batch = shas[at:at + DESCRIBE_BATCH]
+        text = git(repo, "log", "--no-walk=unsorted", f"--format={RECORD}%H{FIELD}%cs{FIELD}%s", *batch, "--", check=False)
+        rows = [chunk.rstrip("\n").split(FIELD, 2) for chunk in text.split(RECORD)[1:]]
+        if len(rows) == len(batch) and all(len(row) == 3 and row[0] == sha for row, sha in zip(rows, batch)):
+            out.update((sha, dict(date=day or None, subject=subject.rstrip())) for (_, day, subject), sha in zip(rows, batch))
+        else:
+            out.update((sha, describe(repo, sha)) for sha in batch)
+    return out
 
 
 def mine(repo, since, max_fixes, depth, max_commits):
@@ -114,7 +160,9 @@ def mine(repo, since, max_fixes, depth, max_commits):
             for module in touched:
                 fixes_per_module[module] += 1
             candidates.append((commit, "prefix" if strict else "word"))
-    records, resolved, extra = [], {}, {}
+    head = git(repo, "rev-parse", "HEAD", check=False).strip()
+    hash_len = len(head) if FULL_HASH.match(head) else None
+    records, resolved, top = [], {}, []
     for index, (commit, match) in enumerate(candidates):
         record = dict(commit=commit["sha"], date=commit["date"], subject=clean(commit["subject"]), match=match,
                       files=source_files(commit["files"])[:40], test_changed=any(TEST_PATH.search(f) for f in commit["files"]))
@@ -122,17 +170,20 @@ def mine(repo, since, max_fixes, depth, max_commits):
             origins, changed = blame_origins(repo, commit)
             merged = Counter()
             for ref, lines in origins.items():
-                merged[full_sha(repo, ref, resolved)] += lines
+                merged[full_sha(repo, ref, resolved, hash_len)] += lines
             record["changed_lines"] = changed
             record["pure_addition"] = changed == 0
-            rows = []
-            for sha, lines in merged.most_common(12):
-                info = by_sha.get(sha) or extra.setdefault(sha, describe(repo, sha))
-                rows.append(dict(commit=sha, lines=lines, date=info.get("date"), kind=kind_of(info.get("subject", ""))))
-            record["origins"] = rows
+            top.append((record, merged.most_common(12)))
         else:
             record["origins_skipped"] = True
         records.append(record)
+    # Origins outside the mined window, in first-cited order, described in one batch.
+    extra = describe_all(repo, [sha for _, rows in top for sha, _ in rows if sha not in by_sha])
+    for record, rows in top:
+        record["origins"] = []
+        for sha, lines in rows:
+            info = by_sha.get(sha) or extra[sha]
+            record["origins"].append(dict(commit=sha, lines=lines, date=info.get("date"), kind=kind_of(info.get("subject", ""))))
     tree = [f for f in git(repo, "ls-files", "-z", check=False).split("\x00") if f]
     tests = [f for f in tree if TEST_PATH.search(f)]
     modules = []
@@ -150,7 +201,7 @@ def mine(repo, since, max_fixes, depth, max_commits):
     merges = git(repo, "rev-list", "--count", "--merges", "HEAD", *([f"--since={since}"] if since else []), check=False).strip()
     prefixed = sum(1 for c in commits if KIND.match(c["subject"]))
     return dict(
-        meta=dict(head=git(repo, "rev-parse", "HEAD", check=False).strip(), since=since, module_depth=depth,
+        meta=dict(head=head, since=since, module_depth=depth,
                   blame_limit=max_fixes),
         quality=dict(shallow=git(repo, "rev-parse", "--is-shallow-repository", check=False).strip() == "true",
                      commits=len(commits), reached_max_commits=len(commits) >= max_commits, merges=int(merges or 0), prefix_share=round(prefixed / len(commits), 3) if commits else 0,

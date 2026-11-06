@@ -85,12 +85,25 @@ def leading(chars, pattern):
     """Compile pattern behind a lookahead for the characters every one of its matches starts with.
 
     The lookahead never changes what matches or where. It lets the search reject other
-    positions at once, which the engine cannot do by itself for a pattern that opens with a
-    lookbehind or \\b. A global flag group such as (?i) stays first and applies to chars too.
+    positions with one test, before a lookbehind or \\b that opens the pattern. The engine still
+    tries every position, so a pattern that can open with literal words is faster with words().
+    A global flag group such as (?i) stays first and applies to chars too.
     """
     flags = re.match(r"\(\?[aiLmsux]+\)", pattern)
     head = flags.group(0) if flags else ""
     return re.compile(f"{head}(?={chars})(?:{pattern[len(head):]})")
+
+
+def words(boundary, *alternatives):
+    """Alternatives of literal words, each matched only where no boundary character precedes it.
+
+    (?:word(?<!Bword)|…) matches what (?<!B)(?:word|…) matches, at the same places and in
+    the same order: the lookbehind reads the one character before the word once the word
+    is read. Opening with literal letters lets the engine scan for a word's first character,
+    which it cannot do past a lookbehind, \\b or lookahead. \\b before a word that starts
+    with a word character is boundary \\w.
+    """
+    return "(?:" + "|".join(f"{re.escape(w)}(?<!{boundary}{re.escape(w)})" for w in alternatives) + ")"
 
 
 LENGTH = re.compile(r"(?<![\w.#-])(-?(?:\d+(?:\.\d+)?|\.\d+))((?i:px|rem|em))\b")
@@ -102,29 +115,30 @@ _CSS_VALUE = r"([^;{}\n]+(?:\n(?=" + _CSS_CONTINUATION + r"(?:[\n;}]|\Z))" + _CS
 _CSS_LINE_VALUE = r"([^;{}\n]+)"
 INDENTED_CSS_EXT = {".sass", ".styl"}
 INDENTED_STYLE_LANGS = {"sass", "stylus", "styl"}
-_CSS_SPACING_NAME = (r"(?<![\w-])(?:margin|padding|gap|row-gap|column-gap|grid-gap|grid-row-gap|grid-column-gap)"
-                     r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
-CSS_SPACING = leading(r"[mpgrc]", _CSS_SPACING_NAME + _CSS_VALUE)
+_CSS_SPACING_NAME = (words(r"[\w-]", "margin", "padding", "gap", "row-gap", "column-gap", "grid-gap",
+                           "grid-row-gap", "grid-column-gap")
+                     + r"(?:-(?:top|right|bottom|left|inline|block)(?:-start|-end)?)?\s*:\s*")
+CSS_SPACING = re.compile(_CSS_SPACING_NAME + _CSS_VALUE)
 CSS_SPACING_LINE = re.compile(_CSS_SPACING_NAME.replace(r"\s*:\s*", r"[^\S\n]*:[^\S\n]*") + _CSS_LINE_VALUE)
 # Style-object keys may be quoted, and Vue style bindings use kebab-case names.
-JS_SPACING = leading(r"[mpgrc]", r"(?<![\w$-])(?:margin|padding|gap|rowGap|columnGap|row-gap|column-gap)"
-                        r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
+JS_SPACING = re.compile(words(r"[\w$-]", "margin", "padding", "gap", "rowGap", "columnGap", "row-gap", "column-gap")
+                        + r"(?:Top|Right|Bottom|Left|Inline|Block|X|Y|-top|-right|-bottom|-left|-inline|-block)?"
                         r"(?:Start|End|-start|-end)?[\"']?\s*:\s*"
                         r"(?:(-?\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,60})[\"'`])")
-CSS_FONT_SIZE = leading(r"f", r"(?<![\w-])font-size\s*:\s*" + _CSS_VALUE)
-CSS_FONT_SIZE_LINE = re.compile(r"(?<![\w-])font-size[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
-JS_FONT_SIZE = leading(r"f", r"(?<![\w$-])(?:fontSize|font-size)[\"']?\s*:\s*"
+CSS_FONT_SIZE = re.compile(words(r"[\w-]", "font-size") + r"\s*:\s*" + _CSS_VALUE)
+CSS_FONT_SIZE_LINE = re.compile(words(r"[\w-]", "font-size") + r"[^\S\n]*:[^\S\n]*" + _CSS_LINE_VALUE)
+JS_FONT_SIZE = re.compile(words(r"[\w$-]", "fontSize", "font-size") + r"[\"']?\s*:\s*"
                           r"(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'`]([^\"'`\n]{1,40})[\"'`])")
 # Width conditions, including Media Queries 4 ranges written from either side.
 _MQ = r"(\d+(?:\.\d+)?)((?i:px|em|rem))"
 MEDIA = re.compile(r"\(\s*(?:(?:(?:min|max)-width\s*:|width\s*[<>]=?)\s*" + _MQ + r"|"
                    + _MQ + r"\s*[<>]=?\s*width(?:\s*[<>]=?\s*" + _MQ + r")?)\s*\)")
-CSS_Z = leading(r"z", r"(?<![\w-])z-index\s*:\s*(-?\d+)")
-JS_Z = leading(r"z", r"(?<![\w$-])(?:zIndex|z-index)[\"']?\s*:\s*[\"']?(-?\d+)")
+CSS_Z = re.compile(words(r"[\w-]", "z-index") + r"\s*:\s*(-?\d+)")
+JS_Z = re.compile(words(r"[\w$-]", "zIndex", "z-index") + r"[\"']?\s*:\s*[\"']?(-?\d+)")
 # A parenthesized condition tests a width; it does not set an element's width.
-CSS_WIDTH = leading(r"[wm]", r"(?<![\w-])(width|min-width)\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
+CSS_WIDTH = re.compile("(" + words(r"[\w-]", "width", "min-width") + r")\s*:\s*(\d+(?:\.\d+)?)((?i:px|rem|em))\b"
                        r"(?!\s*(?:(?i:!important)\s*)?\))")
-JS_WIDTH = leading(r"[wm]", r"(?<![\w$-])(width|minWidth|min-width)[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
+JS_WIDTH = re.compile("(" + words(r"[\w$-]", "width", "minWidth", "min-width") + r")[\"']?\s*:\s*(?:(\d+(?:\.\d+)?)\s*(?=[,}\n])|[\"'](\d+(?:\.\d+)?)((?i:px|rem|em))[\"'])")
 # A script object that describes a viewport or an image rather than styling an element:
 # use: { viewport: { width: 1280 } } (test runners), openGraph: { images: [{ width: 1200 }] }.
 NOT_ELEMENT_WIDTH = re.compile(r"(?<![\w$-])[\"']?(?:viewport|images)[\"']?\s*:\s*"
@@ -138,7 +152,7 @@ SIZE_DECL = re.compile(r"(?<![\w-])(width|height|min-width|min-height)\s*:\s*(\d
 TAP_SELECTOR = re.compile(r"(?i)btn|button|icon|close|chip|toggle|\btab\b|link|(?:^|[\s,>+~])a(?=$|[\s.:#\[,>+~])|checkbox|radio")
 _NO_OUTLINE = r"(?:none|0(?:\.0+)?(?:px|em|rem)?)(?![\w.%-])"
 OUTLINE_NONE = re.compile(r"(?<![\w-])outline\s*:\s*" + _NO_OUTLINE)
-JS_OUTLINE_NONE = leading(r"o", r"\boutline\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
+JS_OUTLINE_NONE = re.compile(words(r"\w", "outline") + r"\s*:\s*(?:[\"']" + _NO_OUTLINE + r"[\"']|0(?=\s*[,}\n]))")
 # A visible replacement sets a box shadow, border, background, underline or
 # outline to something other than nothing.
 FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|bottom|left|block|inline)"
@@ -147,19 +161,20 @@ FOCUS_REPLACEMENT = re.compile(r"(?<![\w-])(?:box-shadow|border(?:-(?:top|right|
                                r"\s*:(?!\s*(?:(?:none|0(?:\.0+)?(?![\d.])(?:px|em|rem)?|transparent|inherit|initial|unset|revert)"
                                r"\s*)+(?:!important\s*)?(?:;|$))",
                                re.M)
-CSS_MOTION = leading(r"[ta]", r"(?<![\w-])(transition|animation)(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
-JS_MOTION = re.compile(r"\b(transition|animation)\s*:\s*[\"'`](?!none)")
+CSS_MOTION = re.compile("(" + words(r"[\w-]", "transition", "animation") + r")(?:-duration|-name)?\s*:\s*(?!\s*none\b)([^;{}\n]+)")
+JS_MOTION = re.compile("(" + words(r"\w", "transition", "animation") + r")\s*:\s*[\"'`](?!none)")
 REDUCED_MOTION = re.compile(r"prefers-reduced-motion|useReducedMotion|reducedMotion|ReducedMotion")
-TRUNCATION = leading(r"[tlwWcv:]", r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
+TRUNCATION = re.compile(r"text-overflow\s*:\s*ellipsis|line-clamp\s*:|white-space\s*:\s*nowrap|"
                         r"textOverflow\s*:\s*[\"']ellipsis|WebkitLineClamp|whiteSpace\s*:\s*[\"']nowrap|"
                         r"class(?:Name)?\s*=\s*(?:\{[^}]{0,200}?)?[\"'`][^\"'`]*\b(?:truncate|line-clamp-\d)\b|"
                         # Vue :class="['truncate', …]" or "{ 'line-clamp-2': on }"; Svelte class:truncate={on}.
-                        r"(?<![\w-])(?:v-bind)?:class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b|"
-                        r"\bclass:(?:truncate|line-clamp-\d)\b")
+                        + "|".join(words(r"[\w-]", bind) + r"class\s*=\s*\"[^\"]{0,200}?\b(?:truncate|line-clamp-\d)\b"
+                                   for bind in ("v-bind:", ":")) + "|"
+                        + words(r"\w", "class:") + r"(?:truncate|line-clamp-\d)\b")
 PHYSICAL = leading(r"[mpbtflr]", r"(?<![\w-])(margin-left|margin-right|padding-left|padding-right|border-left|border-right|"
                       r"text-align\s*:\s*(?:left|right)|float\s*:\s*(?:left|right)|(?<![\w.#-])(?:left|right)(?=\s*:))|"
                       r"\b(marginLeft|marginRight|paddingLeft|paddingRight|borderLeft|borderRight)\s*:")
-CUSTOM_PROPERTY = leading(r"-", r"(?<![\w-])--[\w-]+\s*:")
+CUSTOM_PROPERTY = re.compile(words(r"[\w-]", "--") + r"[\w-]+\s*:")
 # A token file is named for its role (theme.ts) or sits in a folder named for it (theme/index.ts).
 TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-system)\.|tailwind\.config\.|"
                         # Below such a folder, style and data files and index modules; below a
@@ -168,8 +183,9 @@ TOKEN_FILE = re.compile(r"(?i)(?:^|[/_.-])(?:tokens?|theme|variables|design-syst
                         r"/(?:tokens|design-tokens|theme|design-system)/(?:[^/]+/)*"
                         r"(?:index\.[cm]?[jt]sx?|[^/]+\.(?:css|scss|sass|less|styl|pcss|json))$|"
                         r"/(?:design-tokens|theme|design-system)/(?:[^/]+/)*[^/]+\.[cm]?[jt]s$")
-FETCH = leading(r"[fau$c]", r"\bfetch\(|\baxios[.(]|\buse(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
-                   r"\bcreateResource\b|\buseAsyncData\b")
+FETCH = re.compile(words(r"\w", "fetch") + r"\(|" + words(r"\w", "axios") + r"[.(]|"
+                   + words(r"\w", "use") + r"(?:Query|SWR|InfiniteQuery|Fetch|LoaderData)\b|\$fetch\(|"
+                   + words(r"\w", "createResource") + r"\b|" + words(r"\w", "useAsyncData") + r"\b")
 LOADING = leading(r"[ilps<{]", r"(?i)\b(?:is)?loading\b|\bis_?pending\b|\bpending\b|\bisFetching\b|Skeleton|Spinner|<Suspense|"
                      r"\bstatus\s*===?\s*[\"'](?:loading|pending)|"
                      # A Svelte {#await p} block whose pending branch comes before {:then}.
@@ -200,7 +216,8 @@ MAX_HANDLER_REFERENCE = 200
 # A field that confirms an entry (confirmPassword, confirm_email) is not a confirmation step.
 CONFIRM = leading(r"[cudma]", r"(?i)\bconfirm(?![\s_-]?(?:new[\s_-]?)?(?:password|passwd|pass|pw|email|e-mail|pin|code)\w*\b)\w*\b|\bundo\b|Dialog|\bModal\b|AlertDialog|\bare you sure\b")
 # Attributes before path may hold an element (element={<Home />}) or an arrow function.
-ROUTE = leading(r"[<p]", r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|\bpath\s*:\s*[\"'](/[^\"']*)[\"']")
+ROUTE = re.compile(r"<Route\b(?:=>|<[^<>]*>|[^<>]){0,2000}?\bpath\s*=\s*(?:\{\s*(?=[\"'`](?:(?!\$\{)[^\"'`])+[\"'`]\s*\}))?[\"'`]((?:(?!\$\{)[^\"'`])+)[\"'`]|"
+                   + words(r"\w", "path") + r"\s*:\s*[\"'](/[^\"']*)[\"']")
 # to="/x", href="/x", :to="'/x'", routerLink="/x", [routerLink]="'/x'" or "['/x']".
 # Nav arrays ({ name: "Settings", href: "/settings" }) also name link targets.
 # A location object ({ path: "/x" }) passed to to=, href= or push() is a link, not a route.
@@ -208,7 +225,29 @@ LINK = leading(r"(?i:[\[:thr])|[np]", r"(?<![\w-])\[?(?i:to|href|routerlink)\]?\
                   r"\b(?:navigate|push|replace|redirect)\(\s*[\"'`](/[^\"'`?#]*)|"
                   r"(?:(?<![\w-]):?(?i:to|href)\s*=\s*[\"']?\{\{?|\b(?:navigate|push|replace|redirect)\(\s*\{)"
                   r"[^{}]{0,200}?\bpath(?:name)?\s*:\s*[\"'`](/[^\"'`?#]*)")
+# Every LINK match holds a quote, then at most "[", spaces and a second quote, before its "/".
+# A file without that has no link, and this search is far cheaper than LINK's own.
+LINK_TARGET = re.compile(r"[\"'`]\[?\s*[\"'`]?/")
 FRONTMATTER = re.compile(r"---[^\S\n]*\n(.*?)(?:\n---[^\S\n]*(?:\n|$))", re.S)
+# A literal that every match of the pattern holds, starting at most reach characters after the match
+# does: (needle, reach). No match starts before the needle's first occurrence less reach.
+NEEDLES = {
+    JS_WIDTH: ("idth", 5),  # min-width
+    REDUCED_MOTION: ("educed", 9),  # prefers-reduced-motion
+}
+
+
+def finditer(pattern, text):
+    """pattern.finditer(text), with the search started where the pattern's needle first allows.
+
+    Finding a literal reads text several times faster than the pattern's search, and it reads
+    no further than the needle's first occurrence, before which that search can now skip.
+    """
+    needle, reach = NEEDLES[pattern]
+    first = text.find(needle)
+    return pattern.finditer(text, max(0, first - reach)) if first >= 0 else iter(())
+
+
 FILE_ROUTE = re.compile(r"(?:^|/)app/((?:[^/]+/)*)page\.(?:tsx|ts|jsx|js|mdx)$|"
                         r"(?:^|/)routes/((?:[^/]+/)*)\+page(?:@[^/]*)?\.svelte$")
 SCREEN_DIR = re.compile(r"(?i)(?:^|/)(?:pages|screens|views|routes)/")
@@ -241,7 +280,7 @@ VIEWPORT_SCALE = re.compile(r"(?<![\w-])maximum-scale\s*=\s*"
                             r"([+-]?(?:\d+(?:\.\d*)?|\.\d+)(?:e[+-]?\d+)?)", re.I)
 # Next.js App Router: export const viewport = { maximumScale: 1, userScalable: false },
 # also around one level of nested objects (themeColor: [{ media, color }]).
-NEXT_VIEWPORT = leading(r"e", r"\bexport\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
+NEXT_VIEWPORT = re.compile(words(r"\w", "export") + r"\s+const\s+viewport\b[^=\n]*=\s*\{((?:[^{}]|\{[^{}]{0,200}\}){0,1000})\}")
 # The whole value of maximumScale, when it is a lone numeric literal (not an expression).
 NEXT_MAXIMUM_SCALE = re.compile(r"\bmaximumScale\s*:\s*([0-9.][\w.]*(?:(?<=[eE])[+-][\w]+)?)(?=\s*(?:,|//|/\*|$))")
 JS_DECIMAL = re.compile(r"(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
@@ -274,7 +313,11 @@ TEMPLATE_TOKEN = re.compile(r"<!--|\{/\*|(?<!\{)\{#(?![#/])|\{\{!--|\{\{!|<%#|\{
 TEMPLATE_CLOSE = {"{#": "#}", "{{!--": "--}}", "{{!": "}}", "<%#": "%>", "<!--": "-->", "{/*": "*/}"}
 ENDCOMMENT = re.compile(r"\{%-?\s*endcomment\s*-?%\}")
 # JSX files: {/* */}, a // comment line (commented-out markup) and a /* */ comment, beside JS strings.
-JSX_TOKEN = re.compile(r"""\{/\*|^[ \t]*//[^\n]*|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""",
+# A // line is one whose first non-blank characters are "//". Each form opens with a literal and then
+# looks back for the line's start, as ^ would, so a search can skip to the characters that can open a token.
+_LINE_COMMENT = ("|".join(rf"{c}(?<![^\n]{c})[ \t]*//[^\n]*" for c in (" ", r"\t"))
+                 + r"|//(?<![^\n]//)[^\n]*")
+JSX_TOKEN = re.compile(r"\{/\*|" + _LINE_COMMENT + r"""|/\*|"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`""",
                        re.S | re.M)
 # Plain script: the JSX tokens without {/*, so "{/* note */ a: 1}" ends its comment at "*/".
 SCRIPT_TOKEN = re.compile(JSX_TOKEN.pattern.removeprefix(r"\{/\*|"), re.S | re.M)
@@ -305,8 +348,9 @@ def holds_page_sources(directory):
 
 
 def iter_files(root, onerror=None):
+    depth = len(Path(root).parts)  # Each walked directory's parts below root, without relative_to's search.
     for dirpath, dirnames, filenames in os.walk(root, onerror=onerror):
-        in_routes = not ROUTE_TREES.isdisjoint(Path(dirpath).relative_to(root).parts)
+        in_routes = not ROUTE_TREES.isdisjoint(Path(dirpath).parts[depth:])
         dirnames[:] = sorted(d for d in dirnames
                              if not os.path.islink(os.path.join(dirpath, d))
                              and (d not in SKIP_DIRS
@@ -359,9 +403,17 @@ class SourceLines:
         return bisect_left(self.newlines, index) + 1
 
 
+def blank(text):
+    """text with every character but a newline turned into a space, so every offset stays put.
+
+    The same as re.sub(r"[^\\n]", " ", text), which builds the result a character at a time.
+    """
+    return "\n".join(" " * len(line) for line in text.split("\n"))
+
+
 def blank_comment(match):
     """Mask a comment while preserving every source offset and newline."""
-    return re.sub(r"[^\n]", " ", match.group(0))
+    return blank(match.group(0))
 
 
 def mask_css_comments(text, line_comments=False):
@@ -544,7 +596,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             if child_text and jsx_text_line(text, match.start(), budget):
                 cursor = match.end()  # "//" in JSX child text is visible text, not a comment.
                 continue
-            parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", found)))
+            parts.extend((text[end:match.start()], blank(found)))
             cursor = end = match.end()
             continue
         if jsx and found == "/*" and inside_regex(text, match.start(), budget):
@@ -576,7 +628,7 @@ def mask_markup_comments(text, *, jsx=False, template=False, child_text=True):
             if close < 0:
                 break  # Do not erase the remaining source on ambiguous syntax.
             cursor = close + len(marker)
-            parts.extend((text[end:match.start()], re.sub(r"[^\n]", " ", text[match.start():cursor])))
+            parts.extend((text[end:match.start()], blank(text[match.start():cursor])))
             end = cursor
     parts.append(text[end:])
     return "".join(parts)
@@ -588,9 +640,9 @@ def keep_regions(text, regions):
     for start, stop, body in sorted(regions):
         if start < end:
             continue
-        parts.extend((re.sub(r"[^\n]", " ", text[end:start]), body))
+        parts.extend((blank(text[end:start]), body))
         end = stop
-    parts.append(re.sub(r"[^\n]", " ", text[end:]))
+    parts.append(blank(text[end:]))
     return "".join(parts)
 
 
@@ -730,6 +782,9 @@ CONTROL_WORDS = {"if", "while", "for", "with"}
 REGEX_WORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield", "await"}
 
 
+JS_WORD = re.compile(r"[A-Za-z_$][\w$]*")
+
+
 def inside_regex(text, i, budget=None):
     """Whether the "/" at text[i] lies inside a regular-expression literal opened earlier on its line.
 
@@ -783,7 +838,7 @@ def inside_regex(text, i, budget=None):
                 return True  # i is the literal's closing "/".
             j, previous = j + 1, "a"
             continue
-        word = re.match(r"[A-Za-z_$][\w$]*", text[j:j + 64])
+        word = JS_WORD.match(text, j, j + 64)
         if word:
             dotted = previous == "."  # obj.return is a property, not the keyword.
             previous = "" if word.group(0) in REGEX_WORDS and not dotted else "a"
@@ -1046,9 +1101,12 @@ def dynamic_label_pairs(parsed):
     return {key for key, count in labels.items() if count == 1 and fields.get(key) == 1}
 
 
+EVENT_MODIFIERS = re.compile(r"[.|][^)]*")
+
+
 def event_name(attr):
     """An event attribute without modifiers: (keyup.enter) -> (keyup), on:click|once -> on:click."""
-    return re.sub(r"[.|][^)]*", "", attr)
+    return EVENT_MODIFIERS.sub("", attr)
 
 
 def has_name(attrs, names=NAME_ATTRS):
@@ -1570,8 +1628,9 @@ def inventory(root, flows=None):
         reason = str(error.strerror or error).encode("utf-8", errors="backslashreplace").decode("utf-8")
         parse_warning(acc, location, f"directory could not be scanned; contents skipped: {reason[:200]}")
 
+    depth = len(root.parts)
     for path in iter_files(root, onerror=directory_warning):
-        rel = path.relative_to(root).as_posix()
+        rel = "/".join(path.parts[depth:])  # path.relative_to(root).as_posix(): iter_files walks below root.
         suffix = path.suffix.lower()
         if suffix not in SCANNED_EXT:
             continue
@@ -1659,7 +1718,7 @@ def inventory(root, flows=None):
                           if tag.name == "style" and tag.body is not None
                           and (literal(tag.attrs.get("lang")) or "").lower() in INDENTED_STYLE_LANGS
                           for start, stop in [tag.body]]
-                by_syntax = [(replace_regions(css_text, [(a, b, re.sub(r"[^\n]", " ", t)) for a, b, t in blocks]), False)]
+                by_syntax = [(replace_regions(css_text, [(a, b, blank(t)) for a, b, t in blocks]), False)]
                 if blocks:
                     by_syntax.append((keep_regions(css_text, blocks), True))
             for measured, indented in by_syntax:
@@ -1703,7 +1762,7 @@ def inventory(root, flows=None):
                 value = integer(m.group(1), warn_at(m.start()))
                 if value is not None:
                     z_index.add(value, at(m.start()))
-            for m in JS_WIDTH.finditer(js_text):
+            for m in finditer(JS_WIDTH, js_text):
                 if NOT_ELEMENT_WIDTH.search(js_text, max(0, m.start() - 400), m.start()):
                     continue
                 v = px(m.group(2) or m.group(3), m.group(4) or "px", warn_at(m.start()))
@@ -1740,14 +1799,14 @@ def inventory(root, flows=None):
                     breakpoints.add(fmt(value), at(m.start()))
                     if not upper:
                         lower_breakpoints.add(fmt(value))
-        for m in REDUCED_MOTION.finditer(text):
+        for m in finditer(REDUCED_MOTION, text):
             reduced.append(at(m.start()))
         for m in TRUNCATION.finditer(text):
             truncation.add(re.sub(r"\s+", " ", m.group(0))[:40], at(m.start()))
         for m in PHYSICAL.finditer(text) if scan_physical else ():
             physical.add(re.sub(r"\s+", " ", (m.group(1) or m.group(2)))[:30], at(m.start()))
         link_spans = []
-        for m in LINK.finditer(text):
+        for m in LINK.finditer(text) if LINK_TARGET.search(text) else ():
             links.add((m.group(1) or m.group(2) or m.group(3)).rstrip("/") or "/")
             link_spans.append(m.span())
         for m in ROUTE.finditer(text):

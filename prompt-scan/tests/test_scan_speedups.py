@@ -108,6 +108,12 @@ class NeedleTest(unittest.TestCase):
         for line in ["plain", "a `b` c", "``x``", "`{{ v }}` {{ w }}", "{x} `y", "``` fence"]:
             self.assertEqual(inventory.without_code_spans(line), inventory.INLINE_CODE.sub("", line))
 
+    def test_mask_replaces_what_secret_re_replaces(self):
+        for text in TRICKY + ["", "high right through", "sk-short", "AKIA" + "C" * 15, "a\nb"]:
+            with self.subTest(text=text[:20]):
+                self.assertEqual(excerpt.mask(text), excerpt.SECRET_RE.sub("[REDACTED]", text))
+        self.assertIn("[REDACTED]", excerpt.mask("key ghp_" + "b" * 36))
+
     def test_has_secret_needle(self):
         self.assertFalse(excerpt.has_secret_needle("plain prompt text, high and right"))
         self.assertTrue(excerpt.has_secret_needle("token: ghp_" + "a" * 36))

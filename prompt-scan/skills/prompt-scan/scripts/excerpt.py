@@ -61,7 +61,8 @@ def has_secret_needle(text):
 
 
 def mask(text):
-    return SECRET_RE.sub("[REDACTED]", text)
+    # A text without a needle has nothing to replace: sub() would return it unchanged.
+    return SECRET_RE.sub("[REDACTED]", text) if has_secret_needle(text) else text
 
 
 def mask_excerpt(line):

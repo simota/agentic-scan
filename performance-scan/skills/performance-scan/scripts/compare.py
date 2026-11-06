@@ -149,18 +149,21 @@ def match_findings(baseline, current):
     files = [location_files(f) for f in baseline], [location_files(f) for f in current]
     titles = [normalized_title(f) for f in baseline], [normalized_title(f) for f in current]
     grams = [bigrams(t) for t in titles[0]], [bigrams(t) for t in titles[1]]
+    # Per finding, not per candidate pair: a shared file can pair each finding
+    # with many others.
+    steps = [_step(f) for f in baseline], [_step(f) for f in current]
     by_file = {}
     for j, new in enumerate(current):
         for path in files[1][j]:
             by_file.setdefault((new["category"], path), set()).add(j)
     candidates = []
     for i, old in enumerate(baseline):
+        step = steps[0][i]
         for j in set().union(*(by_file.get((old["category"], path), set())
                                for path in files[0][i])):
-            new = current[j]
             overlap = len(files[0][i] & files[1][j]) / len(files[0][i] | files[1][j])
             title = similarity(grams[0][i], grams[1][j])
-            same_step = 0.5 if _step(old) and _step(old) == _step(new) else 0.0
+            same_step = 0.5 if step and step == steps[1][j] else 0.0
             candidates.append((-(2 * overlap + title + same_step), i, j))
     pairs, used_new = {}, set()
     _greedy(candidates, pairs, used_new)
@@ -268,24 +271,41 @@ def normalized_statement(budget):
 
 
 def compare_budgets(baseline, current):
-    """Status changes of budgets matched by statement, then by ID; added and dropped ones."""
-    remaining = list(current)
+    """Status changes of budgets matched by statement, then by ID; added and dropped ones.
+
+    Each baseline budget takes the first unmatched current budget with its
+    statement, then with its ID. Indexes of the current budgets keep this linear;
+    scanning the unmatched list per baseline budget was O(budgets^2).
+    """
+    by_statement = {}
+    for k, b in enumerate(current):
+        by_statement.setdefault(normalized_statement(b), []).append(k)
+    for queue in by_statement.values():
+        queue.reverse()  # pop() then yields the first in record order
+    taken = set()
     changes = []
     unmatched_old = []
     for old in baseline:
-        found = next((b for b in remaining
-                      if normalized_statement(b) == normalized_statement(old)), None)
-        if found is None:
-            unmatched_old.append(old)
+        queue = by_statement.get(normalized_statement(old))
+        if queue:
+            k = queue.pop()
+            taken.add(k)
+            changes.append((old, current[k]))
         else:
-            remaining.remove(found)
-            changes.append((old, found))
-    for old in list(unmatched_old):
-        found = next((b for b in remaining if b["id"] == old["id"]), None)
-        if found is not None:
-            remaining.remove(found)
-            unmatched_old.remove(old)
-            changes.append((old, found))
+            unmatched_old.append(old)
+    by_id = {}
+    for k, b in enumerate(current):
+        by_id.setdefault(b["id"], []).append(k)
+    still_unmatched = []
+    for old in unmatched_old:
+        k = next((k for k in by_id.get(old["id"], ()) if k not in taken), None)
+        if k is None:
+            still_unmatched.append(old)
+        else:
+            taken.add(k)
+            changes.append((old, current[k]))
+    unmatched_old = still_unmatched
+    remaining = [b for k, b in enumerate(current) if k not in taken]
     rows = [{"baseline_id": old["id"], "current_id": new["id"], "statement": new["statement"],
              "from": old["status"], "to": new["status"]}
             for old, new in changes if old["status"] != new["status"]]

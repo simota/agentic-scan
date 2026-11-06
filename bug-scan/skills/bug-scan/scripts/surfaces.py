@@ -146,22 +146,22 @@ def infer_links(items, texts):
     """Propose an edge when a file that defines one surface names another. A proposal, not a trace."""
     links = []
     by_file = {}
-    files = [item["location"].rsplit(":", 1)[0] for item in items]
-    for item, rel in zip(items, files):
+    files, shared = [], {}  # each item's file, held once per file rather than once per item
+    for item in items:
+        rel = item["location"].rsplit(":", 1)[0]
+        rel = shared.setdefault(rel, rel)
         by_file.setdefault(rel, []).append(item)
+        files.append(rel)
 
-    def probe(item):
-        """How a file is searched for a mention of item, worked out once per item."""
+    def mention(text, item):
         if item["kind"] == "api":
             needle = item["name"].split(" ", 1)[-1].split("{")[0].split("<")[0].split(":")[0].rstrip("/")
-            return lambda text: len(needle) > 1 and needle in text
+            return len(needle) > 1 and needle in text
         if item["kind"] == "db":
             # The substring test is a cheap gate: a \b-anchored regex has no prefix to scan for.
-            word = re.compile(rf"\b{re.escape(item['name'])}\b").search
-            return lambda text, name=item["name"]: name in text and word(text) is not None
-        return lambda text, name=item["name"]: name in text
+            return item["name"] in text and re.search(rf"\b{re.escape(item['name'])}\b", text) is not None
+        return item["name"] in text
 
-    probes = {}
     order = {"screen": ("api",), "api": ("job", "db", "ext"), "job": ("db", "ext")}
     for rel, sources in by_file.items():
         text = texts.get(rel, "")
@@ -173,9 +173,7 @@ def infer_links(items, texts):
                     continue
                 if files[index] != rel:
                     if index not in named:
-                        if index not in probes:
-                            probes[index] = probe(target)
-                        named[index] = bool(probes[index](text))
+                        named[index] = mention(text, target)
                     if named[index]:
                         links.append(dict(**{"from": source["id"], "to": target["id"]}, basis="inferred"))
                 elif source["kind"] != "api":

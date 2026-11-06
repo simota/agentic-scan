@@ -28,6 +28,7 @@ Exit codes: 0 written, 1 the record was refused or a draft could not be saved,
 2 the command line is invalid.
 """
 import argparse
+from functools import lru_cache
 from pathlib import Path
 import re
 import sys
@@ -46,6 +47,8 @@ PLACEHOLDER = re.compile(r"{{([^{}]+)}}")
 FIELD = re.compile(r"`{{(?P<code>[^{}]+)}}`|{{(?P<text>[^{}]+)}}")
 # A placeholder that starts a paragraph or a list item's text.
 ITEM_START = re.compile(r"^(?:[-*+] |[0-9]+\. )?{{")
+# A `{{name[]}}` placeholder: the line repeats once per entry.
+LOOP = re.compile(r"{{([a-z_]+)\[\]")
 RUN_OUTPUTS = ("findings.json", "dashboard.html", "report.md")
 
 LABELS = {
@@ -128,7 +131,7 @@ class Draft:
             line = line.replace(" — {{step}}", "")
         if "{{commitments[id]." in line and self.f is not None and not self.cited():
             line = line.split(" — {{commitments[id].", 1)[0]
-        loop = re.search(r"{{([a-z_]+)\[\]", line)
+        loop = LOOP.search(line)
         if loop:
             name = loop.group(1)
             if name == "references":
@@ -182,8 +185,15 @@ def tidy(lines):
     return "\n".join(out) + "\n"
 
 
+@lru_cache(maxsize=None)
+def _template(name, lang):
+    """A template's text, read once per run: an issue draft is filled per finding.
+    Only the shipped templates are read, so the cache holds at most four."""
+    return (TEMPLATES / f"{name}.{lang}.md").read_text(encoding="utf-8")
+
+
 def issue(doc, f, lang):
-    template = (TEMPLATES / f"issue.{lang}.md").read_text(encoding="utf-8")
+    template = _template("issue", lang)
     text = fill(template, Draft(doc, lang, f))
     if f["severity"] == "High" and not excluded(f) and f.get("status", "Open") != "Fixed":
         text = LABELS[lang]["private"] + "\n\n" + text
@@ -192,7 +202,7 @@ def issue(doc, f, lang):
 
 def owner_report(doc, lang):
     """The report template, with its per-finding block repeated for every reported High and Medium."""
-    template = COMMENT.sub("", (TEMPLATES / f"report.{lang}.md").read_text(encoding="utf-8"))
+    template = COMMENT.sub("", _template("report", lang))
     lines = template.split("\n")
     start = next(i for i, x in enumerate(lines) if x.startswith("### {{id}}"))
     end = next(i for i in range(start + 1, len(lines)) if lines[i].startswith("## "))

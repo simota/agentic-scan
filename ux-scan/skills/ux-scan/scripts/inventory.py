@@ -85,8 +85,9 @@ def leading(chars, pattern):
     """Compile pattern behind a lookahead for the characters every one of its matches starts with.
 
     The lookahead never changes what matches or where. It lets the search reject other
-    positions at once, which the engine cannot do by itself for a pattern that opens with a
-    lookbehind or \\b. A global flag group such as (?i) stays first and applies to chars too.
+    positions with one test, before a lookbehind or \\b that opens the pattern. The engine still
+    tries every position, so a pattern that can open with literal words is faster with words().
+    A global flag group such as (?i) stays first and applies to chars too.
     """
     flags = re.match(r"\(\?[aiLmsux]+\)", pattern)
     head = flags.group(0) if flags else ""

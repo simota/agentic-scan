@@ -8,6 +8,20 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json
 python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json
 ```
 
+In CI, the lint runs alone, without a review:
+
+```
+python3 scripts/inventory.py <repo> --sarif <file>.sarif --fail-on High [--baseline <review>/findings.json]
+```
+
+`--fail-on` prints each hit at that severity or above as `path:line: severity
+rule: detail` and exits 1 when there is one; `--sarif` writes the hits as SARIF
+2.1.0; `--baseline` suppresses each hit an earlier review judged
+`FalsePositive` or `NotApplicable` (in `validation`, or kept as
+`previous_validation` across a rescan), matched by rule, file, tag and detail
+with line numbers aside. Neither writes inside the repository or changes the
+review's outputs.
+
 It reads files only. It never executes code from the repository and sends
 nothing over the network; the Git state it records comes from `git status`,
 `git ls-files` and `git check-ignore`, with the repository's fsmonitor and

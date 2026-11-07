@@ -6,6 +6,7 @@
 #   make test        run the offline regression tests
 #   make check       tests + verify the skill is self-contained and internally consistent
 #   make inventory   prompt inventory and lint of TARGET
+#   make lint        the lint alone, for CI: TARGET, FAIL_ON=High, SARIF=file, BASELINE=reviewed findings.json
 #   make demo        render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
 #   make compare     what changed between BASE and FINDINGS (two findings.json files)
 #   make export      FORMAT=summary|sarif|issues export of FINDINGS (OUT=file or directory)
@@ -56,7 +57,7 @@ LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 NO_PDF   ?=
 
-.PHONY: help link unlink status check demo inventory test compare export
+.PHONY: help link unlink status check demo inventory lint test compare export
 
 help: ## list targets
 	@echo "$(NAME) - skill install"
@@ -65,7 +66,7 @@ help: ## list targets
 	  | awk -F':.*## ' '{printf "  %-10s %s\n", $$1, $$2}'
 	@echo
 	@echo "  skill:  $(SKILL)"
-	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET OUT BASE FINDINGS FORMAT FAIL_ON"
+	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET OUT BASE FINDINGS FORMAT FAIL_ON SARIF BASELINE"
 	@echo "          DEMO_OUT DEMO_INPUT LANG_OUT NO_PDF PYTHON"
 
 link: ## symlink the skill into every installed host's skills dir
@@ -136,6 +137,10 @@ check: test ## verify the skill is self-contained and internally consistent
 	done; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" examples/sample-app --out "$$out/inventory.json" >/dev/null \
 	  || { echo "MISS inventory.py fails on examples/sample-app" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" examples/sample-app --sarif "$$out/lint.sarif" 2>/dev/null \
+	  || { echo "MISS inventory.py --sarif fails on examples/sample-app" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" examples/sample-app --fail-on High 2>/dev/null; \
+	[ $$? -eq 1 ] || { echo "MISS inventory.py --fail-on High does not fail on the sample's High lint hits" >&2; fail=1; }; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/compare.py" examples/findings.sample.ja.json examples/findings.sample.json >/dev/null \
 	  || { echo "MISS compare.py fails on the samples" >&2; fail=1; }; \
 	for fmt in summary sarif; do \
@@ -145,12 +150,17 @@ check: test ## verify the skill is self-contained and internally consistent
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/export.py" issues examples/findings.sample.ja.json --out "$$out/issues" >/dev/null \
 	  || { echo "MISS export.py issues fails on the sample" >&2; fail=1; }; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, inventory, compare and export run"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, inventory, lint, compare and export run"; \
 	exit $$fail
 
 inventory: ## prompt inventory and lint of TARGET (OUT=inventory.json to write a file)
 	@[ -n "$(TARGET)" ] || { echo "usage: make inventory TARGET=/path/to/repo [OUT=inventory.json]" >&2; exit 2; }
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" "$(TARGET)" $(if $(OUT),--out "$(OUT)",)
+
+lint: ## the lint alone, for CI (FAIL_ON=High exits 1 on a hit; SARIF=file; BASELINE=reviewed findings.json)
+	@[ -n "$(TARGET)" ] && [ -n "$(FAIL_ON)$(SARIF)" ] || { echo "usage: make lint TARGET=/path/to/repo FAIL_ON=High|Medium|Low|Info [SARIF=lint.sarif] [BASELINE=findings.json]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/inventory.py" "$(TARGET)" \
+	  $(if $(FAIL_ON),--fail-on $(FAIL_ON),) $(if $(SARIF),--sarif "$(SARIF)",) $(if $(BASELINE),--baseline "$(BASELINE)",)
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + PDF)
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$(DEMO_INPUT)" \

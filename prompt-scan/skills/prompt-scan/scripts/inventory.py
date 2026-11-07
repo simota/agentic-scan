@@ -2,6 +2,7 @@
 """Inventory the LLM prompts in a repository and lint them mechanically.
 
     python3 inventory.py REPO [--out inventory.json] [--into findings.json]
+    python3 inventory.py REPO [--baseline findings.json] [--sarif FILE] [--fail-on SEVERITY]
 
 Lists prompt files (prompt directories, prompt and template suffixes, agent and
 skill definitions), call sites of model APIs in code, template variables per
@@ -19,7 +20,17 @@ new review replaces it; the new hit starts `Unverified`.
 --out replaces only an earlier inventory.json: an existing file of any other
 kind (findings.json, with --out and --into swapped) is refused.
 
-Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
+The lint runs on its own in CI, without a review: --sarif writes the hits as
+SARIF 2.1.0 (as export.py sarif does for a review), --fail-on SEVERITY prints
+each hit at that severity or above as `path:line: severity rule: detail` and
+exits 1 when there is one, and --baseline names an earlier review's
+findings.json whose L-* verdicts FalsePositive or NotApplicable suppress the
+same hit (same rule, file and named variables, keys or tag; line numbers aside,
+so an edit above it does not bring it back). With --sarif or --fail-on and no
+--out, the inventory is not written to stdout.
+
+Exit codes: 0 written, 1 --fail-on threshold reached, 2 unreadable input,
+unwritable output or schema error.
 """
 import argparse
 import copy
@@ -783,6 +794,57 @@ def hit_key(rule, location, text):
     return rule, location, tag.group(1) if tag else None
 
 
+def suppression_key(rule, location, text):
+    """What identifies a reviewed hit for --baseline: its rule, file, tag and detail with every number
+    blanked, so the verdict still applies after lines move. text is a hit's detail or an L-* cause."""
+    _rule, _location, tag = hit_key(rule, location, text)
+    detail = re.sub(r"^inventory\.py [\w-]+: |\.$", "", text or "")
+    return rule, location.rpartition(":")[0], tag, re.sub(r"[0-9]+", "#", detail)
+
+
+def suppressed_by(baseline):
+    """The suppression keys of the L-* findings a review judged FalsePositive or NotApplicable (a rescan
+    since keeps that review as previous_validation)."""
+    data = record.load(baseline, record.read_regular(baseline))
+    keys = set()
+    for f in data.get("findings", []):
+        if not f["id"].startswith("L-") or not f.get("rule"):
+            continue
+        review = f["validation"]
+        if review.get("verdict") == "Unverified" and isinstance(f.get("previous_validation"), dict):
+            review = f["previous_validation"]
+        if review.get("verdict") in record.EXCLUDED:
+            keys.add(suppression_key(f["rule"], f["location"], f.get("cause")))
+    return keys
+
+
+def lint_report(inventory, a):
+    """--baseline, --sarif and --fail-on: the exit code, after writing the SARIF file."""
+    hits = inventory["lint"]
+    if a.baseline:
+        keys = suppressed_by(a.baseline)
+        kept = [h for h in hits if suppression_key(h["rule"], h["location"], h["detail"]) not in keys]
+        if len(kept) < len(hits):
+            print(f"inventory.py: {len(hits) - len(kept)} hit(s) suppressed by reviewed verdicts in {a.baseline}",
+                  file=sys.stderr)
+        hits = kept
+    if a.sarif:
+        import export  # noqa: E402 - only this mode needs it
+        meta = {"target": inventory["root"], "scope": "inventory.py lint", "commit": inventory["commit"]}
+        a.sarif.parent.mkdir(parents=True, exist_ok=True)
+        export.write(a.sarif, export.sarif({"meta": meta}, lint_findings(hits)))
+        print(f"wrote {a.sarif}: {len(hits)} lint hit(s)", file=sys.stderr)
+    if a.fail_on:
+        limit = record.SEVERITIES.index(a.fail_on)
+        failing = [h for h in hits if record.SEVERITIES.index(h["severity"]) <= limit]
+        for h in failing:
+            print(f"{h['location']}: {h['severity']} {h['rule']}: {h['detail']}", file=sys.stderr)
+        if failing:
+            print(f"inventory.py: {len(failing)} lint hit(s) at {a.fail_on} or above", file=sys.stderr)
+            return 1
+    return 0
+
+
 def merge_into(findings_path, inventory):
     original = record.read_regular(findings_path)
     data = record.read_json(findings_path, original)
@@ -823,6 +885,11 @@ def main(argv=None):
     p.add_argument("repo", type=Path)
     p.add_argument("--out", type=Path, help="write inventory.json here (default: stdout)")
     p.add_argument("--into", type=Path, help="replace the L-* findings of this findings.json")
+    p.add_argument("--baseline", type=Path, help="a reviewed findings.json: its FalsePositive and NotApplicable "
+                                                 "L-* verdicts suppress the same hits for --sarif and --fail-on")
+    p.add_argument("--sarif", type=Path, help="write the lint hits as SARIF 2.1.0 here")
+    p.add_argument("--fail-on", choices=record.SEVERITIES, metavar="SEVERITY",
+                   help="print the lint hits at this severity or above and exit 1 when there is one")
     a = p.parse_args(argv)
     if not a.repo.is_dir():
         print(f"inventory.py: {a.repo}: not a directory", file=sys.stderr)
@@ -845,7 +912,7 @@ def main(argv=None):
             return 2
         print(f"wrote {a.out}: {len(inventory['prompt_files'])} prompt file(s), "
               f"{len(inventory['call_sites'])} call site(s), {len(inventory['lint'])} lint hit(s)")
-    else:
+    elif not (a.sarif or a.fail_on):
         sys.stdout.write(text)
     if a.into:
         try:
@@ -854,6 +921,14 @@ def main(argv=None):
             print(f"inventory.py: {e}", file=sys.stderr)
             return 2
         print(f"merged {count} L-* finding(s) into {a.into}", file=sys.stderr if not a.out else sys.stdout)
+    if a.baseline or a.sarif or a.fail_on:
+        try:
+            if a.sarif and a.sarif.resolve() in {x.resolve() for x in (a.out, a.into, a.baseline) if x}:
+                raise OSError(f"--sarif {a.sarif} is also another input or output")
+            return lint_report(inventory, a)
+        except (record.SchemaError, OSError) as e:
+            print(f"inventory.py: {e}", file=sys.stderr)
+            return 2
     return 0
 
 

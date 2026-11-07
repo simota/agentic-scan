@@ -109,6 +109,7 @@ passes:
 | The chat summary | `scripts/export.py summary <out>/findings.json`, then add what it cannot know: what remains unknown, the scratch directory and the file links |
 | Findings as issues | `scripts/export.py issues <out>/findings.json --out <dir>`: one body per finding from `templates/issue.<lang>.md`, plus `index.md`. File them only when asked to, and say first where they go |
 | Code scanning, an IDE or CI | `scripts/export.py sarif <out>/findings.json --out <file>.sarif`; `--fail-on <severity>` exits 1 while an Open finding at that severity remains |
+| The mechanical lint on every change, without a review | `scripts/inventory.py <repo> --fail-on <severity> [--sarif <file>.sarif] [--baseline <out>/findings.json]`: `--baseline` keeps the hits this review judged `FalsePositive` or `NotApplicable` quiet (`reference/inventory.md`) |
 | What changed since an earlier review | A new, complete review, then `scripts/compare.py <earlier>/findings.json <out>/findings.json`: new, reopened, persisting, resolved and dismissed findings. `--accepted-fragment <scratch>/accepted.json` carries the earlier `Accepted` statuses forward as a fragment to merge; `--fail-on <severity>` fails only on new or reopened findings |
 
 ## Decide first

@@ -157,7 +157,10 @@ Merge semantics:
 
 ## Correcting the record
 
-Never edit `findings.json` by hand; every correction is a fragment:
+Never edit `findings.json` by hand; every correction is a fragment, and a
+decision taken after the review (a status, its reason, the tracking issue)
+is recorded with `findings.py triage`, which builds that fragment, merges it
+under the same lock and re-renders the outputs beside the record:
 
 - `null` removes an optional key: `{"findings": [{"id": "A-003", "analysis":
   null}]}`, `{"meta": {"method": null}}`, `{"rules": [{"id": "R-02", "reason":
@@ -189,7 +192,7 @@ by the path and line of their first location, and renames them `A-001`…
 without gaps. Every whole-word mention of an old ID in the record's prose
 (`title`, `trace`, `evidence`, `next_steps`, `decisions`…) is rewritten in the
 same pass. Literal values keep theirs: `meta`, every `location`, reference
-`url`, `analysis.command` and rule `source` (an `A-001` there is a file, a
+`url`, a finding's `issue`, `analysis.command` and rule `source` (an `A-001` there is a file, a
 ticket or an argument). In prose, a token such as `JIRA-A-001` or
 `A-001-style`, a path segment such as `docs/A-001.md` and a URL are left
 alone; a URL runs to the next blank or non-ASCII punctuation, so write
@@ -355,6 +358,8 @@ wrap onto further lines.
 | `validation.method` | Required: `static` or `analysed`; `analysed` requires `analysis` |
 | `analysis` | When present, an object with nonblank string fields `{tool, command, result}`, from a read-only local analysis; checked even when `validation.method` is `static` |
 | `status` | `Open` (default), `Fixed`, `Accepted` |
+| `status_note` | Optional nonblank string: why the status is what it is — the accepted trade-off and who accepted it, the change that fixed it, why it was reopened. Shown in both outputs, copy-for-LLM and SARIF (an `Accepted` result's suppression justification). `findings.py triage --note` sets it and refuses `Accepted` without one; renumber rewrites finding IDs in it like any prose |
+| `issue` | Optional nonblank string, one URL without blanks: where the fix is tracked (the filed issue or ticket). A link in both outputs only when it is a web URL; `drafts.py` no longer drafts a finding that has one and links it in the owner report; `compare.py --carry` carries it to a re-run. A literal value: renumber never rewrites an ID in it. `findings.py triage --issue` sets it |
 | `references[]` | Objects with a required nonblank string `url` and optional string `title`. A missing or empty title uses the URL as its label in both outputs |
 | `rules[]` | `id` (`R-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` rule needs `reason`, a `partly read` one may carry it, and `check` refuses it on `holds` or `violated` (send `"reason": null` with the final status). Optional `family` is one of `LAYER`, `BOUND`, `OWN`, `TX`, `FAIL`, `CONTRACT`, `SEAM` (`reference/rules.md` §2); optional `inferred` is `true` or `false` |
 | `perspectives[]` | `name` (exact and unique), `status` (`applied`, `N/A`, `not checked`), `note` (required nonblank: steps applied, steps left out with reasons). A perspective is replaced by sending it again, never removed |

@@ -19,8 +19,9 @@ scanning or an IDE's SARIF viewer shows it on the line it names:
 Left out: excluded verdicts (`FalsePositive`, `NotApplicable`), `Unlikely`
 findings, findings whose status is `Fixed`, and findings below
 `--min-severity`. An `Accepted` finding is kept as a suppressed result
-(`kind: external`, `status: accepted`), so the trade-off stays visible without
-an open alert. Locations are relative to the repository root, as the record
+(`kind: external`, `status: accepted`, its `status_note` as the
+justification), so the trade-off stays visible without an open alert. A
+recorded `issue` URL and `status_note` travel in the result's `properties`. Locations are relative to the repository root, as the record
 holds them; with `--repo`, an absolute path inside that checkout is made
 relative to it.
 
@@ -42,13 +43,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, STEP_PREFIXES, SchemaError,  # noqa: E402
                       atomic_write_all, as_locations, cited_rules, read_json, safe_output,
-                      split_location, validate)
+                      split_location, validate, visible)
 
 SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 LEVELS = {"High": "error", "Medium": "warning", "Low": "note", "Info": "note"}
 LEFT_OUT_VERDICTS = (*EXCLUDED, "Unlikely")
 FINGERPRINT = "architectureScan/v1"
 DETAIL_FIELDS = ("scenario", "blast_radius", "trace", "contrast", "impact", "fix", "guard")
+
+
+def filled(record, key):
+    return isinstance(record.get(key), str) and visible(record[key])
 
 
 def slug(text):
@@ -133,9 +138,15 @@ def result(f, doc, repo):
                                    for i, loc in enumerate(locations[1:], 1)]
     if f.get("references"):
         out["properties"]["references"] = [r["url"] for r in f["references"]]
+    if filled(f, "status_note"):
+        out["properties"]["statusNote"] = f["status_note"]
+    if filled(f, "issue"):
+        out["properties"]["issue"] = f["issue"].strip()
     if f.get("status") == "Accepted":
+        # The recorded reason is the justification a code-scanning reviewer reads.
+        reason = f["status_note"] if filled(f, "status_note") else "Accepted in the architecture assessment"
         out["suppressions"] = [{"kind": "external", "status": "accepted",
-                                "justification": "Accepted in the architecture assessment"}]
+                                "justification": reason}]
     return out
 
 

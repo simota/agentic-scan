@@ -53,7 +53,7 @@
 - **何が起きるか:** {{impact}}
 - **修正方針:** {{fix}}
 - **適合性チェック:** {{guard}}
-- **管理先:** <issue の URL>
+- **管理先:** {{issue}} <!-- 記録済みの issue。`findings.py triage --issue` で記録するまでは `<issue の URL>` -->
 
 ## 4. アーキテクチャ: 修正前と修正後
 

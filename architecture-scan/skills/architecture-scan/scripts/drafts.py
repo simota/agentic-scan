@@ -11,8 +11,11 @@ trace keeps one numbered step per line, each cited rule carries its statement
 and source, and a missing commit reads `UNKNOWN` as in report.md.
 
 Never drafted as an issue: an excluded finding (`FalsePositive`,
-`NotApplicable`) and a finding whose status is `Fixed` or `Accepted`; the owner
-report still counts them, as its template says. Recorded text is made safe for
+`NotApplicable`), a finding whose status is `Fixed` or `Accepted`, and a
+finding whose `issue` is already recorded (`findings.py triage --issue`), so a
+second run of drafts never files the same finding twice; the owner report
+still counts them, as its template says, and links each recorded issue under
+"Tracked in". Recorded text is made safe for
 Markdown exactly as in report.md, so it cannot open a block, form a link or end
 a table cell. What only a person can write stays a comment for them to fill:
 an issue's open questions, the report's one-line conclusion, the issue URLs and
@@ -46,10 +49,12 @@ STEP = re.compile(r"(?:(?<=\s)|^)([1-9][0-9]{0,2})\.[ \t]+")
 SEP = {"en": ", ", "ja": "、"}
 WORDS = {
     "en": {"source": "source", "unknown_rule": "not in the rules ledger",
+           "no_issue": "<issue URL>",
            "none": "None.",
            "after_note": "<!-- Say in one line what the after diagram changes. -->",
            "not_drawn": "Not recorded."},
     "ja": {"source": "出典", "unknown_rule": "ルール台帳にない",
+           "no_issue": "<issue の URL>",
            "none": "なし。",
            "after_note": "<!-- 修正後の図で何が変わるかを 1 行で書く。 -->",
            "not_drawn": "未記録。"},
@@ -159,6 +164,9 @@ def finding_values(f, doc, lang):
         "meta.assessor": inline(meta["assessor"]),
         "rule": rule_text(f, rules, lang) if filled(f, "rule") else None,
         "validation.evidence": inline(v["evidence"]) if filled(v, "evidence") else None,
+        # Recorded with `findings.py triage --issue`; until then a person fills it in.
+        "issue": (markdown_reference({"url": f["issue"].strip()}) if filled(f, "issue")
+                  else WORDS[lang]["no_issue"]),
     }
     for key in ("impact", "scenario", "blast_radius", "fix", "guard", "contrast"):
         values[key] = inline(f[key]) if filled(f, key) else None
@@ -343,7 +351,9 @@ def owner_report(doc, lang, template, cache=None):
 
 
 def draftable(f):
-    return f["validation"]["verdict"] not in EXCLUDED and f.get("status", "Open") not in CLOSED
+    """Worth filing: reported, still Open, and not already tracked in an issue."""
+    return (f["validation"]["verdict"] not in EXCLUDED and f.get("status", "Open") not in CLOSED
+            and not filled(f, "issue"))
 
 
 def drafts(doc, lang, only=None):
@@ -359,8 +369,12 @@ def drafts(doc, lang, only=None):
         if only is not None and f["id"] not in only:
             continue
         if not draftable(f):
-            reason = f["validation"]["verdict"] if f["validation"]["verdict"] in EXCLUDED \
-                else f.get("status")
+            if f["validation"]["verdict"] in EXCLUDED:
+                reason = f["validation"]["verdict"]
+            elif f.get("status", "Open") in CLOSED:
+                reason = f["status"]
+            else:
+                reason = f"tracked in {f['issue'].strip()}"
             skipped.append((f["id"], reason))
             continue
         files[f"{f['id']}.md"] = issue_draft(f, doc, lang, issue, cache)

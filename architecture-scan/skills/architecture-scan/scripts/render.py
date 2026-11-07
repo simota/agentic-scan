@@ -71,7 +71,9 @@ LABELS = {
         "fix": "fix direction", "guard": "fitness function", "verdict": "recorded verdict",
         "verdicts": "Verdict counts",
         "method": "verification", "evidence": "evidence", "analysis": "analysis",
-        "references": "references", "status": "status", "reason": "Reason",
+        "references": "references", "status": "status", "status_note": "status reason",
+        "issue": "tracked in",
+        "reason": "Reason",
         "category": "perspective", "id": "ID", "statement": "Rule", "source": "Source",
         "rule_status": "Status", "perspective": "Perspective", "note": "Note",
         "not_recorded": "not recorded", "inferred": "inferred, to confirm",
@@ -105,7 +107,9 @@ LABELS = {
         "fix": "修正方針", "guard": "適合性チェック", "verdict": "検証判定",
         "verdicts": "検証判定別件数",
         "method": "検証方法", "evidence": "根拠", "analysis": "解析",
-        "references": "参考", "status": "ステータス", "reason": "理由",
+        "references": "参考", "status": "ステータス", "status_note": "ステータスの理由",
+        "issue": "管理先",
+        "reason": "理由",
         "category": "観点", "id": "ID", "statement": "ルール", "source": "出典",
         "rule_status": "状態", "perspective": "観点", "note": "メモ",
         "not_recorded": "未記録", "inferred": "推定・要確認", "baseline": "ベースライン",
@@ -545,6 +549,10 @@ def render_markdown(doc, lang):
             lines.append(f"- **{t['analysis']}:** {text(a['result'])} "
                          f"({text(a['tool'])}: {markdown_code(a['command'])})")
         lines.append(f"- **{t['status']}:** {f.get('status', 'Open')}")
+        if filled(f, "status_note"):
+            lines.append(f"- **{t['status_note']}:** {text(f['status_note'])}")
+        if filled(f, "issue"):
+            lines.append(f"- **{t['issue']}:** {markdown_reference({'url': f['issue']})}")
         for ref in f.get("references", []):
             lines.append(f"- **{t['references']}:** {markdown_reference(ref)}")
         lines.append("")
@@ -931,6 +939,10 @@ def finding_markdown(f, lang):
     if "analysis" in f:
         a = f["analysis"]
         blocks.append((t["analysis"], f"{a['result']}\n{a['tool']}: {a['command']}"))
+    if filled(f, "status_note"):
+        blocks.append((t["status_note"], f["status_note"]))
+    if filled(f, "issue"):
+        out.append(f"- {t['issue']}: {one(f['issue'])}")
     for label, value in blocks:
         out += ["", f"### {label}", "", fenced(value)]
     refs = f.get("references", [])
@@ -1573,6 +1585,10 @@ def html_finding(f, lang, status, order):
     if filled(v, "evidence"):
         fields.append((t["evidence"], e(v["evidence"])))
     fields.append((t["status"], e(status)))
+    if filled(f, "status_note"):
+        fields.append((t["status_note"], e(f["status_note"])))
+    if filled(f, "issue"):
+        fields.append((t["issue"], html_reference({"url": f["issue"]})))
     if "analysis" in f:
         a = f["analysis"]
         fields.append((t["analysis"], e(f"{a['result']} — {a['tool']}: {a['command']}")))

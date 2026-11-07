@@ -85,6 +85,33 @@ python3 skills/architecture-scan/scripts/compare.py earlier/findings.json out/fi
 python3 skills/architecture-scan/scripts/sarif.py out/findings.json --out architecture.sarif # SARIF 2.1.0 for code scanning
 ```
 
+and one command records what people decide afterwards, so the record keeps
+following the work:
+
+```sh
+python3 skills/architecture-scan/scripts/findings.py triage out/findings.json A-002 \
+    --status Accepted --note "Replays are rare until the Q1 rewrite"          # accept a risk, with its reason
+python3 skills/architecture-scan/scripts/findings.py triage out/findings.json A-001,A-003 \
+    --issue https://github.com/acme/shop/issues/12                            # link the filed issue
+python3 skills/architecture-scan/scripts/compare.py earlier/findings.json out/findings.json \
+    --carry scratch/carry.json --fail-on High                                 # keep that triage in a re-run; gate regressions
+```
+
+### The lifecycle of a finding
+
+```
+assess ─► drafts.py ─► file issues ─► triage --issue / --status ─► re-run ─► compare --carry ─► merge
+            │                            (dashboard, report and SARIF        │
+            └ skips findings already      re-rendered in place)              └ --fail-on: exit 3 on a
+              tracked, Fixed or Accepted                                       new or reappeared finding
+```
+
+| Command | What it gives you |
+|---|---|
+| `findings.py triage` | Sets `status` (`Open`, `Fixed`, `Accepted`), `status_note` (the reason; `Accepted` needs one, reopening drops the old one) and `issue` (where the fix is tracked) on one or several findings, refuses an excluded finding or a reason naming an unknown finding, and re-renders `dashboard.html` and `report.md` in the same atomic write so `check` still passes (`--no-render` to skip). Both fields show in the dashboard, `report.md`, copy-for-LLM and SARIF (the reason becomes an Accepted result's suppression justification); `drafts.py` stops drafting a tracked finding and links its issue in the owner report |
+| `compare.py --carry FILE` | A fragment for the later record holding the earlier triage of each persisting finding: `Accepted` with its reason (not when the severity rose: that decision is made again), and the `issue` URL. `Fixed` is never carried (found again, it is flagged as reappeared), nor is any verdict or severity. IDs in a carried reason are rewritten to the later record's |
+| `compare.py --fail-on SEVERITY` | Exit `3` when the later record has, at or above SEVERITY, a new finding, one that reappeared after `Fixed`, one reported again after being excluded, or one whose severity rose to it; each reason on stderr, outputs still written |
+
 | Tool | What it gives you |
 |---|---|
 | `drafts.py` | `templates/issue.<lang>.md` filled for every finding worth filing (one `A-NNN.md` each; excluded, `Fixed` and `Accepted` ones left out) and `templates/report.<lang>.md` filled as `owner-report.md` (counts, High/Medium findings, both Mermaid diagrams, rules, lists). Only the judgment stays for you: open questions, the conclusion, issue URLs. `--only A-001,A-003` drafts some |
@@ -130,10 +157,11 @@ skills/architecture-scan/
   reference/validation.md      verdicts, the four claims, read-only analysis, fitness functions
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
-  scripts/findings.py          merges JSON fragments; renumbers; checks the run contract (stdlib only)
+  scripts/findings.py          merges JSON fragments; renumbers; records triage; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
-  scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting
+  scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting;
+                               carries triage forward and gates regressions
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
   scripts/scan_report_kit/     vendored scan-report-kit: the shared dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
@@ -149,7 +177,7 @@ make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, the vendored scan-report-kit matches its MANIFEST,
              # sample renders in ja/en and passes the run contract, and
-             # drafts, compare and sarif run on it
+             # drafts, compare, sarif and triage run on it
 make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
 ```
 

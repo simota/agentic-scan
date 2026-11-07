@@ -90,4 +90,4 @@ $ {{measurement.after.command}}
 - [ ] 修正がマージされた
 - [ ] 修正前に失敗し、修正後に成功する決定的な回帰チェックが追加された
 - [ ] 対象経路の結果が変わらないこと（positive control）を確認した
-- [ ] findings.json の `status` を `Fixed` に更新した
+- [ ] findings.json の `status` を `Fixed` に更新した（`findings.py set … --status Fixed`）

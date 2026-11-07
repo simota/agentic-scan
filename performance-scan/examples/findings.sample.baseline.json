@@ -169,7 +169,7 @@
         "verdict": "Unverified",
         "method": "static"
       },
-      "status": "Open"
+      "status": "Accepted"
     }
   ],
   "perspectives": [
@@ -239,7 +239,8 @@
   ],
   "decisions": [
     "Confirm the intended maximum items per order",
-    "Confirm the inferred nightly sync deadline from deploy/cron.yaml:12 (B-03)"
+    "Confirm the inferred nightly sync deadline from deploy/cron.yaml:12 (B-03)",
+    "P-005: The catalogue owner accepts the unindexed product search while the catalogue stays below 20,000 products per tenant"
   ],
   "limitations": [
     "Production data volumes, deployed indexes and pool sizes were not observed",

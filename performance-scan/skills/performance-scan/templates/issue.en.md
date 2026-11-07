@@ -91,4 +91,4 @@ $ {{measurement.after.command}}
 - [ ] The fix is merged
 - [ ] A deterministic regression check fails before the fix and passes after it
 - [ ] The result of the affected path is unchanged (positive control)
-- [ ] `status` in findings.json is `Fixed`
+- [ ] `status` in findings.json is `Fixed` (`findings.py set … --status Fixed`)

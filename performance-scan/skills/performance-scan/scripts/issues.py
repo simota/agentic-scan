@@ -36,7 +36,7 @@ import re
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, MEASUREMENT_RUNS, SEVERITIES, SchemaError,  # noqa: E402
+from findings import (EXCLUDED, FINDING_MENTION, MEASUREMENT_RUNS, SEVERITIES, SchemaError,  # noqa: E402
                       escape_unencodable_console, file_mode, finding_locations,
                       finding_status, read_json, resolve_path, validate, write_atomic)
 from render import (block_fence, markdown_code, markdown_link, markdown_text,  # noqa: E402
@@ -65,7 +65,7 @@ LABELS = {
         "done": ("The fix is merged",
                  "A deterministic regression check fails before the fix and passes after it",
                  "The result of the affected path is unchanged (positive control)",
-                 "`status` in findings.json is `Fixed`"),
+                 "`status` in findings.json is `Fixed` (`findings.py set … --status Fixed`)"),
         "paren": " ({})", "verdict_line": "{verdict} (method: {method})",
     },
     "ja": {
@@ -89,16 +89,12 @@ LABELS = {
         "done": ("修正がマージされた",
                  "修正前に失敗し、修正後に成功する決定的な回帰チェックが追加された",
                  "対象経路の結果が変わらないこと（positive control）を確認した",
-                 "findings.json の `status` を `Fixed` に更新した"),
+                 "findings.json の `status` を `Fixed` に更新した（`findings.py set … --status Fixed`）"),
         "paren": "（{}）", "verdict_line": "{verdict}（検証方法: {method}）",
     },
 }
 # "1. A tenant ... 2. GET /api/..." holds one step per number; split before each.
 STEP_START = re.compile(r"(?:(?<=\s)|^)(?=[0-9]{1,3}[.)]\s)")
-# A finding ID (P- and three digits, as the schema requires) not glued to a
-# longer identifier or number. One scan of each line finds every ID it names:
-# matches cannot overlap, since the only P in "P-123" is its first character.
-FINDING_MENTION = re.compile(r"(?<![A-Za-z0-9_-])P-[0-9]{3}(?![0-9])")
 
 
 def issue_title(f):

@@ -137,8 +137,20 @@ check: test ## verify the skill is self-contained and internally consistent
 	    examples/findings.sample.json --out "$$out/issues-$$lang" --lang $$lang >/dev/null \
 	    || { echo "MISS issues.py fails on the sample ($$lang)" >&2; fail=1; }; \
 	done; \
+	mkdir "$$out/run" && cp examples/findings.sample.json "$$out/run/findings.json" \
+	  && PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/compare.py) \
+	    examples/findings.sample.baseline.json "$$out/run/findings.json" --carry "$$out/carry.json" >/dev/null 2>&1 \
+	  && PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/findings.py) \
+	    merge "$$out/run/findings.json" "$$out/carry.json" >/dev/null \
+	  && PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/findings.py) \
+	    set "$$out/run/findings.json" P-001 --status Fixed --render >/dev/null \
+	  && PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/findings.py) check "$$out/run" >/dev/null \
+	  || { echo "MISS compare --carry, merge, set --render and check fail on the samples" >&2; fail=1; }; \
+	PYTHONDONTWRITEBYTECODE=1 $(call shell_quote,$(PYTHON)) $(call shell_quote,$(SKILL)/scripts/sarif.py) \
+	  examples/findings.sample.json --out "$$out/sample.sarif" --baseline examples/findings.sample.baseline.json >/dev/null \
+	  || { echo "MISS sarif.py fails on the sample" >&2; fail=1; }; \
 	rm -rf "$$out"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(call shell_quote,$(SKILL))/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract, compare/summary/issues run"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls $(call shell_quote,$(SKILL))/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and pass the contract, compare/carry/set/summary/issues/sarif run"; \
 	exit $$fail
 
 demo: ## render the sample findings into DEMO_OUT (dashboard + report.md)

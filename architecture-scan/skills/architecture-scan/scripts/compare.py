@@ -2,6 +2,7 @@
 """Compare an earlier assessment with a later one of the same codebase.
 
     python3 compare.py OLD_FINDINGS NEW_FINDINGS [--lang ja|en] [--format md|json] [--out FILE]
+                       [--carry FRAGMENT] [--fail-on High|Medium|Low|Info]
 
 IDs are renumbered on every run, so findings are paired by what they are, not
 by ID: the same title, or a shared file with the same perspective or the same
@@ -23,11 +24,27 @@ statement), and every perspective whose coverage changed.
 
 The comparison reads both records and writes nothing beside them; with `--out`
 it writes FILE (outside the run's output directory, or add it with `check
---allow`). Neither record is changed: to carry a result into the later record,
-write a fragment as usual.
+--allow`). Neither record is changed.
+
+`--carry FRAGMENT` writes the triage people already did on the earlier record
+as a fragment for the later one, so an independent re-run does not lose it:
+for each persisting finding still `Open` now, an earlier `Accepted` status with
+its reason (unless the severity rose since, which reopens the decision), and
+an earlier `issue` URL the later finding lacks. A finding marked `Fixed` that
+is found again is not carried: it is flagged as reappeared instead. Finding
+IDs in a carried reason are rewritten to the later record's IDs (an earlier
+finding with no counterpart reads `earlier-A-005`). Verdicts, severities and
+every other judgment are never carried. Merge it with `findings.py merge`
+before the later record is renumbered again, then render.
+
+`--fail-on SEVERITY` makes the comparison a regression gate: exit 3 when the
+later record has, at or above SEVERITY, a new finding, a finding that
+reappeared after `Fixed`, a finding reported again after being excluded, or a
+persisting finding whose severity rose to it. Each reason goes to stderr.
 
 Exit codes: 0 compared, 1 a record cannot be read, does not match the schema
-or FILE could not be written, 2 the command line is wrong.
+or FILE could not be written, 2 the command line is wrong, 3 `--fail-on` found
+a regression (the outputs are still written).
 """
 import argparse
 import json
@@ -38,8 +55,8 @@ import unicodedata
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
-                      atomic_write_all, as_locations, cited_rules, read_json, safe_output,
-                      split_location, validate)
+                      _rewrite_ids, atomic_write_all, as_locations, cited_rules, read_json,
+                      safe_output, split_location, validate, visible)
 from render import as_text, markdown_code, markdown_inline, revision  # noqa: E402
 
 # How close two locations in the same file must be to count as the same place.
@@ -344,6 +361,75 @@ def as_markdown(result, old_doc, new_doc, lang):
     return "\n".join(lines) + "\n"
 
 
+CARRY_WORDS = {
+    "en": {"accepted": "Accepted in the earlier assessment ({when}); no reason was recorded",
+           "earlier": "earlier-{id}"},
+    "ja": {"accepted": "前回の診断（{when}）で Accepted。理由は記録されていない",
+           "earlier": "前回-{id}"},
+}
+
+
+def _note(f):
+    note = f.get("status_note")
+    return note if isinstance(note, str) and visible(note) else None
+
+
+def carry(result, old_doc, new_doc):
+    """(fragment, lines): the earlier triage to carry into the later record, and what was done."""
+    lang = new_doc["meta"]["lang"]
+    w = CARRY_WORDS[lang]
+    pairs = [(o, n) for o, n, _, _ in result["persisting"]]
+    # Every earlier ID a carried reason may mention: its counterpart now, or a name no
+    # later finding holds, so a mention never silently points at another finding.
+    mapping = {f["id"]: w["earlier"].format(id=f["id"]) for f in old_doc.get("findings", [])}
+    mapping.update({o["id"]: n["id"] for o, n in pairs})
+    for o, n in result["now_excluded"] + result["now_reported"]:
+        mapping[o["id"]] = n["id"]
+    when = old_doc["meta"]["date"] + (f", {old_doc['meta']['commit']}"
+                                      if old_doc["meta"].get("commit") else "")
+    updates, lines = [], []
+    for o, n in pairs:
+        update = {"id": n["id"]}
+        if o.get("status") == "Accepted" and n.get("status", "Open") == "Open":
+            if SEVERITIES.index(n["severity"]) < SEVERITIES.index(o["severity"]):
+                lines.append(f"not carried {o['id']} → {n['id']}: Accepted as {o['severity']}, "
+                             f"now {n['severity']}; decide again")
+            else:
+                note = _note(o)
+                update["status"] = "Accepted"
+                update["status_note"] = (_rewrite_ids(note, mapping) if note
+                                         else w["accepted"].format(when=when))
+                lines.append(f"carried {o['id']} → {n['id']}: Accepted")
+        if isinstance(o.get("issue"), str) and visible(o["issue"]) and not (
+                isinstance(n.get("issue"), str) and visible(n["issue"])):
+            update["issue"] = o["issue"].strip()
+            lines.append(f"carried {o['id']} → {n['id']}: issue {update['issue']}")
+        if len(update) > 1:
+            updates.append(update)
+    return {"findings": updates}, lines
+
+
+def regressions(result, threshold):
+    """Each reason the later record is worse at or above threshold, as one line."""
+    limit = SEVERITIES.index(threshold)
+
+    def at(f):
+        return SEVERITIES.index(f["severity"]) <= limit
+
+    out = [f"new {n['id']} [{n['severity']}] {n['title']}" for n in result["new"] if at(n)]
+    for o, n, _, reappeared in result["persisting"]:
+        if not at(n):
+            continue
+        if reappeared:
+            out.append(f"reappeared {n['id']} [{n['severity']}] {n['title']} (earlier {o['id']} "
+                       "was Fixed)")
+        elif not at(o):
+            out.append(f"severity rose {n['id']} {o['severity']} → {n['severity']} {n['title']}")
+    out += [f"reported again {n['id']} [{n['severity']}] {n['title']} (earlier "
+            f"{o['validation']['verdict']})" for o, n in result["now_reported"] if at(n)]
+    return out
+
+
 def load(path):
     doc = read_json(path)
     validate(doc, complete=True)
@@ -359,6 +445,11 @@ def main(argv=None):
     parser.add_argument("--lang", choices=("ja", "en"))
     parser.add_argument("--format", choices=("md", "json"), default="md")
     parser.add_argument("--out", metavar="FILE", help="write here instead of standard output")
+    parser.add_argument("--carry", metavar="FRAGMENT",
+                        help="also write the earlier triage (Accepted, issue) as a fragment "
+                             "for the later record")
+    parser.add_argument("--fail-on", choices=SEVERITIES, metavar="SEVERITY",
+                        help="exit 3 on a regression at or above SEVERITY (High, Medium, Low, Info)")
     args = parser.parse_args(argv)
     docs = []
     for path in (args.old, args.new):
@@ -373,15 +464,36 @@ def main(argv=None):
         output = json.dumps(as_json(result, old_doc, new_doc), ensure_ascii=False, indent=2) + "\n"
     else:
         output = as_markdown(result, old_doc, new_doc, args.lang or new_doc["meta"]["lang"])
+    files = {}
+    if args.out is not None:
+        files[Path(args.out)] = output.encode("utf-8")
+    if args.carry is not None:
+        fragment, carried = carry(result, old_doc, new_doc)
+        files[Path(args.carry)] = (json.dumps(fragment, ensure_ascii=False, indent=2)
+                                   + "\n").encode("utf-8")
+    if files:
+        try:
+            atomic_write_all(files)
+        except (OSError, RuntimeError) as exc:
+            print(f"write failed: {exc}", file=sys.stderr)
+            return 1
+    # With the comparison on stdout, every other message goes to stderr.
+    note = sys.stdout if args.out is not None else sys.stderr
     if args.out is None:
         sys.stdout.write(output)
-        return 0
-    try:
-        atomic_write_all({Path(args.out): output.encode("utf-8")})
-    except (OSError, RuntimeError) as exc:
-        print(f"write failed: {exc}", file=sys.stderr)
-        return 1
-    print(f"wrote {args.out}")
+    else:
+        print(f"wrote {args.out}", file=note)
+    if args.carry is not None:
+        for line in carried:
+            print(line, file=note)
+        print(f"wrote {args.carry}: {len(fragment['findings'])} finding(s) to update; merge it "
+              f"with findings.py merge {args.new} {args.carry}", file=note)
+    if args.fail_on is not None:
+        found = regressions(result, args.fail_on)
+        for line in found:
+            print(f"regression: {line}", file=sys.stderr)
+        if found:
+            return 3
     return 0
 
 

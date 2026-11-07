@@ -204,12 +204,18 @@ check: test ## verify the skill is self-contained and internally consistent
 	    || { echo "MISS render.py fails on $$sample (meta.lang)" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py check "$$out" >/dev/null \
 	    || { echo "MISS $$sample does not pass the run contract" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py triage "$$out/findings.json" A-001 --status Accepted --note "make check" --issue https://example.invalid/1 >/dev/null \
+	    && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/findings.py check "$$out" >/dev/null \
+	    || { echo "MISS findings.py triage fails on $$sample or leaves the contract broken" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/drafts.py "$$out/findings.json" --out "$$out/drafts" >/dev/null \
 	    || { echo "MISS drafts.py fails on $$sample" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/compare.py "$$sample" "$$out/findings.json" >/dev/null \
 	    || { echo "MISS compare.py fails on $$sample" >&2; fail=1; }; \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/sarif.py "$$out/findings.json" --out "$$out/drafts/a.sarif" >/dev/null \
 	    || { echo "MISS sarif.py fails on $$sample" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/compare.py "$$out/findings.json" "$$sample" --carry "$$out/drafts/carry.json" --fail-on High >/dev/null 2>&1 \
+	    && grep -q '"Accepted"' "$$out/drafts/carry.json" \
+	    || { echo "MISS compare.py --carry does not carry triage on $$sample" >&2; fail=1; }; \
 	  rm -f "$$out"/drafts/*; rmdir "$$out"/drafts 2>/dev/null; rm -f "$$out"/*; \
 	done; \
 	rm -rf "$$out"; \

@@ -4,6 +4,7 @@
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py renumber FINDINGS
     python3 findings.py counts FINDINGS
+    python3 findings.py triage FINDINGS IDS [--status S] [--note TEXT] [--issue URL] [--no-render]
     python3 findings.py check OUT_DIR [--repo CHECKOUT] [--allow NAME]...
 
 A fragment is a JSON file written with the host's file-write tool (never a
@@ -34,6 +35,14 @@ refused when renumber would give that ID to a finding.
 
 `counts` prints the `n_*` values the report templates use, one `name=value`
 per line, counted as report.md counts them (excluded verdicts apart).
+
+`triage` records what people decide after the review, without a hand-written
+fragment: `--status` (`Open`, `Fixed`, `Accepted`), `--note` the reason (an
+`Accepted` finding needs one; moving back to `Open` drops the old one), and
+`--issue` the URL where the fix is tracked (drafts.py then stops drafting it).
+It takes several IDs at once (`A-001,A-003`), refuses an excluded finding, and,
+when `dashboard.html` and `report.md` sit beside FINDINGS, renders them again
+in `meta.lang` in the same atomic write, so `check` still passes.
 
 `check` is the run contract: the output directory holds exactly
 `findings.json`, `dashboard.html` and `report.md` (plus `--allow` names), the
@@ -120,7 +129,8 @@ REFERENCE_KEYS = {"url", "title"}
 TEXT_FIELDS = ("title", "scenario", "blast_radius", "trace", "impact", "fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
-FINDING_KEYS = {*FINDING_REQUIRED, "contrast", "rule", "step", "status", "analysis", "references"}
+FINDING_KEYS = {*FINDING_REQUIRED, "contrast", "rule", "step", "status", "status_note", "issue",
+                "analysis", "references"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 TEMPORARY = re.compile(r"\.findings-[0-9a-f]{32}\.tmp")
 # ASCII digits only: `\d` would also accept other scripts' digits.
@@ -269,6 +279,15 @@ def validate_finding(f, where):
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
     _choice(f.get("status", "Open"), STATUSES, f"{where}.status")
+    if "status_note" in f:
+        # Why the finding is Fixed or Accepted (or was reopened): a decision with no reason
+        # cannot be reviewed later, so a recorded note is never blank.
+        _text(f["status_note"], f"{where}.status_note")
+    if "issue" in f:
+        # Where the fix is tracked (the filed issue or ticket): one URL, shown as a link.
+        _text(f["issue"], f"{where}.issue")
+        if any(c.isspace() for c in f["issue"].strip()):
+            raise SchemaError(f"{where}.issue: one URL, without blanks")
     locations = as_locations(f["location"])
     if not locations:
         raise SchemaError(f"{where}.location: at least one path:line")
@@ -879,7 +898,7 @@ def _first_location(f):
 # Literal values that only look like prose: a path, a URL, a command that ran,
 # a rule's source. An `A-001` in them is a file, ticket or argument, not a finding.
 # A diagram edge's ends name node IDs.
-LITERAL_KEYS = {"location", "url", "command", "source", "from", "to"}
+LITERAL_KEYS = {"location", "url", "issue", "command", "source", "from", "to"}
 
 
 def _rewrite_ids(value, mapping, key=None):
@@ -1126,6 +1145,99 @@ def cmd_counts(args):
         return 1
     for name, value in template_counts(doc).items():
         print(f"{name}={value}")
+    return 0
+
+
+def triage_fragment(doc, ids, status=None, note=None, issue=None):
+    """The fragment that records a human's decision on findings, or SchemaError.
+
+    A finding moved to `Accepted` needs a reason (`note`, or the one already
+    recorded): an accepted risk with no reason cannot be reviewed later. A
+    finding moved back to `Open` drops its earlier reason unless a new one is
+    given. An `issue` of `""` removes the recorded one. Excluded findings
+    (`FalsePositive`, `NotApplicable`) are never acted on, so they take no status.
+    """
+    if status is None and note is None and issue is None:
+        raise SchemaError("nothing to record: give --status, --note or --issue")
+    by_id = {f["id"]: f for f in doc.get("findings", [])}
+    updates = []
+    for fid in ids:
+        f = by_id.get(fid)
+        if f is None:
+            raise SchemaError(f"{fid} is not a recorded finding")
+        if f["validation"]["verdict"] in EXCLUDED:
+            raise SchemaError(f"{fid} is excluded ({f['validation']['verdict']}): "
+                              "an excluded finding is not acted on")
+        update = {"id": fid}
+        if status is not None:
+            _choice(status, STATUSES, "--status")
+            update["status"] = status
+            if status == "Open" and note is None and f.get("status", "Open") != "Open":
+                update["status_note"] = None  # the earlier reason no longer applies
+        if note is not None:
+            update["status_note"] = note if visible(note) else None
+        final_status = status or f.get("status", "Open")
+        final_note = update["status_note"] if "status_note" in update else f.get("status_note")
+        # Checked when this call sets Accepted or changes the reason, so an older record's
+        # Accepted finding without one can still be given its issue.
+        deciding = status == "Accepted" or (note is not None and final_status == "Accepted")
+        if deciding and final_note is None:
+            raise SchemaError(f"{fid}: Accepted needs --note with the reason the risk is accepted")
+        if issue is not None:
+            update["issue"] = issue.strip() or None
+        updates.append(update)
+    return {"findings": updates}
+
+
+def cmd_triage(args):
+    """Record status, reason and tracking issue for findings, then re-render beside them."""
+    target = Path(args.findings)
+    ids = [x for x in RULE_LIST.split(args.ids) if x]
+    bad = [x for x in ids if not FINDING_ID.fullmatch(x)]
+    if bad or not ids:
+        print(f"refused: IDS takes finding IDs such as A-001,A-003, not "
+              f"{', '.join(bad) or 'nothing'}", file=sys.stderr)
+        return 2
+    ids = list(dict.fromkeys(ids))
+    out = target.resolve().parent
+    rendered = [out / name for name in ("dashboard.html", "report.md")]
+    try:
+        with _exclusive(target, create=False):
+            if not target.is_file():
+                raise SchemaError(f"{target}: no such record")
+            doc = read_json(target)
+            validate(doc, complete=True)
+            before = set(unknown_mentions(doc))
+            merge(doc, triage_fragment(doc, ids, args.status, args.note, args.issue), "triage")
+            validate(doc, complete=True)
+            added = [pair for pair in unknown_mentions(doc) if pair not in before]
+            if added:
+                raise SchemaError("; ".join(f"{where} names {fid}, which no finding holds"
+                                            for where, fid in added))
+            files = {target: _serialize(doc)}
+            render_too = not args.no_render and all(p.is_file() for p in rendered)
+            if render_too:
+                outputs = _renderer().rendered_outputs(doc, doc["meta"]["lang"])
+                files.update({out / name: data for name, data in outputs.items()})
+            # The record and its rendering are replaced together, so check never sees one
+            # without the other.
+            atomic_write_all(files)
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    by_id = {f["id"]: f for f in doc["findings"]}
+    for fid in ids:
+        f = by_id[fid]
+        parts = [f.get("status", "Open")]
+        if "status_note" in f:
+            parts.append(f"reason: {' '.join(f['status_note'].split())}")
+        if "issue" in f:
+            parts.append(f"tracked in {f['issue']}")
+        print(f"{fid}: {' · '.join(parts)}")
+    if render_too:
+        print(f"re-rendered {rendered[0]} and {rendered[1]}")
+    else:
+        print(f"render again: scripts/render.py {target} --out {out}")
     return 0
 
 
@@ -1439,6 +1551,16 @@ def main(argv=None):
     r.add_argument("findings")
     n = sub.add_parser("counts", help="print the n_* values the report templates use")
     n.add_argument("findings")
+    t = sub.add_parser("triage", help="record a status, its reason and the tracking issue")
+    t.add_argument("findings")
+    t.add_argument("ids", metavar="IDS", help="finding IDs, comma-separated (A-001,A-003)")
+    t.add_argument("--status", choices=STATUSES)
+    t.add_argument("--note", metavar="TEXT",
+                   help="why: the accepted trade-off, the fixing change; \"\" removes it")
+    t.add_argument("--issue", metavar="URL",
+                   help="where the fix is tracked; \"\" removes it")
+    t.add_argument("--no-render", action="store_true",
+                   help="leave dashboard.html and report.md as they are")
     c = sub.add_parser("check", help="check the run contract of an output directory")
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[], metavar="NAME",
@@ -1448,7 +1570,7 @@ def main(argv=None):
                         "checkout of the assessed revision")
     args = parser.parse_args(argv)
     return {"merge": cmd_merge, "renumber": cmd_renumber, "counts": cmd_counts,
-            "check": cmd_check}[args.cmd](args)
+            "triage": cmd_triage, "check": cmd_check}[args.cmd](args)
 
 
 if __name__ == "__main__":

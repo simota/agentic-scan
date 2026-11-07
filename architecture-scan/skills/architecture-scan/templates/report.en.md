@@ -55,7 +55,7 @@ attached report.md. -->
 - **What happens:** {{impact}}
 - **Fix direction:** {{fix}}
 - **Guard:** {{guard}}
-- **Tracked in:** <issue URL>
+- **Tracked in:** {{issue}} <!-- the recorded issue; `<issue URL>` until `findings.py triage --issue` records it -->
 
 ## 4. Architecture: before and after
 

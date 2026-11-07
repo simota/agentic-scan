@@ -93,7 +93,7 @@ confidence and verdict, never severity.
 | UNITS | Write `units.json`: purpose items, entry points, consumers and review units with their paths. Rerun `inventory.py --units` | `reference/units.md` |
 | CHECKLIST | The perspective families that apply to these units, as a coverage plan; attach inventory candidates marked unverified | `reference/perspectives.md` |
 | REVIEW | One pass per unit. From each entry point inward: who calls it, what it reaches, what the core jobs would lose without it. Sweep every applicable hunt step; decide each inventory candidate in context; write the subtraction for each finding | `reference/perspectives.md` |
-| VERIFY | For every finding, hunt for dynamic and external use (reflection, string-built names, DI and plugin registration, routes from config, templates, serialization, cron and infrastructure outside the repo, external API consumers, other repos, old mobile versions, data retention and legal duties); try to falsify it; settle the verdict and the confidence | `reference/validation.md` |
+| VERIFY | For every finding, hunt for dynamic and external use (reflection, string-built names, DI and plugin registration, routes from config, templates, serialization, cron and infrastructure outside the repo, external API consumers, other repos, old mobile versions, data retention and legal duties); with access logs the requester supplied, count the traffic per route and public asset (`scripts/usage.py`); try to falsify it; settle the verdict and the confidence | `reference/validation.md`, `reference/usage.md` |
 | REPORT | Merge findings with `path:line` locations, `unit_ref`, `basis`, `subtraction` and `risk`; `scripts/findings.py renumber <out>/findings.json`; render with `scripts/render.py --lang <ja\|en> --repo <repo>` in the requester's language; pass `scripts/contract_check.py`; then give the chat summary (*Done when*) | `reference/findings-schema.md`, `reference/report.md` |
 
 ## Outputs
@@ -107,7 +107,9 @@ confidence and verdict, never severity.
 | `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings; next steps open with the subtraction summary |
 
-Skip the files when only a checklist was asked for.
+Skip the files when only a checklist was asked for. A removal plan
+(`scripts/plan.py`) and usage counts (`scripts/usage.py`) are not contracted
+outputs: write them to scratch, or pass their names to `contract_check.py --allow`.
 
 ## Done when
 
@@ -125,13 +127,14 @@ Skip the files when only a checklist was asked for.
 | Situation | Do |
 |---|---|
 | Asked only what to check, or for a checklist | RECON, UNITS and CHECKLIST only; deliver the checklist (`reference/report.md`) and write no output files |
-| Asked to delete, clean up or "just remove it" | Out of scope for this run: report the findings; removal is a later, separate request |
+| Asked to delete, clean up or "just remove it" | Out of scope for this run: report the findings, then offer the removal plan; removal is a later, separate request |
+| Asked for a removal plan, a work checklist or issues; or the later removal request itself | `scripts/plan.py <out>/findings.json` on the settled record: ordered remove-now and reduce steps, steps that wait for a decision, the decisions themselves, files several steps share (`reference/plan.md`). In the removal request, work it from the top and stop at the steps that wait for a decision |
 | Asked what changed since an earlier prune-scan, or to review again after removals | Run the full contract into a new output directory, then `scripts/compare.py <earlier-out> <out> --repo <repo>`: what was resolved, persists, changed or is new, which inventory candidates appeared, and a fragment that carries confirmed removals into the record as `Fixed` (`reference/follow-up.md`) |
 | No documented purpose | Infer the purpose items from the README, navigation, landing copy and most-used entry points; mark them `inferred`. Findings resting on them are `Purpose-dependent`, at most `Likely`, and each goes in `decisions`; put "confirm the purpose and non-goals" first in `decisions` |
 | The requester states the purpose or non-goals | Record them as `stated` purpose items with the requester as evidence ("requester, <date>") |
 | A library, SDK or published package | Its exports are API surface: an export unreferenced inside the repository is `Externally-dependent`, never `Confirmed`, unless the package is private and every consumer is in the repository |
 | Consumers outside the repository (mobile apps, partners, other services, ops scripts) | Record them in `units.json`; anything they could call is `Externally-dependent` until the requester supplies usage data, and each such finding names what would settle it |
-| The requester supplies usage data (access logs, analytics, flag service exports, telemetry) | Use it as evidence in `validation.evidence` (source, window, query); with it an externally-dependent finding can become `Confirmed` |
+| The requester supplies usage data (access logs, analytics, flag service exports, telemetry) | Use it as evidence in `validation.evidence` (source, window, query); with it an externally-dependent finding can become `Confirmed`. For access logs, `scripts/usage.py <out>/inventory.json <log>... --findings <out>/findings.json` counts requests per route and public asset and writes the evidence line; zero requests settles only the window it covers (`reference/usage.md`) |
 | The requester asks to run the app, its tests or coverage | Allowed only as asked: run from a copy or with the repository's own command, install dependencies only with their consent, write nothing inside the repository, never touch shared or production backends or databases. Cite each observation (command, output path in scratch) in `validation.evidence`. Rendering `report.pdf` with headless Chrome is not opening a browser and needs no such request |
 | Data: tables, columns, buckets, queues | Judge from schema, migrations and code only; never query a database. Data removal is at most `Likely` with `Externally-dependent` until retention and legal duties are confirmed (`decisions`) |
 | Generated code, vendored code, lockfiles | Not findings in themselves; report the generator, its config or the vendoring decision instead |

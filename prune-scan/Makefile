@@ -7,6 +7,8 @@
 #   make check     verify the skill is self-contained and internally consistent
 #   make inventory removal-candidate inventory of TARGET (UNITS=units.json OUT=inventory.json)
 #   make compare   follow-up: compare LATER's review with EARLIER's (TARGET=repo checks removed files)
+#   make usage     requests per route and public asset in LOGS (INVENTORY=inventory.json [FINDINGS=findings.json])
+#   make plan      removal plan from a settled FINDINGS record ([OUT=removal-plan.md] [LANG_OUT=ja|en])
 #   make demo      render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
@@ -68,7 +70,7 @@ LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 NO_PDF   ?=
 
-.PHONY: help link unlink status check demo inventory compare test
+.PHONY: help link unlink status check demo inventory compare usage plan test
 
 help: ## list targets
 	@echo "$(NAME) - skill install, tests and demo"
@@ -78,6 +80,7 @@ help: ## list targets
 	@echo
 	@printf '  skill:  %s\n' $(call shell_quote,$(SKILL))
 	@echo "  vars:   AGENT PROJECT SKILLS_DIR CODEX_HOME AGY_HOME TARGET UNITS OUT EARLIER LATER"
+	@echo "          INVENTORY LOGS FINDINGS MOUNT"
 	@echo "          DEMO_OUT DEMO_INPUT LANG_OUT NO_PDF PYTHON"
 
 link: ## symlink the skill into every installed host's skills dir
@@ -171,6 +174,17 @@ compare: ## follow-up review: compare LATER's outputs with EARLIER's (TARGET=rep
 	@[ -n $(call shell_quote,$(EARLIER)) ] && [ -n $(call shell_quote,$(LATER)) ] || { echo "usage: make compare EARLIER=/path/to/old-out LATER=/path/to/new-out [TARGET=/path/to/repo]" >&2; exit 2; }
 	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/compare.py) $(call shell_quote,$(EARLIER)) $(call shell_quote,$(LATER)) \
 	  $(if $(TARGET),--repo $(call shell_quote,$(TARGET)),)
+
+usage: ## requests per route and public asset in LOGS (INVENTORY=inventory.json, FINDINGS optional)
+	@[ -n $(call shell_quote,$(INVENTORY)) ] && [ -n $(call shell_quote,$(LOGS)) ] || { echo "usage: make usage INVENTORY=/path/to/inventory.json LOGS=\"access.log ...\" [FINDINGS=findings.json] [MOUNT=/api] [OUT=usage.json]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/usage.py) $(call shell_quote,$(INVENTORY)) $(LOGS) \
+	  $(if $(FINDINGS),--findings $(call shell_quote,$(FINDINGS)),) $(if $(MOUNT),--mount $(call shell_quote,$(MOUNT)),) \
+	  $(if $(OUT),--json $(call shell_quote,$(OUT)),) $(if $(filter ja,$(LANG_OUT)),--lang ja,)
+
+plan: ## removal plan from a settled FINDINGS record (OUT=removal-plan.md optional, else stdout)
+	@[ -n $(call shell_quote,$(FINDINGS)) ] || { echo "usage: make plan FINDINGS=/path/to/findings.json [OUT=removal-plan.md] [LANG_OUT=ja|en]" >&2; exit 2; }
+	@PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(call shell_quote,$(SKILL)/scripts/plan.py) $(call shell_quote,$(FINDINGS)) \
+	  $(if $(OUT),--out $(call shell_quote,$(OUT)),) $(if $(filter ja,$(LANG_OUT)),--lang ja,)
 
 demo: ## render the sample (dashboard + report + PDF) into DEMO_OUT
 	@out=$(call shell_quote,$(DEMO_OUT)); skill=$(call shell_quote,$(SKILL)); repo=$(call shell_quote,$(REPO)); \

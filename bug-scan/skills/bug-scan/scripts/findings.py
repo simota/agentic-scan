@@ -216,6 +216,8 @@ def _finding_shape(finding, errors):
             errors.append(f"{where}.{name}: must be a list")
             return
     _string_list(f"{where}.events", finding.get("events", []), errors)
+    if "external_refs" in finding:
+        _string_list(f"{where}.external_refs", finding["external_refs"], errors)
     _enum(f"{where}.status", finding.get("status"), STATUSES, errors)
     if not re.fullmatch(r"BG-[0-9]{3}", str(finding.get("id"))):
         errors.append(f"{where}: id must be BG-NNN")

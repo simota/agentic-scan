@@ -91,9 +91,13 @@ def load_json(path):
 
 def write_json(path, data):
     """Replace a JSON file atomically so a failed run keeps the previous record."""
+    write_text(path, json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n")
+
+
+def write_text(path, text):
+    """Replace a text file atomically, keeping its mode, so a failed write leaves the previous file whole."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    text = json.dumps(data, ensure_ascii=False, indent=2, allow_nan=False) + "\n"
     handle, tmp = tempfile.mkstemp(prefix=f".{path.name}-", suffix=".tmp", dir=path.parent)
     try:
         with os.fdopen(handle, "w", encoding="utf-8") as stream:

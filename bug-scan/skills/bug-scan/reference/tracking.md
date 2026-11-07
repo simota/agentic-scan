@@ -90,7 +90,14 @@ Inputs are synthetic. Never record a real user's data or a production value.
 python3 scripts/ledger.py reconcile <ledger.json> <out>/findings.json --repo <repo> --fragment <scratch>/ledger-fragment.json
 python3 scripts/findings.py merge <out>/findings.json <scratch>/ledger-fragment.json
 python3 scripts/ledger.py set <ledger.json> <key> --status Accepted --owner TEAM --reason TEXT
+python3 scripts/ledger.py set <ledger.json> <key> --status Open --reason TEXT        # withdraw an acceptance
+python3 scripts/ledger.py set <ledger.json> <key> --ref <issue-or-pr-url> --reason filed
+python3 scripts/ledger.py list <ledger.json> [--status NotSeen] [--format json]
 ```
+
+Only a person sets a status here, and every change is logged with its reason. `--status Open` is accepted only on an
+`Accepted` entry; the next reconcile then uses that run's own status again. A `--ref` is copied into the record's
+`external_refs` on every later reconcile, so a filed issue stays attached to the defect across runs.
 
 It must live outside the reviewed repository. Run reconcile only after the run's verdicts are final.
 

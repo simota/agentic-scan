@@ -110,7 +110,13 @@ check: test ## verify the skill is self-contained and internally consistent
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/render.py "$$out/findings.json" --out "$$out" --no-pdf >/dev/null; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/contract_check.py "$$out" --no-pdf >/dev/null \
 	  || { echo "MISS the sample does not pass the contract" >&2; fail=1; }; \
-	rm -rf "$$out" "$$out.frag"; \
+	exp="$$out.export"; \
+	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/export.py issues "$$out/findings.json" --out "$$exp/issues" >/dev/null \
+	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/export.py sarif "$$out/findings.json" --out "$$exp/bug-scan.sarif" >/dev/null \
+	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/export.py csv "$$out/findings.json" --out "$$exp/register.csv" >/dev/null \
+	  && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/impact.py "$$out" --files api/orders/validate.py >/dev/null \
+	  || { echo "MISS the sample does not export or analyse" >&2; fail=1; }; \
+	rm -rf "$$out" "$$out.frag" "$$exp"; \
 	[ $$fail -eq 0 ] && echo "check ok"; exit $$fail
 
 demo: ## render the sample into DEMO_OUT (LANG_OUT=en, NO_PDF=1)

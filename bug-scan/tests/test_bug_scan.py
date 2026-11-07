@@ -18,9 +18,13 @@ sys.path.insert(0, str(SCRIPTS))
 import common  # noqa: E402
 import compare  # noqa: E402
 import contract_check  # noqa: E402
+import csv  # noqa: E402
+import io  # noqa: E402
 import diagrams  # noqa: E402
+import export  # noqa: E402
 import findings  # noqa: E402
 import history  # noqa: E402
+import impact  # noqa: E402
 import import_findings  # noqa: E402
 import ledger  # noqa: E402
 import render  # noqa: E402
@@ -545,12 +549,210 @@ class LedgerTests(TempDir):
         self.assertEqual(code, 2)
         self.assertFalse((repo / "ledger.json").exists())
 
+    def test_a_person_can_withdraw_an_acceptance_and_link_a_filed_issue(self):
+        book = dict(version=1, entries=[])
+        ledger.reconcile(book, self.record(("k1", "a", "Open")), "2026-01-01")
+        entry = book["entries"][0]
+        with self.assertRaises(common.RecordError):
+            ledger.set_entry(entry, "2026-01-02", "nothing to withdraw", status="Open")
+        ledger.set_entry(entry, "2026-01-02", "accepted for now", status="Accepted", owner="payments team")
+        ledger.set_entry(entry, "2026-01-03", "filed", ref="https://tracker.example.com/T-12")
+        ledger.set_entry(entry, "2026-01-03", "filed twice", ref="https://tracker.example.com/T-12")
+        self.assertEqual(entry["external_refs"], ["https://tracker.example.com/T-12"])
+        fragment, _ = ledger.reconcile(book, self.record(("k1", "a", "Triaged")), "2026-02-01")
+        self.assertEqual(fragment["findings"][0]["status"], "Accepted")
+        self.assertEqual(fragment["findings"][0]["external_refs"], ["https://tracker.example.com/T-12"])
+        ledger.set_entry(entry, "2026-02-02", "revisit after the coupon rewrite", status="Open")
+        fragment, _ = ledger.reconcile(book, self.record(("k1", "a", "Triaged")), "2026-03-01")
+        self.assertEqual(fragment["findings"][0]["status"], "Triaged")
+        self.assertEqual([e["status"] for e in entry["status_log"]][-3:], ["Accepted", "Open", "Triaged"])
+        with self.assertRaises(common.RecordError):
+            ledger.set_entry(entry, "2026-03-02", "x", ref="https://user:hunter2pass@tracker.example.com/T-1")
+
+    def test_refs_already_on_the_record_are_kept_and_not_repeated(self):
+        book = dict(version=1, entries=[])
+        record = self.record(("k1", "a", "Open"))
+        ledger.reconcile(book, record, "2026-01-01")
+        ledger.set_entry(book["entries"][0], "2026-01-02", "filed", ref="https://tracker.example.com/T-1")
+        record["findings"][0]["external_refs"] = ["https://tracker.example.com/T-0", "https://tracker.example.com/T-1"]
+        fragment, _ = ledger.reconcile(book, record, "2026-02-01")
+        self.assertEqual(fragment["findings"][0]["external_refs"], ["https://tracker.example.com/T-0", "https://tracker.example.com/T-1"])
+
+    def test_list_filters_and_set_needs_a_change(self):
+        path = self.dir / "ledger.json"
+        book = dict(version=1, entries=[])
+        ledger.reconcile(book, self.record(("k1", "a", "Open"), ("k2", "b", "Open")), "2026-01-01")
+        ledger.reconcile(book, self.record(("k1", "a", "Open")), "2026-02-01")
+        common.write_json(path, book)
+        self.assertEqual([e["key"] for e in ledger.listing(book, "NotSeen")], ["k2"])
+        self.assertIn("does not prove a fix", ledger.listing_markdown(ledger.listing(book)))
+        self.assertEqual(ledger.main(["set", str(path), "k1", "--reason", "nothing"]), 2)
+        self.assertEqual(ledger.main(["list", str(self.dir / "absent.json")]), 2)
+
     def test_fragment_merges_into_the_sample(self):
         record, surfaces_data, history_data = sample()
         book = dict(version=1, entries=[])
         fragment, _ = ledger.reconcile(book, record, record["meta"]["date"])
         findings.merge_fragment(record, fragment)
         self.assertEqual(findings.contract_errors(record, surfaces_data, history_data), [])
+
+
+class ExportTests(TempDir):
+    def setUp(self):
+        super().setUp()
+        self.run_dir = self.dir / "run"
+        self.run_dir.mkdir()
+        for name in ("findings", "surfaces", "history"):
+            shutil.copy(ROOT / "examples" / f"{name}.sample.json", self.run_dir / f"{name}.json")
+        self.record_path = self.run_dir / "findings.json"
+        self.record, _, _ = sample()
+
+    def test_issue_drafts_cover_each_unresolved_record_and_nothing_else(self):
+        out = self.dir / "issues"
+        drafted, skipped = export.export_issues(self.record_path, out, minimum="Info")
+        unresolved = [f["id"] for f in self.record["findings"] if common.unresolved(f)]
+        self.assertEqual([f["id"] for f in drafted], unresolved)
+        self.assertEqual(sorted(p.name for p in out.iterdir()), sorted([f"{i}.md" for i in unresolved] + ["index.md"]))
+        self.assertEqual(len(drafted) + len(skipped), len(self.record["findings"]))
+        first = (out / "BG-001.md").read_text(encoding="utf-8")
+        record = self.record["findings"][0]
+        for text in (record["title"], record["key"], "api/orders/validate.py:42", "api/admin/coupons.py:27", record["repro"]["steps"][1], "ledger.py set"):
+            self.assertIn(text, first)
+        self.assertNotIn("web/checkout/CouponForm.tsx:44", first.split("## ")[-3], "a safe sibling is not a to-do")
+
+    def test_issue_drafts_follow_the_language_and_the_threshold(self):
+        drafted, _ = export.export_issues(self.record_path, self.dir / "en", lang="en", minimum="Medium")
+        self.assertEqual({f.get("severity") for f in drafted}, {"High", "Medium"})
+        text = (self.dir / "en" / "BG-001.md").read_text(encoding="utf-8")
+        self.assertIn("## Reproduction", text)
+        self.assertIn("Derived from code (not run)", text)
+
+    def test_drafts_cannot_notify_people_or_leak_secrets(self):
+        self.record["findings"][0]["fix"] = "ask @octocat or mail ops.lead@corp-mail.io; token = abcdef123456; see a@example.com"
+        common.write_json(self.record_path, self.record)
+        self.assertEqual(export.main(["issues", str(self.record_path), "--out", str(self.dir / "issues")]), 2, "the record itself refuses them")
+        text = export.issue_markdown(self.record["findings"][0], self.record, {}, "ja")
+        self.assertIn("`@octocat`", text)
+        self.assertNotIn("ops.lead@corp-mail.io", text)
+        self.assertNotIn("abcdef123456", text)
+
+    def test_exports_are_refused_inside_the_run_directory(self):
+        for argv in (["issues", str(self.record_path), "--out", str(self.run_dir / "issues")],
+                     ["sarif", str(self.record_path), "--out", str(self.run_dir / "r.sarif")],
+                     ["csv", str(self.record_path), "--out", str(self.run_dir / "r.csv")]):
+            self.assertEqual(export.main(argv), 2)
+        self.assertEqual(sorted(p.name for p in self.run_dir.iterdir()), ["findings.json", "history.json", "surfaces.json"])
+
+    def test_sarif_holds_unresolved_records_with_stable_fingerprints(self):
+        data, skipped = export.to_sarif(self.record, {})
+        self.assertEqual(data["version"], "2.1.0")
+        run = data["runs"][0]
+        results = {r["properties"]["bugScanId"]: r for r in run["results"]}
+        expected = {f["id"] for f in self.record["findings"] if common.unresolved(f)}
+        self.assertEqual(set(results) | set(skipped), expected)
+        first = results["BG-001"]
+        self.assertEqual(first["level"], "error")
+        self.assertEqual(first["partialFingerprints"]["bugScanKey/v1"], self.record["findings"][0]["key"])
+        self.assertEqual(first["locations"][0]["physicalLocation"]["region"]["startLine"], 42)
+        related = [r["physicalLocation"]["artifactLocation"]["uri"] for r in first["relatedLocations"]]
+        self.assertIn("api/admin/coupons.py", related)
+        self.assertNotIn("web/checkout/CouponForm.tsx", related)
+        self.assertEqual(len({r["id"] for r in first["relatedLocations"]}), len(first["relatedLocations"]))
+        rule_ids = {r["id"] for r in run["tool"]["driver"]["rules"]}
+        self.assertEqual(rule_ids, {r["ruleId"] for r in run["results"]})
+        moved = copy.deepcopy(self.record)
+        moved["findings"][0]["location"] = ["api/orders/validate.py:50"]
+        again, _ = export.to_sarif(moved, {})
+        self.assertEqual(again["runs"][0]["results"][0]["partialFingerprints"], first["partialFingerprints"])
+
+    def test_csv_keeps_every_record_and_disarms_formulas(self):
+        self.record["findings"][0]["title"] = "=HYPERLINK(\"http://x.invalid\")"
+        text = export.to_csv(self.record, {})
+        rows = list(csv.DictReader(io.StringIO(text.lstrip("\ufeff"))))
+        self.assertEqual([r["id"] for r in rows], [f["id"] for f in self.record["findings"]])
+        self.assertTrue(rows[0]["title"].startswith("'="))
+        self.assertEqual(rows[0]["location"], "api/orders/validate.py:42; api/orders/routes.py:31")
+
+
+class ImpactTests(TempDir):
+    def setUp(self):
+        super().setUp()
+        self.record, _, _ = sample()
+        repo = self.dir / "repo"
+        repo.mkdir()
+        run_git(repo, "init", "-q", "-b", "main")
+        for path, lines in (("api/orders/validate.py", 80), ("api/admin/coupons.py", 30), ("web/checkout/api.ts", 50), ("docs/readme.md", 5)):
+            target = repo / path
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text("".join(f"line {n}\n" for n in range(1, lines + 1)), encoding="utf-8")
+        run_git(repo, "add", "-A")
+        run_git(repo, "commit", "-qm", "base")
+        self.repo = repo
+
+    def edit(self, path, line, text="changed"):
+        target = self.repo / path
+        rows = target.read_text(encoding="utf-8").splitlines()
+        rows[line - 1] = text
+        target.write_text("\n".join(rows) + "\n", encoding="utf-8")
+
+    def test_a_change_at_a_recorded_line_names_the_defect_its_siblings_and_the_fixed_one(self):
+        self.edit("api/orders/validate.py", 41)
+        self.edit("api/admin/coupons.py", 5)
+        result = impact.analyse(self.record, impact.changed_files(self.repo, "HEAD", None))
+        self.assertEqual([r["id"] for r in result["sites"]], ["BG-001"])
+        self.assertEqual(result["sites"][0]["at"][0], dict(location="api/orders/validate.py:42", match="line"))
+        self.assertEqual(sorted(r["at"]["location"] for r in result["siblings"]), ["api/admin/coupons.py:27", "api/orders/validate.py:67"])
+        self.assertTrue(all(r["at"]["match"] == "file" for r in result["siblings"]))
+        self.assertEqual([r["id"] for r in result["fixed_here"]], ["BG-007"])
+        self.assertEqual(result["patterns"][0]["module"], "api/orders")
+        self.assertEqual(impact.gate(result, "High"), ["BG-001"])
+        self.assertIn("I-05", [i["id"] for i in result["issues"]])
+
+    def test_a_change_far_from_the_line_is_file_level_and_unrelated_files_are_counted(self):
+        self.edit("api/orders/validate.py", 1)
+        self.edit("docs/readme.md", 2)
+        result = impact.analyse(self.record, impact.changed_files(self.repo, "HEAD", None))
+        self.assertEqual(result["sites"][0]["at"][0]["match"], "file")
+        self.assertEqual(result["untouched_by_record"], ["docs/readme.md"])
+
+    def test_committed_ranges_untracked_files_and_the_gate_exit_code(self):
+        self.edit("web/checkout/api.ts", 41)
+        run_git(self.repo, "commit", "-qam", "change")
+        (self.repo / "api" / "orders" / "brand new.py").write_text("x\n", encoding="utf-8")
+        committed = impact.changed_files(self.repo, "HEAD~1", "HEAD")
+        self.assertEqual(list(committed), ["web/checkout/api.ts"])
+        result = impact.analyse(self.record, committed)
+        self.assertEqual([r["id"] for r in result["fixed_here"]], ["BG-008"])
+        self.assertEqual(result["sites"], [])
+        self.assertIn("api/orders/brand new.py", impact.changed_files(self.repo, "HEAD", None))
+        out = self.dir / "run"
+        out.mkdir()
+        common.write_json(out / "findings.json", self.record)
+        self.edit("api/orders/validate.py", 42)
+        self.assertEqual(impact.main([str(out), "--repo", str(self.repo), "--base", "HEAD", "--fail-on", "High"]), 1)
+        self.assertEqual(impact.main([str(out), "--repo", str(self.repo), "--base", "HEAD", "--fail-on", "High", "--format", "json"]), 1)
+        self.assertEqual(impact.main([str(out), "--files", "docs/readme.md", "--fail-on", "Info"]), 0)
+        self.assertEqual(impact.main([str(out), "--repo", str(self.repo), "--base=--output=x"]), 2)
+
+    def test_excluded_records_never_count(self):
+        self.record["findings"][0]["validation"]["verdict"] = "FalsePositive"
+        result = impact.analyse(self.record, {"api/orders/validate.py": impact.WHOLE_FILE})
+        self.assertNotIn("BG-001", [r["id"] for r in result["sites"] + result["siblings"]])
+
+    def test_quoted_and_renamed_paths_keep_the_base_side_name(self):
+        patch = ('diff --git "a/api/\\303\\244.py" "b/api/\\303\\244.py"\n--- "a/api/\\303\\244.py"\n+++ "b/api/\\303\\244.py"\n@@ -3,0 +4 @@\n+x\n'
+                 "diff --git a/old.py b/new.py\n--- a/old.py\n+++ b/new.py\n@@ -10,2 +10,2 @@\n-a\n-b\n+c\n+d\n")
+        changed = impact.parse_diff(patch)
+        self.assertEqual(changed, {"api/ä.py": [(3, 4)], "old.py": [(10, 11)]})
+        self.assertEqual(impact.touch("old.py:14", changed), "line")
+        self.assertEqual(impact.touch("old.py:15", changed), "file")
+
+    def test_the_repository_is_not_changed(self):
+        self.edit("api/orders/validate.py", 41)
+        before = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain=v2"], capture_output=True, text=True).stdout
+        impact.analyse(self.record, impact.changed_files(self.repo, "HEAD", None))
+        after = subprocess.run(["git", "-C", str(self.repo), "status", "--porcelain=v2"], capture_output=True, text=True).stdout
+        self.assertEqual(before, after)
 
 
 class CompareAndImportTests(TempDir):

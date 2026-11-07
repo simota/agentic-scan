@@ -3,6 +3,8 @@
 
     python3 findings.py merge FINDINGS FRAGMENT [FRAGMENT ...]
     python3 findings.py check OUT_DIR [--allow NAME ...]
+    python3 findings.py set FINDINGS P-NNN [P-NNN ...] --status Open|Fixed|Accepted
+                        [--decision TEXT] [--render]
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
@@ -21,6 +23,14 @@ detect concurrent updates.
 required outputs are readable nonempty regular files, the record is complete,
 IDs are gapless in severity order and every perspective in
 `reference/perspectives.md` is recorded.
+
+`set` is the owner's triage after a run: it changes the `status` of the named
+findings in place (atomically, like `merge`) and appends `--decision` to
+`decisions`. A finding that becomes `Accepted` needs a decision (who accepts
+the cost, and why), and `check` requires every `Accepted` finding to be named
+in `decisions`; a decision that names none of the IDs is prefixed with them. Excluded findings (`FalsePositive`, `NotApplicable`) have
+no status to change. `--render` re-renders `dashboard.html` and `report.md`
+beside FINDINGS so the outputs stay current.
 
 Exit codes: 0 ok, 1 a fragment was refused, the input was unreadable or the
 contract failed (reasons on stderr), 2 a command-line usage error.
@@ -90,6 +100,10 @@ BUDGET_ID = re.compile(r"B-[0-9]{2,}")
 # Budget IDs are ASCII, so only ASCII identifier characters bound a mention;
 # kana or kanji right next to an ID (予算B-02を超過) do not hide it.
 BUDGET_MENTION = re.compile(r"(?<![A-Za-z0-9_-])B-[0-9]{2,}(?![A-Za-z0-9_-])")
+# A finding ID (P- and three digits, as the schema requires) not glued to a
+# longer identifier or number. One scan of each line finds every ID it names:
+# matches cannot overlap, since the only P in "P-123" is its first character.
+FINDING_MENTION = re.compile(r"(?<![A-Za-z0-9_-])P-[0-9]{3}(?![0-9])")
 # The path holds no line break of any kind str.splitlines() knows.
 LOCATION = re.compile(r"(?P<path>[^\r\n\x0b\x0c\x1c-\x1e\x85\u2028\u2029]+)"
                       r":(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?")
@@ -598,11 +612,99 @@ def _record_problems(doc):
             for held in (b for b in violated if b in holding):
                 problems.append(f"{held}: status holds, but {f['id']} is a Valid, unfixed "
                                 "violation of it")
+    decided = decided_ids(doc)
+    for f in findings:
+        if (finding_status(f) == "Accepted" and f["validation"]["verdict"] not in EXCLUDED
+                and f["id"] not in decided):
+            problems.append(f"{f['id']}: Accepted, but no decisions line names it; record "
+                            "who accepted the cost and why (findings.py set --decision)")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):
         problems.append("checked_ok: list what was examined and held")
     return problems
+
+
+def decided_ids(doc):
+    """Finding IDs that at least one `decisions` line names."""
+    return {fid for line in doc.get("decisions", []) for fid in FINDING_MENTION.findall(line)}
+
+
+def set_status(doc, ids, status, decision=None):
+    """Change the status of the findings named by ids; return [(id, old, new)].
+
+    Raises SchemaError, changing nothing, for an unknown or excluded ID, for a
+    decision naming some of the IDs but not all, or for a finding that becomes
+    Accepted without a decision.
+    """
+    by_id = {f["id"]: f for f in doc.get("findings", [])}
+    chosen = []
+    for fid in dict.fromkeys(ids):
+        f = by_id.get(fid)
+        if f is None:
+            raise SchemaError(f"{fid}: no such finding")
+        if f["validation"]["verdict"] in EXCLUDED:
+            raise SchemaError(f"{fid}: excluded as {f['validation']['verdict']}; it has no "
+                              "status to change")
+        chosen.append(f)
+    decision = (decision or "").strip()
+    if decision:
+        named = set(FINDING_MENTION.findall(decision))
+        missing = [f["id"] for f in chosen if f["id"] not in named]
+        if missing and not named:
+            decision = f"{', '.join(missing)}: {decision}"
+        elif missing:
+            raise SchemaError("--decision names " + ", ".join(sorted(named)) + " but not "
+                              + ", ".join(missing) + "; name every finding it decides, or "
+                              "none to have them prefixed")
+    if status == "Accepted" and not decision:
+        # A decisions line naming the ID may be an open question, not the
+        # acceptance, so a new acceptance always brings its own decision.
+        undecided = [f["id"] for f in chosen if finding_status(f) != "Accepted"]
+        if undecided:
+            raise SchemaError(f"Accepted needs --decision for {', '.join(undecided)}: who "
+                              "accepts the cost, and why")
+    changes = []
+    for f in chosen:
+        old = finding_status(f)
+        f["status"] = status
+        changes.append((f["id"], old, status))
+    if decision:
+        decisions = doc.setdefault("decisions", [])
+        if decision not in decisions:
+            decisions.append(decision)
+    return changes
+
+
+def cmd_set(args):
+    target = Path(args.findings)
+    try:
+        destination = resolve_path(target)
+        doc = read_json(destination)
+        try:
+            validate(doc, complete=True)
+        except SchemaError as exc:
+            raise SchemaError(f"{target}: {exc}") from exc
+        if args.decision is not None:
+            _text(args.decision, "--decision")
+        for fid in args.ids:
+            if not FINDING_ID.fullmatch(fid):
+                raise SchemaError(f"{fid!r} is not a finding ID (P-NNN)")
+        changes = set_status(doc, args.ids, args.status, args.decision)
+        validate(doc, complete=True)
+        content = (json.dumps(doc, ensure_ascii=False, indent=2) + "\n").encode("utf-8")
+        write_atomic(destination, content)
+    except (SchemaError, OSError, UnicodeError, RecursionError) as exc:
+        print(f"refused: {exc}", file=sys.stderr)
+        return 1
+    for fid, old, new in changes:
+        print(f"{fid}: {old} -> {new}" + ("" if old != new else " (unchanged)"))
+    if args.render:
+        import render  # noqa: PLC0415 - render imports this module
+        return render.main([str(target), "--out", str(target.parent)])
+    print(f"re-render: python3 {Path(__file__).with_name('render.py')} {target} "
+          f"--out {target.parent}")
+    return 0
 
 
 def contract_problems(out, allow=()):
@@ -657,6 +759,15 @@ def main(argv=None):
     c.add_argument("out")
     c.add_argument("--allow", action="append", default=[])
     c.set_defaults(func=cmd_check)
+    s = sub.add_parser("set", help="change the status of findings after the run")
+    s.add_argument("findings")
+    s.add_argument("ids", nargs="+", metavar="P-NNN")
+    s.add_argument("--status", required=True, choices=STATUSES)
+    s.add_argument("--decision", help="appended to decisions; required when a finding "
+                                      "becomes Accepted")
+    s.add_argument("--render", action="store_true",
+                   help="re-render dashboard.html and report.md beside FINDINGS")
+    s.set_defaults(func=cmd_set)
     args = parser.parse_args(argv)
     escape_unencodable_console()
     return args.func(args)

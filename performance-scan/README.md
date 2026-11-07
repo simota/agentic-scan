@@ -133,17 +133,30 @@ Exit codes: `render.py` 0 written, 1 an output could not be written, 2 bad
 input or usage; `findings.py` 0 ok, 1 merge refused or contract violated
 (reasons on stderr), 2 usage.
 
-## After the run: summary, issues and re-scans
+## After the run: triage, summary, issues, re-scans and code scanning
 
-Three more scripts work on a finished record. None of them changes it, and
-each escapes record text the way `report.md` does.
+These scripts work on a finished record. Only `findings.py set` (and merging
+a `--carry` fragment) changes it; the others read it, and each escapes record
+text the way `report.md` does.
 
 ```sh
 S=skills/performance-scan/scripts
 python3 $S/summary.py out/findings.json --scratch "$SCRATCH"      # chat summary from the record
 python3 $S/issues.py  out/findings.json --out "$SCRATCH/issues"   # one issue draft per open finding
 python3 $S/compare.py old/findings.json out/findings.json         # what changed since an earlier run
+python3 $S/findings.py set out/findings.json P-002 --status Accepted \
+  --decision "Ops accepts the export cost below 10k orders" --render  # owner triage
+python3 $S/compare.py old/findings.json out/findings.json --carry "$SCRATCH/carry.json"
+python3 $S/sarif.py   out/findings.json --out "$SCRATCH/perf.sarif"   # code-scanning alerts
 ```
+
+- **`findings.py set`** is the owner's triage: it sets `Open`, `Fixed` or
+  `Accepted` on the named findings in place (atomically, like `merge`),
+  appends `--decision` to `decisions` (prefixed with the IDs when it names
+  none) and with `--render` rewrites `dashboard.html` and `report.md`. A
+  finding that becomes `Accepted` needs a decision, and `check` refuses an
+  `Accepted` finding that no `decisions` line names. Excluded findings have no
+  status to change.
 
 - **`summary.py`** prints the chat summary of `reference/report.md` (status and
   verification counts, revision and method, one line per finding, the full
@@ -175,9 +188,33 @@ python3 $S/compare.py old/findings.json out/findings.json         # what changed
   finding reaches that severity, for a CI job that compares against an
   accepted baseline.
 
+  `--carry FRAGMENT` keeps the owner's triage across a re-scan: it writes a
+  merge fragment that marks every baseline `Accepted` finding that persists,
+  still `Open` and not escalated, `Accepted` again, carrying the baseline
+  `decisions` lines that name it with IDs rewritten to the new run's
+  (unmatched IDs become `baseline-P-NNN`). A finding whose severity rose is
+  listed as not carried. Merge it with `findings.py merge` once the owner
+  confirms; it is refused inside either record's directory.
+- **`sarif.py`** exports the active findings as SARIF 2.1.0 for GitHub code
+  scanning (`github/codeql-action/upload-sarif`) and editor SARIF viewers: one
+  rule per hunt step named from `reference/perspectives.md`, High → `error`,
+  Medium → `warning`, Low/Info → `note`, every location relative to
+  `%SRCROOT%`, a root-cause fingerprint that survives renumbering and moved
+  lines, `Accepted` findings as accepted suppressions justified by their
+  decisions, and with `--baseline` a `baselineState` of `new`, `unchanged` or
+  `updated`. Record text stays plain text with SARIF embedded links escaped.
+
+A CI job can combine them: compare against the accepted baseline with
+`--fail-on High`, and upload `sarif.py --baseline` output so the PR shows the
+findings on their lines.
+
 Exit codes: `summary.py` 0 printed, 2 bad input; `issues.py` 0 written, 1 a
 draft could not be written, 2 bad input, an unusable `--id` or an existing
-draft; `compare.py` 0 compared, 1 the `--fail-on` gate failed, 2 bad input.
+draft; `compare.py` 0 compared, 1 the `--fail-on` gate failed, 2 bad input or
+a `--carry` path that could not be written; `findings.py set` 0 set, 1
+refused (unknown or excluded ID, missing decision, bad record) with nothing
+changed; `sarif.py` 0 written, 1 the file could not be written, 2 bad input or
+an `--out` inside the record's directory.
 
 ## Layout
 
@@ -190,12 +227,13 @@ skills/performance-scan/
   reference/validation.md      verdicts, the four claims, measurement and fix verification
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
-  scripts/findings.py          merges JSON fragments; checks the run contract (stdlib only)
+  scripts/findings.py          merges JSON fragments; checks the run contract; set triages status
   scripts/citations.py         tells a path:line citation in evidence from look-alikes (used by check)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/summary.py           findings.json -> the chat summary on stdout
   scripts/issues.py            findings.json -> one issue draft per open finding
-  scripts/compare.py           two findings.json -> new / resolved / changed, with a CI gate
+  scripts/compare.py           two findings.json -> new / resolved / changed, a CI gate, --carry
+  scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and editors
   scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
@@ -213,7 +251,7 @@ make check   # tests plus citations resolve, references headed, frontmatter vali
              # scripts parse, description <= 400 bytes, no cited ../ paths,
              # vendored scan_report_kit matches its MANIFEST,
              # sample renders in ja/en and passes the run contract,
-             # compare, summary and issue drafts run on the samples
+             # compare (with --carry), summary, issue drafts and SARIF run on the samples
 make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
 ```
 

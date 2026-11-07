@@ -2,7 +2,7 @@
 """Compare two findings.json records: what is new, resolved, still open or changed.
 
     python3 compare.py BASELINE CURRENT [--format markdown|json] [--lang ja|en]
-                       [--fail-on High|Medium|Low|Info]
+                       [--fail-on High|Medium|Low|Info] [--carry FRAGMENT]
 
 BASELINE is an earlier run's record and CURRENT a later run's record of the same
 application (for example before and after a round of fixes). IDs are renumbered
@@ -29,6 +29,16 @@ record's strings are escaped as in report.md) or as JSON.
 escalated finding that is `Open` has at least that severity. Use it in CI
 against an accepted baseline so that only regressions fail the build.
 
+`--carry FRAGMENT` writes a merge fragment for CURRENT that keeps the owner's
+earlier triage: every baseline `Accepted` finding that persists, still active,
+`Open` and not escalated, becomes `Accepted` again, and the baseline
+`decisions` lines naming it are carried with their finding IDs rewritten to the
+current ones (an ID with no match becomes `baseline-P-NNN`). An accepted
+finding without a recorded decision gets a line asking to confirm it. A
+finding whose severity rose is not carried: the owner accepted a smaller cost.
+Merge the fragment with `findings.py merge` only once the owner confirms the
+decisions still stand. It must not be written into either record's directory.
+
 Exit codes: 0 compared (and the gate, if any, passed), 1 the gate failed,
 2 an input could not be read or does not match the schema, or a usage error.
 """
@@ -38,9 +48,9 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, LOCATION, SEVERITIES, SchemaError,  # noqa: E402
-                      escape_unencodable_console, finding_locations, finding_status,
-                      read_json, validate)
+from findings import (EXCLUDED, FINDING_MENTION, LOCATION, SEVERITIES,  # noqa: E402
+                      SchemaError, escape_unencodable_console, finding_locations,
+                      finding_status, read_json, resolve_path, validate, write_atomic)
 from render import markdown_cell, markdown_text  # noqa: E402
 
 # Two findings of one category are the same root cause when they share a file
@@ -69,6 +79,13 @@ LABELS = {
                          "missing from the current run may lie outside its scope.",
         "same_commit": "Both records name the same revision ({commit}); differences come "
                        "from the review, not from code changes.",
+        "carry": "Carried acceptances", "carried": "carried",
+        "carry_escalated": "not carried: escalated {old} → {new}",
+        "carry_prefix": "Carried from the baseline ({run}): ",
+        "carry_unrecorded": "{new}: Accepted in the baseline ({run}) as {old}, with no "
+                            "decision recorded; confirm the owner still accepts it",
+        "carry_written": "wrote {path}: {count} Accepted finding(s) carried; merge it with "
+                         "findings.py merge once the owner confirms the decisions still stand",
         "gate_ok": "gate passed: no new or escalated Open finding at {severity} or above",
         "gate_failed": "gate failed: {count} new or escalated Open finding(s) at {severity} "
                        "or above: {ids}",
@@ -94,6 +111,13 @@ LABELS = {
                          "検出事項は、今回の範囲外にある可能性がある。",
         "same_commit": "両方の記録が同じリビジョン（{commit}）を指している。差分はコードの"
                        "変更ではなくレビューの違いによる。",
+        "carry": "引き継いだ許容判断", "carried": "引き継ぎ",
+        "carry_escalated": "引き継がない: 深刻度が {old} → {new} に上昇",
+        "carry_prefix": "ベースライン（{run}）から引き継ぎ: ",
+        "carry_unrecorded": "{new}: ベースライン（{run}）では {old} として Accepted だが、判断が"
+                            "記録されていない。オーナーが引き続き許容するか確認する",
+        "carry_written": "{path} を書き出した: Accepted の引き継ぎ {count} 件。オーナーが判断の"
+                         "継続を確認してから findings.py merge でマージする",
         "gate_ok": "ゲート通過: {severity} 以上の新規・深刻化した Open の検出事項はない",
         "gate_failed": "ゲート失敗: {severity} 以上の新規・深刻化した Open の検出事項が "
                        "{count} 件: {ids}",
@@ -358,6 +382,66 @@ def compare(baseline, current):
     return result
 
 
+def carry(baseline, current, lang):
+    """The baseline's Accepted triage, re-expressed for CURRENT.
+
+    Returns {"fragment": a findings.py merge fragment, "carried": [...],
+    "skipped": [...]}; entries hold the baseline and current IDs.
+    """
+    t = LABELS[lang]
+    old_findings, new_findings = baseline.get("findings", []), current.get("findings", [])
+    pairs = match_findings(old_findings, new_findings)
+    id_map = {old_findings[i]["id"]: new_findings[j]["id"] for i, j in pairs.items()}
+    carried, skipped = [], []
+    for i, j in sorted(pairs.items(), key=lambda pair: pair[1]):
+        old, new = old_findings[i], new_findings[j]
+        if (finding_status(old) != "Accepted" or not is_active(old) or not is_active(new)
+                or finding_status(new) != "Open"):
+            continue
+        entry = {"baseline_id": old["id"], "current_id": new["id"],
+                 "severity": new["severity"], "title": new["title"]}
+        if SEVERITIES.index(new["severity"]) < SEVERITIES.index(old["severity"]):
+            entry["reason"] = {"kind": "escalated", "old": old["severity"],
+                               "new": new["severity"]}
+            skipped.append(entry)
+        else:
+            carried.append(entry)
+    commit = baseline["meta"].get("commit", "").strip() or "UNKNOWN"
+    run = f"{commit}, {baseline['meta']['date']}"
+    carried_old = {e["baseline_id"] for e in carried}
+
+    def rewrite(match):
+        fid = match.group(0)
+        return id_map.get(fid, f"baseline-{fid}")
+
+    decisions, decided = [], set()
+    for line in baseline.get("decisions", []):
+        named = set(FINDING_MENTION.findall(line)) & carried_old
+        if named:
+            decided |= named
+            decisions.append(t["carry_prefix"].format(run=run)
+                             + FINDING_MENTION.sub(rewrite, line))
+    for e in carried:
+        if e["baseline_id"] not in decided:
+            decisions.append(t["carry_unrecorded"].format(new=e["current_id"],
+                                                          old=e["baseline_id"], run=run))
+    fragment = {"findings": [{"id": e["current_id"], "status": "Accepted"} for e in carried],
+                "decisions": decisions}
+    return {"fragment": fragment, "carried": carried, "skipped": skipped}
+
+
+def write_carry(path, fragment, *records):
+    """Write the fragment atomically, never into a run directory of either record."""
+    target = resolve_path(path)
+    for record in records:
+        if target.parent == resolve_path(record).parent:
+            raise OSError(f"--carry {path}: {record}'s directory holds only the run outputs; "
+                          "write the fragment to scratch")
+    target.parent.mkdir(parents=True, exist_ok=True)
+    content = json.dumps(fragment, ensure_ascii=False, indent=2) + "\n"
+    write_atomic(target, content.encode("utf-8"))
+
+
 def gate(result, threshold):
     """IDs of new or escalated Open findings at threshold severity or above."""
     limit = SEVERITIES.index(threshold)
@@ -446,6 +530,21 @@ def render_markdown(result, lang):
             lines.append(f"| {p['name']} | {p['from'] or '—'} | {p['to'] or '—'} |")
     else:
         lines.append(t["none"])
+    if "carry" in result:
+        lines += ["", f"## {t['carry']}", ""]
+        rows = result["carry"]["carried"] + result["carry"]["skipped"]
+        if rows:
+            lines += [f"| {t['change_col']} | {t['current_id']} | {t['baseline_id']} | "
+                      f"{t['severity']} | {t['title_col']} |", "|---|---|---|---|---|"]
+            for e in rows:
+                change = (t["carry_escalated"].format(**{k: v for k, v in e["reason"].items()
+                                                         if k != "kind"})
+                          if "reason" in e else t["carried"])
+                lines.append(f"| {markdown_cell(change)} | {e['current_id']} | "
+                             f"{e['baseline_id']} | {e['severity']} | "
+                             f"{markdown_cell(e['title'])} |")
+        else:
+            lines.append(t["none"])
     if result["notes"]:
         lines += ["", f"## {t['notes']}", ""]
         for note in result["notes"]:
@@ -473,7 +572,12 @@ def main(argv=None):
     parser.add_argument("--fail-on", choices=SEVERITIES, metavar="SEVERITY",
                         help="exit 1 when a new or escalated Open finding has at least "
                              "this severity (High, Medium, Low or Info)")
+    parser.add_argument("--carry", metavar="FRAGMENT",
+                        help="write a merge fragment that keeps the baseline's Accepted "
+                             "triage on the findings that persist")
     args = parser.parse_args(argv)
+    if args.carry is not None and not args.carry.strip():
+        parser.error("--carry must name a file")
     escape_unencodable_console()
     try:
         baseline, current = load(args.baseline), load(args.current)
@@ -484,10 +588,23 @@ def main(argv=None):
     lang = args.lang or current["meta"]["lang"]
     if args.fail_on:
         result["gate"] = {"fail_on": args.fail_on, "tripped": gate(result, args.fail_on)}
+    if args.carry:
+        carried = carry(baseline, current, lang)
+        try:
+            write_carry(args.carry, carried["fragment"], args.baseline, args.current)
+        except (OSError, UnicodeError) as exc:
+            print(f"compare: {exc}", file=sys.stderr)
+            return 2
+        result["carry"] = {"fragment": args.carry, "carried": carried["carried"],
+                           "skipped": carried["skipped"]}
     if args.format == "json":
         print(json.dumps(result, ensure_ascii=False, indent=2))
     else:
         sys.stdout.write(render_markdown(result, lang))
+    if args.carry:
+        print(LABELS[lang]["carry_written"].format(path=args.carry,
+                                                   count=len(result["carry"]["carried"])),
+              file=sys.stderr)
     if args.fail_on:
         t = LABELS[lang]
         tripped = result["gate"]["tripped"]

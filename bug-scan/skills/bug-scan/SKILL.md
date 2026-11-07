@@ -54,7 +54,7 @@ headline numbers.
 | People | No author names, committers or personal e-mail anywhere. `owner` is a team or role a person enters |
 | Reproduction | Steps are derived from code and marked `static`. Inputs are synthetic. Nothing is run; a result from `verify-scan` or the requester is cited by reference |
 | Data | Schema and code only, never a database. SQL in `data_remediation.locate` is a proposal that is not executed; `count` stays `UNKNOWN` unless the requester supplies data |
-| Outputs | Exactly `findings.json`, `surfaces.json`, `history.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language. The ledger lives outside the repository, at a path the requester names |
+| Outputs | Exactly `findings.json`, `surfaces.json`, `history.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language. The ledger lives outside the repository, at a path the requester names. Exports (`export.py`) go to a separate directory the requester names; they are derived and never edited |
 | `meta.assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | Budget | Read fix candidates newest first. Over 100, sample by module and record `meta.sample` as `{read, candidates}`. Short on effort: close core flows first and name the rest in `limitations` |
 
@@ -98,7 +98,10 @@ the limitation `report.pdf not produced: <reason>`, render with `--no-pdf`, and 
 | A defect stops being found | `NotSeen` in the ledger, never `Fixed`. `Fixed` needs a fix commit or a confirmed result |
 | Asked to fix, run, or reproduce | Out of scope here. Report the record and name `coding-debug` or `verify-scan` |
 | The requester supplies logs, analytics or incident data | Cite it in `risk.basis`, `data_remediation.count` or `detection.basis` with source and window |
-| Asked to file issues | Draft from the record; filing is the requester's step |
+| Asked to file issues | `scripts/export.py issues <out>/findings.json --out <dir>` drafts one per unresolved record. Filing is the requester's step; then `scripts/ledger.py set <ledger> <key> --ref <url>` links it |
+| Asked for code scanning, editor annotations or a spreadsheet | `scripts/export.py sarif` or `csv`, written outside `<out>`. The SARIF fingerprint is the tracking key |
+| Asked which recorded defects a change touches (review, CI) | `scripts/impact.py <out> --repo <repo> [--base REF] [--head REF]`; `--fail-on High` exits 1 for a gate. Touching nothing is not proof of safety |
+| A person accepts a risk, or withdraws an acceptance | `scripts/ledger.py set <ledger> <key> --status Accepted\|Open --owner TEAM --reason TEXT`; `ledger.py list` shows the ledger |
 
 ## Always / Never
 

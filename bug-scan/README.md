@@ -42,7 +42,8 @@ Then invoke `bug-scan` (or `/bug-scan`).
 | `history.json` | Fix candidates, blame edges, churn and tags. No authors, no diff bodies |
 | `dashboard.html` | Self-contained register, filters and nine figures, each with a table |
 | `report.html` / `report.pdf` | The printable report |
-| `ledger.json` | Optional, outside the repository: tracks defects across runs |
+| `ledger.json` | Optional, outside the repository: tracks defects across runs, with owners, acceptances and linked issues |
+| Exports | Optional, outside the run: issue drafts (Markdown), SARIF 2.1.0 for code scanning, CSV of the register |
 
 ## Figures
 
@@ -63,7 +64,24 @@ python3 $S/contract_check.py out --repo <checkout>
 python3 $S/ledger.py reconcile <ledger.json> out/findings.json --repo <repo> --fragment frag.json
 python3 $S/compare.py <earlier-out> <later-out>
 python3 $S/import_findings.py <other>/findings.json --scan security-scan --out frag.json
+python3 $S/ledger.py list <ledger.json> [--status NotSeen]
+python3 $S/ledger.py set <ledger.json> <key> --ref <issue-url> --reason filed
+python3 $S/export.py issues out/findings.json --out drafts/       # one draft per unresolved record
+python3 $S/export.py sarif out/findings.json --out bug-scan.sarif  # code scanning, editors
+python3 $S/export.py csv out/findings.json --out register.csv
+python3 $S/impact.py out --repo <repo> --base main --head HEAD --fail-on High
 ```
+
+## From the register to the next step
+
+| Task | Tool |
+|---|---|
+| File the open defects as issues | `export.py issues` drafts them; you file; `ledger.py set --ref` links each back |
+| See defects in code scanning or the editor | `export.py sarif`; the tracking key is the fingerprint, so alerts survive moved lines |
+| Review a change against the record | `impact.py` names defects, sibling sites, fixed defects and recurring patterns at the changed lines |
+| Gate a merge | `impact.py --fail-on High` exits 1 when an unresolved High record's site or sibling is changed |
+| Triage in a spreadsheet | `export.py csv`; cells cannot run as formulas |
+| Accept a risk, or take the acceptance back | `ledger.py set --status Accepted` / `--status Open`, always with a reason |
 
 ## Layout
 

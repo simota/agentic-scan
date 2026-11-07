@@ -712,10 +712,11 @@ def location_key(location):
     return path, int(line) if line.isdigit() else 0
 
 
-def link_call_sites(call_sites, found, sources, code, prompt_words=None):
+def link_call_sites(call_sites, found, sources, code, prompt_words=None, inline=()):
     """Give each call site that sends a prompt its argument names, the literal values of the parameters that
-    matter (model, max_tokens, temperature...) and the prompt files whose text it sends; return the
-    unrequested-output-key hits of those calls (prompt_words maps a prompt file to the words in it)."""
+    matter (model, max_tokens, temperature...), the prompt files whose text it sends and the inline prompts
+    it passes (by name, or written in the call); return the unrequested-output-key hits of those calls
+    (prompt_words maps a prompt file to the words in it)."""
     hits = []
     for site in call_sites:
         opening = site.pop("_open")
@@ -735,6 +736,10 @@ def link_call_sites(call_sites, found, sources, code, prompt_words=None):
         sent = [b for b in found if b["loaded_at"].rpartition(":")[0] == rel and (
             set(b["targets"]) & words or here in b["sent_at"])]
         site["prompts"] = sorted({b["prompt"] for b in sent})
+        start = src.lines[site["line"] - 1] + opening
+        last = src.line(src.match[start])
+        site["inline_prompts"] = [f"{e['path']}:{e['line']}" for e in inline if e["path"] == rel and (
+            site["line"] <= e["line"] <= last or e["name"] in words)]
         if prompt_words is not None and sent:
             hits += lint_reply(site, sent, src, prompt_words)
     return hits
@@ -850,7 +855,7 @@ def scan(root):
     for f in prompt_files:
         f["loaded_by"] = sorted({b["loaded_at"] for b in found if b["prompt"] == f["path"]}, key=location_key)
     lint += link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files),
-                            prompt_words)
+                            prompt_words, inline)
     for site in call_sites:
         site.pop("_at", None)
     hits, settled = lint_bindings(template_texts, found)

@@ -427,7 +427,7 @@ def trace(code_files, prompt_paths, senders):
 def call_details(src, pos):
     """(args, params, words) of the call whose name ends just before masked[pos] == '(': argument names
     (keyword or object keys; '**' for a spread), literal values of PARAMS, and every identifier in the
-    arguments (to link the variables holding prompts)."""
+    argument values (to link the variables holding prompts)."""
     if pos not in src.match:
         return None
     close = src.match[pos]
@@ -461,7 +461,8 @@ def call_details(src, pos):
                 params[name] = float(number) if "." in number else int(number)
             elif raw.strip() in CONSTANT:
                 params[name] = CONSTANT[raw.strip()]
-    words = set(IDENT.findall(src.masked[pos + 1:close]))
+    # Argument and object-key names are not values: system=system passes the variable, not the keyword.
+    words = set(IDENT.findall(re.sub(r"[A-Za-z_$][\w$]*\s*(?:=(?![=>])|:(?!:))", " ", src.masked[pos + 1:close])))
     return args, params, words
 
 

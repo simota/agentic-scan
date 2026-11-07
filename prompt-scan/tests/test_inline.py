@@ -39,6 +39,13 @@ class InlineTest(unittest.TestCase):
             ("unclosed-tag", "app.py:4"), ("placeholder", "app.py:5"),
             ("placeholder", "src/a.ts:2"), ("unclosed-tag", "src/a.ts:3")])
 
+    def test_call_sites_name_the_inline_prompts_they_send(self):
+        code = PY + "def h(c):\n    return c.messages.create(model='m', system=SYSTEM_PROMPT, messages=[])\n"
+        calls = {c["line"]: c.get("inline_prompts") for c in inventory.scan(make_repo({"app.py": code}))["call_sites"]
+                 if c["api"] == "anthropic.messages"}
+        # Written in the call, or passed by name; the keyword system= is not a use of a prompt named system.
+        self.assertEqual(calls, {13: ["app.py:13", "app.py:14"], 18: ["app.py:2"]})
+
     def test_candidates_need_a_quote_after_a_prompt_name(self):
         text = 'def f(system=None):\n    # the system\n    s = "value with spaces"\n'
         self.assertEqual(inventory.binding_tool.inline_candidates(text), set())

@@ -143,13 +143,15 @@ check: test ## verify the skill is self-contained and internally consistent
 	for sample in examples/findings.sample*.json; do \
 	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/render.py" "$$sample" --out "$$out" --no-pdf >/dev/null \
 	    || { echo "MISS render.py fails on $$sample" >&2; fail=1; }; \
+	  PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/sarif.py" "$$sample" --out "$$out/$$(basename "$$sample").sarif" >/dev/null \
+	    || { echo "MISS sarif.py fails on $$sample" >&2; fail=1; }; \
 	done; \
 	rm -rf "$$out"; \
 	scan=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-scan.XXXXXX") || exit 1; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) "$(SKILL)/scripts/iac_scan.py" tests/fixtures --out "$$scan/iac.json" >/dev/null 2>"$$scan/err" \
 	  || { cat "$$scan/err" >&2; echo "MISS iac_scan.py fails on tests/fixtures" >&2; fail=1; }; \
 	rm -rf "$$scan"; \
-	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, iac_scan runs"; \
+	[ $$fail -eq 0 ] && echo "check ok - $$(ls "$(SKILL)"/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render and export to SARIF, iac_scan runs"; \
 	exit $$fail
 
 scan: ## baseline IaC scan of TARGET into OUT (iac.json + findings.json); never calls a cloud

@@ -30,6 +30,11 @@ supplied):
 4. **Cost and loss** — what keeping it costs (the severity basis) and what
    removal would lose, in the subtraction (`loses`)
 
+When the requester supplied access logs, `scripts/usage.py` counts the requests
+to every route and public asset and words the evidence line (source, window,
+query); a route that was requested falsifies a non-use finding
+(`reference/usage.md`).
+
 Then try to falsify it: search for the element's name in every form (snake,
 camel, kebab, the URL path, the file name), in docs, CI and infrastructure
 files, and for a "do not remove" note or an open issue that keeps it.

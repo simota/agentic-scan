@@ -658,6 +658,7 @@ DISPLAY = {
         "CloudFront serves viewers over plaintext HTTP or outdated TLS": "CloudFront が平文 HTTP または古い TLS で閲覧者に配信している",
         "Bucket, object or dataset ACL grants public access": "バケット・オブジェクト・データセットの ACL が公開アクセスを許可している",
         "Database storage not encrypted": "データベースのストレージが暗号化されていない",
+        "Database automated backups disabled": "データベースの自動バックアップが無効になっている",
         "Instance metadata service does not require IMDSv2": "インスタンスメタデータサービスが IMDSv2 を必須にしていない",
         "EBS volume not encrypted": "EBS ボリュームが暗号化されていない",
         "Lambda function URL requires no authentication": "Lambda 関数 URL が認証を要求しない",

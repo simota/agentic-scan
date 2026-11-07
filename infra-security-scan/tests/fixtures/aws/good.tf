@@ -104,6 +104,7 @@ resource "aws_db_instance" "app" {
   publicly_accessible = false
   storage_encrypted   = true
   password            = var.db_password
+  backup_retention_period = 7
 }
 
 resource "aws_lambda_function_url" "app" {

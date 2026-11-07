@@ -122,6 +122,7 @@ resource "aws_db_instance" "main" {
   publicly_accessible = true
   storage_encrypted   = false
   password            = "example-literal-not-real"
+  backup_retention_period = 0
 }
 
 resource "aws_lambda_function_url" "api" {

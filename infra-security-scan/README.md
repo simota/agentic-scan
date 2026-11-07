@@ -79,6 +79,13 @@ baseline                perspectives         └─ chat summary
   per counted finding, with an index saying which drafts belong in a private
   tracker only (unfixed High and Medium); `--mask` hides account IDs and IPv4
   addresses. Drafts are written to scratch for a human to file
+- **SARIF export** — `scripts/sarif.py` writes the record as one SARIF 2.1.0
+  log for GitHub code scanning, GitLab, Azure DevOps or an editor's SARIF
+  viewer: each finding on its `path:line` with severity, fix and evidence,
+  attack paths as code flows, and a fingerprint built from the root cause (not
+  the renumbered ID) so an alert keeps its identity across re-assessments.
+  Excluded and covered findings are written as suppressed, closing alerts an
+  earlier upload raised. Written to scratch for the requester to upload
 - **Snapshots** — when deployed state matters, the skill hands the requester
   read-only export commands to run themselves (`reference/snapshots.md`); the
   exports join the baseline with `iac_scan.py --snapshots DIR`
@@ -106,6 +113,7 @@ python3 skills/infra-scan/scripts/compare.py /tmp/infra-out-oct /tmp/infra-out  
 python3 skills/infra-scan/scripts/render.py /tmp/infra-out/findings.json --out /tmp/infra-out \
   --previous /tmp/infra-out-oct           # reports open with the comparison
 python3 skills/infra-scan/scripts/issues.py /tmp/infra-out/findings.json --out /tmp/drafts --lang ja
+python3 skills/infra-scan/scripts/sarif.py /tmp/infra-out/findings.json --out /tmp/infra-scan.sarif  # code scanning
 ```
 
 Python 3.10+, standard library only. PDF output uses headless Chrome / Chromium
@@ -141,6 +149,7 @@ skills/infra-scan/
   scripts/render.py        dashboard.html, assessment.html, assessment.pdf
   scripts/compare.py       what changed between two assessments (render.py --previous)
   scripts/issues.py        issue drafts from templates/issue.<lang>.md
+  scripts/sarif.py         SARIF 2.1.0 log for code scanning, CI and editors
   scripts/excerpts.py      which cited lines render.py --repo may show, redacted
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts

@@ -135,7 +135,7 @@ provider references.
 
 | Step | Hunt | Where | Sound when — because | Catalog |
 |---|---|---|---|---|
-| RR1 | Backups: enabled, retention, cross-account or locked copies | `backup_retention_period`, AWS Backup plans, Cloud SQL backups, vault lock | Backups exist in a place the production identity cannot delete — because ransomware deletes backups first | CWE-693 |
+| RR1 | Backups: enabled, retention, cross-account or locked copies (the baseline flags only backups switched off literally, `AWS-RDS-003` / `GCP-SQL-002`; an omitted Cloud SQL `backup_configuration` also leaves them off and is this step's to find) | `backup_retention_period`, AWS Backup plans, Cloud SQL backups, vault lock | Backups exist in a place the production identity cannot delete — because ransomware deletes backups first | CWE-693 |
 | RR2 | Deletion protection on crown-jewel stores | `deletion_protection`, `prevent_destroy`, `force_destroy` | On for crown jewels — because one bad apply or one stolen credential deletes the data | CWE-693 |
 | RR3 | Versioning and object lock on buckets holding critical data or state | `versioning`, `object_lock_configuration`, GCS retention policy | On for state and critical data — because overwrite equals deletion without them | CWE-693 |
 

@@ -26,7 +26,8 @@ registry. Search for those next.
 - Prompt files with an empty `loaded_by`, and bindings with `traced: false`:
   their loader or render is a helper, another file or a computed path; find it
 - Strings assigned to names containing `prompt`, `instruction`, `system`,
-  `template`, `persona`
+  `template`, `persona`: `inventory.json` `inline_prompts` lists the literal ones;
+  search for those built from variables, calls or loops, and for other names
 - Prompt text loaded at runtime: files read by path, database rows, a prompt
   registry or feature-flag service, environment variables. Record the loader's
   `path:line`; the text itself is outside the review and goes in `limitations`

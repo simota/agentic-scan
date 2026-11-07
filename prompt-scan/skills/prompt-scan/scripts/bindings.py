@@ -66,7 +66,8 @@ class Source:
         self.block_braces = suffix not in HASH_COMMENT  # In C-like languages a { may open a block.
         self.lines = [0] + [m.end() for m in re.finditer("\n", text)]
         self.match, self.parent, stack = {}, {}, []
-        for i, c in enumerate(self.masked):
+        for m in BRACKET.finditer(self.masked):
+            i, c = m.start(), m.group()
             if c in PAIR:
                 self.parent[i] = stack[-1] if stack else None
                 stack.append(i)
@@ -121,41 +122,33 @@ class Source:
         return line
 
 
+_STRINGS = (r'"""[\s\S]*?(?:"""|\Z)|' r"'''[\s\S]*?(?:'''|\Z)|"
+            r'"(?:[^"\\\n]|\\[\s\S])*"?|' r"'(?:[^'\\\n]|\\[\s\S])*'?")
+# Comments and string literals, leftmost first: a # or // inside a string belongs to the string.
+HASH_TOKENS = re.compile(r"#[^\n]*|" + _STRINGS)
+SLASH_TOKENS = re.compile(r"//[^\n]*|/\*[\s\S]*?(?:\*/|\Z)|`(?:[^`\\]|\\[\s\S])*`?|" + _STRINGS)
+NOT_NEWLINE = re.compile(r"[^\n]")
+BRACKET = re.compile(r"[()\[\]{}]")
+
+
 def mask_code(text, suffix):
     """(masked, strings): comments and string contents replaced by spaces (newlines kept, same length), and
-    the (start, end) span of every string literal, quotes included."""
-    out, strings = list(text), []
-    hash_c, slash_c = suffix in HASH_COMMENT, suffix in SLASH_COMMENT or suffix not in HASH_COMMENT
-    i, n = 0, len(text)
-    while i < n:
-        c = text[i]
-        if hash_c and c == "#" or slash_c and text.startswith("//", i):
-            j = text.find("\n", i)
-            j = n if j < 0 else j
-            out[i:j] = " " * (j - i)
-            i = j
-        elif slash_c and text.startswith("/*", i):
-            j = text.find("*/", i + 2)
-            j = n if j < 0 else j + 2
-            out[i:j] = [ch if ch == "\n" else " " for ch in text[i:j]]
-            i = j
-        elif c in "\"'`":
-            quote = text[i:i + 3] if c != "`" and text.startswith(c * 3, i) else c
-            j, multiline = i + len(quote), len(quote) == 3 or c == "`"
-            while j < n:
-                if text[j] == "\\":
-                    j += 2
-                    continue
-                if text.startswith(quote, j) or text[j] == "\n" and not multiline:
-                    break
-                j += 1
-            end = min(j + (len(quote) if text.startswith(quote, j) else 0), n)
-            out[i + len(quote):max(i + len(quote), end - len(quote))] = [
-                ch if ch == "\n" else " " for ch in text[i + len(quote):max(i + len(quote), end - len(quote))]]
-            strings.append((i, end, len(quote)))
-            i = end
+    the (start, end, quote length) of every string literal, quotes included. Python and the other # languages
+    take # comments and triple quotes; the rest take // and /* */ comments and backtick strings."""
+    out, strings, last = [], [], 0
+    for m in (HASH_TOKENS if suffix in HASH_COMMENT else SLASH_TOKENS).finditer(text):
+        start, end = m.span()
+        token = m.group()
+        out.append(text[last:start])
+        if token[0] in "#/":
+            out.append(NOT_NEWLINE.sub(" ", token))
         else:
-            i += 1
+            q = 3 if token[:3] in ('"""', "'''") else 1
+            close = q if len(token) >= 2 * q and token.endswith(token[:q]) else 0
+            out.append(token[:q] + NOT_NEWLINE.sub(" ", token[q:len(token) - close]) + token[len(token) - close:])
+            strings.append((start, end, q))
+        last = end
+    out.append(text[last:])
     return "".join(out), strings
 
 
@@ -560,3 +553,79 @@ def string_words(src, skip=()):
     the literals starting at skip (the keys read)."""
     skip = set(skip)
     return {w for start, end, q in src.strings if start not in skip for w in IDENT.findall(src.text[start + q:end - q])}
+
+
+# Inline prompts: string literals in code assigned to, or passed as, a prompt-named name.
+PROMPT_NAME = re.compile(r"(?i)prompt|instruction|persona|^system(?:_?(?:message|msg|text|content))?$|^preamble$")
+# The name before a literal: `NAME = `, `NAME: str = `, `name=` (keyword), `name: ` (object key, quoted or
+# not), optionally through a dedent call, a group or a string prefix (f, r, b, rb).
+NAMED = re.compile(r"""["']?([A-Za-z_$][\w$]*)["']?\s*(?::\s*[\w\[\], .|]{1,40}?\s*=|:(?!:)|=(?![=>])|:=)\s*"""
+                   r"""(?:(?:[\w.]*dedent|[\w.]*cleandoc|[\w.]*strip|String\.raw)?\s*\(\s*)*[A-Za-z]{0,2}$""")
+SYSTEM_ROLE = re.compile(r"""["']?role["']?\s*[:=]\s*["']system["']""")
+# On the raw text, before any masking: where a literal may follow a prompt-named name (the match ends on its
+# opening quote), and where a message's content may be a system prompt. A file with neither is not masked.
+# Each word is found with str.find on a lowercased copy and the rest matched at that offset: a
+# case-insensitive alternation would test every character of every code file.
+PROMPT_WORDS = ("prompt", "instruction", "persona", "system", "preamble")
+AFTER_WORD = re.compile(r"""[\w$]*["']?\s*(?::[^=\n]{0,40}=|:=|[:=])\s*(?:[\w.]*\(\s*)*[A-Za-z]{0,2}["'`]""")
+ROLE_BEFORE = re.compile(r"""role["']?\s*[:=]\s*["']$""")
+CONTENT = re.compile(r"""["']?content["']?\s*[:=]\s*(?:[\w.]*\(\s*)*[A-Za-z]{0,2}["'`]""")
+ASCII_LOWER = str.maketrans("ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz")
+
+
+def inline_candidates(text):
+    """The offsets at which an inline prompt's literal may open, from the raw text; empty for most files."""
+    low = text.lower()
+    if len(low) != len(text):  # A character whose lower case is longer (U+0130): keep offsets aligned.
+        low = text.translate(ASCII_LOWER)
+    starts, role = set(), False
+    for word in PROMPT_WORDS:
+        i = low.find(word)
+        while i >= 0:
+            m = AFTER_WORD.match(text, i + len(word))
+            if m:
+                starts.add(m.end() - 1)
+            if word == "system" and i and text[i - 1] in "\"'" and ROLE_BEFORE.search(text, max(0, i - 32), i):
+                role = True
+            i = low.find(word, i + len(word))
+    if role:
+        starts |= {m.end() - 1 for m in CONTENT.finditer(text)}
+    return starts
+
+
+JOIN = re.compile(r"\s*(?:\+|\\)?\s*")
+MIN_INLINE = 20
+
+
+def inline_prompts(src, candidates=None):
+    """[(name, start, pieces)] for each prompt-named string literal: pieces are (content, first line) of the
+    literal and of each literal joined to it (implicit concatenation, +, a line continuation). A literal
+    without whitespace (a path, an identifier) or shorter than MIN_INLINE characters in all is not one.
+    candidates (inline_candidates()) limits the literals looked at."""
+    found, used = [], set()
+    for k, (start, end, q) in enumerate(src.strings):
+        if k in used or candidates is not None and start not in candidates:
+            continue
+        m = NAMED.search(src.text, max(0, start - 160), start)
+        if not m or m.end() != start:
+            continue
+        name = m.group(1)
+        if not PROMPT_NAME.search(name):
+            inner = src.enclosing(start)
+            if name != "content" or not inner or not SYSTEM_ROLE.search(src.text, inner[0], src.match[inner[0]]):
+                continue
+            name = "system"
+        pieces, j = [(src.text[start + q:end - q], src.line(start))], k
+        while j + 1 < len(src.strings):
+            gap = src.masked[src.strings[j][1]:src.strings[j + 1][0]]
+            nxt = src.strings[j + 1]
+            # A prefix letter (f, r, b) may sit before the next quote.
+            if not JOIN.fullmatch(re.sub(r"[A-Za-z]{1,2}$", "", gap)):
+                break
+            j += 1
+            used.add(j)
+            pieces.append((src.text[nxt[0] + nxt[2]:nxt[1] - nxt[2]], src.line(nxt[0])))
+        text = "".join(p for p, _ in pieces)
+        if len(text) >= MIN_INLINE and any(c.isspace() for c in text.strip()):
+            found.append((name, start, pieces))
+    return found

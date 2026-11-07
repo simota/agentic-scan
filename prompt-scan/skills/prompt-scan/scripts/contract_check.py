@@ -165,8 +165,8 @@ def inventory_problems(out, data):
     if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
         problems.append("inventory.json was not written by inventory.py")
     else:
-        if inventory.get("prompt_files") and not data.get("prompts"):
-            problems.append("inventory.json lists prompt files but findings.json records no prompts")
+        if (inventory.get("prompt_files") or inventory.get("inline_prompts")) and not data.get("prompts"):
+            problems.append("inventory.json lists prompt files or inline prompts but findings.json records no prompts")
         problems += scan_problems(inventory, data)
     return problems
 

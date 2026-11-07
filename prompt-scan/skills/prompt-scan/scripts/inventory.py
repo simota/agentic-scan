@@ -145,7 +145,8 @@ LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
 
 NOT_COVERED = [
-    "prompts built at runtime from string pieces in code (only call sites and prompt variables are listed)",
+    "prompts built at runtime from string pieces in code (only call sites, prompt variables and string "
+    "literals assigned to prompt-named names are listed)",
     "prompts loaded from databases, prompt registries, feature flags or environment variables",
     "provider-side or framework-added system text",
 ]
@@ -583,15 +584,18 @@ def lint_references(root, rel, lines, fenced):
                  **{k: RULES["missing-file-reference"][k] for k in ("kind", "severity", "confidence", "category")})]
 
 
-def lint_file(rel, text, tokens, *, lines=None, fenced=None):
-    """Lint hits for one prompt file; lines and fenced as template_uses() takes them."""
+def lint_file(rel, text, tokens, *, lines=None, fenced=None, line_map=None):
+    """Lint hits for one prompt file; lines and fenced as template_uses() takes them. With line_map (the
+    file line of each of lines), text is an inline prompt in code: its braces belong to the code's string
+    syntax (an f-string's {{ is a literal brace), so unbalanced-template is not applied."""
     lines = source_lines(text) if lines is None else lines
     fenced = fenced_lines(lines) if fenced is None else fenced
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [without_code_spans(line) for line in lines]
     hits = []
     suffix = Path(rel).suffix.lower()
-    for number, detail in lint_template(prose, fenced, suffix in ENGINE_SUFFIXES, suffix in CONFIG_SUFFIXES):
+    for number, detail in [] if line_map else lint_template(prose, fenced, suffix in ENGINE_SUFFIXES,
+                                                            suffix in CONFIG_SUFFIXES):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))
@@ -614,6 +618,8 @@ def lint_file(rel, text, tokens, *, lines=None, fenced=None):
         hits.append(("secret-literal", secrets[0], f"{len(secrets)} line(s) with a credential-shaped value"))
     if tokens > LARGE_PROMPT_TOKENS:
         hits.append(("large-prompt", 1, f"about {tokens} tokens"))
+    if line_map:
+        hits = [(rule, line_map[min(number, len(line_map)) - 1], detail) for rule, number, detail in hits]
     return [dict(rule=rule, location=f"{rel}:{number}", detail=detail, **{
         k: RULES[rule][k] for k in ("kind", "severity", "confidence", "category")}) for rule, number, detail in hits]
 
@@ -761,10 +767,28 @@ def lint_reply(site, sent, src, prompt_words):
                  **{k: RULES["unrequested-output-key"][k] for k in ("kind", "severity", "confidence", "category")})]
 
 
+def scan_inline(rel, src, candidates=None):
+    """(entries, hits) for the inline prompts of one code file (bindings.inline_prompts)."""
+    entries, hits = [], []
+    for name, start, pieces in binding_tool.inline_prompts(src, candidates):
+        lines, numbers = [], []
+        for content, first in pieces:
+            for i, line in enumerate(content.split("\n")):
+                lines.append(line.rstrip("\r"))
+                numbers.append(first + i)
+        text = "\n".join(lines)
+        tokens = estimate_tokens(text)
+        entries.append({"path": rel, "line": src.line(start), "name": name, "lines": len(lines), "chars": len(text),
+                        "est_tokens": tokens, "variables": variables(text)})
+        hits += lint_file(rel, text, tokens, lines=lines, fenced=fenced_lines(lines), line_map=numbers)
+    return entries, hits
+
+
 def scan(root):
     root = Path(root).resolve()
     prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
-    templates, code_words, code_files, template_texts, prompt_words = [], set(), [], {}, {}
+    templates, code_words, code_files, template_texts, prompt_words, inline = [], set(), [], {}, {}, []
+    disk = {}  # The on-disk path of each code file, for the Git state of what was read.
     for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
@@ -794,6 +818,7 @@ def scan(root):
         if is_code:
             code_words.update(CODE_WORD.findall(text))
             code_files.append((rel, text, suffix))
+            disk[rel] = on_disk
         if is_code or suffix in CONFIG_SUFFIXES:
             # Only lines on which some pattern's match starts can match it; most code lines match none.
             patterns = [pattern for _, pattern, needles in CALL_PATTERNS
@@ -812,6 +837,16 @@ def scan(root):
                     models.setdefault(model, []).append(f"{rel}:{number}")
                     read.add(on_disk)
     found, sources = binding_tool.trace(code_files, [f["path"] for f in prompt_files], SENDERS)
+    for rel, text, suffix in code_files:
+        candidates = binding_tool.inline_candidates(text)
+        if candidates:
+            src = sources.get(rel) or binding_tool.Source(text, suffix)
+            entries, hits = scan_inline(rel, src, candidates)
+            if entries:
+                sources[rel] = src
+                read.add(disk[rel])
+                inline += entries
+                lint += hits
     for f in prompt_files:
         f["loaded_by"] = sorted({b["loaded_at"] for b in found if b["prompt"] == f["path"]}, key=location_key)
     lint += link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files),
@@ -828,7 +863,7 @@ def scan(root):
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
         "tool": "inventory.py", "version": 1, "root": shown(root.name), "commit": commit, "dirty": dirty,
-        "prompt_files": prompt_files, "call_sites": call_sites, "bindings": found,
+        "prompt_files": prompt_files, "inline_prompts": inline, "call_sites": call_sites, "bindings": found,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
         "skipped_files": sorted(unread, key=lambda f: f["path"]),

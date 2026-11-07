@@ -27,7 +27,8 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 
 - **Recon** — `scripts/inventory.py` lists prompt files (prompt directories,
   `.prompt` files, `SKILL.md`, `AGENTS.md`/`CLAUDE.md`, `.claude/agents`…),
-  model API call sites, template variables, quoted model IDs and mechanical
+  inline prompts in code (`SYSTEM_PROMPT = """…"""`, `system="…"`), model API
+  call sites, template variables, quoted model IDs and mechanical
   lint hits. It traces each prompt file to the code that loads it, the keys
   every render call (`.format`, `.render`, `.substitute`, `.invoke`,
   `.replace`…) fills it with and the model call that sends it, with that

@@ -80,7 +80,7 @@ one level.
 
 | Phase | Do | Reference |
 |---|---|---|
-| RECON | Run `scripts/inventory.py` for prompt files, call sites, template variables, model IDs and lint hits. Then read each call site: which prompt it sends, which role each part takes, where each variable comes from, which model and parameters, what parses the output, what happens on truncation or retry. Record each prompt in the `prompts` list with an ID `P-NN` | `reference/recon.md`, `reference/inventory.md` |
+| RECON | Run `scripts/inventory.py` for prompt files, call sites, template variables, model IDs, lint hits, and the bindings from each prompt file to the code that loads, renders and sends it. Then read each call site: which prompt it sends, which role each part takes, where each variable comes from, which model and parameters, what parses the output, what happens on truncation or retry. Record each prompt in the `prompts` list with an ID `P-NN` | `reference/recon.md`, `reference/inventory.md` |
 | CHECKLIST | Pick the perspectives that apply per review unit; mark the others N/A with a reason; attach early suspicions marked unverified | `reference/perspectives.md`, `reference/report.md` |
 | REVIEW | Per review unit, sweep every applicable perspective's hunt steps. Read the prompt text **and** the code that fills and parses it: a variable defect, a parser mismatch or a truncation defect is invisible in the prompt alone. Then the variants of each finding (the same pattern in sibling prompts) and `inventory.py --into` | `reference/perspectives.md` |
 | VERIFY | For each finding, try to falsify it: re-read the full prompt as sent (system plus template plus filled variables), look for the instruction or code that already handles the case, and set a verdict with evidence. A behaviour claim the text alone cannot settle is `Model-dependent` and gets an eval case | `reference/validation.md` |
@@ -109,6 +109,7 @@ passes:
 | The chat summary | `scripts/export.py summary <out>/findings.json`, then add what it cannot know: what remains unknown, the scratch directory and the file links |
 | Findings as issues | `scripts/export.py issues <out>/findings.json --out <dir>`: one body per finding from `templates/issue.<lang>.md`, plus `index.md`. File them only when asked to, and say first where they go |
 | Code scanning, an IDE or CI | `scripts/export.py sarif <out>/findings.json --out <file>.sarif`; `--fail-on <severity>` exits 1 while an Open finding at that severity remains |
+| The mechanical lint on every change, without a review | `scripts/inventory.py <repo> --fail-on <severity> [--sarif <file>.sarif] [--baseline <out>/findings.json]`: `--baseline` keeps the hits this review judged `FalsePositive` or `NotApplicable` quiet (`reference/inventory.md`) |
 | What changed since an earlier review | A new, complete review, then `scripts/compare.py <earlier>/findings.json <out>/findings.json`: new, reopened, persisting, resolved and dismissed findings. `--accepted-fragment <scratch>/accepted.json` carries the earlier `Accepted` statuses forward as a fragment to merge; `--fail-on <severity>` fails only on new or reopened findings |
 
 ## Decide first

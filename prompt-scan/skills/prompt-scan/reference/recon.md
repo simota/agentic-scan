@@ -13,14 +13,21 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json
 ```
 
 It lists prompt files, call sites of model APIs, template variables per file,
-model IDs and lint hits (`reference/inventory.md`). It is a starting list, not
-the map: it finds prompts by pattern and misses prompts built at runtime, stored
-in databases or fetched from a registry. Search for those next.
+model IDs and lint hits (`reference/inventory.md`). It also traces each prompt
+file to the code that loads it (`prompt_files[].loaded_by`), the keys each
+render call fills it with (`bindings`), and the prompt files, argument names and
+literal parameters of each model call (`call_sites[].prompts`, `args`,
+`params`). It is a starting list, not the map: it finds prompts by pattern and
+misses prompts built at runtime, stored in databases or fetched from a
+registry. Search for those next.
 
 ## 2. Find what the inventory misses
 
+- Prompt files with an empty `loaded_by`, and bindings with `traced: false`:
+  their loader or render is a helper, another file or a computed path; find it
 - Strings assigned to names containing `prompt`, `instruction`, `system`,
-  `template`, `persona`
+  `template`, `persona`: `inventory.json` `inline_prompts` lists the literal ones;
+  search for those built from variables, calls or loops, and for other names
 - Prompt text loaded at runtime: files read by path, database rows, a prompt
   registry or feature-flag service, environment variables. Record the loader's
   `path:line`; the text itself is outside the review and goes in `limitations`
@@ -36,7 +43,10 @@ in databases or fetched from a registry. Search for those next.
 
 ## 3. One row per prompt
 
-For every prompt record, in scratch and later in the `prompts` list:
+For every prompt record, in scratch and later in the `prompts` list. A traced
+binding gives a first `consumer` (its render or send site), `inputs` (its
+`keys`) and, through the call site whose `prompts` names the file, `model`
+(`params`); confirm each by reading the code:
 
 | Field | What to record |
 |---|---|

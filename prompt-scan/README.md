@@ -27,9 +27,16 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 
 - **Recon** — `scripts/inventory.py` lists prompt files (prompt directories,
   `.prompt` files, `SKILL.md`, `AGENTS.md`/`CLAUDE.md`, `.claude/agents`…),
-  model API call sites, template variables, quoted model IDs and mechanical
-  lint hits. The agent then reconstructs each message as actually sent and
-  marks which inputs are untrusted
+  inline prompts in code (`SYSTEM_PROMPT = """…"""`, `system="…"`), model API
+  call sites, template variables, quoted model IDs and mechanical
+  lint hits. It traces each prompt file to the code that loads it, the keys
+  every render call (`.format`, `.render`, `.substitute`, `.invoke`,
+  `.replace`…) fills it with and the model call that sends it, with that
+  call's literal `model`, `max_tokens` and `temperature`. A variable a traced
+  render never fills, a key it passes that the template never uses, and a key
+  the code reads from the call's parsed JSON reply that no prompt asks for are
+  lint hits naming both lines. The agent then reconstructs each message as
+  actually sent and marks which inputs are untrusted
 - **Perspectives** — task and intent, instruction consistency, structure and
   placement, variables and assembly, output contract, examples, tools and
   agents, untrusted input, safety and refusal, context budget, model and
@@ -66,6 +73,13 @@ The record is built to be acted on, not only read:
   severity
 - **Chat summary** — `scripts/export.py summary` prints the summary format of
   `reference/report.md` with the record's own counts and verdicts
+- **Lint on every change** — `scripts/inventory.py <repo> --fail-on High`
+  runs the mechanical rules alone, with no agent and no model: unfilled
+  template variables, keys a render passes that the template never uses, reply
+  keys no prompt asks for, files an agent or skill prompt cites that do not
+  exist, unbalanced templates, secrets and placeholders in prompts. `--sarif` writes them for code scanning, and `--baseline
+  <review>/findings.json` keeps hits a review judged `FalsePositive` or
+  `NotApplicable` quiet, even after the lines move
 
 ## Install
 
@@ -84,11 +98,19 @@ Then invoke `prompt-scan` (or `/prompt-scan`).
 make demo                       # Japanese sample → $TMPDIR/prompt-scan-demo (PDF needs Chrome or WeasyPrint)
 make demo LANG_OUT=en NO_PDF=1  # English, HTML only
 make inventory TARGET=examples/sample-app
+make lint TARGET=examples/sample-app FAIL_ON=High     # exits 1: the sample has two High lint hits
 make compare BASE=examples/findings.sample.ja.json FINDINGS=examples/findings.sample.json
 make export FORMAT=sarif FINDINGS=examples/findings.sample.json OUT=/tmp/prompt-scan.sarif
 ```
 
-In CI, after a review was committed or produced as an artifact:
+In CI, on every change (no review needed; the baseline is optional):
+
+```sh
+python3 skills/prompt-scan/scripts/inventory.py . --sarif prompt-lint.sarif --fail-on High \
+  --baseline baseline/findings.json
+```
+
+After a review was committed or produced as an artifact:
 
 ```sh
 python3 skills/prompt-scan/scripts/export.py sarif out/findings.json --out prompt-scan.sarif
@@ -105,7 +127,8 @@ review of it.
 |---|---|
 | `skills/prompt-scan/SKILL.md` | The skill: scope, run contract, severity, phases, decisions |
 | `skills/prompt-scan/reference/` | Read per phase: recon, inventory, perspectives, validation, schema, report |
-| `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`) |
+| `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`; `--fail-on`, `--sarif`, `--baseline` for CI) |
+| `skills/prompt-scan/scripts/bindings.py` | Traces prompt files to the code that loads, renders and sends them (for `inventory.py`) |
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
 | `skills/prompt-scan/scripts/compare.py` | What changed between two reviews; `--fail-on` gates on new findings, `--accepted-fragment` carries accepted risks forward |

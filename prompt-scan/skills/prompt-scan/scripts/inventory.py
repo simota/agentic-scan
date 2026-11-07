@@ -2,11 +2,14 @@
 """Inventory the LLM prompts in a repository and lint them mechanically.
 
     python3 inventory.py REPO [--out inventory.json] [--into findings.json]
+    python3 inventory.py REPO [--baseline findings.json] [--sarif FILE] [--fail-on SEVERITY]
 
 Lists prompt files (prompt directories, prompt and template suffixes, agent and
 skill definitions), call sites of model APIs in code, template variables per
-prompt file, quoted model IDs and lint hits. It reads files only: nothing is
-executed and nothing leaves the machine.
+prompt file, quoted model IDs and lint hits, and (bindings.py) where code loads
+each prompt file, the keys each render call fills it with and the model call
+that sends it. It reads files only: nothing is executed and nothing leaves the
+machine.
 
 With --into, the lint hits replace every `L-*` finding in an existing
 findings.json (scanner text stays in English), and `meta.commit` / `meta.dirty`
@@ -17,7 +20,17 @@ new review replaces it; the new hit starts `Unverified`.
 --out replaces only an earlier inventory.json: an existing file of any other
 kind (findings.json, with --out and --into swapped) is refused.
 
-Exit codes: 0 written, 2 unreadable input, unwritable output or schema error.
+The lint runs on its own in CI, without a review: --sarif writes the hits as
+SARIF 2.1.0 (as export.py sarif does for a review), --fail-on SEVERITY prints
+each hit at that severity or above as `path:line: severity rule: detail` and
+exits 1 when there is one, and --baseline names an earlier review's
+findings.json whose L-* verdicts FalsePositive or NotApplicable suppress the
+same hit (same rule, file and named variables, keys or tag; line numbers aside,
+so an edit above it does not bring it back). With --sarif or --fail-on and no
+--out, the inventory is not written to stdout.
+
+Exit codes: 0 written, 1 --fail-on threshold reached, 2 unreadable input,
+unwritable output or schema error.
 """
 import argparse
 import copy
@@ -30,6 +43,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bindings as binding_tool  # noqa: E402
 import record  # noqa: E402
 from excerpt import SECRET_RE, has_secret_needle, sensitive, source_lines  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
@@ -69,6 +83,11 @@ CALL_PATTERNS = [
                                    r"prompt_template|promptTemplate)\b\s*[:=]"),
      ("SYSTEM_PROMPT", "system_prompt", "systemPrompt", "PROMPT_TEMPLATE", "prompt_template", "promptTemplate")),
 ]
+# Call sites that send a prompt to a model; their arguments are recorded and their prompts linked.
+SENDING_APIS = {"anthropic.messages", "openai.chat.completions", "openai.responses", "gemini.generate_content",
+                "ai-sdk"}
+SENDERS = [pattern for api, pattern, _ in CALL_PATTERNS if api in SENDING_APIS]
+SCHEMA_ARGS = binding_tool.SCHEMA_ARGS
 # Bare IDs plus the forms clouds use: Bedrock `us.anthropic.claude-…-v1:0`, Vertex `claude-…@20240620`,
 # Gemini `models/gemini-…`.
 _TAIL = r"(?:[a-z0-9.-]*[a-z0-9])?"
@@ -83,6 +102,27 @@ VARIABLE_RES = [
     re.compile(r"(?<![{$])\{([A-Za-z_]\w*)(?:![rsa])?(?::[^{}\s]*)?\}(?!\})"),
     re.compile(r"\$\{([A-Za-z_]\w*)\}"),                # JS template literal, string.Template
 ]
+# The placeholder syntax each kind of render call fills (bindings.RENDER_STYLE): str.format and f-string
+# templates single braces, Jinja and Mustache double braces, string.Template ${name} and $name; "any" (a
+# literal .replace, or a template sent without rendering) every syntax above but the bare $name.
+STYLE_RES = {"brace": [VARIABLE_RES[1]], "jinja": [VARIABLE_RES[0]],
+             "dollar": [VARIABLE_RES[2], re.compile(r"(?<![\w$\\])\$([A-Za-z_]\w*)")], "any": VARIABLE_RES}
+# A template that pulls in another file may fill or use names this scan cannot see.
+INCLUDES = re.compile(r"\{%-?\s*(?:include|extends|import|from)\b|\{\{>")
+# Names the template tests before using (an if, a default filter, a Mustache section): optional by design.
+OPTIONAL = re.compile(r"\{%-?\s*(?:if|elif|unless)\b([^%]*)%\}|\{\{[#^]\s*(?:if\s+|unless\s+|with\s+)?([\w.]+)|"
+                      r"([A-Za-z_]\w*)\s*\|\s*default\b|([A-Za-z_]\w*)\s+is\s+(?:not\s+)?defined")
+# Every template construct; a word in none of them is not a name the template uses.
+CONSTRUCT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\$\{[^}\n]*\}|\{[^{}\n]*\}|\$[A-Za-z_]\w*")
+# File references in agent and skill prompts: Markdown links, CLAUDE.md-style @imports, and paths in code
+# spans. A path in a code span is judged only when its directory exists (a renamed or moved file); one
+# under a directory that does not exist may name a file to create, or one in another repository.
+MD_LINK = re.compile(r"\]\(([^)\s#<>]+)(?:#[^)\s]*)?(?:\s+\"[^\"]*\")?\)")
+AT_IMPORT = re.compile(r"(?<![\w@`])@((?:\.{1,2}/)*[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_.-]+)*)")
+PATH_TOKEN = re.compile(r"(?:\.{1,2}/)*\.?[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/\.?[A-Za-z0-9_][A-Za-z0-9_.-]*)+/?")
+REF_SUFFIXES = {".md", ".mdc", ".mdx", ".txt", ".py", ".sh", ".js", ".mjs", ".cjs", ".ts", ".json", ".yaml",
+                ".yml", ".toml", ".prompt", ".prompty", ".j2", ".jinja", ".jinja2", ".tmpl", ".csv", ".html",
+                ".sql", ".xml"}
 TEMPLATE_TOKEN = re.compile(r"\{\{|\}\}|\{%|%\}")
 PAIRS = {"{{": "}}", "{%": "%}"}
 OPEN_TAG = re.compile(r"<([a-z][\w-]*)((?:\s+[\w:-]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(/?)>")
@@ -105,7 +145,8 @@ LARGE_PROMPT_TOKENS = 8000
 DUPLICATE_MIN_CHARS = 40
 
 NOT_COVERED = [
-    "prompts built at runtime from string pieces in code (only call sites and prompt variables are listed)",
+    "prompts built at runtime from string pieces in code (only call sites, prompt variables and string "
+    "literals assigned to prompt-named names are listed)",
     "prompts loaded from databases, prompt registries, feature flags or environment variables",
     "provider-side or framework-added system text",
 ]
@@ -147,6 +188,47 @@ RULES = {
         impact="The prompt is sent without the content the variable was meant to carry.",
         fix="Fill the variable at the call site that renders this template, or remove it from the template.",
         test="Render the template from its call site with strict undefined-variable handling and assert it succeeds."),
+    "unfilled-variable": dict(
+        kind="defect", severity="High", confidence="Suspected", category="Variables and assembly",
+        title="Template variable the rendering code does not fill",
+        symptom="The variable reaches the model empty or as a literal placeholder, or the render fails "
+                "(str.format raises KeyError).",
+        impact="Every call through that render sends the prompt without the content the variable was meant to "
+               "carry, or fails.",
+        fix="Pass the variable at the render call named in the cause, or remove it from the template; render "
+            "with strict undefined-variable handling.",
+        test="Render the template from the named call site with strict undefined-variable handling and assert "
+             "it succeeds and contains the variable's content."),
+    "unused-render-key": dict(
+        kind="defect", severity="Medium", confidence="Suspected", category="Variables and assembly",
+        title="Value passed to a template that never uses it",
+        symptom="The code passes a value when rendering the template, but the template has no placeholder of "
+                "that name, so the value is dropped.",
+        impact="Content the caller prepared for the model (often under a renamed variable) never reaches it.",
+        fix="Add the placeholder where the template needs the value, rename the key to the placeholder it was "
+            "meant for, or stop passing it.",
+        test="Render the template from the named call site and assert the rendered prompt contains the passed "
+             "value."),
+    "unrequested-output-key": dict(
+        kind="defect", severity="High", confidence="Suspected", category="Output contract",
+        title="Code reads a reply key the prompt never asks for",
+        symptom="The code reads a key from the model's JSON reply that no prompt sent on that call names, so "
+                "the model has no reason to produce it.",
+        impact="The read fails (KeyError) or yields nothing on ordinary replies; the feature returns wrong or "
+               "empty output.",
+        fix="Ask for the key in the prompt's output format, or read the key the prompt asks for; better, use "
+            "structured output with one schema shared by the prompt and the parser.",
+        test="For a representative input, parse the reply as the code does and assert every key it reads is "
+             "present."),
+    "missing-file-reference": dict(
+        kind="defect", severity="Medium", confidence="Suspected", category="Instruction consistency",
+        title="Prompt points to a file that does not exist",
+        symptom="The prompt tells the model to read or use a file that is not in the repository.",
+        impact="The model cannot follow that instruction: it searches, guesses the file's content or goes on "
+               "without it.",
+        fix="Point the reference at the file's current path, restore the file, or remove the instruction.",
+        test="Assert every file the prompt cites resolves in the repository, relative to the prompt file or the "
+             "repository root."),
     "duplicate-line": dict(
         kind="improvement", severity="Info", confidence="Confirmed", category="Context budget",
         title="Repeated line in a prompt",
@@ -269,9 +351,9 @@ def without_code_spans(line):
     return INLINE_CODE.sub("", line) if "`" in line else line
 
 
-def variables(text):
+def variables(text, patterns=VARIABLE_RES):
     found = []
-    for pattern in VARIABLE_RES:
+    for pattern in patterns:
         for name in pattern.findall(text):
             if name not in found:
                 found.append(name)
@@ -351,10 +433,11 @@ def lint_tags(lines, fenced):
             for name, numbers in sorted(opened.items(), key=lambda kv: kv[1][0] if kv[1] else 0) if numbers]
 
 
-def template_uses(text, *, lines=None, fenced=None):
+def template_uses(text, *, lines=None, fenced=None, patterns=VARIABLE_RES):
     """(line, names) for each line outside code fences that uses a template variable the template itself
     does not define: what a caller has to fill. lines and fenced, when given, are source_lines(text) and
-    fenced_lines() of them, which scan() has already worked out."""
+    fenced_lines() of them, which scan() has already worked out; patterns narrows the placeholder syntax
+    (STYLE_RES)."""
     lines = source_lines(text) if lines is None else lines
     fenced = fenced_lines(lines) if fenced is None else fenced
     defined = set(TEMPLATE_BUILTINS)
@@ -363,20 +446,23 @@ def template_uses(text, *, lines=None, fenced=None):
     uses = []
     for number, line in enumerate(lines, 1):
         # Every VARIABLE_RES pattern opens a brace, so a line without one uses no variable.
-        if number in fenced or "{" not in line:
+        if number in fenced or "{" not in line and (patterns is VARIABLE_RES or "$" not in line):
             continue
-        names = [n.split(".")[0] for n in variables(without_code_spans(line))]
+        names = [n.split(".")[0] for n in variables(without_code_spans(line), patterns)]
         names = [n for n in dict.fromkeys(names) if n.lower() not in defined and n not in defined]
         if names:
             uses.append((number, names))
     return uses
 
 
-def lint_unreferenced(templates, code_words):
-    """One unreferenced-variable hit per template file whose variables some name no code file contains."""
+def lint_unreferenced(templates, code_words, settled=None):
+    """One unreferenced-variable hit per template file whose variables some name no code file contains;
+    a name lint_bindings() settled for that file (settled[rel]) is left out."""
     hits = []
     for rel, uses in templates:
-        missing = [(number, name) for number, names in uses for name in names if name not in code_words]
+        done = (settled or {}).get(rel, set())
+        missing = [(number, name) for number, names in uses for name in names
+                   if name not in code_words and name not in done]
         if missing:
             names = list(dict.fromkeys(name for _, name in missing))
             hits.append(dict(rule="unreferenced-variable", location=f"{rel}:{missing[0][0]}",
@@ -385,15 +471,131 @@ def lint_unreferenced(templates, code_words):
     return hits
 
 
-def lint_file(rel, text, tokens, *, lines=None, fenced=None):
-    """Lint hits for one prompt file; lines and fenced as template_uses() takes them."""
+def optional_names(text):
+    return {word for groups in OPTIONAL.findall(text) for group in groups for word in CODE_WORD.findall(group)}
+
+
+def lint_bindings(templates, bindings):
+    """unfilled-variable and unused-render-key hits from the render sites bindings.trace() found.
+
+    templates maps a template path to (text, lines, fenced). A template that includes or extends another is
+    skipped: that file may fill or use the names. unfilled-variable needs a complete site of a traced
+    binding; unused-render-key needs only a site of a binding naming this one file. A site that both leaves
+    a variable unfilled and passes a key the template never uses (a renamed variable, usually) is one
+    unfilled-variable hit naming both.
+
+    Returns (hits, settled): settled maps a template to the names unreferenced-variable must not report
+    again, those unfilled-variable reported and, when every binding is traced and every site complete in
+    one placeholder syntax, the brace text that syntax does not fill (a {example} in a Jinja template)."""
+    hits, settled = [], {}
+    for rel, (text, lines, fenced) in templates.items():
+        mine = [b for b in bindings if b["prompt"] == rel and not b.get("ambiguous")]
+        if not mine or INCLUDES.search(text):
+            continue
+        optional = optional_names(text)
+        used = {word for chunk in CONSTRUCT.findall(text) for word in CODE_WORD.findall(chunk)}
+        uses = {style: template_uses(text, lines=lines, fenced=fenced, patterns=patterns)
+                for style, patterns in STYLE_RES.items()}
+        missing, sites, renamed, extra, lost_at = {}, [], [], [], set()
+        for b in mine:
+            for site in b["renders"]:
+                unused = [k for k in site["keys"] if k not in used]
+                lost = []
+                if b["traced"] and site["complete"]:
+                    for number, names in uses[site["style"]]:
+                        for name in names:
+                            if name not in site["keys"] and name not in optional:
+                                lost.append(name)
+                                missing.setdefault(name, number)
+                if lost:
+                    verb = "sends it without rendering" if site["via"] == "sent" else "renders it"
+                    sites.append(f"{site['location']} {verb}")
+                    lost_at.add(site["location"])
+                    renamed += [k for k in unused if k not in renamed]
+                elif unused:
+                    extra.append((site["location"], unused))
+        styles = {s["style"] for b in mine for s in b["renders"]}
+        if all(b["traced"] and b["renders"] and all(s["complete"] for s in b["renders"]) for b in mine) \
+                and len(styles) == 1 and styles != {"any"}:
+            filled = {n for _, names in uses[styles.pop()] for n in names}
+            settled[rel] = {n for _, names in template_uses(text, lines=lines, fenced=fenced) for n in names} - filled
+        if missing:
+            names = sorted(missing, key=lambda n: (missing[n], n))
+            detail = f"{len(names)} variable(s) not filled where {', '.join(dict.fromkeys(sites))}: {', '.join(names)}"
+            if renamed:
+                detail += f"; that call passes {', '.join(renamed)}, which the template never uses"
+            hits.append(dict(rule="unfilled-variable", location=f"{rel}:{min(missing.values())}", detail=detail,
+                             **{k: RULES["unfilled-variable"][k] for k in ("kind", "severity", "confidence", "category")}))
+            settled[rel] = settled.get(rel, set()) | set(names)
+        for location, keys in dict(extra).items():
+            if location in lost_at:
+                continue
+            hits.append(dict(rule="unused-render-key", location=location,
+                             detail=f"renders {rel} with {len(keys)} key(s) the template never uses: {', '.join(keys)}",
+                             **{k: RULES["unused-render-key"][k] for k in ("kind", "severity", "confidence", "category")}))
+    return hits, settled
+
+
+def resolves(root, base, ref):
+    """True, False, or None when ref leaves the repository or is not a repository path."""
+    ref = ref.split("#")[0].split("?")[0]
+    if not ref or ref.startswith(("/", "~")) or re.match(r"[a-z][a-z0-9+.-]*:", ref):
+        return None
+    for start in (base, ""):
+        target = os.path.normpath(os.path.join(start, ref))
+        if target == ".." or target.startswith("../") or os.path.isabs(target):
+            continue
+        if os.path.lexists(os.path.join(root, target)):
+            return True
+    return False
+
+
+def lint_references(root, rel, lines, fenced):
+    """missing-file-reference: the paths an agent or skill prompt cites that exist neither next to it nor
+    from the repository root. Markdown links and @imports always count; a code-span path counts when it
+    names a file with a known suffix (or a directory, with a trailing /) and its own directory exists."""
+    base = os.path.dirname(os.fsdecode(os.fsencode(rel)))
+    missing = []
+    for number, line in enumerate(lines, 1):
+        if number in fenced:
+            continue
+        refs = [(ref, False) for ref in MD_LINK.findall(line) if "{{" not in ref]
+        prose = without_code_spans(line)
+        refs += [(ref, False) for ref in AT_IMPORT.findall(prose)
+                 if "/" in ref or Path(ref).suffix.lower() in REF_SUFFIXES]
+        for span in INLINE_CODE.finditer(line):
+            for token in span.group(0).strip("`").split():
+                token = token.rstrip(".,;:)")
+                if PATH_TOKEN.fullmatch(token) and "." not in token.split("/")[0].lstrip(".") and (
+                        token.endswith("/") or Path(token).suffix.lower() in REF_SUFFIXES):
+                    refs.append((token, True))
+        for ref, guarded in refs:
+            if guarded:
+                parent = os.path.dirname(ref.rstrip("/")) or "."
+                if not resolves(root, base, parent):
+                    continue
+            if resolves(root, base, ref.rstrip("/") or ".") is False and ref not in (r for _, r in missing):
+                missing.append((number, ref))
+    if not missing:
+        return []
+    names = [ref for _, ref in missing]
+    return [dict(rule="missing-file-reference", location=f"{rel}:{missing[0][0]}",
+                 detail=f"{len(names)} reference(s) to files that do not exist: {', '.join(names)}",
+                 **{k: RULES["missing-file-reference"][k] for k in ("kind", "severity", "confidence", "category")})]
+
+
+def lint_file(rel, text, tokens, *, lines=None, fenced=None, line_map=None):
+    """Lint hits for one prompt file; lines and fenced as template_uses() takes them. With line_map (the
+    file line of each of lines), text is an inline prompt in code: its braces belong to the code's string
+    syntax (an f-string's {{ is a literal brace), so unbalanced-template is not applied."""
     lines = source_lines(text) if lines is None else lines
     fenced = fenced_lines(lines) if fenced is None else fenced
     # Markup rules skip code fences and inline code spans: both hold examples such as `<out>`.
     prose = [without_code_spans(line) for line in lines]
     hits = []
     suffix = Path(rel).suffix.lower()
-    for number, detail in lint_template(prose, fenced, suffix in ENGINE_SUFFIXES, suffix in CONFIG_SUFFIXES):
+    for number, detail in [] if line_map else lint_template(prose, fenced, suffix in ENGINE_SUFFIXES,
+                                                            suffix in CONFIG_SUFFIXES):
         hits.append(("unbalanced-template", number, detail))
     for number, detail in lint_tags(prose, fenced):
         hits.append(("unclosed-tag", number, detail))
@@ -416,6 +618,8 @@ def lint_file(rel, text, tokens, *, lines=None, fenced=None):
         hits.append(("secret-literal", secrets[0], f"{len(secrets)} line(s) with a credential-shaped value"))
     if tokens > LARGE_PROMPT_TOKENS:
         hits.append(("large-prompt", 1, f"about {tokens} tokens"))
+    if line_map:
+        hits = [(rule, line_map[min(number, len(line_map)) - 1], detail) for rule, number, detail in hits]
     return [dict(rule=rule, location=f"{rel}:{number}", detail=detail, **{
         k: RULES[rule][k] for k in ("kind", "severity", "confidence", "category")}) for rule, number, detail in hits]
 
@@ -503,10 +707,93 @@ def git_state(root, read=()):
     return commit, True if ignored else None if ignored is None or unknown else False
 
 
+def location_key(location):
+    path, _, line = location.rpartition(":")
+    return path, int(line) if line.isdigit() else 0
+
+
+def link_call_sites(call_sites, found, sources, code, prompt_words=None, inline=()):
+    """Give each call site that sends a prompt its argument names, the literal values of the parameters that
+    matter (model, max_tokens, temperature...), the prompt files whose text it sends and the inline prompts
+    it passes (by name, or written in the call); return the unrequested-output-key hits of those calls
+    (prompt_words maps a prompt file to the words in it)."""
+    hits = []
+    for site in call_sites:
+        opening = site.pop("_open")
+        if site["api"] not in SENDING_APIS or opening is None:
+            continue
+        rel = site["path"]
+        src = sources.get(rel)
+        if src is None:
+            src = sources[rel] = binding_tool.Source(*code[rel])
+        site["_at"] = opening
+        details = binding_tool.call_details(src, src.lines[site["line"] - 1] + opening)
+        if details is None:
+            continue
+        args, params, words = details
+        here = f"{rel}:{site['line']}"
+        site["args"], site["params"] = args, params
+        sent = [b for b in found if b["loaded_at"].rpartition(":")[0] == rel and (
+            set(b["targets"]) & words or here in b["sent_at"])]
+        site["prompts"] = sorted({b["prompt"] for b in sent})
+        start = src.lines[site["line"] - 1] + opening
+        last = src.line(src.match[start])
+        site["inline_prompts"] = [f"{e['path']}:{e['line']}" for e in inline if e["path"] == rel and (
+            site["line"] <= e["line"] <= last or e["name"] in words)]
+        if prompt_words is not None and sent:
+            hits += lint_reply(site, sent, src, prompt_words)
+    return hits
+
+
+def lint_reply(site, sent, src, prompt_words):
+    """An unrequested-output-key hit when code reads keys from the call's parsed JSON reply that neither
+    the prompt files it sends, nor any other prompt file (one may be sent through a helper the trace does
+    not follow), nor any string literal in its file names. A call with a schema argument (response_format,
+    tools...), a spread argument or a prompt file whose path is ambiguous is not judged."""
+    if SCHEMA_ARGS & set(site["args"]) or "**" in site["args"] or any(b.get("ambiguous") for b in sent):
+        return []
+    rel = site["path"]
+    reads = binding_tool.reply_reads(src, src.lines[site["line"] - 1] + site.get("_at", 0))
+    if not reads:
+        return []
+    asked = set().union(*prompt_words.values())
+    asked |= binding_tool.string_words(src, skip=[at for *_, at in reads])
+    missing = {}
+    for line, key, _parse, _at in reads:
+        if key not in asked:
+            missing.setdefault(key, line)
+    if not missing:
+        return []
+    keys = sorted(missing, key=lambda k: (missing[k], k))
+    prompts = ", ".join(sorted({b["prompt"] for b in sent}))
+    return [dict(rule="unrequested-output-key", location=f"{rel}:{min(missing.values())}",
+                 detail=f"{len(keys)} key(s) read from the reply of the call at {rel}:{site['line']} that no prompt "
+                        f"it sends names ({prompts}): {', '.join(keys)}",
+                 **{k: RULES["unrequested-output-key"][k] for k in ("kind", "severity", "confidence", "category")})]
+
+
+def scan_inline(rel, src, candidates=None):
+    """(entries, hits) for the inline prompts of one code file (bindings.inline_prompts)."""
+    entries, hits = [], []
+    for name, start, pieces in binding_tool.inline_prompts(src, candidates):
+        lines, numbers = [], []
+        for content, first in pieces:
+            for i, line in enumerate(content.split("\n")):
+                lines.append(line.rstrip("\r"))
+                numbers.append(first + i)
+        text = "\n".join(lines)
+        tokens = estimate_tokens(text)
+        entries.append({"path": rel, "line": src.line(start), "name": name, "lines": len(lines), "chars": len(text),
+                        "est_tokens": tokens, "variables": variables(text)})
+        hits += lint_file(rel, text, tokens, lines=lines, fenced=fenced_lines(lines), line_map=numbers)
+    return entries, hits
+
+
 def scan(root):
     root = Path(root).resolve()
     prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
-    templates, code_words = [], set()
+    templates, code_words, code_files, template_texts, prompt_words, inline = [], set(), [], {}, {}, []
+    disk = {}  # The on-disk path of each code file, for the Git state of what was read.
     for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
@@ -525,12 +812,18 @@ def scan(root):
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
                                  "est_tokens": tokens, "variables": variables(text)})
             fenced = fenced_lines(lines)
+            prompt_words[rel] = set(CODE_WORD.findall(text))
             lint += lint_file(rel, text, tokens, lines=lines, fenced=fenced)
+            if kind in ("skill", "agent"):
+                lint += lint_references(root, on_disk, lines, fenced)
             if kind == "template":
                 templates.append((rel, template_uses(text, lines=lines, fenced=fenced)))
+                template_texts[rel] = (text, lines, fenced)
             read.add(on_disk)
         if is_code:
             code_words.update(CODE_WORD.findall(text))
+            code_files.append((rel, text, suffix))
+            disk[rel] = on_disk
         if is_code or suffix in CONFIG_SUFFIXES:
             # Only lines on which some pattern's match starts can match it; most code lines match none.
             patterns = [pattern for _, pattern, needles in CALL_PATTERNS
@@ -540,21 +833,42 @@ def scan(root):
             for number, line in ((i + 1, lines[i]) for i in candidates):
                 if is_code:
                     for api, pattern, _needles in CALL_PATTERNS:
-                        if pattern.search(line):
-                            call_sites.append({"path": rel, "line": number, "api": api})
+                        m = pattern.search(line)
+                        if m:
+                            call_sites.append({"path": rel, "line": number, "api": api,
+                                               "_open": m.end() - 1 if line[m.end() - 1:m.end()] == "(" else None})
                             read.add(on_disk)
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
                     read.add(on_disk)
+    found, sources = binding_tool.trace(code_files, [f["path"] for f in prompt_files], SENDERS)
+    for rel, text, suffix in code_files:
+        candidates = binding_tool.inline_candidates(text)
+        if candidates:
+            src = sources.get(rel) or binding_tool.Source(text, suffix)
+            entries, hits = scan_inline(rel, src, candidates)
+            if entries:
+                sources[rel] = src
+                read.add(disk[rel])
+                inline += entries
+                lint += hits
+    for f in prompt_files:
+        f["loaded_by"] = sorted({b["loaded_at"] for b in found if b["prompt"] == f["path"]}, key=location_key)
+    lint += link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files),
+                            prompt_words, inline)
+    for site in call_sites:
+        site.pop("_at", None)
+    hits, settled = lint_bindings(template_texts, found)
+    lint += hits
     # Without any code there is no caller to check against: a prompt-only repository is filled elsewhere.
     if code_words:
-        lint += lint_unreferenced(templates, code_words)
+        lint += lint_unreferenced(templates, code_words, settled)
     commit, dirty = git_state(root, sorted(read))
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
         "tool": "inventory.py", "version": 1, "root": shown(root.name), "commit": commit, "dirty": dirty,
-        "prompt_files": prompt_files, "call_sites": call_sites,
+        "prompt_files": prompt_files, "inline_prompts": inline, "call_sites": call_sites, "bindings": found,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
         "skipped_files": sorted(unread, key=lambda f: f["path"]),
@@ -580,8 +894,63 @@ def lint_findings(lint):
 
 def hit_key(rule, location, text):
     """What identifies one hit across rescans: unclosed-tag reports one hit per tag, possibly on one line."""
-    tag = re.search(r"<([a-z][\w-]*)>", text or "") if rule == "unclosed-tag" else None
+    if rule == "unused-render-key":
+        # One call site may render several templates, each its own hit.
+        tag = re.search(r"renders (\S+) with", text or "")
+    else:
+        tag = re.search(r"<([a-z][\w-]*)>", text or "") if rule == "unclosed-tag" else None
     return rule, location, tag.group(1) if tag else None
+
+
+def suppression_key(rule, location, text):
+    """What identifies a reviewed hit for --baseline: its rule, file, tag and detail with every number
+    blanked, so the verdict still applies after lines move. text is a hit's detail or an L-* cause."""
+    _rule, _location, tag = hit_key(rule, location, text)
+    detail = re.sub(r"^inventory\.py [\w-]+: |\.$", "", text or "")
+    return rule, location.rpartition(":")[0], tag, re.sub(r"[0-9]+", "#", detail)
+
+
+def suppressed_by(baseline):
+    """The suppression keys of the L-* findings a review judged FalsePositive or NotApplicable (a rescan
+    since keeps that review as previous_validation)."""
+    data = record.load(baseline, record.read_regular(baseline))
+    keys = set()
+    for f in data.get("findings", []):
+        if not f["id"].startswith("L-") or not f.get("rule"):
+            continue
+        review = f["validation"]
+        if review.get("verdict") == "Unverified" and isinstance(f.get("previous_validation"), dict):
+            review = f["previous_validation"]
+        if review.get("verdict") in record.EXCLUDED:
+            keys.add(suppression_key(f["rule"], f["location"], f.get("cause")))
+    return keys
+
+
+def lint_report(inventory, a):
+    """--baseline, --sarif and --fail-on: the exit code, after writing the SARIF file."""
+    hits = inventory["lint"]
+    if a.baseline:
+        keys = suppressed_by(a.baseline)
+        kept = [h for h in hits if suppression_key(h["rule"], h["location"], h["detail"]) not in keys]
+        if len(kept) < len(hits):
+            print(f"inventory.py: {len(hits) - len(kept)} hit(s) suppressed by reviewed verdicts in {a.baseline}",
+                  file=sys.stderr)
+        hits = kept
+    if a.sarif:
+        import export  # noqa: E402 - only this mode needs it
+        meta = {"target": inventory["root"], "scope": "inventory.py lint", "commit": inventory["commit"]}
+        a.sarif.parent.mkdir(parents=True, exist_ok=True)
+        export.write(a.sarif, export.sarif({"meta": meta}, lint_findings(hits)))
+        print(f"wrote {a.sarif}: {len(hits)} lint hit(s)", file=sys.stderr)
+    if a.fail_on:
+        limit = record.SEVERITIES.index(a.fail_on)
+        failing = [h for h in hits if record.SEVERITIES.index(h["severity"]) <= limit]
+        for h in failing:
+            print(f"{h['location']}: {h['severity']} {h['rule']}: {h['detail']}", file=sys.stderr)
+        if failing:
+            print(f"inventory.py: {len(failing)} lint hit(s) at {a.fail_on} or above", file=sys.stderr)
+            return 1
+    return 0
 
 
 def merge_into(findings_path, inventory):
@@ -624,6 +993,11 @@ def main(argv=None):
     p.add_argument("repo", type=Path)
     p.add_argument("--out", type=Path, help="write inventory.json here (default: stdout)")
     p.add_argument("--into", type=Path, help="replace the L-* findings of this findings.json")
+    p.add_argument("--baseline", type=Path, help="a reviewed findings.json: its FalsePositive and NotApplicable "
+                                                 "L-* verdicts suppress the same hits for --sarif and --fail-on")
+    p.add_argument("--sarif", type=Path, help="write the lint hits as SARIF 2.1.0 here")
+    p.add_argument("--fail-on", choices=record.SEVERITIES, metavar="SEVERITY",
+                   help="print the lint hits at this severity or above and exit 1 when there is one")
     a = p.parse_args(argv)
     if not a.repo.is_dir():
         print(f"inventory.py: {a.repo}: not a directory", file=sys.stderr)
@@ -646,7 +1020,7 @@ def main(argv=None):
             return 2
         print(f"wrote {a.out}: {len(inventory['prompt_files'])} prompt file(s), "
               f"{len(inventory['call_sites'])} call site(s), {len(inventory['lint'])} lint hit(s)")
-    else:
+    elif not (a.sarif or a.fail_on):
         sys.stdout.write(text)
     if a.into:
         try:
@@ -655,6 +1029,14 @@ def main(argv=None):
             print(f"inventory.py: {e}", file=sys.stderr)
             return 2
         print(f"merged {count} L-* finding(s) into {a.into}", file=sys.stderr if not a.out else sys.stdout)
+    if a.baseline or a.sarif or a.fail_on:
+        try:
+            if a.sarif and a.sarif.resolve() in {x.resolve() for x in (a.out, a.into, a.baseline) if x}:
+                raise OSError(f"--sarif {a.sarif} is also another input or output")
+            return lint_report(inventory, a)
+        except (record.SchemaError, OSError) as e:
+            print(f"inventory.py: {e}", file=sys.stderr)
+            return 2
     return 0
 
 

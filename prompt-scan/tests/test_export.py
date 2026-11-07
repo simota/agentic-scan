@@ -23,15 +23,15 @@ class ExportTest(unittest.TestCase):
         data["findings"][0]["status"] = "Fixed"
         data["findings"][1]["validation"] = {"verdict": "FalsePositive", "evidence": "x", "method": "static"}
         ids = [f["id"] for f in export.exported(data, "Info")]
-        self.assertEqual(len(ids), 9)
+        self.assertEqual(len(ids), 10)
         self.assertNotIn(data["findings"][0]["id"], ids)
-        self.assertEqual([f["severity"] for f in export.exported(data, "Medium")], ["High"] + ["Medium"] * 3)
+        self.assertEqual([f["severity"] for f in export.exported(data, "Medium")], ["High"] * 2 + ["Medium"] * 3)
 
     def test_summary_follows_the_chat_format(self):
         code, out, err = self.export("summary")
         self.assertEqual(code, 0, err)
         first = out.splitlines()[0]
-        self.assertTrue(first.startswith("11 findings (8 defects, 3 improvements): High 3, Medium 3, Low 5, Info 0."))
+        self.assertTrue(first.startswith("12 findings (9 defects, 3 improvements): High 4, Medium 3, Low 5, Info 0."))
         self.assertIn("Static review only.", first)
         self.assertIn("[High][defect][Confirmed] Template variable context is never filled", out)
         self.assertIn("  verdict: Valid — ", out)
@@ -55,7 +55,7 @@ class ExportTest(unittest.TestCase):
         self.assertEqual(doc["version"], "2.1.0")
         run_ = doc["runs"][0]
         results = run_["results"]
-        self.assertEqual(len(results), 11)
+        self.assertEqual(len(results), 12)
         rules = run_["tool"]["driver"]["rules"]
         self.assertEqual(len({r["id"] for r in rules}), len(rules))
         for r in results:
@@ -87,7 +87,7 @@ class ExportTest(unittest.TestCase):
         code, _, err = self.export("issues", "--out", out)
         self.assertEqual(code, 0, err)
         names = sorted(p.name for p in out.iterdir())
-        self.assertEqual(len(names), 12)
+        self.assertEqual(len(names), 13)
         self.assertIn("index.md", names)
         body = (out / "F-001.md").read_text()
         self.assertNotIn("{{", body.replace("{{ context }}", ""))

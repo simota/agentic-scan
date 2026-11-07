@@ -31,9 +31,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   lint hits. It traces each prompt file to the code that loads it, the keys
   every render call (`.format`, `.render`, `.substitute`, `.invoke`,
   `.replace`…) fills it with and the model call that sends it, with that
-  call's literal `model`, `max_tokens` and `temperature`; a variable a traced
-  render never fills, or a key it passes that the template never uses, is a
-  lint hit naming both lines. The agent then reconstructs each message as
+  call's literal `model`, `max_tokens` and `temperature`. A variable a traced
+  render never fills, a key it passes that the template never uses, and a key
+  the code reads from the call's parsed JSON reply that no prompt asks for are
+  lint hits naming both lines. The agent then reconstructs each message as
   actually sent and marks which inputs are untrusted
 - **Perspectives** — task and intent, instruction consistency, structure and
   placement, variables and assembly, output contract, examples, tools and

@@ -470,3 +470,93 @@ def call_details(src, pos):
                 params[name] = CONSTANT[raw.strip()]
     words = set(IDENT.findall(src.masked[pos + 1:close]))
     return args, params, words
+
+
+# Parsing a reply as JSON; a schema-validating parser (pydantic, zod) carries its own contract and is not one.
+PARSE_CALL = re.compile(r"\b(?:json\.loads|JSON\.parse|orjson\.loads|ujson\.loads|json5\.loads|yaml\.safe_load)\s*\(")
+# Arguments that give the call a schema of its own: the keys then come from code, not from the prompt.
+SCHEMA_ARGS = {"response_format", "tools", "functions", "tool_choice", "output_format", "text_format", "text",
+               "response_schema", "responseSchema", "schema", "output", "experimental_output", "response_model",
+               "generation_config", "generationConfig", "config"}
+MAX_ALIASES = 3
+
+
+def reply_reads(src, pos):
+    """[(line, key, parse line, literal start)] of the keys code reads from the JSON parsed out of the reply of the call
+    whose opening parenthesis is at pos, or None when the call is not assigned, or its reply is not parsed
+    as JSON in this file. Followed: the call's assignment target, assignments of expressions holding it
+    (`text = message.content[0].text`), a JSON parse of one of them, and subscripts and .get() of the
+    parsed value, chained or through its own assignment target."""
+    if pos not in src.match:
+        return None
+    rings = src.enclosing(pos)
+    stmt = src.statement(pos, rings[-1] if rings else None)
+    target = ASSIGN.match(src.masked, stmt)
+    if not target or rings or target.end() > pos:
+        return None
+    holders, frontier, after = {target.group(1)}, [target.group(1)], src.match[pos]
+    reads, parsed = [], False
+    for _ in range(MAX_ALIASES):
+        found = []
+        for name in frontier:
+            for m in re.compile(r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])").finditer(src.masked, after):
+                inner = src.enclosing(m.start())
+                start = src.statement(m.start(), inner[-1] if inner else None)
+                own = ASSIGN.match(src.masked, start)
+                if own and own.start(1) == m.start():
+                    continue
+                parse = next((o for o in inner if PARSE_CALL.search(src.masked, max(0, o - 40), o + 1)
+                              and PARSE_CALL.search(src.masked, max(0, o - 40), o + 1).end() == o + 1), None)
+                if parse is not None:
+                    parsed = True
+                    reads += subscripts(src, src.match[parse] + 1, src.line(parse))
+                    outer = src.enclosing(parse)
+                    alias = ASSIGN.match(src.masked, src.statement(parse, outer[-1] if outer else None))
+                    if alias and not outer and alias.end() <= parse:
+                        reads += value_reads(src, alias, src.line(parse))
+                elif own and not inner and own.group(1) not in holders and own.end() <= m.start():
+                    holders.add(own.group(1))
+                    found.append(own.group(1))
+        frontier = found
+        if not frontier:
+            break
+    return reads if parsed else None
+
+
+def key_at(src, pos):
+    """(key, where its literal starts) of a subscript `["key"]` or `.get("key"` starting at pos, or (None, None)."""
+    m = re.compile(r"\s*(?:\[|\??\.\s*get\s*\()").match(src.masked, pos)
+    if not m or m.end() - 1 not in src.match:
+        return None, None
+    opening = m.end() - 1
+    args = split_args(src, opening + 1, src.match[opening])
+    key = literal(src, *args[0]) if args else None
+    if not key or not IDENT.fullmatch(key):
+        return None, None
+    return key, src.masked.find(src.masked[args[0][0]:args[0][1]].strip()[:1], args[0][0])
+
+
+def subscripts(src, pos, parse_line):
+    key, at = key_at(src, pos)
+    return [(src.line(pos), key, parse_line, at)] if key else []
+
+
+def value_reads(src, alias, parse_line):
+    """The first-level keys read from the variable alias names, after its assignment."""
+    name, reads = alias.group(1), []
+    for m in re.compile(r"(?<![\w$.])" + re.escape(name) + r"(?![\w$])").finditer(src.masked, alias.end()):
+        inner = src.enclosing(m.start())
+        own = ASSIGN.match(src.masked, src.statement(m.start(), inner[-1] if inner else None))
+        if own and own.start(1) == m.start():
+            break  # Reassigned: later reads are of another value.
+        key, at = key_at(src, m.end())
+        if key:
+            reads.append((src.line(m.start()), key, parse_line, at))
+    return reads
+
+
+def string_words(src, skip=()):
+    """Every word in the file's string literals, as an inline prompt or a schema might hold it, but those of
+    the literals starting at skip (the keys read)."""
+    skip = set(skip)
+    return {w for start, end, q in src.strings if start not in skip for w in IDENT.findall(src.text[start + q:end - q])}

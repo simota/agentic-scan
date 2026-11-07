@@ -32,7 +32,7 @@ class TraceTest(unittest.TestCase):
         self.assertEqual(site["params"], {"model": "claude-haiku-5-5", "max_tokens": 200, "temperature": 1.0})
         self.assertEqual(site["args"], ["model", "max_tokens", "temperature", "system", "messages"])
         self.assertEqual(site["prompts"], ["app/llm/prompts/answer.prompt", "app/llm/prompts/support_system.md"])
-        self.assertEqual(lint(result)[0], ("unfilled-variable", "app/llm/prompts/answer.prompt:4",
+        self.assertEqual(lint(result)[1], ("unfilled-variable", "app/llm/prompts/answer.prompt:4",
                                            "1 variable(s) not filled where app/llm/answer.py:14 renders it: context"))
 
     def test_module_constant_rendered_in_a_function(self):
@@ -167,6 +167,38 @@ class TraceTest(unittest.TestCase):
                      category="Variables and assembly") for t in ("prompts/a.md", "prompts/b.md")]
         keys = {inventory.hit_key(f["rule"], f["location"], f["cause"]) for f in inventory.lint_findings(hits)}
         self.assertEqual(len(keys), 2)
+
+    def test_reply_keys_the_prompts_never_ask_for(self):
+        prompt = {"prompts/a.md": 'Reply as JSON with "answer" and "sources".\n', "prompts/other.md": "Give a score.\n"}
+        head = 'S = open("prompts/a.md").read()\n'
+        cases = {
+            "alias then get": (head + 'r = client.chat.completions.create(model="m", messages=[{"role": "system", '
+                               '"content": S}])\ntext = r.choices[0].message.content\ndata = json.loads(text)\n'
+                               'print(data["answer"], data.get("confidence"))\n', ".py", ("app.py:5", "confidence")),
+            "chained subscript": (head + 'r = client.messages.create(model="m", system=S, messages=m)\n'
+                                  'x = json.loads(r.content[0].text)["verdict"]\n', ".py", ("app.py:3", "verdict")),
+            "javascript": ('const S = fs.readFileSync("prompts/a.md", "utf8");\nconst r = await client.chat.completions'
+                           '.create({ model: "m", messages: [{ role: "system", content: S }] });\n'
+                           'const data = JSON.parse(r.choices[0].message.content);\nreturn data["verdict"];\n', ".ts",
+                           ("app.ts:4", "verdict")),
+            # Not judged: a schema argument, a key an inline string or another prompt file names, a value
+            # reassigned before the read, a reply not parsed as JSON.
+            "schema": (head + 'r = client.chat.completions.create(model="m", messages=[{"role": "system", "content": S}],'
+                       ' response_format=Schema)\nd = json.loads(r.choices[0].message.content)\nd["verdict"]\n', ".py", None),
+            "inline": (head + 'r = client.messages.create(model="m", system=S, messages=[{"role": "user", '
+                       '"content": "Also give a verdict field"}])\nd = json.loads(r.content[0].text)\nd["verdict"]\n', ".py", None),
+            "other prompt": (head + 'r = client.messages.create(model="m", system=S, messages=m)\n'
+                             'd = json.loads(r.content[0].text)\nd["score"]\n', ".py", None),
+            "reassigned": (head + 'r = client.messages.create(model="m", system=S, messages=m)\n'
+                           'd = json.loads(r.content[0].text)\nd = {}\nd["verdict"]\n', ".py", None),
+            "not parsed": (head + 'r = client.messages.create(model="m", system=S, messages=m)\n'
+                           'd = r.content[0].text\nd["verdict"]\n', ".py", None),
+        }
+        for name, (code, suffix, expected) in cases.items():
+            with self.subTest(name):
+                hits = [(loc, detail.rpartition(": ")[2]) for rule, loc, detail in lint(scan({**prompt, "app" + suffix: code}))
+                        if rule == "unrequested-output-key"]
+                self.assertEqual(hits, [expected] if expected else [])
 
     def test_masking_ignores_comments_and_strings(self):
         src = inventory.binding_tool.Source('a = "x(" # )\nb = (1, \'\'\'\n)\'\'\')\n', ".py")

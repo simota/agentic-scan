@@ -22,7 +22,7 @@ class CompareTest(unittest.TestCase):
 
     def test_identical_reviews_persist_everything(self):
         result = compare.compare(self.base, clone(self.base))
-        self.assertEqual(result["summary"], {"new": 0, "reopened": 0, "persisting": 11, "resolved": 0, "dismissed": 0})
+        self.assertEqual(result["summary"], {"new": 0, "reopened": 0, "persisting": 12, "resolved": 0, "dismissed": 0})
         self.assertTrue(all(not e["changes"] for e in result["persisting"]))
 
     def test_renumbered_moved_and_reworded_findings_still_match(self):
@@ -36,7 +36,7 @@ class CompareTest(unittest.TestCase):
 
     def test_a_review_in_the_other_language_matches_by_location(self):
         result = compare.compare(sample("ja"), self.base)
-        self.assertEqual(result["summary"]["persisting"], 11)
+        self.assertEqual(result["summary"]["persisting"], 12)
 
     def test_classes(self):
         cur = clone(self.base)
@@ -74,12 +74,12 @@ class CompareTest(unittest.TestCase):
                 f["id"] = "L-001"
         result = compare.compare(self.base, cur)
         pairs = {e["id"]: e["baseline_id"] for e in result["persisting"] if e["id"].startswith("L-")}
-        self.assertEqual(pairs, {"L-001": "L-002", "L-002": "L-001", "L-003": "L-003"})
+        self.assertEqual(pairs, {"L-001": "L-002", "L-002": "L-001", "L-003": "L-003", "L-004": "L-004"})
 
     def test_markdown_and_json_outputs(self):
         code, out, err = self.run_compare(clone(self.base))
         self.assertEqual(code, 0, err)
-        self.assertIn("0 new, 0 reopened, 11 persisting", out)
+        self.assertIn("0 new, 0 reopened, 12 persisting", out)
         code, out, _ = self.run_compare(clone(self.base), "--json")
         self.assertEqual(json.loads(out)["tool"], "compare.py")
         code, out, _ = self.run_compare(clone(self.base), "--lang", "ja")

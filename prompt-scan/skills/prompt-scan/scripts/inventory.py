@@ -76,6 +76,7 @@ CALL_PATTERNS = [
 SENDING_APIS = {"anthropic.messages", "openai.chat.completions", "openai.responses", "gemini.generate_content",
                 "ai-sdk"}
 SENDERS = [pattern for api, pattern, _ in CALL_PATTERNS if api in SENDING_APIS]
+SCHEMA_ARGS = binding_tool.SCHEMA_ARGS
 # Bare IDs plus the forms clouds use: Bedrock `us.anthropic.claude-…-v1:0`, Vertex `claude-…@20240620`,
 # Gemini `models/gemini-…`.
 _TAIL = r"(?:[a-z0-9.-]*[a-z0-9])?"
@@ -187,6 +188,17 @@ RULES = {
             "meant for, or stop passing it.",
         test="Render the template from the named call site and assert the rendered prompt contains the passed "
              "value."),
+    "unrequested-output-key": dict(
+        kind="defect", severity="High", confidence="Suspected", category="Output contract",
+        title="Code reads a reply key the prompt never asks for",
+        symptom="The code reads a key from the model's JSON reply that no prompt sent on that call names, so "
+                "the model has no reason to produce it.",
+        impact="The read fails (KeyError) or yields nothing on ordinary replies; the feature returns wrong or "
+               "empty output.",
+        fix="Ask for the key in the prompt's output format, or read the key the prompt asks for; better, use "
+            "structured output with one schema shared by the prompt and the parser.",
+        test="For a representative input, parse the reply as the code does and assert every key it reads is "
+             "present."),
     "duplicate-line": dict(
         kind="improvement", severity="Info", confidence="Confirmed", category="Context budget",
         title="Repeated line in a prompt",
@@ -617,9 +629,11 @@ def location_key(location):
     return path, int(line) if line.isdigit() else 0
 
 
-def link_call_sites(call_sites, found, sources, code):
+def link_call_sites(call_sites, found, sources, code, prompt_words=None):
     """Give each call site that sends a prompt its argument names, the literal values of the parameters that
-    matter (model, max_tokens, temperature...) and the prompt files whose text it sends."""
+    matter (model, max_tokens, temperature...) and the prompt files whose text it sends; return the
+    unrequested-output-key hits of those calls (prompt_words maps a prompt file to the words in it)."""
+    hits = []
     for site in call_sites:
         opening = site.pop("_open")
         if site["api"] not in SENDING_APIS or opening is None:
@@ -628,20 +642,52 @@ def link_call_sites(call_sites, found, sources, code):
         src = sources.get(rel)
         if src is None:
             src = sources[rel] = binding_tool.Source(*code[rel])
+        site["_at"] = opening
         details = binding_tool.call_details(src, src.lines[site["line"] - 1] + opening)
         if details is None:
             continue
         args, params, words = details
         here = f"{rel}:{site['line']}"
         site["args"], site["params"] = args, params
-        site["prompts"] = sorted({b["prompt"] for b in found if b["loaded_at"].rpartition(":")[0] == rel and (
-            set(b["targets"]) & words or here in b["sent_at"])})
+        sent = [b for b in found if b["loaded_at"].rpartition(":")[0] == rel and (
+            set(b["targets"]) & words or here in b["sent_at"])]
+        site["prompts"] = sorted({b["prompt"] for b in sent})
+        if prompt_words is not None and sent:
+            hits += lint_reply(site, sent, src, prompt_words)
+    return hits
+
+
+def lint_reply(site, sent, src, prompt_words):
+    """An unrequested-output-key hit when code reads keys from the call's parsed JSON reply that neither
+    the prompt files it sends, nor any other prompt file (one may be sent through a helper the trace does
+    not follow), nor any string literal in its file names. A call with a schema argument (response_format,
+    tools...), a spread argument or a prompt file whose path is ambiguous is not judged."""
+    if SCHEMA_ARGS & set(site["args"]) or "**" in site["args"] or any(b.get("ambiguous") for b in sent):
+        return []
+    rel = site["path"]
+    reads = binding_tool.reply_reads(src, src.lines[site["line"] - 1] + site.get("_at", 0))
+    if not reads:
+        return []
+    asked = set().union(*prompt_words.values())
+    asked |= binding_tool.string_words(src, skip=[at for *_, at in reads])
+    missing = {}
+    for line, key, _parse, _at in reads:
+        if key not in asked:
+            missing.setdefault(key, line)
+    if not missing:
+        return []
+    keys = sorted(missing, key=lambda k: (missing[k], k))
+    prompts = ", ".join(sorted({b["prompt"] for b in sent}))
+    return [dict(rule="unrequested-output-key", location=f"{rel}:{min(missing.values())}",
+                 detail=f"{len(keys)} key(s) read from the reply of the call at {rel}:{site['line']} that no prompt "
+                        f"it sends names ({prompts}): {', '.join(keys)}",
+                 **{k: RULES["unrequested-output-key"][k] for k in ("kind", "severity", "confidence", "category")})]
 
 
 def scan(root):
     root = Path(root).resolve()
     prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
-    templates, code_words, code_files, template_texts = [], set(), [], {}
+    templates, code_words, code_files, template_texts, prompt_words = [], set(), [], {}, {}
     for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
@@ -660,6 +706,7 @@ def scan(root):
             prompt_files.append({"path": rel, "kind": kind, "lines": len(lines), "chars": len(text),
                                  "est_tokens": tokens, "variables": variables(text)})
             fenced = fenced_lines(lines)
+            prompt_words[rel] = set(CODE_WORD.findall(text))
             lint += lint_file(rel, text, tokens, lines=lines, fenced=fenced)
             if kind == "template":
                 templates.append((rel, template_uses(text, lines=lines, fenced=fenced)))
@@ -688,7 +735,10 @@ def scan(root):
     found, sources = binding_tool.trace(code_files, [f["path"] for f in prompt_files], SENDERS)
     for f in prompt_files:
         f["loaded_by"] = sorted({b["loaded_at"] for b in found if b["prompt"] == f["path"]}, key=location_key)
-    link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files))
+    lint += link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files),
+                            prompt_words)
+    for site in call_sites:
+        site.pop("_at", None)
     hits, settled = lint_bindings(template_texts, found)
     lint += hits
     # Without any code there is no caller to check against: a prompt-only repository is filled elsewhere.

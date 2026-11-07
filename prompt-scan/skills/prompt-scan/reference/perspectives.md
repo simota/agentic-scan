@@ -74,7 +74,7 @@ Rules:
 
 | Step | Hunt | Sound when |
 |---|---|---|
-| VA1 | A template variable that no call site fills, or a call site that fills a name the template does not use | Every name matches between template and call site (`inventory.json` variables) |
+| VA1 | A template variable that no call site fills, or a call site that fills a name the template does not use | Every name matches between template and call site (`inventory.json` `bindings`; lint `unfilled-variable`, `unused-render-key` and `unreferenced-variable` help) |
 | VA2 | Empty or missing values: the variable is optional in code but the prompt reads as if it is present | The template handles the empty case, or the code guarantees a value |
 | VA3 | Escaping: literal braces in a format string, a value containing the delimiter, Jinja autoescape producing `&lt;` in the prompt | Values are escaped for the template engine and cannot close the surrounding tag |
 | VA4 | Type and formatting: a list or object interpolated with its repr (`['a', 'b']`, `[object Object]`), dates without timezone, numbers without units | The value is formatted for a reader |
@@ -85,11 +85,11 @@ Rules:
 
 | Step | Hunt | Sound when |
 |---|---|---|
-| OC1 | Field names, types or enum values in the prompt differ from the parser or schema | They match field by field (cite both `path:line`) |
+| OC1 | Field names, types or enum values in the prompt differ from the parser or schema | They match field by field (cite both `path:line`; lint `unrequested-output-key` helps, `call_sites[].params` gives the call's literal parameters) |
 | OC2 | The prompt asks for JSON but allows prose around it, and the parser does not strip it | Structured output, a prefill, or a tolerant parser |
 | OC3 | No instruction for the empty, unknown or refusal case, so the model invents a value | The prompt names the value for "none" or "cannot answer" and the consumer handles it |
 | OC4 | The parser's failure path: crash, silent default, or retry loop without a limit | Failure is detected and handled visibly |
-| OC5 | Length limits: the requested output can exceed `max_tokens`, truncating the structure | The limit leaves room for the largest valid output, or truncation is detected |
+| OC5 | Length limits: the requested output can exceed `max_tokens`, truncating the structure | The limit leaves room for the largest valid output, or truncation is detected (`call_sites[].params` holds a literal `max_tokens`) |
 
 ### Examples (EX)
 

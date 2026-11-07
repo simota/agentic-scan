@@ -214,6 +214,10 @@ check: test ## verify the skill is self-contained and internally consistent
 	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/drafts.py "$$sample" --out "$$drafts/$$lang" --lang $$lang >/dev/null \
 	      || { printf '%s\n' "MISS drafts.py fails on $$sample ($$lang)" >&2; fail=1; }; \
 	  done; \
+	  for format in sarif csv datamap-csv; do \
+	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/export.py "$$sample" --format $$format --out "$$drafts/export.$$format" >/dev/null \
+	      || { printf '%s\n' "MISS export.py --format $$format fails on $$sample" >&2; fail=1; }; \
+	  done; \
 	  for lang in ja en; do \
 	    PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py "$$sample" --out "$$out" --lang $$lang >/dev/null \
 	      || { printf '%s\n' "MISS render.py fails on $$sample ($$lang)" >&2; fail=1; }; \
@@ -224,7 +228,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	  rm -f "$$out"/*; \
 	done; \
 	rm -rf "$$out" "$$drafts"; \
-	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, pass the contract, diff and draft"; \
+	[ $$fail -eq 0 ] && printf '%s\n' "check ok - $$(ls $(QSKILL)/reference/*.md | wc -l | tr -d ' ') reference files cited and headed, samples render, pass the contract, diff, draft and export"; \
 	exit $$fail
 
 # The default DEMO_OUT under a shared /tmp can be created first by another user,

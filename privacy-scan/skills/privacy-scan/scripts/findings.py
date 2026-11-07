@@ -9,8 +9,8 @@
 
 A fragment is a JSON file written with the host's file-write tool (never a
 shell heredoc or a generated script). It holds any of these top-level keys:
-`meta` is merged key by key; `findings` and `commitments` records are matched by
-`id`, a known record updated key by key and a new one appended; `perspectives`
+`meta` is merged key by key; `findings`, `commitments` and `data_map` records are
+matched by `id`, a known record updated key by key and a new one appended; `perspectives`
 are matched by `name` and replaced whole; the string lists (`checked_ok`,
 `decisions`, `limitations`, `next_steps`) are appended without duplicates.
 Nested `validation` and `analysis` objects of a known finding also merge key by
@@ -25,8 +25,9 @@ revisions). Run it after the last merge; IDs
 change, so read them back before writing another fragment.
 
 `diff` compares an earlier assessment's record with the current one and prints
-new, reopened, resolved and persisting findings, active counts by severity and
-commitment status changes, as Markdown (or JSON with `--json`). IDs change
+new, reopened, resolved and persisting findings, active counts by severity,
+commitment status changes and data map changes (elements, recipients, stores),
+as Markdown (or JSON with `--json`). IDs change
 between runs, so findings are matched by perspective, location and title
 (`scripts/compare.py`); each pair names how it was matched.
 
@@ -92,7 +93,7 @@ STEP_PREFIXES = dict(zip(PERSPECTIVES, ("MN", "PC", "RD", "DR", "TP", "LT", "EX"
 STEP_COUNTS = dict(zip(PERSPECTIVES, (4, 4, 3, 4, 6, 4, 6, 2, 3, 2, 3, 2)))
 STEP_ID = re.compile(r"([A-Z]{2})([1-9]\d{0,2})")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
-TOP_KEYS = {"meta", "findings", "commitments", "perspectives", *LISTS}
+TOP_KEYS = {"meta", "findings", "commitments", "data_map", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
 META_KEYS = {*META_REQUIRED, "commit", "method"}
 TEXT_FIELDS = ("title", "data", "subjects", "flow", "impact", "fix", "guard")
@@ -100,13 +101,17 @@ TEXT_FIELDS = ("title", "data", "subjects", "flow", "impact", "fix", "guard")
 ACTION_FIELDS = ("fix", "guard")
 FINDING_REQUIRED = ("id", "severity", "confidence", "category", "location", "validation",
                     *TEXT_FIELDS)
-FINDING_KEYS = {*FINDING_REQUIRED, "step", "contrast", "commitment", "analysis", "conditions",
-                "status", "references"}
+FINDING_KEYS = {*FINDING_REQUIRED, "step", "contrast", "commitment", "elements", "analysis",
+                "conditions", "status", "references"}
 VALIDATION_KEYS = {"verdict", "method", "evidence"}
 ANALYSIS_KEYS = {"tool", "command", "result"}
 REFERENCE_KEYS = {"title", "url"}
 COMMITMENT_KEYS = {"id", "statement", "source", "status", "family", "inferred", "reason"}
 PERSPECTIVE_KEYS = {"name", "status", "note"}
+# One personal data element of the recon data map (reference/recon.md §2–3):
+# where it is collected, every store it lands in and every party that receives it.
+ELEMENT_REQUIRED = ("id", "element", "category", "subjects", "sensitive", "stores", "recipients")
+ELEMENT_KEYS = {*ELEMENT_REQUIRED, "collected", "retention", "note"}
 OUTPUTS = {"findings.json", "dashboard.html", "report.md"}
 # IDs and line numbers are ASCII digits; Unicode `\d` would also accept
 # Arabic-Indic or full-width digits that no source line or ledger uses.
@@ -117,6 +122,8 @@ COMMITMENT_ID = re.compile(r"^C-[0-9]{2,6}$")
 # ("C-01の"), which `\w` would count as part of a longer word. Any digits
 # count here, so a citation in other digits is reported as missing from the ledger.
 COMMITMENT_REF = re.compile(r"(?<![A-Za-z0-9_-])C-\d{2,6}(?![A-Za-z0-9_-])")
+ELEMENT_ID = re.compile(r"^D-[0-9]{2,6}$")
+ELEMENT_REF = re.compile(r"(?<![A-Za-z0-9_-])D-\d{2,6}(?![A-Za-z0-9_-])")
 COMMIT_HASH = re.compile(r"[0-9a-fA-F]{4,64}\Z")
 # Spaces are valid in source paths; control characters and line breaks are not.
 LOCATION = re.compile(r"^[^:\x00-\x1f\x7f-\x9f\u2028\u2029]+:[0-9]{1,9}(?:-[0-9]{1,9})?$")
@@ -230,6 +237,44 @@ def _check_reference_url(value, where):
         raise SchemaError(f"{where}: {reason}")
 
 
+def _locations(written, where):
+    """Each entry is a `path:line` whose path passes the personal-value guard."""
+    for i, loc in enumerate(written):
+        if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
+            raise SchemaError(f"{where}[{i}]: must be path:line")
+        # The parsed line range is technical metadata; the path can hold PII.
+        path = loc.rsplit(":", 1)[0]
+        _text(path, f"{where}[{i}]")
+        _no_personal_values(personal_values.PATH_TIMESTAMP.sub("#", path), f"{where}[{i}]")
+
+
+def _string_list(value, where):
+    """A list of nonblank strings (stores, recipients), each checked as prose."""
+    _list(value, where)
+    for i, item in enumerate(value):
+        _text(item, f"{where}[{i}]")
+        _no_personal_values(item, f"{where}[{i}]")
+
+
+def validate_element(r, where):
+    _object(r, ELEMENT_KEYS, where)
+    for key in ELEMENT_REQUIRED:
+        if key not in r:
+            raise SchemaError(f"{where}: missing {key}")
+    _id(r["id"], ELEMENT_ID, "D-01", f"{where}.id")
+    for key in ("element", "category", "subjects"):
+        _text(r[key], f"{where}.{key}")
+    if not isinstance(r["sensitive"], bool):
+        raise SchemaError(f"{where}.sensitive: must be a boolean")
+    for key in ("stores", "recipients"):
+        _string_list(r[key], f"{where}.{key}")
+    if "collected" in r:
+        _list(r["collected"], f"{where}.collected")
+        _locations(r["collected"], f"{where}.collected")
+    _optional_strings(r, ("retention", "note"), where)
+    _check_prose(r, ("element", "category", "subjects", "retention", "note"), where)
+
+
 def validate_finding(f, where):
     _object(f, FINDING_KEYS, where)
     v = f.get("validation")
@@ -242,11 +287,12 @@ def validate_finding(f, where):
     for key in TEXT_FIELDS:
         if key in f or key not in optional:
             _text(f[key], f"{where}.{key}")
-    _optional_strings(f, ("contrast", "step", "commitment", "conditions"), where)
+    _optional_strings(f, ("contrast", "step", "commitment", "elements", "conditions"), where)
     _check_prose(f, (*TEXT_FIELDS, "contrast", "step", "conditions"), where)
     commitment = f.get("commitment")
     if not isinstance(commitment, str) or not COMMITMENT_ID.fullmatch(commitment):
         _no_personal_values(commitment, f"{where}.commitment")
+    _no_personal_values(f.get("elements"), f"{where}.elements")
     _choice(f["severity"], SEVERITIES, f"{where}.severity")
     _choice(f["confidence"], CONFIDENCES, f"{where}.confidence")
     _choice(f["category"], PERSPECTIVES, f"{where}.category")
@@ -254,13 +300,7 @@ def validate_finding(f, where):
     written = f["location"] if isinstance(f["location"], list) else [f["location"]]
     if not written:
         raise SchemaError(f"{where}.location: at least one path:line")
-    for i, loc in enumerate(written):
-        if not isinstance(loc, str) or not LOCATION.fullmatch(loc):
-            raise SchemaError(f"{where}.location[{i}]: must be path:line")
-        # The parsed line range is technical metadata; the path can hold PII.
-        path = loc.rsplit(":", 1)[0]
-        _text(path, f"{where}.location[{i}]")
-        _no_personal_values(personal_values.PATH_TIMESTAMP.sub("#", path), f"{where}.location[{i}]")
+    _locations(written, f"{where}.location")
     v = f["validation"]
     _object(v, VALIDATION_KEYS, f"{where}.validation")
     _choice(v.get("verdict"), VERDICTS, f"{where}.validation.verdict")
@@ -303,8 +343,14 @@ def validate(doc, complete=False):
     # Numeric hexadecimal revisions are valid too; arbitrary commit prose is not exempt.
     if not isinstance(commit, str) or not COMMIT_HASH.fullmatch(commit):
         _no_personal_values(commit, "meta.commit")
-    for key in ("findings", "commitments", "perspectives"):
+    for key in ("findings", "commitments", "data_map", "perspectives"):
         _list(doc.get(key, []), key)
+    seen = set()
+    for i, r in enumerate(doc.get("data_map", [])):
+        validate_element(r, f"data_map[{i}]")
+        if r["id"] in seen:
+            raise SchemaError(f"data_map[{i}].id: must be unique")
+        seen.add(r["id"])
     seen = set()
     for i, f in enumerate(doc.get("findings", [])):
         validate_finding(f, f"findings[{i}]")
@@ -374,7 +420,7 @@ def merge(doc, fragment, where):
         _object(doc.get("meta", {}), META_KEYS, "meta")
         _object(fragment["meta"], META_KEYS, f"{where}.meta")
         doc.setdefault("meta", {}).update(fragment["meta"])
-    for key in ("findings", "commitments", "perspectives"):
+    for key in ("findings", "commitments", "data_map", "perspectives"):
         if key not in fragment:
             continue
         _list(fragment[key], f"{where}.{key}")
@@ -402,7 +448,7 @@ def merge(doc, fragment, where):
     return doc
 
 
-NOT_REFERENCES = {"location", "url", "command", "commit", "source"}
+NOT_REFERENCES = {"location", "collected", "url", "command", "commit", "source"}
 # ASCII boundaries, as COMMITMENT_REF. A hyphen may join references
 # (`PV-001-PV-003`) or a word (`PV-002-related`), but another prefix
 # (`ACME-PV-001`) is a different identifier.
@@ -482,7 +528,42 @@ def counts(doc):
     result["n_excluded"] = len(findings) - len(reported)
     for verdict in ("Likely", "Unverified", "Unlikely"):
         result[f"n_{verdict.lower()}"] = sum(f["validation"]["verdict"] == verdict for f in reported)
+    elements = doc.get("data_map", [])
+    result["n_elements"] = len(elements)
+    result["n_sensitive_elements"] = sum(r["sensitive"] for r in elements)
+    result["n_recipients"] = len(recipients(doc))
     return result
+
+
+def _same(text):
+    return " ".join(text.split()).casefold()
+
+
+def recipients(doc):
+    """Who receives personal data: recipient -> data map IDs, in first-seen order.
+
+    Recipients are matched case- and spacing-insensitively; the first spelling is shown.
+    """
+    seen, shown = {}, {}
+    for r in doc.get("data_map", []):
+        for name in r["recipients"]:
+            key = _same(name)
+            shown.setdefault(key, name)
+            ids = seen.setdefault(key, [])
+            if r["id"] not in ids:
+                ids.append(r["id"])
+    return {shown[key]: ids for key, ids in seen.items()}
+
+
+def element_citations(doc):
+    """Data map ID -> IDs of the reported findings whose `elements` cite it, in record order."""
+    citing = {}
+    for f in doc.get("findings", []):
+        if excluded(f):
+            continue
+        for cited in dict.fromkeys(ELEMENT_REF.findall(f.get("elements", ""))):
+            citing.setdefault(cited, []).append(f["id"])
+    return citing
 
 
 def cmd_counts(args):
@@ -693,6 +774,11 @@ def record_problems(doc):
             prefix, last = STEP_PREFIXES[f["category"]], STEP_COUNTS[f["category"]]
             problems.append(f"{f['id']}.step: {step.group(0)} is not a hunt step of {f['category']} "
                             f"({prefix}1–{prefix}{last} in reference/perspectives.md)")
+    mapped = {r["id"] for r in doc.get("data_map", [])}
+    for i, f in enumerate(findings):
+        for cited in dict.fromkeys(ELEMENT_REF.findall(f.get("elements", ""))):
+            if cited not in mapped:
+                problems.append(f"findings[{i}].elements: {cited} is not in the data map")
     ledger = {r["id"] for r in doc.get("commitments", [])}
     for i, f in enumerate(findings):
         # Ledger IDs are technical identifiers; other prose was checked by validate.

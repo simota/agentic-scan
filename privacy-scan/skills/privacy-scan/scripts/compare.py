@@ -20,6 +20,11 @@ or `NotApplicable`) and its status is not `Fixed`.
 | inactive| active   | reopened   |
 | (none)  | active   | new        |
 
+When either record has a `data_map`, its elements are matched by element name,
+then by ID, and the comparison lists elements added and removed and, per matched
+element, recipients and stores added or removed and a changed sensitive flag:
+a new recipient of personal data is the change a re-assessment most needs to show.
+
 Both records pass the schema check first. Only IDs, titles, severities and
 paths from those records are printed, which the personal-value guard has
 already accepted.
@@ -51,6 +56,10 @@ LABELS = {
         "note": "Findings are matched by perspective, location and title, not by ID; "
                 "confirm each pair before relying on it.",
         "unchanged": "unchanged",
+        "data_map": "Personal data map", "sensitive": "sensitive",
+        "recipients_added": "now sent to", "recipients_removed": "no longer sent to",
+        "stores_added": "now stored in", "stores_removed": "no longer stored in",
+        "sensitive_changed": "sensitive category", "map_removed": "no longer in the data map",
     },
     "ja": {
         "title": "診断結果の比較", "old": "前回", "new": "今回",
@@ -66,6 +75,10 @@ LABELS = {
         "note": "検出事項は ID ではなく観点・場所・タイトルで対応づけている。"
                 "各組を確認してから利用すること。",
         "unchanged": "変化なし",
+        "data_map": "個人データマップ", "sensitive": "機微",
+        "recipients_added": "新たな受領者", "recipients_removed": "受領しなくなった",
+        "stores_added": "新たな保存先", "stores_removed": "保存しなくなった",
+        "sensitive_changed": "要配慮・機微の区分", "map_removed": "データマップから外れた",
     },
 }
 
@@ -179,6 +192,51 @@ def _commitment_changes(old, new):
     return {"changed": changed, "added": added, "removed": removed}
 
 
+def _list_changes(old, new):
+    """Entries of `new` not in `old`, and of `old` not in `new`, ignoring case and spacing."""
+    old_keys, new_keys = {_normal(x) for x in old}, {_normal(x) for x in new}
+    return ([x for x in new if _normal(x) not in old_keys],
+            [x for x in old if _normal(x) not in new_keys])
+
+
+def _data_map_changes(old, new):
+    """Match data map elements by element name, then by ID; list what changed."""
+    old_rows, new_rows = old.get("data_map", []), new.get("data_map", [])
+    pairs, used_old, used_new = [], set(), set()
+    for key in (lambda r: _normal(r["element"]), lambda r: r["id"]):
+        index = {}
+        for i, r in enumerate(old_rows):
+            if i not in used_old:
+                index.setdefault(key(r), i)
+        for j, r in enumerate(new_rows):
+            i = index.get(key(r))
+            if j not in used_new and i is not None and i not in used_old:
+                used_old.add(i)
+                used_new.add(j)
+                pairs.append((i, j))
+    changed = []
+    for i, j in sorted(pairs, key=lambda p: p[1]):
+        a, b = old_rows[i], new_rows[j]
+        change = {}
+        for field in ("recipients", "stores"):
+            added, removed = _list_changes(a[field], b[field])
+            if added:
+                change[f"{field}_added"] = added
+            if removed:
+                change[f"{field}_removed"] = removed
+        if a["sensitive"] != b["sensitive"]:
+            change["sensitive"] = {"from": a["sensitive"], "to": b["sensitive"]}
+        if change:
+            changed.append({"old_id": a["id"], "id": b["id"], "element": b["element"], **change})
+
+    def brief(r):
+        return {"id": r["id"], "element": r["element"], "sensitive": r["sensitive"],
+                "recipients": list(r["recipients"])}
+    return {"changed": changed,
+            "added": [brief(r) for j, r in enumerate(new_rows) if j not in used_new],
+            "removed": [brief(r) for i, r in enumerate(old_rows) if i not in used_old]}
+
+
 def _severity_counts(doc):
     rows = [f for f in doc.get("findings", []) if active(f)]
     return {s: sum(f["severity"] == s for f in rows) for s in SEVERITIES}
@@ -217,6 +275,8 @@ def compare(old, new):
         result[key].sort(key=lambda r: (order[r["severity"]], r["location"]))
     result["counts"] = {"old": _severity_counts(old), "new": _severity_counts(new)}
     result["commitments"] = _commitment_changes(old, new)
+    if old.get("data_map") or new.get("data_map"):
+        result["data_map"] = _data_map_changes(old, new)
     return result
 
 
@@ -268,4 +328,28 @@ def render_markdown(result, lang, text, code):
             + [f"- {r['id']} {text(r['statement'])}: {t['removed']} ({r['status']})"
                for r in ledger["removed"]])
     lines += rows or [t["unchanged"]]
+    if "data_map" in c:
+        lines += ["", f"### {t['data_map']}", ""]
+        lines += _data_map_lines(c["data_map"], t, text) or [t["unchanged"]]
     return "\n".join(lines) + "\n"
+
+
+def _data_map_lines(changes, t, text):
+    def name(r):
+        return f"{r['id']} {text(r['element'])}" + (f" ({t['sensitive']})" if r.get("sensitive") else "")
+
+    def listed(values):
+        return ", ".join(text(v) for v in values)
+    rows = []
+    for r in changes["changed"]:
+        parts = [f"{t[key]} {listed(r[key])}" for key in
+                 ("recipients_added", "recipients_removed", "stores_added", "stores_removed") if key in r]
+        if "sensitive" in r:
+            parts.append(f"{t['sensitive_changed']} {r['sensitive']['from']} → {r['sensitive']['to']}")
+        rows.append(f"- {r['id']} {text(r['element'])}: " + "; ".join(parts)
+                    + (f" ({r['old_id']})" if r["old_id"] != r["id"] else ""))
+    rows += [f"- {name(r)}: {t['added']}"
+             + (f"; {t['recipients_added']} {listed(r['recipients'])}" if r["recipients"] else "")
+             for r in changes["added"]]
+    rows += [f"- {name(r)}: {t['map_removed']}" for r in changes["removed"]]
+    return rows

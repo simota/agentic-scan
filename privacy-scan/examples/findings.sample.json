@@ -24,6 +24,7 @@
       "step": "LT2",
       "location": ["api/app.py:22", "api/checkout/views.py:40"],
       "data": "shipping_address, phone, email (contact)",
+      "elements": "D-01, D-02",
       "subjects": "Every customer who checks out and hits an error",
       "flow": "1. POST /api/checkout collects shipping_address and phone (api/checkout/views.py:40). 2. An exception is raised. 3. The error tracker is initialised with PII and request bodies on (api/app.py:22). 4. The body is sent to the error tracking vendor",
       "contrast": "worker/app.py:15 initialises the tracker with PII off and a before_send scrubber",
@@ -43,6 +44,7 @@
       "step": "CT1",
       "location": "web/src/main.tsx:9",
       "data": "page views, device identifiers, IP address (behavioural, identifier)",
+      "elements": "D-04",
       "subjects": "Every visitor, including those who later decline",
       "flow": "1. main.tsx:9 calls analytics.init() at startup. 2. The consent banner renders afterwards (web/src/consent/banner.tsx:30). 3. Events are sent before any choice",
       "contrast": "web/src/marketing/pixel.ts:5 loads only after consent.granted('marketing')",
@@ -62,6 +64,7 @@
       "step": "RD2",
       "location": "api/accounts/close.py:31",
       "data": "name, email, city (contact)",
+      "elements": "D-03",
       "subjects": "Customers who closed their account",
       "flow": "1. POST /api/account/close deletes the user and orders (close.py:31). 2. The customer document in the search index is never removed. 3. Staff search still returns it",
       "contrast": "api/accounts/close.py:40 deletes uploaded files",
@@ -72,6 +75,12 @@
       "validation": {"verdict": "Valid", "method": "static", "evidence": "close.py:31-45 has no search index call; index writer at api/search/customers.py:12"},
       "status": "Open"
     }
+  ],
+  "data_map": [
+    {"id": "D-01", "element": "shipping_address", "category": "contact", "subjects": "Customers", "sensitive": false, "collected": ["api/checkout/views.py:40"], "stores": ["orders table (primary)"], "recipients": ["Error tracking vendor", "Shipping carrier API"], "retention": "Until account closure"},
+    {"id": "D-02", "element": "phone", "category": "contact", "subjects": "Customers", "sensitive": false, "collected": ["api/checkout/views.py:40"], "stores": ["orders table (primary)"], "recipients": ["Error tracking vendor"], "retention": "Until account closure"},
+    {"id": "D-03", "element": "name, email, city", "category": "contact", "subjects": "Customers", "sensitive": false, "collected": ["api/accounts/signup.py:18"], "stores": ["users table (primary)", "customer search index (copy)"], "recipients": [], "retention": "30 days after account closure (C-02)"},
+    {"id": "D-04", "element": "device identifiers, IP address, page views", "category": "identifier, behavioural", "subjects": "Every visitor", "sensitive": false, "collected": ["web/src/main.tsx:9"], "stores": ["Analytics vendor (provider store)"], "recipients": ["Analytics vendor"], "retention": "Set by the vendor; not in the repository", "note": "Sent before consent (PV-002)"}
   ],
   "perspectives": [
     {"name": "Data inventory and minimisation", "status": "applied", "note": "MN1-MN4 applied"},

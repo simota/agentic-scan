@@ -49,6 +49,10 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   throughout the record
 - **Guards** — each finding names a check with synthetic data (redaction of a
   named field, deletion reaching every store, no SDK call before consent)
+- **Data map** — the recon inventory is kept in the record (`data_map`): each
+  element with its category, subjects, sensitive flag, where it is collected,
+  every store and every recipient. Both reports show it with the findings
+  about each element and a *who receives personal data* table
 
 ## Install
 
@@ -92,20 +96,22 @@ python3 skills/privacy-scan/scripts/findings.py check "$out"   # exit 1 lists ea
 |---|---|
 | Chat summary | Status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source of every other output |
-| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity and by text search (a field name, path, ID or ledger ID; each filter shows its count; the shown count is announced), commitments with the findings that break them, and perspective coverage, with statuses that need action marked. Its content security policy admits only its own style and script |
-| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, coverage, sound items, limitations, decisions for a human, next steps |
+| `dashboard.html` | Self-contained dashboard: severity and verdict counts, findings filterable by severity and by text search (a field name, path, ID or ledger ID; each filter shows its count; the shown count is announced), commitments with the findings that break them, the personal data map with who receives each element, and perspective coverage, with statuses that need action marked. Its content security policy admits only its own style and script |
+| `report.md` | The written assessment: scope, severity and verdict counts, findings, commitments, data map and recipients, coverage, sound items, limitations, decisions for a human, next steps |
 
 After a run, two helpers write outside the output directory:
 
 ```sh
 python3 skills/privacy-scan/scripts/drafts.py "$out/findings.json" --out "$scratch/drafts"
+python3 skills/privacy-scan/scripts/export.py "$out/findings.json" --format sarif --out "$scratch/privacy.sarif"
 python3 skills/privacy-scan/scripts/findings.py diff "$earlier/findings.json" "$out/findings.json"
 ```
 
 | Helper | What it gives you |
 |---|---|
-| `drafts.py` | One issue draft per open finding (`issue-PV-NNN.md`) and an owner or DPO report (`owner-report.md`), filled from the templates with the record's values and counts; only the summary, issue URLs and decisions on data already sent are left `<to fill in>`. Unfixed High drafts open with a private-tracker line |
-| `findings.py diff` | A re-assessment against an earlier record: new, reopened, resolved and persisting findings (matched by perspective, location and title, since IDs change), severity, verdict and status changes, active counts by severity and commitment status changes, as Markdown or `--json` |
+| `drafts.py` | One issue draft per open finding (`issue-PV-NNN.md`) and an owner or DPO report (`owner-report.md`), filled from the templates with the record's values and counts; only the summary, issue URLs and decisions on data already sent are left `<to fill in>`. The owner report lists who receives which elements. Unfixed High drafts open with a private-tracker line |
+| `export.py` | `--format sarif`: SARIF 2.1.0 for code scanning and IDE viewers (active findings at their locations, `Accepted` ones suppressed, fingerprints that survive renumbering). `--format csv`: every finding for a tracker or spreadsheet. `--format datamap-csv`: the data map as a personal data inventory. CSV cells that would start a spreadsheet formula are neutralised. Uploading stays with you |
+| `findings.py diff` | A re-assessment against an earlier record: new, reopened, resolved and persisting findings (matched by perspective, location and title, since IDs change), severity, verdict and status changes, active counts by severity, commitment status changes and data map changes (new elements, new or dropped recipients and stores), as Markdown or `--json` |
 
 `findings.py check` enforces the run contract (exactly these three files, a
 complete record, ordered IDs, consistent references, a ledger whose statuses
@@ -148,6 +154,7 @@ skills/privacy-scan/
   scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract; diffs runs
   scripts/compare.py           matches findings across two assessments for `findings.py diff`
   scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
+  scripts/export.py            findings.json -> SARIF, findings CSV or data map CSV
   scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files

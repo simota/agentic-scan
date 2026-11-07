@@ -4,8 +4,12 @@
 trustworthy until this map exists, because a flow cannot be judged without
 knowing which data it carries and whose it is.
 
-The map is a working artifact. Keep it in scratch; it is not part of the final
-report unless asked. It holds field names and locations, never values.
+The full map (flow rows, notes) is a working artifact kept in scratch. Its
+element inventory — §2 with the recipients from §3 — is also recorded in
+`findings.json` as `data_map` (`reference/findings-schema.md`), so both reports
+show what is held, where and who receives it, and `findings.py diff` shows what
+changed since an earlier assessment. It holds field names and locations, never
+values.
 
 ## 1. Stack and deployable units
 
@@ -37,6 +41,14 @@ others.
   threads, e-mail and messaging providers)
 
 Free-text and file-upload fields are personal data by default.
+
+Record each row as one `data_map` element (`D-01`…): `element` (field names;
+group fields that always travel together), `category`, `subjects`, `sensitive`,
+`collected` (`path:line` list), `stores` (every store, marked primary or copy)
+and `recipients` (every party outside the application that receives it, from
+§3: processors, SDKs, other tenants' webhooks; `[]` when none), with
+`retention` when a period or job is known. A finding names the elements it is
+about in `elements` (`"D-01, D-02"`).
 
 ## 3. Flows and sinks
 

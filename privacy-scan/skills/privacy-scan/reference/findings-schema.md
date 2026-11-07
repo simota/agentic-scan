@@ -40,6 +40,7 @@ point here. `check` refuses an output directory unless:
 - every reported High and Medium finding has nonblank `validation.evidence`,
   whatever its verdict (for `Likely` or `Unverified`, the hop not yet read)
 - a `commitment` that is a ledger ID (`C-01`…) exists in `commitments`
+- every data map ID (`D-01`…) in a finding's `elements` exists in `data_map`
 - every perspective is recorded, and reported findings sit only under one
   recorded as `applied` or `partly applied`
 - each `not checked` commitment has a nonblank `reason`
@@ -72,26 +73,43 @@ Before staging, the renderer rejects output paths that resolve to the input
 record or to each other. A rejected collision preserves the input, existing
 outputs and links.
 
-## Drafts and comparisons
+## Drafts, exports and comparisons
 
-Neither writes into the output directory.
+None writes into the output directory.
 
 ```
 python3 scripts/drafts.py <out>/findings.json --out <scratch>/drafts [--lang ja|en] [--id PV-001]...
+python3 scripts/export.py <out>/findings.json --format sarif|csv|datamap-csv --out <scratch>/FILE [--lang ja|en]
 python3 scripts/findings.py diff <earlier>/findings.json <out>/findings.json [--json] [--lang ja|en]
 ```
+
+`export.py` writes one file: `sarif` (SARIF 2.1.0, one result per active
+finding at each of its locations, level `error`/`warning`/`note` for
+High/Medium/Low and Info, `Accepted` ones suppressed as external, a
+`partialFingerprints` value from perspective, first path and title that
+survives renumbering, `path:0` without a region), `csv` (every finding, with
+an `excluded` column) or `datamap-csv` (every data map element with the
+findings citing it; refused without a `data_map`). CSV files start with a
+UTF-8 BOM, and a cell that starts like a spreadsheet formula (`=`, `+`, `-`,
+`@`, tab, CR) is prefixed with `'`. It refuses a FILE in the record's
+directory or in one holding run outputs.
 
 `drafts.py` fills the templates by the rules in their header comments and
 writes `issue-PV-NNN.md` per finding and `owner-report.md`. It refuses a record
 whose IDs are not renumbered, an `--id` not in the record, and an `--out` that
 is the record's directory or holds `findings.json`, `dashboard.html` or
-`report.md`. `diff` validates both records and prints Markdown (or JSON). A
+`report.md`. The owner report lists each data map recipient with the elements
+it receives, and drops that section without a data map. `diff` validates both
+records and prints Markdown (or JSON). A
 finding is active when it is reported and not `Fixed`; active in both records
 is persisting (with severity, confidence, verdict and status changes), active
 only before is resolved (gone, `Fixed` or excluded), only now is new or, when it
 matches an inactive earlier finding, reopened. Pairs are matched one-to-one by
 the same perspective with the same step and first path, then a shared path,
-then the same title; each pair names the pass that matched it.
+then the same title; each pair names the pass that matched it. When either
+record has a `data_map`, elements are matched by element name, then ID, and
+the comparison lists elements added and removed, and per element the
+recipients and stores added or removed and a changed `sensitive` flag.
 
 ## Writing the file
 
@@ -108,7 +126,7 @@ python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
 Merge semantics:
 
 - `meta` updates key by key
-- `findings` and `commitments` match by `id`: a known record is updated key by
+- `findings`, `commitments` and `data_map` match by `id`: a known record is updated key by
   key (so a later fragment can add just `validation` to `PV-003`), and its
   nested `validation` and `analysis` objects merge key by key as well (a
   fragment can change just `validation.verdict`); a new one is
@@ -187,7 +205,12 @@ whose URL is not linked is treated the same way. Excluded findings (`FalsePositi
 `NotApplicable`) are labelled in both reports and have their own dashboard
 filter instead of appearing under their severity; a filter that matches nothing says so. An
 empty commitments ledger is shown as `None.` in both reports rather than omitted. The
-ledger's last column lists the reported findings citing each commitment. The
+ledger's last column lists the reported findings citing each commitment. A
+record with a nonempty `data_map` adds a *Personal data map* section after the
+ledger in both reports (one row per element, sensitive ones marked, with the
+reported findings whose `elements` cite it) and a *Who receives personal data*
+table (each recipient, matched ignoring case and spacing, with the elements it
+receives); a record without one renders as before. The
 dashboard's search box narrows the severity filter to findings containing the
 typed text (a field name, path, ID or ledger ID). Dashboard cells wrap
 long paths and keep line breaks.
@@ -213,6 +236,12 @@ usually holds several findings and commitments.
      "source": "web/src/legal/privacy.md:44", "family": "CONTAIN", "inferred": false,
      "status": "violated"}
   ],
+  "data_map": [
+    {"id": "D-01", "element": "shipping_address, phone", "category": "contact",
+     "subjects": "Customers", "sensitive": false, "collected": ["api/checkout/views.py:40"],
+     "stores": ["orders table (primary)"], "recipients": ["Error tracking vendor"],
+     "retention": "Until account closure"}
+  ],
   "findings": [
     {
       "id": "PV-001",
@@ -228,6 +257,7 @@ usually holds several findings and commitments.
       "contrast": "worker/app.py:15 initialises the tracker with PII off and a before_send scrubber",
       "impact": "Expected (C-01): no personal field reaches error tracking. Actual: addresses and phone numbers of affected customers are stored by the error tracking vendor",
       "commitment": "C-01",
+      "elements": "D-01",
       "fix": "Turn PII and request bodies off in api/app.py:22 and reuse the worker's before_send scrubber",
       "guard": "Guard for C-01: test raises an error in checkout with synthetic data and asserts the captured event has no body or user fields",
       "validation": {"verdict": "Valid", "method": "static",
@@ -267,5 +297,7 @@ usually holds several findings and commitments.
 | `status` | `Open` (default), `Fixed`, `Accepted` |
 | `references[]` | `{title, url}`; `url` is a nonblank string, `title` is an optional string (defaults to the URL) |
 | `commitments[]` | `id` (`C-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` commitment needs a nonblank `reason` to pass `check`, shown in both reports; `reason` may also explain any other status. `family` (string, shown in both reports; name several families as `CONTAIN, SHARE` when a commitment spans them) and `inferred` (boolean) are optional; `inferred: true` is labelled in both reports |
+| `elements` | Optional string: the data map IDs (`D-01, D-02`) the finding is about; `check` reports an ID that is not in `data_map`. Shown in both reports, and each element's row lists the reported findings citing it |
+| `data_map[]` | Optional; the recon element inventory (`reference/recon.md` §2). `id` (`D-01`…), `element`, `category`, `subjects` (nonblank strings), `sensitive` (boolean), `stores` and `recipients` (lists of nonblank strings; `[]` when none), and optionally `collected` (a list of `path:line`, as `location`), `retention` and `note` (strings). Field names only, never values |
 | `perspectives[]` | `name` (exact), `status` (`applied`, `partly applied`, `N/A`, `not checked`), `note` (steps applied, steps left out with reasons; for `partly applied`, which steps were not reached) |
 | `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

@@ -5,7 +5,8 @@
 
 Both outputs are derived from the one record; neither adds facts of its own.
 `dashboard.html` is self-contained and works offline. `report.md` holds the
-scope, counts, findings, commitments, perspective coverage, sound items,
+scope, counts, findings, commitments, the personal data map and who receives
+each element (when the record has a `data_map`), perspective coverage, sound items,
 limitations, decisions and next steps; the chat summary in `reference/report.md`
 is written by the agent, not rendered.
 
@@ -27,6 +28,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from findings import (PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import commitment_citations, counts as record_counts, excluded as is_excluded  # noqa: E402
+from findings import element_citations, recipients  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 from personal_values import LINE_BREAKS  # noqa: E402
 from scan_report_kit import style as kit_style  # noqa: E402
@@ -58,6 +60,14 @@ LABELS = {
         "filter": "Filter findings by severity",
         "showing": "Showing {shown} of {total}",
         "search": "Search findings", "search_hint": "field, path, ID, commitment…",
+        "elements": "data map",
+        "data_map": "Personal data map",
+        "data_map_summary": "{n} elements, {sensitive} in a sensitive category, {recipients} recipients",
+        "data_map_columns": ("ID", "Element", "Category", "Subjects", "Collected at", "Stored in",
+                             "Recipients", "Retention and notes", "Findings"),
+        "sensitive": "sensitive",
+        "recipients": "Who receives personal data",
+        "recipient_columns": ("Recipient", "Elements received"),
     },
     "ja": {
         "title": "プライバシー診断", "scope": "対象と方法",
@@ -105,10 +115,47 @@ LABELS = {
         "filter": "重要度で検出事項を絞り込む",
         "showing": "{total}件中{shown}件を表示",
         "search": "検出事項を検索", "search_hint": "フィールド名・パス・ID・約束…",
+        "elements": "データマップ",
+        "data_map": "個人データマップ",
+        "data_map_summary": "要素 {n} 件（うち要配慮・機微 {sensitive} 件）、受領者 {recipients} 件",
+        "data_map_columns": ("ID", "要素", "分類", "データ主体", "収集箇所", "保存先",
+                             "受領者", "保持期間・メモ", "検出事項"),
+        "sensitive": "機微",
+        "recipients": "個人データの受領者",
+        "recipient_columns": ("受領者", "受け取る要素"),
     },
 }
-FIELDS = ("location", "data", "subjects", "flow", "contrast", "impact", "conditions",
+FIELDS = ("location", "data", "elements", "subjects", "flow", "contrast", "impact", "conditions",
           "commitment", "fix", "guard")
+
+
+def element_name(record, labels):
+    """An element with its sensitive-category mark, as both reports show it."""
+    return record["element"] + (f" ({labels['sensitive']})" if record["sensitive"] else "")
+
+
+def data_map_rows(doc, labels):
+    """One row per data map element; the last cell lists the reported findings citing it."""
+    citing = element_citations(doc)
+    return [(r["id"], element_name(r, labels), r["category"], r["subjects"],
+             ", ".join(r.get("collected", [])), "\n".join(r["stores"]), "\n".join(r["recipients"]),
+             "\n".join(v for v in (r.get("retention", ""), r.get("note", "")) if shown(v)),
+             ", ".join(citing.get(r["id"], [])))
+            for r in doc.get("data_map", [])]
+
+
+def recipient_rows(doc, labels):
+    """Recipient -> the elements it receives. Findings cite elements, not
+    recipients, so they are listed in the data map table only."""
+    names = {r["id"]: f"{r['id']} {element_name(r, labels)}" for r in doc.get("data_map", [])}
+    return [(recipient, "\n".join(names[i] for i in ids))
+            for recipient, ids in recipients(doc).items()]
+
+
+def data_map_summary(doc, labels):
+    n = record_counts(doc)
+    return labels["data_map_summary"].format(n=n["n_elements"], sensitive=n["n_sensitive_elements"],
+                                             recipients=n["n_recipients"])
 
 
 def counts(findings):
@@ -401,6 +448,19 @@ def render_markdown(doc, lang):
                      ", ".join(citing.get(r["id"], [])))
             lines.append(markdown_row(cells))
         lines.append("")
+    # Shown only when the record carries a data map; older records render as before.
+    if doc.get("data_map"):
+        columns = t["data_map_columns"]
+        lines += [f"## {t['data_map']}", "", markdown_text(data_map_summary(doc, t)), "",
+                  markdown_row(columns), "|" + "---|" * len(columns)]
+        lines += [markdown_row(row) for row in data_map_rows(doc, t)]
+        lines.append("")
+        rows = recipient_rows(doc, t)
+        if rows:
+            lines += [f"### {t['recipients']}", "", markdown_row(t["recipient_columns"]),
+                      "|---|---|"]
+            lines += [markdown_row(row) for row in rows]
+            lines.append("")
     lines += [f"## {t['perspectives']}", "", markdown_row(t["perspective_columns"]), "|---|---|---|"]
     for row in perspective_rows(doc, t):
         lines.append(markdown_row(row))
@@ -473,6 +533,18 @@ background:var(--panel);color:var(--text);border:1px solid var(--line);border-ra
    word itself still carries the meaning. */
 .status[data-status="violated"]{color:var(--high);font-weight:700}
 .status[data-status="not checked"],.status[data-status="partly read"]{color:var(--medium)}
+/* Data map: sensitive elements carry a high-severity rule; the word "sensitive"
+   in the element cell still carries the meaning. */
+.datamap tr[data-sensitive] td:first-child{box-shadow:inset 2.4pt 0 0 var(--high)}
+.datamap th:nth-child(1){width:6%}
+.datamap th:nth-child(2){width:14%}
+.recipients th:nth-child(1){width:30%}
+#data-map h3{margin:24px 0 8px}
+@media screen and (max-width:850px){
+.datamap td:nth-child(1){grid-area:1/1}
+.datamap td:nth-child(2){grid-area:1/2}
+.datamap td:nth-child(6),.datamap td:nth-child(7),.datamap td:nth-child(5){grid-column:1/-1}
+.recipients td:nth-child(1),.recipients td:nth-child(2){grid-column:1/-1}}
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
@@ -638,6 +710,22 @@ def render_html(doc, lang):
             out.append(html_row(t["commitment_columns"], cells, nowrap=(0,),
                                 status=(4, r["status"], label, status[len(label):])))
         out.append("</table></div></section>")
+    if doc.get("data_map"):
+        out.append(f"<section id='data-map'><div class='section-head'><div><h2>{e(t['data_map'])}</h2>"
+                   f"<p class='muted'>{e(data_map_summary(doc, t))}</p></div></div>"
+                   f"<div class='tablewrap'><table class='ledger datamap'>"
+                   f"{html_head(t['data_map_columns'])}")
+        for record, row in zip(doc["data_map"], data_map_rows(doc, t)):
+            html = html_row(t["data_map_columns"], row, nowrap=(0, 8))
+            out.append(html.replace("<tr>", "<tr data-sensitive>", 1) if record["sensitive"] else html)
+        out.append("</table></div>")
+        rows = recipient_rows(doc, t)
+        if rows:
+            out.append(f"<h3>{e(t['recipients'])}</h3><div class='tablewrap'>"
+                       f"<table class='ledger recipients'>{html_head(t['recipient_columns'])}"
+                       + "".join(html_row(t["recipient_columns"], row) for row in rows)
+                       + "</table></div>")
+        out.append("</section>")
     out.append(f"<section><div class='section-head'><div><h2>{e(t['perspectives'])}</h2></div></div>"
                f"<div class='tablewrap'><table class='ledger coverage-table'>"
                f"{html_head(t['perspective_columns'])}")

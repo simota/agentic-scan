@@ -6,7 +6,8 @@ with the dashboard. Take every {{n_…}} count from `python3 scripts/findings.py
 empty. Write <to fill in> where the record has no source (issue URLs, decisions on data already sent).
 A blank meta.commit is written UNKNOWN and a blank meta.method as the review-method line of report.md.
 Lines with a {{list[]}} placeholder repeat once per entry; {{commitments[]}} is one ledger entry with its
-family, source, status, reason and the findings that cite it. `scripts/drafts.py` fills this template by
+family, source, status, reason and the findings that cite it; {{recipients[]}} is one recipient of the
+data map with the elements it receives. `scripts/drafts.py` fills this template by
 these rules and leaves every <to fill in> for you.
 
 Before sending:
@@ -66,22 +67,27 @@ Source code was read; no data store, log or backup was accessed. This is a techn
 <!-- commitments[]: id, statement, family, source and status, with the reason whenever one is recorded (required for not checked); mark inferred ones, which are questions for the owner. -->
 - {{commitments[]}}
 
-## 5. Checked and sound
+## 5. Who receives personal data
+
+<!-- recipients[]: one recipient from the data map with the elements it receives (sensitive ones marked); the section is dropped when the record has no data map. Confirm a contract or DPA covers each one. -->
+- {{recipients[]}}
+
+## 6. Checked and sound
 
 <!-- checked_ok: what was examined and held. -->
 - {{checked_ok[]}}
 
-## 6. What could not be checked
+## 7. What could not be checked
 
 <!-- limitations: vendor-side settings, contracts, data actually present, deployed regions. -->
 - {{limitations[]}}
 
-## 7. Decisions needed
+## 8. Decisions needed
 
 <!-- decisions: commitments to confirm, recipients whose contracts are unknown, data already sent or retained. -->
 - {{decisions[]}}
 
-## 8. Recommended order of work
+## 9. Recommended order of work
 
 <!-- next_steps. -->
 1. {{next_steps[]}}

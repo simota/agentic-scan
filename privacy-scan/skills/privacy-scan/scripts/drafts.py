@@ -117,6 +117,9 @@ class Draft:
                     f"{r['id']}: {statement} ({family}{LABELS[self.lang]['source']}: {r['source']}) "
                     f"— {status}" + (f" — {LABELS[self.lang]['cited_by']}: {', '.join(ids)}" if ids else "")))
             return rows
+        if name == "recipients":
+            return [render.markdown_text(f"{recipient}: " + ", ".join(elements.split("\n")))
+                    for recipient, elements in render.recipient_rows(doc, t)]
         if name == "open_questions":
             rows = [self.f["conditions"]] if shown_text(self.f.get("conditions", "")) else []
             # The lines that name this finding, matched as renumber matches references.

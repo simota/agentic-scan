@@ -2,7 +2,7 @@
 """Compare a later ux-scan review with an earlier one (reference/follow-up.md).
 
     python3 compare.py BASELINE CURRENT --out FILE|- [--format markdown|json] [--lang ja|en]
-                       [--fail-on High|Medium|Low|Info]
+                       [--fail-on High|Medium|Low|Info] [--carry-forward FRAGMENT]
 
 BASELINE and CURRENT are two findings.json records of the same app, each passing
 findings.py check. Ids are renumbered per review and lines move, so findings are matched
@@ -19,7 +19,10 @@ Each match or leftover is one change:
 
 --fail-on SEVERITY exits 1 when a new or regressed Open finding, or a persisting one raised
 to it, is at or above SEVERITY: a gate for CI or a release checklist. The output never
-replaces a review output. Standard library only.
+replaces a review output. --carry-forward FRAGMENT also writes a findings.py merge fragment for
+CURRENT: each persisting finding Accepted in the baseline and Open now goes back to Accepted, and a
+decisions line names every regression and carried acceptance; read it, edit what no longer holds,
+then merge it. Standard library only.
 Exit status: 0 written, 1 the --fail-on gate tripped (still written), 2 invalid input.
 """
 
@@ -183,6 +186,27 @@ def compare(base, cur, fail_on=None):
     return result
 
 
+def carry_forward(result, base):
+    """A findings.py merge fragment recording the comparison's outcome in the current review."""
+    when = " ".join(x for x in (base["meta"].get("date"), base["meta"].get("commit")) if x)
+    findings, decisions = [], []
+    for item in result["changes"]:
+        b, c = item["baseline"], item["current"]
+        if item["change"] == "regressed":
+            decisions.append(f"{c['id']} regressed: Fixed in the {when} review (as {b['id']}), reported again; "
+                             "find what undid the fix.")
+        elif item["change"] == "persisting" and b["status"] == "Accepted" and c["status"] == "Open":
+            findings.append({"id": c["id"], "status": "Accepted"})
+            decisions.append(f"{c['id']} carried forward as Accepted from the {when} review (as {b['id']}); "
+                             "confirm the reason still holds.")
+    fragment = {}
+    if findings:
+        fragment["findings"] = findings
+    if decisions:
+        fragment["decisions"] = decisions
+    return fragment
+
+
 def markdown(result, lang):
     L = LABELS[lang]
     b, c = result["baseline"], result["current"]
@@ -232,14 +256,25 @@ def main(argv=None):
     parser.add_argument("--format", choices=("markdown", "json"), default="markdown")
     parser.add_argument("--lang", choices=("ja", "en"), default="en", help="markdown labels")
     parser.add_argument("--fail-on", choices=SEVERITIES)
+    parser.add_argument("--carry-forward", metavar="FRAGMENT",
+                        help="also write a findings.py merge fragment carrying acceptances and regressions forward")
     args = parser.parse_args(argv)
+    carried = None
     try:
         base, _ = load_record(args.baseline)
         cur, _ = load_record(args.current)
         result = compare(base, cur, args.fail_on)
         text = (json.dumps(result, ensure_ascii=False, indent=2) + "\n" if args.format == "json"
                 else markdown(result, args.lang))
+        if args.carry_forward:
+            if args.carry_forward == "-" or (args.out != "-" and Path(args.carry_forward).resolve()
+                                             == Path(args.out).resolve()):
+                raise RecordError("--carry-forward: name a file other than --out")
+            carried = carry_forward(result, base)
         target = write_derived(args.out, text, [args.baseline, args.current])
+        if carried is not None:
+            fragment = write_derived(args.carry_forward, json.dumps(carried, ensure_ascii=False, indent=2) + "\n",
+                                     [args.baseline, args.current])
     except (RecordError, OSError, ValueError, RecursionError) as e:
         print(f"compare.py: {e}", file=sys.stderr)
         return 2
@@ -247,6 +282,11 @@ def main(argv=None):
     tripped = bool(result.get("gate", {}).get("blocking"))
     if target is not None:
         print(f"wrote {target} ({counts}){allow_note(target, [args.baseline, args.current])}")
+    if carried is not None:
+        carried_n = len(carried.get("findings", []))
+        print(f"wrote {fragment} ({carried_n} acceptance(s) carried, {len(carried.get('decisions', []))} decision line(s)); "
+              f"review it, then findings.py merge {args.current} {fragment}"
+              if carried else f"wrote {fragment} (nothing to carry forward)")
     if tripped:
         print(f"compare.py: gate tripped at {args.fail_on}: {', '.join(result['gate']['blocking'])}", file=sys.stderr)
         return 1

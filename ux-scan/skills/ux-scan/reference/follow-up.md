@@ -64,3 +64,16 @@ checklist. The comparison is written either way.
 Record the outcome in the current review, not only in the derived file: add a
 `next_steps` or `decisions` line for regressions and lapsed acceptances, and name the
 earlier review compared (its date and commit) in `meta.method`.
+
+```sh
+python3 <skill-dir>/scripts/compare.py <earlier>/findings.json <out>/findings.json --out progress.md --carry-forward <scratch>/carry.json
+```
+
+`--carry-forward` drafts that record update as a `findings.py merge` fragment: every
+`persisting` finding `Accepted` in the baseline and `Open` now goes back to `Accepted`, and a
+`decisions` line names each carried acceptance and each regression with the baseline's date,
+commit and old id. An empty object means nothing to carry. It is a draft: an acceptance whose
+reason no longer holds (the defect grew, the flow became primary) is taken out of the
+fragment and its lapse recorded instead. Then merge it, re-render and rerun
+`contract_check.py`. The fragment must be a file other than `--out`, outside the review
+directory.

@@ -58,7 +58,7 @@ Rules:
 | IC2 | A later layer contradicts an earlier one: system vs template vs appended per-request text vs tool description | The layers are read in send order and agree, or the precedence is stated |
 | IC3 | Absolute words (always, never, must) on rules that have legitimate exceptions | The exception is written next to the rule |
 | IC4 | A rule copied into several prompts with different wording or values | One source, or the copies agree |
-| IC5 | Instructions that refer to sections, tools or fields that no longer exist | Every reference resolves in the prompt as sent |
+| IC5 | Instructions that refer to sections, tools, fields or files that no longer exist | Every reference resolves in the prompt as sent (lint `missing-file-reference` checks cited files) |
 
 ### Structure and placement (ST)
 

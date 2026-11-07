@@ -75,8 +75,8 @@ The record is built to be acted on, not only read:
 - **Lint on every change** — `scripts/inventory.py <repo> --fail-on High`
   runs the mechanical rules alone, with no agent and no model: unfilled
   template variables, keys a render passes that the template never uses, reply
-  keys no prompt asks for, unbalanced templates, secrets and placeholders in
-  prompts. `--sarif` writes them for code scanning, and `--baseline
+  keys no prompt asks for, files an agent or skill prompt cites that do not
+  exist, unbalanced templates, secrets and placeholders in prompts. `--sarif` writes them for code scanning, and `--baseline
   <review>/findings.json` keeps hits a review judged `FalsePositive` or
   `NotApplicable` quiet, even after the lines move
 

@@ -114,6 +114,15 @@ OPTIONAL = re.compile(r"\{%-?\s*(?:if|elif|unless)\b([^%]*)%\}|\{\{[#^]\s*(?:if\
                       r"([A-Za-z_]\w*)\s*\|\s*default\b|([A-Za-z_]\w*)\s+is\s+(?:not\s+)?defined")
 # Every template construct; a word in none of them is not a name the template uses.
 CONSTRUCT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\$\{[^}\n]*\}|\{[^{}\n]*\}|\$[A-Za-z_]\w*")
+# File references in agent and skill prompts: Markdown links, CLAUDE.md-style @imports, and paths in code
+# spans. A path in a code span is judged only when its directory exists (a renamed or moved file); one
+# under a directory that does not exist may name a file to create, or one in another repository.
+MD_LINK = re.compile(r"\]\(([^)\s#<>]+)(?:#[^)\s]*)?(?:\s+\"[^\"]*\")?\)")
+AT_IMPORT = re.compile(r"(?<![\w@`])@((?:\.{1,2}/)*[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/[A-Za-z0-9_.-]+)*)")
+PATH_TOKEN = re.compile(r"(?:\.{1,2}/)*\.?[A-Za-z0-9_][A-Za-z0-9_.-]*(?:/\.?[A-Za-z0-9_][A-Za-z0-9_.-]*)+/?")
+REF_SUFFIXES = {".md", ".mdc", ".mdx", ".txt", ".py", ".sh", ".js", ".mjs", ".cjs", ".ts", ".json", ".yaml",
+                ".yml", ".toml", ".prompt", ".prompty", ".j2", ".jinja", ".jinja2", ".tmpl", ".csv", ".html",
+                ".sql", ".xml"}
 TEMPLATE_TOKEN = re.compile(r"\{\{|\}\}|\{%|%\}")
 PAIRS = {"{{": "}}", "{%": "%}"}
 OPEN_TAG = re.compile(r"<([a-z][\w-]*)((?:\s+[\w:-]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(/?)>")
@@ -210,6 +219,15 @@ RULES = {
             "structured output with one schema shared by the prompt and the parser.",
         test="For a representative input, parse the reply as the code does and assert every key it reads is "
              "present."),
+    "missing-file-reference": dict(
+        kind="defect", severity="Medium", confidence="Suspected", category="Instruction consistency",
+        title="Prompt points to a file that does not exist",
+        symptom="The prompt tells the model to read or use a file that is not in the repository.",
+        impact="The model cannot follow that instruction: it searches, guesses the file's content or goes on "
+               "without it.",
+        fix="Point the reference at the file's current path, restore the file, or remove the instruction.",
+        test="Assert every file the prompt cites resolves in the repository, relative to the prompt file or the "
+             "repository root."),
     "duplicate-line": dict(
         kind="improvement", severity="Info", confidence="Confirmed", category="Context budget",
         title="Repeated line in a prompt",
@@ -517,6 +535,54 @@ def lint_bindings(templates, bindings):
     return hits, settled
 
 
+def resolves(root, base, ref):
+    """True, False, or None when ref leaves the repository or is not a repository path."""
+    ref = ref.split("#")[0].split("?")[0]
+    if not ref or ref.startswith(("/", "~")) or re.match(r"[a-z][a-z0-9+.-]*:", ref):
+        return None
+    for start in (base, ""):
+        target = os.path.normpath(os.path.join(start, ref))
+        if target == ".." or target.startswith("../") or os.path.isabs(target):
+            continue
+        if os.path.lexists(os.path.join(root, target)):
+            return True
+    return False
+
+
+def lint_references(root, rel, lines, fenced):
+    """missing-file-reference: the paths an agent or skill prompt cites that exist neither next to it nor
+    from the repository root. Markdown links and @imports always count; a code-span path counts when it
+    names a file with a known suffix (or a directory, with a trailing /) and its own directory exists."""
+    base = os.path.dirname(os.fsdecode(os.fsencode(rel)))
+    missing = []
+    for number, line in enumerate(lines, 1):
+        if number in fenced:
+            continue
+        refs = [(ref, False) for ref in MD_LINK.findall(line) if "{{" not in ref]
+        prose = without_code_spans(line)
+        refs += [(ref, False) for ref in AT_IMPORT.findall(prose)
+                 if "/" in ref or Path(ref).suffix.lower() in REF_SUFFIXES]
+        for span in INLINE_CODE.finditer(line):
+            for token in span.group(0).strip("`").split():
+                token = token.rstrip(".,;:)")
+                if PATH_TOKEN.fullmatch(token) and "." not in token.split("/")[0].lstrip(".") and (
+                        token.endswith("/") or Path(token).suffix.lower() in REF_SUFFIXES):
+                    refs.append((token, True))
+        for ref, guarded in refs:
+            if guarded:
+                parent = os.path.dirname(ref.rstrip("/")) or "."
+                if not resolves(root, base, parent):
+                    continue
+            if resolves(root, base, ref.rstrip("/") or ".") is False and ref not in (r for _, r in missing):
+                missing.append((number, ref))
+    if not missing:
+        return []
+    names = [ref for _, ref in missing]
+    return [dict(rule="missing-file-reference", location=f"{rel}:{missing[0][0]}",
+                 detail=f"{len(names)} reference(s) to files that do not exist: {', '.join(names)}",
+                 **{k: RULES["missing-file-reference"][k] for k in ("kind", "severity", "confidence", "category")})]
+
+
 def lint_file(rel, text, tokens, *, lines=None, fenced=None):
     """Lint hits for one prompt file; lines and fenced as template_uses() takes them."""
     lines = source_lines(text) if lines is None else lines
@@ -719,6 +785,8 @@ def scan(root):
             fenced = fenced_lines(lines)
             prompt_words[rel] = set(CODE_WORD.findall(text))
             lint += lint_file(rel, text, tokens, lines=lines, fenced=fenced)
+            if kind in ("skill", "agent"):
+                lint += lint_references(root, on_disk, lines, fenced)
             if kind == "template":
                 templates.append((rel, template_uses(text, lines=lines, fenced=fenced)))
                 template_texts[rel] = (text, lines, fenced)

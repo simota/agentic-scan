@@ -5,8 +5,10 @@
 
 Lists prompt files (prompt directories, prompt and template suffixes, agent and
 skill definitions), call sites of model APIs in code, template variables per
-prompt file, quoted model IDs and lint hits. It reads files only: nothing is
-executed and nothing leaves the machine.
+prompt file, quoted model IDs and lint hits, and (bindings.py) where code loads
+each prompt file, the keys each render call fills it with and the model call
+that sends it. It reads files only: nothing is executed and nothing leaves the
+machine.
 
 With --into, the lint hits replace every `L-*` finding in an existing
 findings.json (scanner text stays in English), and `meta.commit` / `meta.dirty`
@@ -30,6 +32,7 @@ import subprocess
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import bindings as binding_tool  # noqa: E402
 import record  # noqa: E402
 from excerpt import SECRET_RE, has_secret_needle, sensitive, source_lines  # noqa: E402
 from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
@@ -69,6 +72,10 @@ CALL_PATTERNS = [
                                    r"prompt_template|promptTemplate)\b\s*[:=]"),
      ("SYSTEM_PROMPT", "system_prompt", "systemPrompt", "PROMPT_TEMPLATE", "prompt_template", "promptTemplate")),
 ]
+# Call sites that send a prompt to a model; their arguments are recorded and their prompts linked.
+SENDING_APIS = {"anthropic.messages", "openai.chat.completions", "openai.responses", "gemini.generate_content",
+                "ai-sdk"}
+SENDERS = [pattern for api, pattern, _ in CALL_PATTERNS if api in SENDING_APIS]
 # Bare IDs plus the forms clouds use: Bedrock `us.anthropic.claude-…-v1:0`, Vertex `claude-…@20240620`,
 # Gemini `models/gemini-…`.
 _TAIL = r"(?:[a-z0-9.-]*[a-z0-9])?"
@@ -83,6 +90,18 @@ VARIABLE_RES = [
     re.compile(r"(?<![{$])\{([A-Za-z_]\w*)(?:![rsa])?(?::[^{}\s]*)?\}(?!\})"),
     re.compile(r"\$\{([A-Za-z_]\w*)\}"),                # JS template literal, string.Template
 ]
+# The placeholder syntax each kind of render call fills (bindings.RENDER_STYLE): str.format and f-string
+# templates single braces, Jinja and Mustache double braces, string.Template ${name} and $name; "any" (a
+# literal .replace, or a template sent without rendering) every syntax above but the bare $name.
+STYLE_RES = {"brace": [VARIABLE_RES[1]], "jinja": [VARIABLE_RES[0]],
+             "dollar": [VARIABLE_RES[2], re.compile(r"(?<![\w$\\])\$([A-Za-z_]\w*)")], "any": VARIABLE_RES}
+# A template that pulls in another file may fill or use names this scan cannot see.
+INCLUDES = re.compile(r"\{%-?\s*(?:include|extends|import|from)\b|\{\{>")
+# Names the template tests before using (an if, a default filter, a Mustache section): optional by design.
+OPTIONAL = re.compile(r"\{%-?\s*(?:if|elif|unless)\b([^%]*)%\}|\{\{[#^]\s*(?:if\s+|unless\s+|with\s+)?([\w.]+)|"
+                      r"([A-Za-z_]\w*)\s*\|\s*default\b|([A-Za-z_]\w*)\s+is\s+(?:not\s+)?defined")
+# Every template construct; a word in none of them is not a name the template uses.
+CONSTRUCT = re.compile(r"\{\{.*?\}\}|\{%.*?%\}|\$\{[^}\n]*\}|\{[^{}\n]*\}|\$[A-Za-z_]\w*")
 TEMPLATE_TOKEN = re.compile(r"\{\{|\}\}|\{%|%\}")
 PAIRS = {"{{": "}}", "{%": "%}"}
 OPEN_TAG = re.compile(r"<([a-z][\w-]*)((?:\s+[\w:-]+\s*=\s*(?:\"[^\"]*\"|'[^']*'))*)\s*(/?)>")
@@ -147,6 +166,27 @@ RULES = {
         impact="The prompt is sent without the content the variable was meant to carry.",
         fix="Fill the variable at the call site that renders this template, or remove it from the template.",
         test="Render the template from its call site with strict undefined-variable handling and assert it succeeds."),
+    "unfilled-variable": dict(
+        kind="defect", severity="High", confidence="Suspected", category="Variables and assembly",
+        title="Template variable the rendering code does not fill",
+        symptom="The variable reaches the model empty or as a literal placeholder, or the render fails "
+                "(str.format raises KeyError).",
+        impact="Every call through that render sends the prompt without the content the variable was meant to "
+               "carry, or fails.",
+        fix="Pass the variable at the render call named in the cause, or remove it from the template; render "
+            "with strict undefined-variable handling.",
+        test="Render the template from the named call site with strict undefined-variable handling and assert "
+             "it succeeds and contains the variable's content."),
+    "unused-render-key": dict(
+        kind="defect", severity="Medium", confidence="Suspected", category="Variables and assembly",
+        title="Value passed to a template that never uses it",
+        symptom="The code passes a value when rendering the template, but the template has no placeholder of "
+                "that name, so the value is dropped.",
+        impact="Content the caller prepared for the model (often under a renamed variable) never reaches it.",
+        fix="Add the placeholder where the template needs the value, rename the key to the placeholder it was "
+            "meant for, or stop passing it.",
+        test="Render the template from the named call site and assert the rendered prompt contains the passed "
+             "value."),
     "duplicate-line": dict(
         kind="improvement", severity="Info", confidence="Confirmed", category="Context budget",
         title="Repeated line in a prompt",
@@ -269,9 +309,9 @@ def without_code_spans(line):
     return INLINE_CODE.sub("", line) if "`" in line else line
 
 
-def variables(text):
+def variables(text, patterns=VARIABLE_RES):
     found = []
-    for pattern in VARIABLE_RES:
+    for pattern in patterns:
         for name in pattern.findall(text):
             if name not in found:
                 found.append(name)
@@ -351,10 +391,11 @@ def lint_tags(lines, fenced):
             for name, numbers in sorted(opened.items(), key=lambda kv: kv[1][0] if kv[1] else 0) if numbers]
 
 
-def template_uses(text, *, lines=None, fenced=None):
+def template_uses(text, *, lines=None, fenced=None, patterns=VARIABLE_RES):
     """(line, names) for each line outside code fences that uses a template variable the template itself
     does not define: what a caller has to fill. lines and fenced, when given, are source_lines(text) and
-    fenced_lines() of them, which scan() has already worked out."""
+    fenced_lines() of them, which scan() has already worked out; patterns narrows the placeholder syntax
+    (STYLE_RES)."""
     lines = source_lines(text) if lines is None else lines
     fenced = fenced_lines(lines) if fenced is None else fenced
     defined = set(TEMPLATE_BUILTINS)
@@ -363,26 +404,94 @@ def template_uses(text, *, lines=None, fenced=None):
     uses = []
     for number, line in enumerate(lines, 1):
         # Every VARIABLE_RES pattern opens a brace, so a line without one uses no variable.
-        if number in fenced or "{" not in line:
+        if number in fenced or "{" not in line and (patterns is VARIABLE_RES or "$" not in line):
             continue
-        names = [n.split(".")[0] for n in variables(without_code_spans(line))]
+        names = [n.split(".")[0] for n in variables(without_code_spans(line), patterns)]
         names = [n for n in dict.fromkeys(names) if n.lower() not in defined and n not in defined]
         if names:
             uses.append((number, names))
     return uses
 
 
-def lint_unreferenced(templates, code_words):
-    """One unreferenced-variable hit per template file whose variables some name no code file contains."""
+def lint_unreferenced(templates, code_words, settled=None):
+    """One unreferenced-variable hit per template file whose variables some name no code file contains;
+    a name lint_bindings() settled for that file (settled[rel]) is left out."""
     hits = []
     for rel, uses in templates:
-        missing = [(number, name) for number, names in uses for name in names if name not in code_words]
+        done = (settled or {}).get(rel, set())
+        missing = [(number, name) for number, names in uses for name in names
+                   if name not in code_words and name not in done]
         if missing:
             names = list(dict.fromkeys(name for _, name in missing))
             hits.append(dict(rule="unreferenced-variable", location=f"{rel}:{missing[0][0]}",
                              detail=f"{len(names)} variable(s) no code file names: {', '.join(names)}", **{
                                  k: RULES["unreferenced-variable"][k] for k in ("kind", "severity", "confidence", "category")}))
     return hits
+
+
+def optional_names(text):
+    return {word for groups in OPTIONAL.findall(text) for group in groups for word in CODE_WORD.findall(group)}
+
+
+def lint_bindings(templates, bindings):
+    """unfilled-variable and unused-render-key hits from the render sites bindings.trace() found.
+
+    templates maps a template path to (text, lines, fenced). A template that includes or extends another is
+    skipped: that file may fill or use the names. unfilled-variable needs a complete site of a traced
+    binding; unused-render-key needs only a site of a binding naming this one file. A site that both leaves
+    a variable unfilled and passes a key the template never uses (a renamed variable, usually) is one
+    unfilled-variable hit naming both.
+
+    Returns (hits, settled): settled maps a template to the names unreferenced-variable must not report
+    again, those unfilled-variable reported and, when every binding is traced and every site complete in
+    one placeholder syntax, the brace text that syntax does not fill (a {example} in a Jinja template)."""
+    hits, settled = [], {}
+    for rel, (text, lines, fenced) in templates.items():
+        mine = [b for b in bindings if b["prompt"] == rel and not b.get("ambiguous")]
+        if not mine or INCLUDES.search(text):
+            continue
+        optional = optional_names(text)
+        used = {word for chunk in CONSTRUCT.findall(text) for word in CODE_WORD.findall(chunk)}
+        uses = {style: template_uses(text, lines=lines, fenced=fenced, patterns=patterns)
+                for style, patterns in STYLE_RES.items()}
+        missing, sites, renamed, extra, lost_at = {}, [], [], [], set()
+        for b in mine:
+            for site in b["renders"]:
+                unused = [k for k in site["keys"] if k not in used]
+                lost = []
+                if b["traced"] and site["complete"]:
+                    for number, names in uses[site["style"]]:
+                        for name in names:
+                            if name not in site["keys"] and name not in optional:
+                                lost.append(name)
+                                missing.setdefault(name, number)
+                if lost:
+                    verb = "sends it without rendering" if site["via"] == "sent" else "renders it"
+                    sites.append(f"{site['location']} {verb}")
+                    lost_at.add(site["location"])
+                    renamed += [k for k in unused if k not in renamed]
+                elif unused:
+                    extra.append((site["location"], unused))
+        styles = {s["style"] for b in mine for s in b["renders"]}
+        if all(b["traced"] and b["renders"] and all(s["complete"] for s in b["renders"]) for b in mine) \
+                and len(styles) == 1 and styles != {"any"}:
+            filled = {n for _, names in uses[styles.pop()] for n in names}
+            settled[rel] = {n for _, names in template_uses(text, lines=lines, fenced=fenced) for n in names} - filled
+        if missing:
+            names = sorted(missing, key=lambda n: (missing[n], n))
+            detail = f"{len(names)} variable(s) not filled where {', '.join(dict.fromkeys(sites))}: {', '.join(names)}"
+            if renamed:
+                detail += f"; that call passes {', '.join(renamed)}, which the template never uses"
+            hits.append(dict(rule="unfilled-variable", location=f"{rel}:{min(missing.values())}", detail=detail,
+                             **{k: RULES["unfilled-variable"][k] for k in ("kind", "severity", "confidence", "category")}))
+            settled[rel] = settled.get(rel, set()) | set(names)
+        for location, keys in dict(extra).items():
+            if location in lost_at:
+                continue
+            hits.append(dict(rule="unused-render-key", location=location,
+                             detail=f"renders {rel} with {len(keys)} key(s) the template never uses: {', '.join(keys)}",
+                             **{k: RULES["unused-render-key"][k] for k in ("kind", "severity", "confidence", "category")}))
+    return hits, settled
 
 
 def lint_file(rel, text, tokens, *, lines=None, fenced=None):
@@ -503,10 +612,36 @@ def git_state(root, read=()):
     return commit, True if ignored else None if ignored is None or unknown else False
 
 
+def location_key(location):
+    path, _, line = location.rpartition(":")
+    return path, int(line) if line.isdigit() else 0
+
+
+def link_call_sites(call_sites, found, sources, code):
+    """Give each call site that sends a prompt its argument names, the literal values of the parameters that
+    matter (model, max_tokens, temperature...) and the prompt files whose text it sends."""
+    for site in call_sites:
+        opening = site.pop("_open")
+        if site["api"] not in SENDING_APIS or opening is None:
+            continue
+        rel = site["path"]
+        src = sources.get(rel)
+        if src is None:
+            src = sources[rel] = binding_tool.Source(*code[rel])
+        details = binding_tool.call_details(src, src.lines[site["line"] - 1] + opening)
+        if details is None:
+            continue
+        args, params, words = details
+        here = f"{rel}:{site['line']}"
+        site["args"], site["params"] = args, params
+        site["prompts"] = sorted({b["prompt"] for b in found if b["loaded_at"].rpartition(":")[0] == rel and (
+            set(b["targets"]) & words or here in b["sent_at"])})
+
+
 def scan(root):
     root = Path(root).resolve()
     prompt_files, call_sites, models, lint, read, skipped, unread = [], [], {}, [], set(), [], []
-    templates, code_words = [], set()
+    templates, code_words, code_files, template_texts = [], set(), [], {}
     for path, on_disk in walk(root, skipped, unread):
         rel = shown(on_disk)
         suffix = path.suffix.lower()
@@ -528,9 +663,11 @@ def scan(root):
             lint += lint_file(rel, text, tokens, lines=lines, fenced=fenced)
             if kind == "template":
                 templates.append((rel, template_uses(text, lines=lines, fenced=fenced)))
+                template_texts[rel] = (text, lines, fenced)
             read.add(on_disk)
         if is_code:
             code_words.update(CODE_WORD.findall(text))
+            code_files.append((rel, text, suffix))
         if is_code or suffix in CONFIG_SUFFIXES:
             # Only lines on which some pattern's match starts can match it; most code lines match none.
             patterns = [pattern for _, pattern, needles in CALL_PATTERNS
@@ -540,21 +677,29 @@ def scan(root):
             for number, line in ((i + 1, lines[i]) for i in candidates):
                 if is_code:
                     for api, pattern, _needles in CALL_PATTERNS:
-                        if pattern.search(line):
-                            call_sites.append({"path": rel, "line": number, "api": api})
+                        m = pattern.search(line)
+                        if m:
+                            call_sites.append({"path": rel, "line": number, "api": api,
+                                               "_open": m.end() - 1 if line[m.end() - 1:m.end()] == "(" else None})
                             read.add(on_disk)
                 for model in MODEL_RE.findall(line):
                     models.setdefault(model, []).append(f"{rel}:{number}")
                     read.add(on_disk)
+    found, sources = binding_tool.trace(code_files, [f["path"] for f in prompt_files], SENDERS)
+    for f in prompt_files:
+        f["loaded_by"] = sorted({b["loaded_at"] for b in found if b["prompt"] == f["path"]}, key=location_key)
+    link_call_sites(call_sites, found, sources, dict((rel, (text, suffix)) for rel, text, suffix in code_files))
+    hits, settled = lint_bindings(template_texts, found)
+    lint += hits
     # Without any code there is no caller to check against: a prompt-only repository is filled elsewhere.
     if code_words:
-        lint += lint_unreferenced(templates, code_words)
+        lint += lint_unreferenced(templates, code_words, settled)
     commit, dirty = git_state(root, sorted(read))
     lint.sort(key=lambda h: (SEVERITY_RANK[h["severity"]], h["location"].rpartition(":")[0],
                              int(h["location"].rpartition(":")[2]), h["rule"]))
     return {
         "tool": "inventory.py", "version": 1, "root": shown(root.name), "commit": commit, "dirty": dirty,
-        "prompt_files": prompt_files, "call_sites": call_sites,
+        "prompt_files": prompt_files, "call_sites": call_sites, "bindings": found,
         "models": [{"id": m, "locations": locs} for m, locs in sorted(models.items())],
         "lint": lint, "skipped_dirs": [shown(d) for d in sorted(skipped)],
         "skipped_files": sorted(unread, key=lambda f: f["path"]),
@@ -580,7 +725,11 @@ def lint_findings(lint):
 
 def hit_key(rule, location, text):
     """What identifies one hit across rescans: unclosed-tag reports one hit per tag, possibly on one line."""
-    tag = re.search(r"<([a-z][\w-]*)>", text or "") if rule == "unclosed-tag" else None
+    if rule == "unused-render-key":
+        # One call site may render several templates, each its own hit.
+        tag = re.search(r"renders (\S+) with", text or "")
+    else:
+        tag = re.search(r"<([a-z][\w-]*)>", text or "") if rule == "unclosed-tag" else None
     return rule, location, tag.group(1) if tag else None
 
 

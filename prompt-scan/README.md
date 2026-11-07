@@ -28,8 +28,13 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 - **Recon** — `scripts/inventory.py` lists prompt files (prompt directories,
   `.prompt` files, `SKILL.md`, `AGENTS.md`/`CLAUDE.md`, `.claude/agents`…),
   model API call sites, template variables, quoted model IDs and mechanical
-  lint hits. The agent then reconstructs each message as actually sent and
-  marks which inputs are untrusted
+  lint hits. It traces each prompt file to the code that loads it, the keys
+  every render call (`.format`, `.render`, `.substitute`, `.invoke`,
+  `.replace`…) fills it with and the model call that sends it, with that
+  call's literal `model`, `max_tokens` and `temperature`; a variable a traced
+  render never fills, or a key it passes that the template never uses, is a
+  lint hit naming both lines. The agent then reconstructs each message as
+  actually sent and marks which inputs are untrusted
 - **Perspectives** — task and intent, instruction consistency, structure and
   placement, variables and assembly, output contract, examples, tools and
   agents, untrusted input, safety and refusal, context budget, model and
@@ -106,6 +111,7 @@ review of it.
 | `skills/prompt-scan/SKILL.md` | The skill: scope, run contract, severity, phases, decisions |
 | `skills/prompt-scan/reference/` | Read per phase: recon, inventory, perspectives, validation, schema, report |
 | `skills/prompt-scan/scripts/inventory.py` | Prompt inventory and lint (`L-*` findings with `--into`) |
+| `skills/prompt-scan/scripts/bindings.py` | Traces prompt files to the code that loads, renders and sends them (for `inventory.py`) |
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
 | `skills/prompt-scan/scripts/compare.py` | What changed between two reviews; `--fail-on` gates on new findings, `--accepted-fragment` carries accepted risks forward |

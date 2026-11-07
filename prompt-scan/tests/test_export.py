@@ -25,13 +25,13 @@ class ExportTest(unittest.TestCase):
         ids = [f["id"] for f in export.exported(data, "Info")]
         self.assertEqual(len(ids), 9)
         self.assertNotIn(data["findings"][0]["id"], ids)
-        self.assertEqual([f["severity"] for f in export.exported(data, "Medium")], ["Medium"] * 4)
+        self.assertEqual([f["severity"] for f in export.exported(data, "Medium")], ["High"] + ["Medium"] * 3)
 
     def test_summary_follows_the_chat_format(self):
         code, out, err = self.export("summary")
         self.assertEqual(code, 0, err)
         first = out.splitlines()[0]
-        self.assertTrue(first.startswith("11 findings (8 defects, 3 improvements): High 2, Medium 4, Low 5, Info 0."))
+        self.assertTrue(first.startswith("11 findings (8 defects, 3 improvements): High 3, Medium 3, Low 5, Info 0."))
         self.assertIn("Static review only.", first)
         self.assertIn("[High][defect][Confirmed] Template variable context is never filled", out)
         self.assertIn("  verdict: Valid — ", out)

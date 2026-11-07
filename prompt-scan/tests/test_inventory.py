@@ -28,7 +28,7 @@ class InventoryTest(unittest.TestCase):
                          [("app/llm/answer.py", 15, "anthropic.messages")])
         self.assertEqual(result["models"], [{"id": "claude-haiku-5-5", "locations": ["app/llm/answer.py:16"]}])
         self.assertEqual([(h["rule"], h["location"]) for h in result["lint"]],
-                         [("unreferenced-variable", "app/llm/prompts/answer.prompt:4"),
+                         [("unfilled-variable", "app/llm/prompts/answer.prompt:4"),
                           ("unclosed-tag", "app/llm/prompts/support_system.md:3"),
                           ("placeholder", "app/llm/prompts/support_system.md:7")])
 

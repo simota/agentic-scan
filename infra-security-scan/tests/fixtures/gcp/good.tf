@@ -43,6 +43,9 @@ resource "google_sql_database_instance" "main" {
   database_version = "POSTGRES_15"
   settings {
     tier = "db-f1-micro"
+    backup_configuration {
+      enabled = true
+    }
     ip_configuration {
       ipv4_enabled    = false
       private_network = "projects/example-project/global/networks/app"

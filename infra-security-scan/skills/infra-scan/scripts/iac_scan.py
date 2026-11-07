@@ -163,6 +163,12 @@ RULES = {
                    "CWE-319"),
     "GCP-GCS-002": ("Bucket, object or dataset ACL grants public access", "High", "Data protection", "gcp",
                     ["CIS GCP Foundation — Cloud Storage buckets are not publicly accessible"], "CWE-200"),
+    "AWS-RDS-003": ("Database automated backups disabled", "Low", "Resilience and recovery", "aws",
+                    ["AWS Foundational Security Best Practices — RDS DB instances have automatic backups enabled"],
+                    "CWE-693"),
+    "GCP-SQL-002": ("Database automated backups disabled", "Low", "Resilience and recovery", "gcp",
+                    ["CIS GCP Foundation — Cloud SQL database instances are configured with automated backups"],
+                    "CWE-693"),
 }
 # Resource types whose policy argument is a resource policy (AWS-S3-003).
 RESOURCE_POLICY_ATTRS = {
@@ -762,6 +768,19 @@ FILE_REF = re.compile(r'^(?:file|templatefile)\(\s*"(?:\$\{path\.module\}/)?([^"
 DOC_REF = re.compile(r'^"?(?:\$\{\s*)?data\.aws_iam_policy_document\.([A-Za-z0-9_-]+)(?:\[[^\]]*\])?'
                      r'\.(?:minified_)?json'
                      r'\s*\}?"?$')
+
+
+def literal_int(value):
+    """An integer the configuration states literally (5, "5"), else None."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float) and value.is_integer():
+        return int(value)
+    if isinstance(value, str) and re.fullmatch(r"\s*-?[0-9]+\s*", value):
+        return int(value)
+    return None
 
 
 def cfn_string(value):
@@ -1840,6 +1859,11 @@ def check_tf(scan, res):
         if t != "aws_rds_cluster_instance" and tf_bool(v.get("storage_encrypted")) in (False, None) \
                 and not inherited and v.get("engine_mode") != "serverless":
             scan.hit("AWS-RDS-002", res, v.line("storage_encrypted"), "storage_encrypted not true")
+        # Only a literal 0 turns backups off (the API default keeps one day); a
+        # read replica's backups are its source's.
+        if t == "aws_db_instance" and literal_int(v.get("backup_retention_period")) == 0 and \
+                v.get("replicate_source_db") in (None, ""):
+            scan.hit("AWS-RDS-003", res, v.line("backup_retention_period"), "backup_retention_period = 0")
     elif t in ("aws_instance", "aws_launch_template", "aws_launch_configuration"):
         opts = v.blocks("metadata_options")
         if not opts and t == "aws_instance" and v.blocks("launch_template"):
@@ -1983,6 +2007,15 @@ def check_tf(scan, res):
         if gaps:
             scan.hit("GCP-GCS-001", res, res.line, "; ".join(gaps))
     elif t == "google_sql_database_instance":
+        # Only a literal enabled = false: an omitted block also leaves backups
+        # off, but is left to review (RR1) since it is the provider default on
+        # instances whose backups may be managed elsewhere. A replica's backups
+        # are its primary's.
+        replica = v.get("master_instance_name") not in (None, "") or bool(v.blocks("replica_configuration"))
+        for settings in v.blocks("settings") if not replica else ():
+            for backup in settings.blocks("backup_configuration"):
+                if tf_bool(backup.get("enabled")) is False:
+                    scan.hit("GCP-SQL-002", res, backup.line("enabled"), "backup_configuration.enabled = false")
         for settings in v.blocks("settings"):
             if not settings.blocks("ip_configuration"):
                 # Omitted ip_configuration: a public IPv4 address without required TLS.
@@ -3037,6 +3070,9 @@ def handle_cfn(scan, rel, text, doc, line_of=None):
                 inherited = (inherited - {"DBClusterIdentifier"}) or props.get("EngineMode") == "serverless"
             if props.get("StorageEncrypted") in (False, "false", None) and not inherited:
                 scan.hit("AWS-RDS-002", res, line, "StorageEncrypted not true")
+            if type_ == "AWS::RDS::DBInstance" and literal_int(props.get("BackupRetentionPeriod")) == 0 and \
+                    "SourceDBInstanceIdentifier" not in props:
+                scan.hit("AWS-RDS-003", res, line, "BackupRetentionPeriod = 0")
         elif type_ == "AWS::Serverless::Function":
             # SAM expands these into Lambda, IAM role and URL resources.
             url = props.get("FunctionUrlConfig")
@@ -3356,6 +3392,8 @@ def aws_export(scan, rel, doc, keys):
             scan.hit("AWS-RDS-001", res, at(("DBInstances", i), "PubliclyAccessible"), "PubliclyAccessible = true")
         if db.get("StorageEncrypted") is False:
             scan.hit("AWS-RDS-002", res, at(("DBInstances", i), "StorageEncrypted"), "StorageEncrypted = false")
+        if literal_int(db.get("BackupRetentionPeriod")) == 0 and not db.get("ReadReplicaSourceDBInstanceIdentifier"):
+            scan.hit("AWS-RDS-003", res, at(("DBInstances", i), "BackupRetentionPeriod"), "BackupRetentionPeriod = 0")
     # aws ec2 describe-instances
     for r, reservation in items("Reservations"):
         for i, instance in enumerate(aslist(reservation.get("Instances"))):

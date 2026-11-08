@@ -6,7 +6,7 @@ each one over every review unit).
 Each family has an id and hunt steps. A step is done when every entry point and
 path of the unit has been read for it. Record the result per family in
 `perspectives` (`name`, `result`, `note`), the `name` starting with the family
-id (`DC Dead code`), for all thirteen families — one with nothing to check as
+id (`DC Dead code`), for all fourteen families — one with nothing to check as
 `N/A` with the reason (`N/A: no database` in `result`, or the reason in
 `note`; `scripts/contract_check.py` refuses a bare `N/A`), one not reached as
 `not checked`. Inventory keys that
@@ -28,6 +28,39 @@ does not need it.
   [`commented_code`]
 - DC4 Unreachable branches: code after an unconditional return or raise,
   conditions that are always true or false, cases of enums no value reaches
+
+## Comments (`CM`)
+
+A comment is an element like any other, and the default is none. People and
+coding agents copy the patterns around the code they edit: one surviving
+workaround or excuse comment reads as the house style and spreads. A caveat
+written for the reader ("must", "never", "keep in sync") is a rule nothing
+enforces; it belongs in structure — a type, a test, a lint rule, an assertion
+at the boundary — and the comment goes once the structure holds. What remains
+is what no structure can say: a license header, a directive a tool reads
+(shebang, encoding line, a `noqa` or `@ts-expect-error` scoped to one line
+with its reason), the documentation a published API generates from, and a
+why-comment citing an outside fact (a spec section, a vendor bug) that the
+code cannot show. Commented-out code is DC3, a dated deprecation or removal
+note is weighed with the element it marks (FF2, DU3, AP2).
+
+- CM1 Workaround, TODO and excuse comments (`HACK`, `FIXME`, "for now",
+  "temporary", "kept for…", "don't touch"): remove the workaround they
+  describe, or settle it and delete the note; an undated TODO is a decision
+  nobody owns [`caveat_comments`, `markers`]
+- CM2 Caveat comments that structure should enforce: a value a type says is
+  one thing and a comment says may be another, "call X before Y", "keep in
+  sync with Z", "never pass…". The subtraction names the structure that
+  replaces the comment (`remains`) [`caveat_comments`]
+- CM3 Comments that restate the code, contradict it, or keep history version
+  control already has (changelogs, author and date banners, "added for…",
+  "old version below")
+
+Severity follows the table in SKILL.md: a single comment is Low; the same
+workaround copied to several places is one finding at the first copy, listing
+the rest in `occurrences`, and Medium when the copies diverge. A comment that
+is part of an element already reported (a flag's "kept for the old checkout")
+goes with that finding, not as a second one.
 
 ## Unused features (`UF`)
 

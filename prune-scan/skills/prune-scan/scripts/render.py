@@ -56,11 +56,11 @@ MAX_SNIPPET_LINES = 80
 MAX_SOURCE_BYTES = 2 * 1024 * 1024
 
 FAMILIES = {
-    "en": {"DC": "Dead code", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
+    "en": {"DC": "Dead code", "CM": "Comments", "UF": "Unused features", "FF": "Feature flags and experiments", "DP": "Dependencies",
            "CF": "Configuration and environment", "DA": "Data and schema", "AS": "Assets and content",
            "TT": "Tests and tooling", "DU": "Duplication", "AP": "API surface", "PI": "Permissions and integrations",
            "PX": "Purpose fit", "OB": "Over-built"},
-    "ja": {"DC": "デッドコード", "UF": "未使用の機能", "FF": "フィーチャーフラグ・実験", "DP": "依存関係",
+    "ja": {"DC": "デッドコード", "CM": "コメント", "UF": "未使用の機能", "FF": "フィーチャーフラグ・実験", "DP": "依存関係",
            "CF": "設定・環境変数", "DA": "データ・スキーマ", "AS": "アセット・コンテンツ", "TT": "テスト・ツール",
            "DU": "重複", "AP": "API 表面", "PI": "権限・外部連携", "PX": "目的との適合", "OB": "作り込み過剰"},
 }

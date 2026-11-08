@@ -49,7 +49,7 @@ EXPOSURES = ("public", "authenticated", "admin", "internal", "partner")
 CONSUMER_KINDS = ("web", "mobile", "service", "partner", "ops", "library-user", "other")
 UNIT_KINDS = ("area", "shared")
 LIST_KEYS = ("checked_ok", "limitations", "decisions", "next_steps")
-HUNT_STEPS = {"DC": 4, "UF": 4, "FF": 3, "DP": 4, "CF": 3, "DA": 4, "AS": 4,
+HUNT_STEPS = {"DC": 4, "CM": 3, "UF": 4, "FF": 3, "DP": 4, "CF": 3, "DA": 4, "AS": 4,
               "TT": 4, "DU": 3, "AP": 3, "PI": 3, "PX": 4, "OB": 5}
 FAMILIES = tuple(HUNT_STEPS)
 PURPOSE_FAMILIES = ("PX", "OB")

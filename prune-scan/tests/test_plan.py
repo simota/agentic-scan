@@ -46,7 +46,7 @@ class Plans(unittest.TestCase):
         steps = [s["id"] for s in result["steps"]]
         now = [s["id"] for s in result["steps"] if s["wave"] == "now"]
         reduce = [s["id"] for s in result["steps"] if s["wave"] == "reduce"]
-        self.assertEqual(len(now), 25)
+        self.assertEqual(len(now), 26)
         self.assertEqual(reduce, ["P-005", "P-014", "P-027"])
         self.assertEqual(steps[:len(now)], now)  # Remove-now steps come first.
         # "Remove after P-010": the dependency moves P-006 below P-010, keeping severity order otherwise.
@@ -63,7 +63,7 @@ class Plans(unittest.TestCase):
         decide = {d["id"]: d for d in result["decide"]}
         self.assertTrue(decide["P-003"]["question"][0].startswith("P-003: confirm the Stripe webhook"))
         self.assertEqual(result["blocked"], [])
-        self.assertEqual(result["kept"], {"Excluded": 1})  # P-037 FalsePositive.
+        self.assertEqual(result["kept"], {"Excluded": 1})  # P-038 FalsePositive.
         self.assertEqual(result["shared_files"]["package.json"], ["P-006", "P-018", "P-019"])
         raw = (self.tmp / "findings.json").read_bytes()
         self.assertEqual(result["record"]["sha256"], hashlib.sha256(raw).hexdigest())
@@ -122,7 +122,7 @@ class Plans(unittest.TestCase):
         self.assertEqual(p006["after"], ["P-010"])  # "P-010 の後に行わないと"
         p007 = next(s for s in result["steps"] if s["id"] == "P-007")
         self.assertEqual(p007["with"], ["P-024"])  # "P-024 の移行で併せて削除"
-        self.assertIn("## 今すぐ削除 (25)", text)
+        self.assertIn("## 今すぐ削除 (26)", text)
         self.assertIn("  - 前提: P-010", text)
 
     def test_references_ignore_paths_shaped_like_ids(self):

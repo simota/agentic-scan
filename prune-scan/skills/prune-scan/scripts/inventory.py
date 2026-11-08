@@ -11,10 +11,10 @@ replaceable by the platform, environment variables read versus declared,
 feature flags with their values and checks, locale keys never referenced,
 asset files and CSS classes never named, routes nothing names, Makefile targets
 and package scripts nothing invokes, unreferenced scripts, SQL and docs,
-skipped tests, commented-out code blocks, deprecation and removal markers with
-dates, and SQL tables and columns no code names. With --units, every row is
-tagged with the review unit whose path covers it. Never prints the value of an
-environment variable. Read-only, standard library only (reference/inventory.md).
+skipped tests, commented-out code blocks, workaround and caveat comments,
+deprecation and removal markers with dates, and SQL tables and columns no code
+names. With --units, every row is tagged with the review unit whose path
+covers it. Never prints the value of an environment variable. Read-only, standard library only (reference/inventory.md).
 Exit status: 0 written, 2 bad arguments (including --out inside the repository) or unreadable
 repository/units, 1 output not written.
 """
@@ -299,6 +299,10 @@ CODE_LIKE = re.compile(r"[;{}()=\[\]]|^\s*(?:def|return|import|from|if|elif|else
 MARKER = re.compile(r"(?i)\b(TODO|FIXME|HACK|XXX|deprecated|remove (?:after|by|once|when|in)|temporary|sunset|ended|"
                     r"until)\b")
 ALWAYS_MARKERS = {"deprecated", "sunset"}
+# A workaround tag or a caveat phrase in a line comment: a note asking readers to behave, which a type,
+# test or lint rule could enforce instead. Tags are upper case only so ordinary prose ("a note") is not one.
+CAVEAT = re.compile(r"\b(?:(TODO|FIXME|HACK|XXX|NOTE|WARNING|IMPORTANT)\b|(?i:(workaround|work around|kludge|"
+                    r"temporar(?:y|ily)|for now|kept (?:for|until)|keep in sync|do not|don't|must|never)\b))")
 DATE = re.compile(r"\b(20[0-9]{2}-(?:0[1-9]|1[0-2])(?:-(?:0[1-9]|[12][0-9]|3[01]))?)\b")
 CREATE_TABLE_START = re.compile(r"CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:[`\"\[]?\w+[`\"\]]?\.)?"
                                 r"[`\"\[]?(\w+)[`\"\]]?\s*\(", re.I)
@@ -2400,10 +2404,10 @@ def scan_loose_files(scan):
 
 
 def scan_source_notes(scan):
-    """Skipped tests, commented-out code and deprecation markers."""
+    """Skipped tests, commented-out code, caveat comments and deprecation markers."""
     texts, code_files, locale_files, today = scan.texts, scan.code_files, scan.locale_files, scan.today
     rows = {}
-    skipped, commented, markers = [], [], []
+    skipped, commented, caveats, markers = [], [], [], []
     for rel, text in sorted(texts.items()):
         ext = suffix(rel)
         # Preserve candidates and their metadata, but do not export arbitrary
@@ -2429,10 +2433,15 @@ def scan_source_notes(scan):
                 if m and not line.lstrip().startswith(("#!", "# -*-")):
                     run.append((n, m.group(1)))
                     continue
-                if len(run) >= 4:
-                    code = sum(1 for _, body in run if CODE_LIKE.search(body))
-                    if code / len(run) >= 0.6:
-                        commented.append({"location": f"{rel}:{run[0][0]}-{run[-1][0]}", "lines": len(run)})
+                if len(run) >= 4 and sum(1 for _, body in run if CODE_LIKE.search(body)) / len(run) >= 0.6:
+                    commented.append({"location": f"{rel}:{run[0][0]}-{run[-1][0]}", "lines": len(run)})
+                else:
+                    # A commented-out block is DC3; only prose comments are caveat candidates.
+                    for num, body in run:
+                        c = CAVEAT.search(body)
+                        if c:
+                            caveats.append({"word": c.group(1) or c.group(2).lower(), "location": f"{rel}:{num}",
+                                            "text": omitted_text() or lines[num - 1].strip()[:120]})
                 run = []
         if ext in PROSE_EXT or rel in locale_files or ext == ".json":
             continue
@@ -2458,6 +2467,7 @@ def scan_source_notes(scan):
             markers.append(row)
     rows["skipped_tests"] = skipped
     rows["commented_code"] = commented
+    rows["caveat_comments"] = caveats
     rows["markers"] = markers
     return rows
 

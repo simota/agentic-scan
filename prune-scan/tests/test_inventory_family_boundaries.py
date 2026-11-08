@@ -47,7 +47,8 @@ class FamilyIsolationTests(unittest.TestCase):
             "duplicate_purpose", "platform_replaceable", "env_read", "env_declared_not_read",
             "env_read_not_declared", "feature_flags", "i18n_unreferenced", "i18n_dynamic_prefixes",
             "assets_unreferenced", "css_unreferenced", "css_dynamic_prefixes", "routes", "unreferenced_routes",
-            "scripts", "uninvoked_scripts", "unreferenced_files", "skipped_tests", "commented_code", "markers",
+            "scripts", "uninvoked_scripts", "unreferenced_files", "skipped_tests", "commented_code", "caveat_comments",
+            "markers",
             "sql_tables_unreferenced", "sql_columns_unreferenced"])
 
 

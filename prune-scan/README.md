@@ -57,6 +57,7 @@ we delete or simplify?".
 | Family | Examples |
 |---|---|
 | Dead code / Unused features | Unreferenced functions and modules, commented-out code, routes and screens nothing calls or links, debug routes left mounted, unscheduled jobs |
+| Comments | Workaround, TODO and excuse comments that others copy as the house style; caveats ("must", "never", "keep in sync") to replace with a type, test or lint rule; comments that restate the code or keep history |
 | Feature flags / Dependencies | Always-on or always-off flags, finished experiments still running, unimported or duplicated packages, packages the platform replaces |
 | Configuration / Data | Settings never read, secrets for removed services, unused tables and columns, write-only data, stale seeds |
 | Assets / Tests and tooling | Unreferenced images, fonts, CSS classes, locale keys and docs; skipped tests, dead CI jobs, stale scripts and generators |
@@ -70,7 +71,7 @@ the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 
 | Script | Does |
 |---|---|
-| `scripts/inventory.py REPO --out inventory.json [--units units.json]` | Unreferenced symbols, orphan files, unimported / duplicated / platform-replaceable dependencies, env vars read versus declared, feature flags and their values, unreferenced locale keys, assets and CSS classes, routes nothing names, uninvoked scripts and targets, loose files, skipped tests, commented-out code, dated deprecation markers, unreferenced tables and columns; capped after measuring, with `limits` and `truncated` |
+| `scripts/inventory.py REPO --out inventory.json [--units units.json]` | Unreferenced symbols, orphan files, unimported / duplicated / platform-replaceable dependencies, env vars read versus declared, feature flags and their values, unreferenced locale keys, assets and CSS classes, routes nothing names, uninvoked scripts and targets, loose files, skipped tests, commented-out code, workaround and caveat comments, dated deprecation markers, unreferenced tables and columns; capped after measuring, with `limits` and `truncated` |
 | `scripts/findings.py units\|merge\|check\|renumber` | Validate the units and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
 | `scripts/compare.py EARLIER LATER [--repo REPO] [--json OUT] [--fragment OUT]` | Follow-up review: match findings across two reviews by what they name (ids are renumbered every time) into resolved, accepted, ruled out, persisting with changes, missing, new and reopened; inventory candidates that appeared or are gone; whether missing findings' files still exist; a merge fragment that carries them as `Fixed` |

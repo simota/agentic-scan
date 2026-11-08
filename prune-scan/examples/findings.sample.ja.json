@@ -898,6 +898,31 @@
     },
     {
       "id": "P-032",
+      "title": "HACK コメントが price_cents を Number() するよう全呼び出し元に求め、API 側は数値を保証していない",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CM2",
+      "unit_ref": "UN-02",
+      "element": "listItems の注意書きコメント",
+      "location": "web/src/api.ts:5",
+      "observed": "Item 型は price_cents を数値とするが、コメントは文字列で届くことがあるとして変換を呼び出し元に任せている。唯一の呼び出し元(web/src/pages/Home.tsx:22)は Number() せずに formatPrice へ渡している。",
+      "basis": "inventory caveat_comments(HACK)。規則がコメントにしかないため何も強制せず、唯一の呼び出し元はすでに守っていない。次の変更はコメントか守らない書き方のどちらかを模倣する。add_item(server/items.py:22)は price_cents を受け取ったまま保存するので、文字列がテーブルに入る経路はここにある。",
+      "subtraction": {
+        "action": "remove",
+        "what": "コメント。先に規則を構造へ移す:add_item は整数でない price_cents を拒否し、listItems は Number(price_cents) を返して Item 型を正しくし、\"250\" を送ると拒否されることをテストで固定する。",
+        "remains": "コメントが各呼び出し元に求めていたことを強制する Item 型と境界のチェック。",
+        "loses": "なし。規則は読み飛ばせないコードに移る。"
+      },
+      "risk": "price_cents を文字列で送るクライアントは、文字列が保存される代わりにエラーを受け取る。リポジトリ内にそうするクライアントはない。",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep price_cents:api.ts の型とコメント、Number() のない Home.tsx:22、無検査で挿入する server/items.py:22。",
+        "dynamic_checked": "コメントは実行されない。その主張を型・サーバー・呼び出し元と照合した。"
+      }
+    },
+    {
+      "id": "P-033",
       "title": "OldButton はどこからも import されていない",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -921,7 +946,7 @@
       }
     },
     {
-      "id": "P-033",
+      "id": "P-034",
       "title": "holiday_banner は常に無効だが、バナー・スタイル・画像は出荷され続けている",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -951,7 +976,7 @@
       }
     },
     {
-      "id": "P-034",
+      "id": "P-035",
       "title": "2 つのロケールキーが参照されていない",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -981,7 +1006,7 @@
       }
     },
     {
-      "id": "P-035",
+      "id": "P-036",
       "title": "CSS クラス .legacy-grid を使うマークアップがない",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -1005,7 +1030,7 @@
       }
     },
     {
-      "id": "P-036",
+      "id": "P-037",
       "title": "どこからもリンクされず、docs/clients.md に役目を引き継がれた移行メモ",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -1029,7 +1054,7 @@
       }
     },
     {
-      "id": "P-037",
+      "id": "P-038",
       "title": "on_startup は未参照に見えるが名前でディスパッチされている",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -1058,6 +1083,11 @@
       "name": "DC デッドコード",
       "result": "4件、除外1件",
       "note": "inventory のシンボル・孤立ファイル・コメントブロックを、それぞれ動的利用の有無まで検索。"
+    },
+    {
+      "name": "CM コメント",
+      "result": "1件",
+      "note": "caveat_comments の行コメント。「kept for / kept until」の注記(server/utils.py:9、server/app.py:47、web/src/components/OldButton.tsx:1)は P-028・P-022・P-033 と一緒に扱う。"
     },
     {
       "name": "UF 未使用の機能",

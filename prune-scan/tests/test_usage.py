@@ -86,7 +86,7 @@ class SampleLog(unittest.TestCase):
         self.assertIn("does not settle a purpose", tied["P-007"]["reading"])
         self.assertIn("does not settle a purpose", tied["P-021"]["reading"])  # PX1: a purpose family too.
         self.assertIn("evidence of use", usage.TEXT["en"]["used"])
-        self.assertNotIn("P-037", tied)  # FalsePositive findings are not tied.
+        self.assertNotIn("P-038", tied)  # FalsePositive findings are not tied.
 
     def test_no_client_detail_reaches_the_output(self):
         dumped = json.dumps(self.result) + self.text

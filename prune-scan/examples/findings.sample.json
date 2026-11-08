@@ -898,6 +898,31 @@
     },
     {
       "id": "P-032",
+      "title": "A HACK comment asks every caller to Number() price_cents instead of the API guaranteeing a number",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CM2",
+      "unit_ref": "UN-02",
+      "element": "Caveat comment in listItems",
+      "location": "web/src/api.ts:5",
+      "observed": "The Item type says price_cents is a number; the comment says it can be a string and leaves the conversion to every caller. The one caller (web/src/pages/Home.tsx:22) passes it to formatPrice without Number().",
+      "basis": "inventory caveat_comments (HACK). The rule exists only as a comment, so nothing enforces it and the only caller already skips it; the next change copies either the comment or the omission. add_item (server/items.py:22) stores price_cents as sent, which is how a string could reach the table.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The comment, once structure carries its rule: add_item rejects a price_cents that is not an integer, listItems returns Number(price_cents) so the Item type holds, and a test that posts \"250\" expects the rejection.",
+        "remains": "The Item type and a boundary check that enforce what the comment asked of each caller.",
+        "loses": "Nothing: the rule moves into code that no reader can skip."
+      },
+      "risk": "A client that posts price_cents as a string gets an error instead of a stored string; no client in the repository does.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep price_cents: the type and comment in api.ts, Home.tsx:22 without Number(), server/items.py:22 inserting it unchecked.",
+        "dynamic_checked": "A comment is never executed; its claim was checked against the type, the server and the callers."
+      }
+    },
+    {
+      "id": "P-033",
       "title": "OldButton is imported nowhere",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -921,7 +946,7 @@
       }
     },
     {
-      "id": "P-033",
+      "id": "P-034",
       "title": "holiday_banner is always off; its banner, style and image ship anyway",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -951,7 +976,7 @@
       }
     },
     {
-      "id": "P-034",
+      "id": "P-035",
       "title": "Two locale keys are never referenced",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -981,7 +1006,7 @@
       }
     },
     {
-      "id": "P-035",
+      "id": "P-036",
       "title": "CSS class .legacy-grid is used by no markup",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -1005,7 +1030,7 @@
       }
     },
     {
-      "id": "P-036",
+      "id": "P-037",
       "title": "Migration note linked from nowhere, superseded by docs/clients.md",
       "severity": "Info",
       "confidence": "Confirmed",
@@ -1029,7 +1054,7 @@
       }
     },
     {
-      "id": "P-037",
+      "id": "P-038",
       "title": "on_startup looks unreferenced but is dispatched by name",
       "severity": "Low",
       "confidence": "Confirmed",
@@ -1058,6 +1083,11 @@
       "name": "DC Dead code",
       "result": "4 findings, 1 excluded",
       "note": "Symbols, orphan files and comment blocks from the inventory, each searched for dynamic use."
+    },
+    {
+      "name": "CM Comments",
+      "result": "1 finding",
+      "note": "Line comments from caveat_comments. The kept-for and kept-until notes (server/utils.py:9, server/app.py:47, web/src/components/OldButton.tsx:1) go with P-028, P-022 and P-033."
     },
     {
       "name": "UF Unused features",

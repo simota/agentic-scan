@@ -1,6 +1,6 @@
 ---
 name: prune-scan
-description: "Read-only minus-design review of an app's repo: maps purpose and consumers, then finds what does not earn its place: dead code, unused features, flags, deps, config, data, assets, tests, duplicates, API surface, integrations, over-built or out-of-purpose features. Dashboard + PDF; never deletes. Use when asked what can be deleted, removed or simplified. Not for speed, structure or security."
+description: "Read-only minus-design review of an app repo: maps purpose and consumers, then finds what does not earn its place: dead code, workaround comments, unused features, flags, deps, config, data, assets, tests, duplicates, API surface, integrations, over-built or out-of-purpose features. Dashboard + PDF; never deletes. Use when asked what to remove or simplify. Not for speed, structure or security."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -14,9 +14,15 @@ jobs is a removal candidate even when it is used. The burden of proof is on
 keeping, but every finding still rests on stated evidence — the purpose
 baseline, usage, scale, reference searches — never taste.
 
+Comments are elements too, and the default is none. People and coding agents
+imitate the code around what they edit, so one surviving workaround or excuse
+comment becomes the pattern the next change copies. A caveat is not left as a
+note for the reader: it is replaced by structure — a type, a test, a lint rule
+— and then the comment is removed (`CM`, `reference/perspectives.md`).
+
 The skill reads the repository and reports what can be **removed, reduced or
-consolidated**: dead code, unused features and routes, settled flags and
-finished experiments, dependencies, configuration, data, assets, tests and
+consolidated**: dead code, workaround and caveat comments, unused features
+and routes, settled flags and finished experiments, dependencies, configuration, data, assets, tests and
 tooling, duplicates, API surface, permissions and integrations, and features
 that are over-built for the service's scale or outside its purpose. Each
 finding has a `path:line`, the review unit and purpose item it is measured
@@ -75,8 +81,8 @@ Phases: `RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Severity | When (the cost of keeping the element) |
 |---|---|
 | High | An unneeded element that is an active liability: a reachable unused endpoint, debug route or admin feature with privileges or data access; an unused dependency with install scripts or a known vulnerability; a flag or finished experiment whose dead code still executes in production; secret-bearing configuration for a removed service; an unused OAuth scope, webhook or integration that still grants access or accepts writes |
-| Medium | A significant ongoing cost: a whole unused feature, module or screen; a duplicated implementation that diverges; a permanently-on or -off flag with both branches maintained; an unused heavy dependency; data kept with no reader; a used feature that serves a documented non-goal; a mechanism built far beyond the core jobs' scale that people must keep working |
-| Low | Local cleanup: a dead function, an unused CSS class, asset or locale key, commented-out code, a stale script or target, a skipped test, an unread setting, an abstraction with one implementation; or a Medium-class cost confined to one small component |
+| Medium | A significant ongoing cost: a whole unused feature, module or screen; a duplicated implementation that diverges (a copied workaround included); a permanently-on or -off flag with both branches maintained; an unused heavy dependency; data kept with no reader; a used feature that serves a documented non-goal; a mechanism built far beyond the core jobs' scale that people must keep working |
+| Low | Local cleanup: a dead function, an unused CSS class, asset or locale key, commented-out code, a workaround or caveat comment, a stale script or target, a skipped test, an unread setting, an abstraction with one implementation; or a Medium-class cost confined to one small component |
 | Info | No ongoing cost today: an orphan note, a naming leftover, a candidate kept on purpose and recorded for the next review |
 
 Each further condition before the cost is real (the route is mounted only when a
@@ -109,7 +115,7 @@ in `scripts/render.py`) condenses this table and the confidence table in
 | Chat summary | First line status and counts, the subtraction summary (remove now, reduce or consolidate, decide with a human), decisions for a human |
 | `findings.json` | The canonical findings and narrative used by the dashboard and report, alongside the purpose and review units in `units.json` |
 | `units.json` | The purpose baseline, entry points, consumers and review units the review judged against |
-| `inventory.json` | `inventory.py` candidates (symbols, orphan files, dependencies, env vars, flags, locale keys, assets, CSS, routes, scripts, skipped tests, commented code, markers, schema) |
+| `inventory.json` | `inventory.py` candidates (symbols, orphan files, dependencies, env vars, flags, locale keys, assets, CSS, routes, scripts, skipped tests, commented code, caveat comments, markers, schema) |
 | `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings; next steps open with the subtraction summary |
 
@@ -120,7 +126,7 @@ outputs: write them to scratch, or pass their names to `contract_check.py --allo
 ## Done when
 
 - `scripts/contract_check.py <out>` passes. It also requires every one of the
-  thirteen perspective families in `perspectives` (applied, `N/A` with the
+  fourteen perspective families in `perspectives` (applied, `N/A` with the
   reason, or `not checked`), no finding left `Unverified` (every merged finding
   ends VERIFY with a settled verdict: `Valid`, `Likely`, `Unlikely`,
   `FalsePositive` or `NotApplicable`), and every open `Purpose-dependent`

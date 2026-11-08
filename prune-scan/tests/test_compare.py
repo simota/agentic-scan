@@ -50,7 +50,7 @@ class FollowUp(unittest.TestCase):
         self.write(self.old, SAMPLE)
         later = copy.deepcopy(SAMPLE)
         later["meta"]["date"] = "2026-11-20"
-        later["findings"] = [f for f in later["findings"] if f["id"] not in ("P-002", "P-011", "P-031", "P-032")]
+        later["findings"] = [f for f in later["findings"] if f["id"] not in ("P-002", "P-011", "P-031", "P-033")]
         by_id(later, "P-006")["status"] = "Fixed"
         by_id(later, "P-021")["severity"] = "Info"
         by_id(later, "P-022")["validation"] = {"verdict": "NotApplicable", "evidence": "Deprecation window open."}
@@ -75,7 +75,7 @@ class FollowUp(unittest.TestCase):
     def test_findings_are_matched_across_renumbered_ids(self):
         result, out = self.comparison()
         f = result["findings"]
-        self.assertEqual([r["id"] for r in f["missing"]], ["P-002", "P-011", "P-031", "P-032"])
+        self.assertEqual([r["id"] for r in f["missing"]], ["P-002", "P-011", "P-031", "P-033"])
         self.assertEqual([r["id"] for r in f["resolved"]], ["P-006"])
         self.assertEqual([r["id"] for r in f["accepted"]], ["P-023"])
         self.assertEqual([(r["id"], r["later_verdict"]) for r in f["ruled_out"]], [("P-022", "NotApplicable")])
@@ -86,8 +86,8 @@ class FollowUp(unittest.TestCase):
         later = json.loads((self.new / "findings.json").read_text(encoding="utf-8"))
         for row in f["persisting"]:
             self.assertEqual(by_id(later, row["later_id"])["element"], by_id(SAMPLE, row["id"])["element"])
-        self.assertTrue(out.startswith("prune-scan follow-up: 36 -> 29 open; resolved 1, accepted 1, ruled out 1, "
-                                       "missing 4, persisting 29, new 0, reopened 0"))
+        self.assertTrue(out.startswith("prune-scan follow-up: 37 -> 30 open; resolved 1, accepted 1, ruled out 1, "
+                                       "missing 4, persisting 30, new 0, reopened 0"))
         self.assertIn("High 5->4", out)
 
     def test_repo_tells_deleted_files_from_files_still_present(self):
@@ -100,7 +100,7 @@ class FollowUp(unittest.TestCase):
 
     def test_new_and_reopened_findings(self):
         later = json.loads((self.new / "findings.json").read_text(encoding="utf-8"))
-        extra = copy.deepcopy(by_id(SAMPLE, "P-035"))
+        extra = copy.deepcopy(by_id(SAMPLE, "P-036"))
         extra.update(id="P-099", element="CSS class .btn-old", location="web/src/styles/app.css:4")
         later["findings"].append(extra)
         self.write(self.new, later)
@@ -116,10 +116,10 @@ class FollowUp(unittest.TestCase):
         result, out = self.comparison("--repo", self.repo, "--fragment", fragment_path)
         fragment = json.loads(fragment_path.read_text(encoding="utf-8"))
         carried = fragment["findings"]
-        self.assertEqual([f["id"] for f in carried], ["P-034", "P-035", "P-036", "P-037"])
+        self.assertEqual([f["id"] for f in carried], ["P-035", "P-036", "P-037", "P-038"])
         self.assertEqual({f["status"] for f in carried}, {"Fixed"})
-        self.assertEqual(result["carried"]["ids"], [["P-002", "P-034"], ["P-011", "P-035"],
-                                                    ["P-031", "P-036"], ["P-032", "P-037"]])
+        self.assertEqual(result["carried"]["ids"], [["P-002", "P-035"], ["P-011", "P-036"],
+                                                    ["P-031", "P-037"], ["P-033", "P-038"]])
         legacy = next(f for f in carried if f["element"] == "Module server/legacy_export.py")
         self.assertIn("server/legacy_export.py no longer exists", legacy["validation"]["evidence"])
         debug = next(f for f in carried if f["element"] == "Route GET /debug/dump")

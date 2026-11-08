@@ -175,6 +175,11 @@ requester's language (`ja` or `en`); render uses it, and `check` requires it.
   needs its own permission, and is otherwise shown on a scratch copy)
 - Never: report preference as a defect ("should use hexagonal architecture",
   "too many files") without a demonstrated defect, change cost or inconsistency
+- Never: accept a comment as a control or offer one as a fix or guard. A
+  `TODO: workaround` or a "do not call X" warning is an unenforced rule that
+  the next change, human or agent, copies as the house pattern; the fix
+  direction moves it into a type, test or lint rule (`reference/perspectives.md`
+  DU3)
 - Never: recommend a rewrite as a fix direction. Name the smallest change that
   restores the rule, and the order of steps if it is large
 - Never: report a High or Medium finding you have not traced end to end yourself

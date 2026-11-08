@@ -40,6 +40,10 @@ Rules:
   reason
 - A step is `sound` only when its *Sound when* cell can be filled with the
   mechanism's `path:line`. "The framework separates it" is not evidence
+- A comment is never the mechanism. "Do not call X from Y", "keep these in
+  sync" or a `TODO` naming the proper fix records an unenforced rule; the
+  cell is `NONE` with the comment cited as the rule's source, and the comment
+  is a DU3 lead
 
 ## Hunt steps per perspective
 
@@ -140,6 +144,7 @@ Each step says **what** to hunt, **where** to look, and what evidence makes it
 |---|---|---|---|
 | DU1 | Parallel implementations of one concept: two HTTP clients, two date helpers, two permission checks, two state machines for one entity | Search by concept across modules | One implementation — because parallel versions diverge silently |
 | DU2 | One recurring problem solved several ways (data access, validation, error handling, state management) without a reason | Majority pattern per problem | One way, or a documented reason for each exception — because each variant costs every reader |
+| DU3 | *(sound constructs)* Rules and workarounds kept as comments: a `TODO`/`HACK`/`FIXME`/"temporary" workaround, or a prose warning ("do not call X from Y", "must run after Z", "never pass null"), standing where a type, test or lint rule should; and whether it has already been copied. A marker alone is a lead, not a finding: report it when the workaround has a second site, or when the comment is the only thing keeping a rule on a core flow | Search for workaround and warning markers on core flows and hotspots; for each, search for the same workaround shape elsewhere and `git log -S` its spread | The rule the comment states is enforced by a type, test or lint rule at `path:line`, and the workaround has one site — because people and coding agents copy the code beside them, not the comment's intent, so a workaround left in place becomes the pattern and a warning in prose stops nothing |
 
 ### Dependencies and evolution (DE)
 
@@ -166,4 +171,5 @@ for: find this stack's equivalent.
 | TX4 | Optimistic version column; conditional `UPDATE … WHERE version = ?`; `SELECT … FOR UPDATE`; a distributed lease for singleton jobs | A process-local mutex or `synchronized` block guarding state shared across instances; check-then-act in two statements | A process lock does not span replicas |
 | FH1 | Exceptions propagate to one edge handler; handled errors produce a defined outcome (retry, compensation, user-visible error); awaited promises and checked results | `except Exception: log; pass`; `catch (e) {}`; fire-and-forget promises on core flows; ignored error returns (in Go `_ = f()`, a bare `f()` statement dropping its error, `defer x.Close()` on a write; `_ = tx.Rollback()` after a failure is the deliberate exception); in Python a bare `except:`, `contextlib.suppress(Exception)`, an `asyncio.create_task` nobody awaits or keeps; in Java `catch (Exception e) {}` and a `CompletableFuture` from `KafkaTemplate.send` nobody inspects; an exception that propagates to a consumer framework that already acked the message or committed the offset (auto-ack before processing, Celery's default early ack without `acks_late`, `ack.acknowledge()` with `MANUAL_IMMEDIATE` inside a transaction that later rolls back) | A swallowed error reports success after partial work |
 | AC2 | Clients generated from the OpenAPI, GraphQL or protobuf schema in CI; a schema-compatibility check (e.g. a registry, `buf breaking`); additive-only fields with a supported-app-version window | Hand-written TS or Swift types mirroring DTOs; a `/v2` path with no compatibility test; removing a field still read by shipped mobile builds | Hand-copied types drift silently, and old clients live for months |
+| DU3 | The rule moved into structure: a type or constructor that makes the forbidden call or state unrepresentable, a test that fails when it is broken, a lint or import rule (e.g. a custom ESLint or Ruff rule, ArchUnit, Semgrep in CI); the workaround replaced at its one site, with a test pinning the case it worked around | `// TODO: workaround`, `# HACK`, `XXX: temporary` left on a core flow; "do not call X from Y" or "keep in sync with Z" in prose; a lint suppression whose comment is the only justification; the same workaround copied to a second site; a ticket link in a comment as the only record | Agents and people imitate the surrounding code: one surviving workaround is read as the house style and multiplies, while a rule in prose is enforced by nothing |
 | TS1 | Clock, random, ID generator and clients passed in or injected (e.g. a `Clock` interface, `now` parameter, constructor injection) | `datetime.now()`, `Date.now()`, `Math.random()` or a vendor SDK called inside domain rules; monkeypatching in every test | A hidden dependency cannot be controlled at the boundary |

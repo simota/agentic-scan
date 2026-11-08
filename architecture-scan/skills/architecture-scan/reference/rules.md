@@ -126,3 +126,10 @@ Each finding carries:
 - `guard` — at least one fitness function or test that would keep the rule:
   an import contract, a cycle check, a single-writer search in CI, a contract
   test, an idempotency test that delivers the same message twice
+
+A `fix` or `guard` is structure, never prose: "add a comment", "document
+the constraint" or "add a TODO" is not a fix direction, and a rule whose only
+source is a comment (§1, source 6) is restored by moving it into a type, a
+test or a lint rule and removing the comment that stood in for it. A comment
+left beside a workaround is the next copy's template
+(`reference/perspectives.md` DU3).

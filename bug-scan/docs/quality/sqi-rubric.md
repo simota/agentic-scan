@@ -1,8 +1,9 @@
 # SQI rubric for bug-scan
 
-Fixed before any improvement work. Before and after are scored with this file and `audit.py` unchanged. SQI is
-a rubric, not a physical measurement, and no real user took part: a score says how the artefact meets the anchors
-below, not that anyone became happier or faster.
+Fixed before any improvement work: before and after are scored with this file and `audit.py` unchanged.
+
+SQI is a rubric, not a physical measurement, and no real user took part. A score says how the artefact meets the
+anchors below, not that anyone became happier or faster.
 
 ## Scope
 
@@ -18,7 +19,7 @@ below, not that anyone became happier or faster.
 Evidence levels: E0 none (reported as 未検証, never scored), E1 reading code or screens, E2 reproducible script or
 test, E3 real-use measurement. Measured values come from `audit.py` and are kept apart from scores.
 
-Each item is 0 to 5. Domain score = Σ(weight × score ÷ 5). Half points are not used. A level requires everything
+Each item is 0 to 5; half points are not used. Domain score = Σ(weight × score ÷ 5). A level requires everything
 named in it, and a level's named defect caps the item at the level below.
 
 ## DQI: software design
@@ -72,6 +73,6 @@ named in it, and a level's named defect caps the item at the level below.
 
 ## Acceptance of a change
 
-A change stays only if: tests pass, `make check` passes, no new axe serious or critical, `render.build` and page
-load do not degrade beyond noise (median of repeated runs, ±20%), the record format still loads, and the rule it
-targets moved on evidence. Otherwise it is dropped and named in the report.
+A change stays only if all of these hold: tests pass; `make check` passes; no new axe serious or critical; `render.build`
+and page load do not degrade beyond noise (median of repeated runs, ±20%); the record format still loads; and the rule
+it targets moved on evidence. Otherwise it is dropped and named in the report.

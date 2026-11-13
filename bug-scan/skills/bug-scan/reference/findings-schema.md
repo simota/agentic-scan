@@ -2,26 +2,9 @@
 
 **Read when:** TRIAGE, before the first fragment; REPORT.
 
-Enum values stay in English in both languages. Labels and headings follow `meta.lang`.
-
-```
-python3 scripts/findings.py merge <out>/findings.json <fragment>…
-python3 scripts/findings.py renumber <out>/findings.json
-python3 scripts/render.py <out>/findings.json --out <out>
-python3 scripts/contract_check.py <out> --repo <checkout>
-python3 scripts/findings.py counts <out>/findings.json
-```
-
-## Merge semantics
-
-- Unknown keys are refused. A refused batch writes nothing
-- `meta` updates key by key; `gates`, `fix_events`, `findings` and `issues` match by `id`, `imports` by `key`
-- `perspectives` replace by `name`. String lists append without duplicates
-- `null` removes an optional key. `{"remove": {"next_steps": ["…"]}}` deletes an exact item
-- `key` is computed and refused in a fragment
-- A string holding a personal e-mail address or something shaped like a secret is refused
-
 ## Shape
+
+Enum values stay in English in both languages. Labels and headings follow `meta.lang`.
 
 ```json
 {
@@ -61,7 +44,27 @@ python3 scripts/findings.py counts <out>/findings.json
 }
 ```
 
+## Merge semantics
+
+- Unknown keys are refused, and `key` is computed and refused in a fragment. A refused batch writes nothing
+- `meta` updates key by key; `gates`, `fix_events`, `findings` and `issues` match by `id`, `imports` by `key`
+- `perspectives` replace by `name`. String lists append without duplicates
+- `null` removes an optional key. `{"remove": {"next_steps": ["…"]}}` deletes an exact item
+- A string holding a personal e-mail address or something shaped like a secret is refused
+
+## Commands
+
+```
+python3 scripts/findings.py merge <out>/findings.json <fragment>…
+python3 scripts/findings.py renumber <out>/findings.json
+python3 scripts/render.py <out>/findings.json --out <out>
+python3 scripts/contract_check.py <out> --repo <checkout>
+python3 scripts/findings.py counts <out>/findings.json
+```
+
 ## What `contract_check.py` refuses
+
+It checks shape and consistency, not whether a finding is true. It refuses:
 
 - Files other than the contract's; a dashboard or report that differs from a fresh render
 - `Traced` without a reason or origin commits; `Blamed` without commits; `Unattributable` with commits
@@ -75,5 +78,3 @@ python3 scripts/findings.py counts <out>/findings.json
 - Personal e-mail addresses, author keys, or anything shaped like a secret
 - Empty `checked_ok` or `limitations`, or a pattern missing from `perspectives`
 - With `--repo`: a cited file that is missing or a line past its end
-
-It checks shape and consistency, not whether a finding is true.

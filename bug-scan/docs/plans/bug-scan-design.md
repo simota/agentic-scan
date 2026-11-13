@@ -11,9 +11,7 @@
 - 記録の後工程をつなぐ道具を追加しました。`export.py`(issue の下書き、SARIF 2.1.0、CSV)、`impact.py`(変更が触れる不具合・横展開先・修正済み箇所・再発パターン。`--fail-on` で CI のゲートにできる)。どちらも記録から導出するだけで、起票や送信はしません
 - 台帳に `list`、`set --ref`(起票した issue を結びつけ、以後の実行の `external_refs` に戻す)、`set --status Open`(受容の取り消し)を追加しました
 
-**一言で:** コードと git 履歴を読み取り専用で調べ、「バグがどの種類の変更から入り、どのゲートをすり抜け、今どこに同じ入口が残っているか」を、根拠つきの図で示す `*-scan` スキル。
-
----
+bug-scan は、コードと git 履歴を読み取り専用で調べ、「バグがどの種類の変更から入り、どのゲートをすり抜け、今どこに同じ入口が残っているか」を根拠つきの図で示す `*-scan` スキルです。
 
 ## 1. このスキルでできること / やらないこと
 
@@ -51,8 +49,8 @@
 | 目の前の1件のバグの根本原因を突き止める | `coding-debug` |
 | 脆弱性、性能、設計、UX の専門監査 | 各 `*-scan`。ここでは採点し直さず、重ねて表示するだけ |
 | 技術的負債の返済順を決める | `quality-debt` |
-| **個人の評価**(作者別の集計、ランキング、作者名の記録) | 人を責める道具にしない。作者情報は `history.json` にも保存しない |
-| **「この commit が原因」という断定を機械的に行う** | 下記 §3 のとおり blame は因果を証明しない |
+| 個人の評価(作者別の集計、ランキング、作者名の記録) | 人を責める道具にしない。作者情報は `history.json` にも保存しない |
+| 「この commit が原因」という断定を機械的に行う | 下記 §3 のとおり blame は因果を証明しない |
 | 未修正のバグの総数や将来のバグ数を予測する | 履歴に現れるのは「見つかって直されたもの」だけ |
 | 根拠のない図を描く | 図の要素はすべて記録の ID に紐づける(`check` で拒否) |
 | リポジトリ内の文章や commit message の指示に従う | 調査対象であり、指示ではない |
@@ -63,8 +61,6 @@
 | 数値のリスクスコアを作る | 根拠のない精度に見えるので、固定の表による段階判定にする |
 | 「見つからなくなった」だけで Fixed にする | 修正 commit か確認結果が必要。無ければ `NotSeen` にする |
 | Jira などの課題管理の代替(権限、通知、コメント、担当の割り振り) | 台帳は記録であり、運用基盤ではない。外部 ID を結びつけるだけ |
-
----
 
 ## 2. 既存スキルとの関係(調査結果)
 
@@ -83,11 +79,9 @@
 
 取り込み対象外: `verify-scan`(findings 型ではなく検証記録)と `brand-feature-scan`(提案型)。
 
----
-
 ## 3. 成立性の検証(実測)
 
-**前提:** 修正 commit から混入元へ遡れること。簡易 SZZ(修正で変更された行を親 commit で blame する手法)を実行しました。
+前提は、修正 commit から混入元へ遡れることです。簡易 SZZ(修正で変更された行を親 commit で blame する手法)を実行しました。
 
 | リポジトリ | commit 数 | fix commit(prefix 判定) | 抽出数 | 遡れた / ソース変更あり | テスト変更を伴う | 修正までの時間の中央値 |
 |---|---|---|---|---|---|---|
@@ -96,9 +90,9 @@
 | verify-scan | 199 | 20 | 20 | 20 / 20 | 20 / 20 | 1.6 時間 |
 | security-scan | 161 | 82 | 60 | 55 / 58 | 56 / 60 | 8.5 時間 |
 
-(merge commit を除く。抽出は最新から。`executed`)
+merge commit を除き、最新から抽出しました(`executed`)。
 
-**遡れても、原因とは限りません。** 無作為の 12 組(3 リポジトリ各 4 組)の差分を読むと、次のように分かれました(`inspected`、Claude が 1 回読んだだけの判定で、独立した評価者はいません)。
+ただし、遡れても原因とは限りません。無作為の 12 組(3 リポジトリ各 4 組)の差分を読むと、次のように分かれました(`inspected`、Claude が 1 回読んだだけの判定で、独立した評価者はいません)。
 
 | 分類 | 組数 | 内容 |
 |---|---|---|
@@ -107,17 +101,15 @@
 
 ここから設計を次の4点に変えました。
 
-1. **混入種別を分ける:** `commission`(誤って書いた)、`omission`(欠落)、`requirement`(後からの要件)、`not-defect`
-2. **根拠の強さを3段階に分け、線種で描き分ける:**
+1. 混入種別を分ける: `commission`(誤って書いた)、`omission`(欠落)、`requirement`(後からの要件)、`not-defect`
+2. 根拠の強さを3段階に分け、線種で描き分ける:
    - `Traced`(実線): 修正と混入元の両方の差分を読み、因果を説明できた
    - `Blamed`(破線): blame の結果だけで、未確認
    - `Unattributable`(混入元なし): 欠落、または履歴が無い
-3. **`Traced` だけを主要な数値に使う:** 他と混ぜない
-4. **「fix の連鎖」は基準率と並べて示す:** 混入元候補の 7〜8 割が fix commit でしたが、fix の割合が高いリポジトリ(ux-scan は 83%)では単に最後に触った commit が fix だっただけの可能性があります
+3. `Traced` だけを主要な数値に使う: 他と混ぜない
+4. 「fix の連鎖」は基準率と並べて示す: 混入元候補の 7〜8 割が fix commit でしたが、fix の割合が高いリポジトリ(ux-scan は 83%)では単に最後に触った commit が fix だっただけの可能性があります
 
-**この検証の限界:** 対象はすべて同じ所有者のスキル群で、fix prefix が広く使われています。一般的なアプリのリポジトリでは未検証です(§9)。
-
----
+この検証の対象はすべて同じ所有者のスキル群で、fix prefix が広く使われています。一般的なアプリのリポジトリでは未検証です(§9)。
 
 ## 4. 図のカタログ
 
@@ -125,17 +117,17 @@
 
 | 図 | 答える問い | 形式 | 主な入力 | 段階 |
 |---|---|---|---|---|
-| **D1 混入経路マップ** | どの変更経路から入り、どのゲートを通って、どこで見つかったか | 左から右へのフロー、太さは件数 | 分類済み修正 + ゲート台帳 | 3 |
-| **D2 パターン × モジュール** | どこで何が繰り返すか | ヒートマップ | 分類済み修正 | 2 |
-| **D3 fix 連鎖** | 修正が次の修正を生んでいないか | commit の DAG(時系列) | `history.json` | 1 |
-| **D4 ホットスポット象限** | 危険な場所はどこか | 散布図(変更頻度 × 欠陥修正密度、テスト有無で印を分ける) | `history.json` | 1 |
-| **D5 現存の入口** | 同じバグが今どの経路で起きうるか | finding ごとの因果チェーン | finding の `path` | 2 |
-| **D6 課題 → パターン** | どのコード課題がどのパターンを生んでいるか | 2部グラフ(課題 → パターン → 修正) | finding + 分類済み修正 | 3 |
-| **D7 不具合の関連** | どれがどれにつながり、どれを先に直すべきか | 関連グラフ(根拠つきの矢印 + 自動算出の細線) | `relations` | 2 |
-| **D8 対象マップ** | この不具合はどの画面、API、テーブルに及ぶか | 画面 → API・ジョブ → DB・外部の3列図(選択で強調) | `surfaces.json` | 2 |
-| **D9 リスク × 危険性** | どれが危なく、どれを先に見るべきか | 3×3 マトリクス(不可逆、無音を併記) | `risk` + `hazard` | 2 |
+| D1 混入経路マップ | どの変更経路から入り、どのゲートを通って、どこで見つかったか | 左から右へのフロー、太さは件数 | 分類済み修正 + ゲート台帳 | 3 |
+| D2 パターン × モジュール | どこで何が繰り返すか | ヒートマップ | 分類済み修正 | 2 |
+| D3 fix 連鎖 | 修正が次の修正を生んでいないか | commit の DAG(時系列) | `history.json` | 1 |
+| D4 ホットスポット象限 | 危険な場所はどこか | 散布図(変更頻度 × 欠陥修正密度、テスト有無で印を分ける) | `history.json` | 1 |
+| D5 現存の入口 | 同じバグが今どの経路で起きうるか | finding ごとの因果チェーン | finding の `path` | 2 |
+| D6 課題 → パターン | どのコード課題がどのパターンを生んでいるか | 2部グラフ(課題 → パターン → 修正) | finding + 分類済み修正 | 3 |
+| D7 不具合の関連 | どれがどれにつながり、どれを先に直すべきか | 関連グラフ(根拠つきの矢印 + 自動算出の細線) | `relations` | 2 |
+| D8 対象マップ | この不具合はどの画面、API、テーブルに及ぶか | 画面 → API・ジョブ → DB・外部の3列図(選択で強調) | `surfaces.json` | 2 |
+| D9 リスク × 危険性 | どれが危なく、どれを先に見るべきか | 3×3 マトリクス(不可逆、無音を併記) | `risk` + `hazard` | 2 |
 
-図とは別に、絞り込みと詳細表示ができる**不具合リスト**をダッシュボードの先頭に置きます。
+図とは別に、絞り込みと詳細表示ができる不具合リストをダッシュボードの先頭に置きます。
 
 ### D1 の見本(架空データ)
 
@@ -162,13 +154,13 @@ flowchart LR
   c2 -.->|Blamed| c4["fix 0a9b<br/>全角空白を拒否"]
 ```
 
----
-
 ## 5. 分類の語彙
 
-**変更経路(channel):** `feature` / `fix` / `refactor` / `dependency` / `config` / `migration` / `generated` / `merge` / `unknown`
+### 変更経路(channel)
 
-**バグパターン(12 + 未分類):**
+`feature` / `fix` / `refactor` / `dependency` / `config` / `migration` / `generated` / `merge` / `unknown`
+
+### バグパターン(12 + 未分類)
 
 | ID | パターン | 出どころ |
 |---|---|---|
@@ -182,13 +174,13 @@ flowchart LR
 | BP08 | 一部のデータでしか再現しない | regression-surface |
 | BP09 | タイミング依存 | regression-surface |
 | BP10 | 環境、設定の差 | regression-surface |
-| BP11 | **部分修正**(同種の別ケースが残る) | 今回の抽出 |
+| BP11 | 部分修正(同種の別ケースが残る) | 今回の抽出 |
 | BP12 | 文書と実装のずれ | 今回の抽出 |
 | — | `Unclassified` | 無理に分類しない。件数を表示する |
 
-**コード課題:** テスト不在 / ルール重複 / 例外の握りつぶし / 高 churn かつ高複雑度 / ゲート不在 / 暗黙の契約
+### コード課題
 
----
+テスト不在 / ルール重複 / 例外の握りつぶし / 高 churn かつ高複雑度 / ゲート不在 / 暗黙の契約
 
 ## 6. 実行の流れ
 
@@ -205,7 +197,7 @@ flowchart LR
 | RECONCILE | 今回の結果を独立に確定した後で前回の台帳と照合し、同じ不具合を結びつける。状態の変化と再発を記録する | `ledger.json` |
 | REPORT | merge → renumber → render → `check`。その後チャット要約 | 成果物一式 |
 
-**判断の分岐**
+### 判断の分岐
 
 | 状況 | 動き |
 |---|---|
@@ -217,7 +209,9 @@ flowchart LR
 | 前回と比較 | 新規に独立して走らせてから `compare.py` |
 | 修正を頼まれた | 範囲外。finding を報告して別依頼にする |
 
-**重大度**(confidence とは独立。既存 scan と同じ)
+### 重大度
+
+重大度は confidence とは独立で、基準は既存 scan と同じです。
 
 | 重大度 | 条件 |
 |---|---|
@@ -227,8 +221,6 @@ flowchart LR
 | Info | 傾向の記録のみで、現在の入口は未確認 |
 
 履歴上の統計だけでは Info を超えません。Medium 以上には現在のコードの `path:line` が必要です。
-
----
 
 ## 7. データ設計
 
@@ -260,7 +252,7 @@ flowchart LR
 }
 ```
 
-**`check` が拒否するもの**
+### `check` が拒否するもの
 
 - `Traced` なのに `reason` か混入元の commit が無い
 - 図の要素が記録の ID に解決できない
@@ -268,7 +260,6 @@ flowchart LR
 - 記録に作者名やメールアドレスがある
 - Medium 以上で、現在のコードの `path:line` が無い
 - `dashboard.html` や `report.html` が記録からの再生成と一致しない(既存と同じ)
-
 - 再現状態が `verified` なのに実行結果の参照が無い
 - 関連(`relations`)に根拠が無い、または存在しない ID を指している
 - `surfaces` が `surfaces.json` に解決できない
@@ -276,7 +267,9 @@ flowchart LR
 - 未解決なのにリスク判定が無い
 - 必須範囲(§7.1)の項目が欠けている。分からない場合は空欄にせず、`UNKNOWN` と理由を書く
 
-**配置**(既存 scan と同じ構成。標準ライブラリのみ)
+### 配置
+
+既存 scan と同じ構成で、標準ライブラリだけを使います。
 
 ```
 skills/bug-scan/
@@ -295,29 +288,29 @@ examples/  tests/  Makefile  README.md
 
 | 区分 | 項目 | 内容 | 由来 |
 |---|---|---|---|
-| **識別** | `id` | 実行ごとの番号(`BG-001`) | 既存 scan |
+| 識別 | `id` | 実行ごとの番号(`BG-001`) | 既存 scan |
 | | `key` | 実行をまたいで同じと判定するキー(パターン + 正規化した場所 + 対象)。行番号は含めない | `security-scan` の `finding_keys.py` を参考 |
 | | `title`, `pattern`, `module` | 名前、バグパターン、モジュール | §5 |
-| **状態** | `status` | `Open` / `Triaged` / `Fixed` / `Verified` / `Accepted` / `Reopened` / `NotSeen` / `Unverified` | 既存の `status` を拡張 |
+| 状態 | `status` | `Open` / `Triaged` / `Fixed` / `Verified` / `Accepted` / `Reopened` / `NotSeen` / `Unverified` | 既存の `status` を拡張 |
 | | `first_seen`, `last_seen`, `status_log[]` | 初回検出、最終確認、変更履歴(日時、値、根拠) | 新規 |
 | | `introduced_in`, `fixed_in` | 混入 commit(根拠の強さつき)、修正 commit | §3 |
-| **評価** | `severity`, `confidence`, `validation` | 既存 scan と同じ | 共通 7 項目 |
+| 評価 | `severity`, `confidence`, `validation` | 既存 scan と同じ | 共通 7 項目 |
 | | `risk` | `likelihood`、`impact`、`detectability`、`level`、`basis`。`level` は固定の表から決まる | 新規 |
 | | `hazard` | `classes[]`(金銭、データ消失、データ不整合、セキュリティ、個人情報、可用性、法令、表示誤りなど)、`irreversible`、`silent`、`reach`、`recovery` | `blast_radius`、`subjects` を分解 |
-| **関連** | `relations[]` | `type`、`to`、`strength`、`evidence` | 新規 |
-| **再現** | `repro` | `state`、`preconditions[]`、`fixture`、`environment`、`steps[]`、`expected`、`actual`、`last_run` | `security-scan` の `reproduction` を参考 |
-| **対象** | `surfaces[]` | `surfaces.json` の ID + 操作内容(例: `DB-01` の `W: discount_total`) | `screen`、`request`、`data`、`resources` を統合 |
+| 関連 | `relations[]` | `type`、`to`、`strength`、`evidence` | 新規 |
+| 再現 | `repro` | `state`、`preconditions[]`、`fixture`、`environment`、`steps[]`、`expected`、`actual`、`last_run` | `security-scan` の `reproduction` を参考 |
+| 対象 | `surfaces[]` | `surfaces.json` の ID + 操作内容(例: `DB-01` の `W: discount_total`) | `screen`、`request`、`data`、`resources` を統合 |
 | | `actors[]`, `conditions[]` | 操作する人や役割、発生条件(権限、環境、feature flag、言語、端末) | `actor` |
-| **根拠** | `location[]`, `events[]`, `tests[]`, `tests_missing` | コードの場所、修正履歴、既存のテスト、足りないテスト | 既存 + 新規 |
+| 根拠 | `location[]`, `events[]`, `tests[]`, `tests_missing` | コードの場所、修正履歴、既存のテスト、足りないテスト | 既存 + 新規 |
 | | `external_refs[]` | issue や PR、インシデントの URL。依頼者が渡したものだけ | `references` |
-| **対応** | `fix`, `guard`, `regression_test`, `fix_order` | 修正方針、再発防止、回帰テスト、修正の順序 | 既存 |
+| 対応 | `fix`, `guard`, `regression_test`, `fix_order` | 修正方針、再発防止、回帰テスト、修正の順序 | 既存 |
 | | `owner` | チームや役割だけ。人が入力する。commit の作者からは埋めない | 新規 |
-| **横展開** | `sibling_sites[]` | `location`、`state`(`affected` / `safe` / `unknown`)、`evidence` | 新規 |
-| **影響リリース** | `affected_releases` | `first`、`last`、`fixed_first`、`basis` | 新規 |
-| **データ修復** | `data_remediation` | `needed`(`yes` / `no` / `unknown`)、`locate`、`method`、`count` | `recovery` を詳しくしたもの |
-| **検知の経緯** | `detection` | `source`、`stage`、`detected_at`、`days_to_detect`、`days_to_fix`、`basis` | 新規 |
+| 横展開 | `sibling_sites[]` | `location`、`state`(`affected` / `safe` / `unknown`)、`evidence` | 新規 |
+| 影響リリース | `affected_releases` | `first`、`last`、`fixed_first`、`basis` | 新規 |
+| データ修復 | `data_remediation` | `needed`(`yes` / `no` / `unknown`)、`locate`、`method`、`count` | `recovery` を詳しくしたもの |
+| 検知の経緯 | `detection` | `source`、`stage`、`detected_at`、`days_to_detect`、`days_to_fix`、`basis` | 新規 |
 
-**必須範囲**
+#### 必須範囲
 
 | 対象 | 必須にする項目 |
 |---|---|
@@ -327,7 +320,7 @@ examples/  tests/  Makefile  README.md
 
 範囲外の項目は分かれば記録してかまいません。必須の項目が分からない場合は、空欄にせず `UNKNOWN` と理由を書きます。`owner` は人が入力する項目なので、どの範囲でも `check` の対象にしません。
 
-**追加した4項目の決まり**
+#### 追加した4項目の決まり
 
 | 項目 | 取得元 | 決まり |
 |---|---|---|
@@ -336,7 +329,7 @@ examples/  tests/  Makefile  README.md
 | データ修復 | スキーマとコードからの導出 | `count` は依頼者がデータを渡さない限り `UNKNOWN`。SQL は案で、実行しない |
 | 検知の経緯 | git 履歴、PR、依頼者が渡す issue | 検知元が読み取れなければ `UNKNOWN`。日数は日付から機械的に計算する |
 
-**関連の種類(`relations.type`)**
+#### 関連の種類(`relations.type`)
 
 | 種類 | 意味 | 作り方 |
 |---|---|---|
@@ -347,7 +340,7 @@ examples/  tests/  Makefile  README.md
 | `duplicate_of` | 重複 | 根拠必須 |
 | `shares_surface` | 同じ DB やジョブを使用 | `surfaces` から自動算出。因果を意味しない |
 
-**再現の状態(`repro.state`)**
+#### 再現の状態(`repro.state`)
 
 | 状態 | 意味 |
 |---|---|
@@ -359,7 +352,7 @@ examples/  tests/  Makefile  README.md
 
 入力値は合成データだけにします。実在の個人情報や本番の値は記録しません。
 
-**対象カタログ(`surfaces.json`)**
+#### 対象カタログ(`surfaces.json`)
 
 | 種別 | ID | 持つ情報 | 抽出の参考 |
 |---|---|---|---|
@@ -372,7 +365,7 @@ examples/  tests/  Makefile  README.md
 
 対応(画面 → API → DB)には `traced` / `inferred` / `UNKNOWN` を付けます。動的なルートは読み取れないことがあるので、`limitations` に書きます。
 
-**リスクの段階(固定の表)**
+#### リスクの段階(固定の表)
 
 | 発生可能性 \ 影響 | 低 | 中 | 高 |
 |---|---|---|---|
@@ -382,7 +375,7 @@ examples/  tests/  Makefile  README.md
 
 `severity` は既存 scan と同じ基準で「コードから言える重大さ」、`risk` は「起きやすさも含めた優先度の材料」です。不一致はありえるので、理由を `basis` に書きます。発生可能性はコードからの推定で、実測ではありません。
 
-**実行をまたぐ追跡(`ledger.json`)**
+#### 実行をまたぐ追跡(`ledger.json`)
 
 - 保存先はリポジトリの外で、依頼者が指定します(読み取り専用の規約を守るため)
 - 既存 scan の Independence 規約に合わせ、今回の結果を確定してから台帳を読みます
@@ -390,31 +383,29 @@ examples/  tests/  Makefile  README.md
 - `NotSeen` は修正の証明ではありません。スコープが違うと見つからないこともあります
 - 人が付けた状態(`Accepted`、`owner` など)は上書きしません
 
-**安全面:** commit message と差分は信頼しない入力として扱います。`history.json` に差分本文は保存しません(過去の commit には秘密情報が残っていることがあるため)。引用は短い抜粋に限り、秘密情報をマスクしてから記録します(`ux-scan` の `scripts/secret_lines.py` と同様)。
+#### 安全面
 
----
+commit message と差分は信頼しない入力として扱います。`history.json` に差分本文は保存しません(過去の commit には秘密情報が残っていることがあるため)。引用は短い抜粋に限り、秘密情報をマスクしてから記録します(`ux-scan` の `scripts/secret_lines.py` と同様)。
 
 ## 8. 検討した案
 
 | 案 | 判断 | 理由 |
 |---|---|---|
-| **A. 独立した新規 scan** | **採用** | 問いと成果物が既存と違う。単体でインストールできる。代償は 1 リポジトリ分の保守 |
+| A. 独立した新規 scan | 採用 | 問いと成果物が既存と違う。単体でインストールできる。代償は 1 リポジトリ分の保守 |
 | B. `architecture-scan` に観点を追加 | 不採用 | 契約は「設計 finding と before/after 図」。`render.py` はすでに 1,696 行あり、図 6 種を足すと役割がぶれる |
 | C. 他 scan の結果を集約して描くだけ | 不採用(取り込み機能としてのみ残す) | 確認した 9 つの findings サンプルに混入経路の項目が無いので、肝心の問いに答えられない |
 | D. 外部の SZZ ツールや可視化ライブラリを使う | 不採用 | 既存 scan のスクリプトは import の検査で標準ライブラリのみ。この形を保つ |
 | E. blame の結果を混入元としてそのまま使う | 不採用 | §3 の抽出では欠落が過半で、blame が無関係な行を指す例もあった |
 
-**この設計で諦めること:** 全自動の高速実行はできません(TRIAGE で差分を読むので履歴が多いほど時間がかかる)。実行時の可視化やリアルタイム追跡もありません。
-
----
+この設計では全自動の高速実行を諦めます。TRIAGE で差分を読むので、履歴が多いほど時間がかかります。実行時の可視化やリアルタイム追跡もありません。
 
 ## 9. この設計が間違っている場合
 
-**最も重要な前提:** 一般的なアプリのリポジトリでも、読んでの分類で混入経路に意味のある偏りが見える。
+最も重要な前提は、一般的なアプリのリポジトリでも、読んでの分類で混入経路に意味のある偏りが見えることです。
 
-**安く確かめる方法(実装前):** 性質の違う 3 リポジトリ(スキル以外で、1 つは conventional commits 不使用)から 30 組ずつ抽出し、手で分類します。
+実装前に安く確かめるには、性質の違う 3 リポジトリ(スキル以外で、1 つは conventional commits 不使用)から 30 組ずつ抽出し、手で分類します。
 
-**次のいずれかなら設計を変えます。**
+次のいずれかなら設計を変えます。
 
 - `Traced` にできる組が全体の 2 割未満 → D1、D3 を主役から外し、D4、D5、D6(現在のコード中心)に絞る
 - 変更経路の分布が基準率(種類別の commit 比率)と差が無い → D1 の件数表示をやめ、ゲート台帳だけにする
@@ -423,11 +414,9 @@ examples/  tests/  Makefile  README.md
 - 画面 → API → DB の対応が静的に読めないリポジトリが多い → D8 を「読めた範囲のみ」と明示するか、段階を遅らせる
 - 検知元が `UNKNOWN` ばかりになる(PR や issue の情報が無い)→ `detection` を必須から外し、D1 の検知段階を任意の図にする
 
----
-
 ## 10. 実装の順序
 
-1. `history.py` と fixture テスト。`architecture-scan` で `history.json` を出す ← **最初の一歩**
+1. `history.py` と fixture テスト。`architecture-scan` で `history.json` を出す ← 最初の一歩
 2. D3 と D4 を SVG で描き、`check` まで通す(分類なしで端から端まで)
 3. §9 のパイロット。ここで続行か変更かを判断する
 4. TRIAGE の語彙と schema、`merge`、`renumber`
@@ -437,13 +426,9 @@ examples/  tests/  Makefile  README.md
 8. `ledger.py`(実行をまたぐ追跡)
 9. `import_findings.py`、`compare.py`
 
----
-
 ## 11. 未決事項
 
 #TODO(agent): DEFERRED §9 のパイロットを実装前に実施する(対象リポジトリの指定が必要)。
-
-#TODO(agent): OPEN スキル名を確定する。既定は `bug-scan`。他の scan はリポジトリ名とスキル名が一致しているが、このリポジトリは `bug-tracker` なので、リポジトリ名を変えるか不一致を許容するかを決める。
 
 #TODO(agent): OPEN コアとなる利用者を確定する。既定は「自分のリポジトリを調べる開発者本人」で、チーム共有向けの匿名化や権限管理は設計に含めない。
 

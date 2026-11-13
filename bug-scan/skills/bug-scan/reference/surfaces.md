@@ -13,12 +13,21 @@
 | `ext` | `EXT-*` | Hosts in absolute URLs |
 | `cfg` | `CFG-*` | `os.environ`, `os.getenv`, `process.env` |
 
-It stores names and locations, never source text. Links are proposed when a file defining one surface
-names another. **A proposal is not a trace.**
+It stores names and locations, never source text, and proposes links when a file defining one surface
+names another. A proposal is not a trace.
 
 ## Confirm what the records cite
 
-Read the path a record depends on, then send a fragment:
+Do not try to confirm every surface. For each one a record cites, read the path the record depends on and
+set its `basis`:
+
+| `basis` | Meaning |
+|---|---|
+| `traced` | Read on the path |
+| `inferred` | Proposed by the script, not read |
+| `UNKNOWN` | Should exist but cannot be read statically (string-built routes, dynamic dispatch) |
+
+Then send a fragment:
 
 ```json
 {"surfaces": [{"id": "API-09", "kind": "api", "name": "POST /refunds", "location": "api/refunds.py:20", "basis": "traced"}],
@@ -30,11 +39,5 @@ Read the path a record depends on, then send a fragment:
 python3 scripts/surfaces.py merge <out>/surfaces.json <fragment>
 ```
 
-| `basis` | Meaning |
-|---|---|
-| `traced` | Read on the path |
-| `inferred` | Proposed by the script, not read |
-| `UNKNOWN` | Should exist but cannot be read statically (string-built routes, dynamic dispatch) |
-
 Only `traced` links are drawn solid in D8. Say in `limitations` where dynamic routing makes the map
-incomplete. Do not try to confirm every surface; confirm what the records cite.
+incomplete.

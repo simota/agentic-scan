@@ -10,7 +10,13 @@ and a comparison is made after both runs are complete. Both mask secret-looking
 values the way the rendered reports do and write nothing inside the audited
 repository.
 
+An export or comparison saved inside `<out>` is an extra output:
+`contract_check.py <out> --allow NAME` names it. Prefer the scratch directory.
+
 ## Comparing two runs
+
+To keep earlier triage decisions on a rescan, run
+`scripts/triage.py carry <baseline> <current>` before comparing.
 
 ```
 python3 scripts/compare.py <baseline-out>/findings.json <current-out>/findings.json \
@@ -35,21 +41,25 @@ Each finding lands in exactly one group:
 | `not_reported` | Included in the baseline, not repeated by the current run |
 | `ruled_out` | Included in the baseline, ruled out in the current run |
 
-`not_reported` is **not** "fixed". Two independent static reviews can differ,
+`not_reported` is not "fixed". Two independent static reviews can differ,
 so the comparison says whether the current run recorded that finding's
 perspective as checked; a fix is confirmed by a regression test or retest
 record (`reference/fix-verification.md`), not by absence. Say so wherever
 the comparison is summarized.
 
-`--fail-on SEVERITY` exits 1 when an open new or reopened finding is at that
-severity or above, or an open persisting finding at that severity was raised
-into that range or was recorded `Fixed` in the baseline (a regressed fix);
+`--fail-on SEVERITY` exits 1 when either holds:
+
+- an open new or reopened finding is at that severity or above
+- an open persisting finding at that severity was raised into that range or
+  was recorded `Fixed` in the baseline (a regressed fix)
+
 `Accepted` and `Fixed` findings do not block, except an acceptance whose
 recorded review date (`reference/triage.md`) has passed by `--as-of` (default
 today, UTC): it counts as open, and so does a persisting finding whose baseline
-acceptance expired. To keep earlier decisions on a rescan, run
-`scripts/triage.py carry <baseline> <current>` before comparing. Exit 2 means unreadable or invalid
-input, or an unsafe output path (a symlink or non-regular file).
+acceptance expired.
+
+Exit 2 means unreadable or invalid input, or an unsafe output path (a symlink
+or non-regular file).
 
 ## Exports
 
@@ -92,6 +102,3 @@ Uploading SARIF to a code-scanning service sends the findings' titles, impact
 and fix text to that service. That is the requester's decision, the same as
 filing an issue: produce the file and name what it contains; do not upload it
 yourself.
-
-An export or comparison saved inside `<out>` is an extra output:
-`contract_check.py <out> --allow NAME` names it. Prefer the scratch directory.

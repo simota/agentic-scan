@@ -1,19 +1,15 @@
-# Expert grade — a multi-agent assessment that spends workers instead of cutting corners
+# Expert grade: a multi-agent assessment
 
 **Read when:** the requester asks for an expert, commercial-grade, exhaustive or
 "no compromise" assessment, or approves spending many workers on one. Read
 `reference/engine-map.md` with it; that file alone names host tools.
 
 Expert grade wraps the ordinary phases. Nothing in the *Run contract* or
-*Always / Never* relaxes: still static, still read-only, still no exploit
-payloads. What changes is that every judgment a single reviewer would make
-alone is made by workers that did not produce what they judge, and every gate
-leaves a record that `scripts/expert_audit.py` recomputes. The deliverable is
-labelled expert-grade only when that audit exits `0`.
-
-It is expensive by design. Price it, get consent, then do not trade a gate for
-budget: a run that cannot finish within the approved ceiling stops `held` and
-says which gates remain, rather than shipping a cheaper process under the label.
+*Always / Never* relaxes: the assessment stays static and read-only, with no
+exploit payloads. What changes is that every judgment a single reviewer would
+make alone is made by workers that did not produce what they judge, and every
+gate leaves a record that `scripts/expert_audit.py` recomputes. The deliverable
+is labelled expert-grade only when that audit exits `0`.
 
 ## Run card
 
@@ -22,11 +18,10 @@ the top-level `expert` object of `findings.json` (schema below) and in `run/`
 beside the report. Before each spawn, write its prompt to
 `run/spawns/S-NN.prompt.md`; save the raw return to `run/spawns/S-NN.return.md`
 and add the `spawns` entry (`id`, `actor`, `role`, `engine`, `prompt`, `return`).
-One actor label holds one role for the whole run.
 
 | Phase | Do | Records |
 |---|---|---|
-| E0 Gate | Compute the envelope (below) and get the requester's approval of the ceiling, the engines, and the data boundary — any extra engine sends source to another provider. Run the spawn preflight for this host and the reachability preflight per extra engine (`reference/engine-map.md`). Exit 0 sets `mode: full`; a failed host preflight sets `single-agent`, which can only end `degraded` | `consent`, `preflight`, `mode`, `host`; `run/gate.md` |
+| E0 Gate | Compute the envelope (below) and get the requester's approval of the ceiling, the engines, and the data boundary; any extra engine sends source to another provider. Run the spawn preflight for this host and the reachability preflight per extra engine (`reference/engine-map.md`). Exit 0 sets `mode: full`; a failed host preflight sets `single-agent`, which can only end `degraded` | `consent`, `preflight`, `mode`, `host`; `run/gate.md` |
 | E1 Recon ×2 | Two recon workers build the attack-surface map independently (`reference/recon.md`). Reconcile the route inventories: every route one map has and the other lacks is re-read and resolved. Turn the reconciled map into `three_pass.coverage` cells: review unit × applicable perspective | `recon` (≥2 actors), `reconciliation` (`routes`, `disagreements`, `resolved` equal) |
 | E2 Discovery ×3 | Per review unit, three discovery workers in isolation, one per angle: `entry-first` (walk each route to its sinks), `sink-first` (start at raw queries, templates, file and shell calls, outbound requests; trace back to callers), `control-first` (list every guard, scope and validator; find the paths that skip them). Each applies every perspective. No worker sees another's output. Consolidate candidates by root cause into `F-NNN` and write the consolidated `three_pass.discovery` record | `discovery` (`actor`, `angle`, `cells`, `candidates`, `raw_candidates`); every cell needs ≥2 actors and ≥2 angles, and ≥2 engines when more than one is approved |
 | E3 Variants | For each High/Medium root cause, a variant worker writes the pattern, searches the whole repository for siblings and dispositions every hit: `finding:F-NNN` (new), `same:F-NNN` (already covered) or `safe` with a reason | `variants` (`hits` equals dispositions) |
@@ -34,7 +29,7 @@ One actor label holds one role for the whole run.
 | E5 Conditions | A verifier that did not discover the finding traces route → middleware → handler → query/response and records the four claims with `scripts/evidence_capture.py` evidence (three-pass `conditions` stage) | finding `verification.reviewer` (role `conditions`) |
 | E6 Challenge | Three-pass `falsification` stage at every severity. For every High/Medium finding also a refutation panel: two or three skeptics, each a different angle (`defense-exists`, `unreachable`, `precondition-unrealistic`, `impact-overstated`, `not-shipped`), briefed to destroy the finding, single round, never shown another skeptic's return. Aggregate on evidence: a majority `refuted` makes the finding an exclusion or needs a written `resolution` naming the evidence the skeptics missed. `unproven` stays a named residual, not a refutation | `panels`; three-pass workflow |
 | E7 Severity | Two rater workers first score the calibration anchors below; the audit recomputes `calibrated` from their scores. Each active finding is then rated by two calibrated raters who did not discover or verify it, without seeing the recorded severity or each other's rating, using the *Run contract* table; each also proposes the CWE. Any disagreement is re-read by the orchestrator and resolved in writing | `calibration`, `ratings`, `severity_resolutions`; finding `cwe` |
-| E8 Report and reception | Render. Three persona workers read the rendered assessment cold — no run records, no findings file: `executive` (can I decide budget and priority from page one?), `engineer` (can I fix each High/Medium from its entry alone?), `auditor` (can I trace every claim to evidence and every limit?). Each returns the verbatim sentence where it stopped or doubted, and the fix. Apply fixes, re-render; the audit greps each span in the report | `reception` (`persona`, `actor`, `stop_span`, `disposition`) |
+| E8 Report and reception | Render. Three persona workers read the rendered assessment cold, without run records or the findings file: `executive` (can I decide budget and priority from page one?), `engineer` (can I fix each High/Medium from its entry alone?), `auditor` (can I trace every claim to evidence and every limit?). Each returns the verbatim sentence where it stopped or doubted, and the fix. Apply fixes, re-render; the audit greps each span in the report | `reception` (`persona`, `actor`, `stop_span`, `disposition`) |
 | E9 QA | A worker that held no other role opens `findings.json`, `run/` and the report, recomputes the counts, runs `expert_audit.py`, and returns `pass` or the imbalance. An imbalance is a phase that did not run: run it, never edit a count | `qa` |
 
 Then `contract_check.py` and `expert_audit.py <out>` must both exit `0`.
@@ -64,7 +59,10 @@ workers = 1 preflight + E extra-engine preflights + 2 recon
 
 Present the computed number and a ceiling with headroom for retries and for
 findings that E3/E4 add. The ceiling is the consent; spawns beyond it hold the
-assessment (`spawns_over_ceiling`).
+assessment (`spawns_over_ceiling`). Expert grade is expensive by design. Price
+it, get consent, then do not trade a gate for budget: a run that cannot finish
+within the approved ceiling stops `held` and says which gates remain, rather
+than shipping a cheaper process under the label.
 
 ## Spawn discipline
 
@@ -80,8 +78,8 @@ assessment (`spawns_over_ceiling`).
   in scratch. A worker whose write is refused saves what it has, reports which
   candidates were not recorded, and stops; the orchestrator records that gap in
   `limitations` instead of re-briefing the same content
-- Spend the high-reasoning tier (`reference/engine-map.md`) on verifiers,
-  skeptics, raters and QA — the steps whose output is the judgment
+- Spend the high-reasoning tier (`reference/engine-map.md`) on the steps whose
+  output is the judgment: verifiers, skeptics, raters and QA
 - The orchestrator may consolidate, re-read and resolve; it never supplies a
   skeptic verdict, a rating or the QA result itself
 
@@ -131,16 +129,16 @@ levels. A failed rater is replaced, never coached on the key.
 ```
 
 Roles are `recon`, `discovery`, `variant`, `conditions`, `falsification`,
-`skeptic`, `rater`, `omission`, `persona` and `qa`. Engines named in spawns must
-be approved and preflighted. Actor identities are compared after NFKC
-normalization, removal of invisible characters, collapsing whitespace runs to
-one space and case folding, consistently with the sequential workflow
-(`Ann Lee` and `AnnLee` stay two identities).
-Conditions and falsification actors in the effective workflow round, including
-its recorded reviewers, must have the corresponding registered spawn roles.
-QA must not appear in any other declared role or recorded workflow participation,
-including retained historical rounds and coordinator/decision events. Reception
-requires three distinct actors, one for each persona.
+`skeptic`, `rater`, `omission`, `persona` and `qa`; one actor label holds one
+role for the whole run. Engines named in spawns must be approved and
+preflighted. Actor identities are compared after NFKC normalization, removal of
+invisible characters, collapsing whitespace runs to one space and case folding,
+consistently with the sequential workflow (`Ann Lee` and `AnnLee` stay two
+identities). Conditions and falsification actors in the effective workflow
+round, including its recorded reviewers, must have the corresponding registered
+spawn roles. QA must not appear in any other declared role or recorded workflow
+participation, including retained historical rounds and coordinator/decision
+events. Reception requires three distinct actors, one for each persona.
 
 Each finding has at most one refutation panel, with two or three distinct,
 registered independent skeptics and distinct angles. Duplicate panel entries,
@@ -150,12 +148,12 @@ known, unique and pinned to the assessed revision; `refuted` and `survived`
 require evidence, while `unproven` may have none. Required integrity applies to
 panel evidence too.
 
-The rendered report carries an *Assessment method
-and assurance* section derived from these records, and each finding's CWE.
-That section reports declaration-record gates only; it does not establish that
-the final run-file audit passed. Missing prompts, returns or reception spans can
-still hold `expert_audit.py` even when the report's declaration gates are complete.
-Apply the expert-grade label only after that final audit exits `0`.
+The rendered report carries an *Assessment method and assurance* section
+derived from these records, and each finding's CWE. That section reports
+declaration-record gates only, so it does not establish that the final run-file
+audit passed: missing prompts, returns or reception spans can still hold
+`expert_audit.py` even when the report's declaration gates are complete. Apply
+the expert-grade label only after that final audit exits `0`.
 
 ## What it does not prove
 

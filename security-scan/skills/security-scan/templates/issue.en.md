@@ -46,12 +46,12 @@ Before filing:
 **Preconditions:**
 1. 
 
+<!-- List every affected route under Request shape; the same root cause stays in one issue. -->
+
 **Request shape:**
 1. `<METHOD> <path>` — parameter: `<name>` = <placeholder>
 
 **Contrast (the path that keeps the rule):** the `Contrast:` path and its control's `path:line`
-
-<!-- List every affected route here; the same root cause stays in one issue. -->
 
 ## Evidence
 

@@ -15,17 +15,21 @@ ARTEX's public L3 benchmark at mirror commit
 system, requires an independent LLM judge for its image mode, grades executed
 proof, and can use DrostBench flag capture as an objective oracle. This
 repository remains a static, read-only source review: it has no target
-execution, flag-capture oracle, or paired ARTEX run.
+execution, flag-capture oracle, or paired ARTEX run. A direct
+ARTEX-versus-security-scan measurement would require the same pinned local
+corpus, subject model and resource cap for both systems, at least three runs of
+each, provider access, local target containers, and independent adjudication.
+No such comparison was performed here.
 
 The adapter deliberately carries over comparison discipline from that pinned
 ARTEX contract: versioned ground truth, four gates weighted component 1 / class
-2 / mechanism keywords 1 / proof 1, invalid-record exclusion, unmatched
-findings as discovery candidates, a denominator and Wilson 95% interval for
-each detection rate, conservative precision bounds while candidates await
+2 / mechanism keywords 1 / proof 1, invalid-record exclusion, unmatched findings
+as discovery candidates, a denominator and Wilson 95% interval for each
+detection rate, conservative precision bounds while candidates await
 disposition, and replication before aggregation. The local schema also adds
-reviewed benign source locations, which ARTEX's vulnerable-only example does
-not provide. Those locations make false positives and true negatives explicit,
-so precision, recall, F1, and false-positive rate are derived from TP/FP/FN/TN
+reviewed benign source locations, which ARTEX's vulnerable-only example does not
+provide. Those locations make false positives and true negatives explicit, so
+precision, recall, F1, and false-positive rate are derived from TP/FP/FN/TN
 rather than from gate scores. Gate rates describe evidence quality only.
 
 Pinned ARTEX references:
@@ -45,21 +49,23 @@ an immutable `git:<40 lowercase hex>` or `sha256:<64 lowercase hex>` revision,
 an exact source-artifact SHA-256, a safe local `artifact_path`, a source URI,
 and a license. The adapter reads that regular file, rejects links, recomputes
 its digest, and verifies that every case `location` identifies an existing,
-nonblank line in those exact bytes. Lines are numbered by LF, as editors and
-`file:line` references count them; a CRLF ending is not part of the line, and
-a lone CR, form feed, NEL, or U+2028 inside a line does not start a new one.
-Results sealed before this rule are unaffected unless their source contains one
-of those characters; re-run `validate` for such sources rather than pooling
-old and new results. The bundled fixture uses the single
-committed `examples/detection-fixture-source.txt`; its `sha256:` revision is
-the digest of that file, not a self-declared label. Each case has a `vulnerable`
-or `benign` disposition, source `location`, component, class, mechanism, and
-literal finding/source terms for all four evidence gates. A valid corpus
-contains both dispositions. A public corpus may use one deterministic
-concatenated source artifact or file manifest as the reviewed artifact; pin its
-checkout by commit and record the manifest/artifact digest. Changing source
-bytes, labels, locations, or gates requires a new ground-truth version. The
-adapter never fetches the artifact.
+nonblank line in those exact bytes.
+
+Lines are numbered by LF, as editors and `file:line` references count them; a
+CRLF ending is not part of the line, and a lone CR, form feed, NEL, or U+2028
+inside a line does not start a new one. Results sealed before this rule are
+unaffected unless their source contains one of those characters; re-run
+`validate` for such sources rather than pooling old and new results.
+
+Each case has a `vulnerable` or `benign` disposition, source `location`,
+component, class, mechanism, and literal finding/source terms for all four
+evidence gates. A valid corpus contains both dispositions. A public corpus may
+use one deterministic concatenated source artifact or file manifest as the
+reviewed artifact; pin its checkout by commit and record the manifest/artifact
+digest. Changing source bytes, labels, locations, or gates requires a new
+ground-truth version. The adapter never fetches the artifact. The bundled
+fixture uses the single committed `examples/detection-fixture-source.txt`; its
+`sha256:` revision is the digest of that file, not a self-declared label.
 
 The public ARTEX Juice Shop JSON is useful provenance but is not accepted
 unchanged: it represents a black-box vulnerable-only corpus and lacks immutable
@@ -169,15 +175,11 @@ cost. A run with no true or false positive has undefined precision; it still
 counts in the pooled totals, and each precision spread names it in
 `undefined_runs` instead of refusing the summary, so the weakest run cannot be
 left out to make the aggregate look better.
+
 For real evidence, retain the sealed run results and summary under a new
 versioned evidence directory, together with the immutable corpus checkout and
 the independent adjudication record. Review discovery candidates separately;
 only a later, recorded disposition can narrow their precision interval.
 
 The bundled values are mechanism evidence for the schema and calculations,
-not public-corpus accuracy or a security-scan capability claim. The direct
-ARTEX-versus-security-scan measurement remains outside this local
-boundary. It would require the same pinned local corpus, subject model and
-resource cap for both systems, at least three runs of each, provider access,
-local target containers, and independent adjudication. No such comparison was
-performed here.
+not public-corpus accuracy or a security-scan capability claim.

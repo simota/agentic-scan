@@ -1,4 +1,4 @@
-# Perspectives — reviewing from more than one angle
+# Perspectives
 
 **Read when:** CHECKLIST, to choose which perspectives apply; REVIEW, after the
 invariant hunt (`reference/invariants.md`), as the coverage sweep; REPORT, to
@@ -6,10 +6,10 @@ fill the `perspectives` table in `findings.json`. **Reader:** the agent running
 the skill. As of 2026-10-07 · owner: security-scan maintainers · review
 trigger: a new edition of a standard traced in `reference/coverage-trace.md`.
 
-The invariant ledger finds what this app's own rules forbid. The perspectives
-then make sure nothing outside the ledger is skipped: apply each one within
-every review unit (`SKILL.md`, *Run contract*), work through its hunt steps
-below, and record every perspective in the report — including the ones that
+The invariant ledger finds what this app's own rules forbid; the perspectives
+make sure nothing outside the ledger is skipped. Within every review unit
+(`SKILL.md`, *Run contract*), apply each perspective and work through its hunt
+steps below. Record every perspective in the report, including the ones that
 found nothing and the ones not run.
 
 | Perspective | The question it asks |
@@ -37,34 +37,35 @@ Rules:
 - A perspective that could not be checked statically is recorded as
   `Not checked` with what would be needed
 - Every finding names the perspective that surfaced it in `category`
-- A hunt step covered by an invariant ledger entry cites it (`INV-…`) in the
-  perspective's `note` instead of being re-run
-- The `note` lists the hunt step IDs applied and each one left out with its
-  reason (e.g. `AT1–AT4 via INV-01; AT5 N/A: no attach or transfer actions`),
-  so coverage can be checked step by step against `reference/coverage-trace.md`
-
+- The perspective's `note` lists the hunt step IDs applied and each one left
+  out with its reason, and cites the invariant ledger entry (`INV-…`) for a
+  step that entry covers instead of re-running the step
+  (e.g. `AT1–AT4 via INV-01; AT5 N/A: no attach or transfer actions`), so
+  coverage can be checked step by step against `reference/coverage-trace.md`
 - A step is `sound` only when its *Sound when* cell can be filled with the
-  enforcing check's `path:line` on the path the actor takes — the check itself,
-  or the inherited one (base class or parent controller, middleware or route
-  group, model manager or default scope, decorator or annotation, database
-  policy). "The framework handles it" is not evidence; a framework default
-  counts only with the `path:line` of the setting or lockfile version that turns
-  it on (cell vocabulary: `reference/invariants.md` §2)
+  enforcing check's `path:line` on the path the actor takes, whether the check
+  itself or the inherited one (base class or parent controller, middleware or
+  route group, model manager or default scope, decorator or annotation,
+  database policy). "The framework handles it" is not evidence; a framework
+  default counts only with the `path:line` of the setting or lockfile version
+  that turns it on (cell vocabulary: `reference/invariants.md` §2)
 
 ## Hunt steps per perspective
 
-Each step says **what** to hunt, **where** to look, and what evidence makes it
-**sound** — with the reason that evidence suffices, so a cold reader can tell a
-real control from a look-alike. Steps are stack-neutral; framework names in
-parentheses are examples only. *Catalog* lists the closest CWE, ASVS 5.0
-section and API Security Top 10 2023 risk; the full trace and its sources are
-in `reference/coverage-trace.md`. The ASVS and API parts, and the Top 25 CWEs,
-are exactly the trace rows that cite the step; other CWEs are closer children.
-In a Catalog cell `—` means no entry of that catalog applies (decided);
-`UNKNOWN` means no mapping has been established yet. The ledger family
+Each step says what to hunt, where to look, and what evidence makes it sound,
+with the reason that evidence suffices, so a cold reader can tell a real
+control from a look-alike. Steps are stack-neutral; framework names in
+parentheses are examples only. Steps marked *(sound constructs)* have a table
+of sound and unsound constructs at the end of this file. The ledger family
 (`reference/invariants.md` §2) that usually covers a perspective is in
-brackets. Steps marked *(sound constructs)* have a table of sound and unsound
-constructs at the end of this file.
+brackets.
+
+*Catalog* lists the closest CWE, ASVS 5.0 section and API Security Top 10 2023
+risk. Its ASVS and API parts, and its Top 25 CWEs, are exactly the rows of
+`reference/coverage-trace.md` that cite the step (the full trace and its
+sources are there); other CWEs are closer children. In a Catalog cell `—`
+means no entry of that catalog applies (decided); `UNKNOWN` means no mapping
+has been established yet.
 
 ### Actor and tenant (AT) [OWN]
 

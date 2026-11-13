@@ -1,4 +1,4 @@
-# Engine map — the one place host tools are named
+# Engine map: the one place host tools are named
 
 **Read when:** expert grade (`reference/expert-mode.md`), at E0 for the
 preflights and whenever a spawn is written. No other file names a host tool,
@@ -9,7 +9,7 @@ binary or model; porting is an edit here.
 | Host (`expert.host`) | Spawn a worker with its own context | Collecting the return |
 |---|---|---|
 | `claude-code` | the `Agent` tool; `run_in_background: true` for parallel workers | completion notification; the worker also writes its return file |
-| `codex` | `spawn_agent(prompt)` | `wait_agent(id)`; keep spawns foreground — a detached TTY can fail silently |
+| `codex` | `spawn_agent(prompt)` | `wait_agent(id)`; keep spawns foreground, because a detached TTY can fail silently |
 | `agy` | `/agent <name> "<task>"` in the TUI, or `agy -p "<prompt>"` headless | stdout is unreliable: have the worker write its return to an absolute path and read the file. Pass files as `@<path>` |
 
 A second reply in the same context is not a worker. Every role in
@@ -18,8 +18,8 @@ A second reply in the same context is not a worker. Every role in
 Workers inherit the host's permission boundaries. Use approved writable paths
 for their return files; do not disable permission checks to make a preflight
 pass. An unavailable worker is recorded by the existing degraded/held gates,
-not replaced with an invented independent review. Already approved engines,
-data boundaries and worker ceilings do not need renewed consent unless changed.
+not replaced with an invented independent review. Engines, data boundaries and
+worker ceilings already approved need no renewed consent unless they change.
 
 ## E0 spawn preflight (host)
 
@@ -35,8 +35,8 @@ Exit 0 → `mode: full`. Anything else → `mode: single-agent`, which ends
 
 ## E0 reachability preflight (each extra engine)
 
-Only for engines the requester approved — an extra engine receives source
-excerpts under another provider's terms.
+Run this only for engines the requester approved: an extra engine receives
+source excerpts under another provider's terms.
 
 ```
 codex exec "Reply with exactly ENGINE-OK." > <out>/run/engine-codex.txt 2>&1
@@ -49,7 +49,7 @@ claude -p "Reply with exactly ENGINE-OK." > <out>/run/engine-claude.txt 2>&1
 grep -qx ENGINE-OK <out>/run/engine-claude.txt; echo "engine claude-code exit=$?" >> <out>/run/gate.md
 ```
 
-An engine that fails is struck before E1; it is not discovered missing later.
+An engine that fails is struck before E1, not discovered missing later.
 Workers on an extra engine run headless with the same prompt files and write
 their return to `run/spawns/`.
 

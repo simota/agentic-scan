@@ -1,4 +1,4 @@
-# Validation — is each finding real and does it apply here?
+# Validation: whether each finding is real and applies here
 
 **Read when:** VERIFY, for every finding before it reaches the report; and
 whenever `findings.json` is re-rendered after a person has reviewed it.
@@ -53,25 +53,25 @@ State the finding as: who enters through which route, under which conditions,
 crosses which protection boundary, and affects what. Record each claim as
 `supported`, `contradicted` or `unknown`, and link the evidence used:
 
-1. **Reachability** — the route exists and is registered; the named actor can
-   pass its authentication and role guards. Trace route → middleware → handler
-   → query/output, with source locations pinned to the assessed revision
-2. **Preconditions** — the relevant feature, package version, configuration and
+1. **Reachability**: the route exists and is registered; the named actor can
+   pass its authentication and role guards. Trace route → middleware → handler →
+   query/output, with source locations pinned to the assessed revision
+2. **Preconditions**: the relevant feature, package version, configuration and
    state exist. Identify assumptions and environment conditions not checked
-3. **Compensating defenses** — test the claim that no policy, tenant scope,
+3. **Compensating defenses**: test the claim that no policy, tenant scope,
    input validation, serializer, DB constraint, framework default or upstream
    control blocks the issue. Read the layers the original reviewer missed
-4. **Impact** — the data actually returned, state actually changed, or operation
+4. **Impact**: the data actually returned, state actually changed, or operation
    actually performed matches the reported impact. Check hidden fields, loaded
    relations and response shaping, rather than inferring exposure from a query
 
 For a structured `Valid`, all four claims must have supporting evidence and
 falsification checks must be clear. Unknown environment conditions or missing
 independent review still prevent sufficient verification, even when the recorded
-verdict remains `Valid`. For an exclusion, link the
-specific contradictory evidence and explain why it rules out the claim or its
-applicability. “Dev-only”, “no import found” or another reviewer's agreement is
-not sufficient on its own.
+verdict remains `Valid`. For an exclusion, link the specific contradictory
+evidence and explain why it rules out the claim or its applicability.
+“Dev-only”, “no import found” or another reviewer's agreement is not sufficient
+on its own.
 
 ## Evidence, falsification and independent review
 
@@ -110,16 +110,17 @@ successful execution support the claim. A runtime method label or a passing
 command is not enough. Unknown deployment conditions stay explicit; a local
 fixture does not prove production has the same state or configuration.
 
-The review remains static by default. An explicit request to reproduce a case
-or verify a fix authorizes that work within its stated owned local or throwaway
-scope; reuse an established scope and do not ask for the same go-ahead again.
-Ask only for missing facts that determine the target, permitted actions or
-isolation. A static review alone does not authorize runtime work. Never extend it to a
-shared, staging, production or third-party system. Use synthetic data and
-inert inputs, preserve the controls being tested, and stub unrelated external
-services. Do not use or validate real credentials. Agree resource limits and
-stop conditions; no new scanner or automatic test runner is added by the record
-format. For requested fix tests, use `reference/fix-verification.md`.
+The review remains static by default, and a static review alone does not
+authorize runtime work. An explicit request to reproduce a case or verify a fix
+authorizes that work within its stated owned local or throwaway scope; reuse an
+established scope and do not ask for the same go-ahead again. Ask only for
+missing facts that determine the target, permitted actions or isolation. Never
+extend runtime work to a shared, staging, production or third-party system. Use
+synthetic data and inert inputs, preserve the controls being tested, and stub
+unrelated external services. Do not use or validate real credentials. Agree
+resource limits and stop conditions; no new scanner or automatic test runner is
+added by the record format. For requested fix tests, use
+`reference/fix-verification.md`.
 
 `not_run`, `blocked`, `unsupported`, `error` and `skip` are incomplete outcomes,
 not passes and not proof that a finding is absent. An exception, timeout,

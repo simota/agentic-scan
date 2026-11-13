@@ -1,4 +1,4 @@
-# Report — output formats
+# Report output formats
 
 **Read when:** CHECKLIST, to deliver a checklist; REPORT, to deliver findings.
 Write in the requester's language.
@@ -21,7 +21,7 @@ stale like the primary pages.
 
 - First line: how many invariants were derived, how many perspectives apply,
   and that suspicions are unverified
-- **Invariant ledger first** (`reference/invariants.md` §2): each entry with its
+- Invariant ledger first (`reference/invariants.md` §2): each entry with its
   source, the paths that touch it and which of them to read; mark `inferred`
   rules as questions for the requester
 - Then one section per perspective from `reference/perspectives.md`, most
@@ -33,13 +33,13 @@ stale like the primary pages.
 
 ## Findings report
 
-1. **First line** — severity counts and review scope. State whether the work was
+1. First line: severity counts and review scope. State whether the work was
    static, or included explicitly authorized isolated tests. State recorded
    `Unverified` findings and insufficient-verification findings separately,
    highlighting High findings; do not call legacy verdicts execution-confirmed
-2. **Evidence line** — assessed revision, what was read, which claims were
+2. Evidence line: assessed revision, what was read, which claims were
    checked, what the reporting agent re-read, and what remains environment-unknown
-3. **Findings, by severity** — each includes:
+3. Findings, by severity, each with:
 
    ```
    [High|Medium|Low|Info][Confirmed|Environment-dependent|Suspected] one-line title
@@ -66,13 +66,13 @@ stale like the primary pages.
    legacy verification notes are historical, regardless of their names.
    `Unverified`, `Likely` and `Unlikely` remain incomplete even with complete
    evidence fields; do not upgrade their recorded verdicts.
-4. **Checked and sound** — what was examined and held, without implying all
+4. Checked and sound: what was examined and held, without implying all
    paths or deployments were tested
-5. **Decisions for a human** — specification questions, deployment settings to
+5. Decisions for a human: specification questions, deployment settings to
    confirm, missing evidence and unresolved material disagreements
-6. **Next step** — validation gaps first where necessary; otherwise a supported
+6. Next step: validation gaps first where necessary; otherwise a supported
    fix order. A local reproduction or fix test requires its own explicit scope
-7. **Files** — link the dashboard and assessment rendered from `findings.json`
+7. Files: link the dashboard and assessment rendered from `findings.json`
    using `reference/findings-schema.md`. The output directory holds exactly
    the set named in `SKILL.md` (*Run contract*); extra files only on request
 
@@ -96,14 +96,17 @@ State limitations prominently: static evidence is not runtime reproduction,
 isolated reproduction is not proof of production conditions, and structural
 schema checks are not semantic proof. Missing perspective coverage is unknown;
 zero findings and passing repository CI are not evidence of an all-clear
-assessment of the target application. A run without the `invariant_ledger`
-opt-in adds this limitation verbatim: "invariant ledger and close-check not
-machine-checked (no invariant_ledger opt-in)" — the ledger and the close-check
-were kept in scratch and nothing in the record proves their counts.
-`contract_check.py` requires that line without the opt-in and rejects it with
-the opt-in; with `--no-pdf` it also requires "assessment.pdf not produced: no
-PDF engine" (or, when `render.py` found an engine that failed, the line it
-prints: "assessment.pdf not produced: PDF engine failed (<reason>)"), and in either mode it rejects that line while an `assessment.pdf` exists. Keep both in English, verbatim, in any report language.
+assessment of the target application.
+
+`contract_check.py` checks two fixed limitation lines; keep both in English,
+verbatim, in any report language:
+
+- A run without the `invariant_ledger` opt-in adds "invariant ledger and
+  close-check not machine-checked (no invariant_ledger opt-in)": the ledger and
+  the close-check were kept in scratch and nothing in the record proves their
+  counts. `contract_check.py` requires that line without the opt-in and rejects
+  it with the opt-in
+- With `--no-pdf`, `contract_check.py` also requires "assessment.pdf not produced: no PDF engine" (or, when `render.py` found an engine that failed, the line it prints: "assessment.pdf not produced: PDF engine failed (<reason>)"), and in either mode it rejects that line while an `assessment.pdf` exists
 
 Describe weaknesses and parameters, not working payloads. Never print secret
 values: use location and kind only. Evidence summaries and commands must be

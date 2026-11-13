@@ -1,11 +1,11 @@
-# Recon — the attack-surface map
+# Recon: the attack-surface map
 
-**Read when:** RECON, before any finding is written. Nothing in later phases is
-trustworthy until this map exists, because a handler cannot be judged without
-knowing who can reach it.
+**Read when:** RECON, before any finding is written. A handler cannot be
+judged without knowing who can reach it, so nothing in later phases is
+trustworthy until this map exists.
 
-The map is a working artifact. Keep it in the conversation or a scratch file;
-it is not part of the final report unless asked.
+Keep the map in the conversation or a scratch file as a working artifact; it
+is not part of the final report unless asked.
 
 ## 1. Stack and versions
 
@@ -20,21 +20,22 @@ it is not part of the final report unless asked.
 
 Everything that accepts input from outside the process:
 
-- HTTP routes — **all** route files, including API, web, admin, and versioned groups
+- HTTP routes in all route files, including API, web, admin, and versioned groups
 - Server-side actions or RPC that the framework exposes implicitly
 - Webhooks and callbacks from third parties
-- Queue consumers, scheduled jobs and CLI commands that read external data
+- Queue consumers, scheduled jobs and CLI commands that read external data,
+  and event-driven consumers (message-queue, stream, storage-event and
+  scheduled triggers), including those wired in IaC or serverless config, not
+  only in code
 - WebSocket channels, GraphQL resolvers, file watchers
-- Every **version and host** of the API (`/v1` and `/v2`, a mobile or partner
+- Every version and host of the API (`/v1` and `/v2`, a mobile or partner
   API, an internal admin host), plus docs, monitoring, debug and test routes.
   A version kept alive for old clients often lacks guards added later
-- Routes declared **outside the application code**: infrastructure-as-code,
+- Routes declared outside the application code: infrastructure-as-code,
   serverless function definitions, API gateway or reverse-proxy route and
   rewrite config (e.g. an OpenAPI file with gateway extensions, a serverless
   manifest, an ingress resource). Each declared route is a row; a route the
   gateway exposes that the application treats as internal is a lead
-- **Event-driven consumers**: message-queue, stream, storage-event and
-  scheduled triggers wired in IaC or serverless config, not only in code
 
 ## 3. Route inventory
 
@@ -46,36 +47,38 @@ The columns are what make the later review mechanical:
 | Method | Path | Authn | Role guard | Handler | Record-naming inputs | Notes |
 |---|---|---|---|---|---|---|
 
-Build it from the route registrations themselves (search every routing call or
-decorator), then reconcile it against every other list of the surface: API
-description files (OpenAPI, GraphQL schema), client code (front end, mobile),
-tests, feature flags, the previous API version, and gateway, proxy and IaC
-route config. A route in one list and not another is a row to resolve, not to
-drop: registered but absent from client and docs (forgotten, debug, legacy or
-test), exposed by the gateway while the app treats it as internal, or an old
-version still registered after a newer one added a guard. *Authn* and *Role
-guard* name the check and where the route inherits it (route group, base
-controller, decorator, or a gateway/IaC authorizer — e.g. a gateway JWT
-authorizer, a serverless function's auth setting) with `path:line`. A
-gateway/IaC authorizer counts as an inherited check only for the routes that
-config actually binds it to, and only when the app is not also reachable
-around the gateway (a public load balancer, a function URL, another ingress);
-when that cannot be read from the repo, the cell is `UNKNOWN`. *Record-naming inputs* lists every parameter that
-names a record, file or tenant (path, query, body, nested IDs, job payload
-fields, import columns, message fields); each becomes an
-object-reference trace row (`reference/invariants.md` §3a) and is the count the
-close-check uses.
+1. Build the rows from the route registrations themselves (search every
+   routing call or decorator)
+2. Reconcile them against every other list of the surface: API description
+   files (OpenAPI, GraphQL schema), client code (front end, mobile), tests,
+   feature flags, the previous API version, and gateway, proxy and IaC route
+   config. A route in one list and not another is a row to resolve, not to
+   drop: registered but absent from client and docs (forgotten, debug, legacy
+   or test), exposed by the gateway while the app treats it as internal, or an
+   old version still registered after a newer one added a guard
+3. In *Authn* and *Role guard*, name the check and where the route inherits it
+   (route group, base controller, decorator, or a gateway/IaC authorizer such
+   as a gateway JWT authorizer or a serverless function's auth setting) with
+   `path:line`. A gateway/IaC authorizer counts as an inherited check only for
+   the routes that config actually binds it to, and only when the app is not
+   also reachable around the gateway (a public load balancer, a function URL,
+   another ingress); when that cannot be read from the repo, the cell is
+   `UNKNOWN`
+4. In *Record-naming inputs*, list every parameter that names a record, file
+   or tenant (path, query, body, nested IDs, job payload fields, import
+   columns, message fields); each becomes an object-reference trace row
+   (`reference/invariants.md` §3a) and is the count the close-check uses
 
 Then flag:
 
-- **Unauthenticated routes** — login, token or magic-link login, password reset,
+- **Unauthenticated routes**: login, token or magic-link login, password reset,
   signup, impersonation, health, webhooks
-- **Routes reachable by more than one role** — the handler must branch on role
+- **Routes reachable by more than one role**: the handler must branch on role
   and on tenant; this is where cross-tenant bugs live
-- **Guards that differ between layers** — a page route behind an IP allowlist
+- **Guards that differ between layers**: a page route behind an IP allowlist
   while the API that feeds it is not; a UI that hides a button while the API
   accepts the call
-- **Admin capabilities** — impersonation ("login as"), bulk operations, exports
+- **Admin capabilities**: impersonation ("login as"), bulk operations, exports
 
 ## 4. Identity
 
@@ -92,13 +95,15 @@ Then flag:
 - What a tenant is (company, account, organization, workspace)
 - The isolation mechanism: default/global scope, policy or permission classes,
   per-handler checks, a scoped base query, row-level security, separate databases
-- **Coverage table**: every model holding tenant data, and whether the mechanism
+- Coverage table: every model holding tenant data, and whether the mechanism
   applies to it. Models outside the mechanism depend entirely on each handler
-- **Bypass list**: raw query builders, scope-removal calls, joins and eager loads
+- Bypass list: raw query builders, scope-removal calls, joins and eager loads
   into unscoped models, background jobs running without a user context
 
-**Several services.** When the repo holds more than one deployable service,
-build one inventory per service and record for each: how it authenticates calls
+### Several services
+
+When the repo holds more than one deployable service, build one inventory per
+service and record for each: how it authenticates calls
 from other services (mTLS, a signed service token, a shared secret, network
 position only), whether it re-derives the end user and tenant or trusts a
 forwarded header or claim, and its own tenancy mechanism (§5 per service). An
@@ -139,19 +144,20 @@ advisory audit is `deps_scan.py --audit` at the end of REVIEW
 `not_run`. The audit needs network access to vulnerability databases; if that
 is unavailable, record the versions and say the audit was not run.
 
-## 10. Rules the app enforces — input to the invariant ledger
+## 10. Rules the app enforces
 
-Record what the later invariant hunt needs (`reference/invariants.md`):
+Record what the later invariant hunt needs, as input to the invariant ledger
+(`reference/invariants.md`):
 
-- **Role matrix** — one row per role (including anonymous and each tenant-side
+- **Role matrix**: one row per role (including anonymous and each tenant-side
   role), one column per sensitive action (read, create, change, delete, export,
   invite, change role, impersonate, approve, refund…). Fill each cell from the
   declared guards and policies with `path:line`; a blank cell is a question
-- **Ownership chain** — for each tenant-data model, the field or relation that
+- **Ownership chain**: for each tenant-data model, the field or relation that
   ties it to its owner or tenant, including children reached through a parent
-- **State machines** — every status/stage field, its allowed transitions, who
+- **State machines**: every status/stage field, its allowed transitions, who
   may make each one and where that is checked
-- **Quantities** — every price, total, balance, quota, limit, counter and
+- **Quantities**: every price, total, balance, quota, limit, counter and
   discount: where it is computed, stored and decremented
-- **Identifiers** — how IDs are generated (sequential, random) and where they
+- **Identifiers**: how IDs are generated (sequential, random) and where they
   are exposed to other actors (shared links, exports, emails, errors)

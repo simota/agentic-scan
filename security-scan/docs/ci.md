@@ -4,9 +4,10 @@
 dispatches. Feature branches use their PR run rather than duplicating every job
 for both the branch push and pull-request event.
 Independent jobs run `make check` on Python 3.9 and 3.12, plus the complete
-Python 3.12 test suite with real Chromium and PDF generation required. No advisory service, target system or external audit
-command is called. Browser interaction tests abort page network requests; PDF
-inputs are the self-contained, synthetic report fixtures.
+Python 3.12 test suite with real Chromium and PDF generation required. No
+advisory service, target system or external audit command is called. Browser
+interaction tests abort page network requests; PDF inputs are the
+self-contained, synthetic report fixtures.
 
 ## Required coverage
 
@@ -42,7 +43,7 @@ The older smoke test's dependency skips are also caught by this runner.
   fictional; the report renderer does not execute their recorded commands.
 - Verification states, retest gaps, report-wide counts and redacted proof details
   are checked in the real browser in both languages at 375 px. HTML-like proof
-  remains inert text, and the new checks are mandatory in the zero-skip runner.
+  remains inert text, and these checks are mandatory in the zero-skip runner.
 - Staged-verification reports are checked in both languages and at 375 px in
   the real browser. Pending, held and stale handoffs cannot become fix-ready
   through earlier evidence. Stage status, next manual stage, gaps, evidence
@@ -65,8 +66,9 @@ change repository access or branch-protection settings.
 
 The default `make check` still requires only the Python standard library and
 skips browser/PDF integrations explicitly. Python 3.9 also explicitly skips the
-two stdlib `tomllib` ownership tests, which run on Python 3.12. For the required CI suite, use Python
-3.12 and a supported non-root Linux desktop or runner:
+two stdlib `tomllib` ownership tests, which run on Python 3.12. For the
+required CI suite, use Python 3.12 and a supported non-root Linux desktop or
+runner:
 
 ```sh
 python3 -m venv /tmp/security-scan-ci-venv
@@ -114,19 +116,19 @@ version, replace its hash list from the release's PyPI JSON
 - [greenlet 3.5.5](https://pypi.org/project/greenlet/3.5.5/)
 - [typing_extensions 4.16.0](https://pypi.org/project/typing-extensions/4.16.0/)
 
-The workflow uses the GitHub runner's already-installed official **Google Chrome**,
+The workflow uses the GitHub runner's already-installed official Google Chrome,
 launched through `/usr/bin/google-chrome` and its normal package wrapper. The
 bounded version list contains **155.0.8059.39** from Ubuntu 22.04 image
 20261012.322.1 and **156.0.8078.47**, observed on image 20261025.340.1 and listed
 in the [official Ubuntu 22.04 image inventory](https://github.com/actions/runner-images/blob/2cdd82f39871ec1e98584ee64008bc1261ce427f/images/ubuntu/Ubuntu2204-Readme.md)
 for image 20261026.341.1. The older Chrome 154 rollout entries have been retired.
-Each selected version must pass the required suite below on its image. It requires an
-exact browser identification/version match to that list and records the
-installed `google-chrome-stable` package version as evidence without assuming a
-Debian revision suffix. It records SHA-256 hashes of the package wrapper and browser executable in
-the synthetic evidence. No alternative browser is downloaded or installed.
-Playwright provides only the pinned Python API; no Playwright browser or
-OS-dependency installation runs.
+Each selected version must pass the required suite below on its image. It
+requires an exact browser identification/version match to that list and records
+the installed `google-chrome-stable` package version as evidence without
+assuming a Debian revision suffix. It records SHA-256 hashes of the package
+wrapper and browser executable in the synthetic evidence. No alternative browser
+is downloaded or installed. Playwright provides only the pinned Python API; no
+Playwright browser or OS-dependency installation runs.
 
 This is an explicit, bounded image-version guard rather than a reproducible
 browser archive install. Unknown versions still fail. The selected distribution
@@ -137,12 +139,11 @@ Review any version-list change, keep the list small during runner rollouts, and
 retire the older entry when the rollout settles. Do not use a broad version
 range, silently switch browsers, remove the guard or alter sandbox settings.
 
-During diagnosis, Chrome for Testing 151.0.7922.34 and 154.0.8037.57 both failed the
-bounded production-flag CLI PDF probe. The runner's standard Google Chrome
+During diagnosis, Chrome for Testing 151.0.7922.34 and 154.0.8037.57 both
+failed the bounded production-flag CLI PDF probe. The runner's standard Google Chrome
 154.0.8037.57 passed with those same flags and retained English/Japanese text.
 This demonstrates a distribution/launch-path difference, not a proven underlying
-cause. The selected browser must pass the preflight and full required suite on
-every run; the PR's checks and linked CI runs record the observed pass/fail status.
+cause. The PR's checks and linked CI runs record the observed pass/fail status.
 Production renderer flags and all report assertions are unchanged.
 
 Ubuntu system packages come from the runner's configured distribution sources.
@@ -162,13 +163,12 @@ References:
 ## Synthetic reproduction evidence
 
 The offline suite executes the generated SQLite owner-scope model twice from a
-clean owned fixture, comparing semantic hashes and both security/control cases.
+clean owned fixture and compares semantic hashes and both security/control cases.
 It also rejects stale input, altered scripts, unsafe fixture paths, unsupported
 plans and incomplete runs. The strict reports job retains the generated bundle,
 fictional input and separate run/evidence JSON under `reproduction-evidence/` in
 the existing artifact. This is actual execution of a synthetic model only, not
 an assessment of application code or a verified target remediation.
-
 
 ## Evidence-byte verification and CI artifacts
 
@@ -179,12 +179,13 @@ actual bytes and the expected rendered text. Those manual artifact inspections
 [local evidence integrity](../skills/security-scan/reference/evidence-integrity.md).
 No past artifact review is automatically imported as verification credit.
 
-The new command reads local artifacts, compares declared SHA-256 values and,
-for source records, compares an explicit source path with a committed blob in an
-explicitly supplied owned local repository. It writes a separate receipt and can
-be repeated by report/workflow/reproduction consumers. Required-integrity policy
-can prevent insufficient evidence from receiving structured support or verified
-retest; a copied receipt is never authoritative.
+`scripts/evidence_integrity.py` reads local artifacts, compares declared
+SHA-256 values and, for source records, compares an explicit source path with a
+committed blob in an explicitly supplied owned local repository. It writes a
+separate receipt and can be repeated by report/workflow/reproduction
+consumers. Required-integrity policy can prevent insufficient evidence from
+receiving structured support or verified retest; a copied receipt is never
+authoritative.
 
 Tests and demonstrations for this boundary use newly created synthetic local
 Git repositories and artifact files. They do not assess a real application,
@@ -261,8 +262,8 @@ reports every sample, its median and an output SHA-256;
 compare both the medians and the hashes between revisions. Results that change
 between repetitions cause an error. The hashes include complete findings or HTML,
 so the comparison also detects changed ordering, references and displayed text.
-These timings describe the specified local workloads, not end-to-end audits or
-network/PDF latency. They are diagnostic measurements rather than CI time limits.
+These timings are diagnostic measurements of the specified local workloads,
+not end-to-end audits, network/PDF latency or CI time limits.
 The offline regression suite instead checks bounded record traversal, repeated
 redaction and verification work, selective evidence copying and source loading
 without relying on machine speed. Derived report states and source indexes are

@@ -7,8 +7,7 @@ earlier assessment kept on a rescan.
 
 Triage happens after the assessment is complete. It records the requester's
 decisions; it never changes a verdict, confidence, evidence or the derived
-verification and retest state. Ruled-out findings (`FalsePositive`,
-`NotApplicable`) are not triaged: their validation decides them.
+verification and retest state.
 
 ## The record
 
@@ -34,6 +33,10 @@ verification and retest state. Ruled-out findings (`FalsePositive`,
 | `Fixed` | `reason`: the change that fixed it (commit, pull request) |
 | `Open` after `Fixed` or `Accepted` | `reason` for reopening |
 | Assignment (no status change) | an `owner` or `ticket` that differs from the current one |
+
+Ruled-out findings (`FalsePositive`, `NotApplicable`) are not triaged: their
+validation decides them. A recorded `Fixed` remains a claim until a retest
+record verifies it (`reference/fix-verification.md`).
 
 `triage.status` must equal the finding's `status`, so a fragment that changes
 `status` alone is refused once a decision exists. Fragments cannot write
@@ -100,9 +103,8 @@ An acceptance whose `review_by` has passed counts as open again:
 
 ## What the summary reports
 
-Included findings by status and severity, open High/Medium without an owner,
-acceptances past their review date, acceptances due within `--due-within` days
-(default 30), `Accepted` records without a reason or review date, open work per
-owner, and recorded `Fixed` findings with whether a retest verified them. A
-recorded `Fixed` remains a claim until a retest record verifies it
-(`reference/fix-verification.md`).
+`summary` reports included findings by status and severity, open High/Medium
+without an owner, acceptances past their review date, acceptances due within
+`--due-within` days (default 30), `Accepted` records without a reason or review
+date, open work per owner, and recorded `Fixed` findings with whether a retest
+verified them.

@@ -7,7 +7,7 @@ regression test plus evidence of what ran, not an attack tool.
 ## Preconditions (all required)
 
 - The requester explicitly authorizes this verification work on their own code
-- Use only an owned **local or throwaway** instance, never a shared, staging,
+- Use only an owned local or throwaway instance, never a shared, staging,
   production or third-party system
 - Stay in the repository's own test framework and synthetic fixtures; do not
   use real data or credentials, send email, take payments or call external APIs
@@ -21,7 +21,7 @@ regression test plus evidence of what ran, not an attack tool.
 
 ## What a good verification test is
 
-Encode the **secure expectation** as an assertion so the vulnerable behavior is
+Encode the *secure expectation* as an assertion so the vulnerable behavior is
 what makes it fail:
 
 | Finding class | The test asserts (the secure outcome) |
@@ -35,7 +35,7 @@ what makes it fail:
 
 Assert the defended state: response, stored value, output or side effect. Keep
 inputs minimal, benign and inert, with nothing that reaches outside the local
-process. Pair the forbidden action with a **positive control**: the legitimate
+process. Pair the forbidden action with a *positive control*: the legitimate
 actor can still perform the intended action on its own resource.
 
 ## Procedure
@@ -58,19 +58,18 @@ actor can still perform the intended action on its own resource.
 5. **Check normal behavior and nearby paths.** Run the positive control and
    relevant regression cases on the fixed revision: for example, legitimate
    tenant access, another role and adjacent list/detail routes. Record every
-   result, including failed or incomplete runs
+   result, including failed or incomplete runs. A failed positive control or
+   regression means the fix is not verified
 6. **Keep it deterministic.** No external network, sleeps, real secrets or
    shared fixtures. Keep the regression in the repository's suite when requested
 
-`skip`, `not_run`, `blocked`, `unsupported` and `error` never count as pass. A
-failed positive control or regression means the fix is not verified. Original
-reproduction must be `runtime_supported`: an incomplete listed current-version
+`skip`, `not_run`, `blocked`, `unsupported` and `error` never count as pass.
+Original reproduction must be `runtime_supported`: an incomplete listed current-version
 run blocks runtime/retest verification even alongside legitimate red evidence.
 For a `Valid` finding, a listed real-boundary security run already passing
-before the fix is material counterevidence and makes verification incomplete. Do not omit it to obtain a
-verified label. A scanner
-no longer reporting the finding, or a merged fix PR, is not independent retest
-evidence.
+before the fix is material counterevidence and makes verification incomplete;
+do not omit it to obtain a verified label. A scanner no longer reporting the
+finding, or a merged fix PR, is not independent retest evidence.
 
 ## A helper script, only if it earns its place
 
@@ -97,7 +96,7 @@ respective revisions, environment/configuration and fixture/test identities,
 expected and observed outcomes, timestamps and sanitized evidence. Link the
 positive-control and regression results on the fixed revision too.
 
-`status: Fixed` is a **recorded remediation claim**. Preserve it when supplied,
+`status: Fixed` is a recorded remediation claim. Preserve it when supplied,
 but report the separately derived retest state. Marking a status, committing a
 test or setting a verdict must not synthesize a successful retest. `Accepted`
 records a response decision and is not remediation verification.

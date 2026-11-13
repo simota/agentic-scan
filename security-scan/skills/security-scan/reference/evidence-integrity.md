@@ -1,4 +1,4 @@
-# Local evidence integrity — bytes, hashes and commit correspondence
+# Local evidence integrity: artifact hashes and commit correspondence
 
 **Read when:** checking that evidence artifacts actually exist and match their
 recorded digests, or requiring those checks before structured verification,
@@ -54,38 +54,41 @@ their hash comparison establishes byte correspondence only.
 Both paths must be safe relative local paths. Absolute paths, traversal, URLs,
 line anchors, backslashes, symlinks, hardlinked files and non-regular artifacts
 are refused. Root-directory ancestors must also be free of symlinks; use physical
-paths on systems where `/tmp` or another parent is a symlink. Keep the evidence root
-and all source material unchanged while the check runs. Before producing a
-receipt, the verifier rereads every initially byte-matched artifact and compares
-its hash and original file/path-chain identity and stat snapshots, then checks
-the root again. Detected changes make affected observations incomplete and remove
-matched/observed values. These are bounded sequential stability checks, not an
-atomic multi-file snapshot or protection against a hostile kernel. Keep inputs
-stable; path checks and bounded reads are not a filesystem sandbox. Missing,
-unsupported, unreadable or mismatching inputs stay unsuccessful; none can
-silently become verified. Size/time bounds can also make a check incomplete.
+paths on systems where `/tmp` or another parent is a symlink.
 
-Dirty source-worktree pins are unsupported: a `diff_sha256` declaration cannot establish
-which source bytes were actually reviewed. Supply a supported clean commit and
-artifacts or leave the limitation visible. The implementation does not apply a
-diff, resolve a remote revision or fall back to current working-tree files.
-A commit ID is checked as a local Git object; repository names, authors and
-reviewer labels are not authenticated identities. The supplied repository's
-working-tree status is not inspected: committed objects are the source of truth,
-not uncommitted files. The unsupported dirty pin refers to declared evidence
-with `diff_sha256`, not a command that cleans or rewrites the user's checkout.
+Keep the evidence root and all source material unchanged while the check runs.
+Before producing a receipt, the verifier rereads every initially byte-matched
+artifact and compares its hash and original file/path-chain identity and stat
+snapshots, then checks the root again. Detected changes make affected
+observations incomplete and remove matched/observed values. These are bounded
+sequential stability checks, not an atomic multi-file snapshot or protection
+against a hostile kernel. Path checks and bounded reads are not a filesystem
+sandbox either. Missing, unsupported, unreadable or mismatching inputs stay
+unsuccessful; none can silently become verified.
+
+Dirty source-worktree pins are unsupported: a `diff_sha256` declaration cannot
+establish which source bytes were actually reviewed. This concerns declared
+evidence with `diff_sha256`, not a command that cleans or rewrites the user's
+checkout. Supply a supported clean commit and artifacts or leave the limitation
+visible. The implementation does not apply a diff, resolve a remote revision or
+fall back to current working-tree files. A commit ID is checked as a local Git
+object; repository names, authors and reviewer labels are not authenticated
+identities. The supplied repository's working-tree status is not inspected:
+committed objects are the source of truth, not uncommitted files.
 
 Supported Git layouts are a normal checkout with a `.git` directory or a bare
-object repository. Linked worktrees/`.git` files, alternate object stores, grafts
-and promisor packs are unsupported; `evidence_capture.py` refuses them too, and
-refuses a subdirectory of a checkout, and it reads each new blob back through
-the verifier's own object snapshot, so it never pins evidence the verifier
-cannot match. Hardlinked object files are refused (by both), so a `git clone` of
-a local path needs `--no-hardlinks`; a store over the snapshot limits below is
-refused at capture too. Missing objects are not fetched. The verifier
-uses `/usr/bin/git`, not a repository-supplied executable or a target `PATH`.
-It requires POSIX `dir_fd`/no-follow filesystem operations; an unsupported platform
-is reported rather than silently weakening checks.
+object repository. Linked worktrees/`.git` files, alternate object stores,
+grafts and promisor packs are unsupported; `evidence_capture.py` refuses them
+too, and also refuses a subdirectory of a checkout. It reads each new blob back
+through the verifier's own object snapshot, so it never pins evidence the
+verifier cannot match. Hardlinked object files are refused (by both), so a
+`git clone` of a local path needs `--no-hardlinks`; a store over the snapshot
+limits below is refused at capture too. Missing objects are not fetched. The
+verifier uses `/usr/bin/git`, not a repository-supplied executable or a target
+`PATH`. It requires POSIX `dir_fd`/no-follow filesystem operations; an
+unsupported platform is reported rather than silently weakening checks.
+
+### Fixed limits
 
 Current fixed limits are 512 evidence records; 16 MiB per artifact/Git object;
 64 MiB of cumulative artifact reads (`limits.total_artifact_bytes`); 128 MiB
@@ -127,12 +130,12 @@ included only after the declared artifact hash matches; mismatches do not expose
 new file fingerprints. The receipt omits local paths, source content and raw Git
 stderr.
 
-A receipt binds the current
-assessment, evidence and test-run declarations, the required-integrity policy,
-and the verification engine's SHA-256. It is not a signed attestation. Editing
-those declarations changes the context; changing the engine changes its binding.
-Deterministic output for unchanged inputs is useful for comparison, not proof of
-who generated the receipt or when an event happened.
+A receipt binds the current assessment, evidence and test-run declarations, the
+required-integrity policy, and the verification engine's SHA-256. It is not a
+signed attestation. Editing those declarations changes the context; changing the
+engine changes its binding. Deterministic output for unchanged inputs is useful
+for comparison, not proof of who generated the receipt or when an event
+happened.
 
 An imported, copied or hand-authored receipt never grants verification. Each
 consumer needs the actual local sources and performs fresh checks:
@@ -177,6 +180,24 @@ Versionless/version-1 files and historical extension fields receive no new
 verification credit. Old fixtures with invented commits, line-number artifact
 locations or placeholder hashes remain fictional; they are not migrated into
 verified evidence automatically.
+
+## What a matching hash does not prove
+
+- That a source condition is reachable, exploitable or even a vulnerability.
+- That a log describes an event that happened, that the named command ran, or
+  that a runtime observation came from the named commit.
+- That the original environment, fixture, credentials, deployed configuration
+  or before/after conditions were as recorded.
+- That reviewers are real, independent, authorized or correct.
+- That repository identity, authorship or a receipt is authentic.
+- That all relevant paths were reviewed or that the application is safe.
+
+Keep independent source review, falsification and authorized real-boundary
+retesting. Synthetic bundle observations stay `mocked` even when their actual
+artifact bytes are checked. Receipts do not expand permission to run code,
+contact a service, fetch a repository or publish source/evidence. Inspect
+summaries, paths, source and runtime artifacts for sensitive information before
+sharing; hash verification is not redaction.
 
 ## Portable, synthetic-only demonstration
 
@@ -268,21 +289,3 @@ matches, and the changed copy also cannot establish correspondence with the
 commit blob. Restore the exact original bytes before expecting success; do not
 edit the recorded hash merely to hide a mismatch. Do not modify a real
 assessment's files to demonstrate this behavior.
-
-## What a matching hash does not prove
-
-- That a source condition is reachable, exploitable or even a vulnerability.
-- That a log describes an event that happened, that the named command ran, or
-  that a runtime observation came from the named commit.
-- That the original environment, fixture, credentials, deployed configuration
-  or before/after conditions were as recorded.
-- That reviewers are real, independent, authorized or correct.
-- That repository identity, authorship or a receipt is authentic.
-- That all relevant paths were reviewed or that the application is safe.
-
-Keep independent source review, falsification and authorized real-boundary
-retesting. Synthetic bundle observations stay `mocked` even when their actual
-artifact bytes are checked. Receipts do not expand permission to run code,
-contact a service, fetch a repository or publish source/evidence. Inspect
-summaries, paths, source and runtime artifacts for sensitive information before
-sharing; hash verification is not redaction.

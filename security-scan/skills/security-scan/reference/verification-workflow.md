@@ -21,7 +21,6 @@ handoff, checks its input and output, applies the accepted stage result, records
 the transition and identifies the next stage. It does not call an AI provider,
 launch a reviewer, execute commands from evidence, run an application test or
 send network traffic. Reviewer labels are declarations, not identity checks.
-Multiple matching opinions do not establish a finding.
 
 The workflow is opt-in for `schema_version: 2` findings. Old reports and findings
 without a workflow retain their existing interpretation. For an opted-in
@@ -47,11 +46,11 @@ python3 scripts/verification_workflow.py next <out>/findings.json --finding F-00
 ```
 
 The handoff identifies the stage, current input digest, evidence and expected
-submission fields. The assigned reviewer reads the actual referenced source
-and copies the handoff's `submission_template` object into a separate JSON file,
+submission fields. The assigned reviewer reads the actual referenced source and
+copies the handoff's `submission_template` object into a separate JSON file,
 then replaces its placeholders with observations. Submit that object, not the
-whole handoff packet. Do not treat the fictional example's
-observations as a real assessment. Submit the completed file:
+whole handoff packet. Do not treat the fictional example's observations as a
+real assessment. Submit the completed file:
 
 ```sh
 python3 scripts/verification_workflow.py submit <out>/findings.json --finding F-001 --submission <scratch>/conditions-result.json
@@ -59,10 +58,9 @@ python3 scripts/verification_workflow.py next <out>/findings.json --finding F-00
 ```
 
 Use a different declared actor for a `complete` falsification; the conditions
-actor may still record a `held`, `error` or `unknown` result. After its accepted submission,
-request the decision handoff, review its evidence and submit the decision. Every
-submission carries the digest from its own handoff; do not reuse the conditions
-digest for later stages.
+actor may still record a `held`, `error` or `unknown` result. After its accepted
+submission, request the decision handoff, review its evidence and submit the
+decision.
 
 ```sh
 python3 scripts/verification_workflow.py status <out>/findings.json
@@ -78,18 +76,21 @@ parallel reviewers should submit through this CLI rather than saving whole-file
 copies over one another.
 
 Exit `0` means the command completed, not that the application is safe. Use
-`status --require-complete` as a shell gate: with `--finding` it exits `3` unless
-that finding's workflow is complete; without it, only opted-in findings count, and
-it exits `3` if any of them is incomplete or none has opted in. Invalid input, stage ordering and file-write conflicts
-exit `2`. Read the JSON state and hold reason as well as the exit code.
+`status --require-complete` as a shell gate: with `--finding` it exits `3`
+unless that finding's workflow is complete; without it, only opted-in findings
+count, and it exits `3` if any of them is incomplete or none has opted in.
+Invalid input, stage ordering and file-write conflicts exit `2`. Read the JSON
+state and hold reason as well as the exit code.
 
 ## Submission contract
 
-All submissions include `stage`, `actor`, `status`, `summary`, `evidence_ids` and
-the handoff's `input_digest`. The stages are `conditions`, `falsification` and
-`decision`. An actor label names responsibility but is not an authentication
-credential. Status is `complete`, `held`, `error`, `unknown` or `conflict`;
-incomplete outcomes cannot advance to the next stage.
+All submissions include `stage`, `actor`, `status`, `summary`, `evidence_ids`
+and the handoff's `input_digest`. Every submission carries the digest from its
+own handoff; do not reuse the conditions digest for later stages. The stages are
+`conditions`, `falsification` and `decision`. An actor label names
+responsibility but is not an authentication credential. Status is `complete`,
+`held`, `error`, `unknown` or `conflict`; incomplete outcomes cannot advance to
+the next stage.
 
 Completed stages carry these additional results:
 
@@ -141,16 +142,16 @@ when the source records are unchanged, an old round's submission cannot satisfy
 a new round. Journal events also link their declared content digests; this
 checks structural consistency, not authenticity.
 
-Each accepted handoff is tied to the current assessment, finding and the evidence
-and test-run records exposed in that round. The available catalog IDs are frozen
-at initialization or restart. Newly added records need an explicit invalidate
-and resume before they can be used; they do not silently appear in an already
-issued handoff. A stage records the input and output digests so
-the next reviewer can identify the exact result they received. These hashes
-detect changes to the declared records; they do not themselves prove that an
-evidence file exists, its declared hash matches actual bytes or a command ran.
-Optional fresh local checks add byte/source-blob correspondence, never execution
-or reviewer authentication.
+Each accepted handoff is tied to the current assessment, finding and the
+evidence and test-run records exposed in that round. The available catalog IDs
+are frozen at initialization or restart. Newly added records need an explicit
+invalidate and resume before they can be used; they do not silently appear in an
+already issued handoff. A stage records the input and output digests so the next
+reviewer can identify the exact result they received. These hashes detect
+changes to the declared records; they do not themselves prove that an evidence
+file exists, its declared hash matches actual bytes or a command ran. Optional
+fresh local checks add byte/source-blob correspondence, never execution or
+reviewer authentication.
 
 Updating a relevant source record outside the workflow makes the current round
 stale. Resume against the new input starts again at conditions while preserving
@@ -204,11 +205,11 @@ unless actual sources are checked; do not retroactively certify historical work.
 
 Keep observations sanitized before storing them. Never include secret values,
 real credentials, unnecessary personal data or working exploit payloads in
-handoffs, submissions or history. `submit` refuses a submission whose text,
-and `init`/`invalidate`/`resume` an actor or reason that, holds a literal attack
-string, with the same patterns as a `findings.py merge`.
-Reports redact recognized patterns as a best-effort safeguard; review them
-before sharing.
+handoffs, submissions or history. `submit` refuses a submission whose text holds
+a literal attack string, and `init`/`invalidate`/`resume` refuse an actor or
+reason that holds one, with the same patterns as a `findings.py merge`. Reports
+redact recognized patterns as a best-effort safeguard; review them before
+sharing.
 
 Runtime reproduction is separate and still requires explicit authorization for
 owned local or throwaway code. The workflow does not expand that authorization.

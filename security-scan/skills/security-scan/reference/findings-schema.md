@@ -1,4 +1,4 @@
-# Findings file — the single source for every output
+# Findings file: the single source for every output
 
 **Read when:** REPORT, before producing the dashboard or the assessment PDF.
 Write the results and their verification limits to `findings.json` once. The
@@ -71,7 +71,7 @@ or the `three_pass`/`expert` declarations documented in their references, and
 use the same `findings.py merge` command. Run records are observations only;
 the writer never executes their `command` fields.
 
-Merge semantics are explicit:
+Merge semantics:
 
 - `findings`, `evidence` and `test_runs` match by nonblank `id`: existing records
   are updated key by key; new IDs append. Duplicate IDs within one fragment
@@ -102,14 +102,13 @@ be supplied in fragments; use `verification_workflow.py` for journal changes.
 Ordinary profile, evidence, run or finding edits leave the journal untouched,
 so relevant input changes become stale instead of silently resealing old work.
 
-The merge is
-refused (exit 1) when report prose holds a literal attack string — a finding's
-`title`, `actor`, `request`, `impact`, `fix`, `validation.evidence`, any
-`verification` `reason` or falsification `check`, or reference `title`; a
+The merge is refused (exit 1) when report prose holds a literal attack string:
+a finding's `title`, `actor`, `request`, `impact`, `fix`, `validation.evidence`,
+any `verification` `reason` or falsification `check`, or reference `title`; a
 `perspectives` `name`, `result` or `note`; a `checked_ok`, `decisions`,
 `limitations` or `next_steps` entry; or a `meta` string. Describe the weakness
-and use a placeholder for the value — and nothing is written unless the merged file passes the schema
-check (exit 2).
+and use a placeholder for the value. Nothing is written unless the merged file
+passes the schema check (exit 2).
 
 ## Common report shape and legacy compatibility
 
@@ -185,10 +184,10 @@ are retained if their values can be represented safely in UTF-8/JSON output;
 this does not make them verification evidence. Derived verification labels are
 computed by the renderer and cannot be set by an input flag.
 
-**Static reproduction lives in the existing fields** — `actor`, `request`
-(preconditions, steps, `Contrast:`), `impact` (expected vs actual, `INV-…`),
-`fix` (invariant restored, then `Test:` assertion) — as `reference/invariants.md`
-§5 specifies; optional `cwe` comes from `reference/coverage-trace.md`.
+Static reproduction lives in the existing fields, as `reference/invariants.md`
+§5 specifies: `actor`, `request` (preconditions, steps, `Contrast:`), `impact`
+(expected vs actual, `INV-…`) and `fix` (invariant restored, then `Test:`
+assertion). Optional `cwe` comes from `reference/coverage-trace.md`.
 
 `status` defaults to `Open`; `validation.verdict`
 defaults to `Unverified`. An optional `triage` object records the decision
@@ -202,6 +201,40 @@ a verdict or the derived verification; see `reference/triage.md`. Findings marke
 left out of included totals and listed in a closing "excluded" section. The
 validation distribution intentionally includes all records; verdict
 rules are in `reference/validation.md`.
+
+## References and source excerpts
+
+Every finding should point the reader at evidence they can open:
+
+- Code in the audited repository: give `location` as `path:line` or
+  `path:start-end`, relative to the repository root. Render with
+  `--repo <root>` to embed the lines around it (secret-looking values are
+  masked), and set `meta.source_url` to a browse URL pinned to a commit so
+  each location also becomes a link that will not drift (its query and
+  fragment are dropped before the path is appended)
+- Third-party libraries: `references` lists the advisory, the fix commit
+  or pull request, and any write-up. `deps_scan.py` fills these from
+  supported audit results; add an `article` entry by hand when a vendor post or analysis explains the issue
+  better than the advisory
+- Only absolute `http://` and `https://` URLs without credentials (userinfo,
+  or a recognised token in the host or path such as a Slack webhook or bot
+  URL), whitespace, control, bidi or zero-width characters are accepted;
+  anything else is rejected when rendering. Credential-like query or fragment
+  parameters (`private_token`, `pass`, signatures, JWTs, a bare `?<token>`)
+  are dropped from the displayed link
+
+Render with `--repo` only for the requester's own copy of the report: the
+excerpts are source code, so the outputs carry the repository's confidentiality.
+
+IDs starting with `D-` belong to `scripts/deps_scan.py`: `--into findings.json`
+replaces them on each run and stamps the top-level `dependency_scan` record
+(`tool`, `audit`, `findings`, `not_run`), so do not hand-write findings with
+that prefix. `findings.py merge` refuses a fragment that creates a `D-*` ID or
+sends any key other than `id`, `validation` and `verification` for one, and any finding id
+that is not exactly `F-` or `D-` plus three ASCII digits (`d-001`, ` D-001`, `Ｄ-001` are refused). Code findings use `F-001`… without gaps; `scripts/contract_check.py`
+checks both, together with the rest of the run contract.
+
+Same rules as the report: no working payloads, no secret values.
 
 ## Version 2: structured verification
 
@@ -513,41 +546,6 @@ scanner, application-test executor or authorization to perform a live test.
   characters per line. The full source remains the evidence of record.
 - `previous_validation`, if present from a dependency re-scan, is shown as
   historical context. It cannot replace the current verdict or counts.
-
-## References and source excerpts
-
-Every finding should point the reader at evidence they can open:
-
-- **Code in the audited repository** — give `location` as `path:line` or
-  `path:start-end`, relative to the repository root. Render with
-  `--repo <root>` to embed the lines around it (secret-looking values are
-  masked), and set `meta.source_url` to a browse URL **pinned to a commit** so
-  each location also becomes a link that will not drift (its query and
-  fragment are dropped before the path is appended)
-- **Third-party libraries** — `references` lists the advisory, the fix commit
-  or pull request, and any write-up. `deps_scan.py` fills these from
-  supported audit results; add an `article` entry by hand when a vendor post or analysis explains the issue
-  better than the advisory
-- Only absolute `http://` and `https://` URLs without credentials (userinfo,
-  or a recognised token in the host or path such as a Slack webhook or bot
-  URL), whitespace, control, bidi or zero-width characters are accepted;
-  anything else is rejected when rendering. Credential-like query or fragment
-  parameters (`private_token`, `pass`, signatures, JWTs, a bare `?<token>`)
-  are dropped from the displayed link
-
-Render with `--repo` only for the requester's own copy of the report: the
-excerpts are source code, so the outputs carry the repository's confidentiality.
-
-IDs starting with `D-` belong to `scripts/deps_scan.py`: `--into findings.json`
-replaces them on each run and stamps the top-level `dependency_scan` record
-(`tool`, `audit`, `findings`, `not_run`), so do not hand-write findings with
-that prefix. `findings.py merge` refuses a fragment that creates a `D-*` ID or
-sends any key other than `id`, `validation` and `verification` for one, and any finding id
-that is not exactly `F-` or `D-` plus three ASCII digits (`d-001`, ` D-001`, `Ｄ-001` are refused). Code findings use `F-001`… without gaps; `scripts/contract_check.py`
-checks both, together with the rest of the run contract.
-
-Same rules as the report: no working payloads, no secret values.
-
 
 ## Optional three-pass assurance profile
 

@@ -1,4 +1,4 @@
-# Coverage trace — standards to perspectives and hunt steps
+# Coverage trace: standards to perspectives and hunt steps
 
 **Read when:** CHECKLIST, to confirm nothing a standard names is skipped;
 REPORT, to choose a finding's `cwe`. **Reader:** the agent running the skill,
@@ -8,9 +8,12 @@ security-scan maintainers · review trigger: a new edition of any standard below
 in `reference/perspectives.md`.
 
 Every class below maps to a perspective in `reference/perspectives.md` and to
-one or more hunt steps there (step IDs such as `AT1`); each hunt step also
-carries its own *Catalog* cell, so the trace runs both ways. The invariant
-family in `reference/invariants.md` §2 is named when the class is app-specific.
+one or more hunt steps there (step IDs such as `AT1`). The trace also runs the
+other way: each step's *Catalog* cell in `reference/perspectives.md` lists
+exactly the ASVS sections, API risks and Top 25 CWEs whose rows below cite
+that step (the skill repository's tests check that the two sides match). The
+invariant family in `reference/invariants.md` §2 is named when the class is
+app-specific.
 The trace is hand-built and is not an official mapping: ASVS 5.0 removed direct
 mappings to other standards and no longer maintains CWE mappings
 (`5.0/en/0x05-For-Users-Of-4.0.md`, *Removal of Direct Mappings to Other
@@ -19,27 +22,25 @@ looks, not a guarantee it is absent.
 
 Two columns say where to spend effort:
 
-- **Semantic** — `yes`: the class needs this app's own rules to see (the
-  invariant ledger finds it; pattern tools usually miss it); `partly`: a
-  pattern shows the sink, the app's rules decide whether it is a flaw; `no`:
-  mostly visible to pattern tools — still checked, not prioritised
-- **Static limit** — what reading the repository cannot settle, named as the
+- *Semantic*: `yes` when the class needs this app's own rules to see (the
+  invariant ledger finds it; pattern tools usually miss it); `partly` when a
+  pattern shows the sink and the app's rules decide whether it is a flaw; `no`
+  when it is mostly visible to pattern tools (still checked, not prioritised)
+- *Static limit*: what reading the repository cannot settle, named as the
   out-of-repo dependency; record it as `UNKNOWN` in the cell and under
   `limitations`. `none: decidable from source` means the class is settled by
   reading the repository (the *General limits* at the end still apply)
-- **`—` vs `UNKNOWN`** — in any column, `—` is a decided "nothing applies"
-  (`— (decisions)` in *Steps*: checked as a `decisions` entry, no hunt step);
-  `UNKNOWN` means no mapping has been established yet and is a gap to close
-- **Steps ↔ Catalog** — each step's *Catalog* cell in `reference/perspectives.md`
-  lists exactly the ASVS sections, API risks and Top 25 CWEs whose rows below
-  cite that step (the skill repository's tests check that the two sides match)
+
+In any column, `—` is a decided "nothing applies" (`— (decisions)` in
+*Steps*: checked as a `decisions` entry, no hunt step); `UNKNOWN` means no
+mapping has been established yet and is a gap to close.
 
 Sources (fetched 2026-10-07):
-ASVS 5.0 — `https://github.com/OWASP/ASVS/tree/master/5.0/en` (all 80 section
+ASVS 5.0: `https://github.com/OWASP/ASVS/tree/master/5.0/en` (all 80 section
 numbers and titles re-fetched 2026-10-07 from the chapter files `0x10`–`0x26`
 at master `9b5da31`; they match the table below exactly);
-API Security Top 10 2023 — `https://api-security.owasp.org/editions/2023/en/0x11-t10`;
-CWE Top 25 2024 — `https://cwe.mitre.org/top25/archive/2024/2024_top25_list.html`.
+API Security Top 10 2023: `https://api-security.owasp.org/editions/2023/en/0x11-t10`;
+CWE Top 25 2024: `https://cwe.mitre.org/top25/archive/2024/2024_top25_list.html`.
 
 ## OWASP ASVS 5.0 (section level)
 
@@ -183,23 +184,23 @@ supports it.
 These hold for every row, including `none: decidable from source`; each one
 that touches a finding or a `Sound` claim goes into `limitations`:
 
-- **Deployed values** — environment variables, secrets, feature flags and
-  settings set outside the repository; the repo shows intent, not state
-- **Infrastructure outside the repo** — gateways, WAFs, load balancers, IAM and
+- Deployed values: environment variables, secrets, feature flags and settings
+  set outside the repository; the repo shows intent, not state
+- Infrastructure outside the repo: gateways, WAFs, load balancers, IAM and
   storage ACLs, network segmentation and egress rules, unless declared in IaC
   that is in the repo (`reference/recon.md` §2)
-- **Data actually present** — what is stored, who already holds access, and
+- Data actually present: what is stored, who already holds access, and
   records created by migrations or by hand
-- **Runtime behaviour** — concurrency interleavings, timing, resource limits
-  under load, and library behaviour that depends on runtime configuration
-- **Code not in the repo or not readable** — generated, vendored or minified
-  code, private packages, separate services, and routes registered dynamically
+- Runtime behaviour: concurrency interleavings, timing, resource limits under
+  load, and library behaviour that depends on runtime configuration
+- Code not in the repo or not readable: generated, vendored or minified code,
+  private packages, separate services, and routes registered dynamically
   (reflection, plugin loading, configuration-driven routing) that a search did
   not resolve
-- **Third parties** — identity providers, payment and webhook senders,
-  external APIs and their registered settings
-- **History and process** — secrets removed from history the run could not
-  read, and review or deployment practice outside the code
+- Third parties: identity providers, payment and webhook senders, external
+  APIs and their registered settings
+- History and process: secrets removed from history the run could not read,
+  and review or deployment practice outside the code
 
 ## Limits of this trace
 
@@ -223,7 +224,7 @@ changes), regenerate in this order:
    and commit or edition under *Sources*
 2. Diff it against the table: added, removed, renumbered and retitled rows
 3. Map each new or changed row to a perspective and hunt steps, or write
-   `UNKNOWN (no step)`; never add a perspective — the 15 names are fixed
+   `UNKNOWN (no step)`. Never add a perspective: the 15 names are fixed
    (`scripts/contract_check.py` parses them). A class no step covers is a
    step to add to `reference/perspectives.md`, with its *Sound when* reason
 4. Regenerate every step's *Catalog* cell in `reference/perspectives.md` as the

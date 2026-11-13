@@ -5,6 +5,11 @@ conditions review and a recorded countercheck before declaring its review
 sequence complete. This is an optional schema-version-2 profile; existing files
 without it retain their interpretation.
 
+The profile controls manually supplied review records. It does not invoke AI
+provider APIs, launch autonomous reviewers, execute recorded commands, test the
+application, or send traffic to a target. The existing static, read-only review
+and explicitly authorized local-only test boundaries still apply.
+
 ## What the three passes mean
 
 1. **Discovery:** plan the perspective × target cells to read, then record an
@@ -26,11 +31,6 @@ are declarations and consistency checks, not authentication of people, agents,
 independence or events. No numerical accuracy or detection-rate claim follows
 from three passes. Completion describes only the supplied records and declared
 scope, not complete security coverage or proof that no vulnerability was missed.
-
-The profile controls manually supplied review records. It does not invoke AI
-provider APIs, launch autonomous reviewers, execute recorded commands, test the
-application, or send traffic to a target. The existing static, read-only review
-and explicitly authorized local-only test boundaries still apply.
 
 ## Opt in and record discovery
 
@@ -134,25 +134,6 @@ removing an otherwise complete individual finding's fix readiness.
 
 ## Audit and report
 
-```sh
-python3 scripts/verification_workflow.py audit <out>/findings.json
-python3 scripts/verification_workflow.py audit <out>/findings.json --require-complete --out <scratch>/three-pass-audit.json
-python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en> --repo <repo>
-```
-
-`audit` does not change findings. Optional `--out` creates a new audit JSON file
-and refuses to overwrite an existing file. Its JSON reports overall state, reasons, per-pass completion
-counts, discovery gaps, scope-challenge gaps and current per-finding workflow
-states. `--require-complete` exits `3` unless the opted-in profile is complete;
-invalid input exits `2`. Without that flag, a held assessment may still exit `0`
-because the audit command itself completed. Inspect its state, not just success
-of the process. Ordinary `status` remains the per-finding workflow view.
-
-The dashboard, assessment HTML and PDF show the same English/Japanese aggregate
-state, counts and gaps. Only named, redacted fields enter the public profile
-view. Review reports before sharing: redaction is best effort. The reports never
-embed the raw profile or arbitrary extension fields as proof.
-
 Aggregate completion requires complete discovery, at least one candidate, a
 complete current workflow for every candidate and full independent scope
 challenge. Zero candidates stays held even when every discovery cell was checked;
@@ -161,15 +142,35 @@ workflows, incomplete reviews and stale inputs cannot borrow readiness from an
 older `Valid` record. Excluded candidates remain visible and must complete their
 current review sequence too.
 
-Changing the coverage plan, discovery declarations or relevant assessment and
-evidence inputs makes affected current work stale. Re-read and restart using the
-existing workflow rather than relabeling history. Initialization and restart snapshots preserve previous discovery
-declarations; reports label changed snapshots as historical, not current proof.
-Fresh evidence checks remain
-available through `--evidence-root` and `--evidence-repository`; when required by
-policy they also gate profile completion. Hash matching establishes byte/source
-correspondence, not that the observations or reviewer identity are true.
+```sh
+python3 scripts/verification_workflow.py audit <out>/findings.json
+python3 scripts/verification_workflow.py audit <out>/findings.json --require-complete --out <scratch>/three-pass-audit.json
+python3 scripts/render.py <out>/findings.json --out <out> --lang <ja|en> --repo <repo>
+```
 
+`audit` does not change findings. Optional `--out` creates a new audit JSON
+file and refuses to overwrite an existing file. Its JSON reports overall state,
+reasons, per-pass completion counts, discovery gaps, scope-challenge gaps and
+current per-finding workflow states. `--require-complete` exits `3` unless the
+opted-in profile is complete; invalid input exits `2`. Without that flag, a
+held assessment may still exit `0` because the audit command itself completed,
+so inspect its state, not just the exit status. Ordinary `status` remains the
+per-finding workflow view.
+
+The dashboard, assessment HTML and PDF show the same English/Japanese aggregate
+state, counts and gaps. Only named, redacted fields enter the public profile
+view. Review reports before sharing: redaction is best effort. The reports never
+embed the raw profile or arbitrary extension fields as proof.
+
+Changing the coverage plan, discovery declarations or relevant assessment and
+evidence inputs makes affected current work stale. Re-read and restart using
+the existing workflow rather than relabeling history. Initialization and
+restart snapshots preserve previous discovery declarations; reports label
+changed snapshots as historical, not current proof. Fresh evidence checks
+remain available through `--evidence-root` and `--evidence-repository`; when
+required by policy they also gate profile completion. Hash matching
+establishes byte/source correspondence, not that the observations or reviewer
+identity are true.
 
 ## Synthetic regression benchmark
 

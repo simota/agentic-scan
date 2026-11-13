@@ -78,7 +78,7 @@ No requests were sent to any deployed environment.
 
 ## Attachments
 
-- `assessment.pdf` — the assessment document
-- `dashboard.html` — every finding, works offline
+- `assessment.pdf`: the assessment document
+- `dashboard.html`: every finding, works offline
 
 <!-- If disclosure is planned: the disclosure date, the fixed release, and whether a CVE is needed. -->

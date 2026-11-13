@@ -1,9 +1,9 @@
 # Resumable assessment execution
 
 `scan_run.py` coordinates the existing static-assessment tools on POSIX hosts
-with Python 3.9 or later and no extra packages. It makes work possible within
-existing permissions: it does not change host approval rules or execute an
-application, arbitrary command, shell string or provider call. Source review
+with Python 3.9 or later and no extra packages. It stays within existing
+permissions: it does not change host approval rules or execute an application,
+arbitrary command, shell string or provider call. Source review
 is still done by the reviewing agent.
 
 ## Start and continue
@@ -65,19 +65,8 @@ After source review and capture, finish the report with one command:
 python3 scripts/scan_run.py finish <run>
 ```
 
-After the report, the requester's triage decisions (risk acceptance with a
-review date, owner, ticket, recorded fix) are applied from a decisions file
-written with the file-write tool, then the report is rendered and checked
-again (`skills/security-scan/reference/triage.md`):
-
-```sh
-python3 scripts/scan_run.py triage <run> <run>/scratch/decisions.json
-python3 scripts/scan_run.py render <run>
-python3 scripts/scan_run.py check <run>
-```
-
 `finish` performs an offline inventory only if no inventory has yet been
-attempted or recorded, then renders and checks the report. An incomplete or
+attempted or recorded; it then renders and checks the report. An incomplete or
 failed stage does not prevent independent stages from running. It preserves
 existing dependency results and manual package reviews, never enables online
 audits, and never automatically retries a previously failed inventory. A failed
@@ -109,6 +98,17 @@ runs the existing public-advisory audits. This explicit invocation is never
 inferred from a saved checkpoint. As with `deps_scan.py --into`, another
 inventory replaces dependency auto-triage and preserves manual reviews as
 history; do the final inventory before per-package review.
+
+After the report, the requester's triage decisions (risk acceptance with a
+review date, owner, ticket, recorded fix) are applied from a decisions file
+written with the file-write tool, then the report is rendered and checked
+again (`skills/security-scan/reference/triage.md`):
+
+```sh
+python3 scripts/scan_run.py triage <run> <run>/scratch/decisions.json
+python3 scripts/scan_run.py render <run>
+python3 scripts/scan_run.py check <run>
+```
 
 ## Progress and estimated finish
 
@@ -142,7 +142,7 @@ run's own pace: time per weight point over completed phases, or, before any
 phase completes, over the current phase's finished units. The current phase is
 projected from its units when reported, otherwise from that pace. With neither,
 `eta` is `null` rather than a guess. The weights are assumptions, so the
-estimate is a planning aid, not a commitment, and it moves as work proceeds.
+estimate is a planning aid, not a commitment; it moves as work proceeds.
 
 ## Deadlines, failure and recovery
 
@@ -189,27 +189,28 @@ marked `interrupted_after_record: true`, and the runner then exits `130`
 (`finish` stops before its next stage). If the runner is killed after the swap
 but before the record, the next command restores the last recorded output and
 leaves the unrecorded copy in `scratch/unrecorded-*` for inspection, so the
-published output always matches a recorded checkpoint. The OS run lock releases when the last process holding it
-exits; never remove `.lock` based on its filename or age. A still-running child
-inherits the lock even if its parent is terminated.
+published output always matches a recorded checkpoint. The OS run lock releases
+when the last process holding it exits; never remove `.lock` based on its
+filename or age. A still-running child inherits the lock even if its parent is
+terminated.
 
 If a child times out, the runner interrupts its process group, allows 15
 seconds for cleanup, and force-stops any remaining members of that group. A
 child that exits on the interrupt ends the wait at once; the allowance lets
 `render.py` stop a PDF engine, which it gives 10 seconds to exit before forcing
-it. Group
-cleanup also runs after normal or error exits: a launcher finishing does not
-mean that its descendants have finished or released the inherited run lock.
-It records a timeout even if the child's interrupt handler returns zero. This
+it. Group cleanup also runs after normal or error exits: a launcher finishing
+does not mean that its descendants have finished or released the inherited run
+lock. The runner records a timeout even if the child's interrupt handler returns
+zero. This
 cleanup covers the process group the runner created; tools that start separate
 sessions remain responsible for their own process cleanup. A host that stops
 the runner with `SIGTERM` or `SIGHUP` gets the same interrupt, grace and forced
 stop as Ctrl-C, so the child cannot outlive its deadline holding the lock; a
 signal the caller already ignores (for example under `nohup`) stays ignored.
-Only an uncatchable `SIGKILL` of the runner leaves a child to finish on its own. Failed attempts
-remain private in scratch for inspection; they are never scanned for findings or promoted
-automatically. They can be removed with the rest of the run when no operation
-is active and its outputs are no longer needed.
+Only an uncatchable `SIGKILL` of the runner leaves a child to finish on its own.
+Failed attempts remain private in scratch for inspection; they are never scanned
+for findings or promoted automatically. They can be removed with the rest of
+the run when no operation is active and its outputs are no longer needed.
 
 PDF generation is optional work within rendering: HTML is prepared first. A
 missing/failed/timed-out PDF engine adds a missing-PDF limitation through the
@@ -217,8 +218,8 @@ ordinary merge tool, then regenerates the HTML with that limitation. An
 intentional `render <run> --no-pdf` records that reason. The PDF is printed on
 a private copy of the staged output and that copy is used only when printing
 succeeds, so a stopped engine's staging or late writes stay in the failed
-attempt and never reach `out`. A later successful PDF
-attempt removes the outdated missing-PDF limitation. Invalid input or an HTML
+attempt and never reach `out`. A later successful PDF attempt removes the
+outdated missing-PDF limitation. Invalid input or an HTML
 rendering error is still a failed operation, not a PDF fallback.
 
 Use runner operations consistently for `out`. The OS lock coordinates runner
@@ -244,8 +245,9 @@ make check
 
 The regressions run metadata → offline inventory → source capture → merge →
 HTML → contract check in a synthetic committed repository. They also exercise
-real process deadlines, host SIGTERM/SIGHUP, descendant cleanup after success/error/timeout, lock
-contention, partial-writer isolation, interrupted
-publication, stops held until a publication is recorded, stale check digests, and PDF fallback with controlled engine
-outcomes. They validate execution behavior, not vulnerability detection quality
-or an assurance that a host will approve every tool call.
+real process deadlines, host SIGTERM/SIGHUP, descendant cleanup after
+success/error/timeout, lock contention, partial-writer isolation, interrupted
+publication, stops held until a publication is recorded, stale check digests,
+and PDF fallback with controlled engine outcomes. They validate execution
+behavior, not vulnerability detection quality or an assurance that a host will
+approve every tool call.

@@ -20,17 +20,17 @@ An invariant is a sentence that must stay true for every actor, on every entry
 point, in every order of calls. Derive it from evidence in the repository, not
 from what a typical app does. Sources, strongest first:
 
-1. **Data model** — foreign keys to an owner or tenant, unique constraints,
+1. Data model: foreign keys to an owner or tenant, unique constraints,
    check constraints, enum columns, nullable vs required, soft-delete flags
-2. **Declared authorization** — policy/permission classes, role enums, guard or
+2. Declared authorization: policy/permission classes, role enums, guard or
    middleware lists, row-level-security policies, scope definitions
-3. **The majority of handlers** — if nine handlers filter by the caller's tenant
+3. The majority of handlers: if nine handlers filter by the caller's tenant
    and one does not, the nine state the rule and the one breaks it
-4. **Tests and fixtures** — tests named "cannot", "forbidden", "only", "limit"
+4. Tests and fixtures: tests named "cannot", "forbidden", "only", "limit"
    state intended rules; seeded roles show the real role set
-5. **Front end** — disabled buttons, hidden menu items, client-side validation
+5. Front end: disabled buttons, hidden menu items, client-side validation
    and step wizards show the rule the server is supposed to enforce too
-6. **Docs, comments, product copy** — pricing pages, plan limits, README
+6. Docs, comments, product copy: pricing pages, plan limits, README
    statements of who can do what
 
 Write each invariant with its source (`path:line`). An invariant inferred only
@@ -42,23 +42,23 @@ add the rule itself to `decisions` so a person can confirm the intent.
 Derive at least one entry per family that the app has; a family the app lacks
 is written `N/A` with the reason (no money, single-tenant, no workflow).
 
+| Family | Typical statement | Derive it from |
+|---|---|---|
+| OWN (ownership and tenancy) | "A `<record>` is read or changed only by members of its owning `<tenant>`" | owner/tenant foreign keys; the tenancy coverage table in `reference/recon.md` §5 |
+| ROLE (role and function matrix) | "Only `<role>` may `<action>`; `<role>` cannot grant a role above its own" | role enum, guards, the role matrix in `reference/recon.md` §10 |
+| PROP (property-level rules) | "Callers set only `<fields>`; `<fields>` are never returned to `<actor>`" | input binding / allow-lists, serializers, hidden-field lists |
+| STATE (state machines and workflows) | "`<entity>` moves only along `<transitions>`; step B requires step A by the same actor; in `<state>`, `<fields>` and `<child records>` are frozen; deleted or archived `<entity>` is visible only to `<actor>`" | status enums, transition functions, wizard steps, soft-delete and archive flags, per-state edit guards |
+| QTY (money, limits and counters) | "`<amount>` is computed server-side, non-negative and charged once; `<quota>` cannot be exceeded" | price/total computation, plan limits, coupons, balances, rate and quota counters |
+| ID (identity lifecycle) | "Every way of signing in applies the same checks; a credential change ends other sessions" | login paths, reset/verify flows, token issue and revocation (`reference/recon.md` §4) |
+| TRUST (trust boundaries) | "Data from `<source>` never becomes code, query structure, a path, a URL or markup without `<control>`" | data sinks (`reference/recon.md` §6), inbound integrations |
+
 **Seed with baselines.** Before deriving, add each applicable family's *Typical
-statement* below as a `baseline` entry (*Source*: `baseline`), filled in with
+statement* above as a `baseline` entry (*Source*: `baseline`), filled in with
 this app's nouns. A baseline is a hunt target, not a claim about the app: it is
 hunted on every path like any entry, and becomes a finding only with code
 evidence of a violation. When §1 sources show the app's actual rule, rewrite
 the entry to it and replace `baseline` with that `path:line`; a baseline the app
 deliberately does not follow goes to `decisions`, not to findings.
-
-| Family | Typical statement | Derive it from |
-|---|---|---|
-| **OWN** ownership and tenancy | "A `<record>` is read or changed only by members of its owning `<tenant>`" | owner/tenant foreign keys; the tenancy coverage table in `reference/recon.md` §5 |
-| **ROLE** role and function matrix | "Only `<role>` may `<action>`; `<role>` cannot grant a role above its own" | role enum, guards, the role matrix in `reference/recon.md` §10 |
-| **PROP** property-level rules | "Callers set only `<fields>`; `<fields>` are never returned to `<actor>`" | input binding / allow-lists, serializers, hidden-field lists |
-| **STATE** state machines and workflows | "`<entity>` moves only along `<transitions>`; step B requires step A by the same actor; in `<state>`, `<fields>` and `<child records>` are frozen; deleted or archived `<entity>` is visible only to `<actor>`" | status enums, transition functions, wizard steps, soft-delete and archive flags, per-state edit guards |
-| **QTY** money, limits and counters | "`<amount>` is computed server-side, non-negative and charged once; `<quota>` cannot be exceeded" | price/total computation, plan limits, coupons, balances, rate and quota counters |
-| **ID** identity lifecycle | "Every way of signing in applies the same checks; a credential change ends other sessions" | login paths, reset/verify flows, token issue and revocation (`reference/recon.md` §4) |
-| **TRUST** trust boundaries | "Data from `<source>` never becomes code, query structure, a path, a URL or markup without `<control>`" | data sinks (`reference/recon.md` §6), inbound integrations |
 
 Keep the ledger in scratch (`SKILL.md`, *Run contract*). It holds one row per
 invariant; its per-path cells live in the path trace (§3a), not here:
@@ -72,9 +72,8 @@ rest not read`, `not checked (reason)` or, for a family the app lacks,
 `N/A (reason)` (`not_applicable` in `invariant_ledger`). A ledger entry whose paths were not
 all read is never reported as holding.
 
-**Cells take five values, nothing else** — in the path trace (§3a) and the
-perspective steps. (The ledger `Status` column has its own
-five values, above.)
+**Cells take five values, nothing else**, in the path trace (§3a) and the
+perspective steps. The ledger `Status` column has its own five values, above.
 
 | Value | Means | Required with it |
 |---|---|---|
@@ -85,7 +84,7 @@ five values, above.)
 | `ASSUMED` | A check exists but does not dominate the fetch on every branch of this path, or is borrowed from a sibling, caller or callee that this path does not run through | The branch or caller that lacks it. Counted as `NONE` by the close-check (§3b) and handed to the hunt |
 
 **Name the enforcing check.** *Enforcing check* (§3a) holds the check that actually runs
-on the path — written in the handler, or **inherited**: a base class or parent
+on the path, written in the handler or inherited from a base class or parent
 controller, a middleware or route group, a model manager or default/global
 scope, a decorator or annotation, a database policy. Give the `path:line` of
 the check itself, and of where this path picks it up (the registration, the
@@ -98,11 +97,11 @@ path.
 
 ## 3. Hunt: every path that touches an invariant
 
-For each ledger entry, list **every** path that reads or writes the protected
+For each ledger entry, list every path that reads or writes the protected
 data, then check each one. Static review is complete per invariant, not per
 file. A path is every entry point in the recon inventory (`reference/recon.md`
 §2–§3): routes, queue consumers and scheduled jobs, import formats, channel
-message types — not routes alone. Paths are easy to miss; look for all of these:
+message types, not routes alone. Look for all of these:
 
 - Primary routes, and their siblings: list vs detail vs export vs search vs
   count; create vs update vs bulk; single vs batch endpoints; old API versions
@@ -119,10 +118,10 @@ message types — not routes alone. Paths are easy to miss; look for all of thes
 **Walk to the query.** For each path, follow the handler through every callee
 (service, repository, helper, model method) down to the statement that fetches
 or writes the record, and stop there or at the framework or library boundary
-(an ORM call, a driver, a framework helper) — do not read library internals;
+(an ORM call, a driver, a framework helper). Do not read library internals;
 a library's behaviour counts only with the `path:line` of the config or locked
 version that sets it. Cite the walk as a chain in the *Fetch* cell:
-`handler path:line → service path:line → repository path:line`. A check counts for this path only if it **dominates**
+`handler path:line → service path:line → repository path:line`. A check counts for this path only if it *dominates*
 that statement — runs before it on every branch, including early returns,
 error paths and the alternative arms of a conditional. A check that holds on
 some branches only, or that runs in a sibling route, a caller this path does
@@ -133,13 +132,19 @@ Then apply the comparison that reveals each family's violations:
 
 | Family | Hunt question per path | Violation shape | Sound when |
 |---|---|---|---|
-| OWN | Where does the record identifier come from, and is it resolved inside the caller's tenant/owner before use? | Lookup by bare ID from path, body, header or nested object; a child fetched under a parent the caller owns but the child's own parent not checked | The query itself is constrained by the caller's owner/tenant (scope, policy, RLS), or the loaded record's owner is compared to the caller before any read or write — on this path, not a sibling |
-| ROLE | Which guard runs on this path, and does it match the matrix row — for the current role, not the one held at sign-in? | Guard on the page but not the API; on the list but not the action; role read from client input; role changes not limited to roles below the actor's; role or tenant read from a session or token snapshot that survives demotion, removal or suspension | The guard is attached to the route or handler itself and compares against a server-held role read fresh (or invalidated when it changes) |
+| OWN | Where does the record identifier come from, and is it resolved inside the caller's tenant/owner before use? | Lookup by bare ID from path, body, header or nested object; a child fetched under a parent the caller owns but the child's own parent not checked | The query itself is constrained by the caller's owner/tenant (scope, policy, RLS), or the loaded record's owner is compared to the caller before any read or write, on this path and not a sibling |
+| ROLE | Which guard runs on this path, and does it match the matrix row for the current role, not the one held at sign-in? | Guard on the page but not the API; on the list but not the action; role read from client input; role changes not limited to roles below the actor's; role or tenant read from a session or token snapshot that survives demotion, removal or suspension | The guard is attached to the route or handler itself and compares against a server-held role read fresh (or invalidated when it changes) |
 | PROP | Which fields are bound from input, and which are serialized out? | Whole-body binding that includes owner, role, price, status or verified flags; responses that include hidden fields through relations | An allow-list per actor for writes; an explicit output shape that excludes the field on every serializer path |
 | STATE | Can this transition be called from any state, by any actor, or twice? Does this writer change a field or child frozen in the record's current state? Does this reader show a deleted or archived record? | Missing "from" state check; step 3 callable without step 2; approval by the requester; cancel after fulfilment; line items edited on a submitted order; a deleted record returned by search or export | Transition checks current state and actor inside the same atomic update; every frozen-field and child writer checks the parent's state; every reader applies the same visibility filter |
 | QTY | Where is the amount or count computed, and is check-then-act atomic? | Client-supplied price/total/quantity/discount; negative or zero values accepted; read-check-write without a lock or conditional update (double spend, coupon reuse, quota overrun); integer/decimal overflow or rounding | Server recomputes from trusted data; constraints reject out-of-range values; the check and the update are one atomic operation or guarded by a unique constraint/idempotency key |
 | ID | Does this sign-in, recovery or token path apply every check the main login does? Does a capability token (share link, invite, API key) stay within its scope and die when revoked? | Secondary login (magic link, SSO, impersonation, API token) skips role, verification or tenant checks; tokens not bound to purpose or user; sessions survive password change, suspension or removal; a link or key grants more than its scope or works after revocation | The same check function runs on every path; tokens are single-use, expiring and bound to user and purpose; scope is checked on each use and revocation is looked up, not cached |
 | TRUST | Does input reach the sink as data or as structure? | Concatenated query, command, template, path, URL or markup; deserializer of untrusted bytes; redirect to a supplied URL | Parameterized APIs, allow-listed values for structural positions, canonicalized paths under a fixed root, an allow-list for outbound hosts |
+
+"Enforced on N of M paths" is the signal: the M−N paths are candidate findings.
+Read each one end to end before recording it (`SKILL.md`, *Always / Never*).
+When no path has the control (no route checks tenancy, no upload checks
+type), comparison shows nothing: a uniformly absent control the invariant
+requires is a finding in its own right.
 
 **PROP: write against read.** List the model's fields, then the fields each
 write path accepts (create, update, bulk, import, admin). A field accepted on
@@ -148,12 +153,6 @@ owner ID, price, status, verified flag, quota), is a mass-assignment lead;
 validation present on create but missing on update, import or the admin path is
 another; so is a field hidden by one serializer of the model and returned by
 another (list vs detail, own vs other's, export vs API).
-
-"Enforced on N of M paths" is the signal: the M−N paths are candidate findings.
-Read each one end to end before recording it (`SKILL.md`, *Always / Never*).
-When **no** path has the control (no route checks tenancy, no upload checks
-type), comparison shows nothing: a uniformly absent control the invariant
-requires is a finding in its own right.
 
 **Sink-backward pass.** The forward hunt starts from the inventory, so it
 cannot see a path the inventory missed. After it, for every protected model
@@ -170,9 +169,9 @@ recorded as unreachable in `checked_ok`. Record the search per model.
 
 One row per path that touches a ledger entry (entry point × entry), and one
 row per entry-point input that names a record, file or tenant (recon
-inventory, *Record-naming inputs*) — route parameters, and also IDs carried in
+inventory, *Record-naming inputs*): route parameters, and also IDs carried in
 job payloads, import rows and channel messages. For those, the *Enforcing
-check* is the one that runs **in the worker** when it loads the record; a check
+check* is the one that runs in the worker when it loads the record; a check
 at enqueue time is `ASSUMED` unless the payload cannot be produced any other
 way. This is where cross-tenant and IDOR findings are found; an input or a
 ledger path with no row is unreviewed.
@@ -189,7 +188,7 @@ ledger path with no row is unreviewed.
   session, dominating the fetch (§3). "The route is authenticated" is not an
   ownership check. The example row is `ASSUMED` because the dominating check
   guards the parent, not the record fetched
-- *Before any use?*: before any read, write, side effect or response —
+- *Before any use?*: before any read, write, side effect or response,
   including an error that confirms the record exists
 - On create, attach, move or share, every other ID in the body gets its own row
 - *Contrast sibling*: the sibling path (detail vs export, v1 vs v2, HTTP vs
@@ -258,8 +257,8 @@ fix location, *Run contract*). Name the other link and its finding ID in
 ## 5. Static reproduction steps for every finding
 
 Each `F-*` finding must let the reader reproduce it against their own local
-copy and fix it, without a payload. Write the steps into the existing fields —
-no schema change:
+copy and fix it, without a payload. Write the steps into the existing fields;
+the schema does not change:
 
 | Field | Holds |
 |---|---|
@@ -268,6 +267,10 @@ no schema change:
 | `impact` | **Expected** first, then **actual**, using those words (`期待` … `実際` in Japanese): expected is what the invariant requires (ideally what the contrast path does: 403/404, rejection, unchanged state); actual is what the code at `location` does instead, citing the chain handler → service → query `path:line`; then the bounded impact against the crown jewels. Name the violated ledger entry, e.g. `violates INV-01` |
 | `fix` | First line: the remediation as the invariant restored, in one sentence, with where the check belongs ("apply the check used at `<contrast path:line>`"). Then `Test:` at least one regression-test assertion stated as the secure outcome (`<actor> requesting <placeholder> receives not-found and no data`), red on the current code and green after the fix |
 | `cwe` | The closest CWE (`CWE-<n>`), from the step's *Catalog* in `reference/perspectives.md` or `reference/coverage-trace.md` |
+
+A Japanese report may write the markers as `前提条件：`, `手順：`, `対比：` and
+`テスト：` (ASCII `:` also accepted). Never put working exploit strings, real
+credentials or real customer data in steps; `scripts/findings.py merge` refuses literal attack strings.
 
 Example shape (placeholders, not a payload):
 
@@ -286,10 +289,6 @@ fix:     Invoices are loaded only inside the caller's tenant: apply the
          Test: a member of tenant A requesting tenant B's invoice pdf
          receives not-found and no file bytes
 ```
-
-A Japanese report may write the markers as `前提条件：`, `手順：`, `対比：` and
-`テスト：` (ASCII `:` also accepted). Never put working exploit strings, real
-credentials or real customer data in steps; `scripts/findings.py merge` refuses literal attack strings.
 
 ## 6. Perspectives as the coverage check
 

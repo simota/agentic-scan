@@ -6,10 +6,9 @@ The rubric, weights, evidence rules and measurement conditions below were fixed
 before any code was changed; the "after" columns are filled in with the same
 rubric once the changes are verified.
 
-SQI is a rubric score, not a physical measurement. Measured values are listed
-separately (see *Measurements*), and nothing here is a result from real users:
-no user test was run, so task-completion rates and perceived difficulty are not
-reported.
+SQI is a rubric score, not a physical measurement; measured values are listed
+separately under *Measurements*. No user test was run, so no task-completion
+rate or perceived difficulty is reported.
 
 ## Scope
 
@@ -27,10 +26,6 @@ reported.
 `SQI = 0.25 × DQI + 0.25 × AQI + 0.25 × VQI + 0.25 × UXQI` (equal weights, fixed
 before the baseline). Each index is `Σ (weight × score ÷ 5)` over its items,
 weights summing to 100, each item scored 0–5.
-
-Evidence levels: E0 unverified (not scored), E1 inspection of code or
-screenshots, E2 reproducible static analysis, automated tests or systematic
-manual checks, E3 measured or independently corroborated.
 
 ## Measurement conditions
 
@@ -51,9 +46,12 @@ manual checks, E3 measured or independently corroborated.
 
 ## Rubric
 
-Each item names what earns each score. A score of 5 needs E2 or better evidence.
+Each item names what earns each score. Evidence levels are E0 unverified (not
+scored), E1 inspection of code or screenshots, E2 reproducible static analysis,
+automated tests or systematic manual checks, E3 measured or independently
+corroborated. A score of 5 needs E2 or better evidence.
 
-### DQI — software design
+### DQI: software design
 
 | Item | Weight | 5 | 4 | 3 | 2 | 1–0 |
 |---|---:|---|---|---|---|---|
@@ -69,7 +67,7 @@ Change scenarios for D4: S1 add a validation verdict; S2 change a secret-masking
 rule; S3 restyle the dashboard; S4 add a field check to the findings schema;
 S5 add a dependency ecosystem.
 
-### AQI — architecture
+### AQI: architecture
 
 | Item | Weight | 5 | 4 | 3 | 2 | 1–0 |
 |---|---:|---|---|---|---|---|
@@ -82,7 +80,7 @@ S5 add a dependency ecosystem.
 | A7 Observability and operability | 10 | Every step reports status and actionable errors and leaves an audit record, tested | Status and actionable errors, partial records | Errors reported, little guidance | Silent failures possible | Opaque |
 | A8 Scalability | 5 | Large-input behaviour benchmarked against a stated budget | Large-input regression tests exist | Linear behaviour assumed | Known superlinear paths | Fails on large inputs |
 
-### VQI — visual design
+### VQI: visual design
 
 | Item | Weight | 5 | 4 | 3 | 2 | 1–0 |
 |---|---:|---|---|---|---|---|
@@ -94,7 +92,7 @@ S5 add a dependency ecosystem.
 | V6 Colour, contrast and meaning | 10 | 0 axe contrast violations in light and dark; severity never colour-only | ≤2 contrast nodes | ≤10 | More | Unreadable |
 | V7 Whitespace and density | 10 | Consistent rhythm; density suited to a working register | Minor inconsistencies | Crowded or sparse regions | Disorganised | — |
 
-### UXQI — UI/UX
+### UXQI: UI/UX
 
 Representative tasks (start: the dashboard is open at the top; success as stated):
 T1 identify the first open finding to act on (its card in *Start here* is
@@ -127,7 +125,7 @@ uses 3.9 and 3.12.
 | axe violations (dashboard / assessment, 20 runs each) | 0 / 0 |
 | Focus-invisible Tab stops | 0 of 290 (dashboard), 0 of 68 (assessment) |
 | Horizontal overflow runs | 0 / 40 |
-| Targets <24 px at mobile | 22 dashboard, 24 assessment — all inline links (headings, ID cells, footers); covered by the WCAG 2.5.8 inline/spacing exceptions on inspection |
+| Targets <24 px at mobile | 22 dashboard, 24 assessment; all are inline links (headings, ID cells, footers), covered by the WCAG 2.5.8 inline/spacing exceptions on inspection |
 | Register enum values broken mid-word (desktop 1280) | "Environment-dependent" → "Environmen/t-dependent" and "Unverified" → "Unverifie/d" in 4 of 5 samples (columns 96 px and 84 px wide; words need 84+24 and 65+24 px) |
 | Truncated current values of filter selects (≥1100 px) | 2 (Records, Order) in en and ja |
 | Record/tool modules importing `render` (presentation) | 4 direct (`findings`, `evidence_capture`, `expert_audit`, `scan_run`) + `deps_scan` transitively |
@@ -216,6 +214,10 @@ decision, not a silent harness change.
 
 ### Measurements
 
+The baseline import time (31.9 ms for `findings`) was taken in a separate run;
+the A/B import-time rows below were measured interleaved in one run and are the
+ones to compare.
+
 | Measure | Before | After |
 |---|---|---|
 | `make check` | 1105 OK, 26 skipped | 1111 OK, 27 skipped (+5 boundary tests, +1 opt-in browser test) |
@@ -239,10 +241,6 @@ decision, not a silent harness change.
 | Same, warm bytecode cache | 32.1, 31.6, 31.3, 32.0, 34.0, 37.7 ms | 25.9, 29.0, 25.4, 30.5, 32.9, 30.1 ms |
 | `render.py` lines | 2,684 | 2,239 (`report_schema.py` 258, `secret_redaction.py` 228) |
 | Functions >120 lines | 8 | 8 (`validate_data` moved, not split) |
-
-The baseline import time (31.9 ms for `findings`) was taken in a separate run;
-the A/B rows above were measured interleaved in one run and are the ones to
-compare.
 
 ### Scores
 

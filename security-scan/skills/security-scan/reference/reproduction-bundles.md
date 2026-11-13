@@ -14,7 +14,7 @@ findings file or the assessed application's code, database or configuration.
 
 The MVP supports one executable template: `sqlite-owner-scope-v1`. It uses
 Python's standard library and SQLite to model two query policies over synthetic
-owners and resources. It does **not** import application code, check out the
+owners and resources. It does not import application code, check out the
 named commits, execute the application's authentication or authorization
 layers, install dependencies, execute commands recorded in evidence, use
 credentials or send network requests. There is no target-host, live-system or
@@ -28,6 +28,67 @@ customer records, secrets, working exploit inputs, shared/staging/production
 databases or third-party targets. The synthetic bundle uses only its own known
 scratch files. Project-specific tests need the separate authorization and
 boundary requirements in `reference/fix-verification.md`.
+
+## Plan contract
+
+The minimal supported plan is `examples/reproduction.plan.sample.json`:
+
+```json
+{
+  "plan_version": 1,
+  "template": "sqlite-owner-scope-v1",
+  "case_id": "owner-boundary",
+  "seed": 42,
+  "before": {"policy": "unscoped"},
+  "after": {
+    "policy": "owner_scoped",
+    "commit": "2222222222222222222222222222222222222222"
+  },
+  "fixture": {"owners": 2, "resources_per_owner": 2},
+  "evidence_ids": ["source-before"]
+}
+```
+
+- `plan_version` selects the supported plan schema; do not infer compatibility
+  with future versions.
+- `template` is an explicit template choice, not an arbitrary module, command,
+  path or URL. The generator does not infer a runnable test from finding prose.
+- `case_id` names the same security expectation before and after.
+- `seed` fixes synthetic fixture generation. Keep it, the fixture configuration
+  and test/template version unchanged when comparing equivalent cases.
+- `before.policy` and `after.policy` configure the local model. The sample
+  intentionally contrasts an unscoped read with an owner-scoped read. Declaring
+  the policies does not establish the real application's behavior.
+- The before revision comes from the current assessment pin; `after.commit`
+  declares the intended fixed revision. Neither field makes the runner fetch
+  or execute that revision. Optional evidence checks only verify source artifacts
+  explicitly registered with a source path and local commit.
+- `fixture` describes synthetic owners and resources per owner. Provide enough
+  independent owners to test an ownership boundary. Do not substitute real data.
+- `evidence_ids` selects existing evidence records to bind to the manifest.
+  Their declared hashes and descriptions need source review. Optional local
+  checks (see *Check the evidence behind a bundle*) read actual artifact bytes
+  and source commit blobs; the runner never retrieves remote artifacts or
+  authenticates their claims.
+
+The plan accepts exactly the fields above; no commands, SQL, URLs or extra
+keys. The current bounds are:
+
+- `seed`: integer 0 through 2147483647; booleans are not integers here.
+- `fixture.owners` and `fixture.resources_per_owner`: integers 2 through 10.
+- Finding, case and selected evidence IDs: 1–64 characters, starting with an
+  ASCII letter, followed by ASCII letters, digits, hyphens or underscores.
+- `after.commit`: full lowercase 40- or 64-character hexadecimal commit ID.
+- `evidence_ids`: 1–50 unique IDs identifying source evidence pinned to the same
+  assessment commit and worktree diff. The sample's hash is fictional.
+- Policies are fixed to `unscoped` before and `owner_scoped` after. This schema
+  does not accept arbitrary model policies, including for manual scaffolds.
+
+Secret-category findings and detected secret-bearing identifiers are rejected;
+arbitrary finding prose is not copied into generated files. This is not a
+substitute for reviewing inputs and artifacts for sensitive data. The CLI
+rejects invalid inputs instead of turning an unknown template or malformed
+fixture into a passed check.
 
 ## Generate, verify and run
 
@@ -125,69 +186,9 @@ Neither proves a logged event, executes the original application or upgrades
 synthetic observations from `mocked` to `real`. Checked synthetic bundles still
 cannot establish runtime-supported findings or verified application fixes.
 
-## Plan contract
-
-The minimal supported plan is `examples/reproduction.plan.sample.json`:
-
-```json
-{
-  "plan_version": 1,
-  "template": "sqlite-owner-scope-v1",
-  "case_id": "owner-boundary",
-  "seed": 42,
-  "before": {"policy": "unscoped"},
-  "after": {
-    "policy": "owner_scoped",
-    "commit": "2222222222222222222222222222222222222222"
-  },
-  "fixture": {"owners": 2, "resources_per_owner": 2},
-  "evidence_ids": ["source-before"]
-}
-```
-
-- `plan_version` selects the supported plan schema; do not infer compatibility
-  with future versions.
-- `template` is an explicit template choice, not an arbitrary module, command,
-  path or URL. The generator does not infer a runnable test from finding prose.
-- `case_id` names the same security expectation before and after.
-- `seed` fixes synthetic fixture generation. Keep it, the fixture configuration
-  and test/template version unchanged when comparing equivalent cases.
-- `before.policy` and `after.policy` configure the local model. The sample
-  intentionally contrasts an unscoped read with an owner-scoped read. Merely
-  declaring the policies does not establish the real application's behavior.
-- The before revision comes from the current assessment pin; `after.commit`
-  declares the intended fixed revision. Neither field makes the runner fetch
-  or execute that revision. Optional evidence checks only verify source artifacts
-  explicitly registered with a source path and local commit.
-- `fixture` describes synthetic owners and resources per owner. Provide enough
-  independent owners to test an ownership boundary. Do not substitute real data.
-- `evidence_ids` selects existing evidence records to bind to the manifest.
-  Their declared hashes and descriptions need source review. Optional local
-  checks below read actual artifact bytes and source commit blobs; the runner
-  never retrieves remote artifacts or authenticates their claims.
-
-The plan accepts exactly the fields above; no commands, SQL, URLs or extra
-keys. The current bounds are:
-
-- `seed`: integer 0 through 2147483647; booleans are not integers here.
-- `fixture.owners` and `fixture.resources_per_owner`: integers 2 through 10.
-- Finding, case and selected evidence IDs: 1–64 characters, starting with an
-  ASCII letter, followed by ASCII letters, digits, hyphens or underscores.
-- `after.commit`: full lowercase 40- or 64-character hexadecimal commit ID.
-- `evidence_ids`: 1–50 unique IDs identifying source evidence pinned to the same
-  assessment commit and worktree diff. The sample's hash is fictional.
-- Policies are fixed to `unscoped` before and `owner_scoped` after. This schema
-  does not accept arbitrary model policies, including for manual scaffolds.
-
-Secret-category findings and detected secret-bearing identifiers are rejected;
-arbitrary finding prose is not copied into generated files. This is not a
-substitute for reviewing inputs and artifacts for sensitive data. The CLI
-rejects invalid inputs instead of turning an unknown template or malformed
-fixture into a passed check.
-
 ## What is bound, and what is produced
 
-The manifest is immutable **input data for the run**, separate from changing
+The manifest is immutable input data for the run, separate from changing
 scratch state and results. Its bindings include the selected finding digest,
 the byte hash of the entire findings input, current assessment revision pin,
 selected evidence identities and hashes,
@@ -297,8 +298,8 @@ A full supported run performs clean → seed → reproduce → cleanup twice. Bo
 cycles use the same template, seed, fixture and secure expectation. For the
 sample policy pair, inspect all of the following:
 
-1. The before-model security assertion **fails because another owner's resource
-   is returned**. This is the intended red observation, not a runner error.
+1. The before-model security assertion fails because another owner's resource
+   is returned. This is the intended red observation, not a runner error.
 2. The after-model security assertion passes: another owner's resource is not
    returned.
 3. The legitimate owner can read its own resource. This positive control guards

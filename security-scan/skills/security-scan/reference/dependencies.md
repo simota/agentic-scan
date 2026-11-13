@@ -24,9 +24,11 @@ verdict (or `Unverified`) and keeps a prior manual review as
 that did not run under `limitations`, and stamps `dependency_scan` with the
 count it wrote; `scripts/contract_check.py` rejects a file whose `D-*` count
 differs, so `D-*` findings are never hand-written or split; `findings.py merge`
-accepts only `validation`/`verification` on an existing `D-*` ID. It covers, across npm, Composer, Python,
-Bundler, Go, Cargo, Maven/Gradle/NuGet (inventory and sources), CI workflows,
-Dockerfiles and Compose files:
+accepts only `validation`/`verification` on an existing `D-*` ID.
+
+The scanner covers, across npm, Composer, Python, Bundler, Go, Cargo,
+Maven/Gradle/NuGet (inventory and sources), CI workflows, Dockerfiles and
+Compose files:
 
 | Check | Why it matters |
 |---|---|
@@ -48,32 +50,45 @@ Dockerfiles and Compose files:
 | Malicious packages (`--audit` with osv-scanner) | OSV includes OpenSSF malicious-package reports (`MAL-` IDs), reported as High |
 | Abandoned packages (Composer) | No fixes will come |
 
-`--audit` prefers `osv-scanner` (every ecosystem, malicious-package data).
-`composer audit` always runs on `composer.lock` (only for abandoned packages
-when OSV covered the lock). `npm audit` and `pip-audit` run only as fallbacks
-for locks OSV did not cover: npm on single-project locks, pip-audit on plain
-`name==version` requirements.
-Generated-output directories (`build`, `dist`, `target`, `vendor`, `.next`,
-`.nuxt`, `.cache*`) are not scanned; when one directly holds a manifest or
-lockfile, `not_run` names it so a first-party package there can be scanned
-separately. Files over 64 MiB are not read and are listed the same way.
-Missing tools are listed under `not_run`; say so in the report rather than
-implying the audit was complete. Only files directly in a `.github/workflows/`
-directory are workflows (GitHub runs nothing in its subdirectories or in look-alike
-directories such as `.github/workflows-archive/`); `uses:` text inside block
-scalars is data, not a step. A UTF-8 byte-order mark is ignored in every input. Audits query public advisory databases with
-the package list, so they need network access; announce this before the query
-and reuse any approval already given for that disclosure. Ask before running
-them if the dependency list itself is confidential and disclosure has not been
-authorized. osv-scanner is given each lockfile with
-`-L` rather than a directory. A sandboxed shell whose proxy re-signs TLS makes
-osv-scanner fail certificate checks; that appears in `not_run`. Do not disable
-TLS verification. Use the host's approval mechanism for a necessary, authorized
-retry; if unavailable or declined, keep advisory coverage incomplete and
-continue the source review and report. Do not install missing audit tools,
-generate lockfiles or run project install scripts just to unblock an audit
-unless that additional work was requested. Static dependency inventory and
-supply-chain findings remain useful without online advisory results.
+`--audit` runs these tools:
+
+- `osv-scanner`, preferred (every ecosystem, malicious-package data), given
+  each lockfile with `-L` rather than a directory
+- `composer audit` always, on `composer.lock` (only for abandoned packages when
+  OSV covered the lock)
+- `npm audit` and `pip-audit` only as fallbacks for locks OSV did not cover:
+  npm on single-project locks, pip-audit on plain `name==version` requirements
+
+Scan scope:
+
+- Generated-output directories (`build`, `dist`, `target`, `vendor`, `.next`,
+  `.nuxt`, `.cache*`) are not scanned; when one directly holds a manifest or
+  lockfile, `not_run` names it so a first-party package there can be scanned
+  separately
+- Files over 64 MiB are not read and are listed in `not_run` the same way
+- Only files directly in a `.github/workflows/` directory are workflows (GitHub
+  runs nothing in its subdirectories or in look-alike directories such as
+  `.github/workflows-archive/`); `uses:` text inside block scalars is data, not
+  a step
+- A UTF-8 byte-order mark is ignored in every input
+
+Audit constraints:
+
+- Missing tools are listed under `not_run`; say so in the report rather than
+  implying the audit was complete
+- Audits query public advisory databases with the package list, so they need
+  network access; announce this before the query and reuse any approval
+  already given for that disclosure. Ask before running them if the dependency
+  list itself is confidential and disclosure has not been authorized
+- Do not disable TLS verification. A sandboxed shell whose proxy re-signs TLS
+  makes osv-scanner fail certificate checks, which appears in `not_run`; use
+  the host's approval mechanism for a necessary, authorized retry, and if it is
+  unavailable or declined, keep advisory coverage incomplete and continue the
+  source review and report
+- Do not install missing audit tools, generate lockfiles or run project install
+  scripts just to unblock an audit unless that additional work was requested;
+  static dependency inventory and supply-chain findings remain useful without
+  online advisory results
 
 ## 2. Judge what the scanner cannot
 

@@ -2,8 +2,8 @@
 
 An agent skill for a **static, read-only security review of your own
 application's source code**. It maps the application, reviews it from several
-perspectives, verifies what it finds, and delivers the result three ways: a
-chat summary, an interactive dashboard and an assessment PDF.
+perspectives, verifies what it finds, and delivers the result as a chat
+summary, an interactive dashboard and an assessment PDF.
 
 > Use it only on code you own or are authorized to assess. The skill reads
 > source; it does not edit code and does not send traffic to deployed systems.
@@ -42,7 +42,7 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   and impact) to revision-pinned evidence, falsification checks and independent
   reviewer records. Static support, isolated runtime reproduction and unknown
   environment conditions remain distinct. Legacy verdicts are preserved but
-  without structured evidence cannot become fix-ready. Dependency advisories
+  cannot become fix-ready without structured evidence. Dependency advisories
   remain auto-triaged and then reviewed per package; exclusions stay visible
 - **Local evidence integrity** *(opt-in)* — read safe local artifact files,
   compare their actual SHA-256 digests, and compare source artifacts with a blob
@@ -83,6 +83,18 @@ make unlink
 ```
 
 Then invoke `security-scan` (or `/security-scan`).
+
+### Try it on the bundled sample
+
+```sh
+make demo                       # Japanese, with PDF, into $TMPDIR/security-scan-demo
+make demo LANG_OUT=en NO_PDF=1  # English, HTML only
+make demo DEMO_INPUT=/path/to/findings.json  # custom data
+```
+
+The default Japanese demo uses `examples/findings.sample.ja.json`, an explicitly
+fictional report with confirmed, uncertain, fixed, accepted and excluded records.
+The English demo uses `examples/findings.sample.json`.
 
 ### Avoiding unnecessary interruptions
 
@@ -186,13 +198,6 @@ Unsettled findings stay non-scoring candidates. This is mechanism evidence for
 security-scan only: it does not run a target, call a provider, measure a public
 corpus, or establish ARTEX outcome parity. See `docs/detection-benchmark.md`.
 
-Report typography follows the shared *-scan report format, scan-report-kit
-(see `docs/report-design.md`): a journal-style assessment (numbered
-sections, captioned booktabs tables and listings, one mincho face for both
-scripts) and a dashboard in the same system. The kit's stylesheets and PDF
-engine are vendored in `skills/security-scan/scripts/scan_report_kit/`;
-change them upstream and re-vendor, never in place (`make check` verifies the copy).
-
 ## Outputs
 
 ```sh
@@ -214,17 +219,17 @@ by severity, then readiness to fix, then ID. No risk score or deadline is invent
 state shows whether the required before/after and control records exist.
 
 Unverified, insufficient-verification and excluded counts are explicit. Headline
-totals include `Open`,
-`Fixed` and `Accepted`, excluding `FalsePositive` and `NotApplicable`; the
-validation distribution includes all records for traceability. Filters affect
-only the finding register, with a visible result count and a reset button.
-Choose Included, Excluded only, or All records, and open details with a keyboard
-or a direct finding link. The dashboard uses scan-report-kit's application
-shell: a sticky app bar, a contents sidebar with per-severity counts (pressing
-one returns to Included and clears the other filters and the search, so the
-register shows exactly the rows counted), pinned register filters, and the keys `/` (search), `j`/`k` (next
-or previous finding) and Enter (show or hide details). Missing coverage is
-unknown, and zero findings is never presented as a guarantee of security.
+totals include `Open`, `Fixed` and `Accepted`, excluding `FalsePositive` and
+`NotApplicable`; the validation distribution includes all records for
+traceability. Filters affect only the finding register, with a visible result
+count and a reset button. Choose Included, Excluded only, or All records, and
+open details with a keyboard or a direct finding link. The dashboard uses
+scan-report-kit's application shell: a sticky app bar, a contents sidebar with
+per-severity counts (pressing one returns to Included and clears the other
+filters and the search, so the register shows exactly the rows counted), pinned
+register filters, and the keys `/` (search), `j`/`k` (next or previous finding)
+and Enter (show or hide details). Missing coverage is unknown, and zero findings
+is never presented as a guarantee of security.
 
 Each finding carries its evidence: code findings embed the lines around
 `path:line` (with `--repo`, best-effort redaction) and link to the
@@ -244,14 +249,21 @@ excerpts, but redaction is heuristic, not a guarantee. With a clean
 `assessment.commit` pin, excerpts come from the `evidence/source/` copy or the
 blob at that commit (else none is shown), never from later working-tree
 edits. Inspect reports before sharing them; without `--repo`, source is not
-embedded. `source_link` and
-`snippet` are derived fields and cannot be injected through input JSON. All
-report links must be absolute HTTP(S) URLs without credentials or controls;
-token-like query and fragment parameters are dropped from displayed reference
-links, and `meta.source_url` is used without its query or fragment.
-Excerpts are capped at 200 lines and 240 characters per line; visible notes
-identify shortened excerpts. Previous validation, when available, is labelled
-as historical and never changes the current verdict or counts.
+embedded. `source_link` and `snippet` are derived fields and cannot be
+injected through input JSON. All report links must be absolute HTTP(S) URLs
+without credentials or controls; token-like query and fragment parameters are
+dropped from displayed reference links, and `meta.source_url` is used
+without its query or fragment. Excerpts are capped at 200 lines and 240
+characters per line; visible notes identify shortened excerpts. Previous
+validation, when available, is labelled as historical and never changes the
+current verdict or counts.
+
+Report typography follows the shared *-scan report format, scan-report-kit
+(see `docs/report-design.md`): a journal-style assessment (numbered
+sections, captioned booktabs tables and listings, one mincho face for both
+scripts) and a dashboard in the same system. The kit's stylesheets and PDF
+engine are vendored in `skills/security-scan/scripts/scan_report_kit/`;
+change them upstream and re-vendor, never in place (`make check` verifies the copy).
 
 The PDF is printed with headless Chrome/Chromium (`CHROME=/path/to/binary` to
 choose one), falling back to WeasyPrint. With neither available the HTML files
@@ -292,7 +304,7 @@ python3 skills/security-scan/scripts/export.py issues out/findings.json --out dr
 
 After fixing, a second, independent run shows what changed. `compare.py`
 matches findings by file, weakness class (CWE or perspective), line proximity
-and title — IDs are per run — and groups them as new, reopened, persisting
+and title (IDs are per run) and groups them as new, reopened, persisting
 (with severity, confidence, verdict or status changes), not reported, and ruled
 out. "Not reported" is deliberately not "fixed": the comparison says whether
 the current run checked that perspective, and a fix is confirmed by a
@@ -495,18 +507,17 @@ verdicts are never automatically upgraded. A verified retest requires
 runtime-supported original reproduction.
 
 Structural verification checks declared records; it does not by itself read
-artifacts or verify their hashes. The separate opt-in local evidence check reads
-actual bytes and, for source, checks the explicitly supplied local repository's
-commit blob. Required-integrity policy can gate structured support and retest;
-without it, existing record-level behavior remains, with provenance identifying
-what was declared and what was freshly checked. Neither route authenticates
-reviewers, proves recorded execution or establishes that all paths were examined.
-No scanners, network retrieval, credentials or application-test execution are
-added by this check. The separate reproduction runner continues to verify its
-own generated files and run only its synthetic local template; it never executes
-application code or stored evidence commands. Runtime work against an application
-still requires explicit permission for owned local or throwaway code. Broader
-asset/coverage inventories remain outside this implementation's scope.
+artifacts or verify their hashes. That is the job of the separate opt-in local
+evidence check above, which adds no scanners, network retrieval, credentials or
+application-test execution. Without its required-integrity policy, existing
+record-level behavior remains, with provenance identifying what was declared and
+what was freshly checked. Neither route authenticates reviewers, proves recorded
+execution or establishes that all paths were examined. The separate reproduction
+runner verifies its own generated files and runs only its synthetic local
+template; it never executes application code or stored evidence commands.
+Runtime work against an application still requires explicit permission for
+owned local or throwaway code. Broader asset/coverage inventories remain outside
+this implementation's scope.
 
 The format and exact rules are documented in
 `skills/security-scan/reference/findings-schema.md`. The explicitly synthetic
@@ -518,7 +529,7 @@ Render it with:
 python3 skills/security-scan/scripts/render.py examples/findings.verification.sample.json --out /tmp/security-scan-verification-demo --no-pdf
 ```
 
-Dependency and supply-chain scan:
+### Dependency and supply-chain scan
 
 ```sh
 python3 skills/security-scan/scripts/deps_scan.py /path/to/repo                 # static, offline
@@ -536,12 +547,13 @@ recorded in `not_run` rather than running Cargo against the target checkout.
 
 npm explicitly includes prod, dev, optional and peer dependencies, even when
 `.npmrc` or the environment omits them, and disables lifecycle scripts.
-The npm fallback now requires a single-project lock. Shared workspace or linked
-package locks require OSV coverage; otherwise they are explicitly incomplete.
-Single-project auditing neutralizes inherited workspace mode. The audit runs
-on an isolated copy of the lock against the public npm registry, with empty
-user and global npmrc files and no inherited `npm_config_*` variables, so a
-project `.npmrc` cannot redirect the advisory request.
+The npm fallback requires a single-project lock and neutralizes inherited
+workspace mode; shared workspace or linked package locks require OSV coverage,
+otherwise they are explicitly incomplete. The audit runs on an isolated copy of
+the lock against the public npm registry, with empty user and global npmrc files
+and no inherited `npm_config_*` variables, so a project `.npmrc` cannot redirect
+the advisory request.
+
 Composer runs with `--no-plugins --no-scripts` against a temporary copy of the
 lockfile, an auditor-owned manifest and an empty Composer home. Project/global
 exclusions and `COMPOSER*` environment overrides are not inherited; abandoned
@@ -559,8 +571,8 @@ Python lockfiles (`uv.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`) require
 OSV coverage; the scanner never substitutes its own Python environment. Errors
 and malformed results from fallback tools are recorded in `not_run`. Use
 `--audit --strict` to exit `3` when any audit is incomplete (JSON output is still
-written); the default remains exit `0` after a completed scan invocation.
-`--strict` is a completeness check, not a vulnerability severity gate.
+written); `--strict` is a completeness check, not a vulnerability severity gate.
+The default remains exit `0` after a completed scan invocation.
 
 Shared lockfiles are associated with explicitly declared Cargo and npm/Yarn
 workspace members, respecting exclusions and nested workspace boundaries.
@@ -579,18 +591,6 @@ On `--into`, prior manual dependency verdicts are kept as `previous_validation`
 only for the same location, package/version, title and advisory IDs. They do not
 silently replace the new triage verdict: revalidate exclusions after every
 scan because source and configuration may have changed.
-
-Try it on the bundled sample:
-
-```sh
-make demo                       # Japanese, with PDF, into $TMPDIR/security-scan-demo
-make demo LANG_OUT=en NO_PDF=1  # English, HTML only
-make demo DEMO_INPUT=/path/to/findings.json  # custom data
-```
-
-The default Japanese demo uses `examples/findings.sample.ja.json`, an explicitly
-fictional report with confirmed, uncertain, fixed, accepted and excluded records.
-The English demo uses `examples/findings.sample.json`.
 
 ## Layout
 

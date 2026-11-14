@@ -77,6 +77,6 @@ input* perspective works from this list.
 
 ## 6. Group into review units
 
-Group prompts that share a consumer, a template or a purpose. Each group is one
+Group prompts that share a consumer or template. Each group is one
 review unit; the assembly code (message building, truncation, retries,
 parsing) is one more, cross-cutting unit.

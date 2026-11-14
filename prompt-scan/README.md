@@ -64,9 +64,9 @@ or improve prompts and it runs all phases.
 - **Issues**: `scripts/export.py issues` writes one issue body per finding
   from the issue template, ready for `gh issue create --body-file`
 - **Code scanning and CI**: `scripts/export.py sarif` writes SARIF 2.1.0 for
-  GitHub code scanning or an IDE; `--fail-on High` (on `export.py` or
-  `compare.py`) makes the job fail on Open, or only on new, findings at that
-  severity
+  GitHub code scanning or an IDE; `export.py --fail-on High` makes the job fail
+  on Open findings at that severity, `compare.py --fail-on High` only on new or
+  reopened ones
 - **Chat summary**: `scripts/export.py summary` prints the summary format of
   `reference/report.md` with the record's own counts and verdicts
 - **Lint on every change**: `scripts/inventory.py <repo> --fail-on High`

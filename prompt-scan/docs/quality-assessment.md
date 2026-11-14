@@ -172,7 +172,7 @@ Measured:
 - radon: 2 functions above CC 30 (`inventory.git_state` 42,
   `findings.fragment_problems` 36; `record._validate_finding` is 30);
   average CC 9.7 → 8.3; render.py maintainability index C (2.0) → A (27.2)
-- Branch coverage 92 % overall (unchanged)
+- Branch coverage 92 % overall (coverage.py, as in the baseline; unchanged)
 - Import graph (enforced by `tests/test_layout.py`): acyclic;
   `record → ∅`, `excerpt → record`, `render → record, excerpt`,
   `findings → record, excerpt`, `inventory → record, excerpt`,

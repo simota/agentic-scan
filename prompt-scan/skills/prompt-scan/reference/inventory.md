@@ -19,7 +19,8 @@ build output, and symlinked directories, which the walk does not follow; all
 are listed in `skipped_dirs`, VCS metadata aside. It also skips `.env*` and
 `*.env` files, key files, login files such as `.npmrc`, `.netrc` and `id_rsa`
 (`render.py` quotes none of these either), symlinks, binary files and files
-over 1 MiB; a prompt file among these is listed in `skipped_files`. A file
+over 1 MiB. A prompt file skipped as a symlink, binary, unreadable or over
+1 MiB is listed in `skipped_files`; the credential files are listed nowhere. A file
 whose name is not UTF-8 is listed with the bytes escaped (`\xff`); Git still
 sees its real name, but `render.py` cannot reopen the escaped one, so its
 findings carry no excerpt.
@@ -74,7 +75,7 @@ per other character). Use it to rank prompts by size, not as a provider count.
 | `unfilled-variable` | defect / High / Suspected | In a `template` prompt file, a traced binding has a complete render site that does not fill a variable the template uses in the syntax that call fills (`{name}` for `.format` and LangChain, `{{ name }}` for `.render`, `$name`/`${name}` for `string.Template`, any for a literal `.replace` or an unrendered send), outside code fences. A name the template tests first (`{% if name %}`, `name \| default(…)`, `name is defined`, a Mustache `{{#name}}` section) is optional and skipped, and so is every template that includes, extends or imports another. One hit per file, at the first such line, naming the sites and the variables; when the same call passes a key the template never uses (a renamed variable, usually) the hit names that key too. Its names are left out of `unreferenced-variable` |
 | `unused-render-key` | defect / Medium / Suspected | A render site of a binding naming this one file passes a key (keyword argument, dict or object key) that appears in no template construct of the file (`{…}`, `{{…}}`, `{%…%}`, `${…}`, `$name`), code fences included, at the render site's line. One hit per template and site; a site already named by an `unfilled-variable` hit is not repeated |
 | `unrequested-output-key` | defect / High / Suspected | A model call that sends traced prompt files is assigned, and its reply is parsed in the same file (`json.loads`, `JSON.parse`, directly or through assignments such as `text = r.content[0].text`), and the code reads a first-level key of the parsed value (`["key"]`, `.get("key")`) that no prompt file of the repository and no other string literal in that code file names as a word. A call with a schema argument (`response_format`, `tools`, `output_format`, `text_format`, `response_schema`, `config`…) or a spread, or one sending a prompt file through an ambiguous path, is not judged. One hit per call, at the first such read, naming the call, its prompt files and the keys |
-| `missing-file-reference` | defect / Medium / Suspected | An agent or skill prompt file (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/agents`…), outside code fences, cites a path that exists neither relative to the file nor from the repository root: a Markdown link, an `@path` import (with a `/` or a known suffix, so `@name` mentions and e-mail addresses are not), or a path in a code span with a known suffix (`.md`, `.py`, `.json`, `.yaml`, `.prompt`…) or a trailing `/` whose own directory does exist, so a file to be created, or one in another repository, is not reported. URLs, absolute and home paths, globs, placeholders (`<out>/…`) and paths leaving the repository are skipped. One hit per file, at the first such line, naming every missing path |
+| `missing-file-reference` | defect / Medium / Suspected | An agent or skill prompt file (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`, `.claude/agents`…), outside code fences, cites a path that exists neither relative to the file nor from the repository root: a Markdown link, an `@path` import (with a `/` or a known suffix, so `@name` mentions and e-mail addresses are not), or a path in a code span with a known suffix (`.md`, `.py`, `.json`, `.yaml`, `.prompt`…) or a trailing `/`. A code-span path counts only when its parent directory exists, so a file to be created, or one in another repository, is not reported; links and imports always count. URLs, absolute and home paths, globs, placeholders (`<out>/…`) and paths leaving the repository are skipped. One hit per file, at the first such line, naming every missing path |
 | `unbalanced-template` | defect / Medium / Suspected | `{{`/`}}` or `{%`/`%}` do not pair up, outside code. A closer counts only in an engine template file (`.j2`, `.jinja`, `.jinja2`, `.mustache`, `.hbs`, `.tmpl`, `.tpl`) or a file that opens `{{` or `{%` somewhere, never in a JSON, YAML or TOML file: elsewhere `}}` is JSON or literal text |
 | `unclosed-tag` | defect / Low / Suspected | A non-HTML tag such as `<instructions>` is opened more often than closed, outside code |
 | `placeholder` | defect / Low / Suspected | `TODO`, `FIXME`, `TBD`, `XXX` (not inside a format mask such as `XXX-XXX-XXXX`), lorem ipsum or `[INSERT …]` outside code |
@@ -91,9 +92,10 @@ the first line that hits; `unclosed-tag` gives one per tag name.
 last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `contract_check.py` fails when its lint hits or Git state differ from the
 `L-*` findings and `meta`, or when an `L-*` differs from what `--into` wrote
-in anything but its review. `--out` replaces only an earlier `inventory.json`,
-so swapping it with `--into` is refused rather than overwriting
-`findings.json`.
+in anything but its review. `--out` overwrites only an earlier
+`inventory.json`: given an existing file of any other kind (`findings.json`,
+with `--out` and `--into` swapped), `inventory.py` exits 2 and writes nothing
+there.
 
 A rescan keeps the latest reviewed verdict on the same rule and location as
 `previous_validation` (a later rescan before a new review keeps it too); the
@@ -114,7 +116,8 @@ this template on the path the feature takes and nothing between (a
 name; `FalsePositive` with that evidence otherwise.
 
 The same root cause found by the agent is one `F-*` finding citing the hit by
-rule and location. When a hit is a symptom of a larger defect the agent found,
+rule and location; the `L-*` stays alongside it, since `contract_check.py`
+requires one `L-*` per lint hit. When a hit is a symptom of a larger defect the agent found,
 keep the `L-*` and cite it from the `F-*` finding's `cause` by rule and location
 (`unclosed-tag at prompts/a.md:3`), not by its ID: `L-*` IDs are reassigned on
 every `--into`.
@@ -132,5 +135,5 @@ rule: detail` and exits 1 when there is one; `--sarif` writes the hits as SARIF
 2.1.0; `--baseline` suppresses each hit an earlier review judged
 `FalsePositive` or `NotApplicable` (in `validation`, or kept as
 `previous_validation` across a rescan), matched by rule, file, tag and detail
-with line numbers aside. None of them writes inside the repository or changes
-the review's outputs.
+with line numbers aside. None of them changes the review's outputs; the only
+file written is the one `--sarif` names, wherever that is.

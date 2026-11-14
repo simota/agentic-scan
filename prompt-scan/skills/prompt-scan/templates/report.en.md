@@ -1,9 +1,10 @@
 <!--
 Template for reporting a prompt review to the owners of the prompts (email, ticket or document).
 Copy the counts and each finding from findings.json so the report and the dashboard agree.
+Every count except {{n_excluded}} leaves out the excluded (FalsePositive / NotApplicable) findings, as the dashboard does.
 
 Before sending:
-- Recipients can read the repository; otherwise remove prompt excerpts
+- Recipients can read the repository; otherwise remove prompt excerpts, and do not attach report.pdf or dashboard.html (they contain excerpts) or point to them
 - No working instruction-override string, secret or personal-data value is included
 - Unverified / Likely / Unlikely and Model-dependent findings are not stated as settled
 -->
@@ -37,7 +38,7 @@ This is a static reading of the prompts and the code around them. Prompts were {
 
 ## 3. What to fix first
 
-<!-- By severity; repeat the block per finding. Link the issue filed from templates/issue.en.md. -->
+<!-- Repeat the block for every finding that is neither excluded nor Fixed: by severity, defects first within a severity. Link the issue filed from templates/issue.en.md. -->
 
 See the attached report.pdf and dashboard.html for every finding.
 

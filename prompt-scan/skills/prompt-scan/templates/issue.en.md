@@ -1,6 +1,6 @@
 <!--
 File one finding as one issue (one root cause = one fix location = one issue).
-Copy each {{field}} from the same field in findings.json. Delete optional rows left empty.
+Copy each {{field}} from the same field in findings.json. By hand, delete a table row or section whose fields are all empty and write — in any other empty field.
 scripts/export.py issues fills this template for every finding and drops the comments, empty rows and empty sections.
 
 Before filing:

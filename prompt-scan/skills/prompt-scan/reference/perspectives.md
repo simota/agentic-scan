@@ -6,7 +6,8 @@ sweep over each review unit; REPORT, to fill the `perspectives` list in
 
 Apply each perspective within every review unit (`SKILL.md`, *Run contract*)
 and work through its hunt steps. A step is sound only when the text or code
-that makes it sound can be cited as `path:line`. "The model will figure it
+that makes it sound can be cited as `path:line`; where a reason or scope makes
+it sound, cite the line that states it. "The model will figure it
 out" is not evidence.
 
 | Perspective | The question it asks |
@@ -54,7 +55,7 @@ out" is not evidence.
 |---|---|---|
 | ST1 | Data and instructions run together with no delimiter | Data sits inside named tags, fences or a separate message |
 | ST2 | The key constraint is buried in the middle of a long block, or stated only once far from where it applies | It is near the task statement or repeated at the point of use |
-| ST3 | Long documents placed after the question in a long-context prompt | Documents first, question and instructions last, or the reason for the other order is clear |
+| ST3 | Long documents placed after the question in a long-context prompt | Documents first, question and instructions last, or the reason for the other order is stated |
 | ST4 | Inconsistent tag names or nesting (`<doc>` opened, `<document>` closed) | Tags are balanced and named consistently (lint `unclosed-tag` helps) |
 | ST5 | Instructions placed in the user turn that belong in the system prompt, or the reverse | Stable behaviour lives in system; per-request data in user |
 
@@ -87,7 +88,7 @@ out" is not evidence.
 | EX2 | All examples share one surface pattern (same length, same label, same opening), so the model copies it | Examples vary along the dimensions that matter |
 | EX3 | Examples contain real customer data, secrets or another tenant's content | Examples are synthetic |
 | EX4 | Examples are not marked as examples and can be mistaken for the current input | They sit inside example tags or are clearly labelled |
-| EX5 | A hard case the instructions mention has no example | The hardest stated case is illustrated, or the reason it is not is clear |
+| EX5 | A hard case the instructions mention has no example | The hardest stated case is illustrated, or the reason it is not is stated |
 
 ### Tools and agents (TA)
 
@@ -115,7 +116,7 @@ out" is not evidence.
 | Step | Hunt | Sound when |
 |---|---|---|
 | SR1 | Blanket prohibitions that will refuse legitimate requests in this product's domain | Each restriction is scoped to the harm it prevents |
-| SR2 | A harm the product can plausibly cause with no instruction about it (medical, legal, financial advice; minors; self-harm) | The relevant guidance exists, or the domain makes it irrelevant |
+| SR2 | A harm the product can plausibly cause with no instruction about it (medical, legal, financial advice; minors; self-harm) | The relevant guidance exists, or the product's stated scope makes it irrelevant |
 | SR3 | No instruction for what to do when declining, so the consumer receives an unparseable refusal | The refusal shape is defined and handled (see OC3) |
 | SR4 | Persona or role-play instructions that could be used to talk the model out of its other rules | The persona is subordinate to the rules, stated explicitly |
 
@@ -126,7 +127,7 @@ out" is not evidence.
 | CB1 | Estimated prompt size (`inventory.json` `est_tokens`) close to or over the model's context, at realistic variable sizes | There is headroom at the largest realistic input |
 | CB2 | Truncation code that cuts from the start (dropping system or instructions) or mid-structure | It cuts low-priority content first and keeps instructions |
 | CB3 | Conversation history growing without a summary or window | History is bounded |
-| CB4 | Large static text resent on every call with no caching where the provider supports it | Caching is used, or the cost is accepted in `decisions` |
+| CB4 | Large static text resent on every call with no caching where the provider supports it | Caching is used; otherwise raise the cost in `decisions` for its owner to accept or fix |
 | CB5 | Redundant text: the same rule stated many times, boilerplate the model does not need | Each rule appears where it is needed |
 
 ### Model and parameters (MP)
@@ -171,6 +172,7 @@ out" is not evidence.
 Record every perspective in the report, including the ones that found nothing
 and the ones not run:
 
+- A perspective swept over its hunt steps is recorded as `applied`
 - A perspective not applicable to these prompts is recorded as `N/A` with a
   reason, not silently skipped
 - A perspective that could not be checked statically is recorded as

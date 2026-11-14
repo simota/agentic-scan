@@ -1,11 +1,12 @@
 <!--
 プロンプト診断の結果を担当者・プロダクトオーナーへまとめて報告するテンプレート（メール、チケット、ドキュメント用）。
 数値と各 finding の内容は findings.json から転記し、ダッシュボードと食い違わないようにする。
+{{n_excluded}} 以外の件数は、ダッシュボードと同じく除外（FalsePositive / NotApplicable）の finding を含めない。
 
 送る前に確認すること:
-- 宛先がリポジトリの閲覧権限を持つ人に限られている。そうでなければプロンプト抜粋を外す
+- 宛先がリポジトリの閲覧権限を持つ人に限られている。そうでなければプロンプト抜粋を外し、抜粋を含む report.pdf と dashboard.html も添付せず、参照もしない
 - 動作する指示上書き文字列、シークレットや個人データの値を含めていない
-- 未検証（Unverified / Likely / Unlikely）や Model-dependent の finding を確定事項として書いていない
+- Unverified / Likely / Unlikely や Model-dependent の finding を確定事項として書いていない
 -->
 
 **件名:** [プロンプト診断] {{meta.target}} — 不具合 {{n_defect}} 件 / 改善提案 {{n_improvement}} 件（{{meta.date}}）
@@ -33,11 +34,11 @@
 | リビジョン | {{meta.commit}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
-プロンプトとコードを静的に読んだ結果です。モデルへの送信（評価の実行）は {{eval_runs があれば「記録のとおり実施」、なければ「行っていません」}}。
+プロンプトとコードを静的に読んだ結果です。モデルへの送信（評価の実行）は {{eval_runs があれば「記録のとおり実施しました」、なければ「行っていません」}}。
 
 ## 3. 優先して対応すべき項目
 
-<!-- 深刻度順。1 件ごとに下のブロックを繰り返す。詳細は templates/issue.ja.md で起票した issue へリンクする。 -->
+<!-- 除外でも Fixed でもないすべての finding について下のブロックを繰り返す。深刻度順、同じ深刻度では不具合を先にする。詳細は templates/issue.ja.md で起票した issue へリンクする。 -->
 
 詳細は添付の report.pdf とダッシュボード（dashboard.html）を参照してください。
 

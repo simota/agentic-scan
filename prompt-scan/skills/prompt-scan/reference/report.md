@@ -94,8 +94,8 @@ that applies, and any prompt in the inventory that was not read.
 A proposal is a concrete rewrite of the smallest span that fixes the cause,
 not a full new prompt. Quote the current text short in `before` (enough to
 find it), and write `after` as text that can be pasted in. When the fix is in
-code rather than in the prompt (escaping, truncation, parser), the proposal
-shows the code-level change in words, and `fix` names the function.
+code rather than in the prompt (escaping, truncation, parser), `after`
+describes the code-level change in words, and `fix` names the function.
 
 Proposals never contain a working override string, and examples in proposals
 use synthetic data.

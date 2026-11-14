@@ -21,8 +21,10 @@ repository's docs directory.
 - `render.py` inlines the shared stylesheets first and appends only the rules
   for prompt-scan record types: `REPORT_CSS` (the severity-by-kind counts
   table, the prompt inventory and eval-run tables, the kind label,
-  before/after proposals) and `DASH_CSS` (decisions panel, verify-first
-  legend, paired counts on the closed card, earlier-validation history, and
+  before/after proposals) and `DASH_CSS` (decisions panel, the "Verify
+  first" note above the "Start here" queue, the Fixed and Accepted counts
+  side by side on one card, the box holding a finding's previous validation,
+  and
   proposal text that wraps as in the report while source excerpts keep the
   kit's sideways scroll).
 - The running footer and the report kicker are `PROMPT REVIEW` (ja

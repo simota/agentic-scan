@@ -14,9 +14,9 @@ confidence and verdict are separate: a High finding can be `Likely`, a Low one
 | Verdict | Meaning | Evidence needed |
 |---|---|---|
 | `Valid` | The cause is in the text or code as cited, nothing elsewhere in the prompt as sent compensates, and the impact follows | Nonblank `evidence` naming what was re-read |
-| `Likely` | Strong signals; one link not yet confirmed (often: what the model actually does) | Optional |
+| `Likely` | Strong signals; one link not yet confirmed (often: what the model actually does) | Optional on Low and Info; nonblank `evidence` on High and Medium |
 | `Unverified` | Not yet examined (the default for `L-*`) | — |
-| `Unlikely` | Signals point away, not ruled out | Optional |
+| `Unlikely` | Signals point away, not ruled out | Optional on Low and Info; nonblank `evidence` on High and Medium |
 | `FalsePositive` | The cited text or code does not have the claimed problem | Nonblank `evidence` |
 | `NotApplicable` | The problem is real in general but not on this path, model or configuration | Nonblank `evidence` |
 
@@ -49,6 +49,9 @@ Before setting `Valid`, try each that applies, and say in `evidence` which:
 | `Model-dependent` | The cause is real, but whether it changes the output depends on how the model weighs it: ambiguity, buried constraints, competing instructions, missing examples |
 | `Suspected` | A signal not yet traced end to end |
 
+Confidence records what the text and code show about the model's behaviour;
+the verdict records whether the finding survived the attempt to falsify it.
+
 A `Model-dependent` finding carries the eval case that would settle it in
 `test`: the input, the expected property of the output, and how to check it
 (an exact field, a regex, a rubric question). Do not run it unless asked.
@@ -63,7 +66,7 @@ to whom.
 - Run each case on the current prompt and, when a proposal is being tested, on
   the proposed one, with the same model and parameters
 - Repeat sampled cases (temperature above zero) enough times to see variance;
-  record the count in `cases`
+  count each repetition as one case in `cases`, `passed` and `failed`
 - Record every run in `eval_runs`, passed or not; never drop a failing run
 - A run is evidence for that model, those cases and that date only. Do not
   extend a pass on one model to another, or a pass on synthetic cases to

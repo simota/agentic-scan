@@ -1,7 +1,7 @@
 # findings.json: the record every output is rendered from
 
-**Read when:** REPORT, before writing the first fragment; whenever a fragment
-is refused by `scripts/findings.py merge`.
+**Read when:** RECON, before writing the first fragment (it carries `meta` and
+`prompts`); whenever a fragment is refused by `scripts/findings.py merge`.
 
 `scripts/record.py` holds the structural schema; `render.py`, `findings.py merge`
 and `inventory.py --into` refuse a record that fails it. `contract_check.py` adds the run
@@ -17,7 +17,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `prompts` | list of prompt records | fragments |
 | `findings` | list of finding records | fragments (`F-*`), `inventory.py --into` (`L-*`) |
 | `eval_runs` | list of eval run records | fragments, only after requested evals |
-| `perspectives` | list of `{name, result, note}` | fragments |
+| `perspectives` | list of `{name, result, note}`: `result` is `applied`, `N/A` or `not checked`; every perspective once; `note` nonblank unless `applied` | fragments |
 | `checked_ok`, `decisions`, `limitations`, `next_steps` | lists of strings | fragments |
 
 ## `meta`
@@ -65,13 +65,13 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `fix` | contract | One-line direction |
 | `proposal` | improvements | `{before, after}`: the current text (short quote) and the proposed text |
 | `test` | contract | String or list: an eval or test assertion of the good outcome |
-| `validation` | yes | `{verdict, evidence, method}`; `Valid`, `FalsePositive` and `NotApplicable` need nonblank `validation.evidence` |
+| `validation` | yes | `{verdict, evidence, method}`; `Valid`, `FalsePositive` and `NotApplicable` need nonblank `validation.evidence`; `method` is optional free text naming how the verdict was reached (e.g. `static trace`, `repository search`; `inventory.py lint` on a new `L-*`) |
 | `status` | | `Open` (default), `Fixed` (the fix is merged), `Accepted` (the risk is accepted by its owner). `scripts/export.py` leaves `Fixed` findings out, marks `Accepted` ones as suppressed in SARIF and gates only on `Open` ones; `scripts/compare.py` can carry `Accepted` into the next review |
 | `references` | | `[{title, url}]`, http(s) only |
 | `source`, `rule`, `previous_validation` | | Written only by `inventory.py` on `L-*` |
 
-`contract_check.py` also requires, on every High and Medium finding (`F-*`
-and `L-*`), a verdict other than `Unverified` and nonblank evidence.
+High and Medium findings need more from `contract_check.py`:
+`reference/validation.md`, *Verdicts*.
 
 ## Eval run record
 
@@ -81,7 +81,7 @@ and `L-*`), a verdict other than `Unverified` and nonblank evidence.
 | `finding` | The `F-*` finding it tests (`L-*` IDs are reassigned on every rescan) |
 | `model` | Model ID and parameters used |
 | `date` | Run date |
-| `cases`, `passed`, `failed` | Nonnegative integers; `passed + failed ≤ cases` (the rest errored or were skipped) |
+| `cases`, `passed`, `failed` | Nonnegative integers counting executions, each repetition of a case once; `passed + failed ≤ cases` (the rest errored or were skipped) |
 | `note` | Which prompt version (current / proposed), and anything the counts do not show |
 
 ## Fragment rules
@@ -91,8 +91,9 @@ and `L-*`), a verdict other than `Unverified` and nonblank evidence.
   `{"id": "F-003", "validation": {…}}`
 - An `L-*` may receive only `validation`
 - New `F-*` ids follow merge order. After VERIFY, `scripts/findings.py renumber
-  <out>/findings.json` puts them in severity order (then path and line,
-  excluded findings last) and rewrites every `F-*` reference in the record.
+  <out>/findings.json` puts them in severity order (then path and line;
+  `FalsePositive` and `NotApplicable` last, in their old order) and rewrites
+  every `F-*` reference in the record.
   It leaves alone quoted `proposal` text, reference URLs, locations, paths and file
   names (a feature id such as `prompts/F-002/` or `F-002.md`), `meta`, prompt records and the
   scanner fields of `L-*` findings (an `L-*` finding's `validation` and `previous_validation` are review

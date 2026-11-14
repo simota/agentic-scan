@@ -25,8 +25,9 @@ The output is a ranked list of findings of two kinds:
 
 Each finding carries a `file:line`, the symptom, the cause, the impact, a fix
 direction, a concrete before/after proposal for improvements, and an eval or
-test assertion that would show the fix works. When only a plan is asked for, it
-delivers a checklist tailored to these prompts.
+test assertion that would show the fix works. When only a plan or a checklist
+is asked for ("what should we check"), it delivers a checklist tailored to these
+prompts.
 
 It does not edit prompts and does not send prompts to a model. Applying the
 proposals is a separate, later request. Running evals against a model happens
@@ -38,7 +39,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 | Situation | How to proceed |
 |---|---|
-| Asked "what should we check" or for a checklist | RECON and CHECKLIST only, then deliver the checklist |
+| Asked "what should we check", or only for a plan or a checklist | RECON and CHECKLIST only, then deliver the checklist |
 | Asked to review, audit, scan or improve prompts | All five phases |
 | Asked whether earlier findings were fixed, or to re-review after changes | A new review in a new output directory, run blind to the earlier one; then `scripts/compare.py` against the earlier `findings.json`. A finding no longer reported is *resolved*, not verified fixed: name the eval case or test that would show it |
 | Asked to rewrite or fix the prompts | Out of scope here: report first; the rewrite is a later request that can start from each finding's `proposal` |
@@ -73,7 +74,7 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Independence | Never read another review's outputs (an earlier `findings.json`, other report directories) unless the request is to merge or compare them; a comparison reads only the earlier `findings.json`, with `scripts/compare.py`, after this review is finished. A second language is a re-render: `render.py <out>/findings.json --out <out>/<lang> --lang <lang> --repo <repo>` (with `--no-pdf` only when the main run has no PDF), then `contract_check.py <out> --allow <lang>` (plus `--no-pdf` in that case), which fails unless `<out>/<lang>/` holds the complete copy |
 | Review units | One unit per prompt family from the inventory (prompts that share a consumer or template), plus one cross-cutting unit for assembly code (message building, truncation, retries, parsing). Each unit sweeps every applicable perspective once |
 | Granularity | One finding per root cause, i.e. per fix location. The same flaw copied into several prompts is one finding listing every location in `cause`; flaws needing different fixes are separate findings |
-| IDs | `F-001`… for agent findings, numbered without gaps in severity order (then path and line; `FalsePositive`/`NotApplicable` are exempt from the order). Number new findings in merge order while reviewing; once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every reference. `L-*` only from `inventory.py --into`. No other prefixes |
+| IDs | `F-001`… for agent findings, numbered without gaps in severity order (then path and line; `findings.py renumber` numbers `FalsePositive`/`NotApplicable` last, and `contract_check.py` leaves their order unchecked). Number new findings in merge order while reviewing; once VERIFY has settled severities and verdicts, `scripts/findings.py renumber <out>/findings.json` restores the order and rewrites every reference. `L-*` only from `inventory.py --into`. No other prefixes |
 | Inventory | RECON: `scripts/inventory.py <repo> --out <out>/inventory.json`. End of REVIEW, after the first merge created `findings.json`: `scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json` once. Never create or edit the scanner fields of `L-*`; record review only as `validation` on the existing ID via `findings.py merge`, after this last `--into` |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |
 | Outputs | Exactly `findings.json`, `inventory.json`, `dashboard.html`, `report.html`, `report.pdf`, in the requester's language, rendered after the last merge or `--into`. If `render.py` exits 3, read its message: an engine that failed or timed out gets one retry (raise `PROMPT_SCAN_PDF_TIMEOUT` for a timeout; a sandboxed host may need the browser run outside its sandbox). Only when no engine can produce the PDF, merge the limitation "report.pdf not produced: no PDF engine", re-run `render.py --no-pdf`, then `contract_check.py <out> --no-pdf` |
@@ -91,8 +92,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 | Info | A maintainability or style note with no behavioural effect |
 
 Severity is about impact and applies to both kinds; an improvement is usually
-Low or Medium, a defect can be any level. Each further condition lowers severity
-one level.
+Low or Medium, a defect can be any level. Each condition beyond Medium's one
+lowers severity one more level, never below Low; Info stays for notes with no
+behavioural effect.
 
 ## Phases
 
@@ -144,8 +146,8 @@ one level.
   condition, and is `Model-dependent` unless the text makes it certain
 - Every variable defect names the template line and the call site that fills
   (or fails to fill) it
-- Recorded eval runs are evidence for that model and case set only; a pass on
-  one model does not verify another
+- Recorded eval runs are evidence for that model, those cases and that date
+  only; a pass on one model does not verify another
 
 ## Outputs
 
@@ -156,7 +158,7 @@ one level.
 | `inventory.json` | `inventory.py` output: prompt files, call sites, variables, model IDs, lint hits |
 | `dashboard.html` | Interactive, self-contained dashboard: filter by kind, severity, perspective and prompt |
 | `report.html` | The report document, print-styled for A4 (the source of the PDF) |
-| `report.pdf` | Cover, summary, prompt inventory, perspectives, findings with proposals, sound items, limitations, next steps |
+| `report.pdf` | Cover, summary, prompt inventory, perspectives, checked and sound, findings with proposals, eval runs, decisions for a human, limitations, next steps |
 
 Skip the files when only a checklist was asked for. When asked to send the
 report to the prompt owners, start from `templates/report.<lang>.md`, filled

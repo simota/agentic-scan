@@ -39,13 +39,15 @@ This is a static reading of the prompts and the code around them. Prompts were {
 
 <!-- By severity; repeat the block per finding. Link the issue filed from templates/issue.en.md. -->
 
+See the attached report.pdf and dashboard.html for every finding.
+
 ### {{id}}: {{title}}
 
-- **Kind / severity / confidence / verdict:** {{kind}} / {{severity}} / {{confidence}} / {{validation.verdict}}
-- **Location:** `{{location}}` ({{prompt}})
-- **Symptom:** {{symptom}}
-- **Impact:** {{impact}}
-- **Fix direction:** {{fix}}
+- Kind / severity / confidence / verdict: {{kind}} / {{severity}} / {{confidence}} / {{validation.verdict}}
+- Location: `{{location}}` ({{prompt}})
+- Symptom: {{symptom}}
+- Impact: {{impact}}
+- Fix direction: {{fix}}
 
 ## 4. Checked and sound
 
@@ -62,5 +64,3 @@ This is a static reading of the prompts and the code around them. Prompts were {
 ## 7. Next steps
 
 - {{next_steps[]}}
-
-See the attached report.pdf and dashboard.html for every finding.

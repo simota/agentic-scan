@@ -5,10 +5,8 @@ codebase**. It inventories every prompt and the code that sends and parses it,
 reviews them from fourteen perspectives, verifies what it finds, and reports
 **defects** (things that are broken) and **improvement proposals** (things that
 work but would work better) three ways: a chat summary, an interactive
-dashboard and a PDF report.
-
-> The skill reads prompts and code. It does not edit them and does not send
-> anything to a model unless you explicitly ask it to run evals.
+dashboard and a PDF report. It does not edit prompts or code, and does not send
+anything to a model unless you explicitly ask it to run evals.
 
 The layout and run contract follow
 [security-scan](https://github.com/simota/security-scan): one `SKILL.md`,
@@ -25,7 +23,7 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
  variables  prompts     unit                  └─ chat summary
 ```
 
-- **Recon** — `scripts/inventory.py` lists prompt files (prompt directories,
+- **Recon**: `scripts/inventory.py` lists prompt files (prompt directories,
   `.prompt` files, `SKILL.md`, `AGENTS.md`/`CLAUDE.md`, `.claude/agents`…),
   inline prompts in code (`SYSTEM_PROMPT = """…"""`, `system="…"`), model API
   call sites, template variables, quoted model IDs and mechanical
@@ -37,20 +35,20 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   the code reads from the call's parsed JSON reply that no prompt asks for are
   lint hits naming both lines. The agent then reconstructs each message as
   actually sent and marks which inputs are untrusted
-- **Perspectives** — task and intent, instruction consistency, structure and
-  placement, variables and assembly, output contract, examples, tools and
-  agents, untrusted input, safety and refusal, context budget, model and
-  parameters, language and tone, evaluation, maintainability. Each is recorded
+- **Perspectives**: task and intent; instruction consistency; structure and
+  placement; variables and assembly; output contract; examples; tools and
+  agents; untrusted input; safety and refusal; context budget; model and
+  parameters; language and tone; evaluation; maintainability. Each is recorded
   as applied, N/A or not checked
-- **Findings** — each with `file:line`, the affected prompt, symptom, cause,
+- **Findings**: each with `file:line`, the affected prompt, symptom, cause,
   impact, fix direction, an eval or test assertion, and for improvements a
   concrete before/after proposal. Severity (High/Medium/Low/Info) and
   confidence (Confirmed / Model-dependent / Suspected) are graded separately
-- **Verify** — every finding gets a verdict (`Valid`, `Likely`, `Unverified`,
+- **Verify**: every finding gets a verdict (`Valid`, `Likely`, `Unverified`,
   `Unlikely`, `FalsePositive`, `NotApplicable`). Claims about model behaviour
   that reading cannot settle stay `Model-dependent` with the eval case that
   would settle it
-- **Eval runs** *(on explicit request only)* — with your own API access, run the
+- **Eval runs** *(on explicit request only)*: with your own API access, run the
   recorded cases before and after a proposal and record every run
 
 Ask "what should we check" and it stops after the checklist. Ask it to review
@@ -58,28 +56,34 @@ or improve prompts and it runs all phases.
 
 ## After the review
 
-The record is built to be acted on, not only read:
-
-- **Re-review** — after changing prompts, run a new review and compare it with
+- **Re-review**: after changing prompts, run a new review and compare it with
   the earlier one: `scripts/compare.py` lists new, reopened, persisting
   (with severity and verdict changes), resolved and dismissed findings,
   matched by file, perspective and title, since IDs are renumbered. Risks
   accepted earlier (`status: Accepted`) can be carried into the new record
-- **Issues** — `scripts/export.py issues` writes one issue body per finding
+- **Issues**: `scripts/export.py issues` writes one issue body per finding
   from the issue template, ready for `gh issue create --body-file`
-- **Code scanning and CI** — `scripts/export.py sarif` writes SARIF 2.1.0 for
+- **Code scanning and CI**: `scripts/export.py sarif` writes SARIF 2.1.0 for
   GitHub code scanning or an IDE; `--fail-on High` (on `export.py` or
   `compare.py`) makes the job fail on Open, or only on new, findings at that
   severity
-- **Chat summary** — `scripts/export.py summary` prints the summary format of
+- **Chat summary**: `scripts/export.py summary` prints the summary format of
   `reference/report.md` with the record's own counts and verdicts
-- **Lint on every change** — `scripts/inventory.py <repo> --fail-on High`
-  runs the mechanical rules alone, with no agent and no model: unfilled
-  template variables, keys a render passes that the template never uses, reply
-  keys no prompt asks for, files an agent or skill prompt cites that do not
-  exist, unbalanced templates, secrets and placeholders in prompts. `--sarif` writes them for code scanning, and `--baseline
+- **Lint on every change**: `scripts/inventory.py <repo> --fail-on High`
+  runs the mechanical rules alone (no agent, no model): unfilled template
+  variables, keys a render passes that the template never uses, reply keys no
+  prompt asks for, files an agent or skill prompt cites that do not exist,
+  unbalanced templates, secrets and placeholders in prompts. `--sarif` writes
+  them for code scanning, and `--baseline
   <review>/findings.json` keeps hits a review judged `FalsePositive` or
   `NotApplicable` quiet, even after the lines move
+
+## Requirements
+
+Python 3.9+ standard library only. The PDF needs Chrome/Chromium (or
+WeasyPrint); without one, `render.py` writes the HTML and exits 3, and the run
+records the limitation. Each engine gets `PROMPT_SCAN_PDF_TIMEOUT` seconds
+(default: 120 plus 0.05 per finding, at most 900).
 
 ## Install
 
@@ -93,6 +97,10 @@ make unlink
 Then invoke `prompt-scan` (or `/prompt-scan`).
 
 ## Try it
+
+`examples/sample-app` is a small synthetic app with deliberate prompt defects;
+`examples/findings.sample.json` and `examples/findings.sample.ja.json` are the
+review of it.
 
 ```sh
 make demo                       # Japanese sample → $TMPDIR/prompt-scan-demo (PDF needs Chrome or WeasyPrint)
@@ -117,10 +125,6 @@ python3 skills/prompt-scan/scripts/export.py sarif out/findings.json --out promp
 python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/findings.json --fail-on High
 ```
 
-`examples/sample-app` is a small synthetic app with deliberate prompt defects;
-`examples/findings.sample.json` and `examples/findings.sample.ja.json` are the
-review of it.
-
 ## Files
 
 | Path | What it is |
@@ -140,21 +144,11 @@ review of it.
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |
 | `docs/report-design.md` | How the report uses the shared *-scan report format |
 
-## Requirements
-
-Python 3.9+ standard library only. The PDF needs Chrome/Chromium (or
-WeasyPrint); without one, `render.py` writes the HTML and exits 3, and the run
-records the limitation. Each engine gets `PROMPT_SCAN_PDF_TIMEOUT` seconds
-(default: 120 plus 0.05 per finding, at most 900).
-
-Report typography is the shared *-scan report format,
-[scan-report-kit](https://github.com/simota/scan-report-kit) (see
-`docs/report-design.md`): a journal-style report (numbered sections, captioned
-booktabs tables and listings, one mincho face for both scripts) and a
-dashboard in the same system. The kit is vendored in
-`skills/prompt-scan/scripts/scan_report_kit/`; change it upstream and
-re-vendor, never in place (`make check` verifies the copy against its
-`MANIFEST`).
+The report and dashboard use the shared *-scan report format from the vendored
+scan-report-kit (see `docs/report-design.md`): a journal-style report (numbered sections, captioned booktabs tables and
+listings, one mincho face for both scripts) and a dashboard in the same system.
+Change the kit upstream and re-vendor, never in place (`make check` verifies the
+copy against its `MANIFEST`).
 
 ## Development
 

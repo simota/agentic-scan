@@ -1,4 +1,4 @@
-# Inventory — what `inventory.py` finds and what it misses
+# Inventory: what `inventory.py` finds and what it misses
 
 **Read when:** RECON, to run the inventory and read its output; end of REVIEW,
 before `--into`; whenever an `L-*` finding is reviewed.
@@ -8,33 +8,21 @@ python3 scripts/inventory.py <repo> --out <out>/inventory.json
 python3 scripts/inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json
 ```
 
-In CI, the lint runs alone, without a review:
-
-```
-python3 scripts/inventory.py <repo> --sarif <file>.sarif --fail-on High [--baseline <review>/findings.json]
-```
-
-`--fail-on` prints each hit at that severity or above as `path:line: severity
-rule: detail` and exits 1 when there is one; `--sarif` writes the hits as SARIF
-2.1.0; `--baseline` suppresses each hit an earlier review judged
-`FalsePositive` or `NotApplicable` (in `validation`, or kept as
-`previous_validation` across a rescan), matched by rule, file, tag and detail
-with line numbers aside. Neither writes inside the repository or changes the
-review's outputs.
-
-It reads files only. It never executes code from the repository and sends
-nothing over the network; the Git state it records comes from `git status`,
+It reads files only: it never executes code from the repository and sends
+nothing over the network. The Git state it records comes from `git status`,
 `git ls-files` and `git check-ignore`, with the repository's fsmonitor and
-filter-driver commands switched off, without entering submodules and without
-refreshing the index. A file whose name is not UTF-8 is listed with the bytes
-escaped (`\xff`); Git still sees its real name, but `render.py` cannot reopen
-the escaped one, so its findings carry no excerpt. Directories such as `.git`,
-`node_modules`, virtual environments and build output are skipped (listed in
-`skipped_dirs`, VCS metadata aside), and so are symlinked directories, which
-the walk does not follow (also listed in `skipped_dirs`), as are `.env*` and `*.env` files, key
-files, login files such as `.npmrc`, `.netrc` and `id_rsa` (`render.py` quotes
-none of these either), symlinks, binary files and files over 1 MiB (a prompt
-file among these is listed in `skipped_files`).
+filter-driver commands switched off; it does not enter submodules or refresh
+the index.
+
+It skips directories such as `.git`, `node_modules`, virtual environments and
+build output, and symlinked directories, which the walk does not follow; all
+are listed in `skipped_dirs`, VCS metadata aside. It also skips `.env*` and
+`*.env` files, key files, login files such as `.npmrc`, `.netrc` and `id_rsa`
+(`render.py` quotes none of these either), symlinks, binary files and files
+over 1 MiB; a prompt file among these is listed in `skipped_files`. A file
+whose name is not UTF-8 is listed with the bytes escaped (`\xff`); Git still
+sees its real name, but `render.py` cannot reopen the escaped one, so its
+findings carry no excerpt.
 
 ## What it lists
 
@@ -46,7 +34,7 @@ file among these is listed in `skipped_files`).
 | `bindings` | Where code loads each prompt file and what it does with the text, below |
 | `models` | Quoted model IDs (`claude-…`, `gpt-…`, `o1`/`o3`/`o4`, `gemini-…`, `mistral-…`, `llama…`) in code and config, with each location, including the cloud forms `us.anthropic.claude-…-v1:0` (Bedrock), `claude-…@YYYYMMDD` (Vertex) and `models/gemini-…`. Whether an ID is current is not decided here (`SKILL.md`, *Decide first*) |
 | `lint` | Mechanical hits in prompt files, below |
-| `skipped_dirs` | Each directory pruned by name, at any depth, and each symlinked directory: a skill or prompt directory named `build`, `coverage`, `env`, `vendor`… is pruned too, and so is a `prompts/` that is a symlink. Read the prompt files in any that hold some, or name them in `limitations` |
+| `skipped_dirs` | Each directory pruned by name at any depth, and each symlinked directory: a skill or prompt directory named `build`, `coverage`, `env`, `vendor`… is pruned too, and so is a `prompts/` that is a symlink. Read the prompt files in any that hold some, or name them in `limitations` |
 | `skipped_files` | Each file that would be a prompt file but was not read, with the reason: `symlink`, `binary`, `unreadable` or `over 1 MiB`. Read them by hand or name them in `limitations` |
 | `not_covered` | What the scan cannot see; copy each line that applies into `limitations` |
 
@@ -105,10 +93,17 @@ last `--into`. Write `inventory.json` in that same run (`--out` with `--into`):
 `L-*` findings and `meta`, or when an `L-*` differs from what `--into` wrote
 in anything but its review. `--out` replaces only an earlier `inventory.json`,
 so swapping it with `--into` is refused rather than overwriting
-`findings.json`. For each one, read the location and merge a `validation`
-with a verdict and evidence — for example `FalsePositive` for a literal brace
-that the template engine never sees, or `Valid` for a `TODO` that reaches the
-model.
+`findings.json`.
+
+A rescan keeps the latest reviewed verdict on the same rule and location as
+`previous_validation` (a later rescan before a new review keeps it too); the
+new hit starts `Unverified` and needs a fresh look.
+
+Read the location of each hit and merge a `validation` with a verdict and
+evidence: for example `FalsePositive` for a literal brace that the template
+engine never sees, or `Valid` for a `TODO` that reaches the model. A fragment
+may change nothing else on an `L-*`.
+
 For `unrequested-output-key`, reconstruct the message as sent (`reference/recon.md`
 §4): `Valid` when nothing sent on that call (history, a prompt from a helper or
 a database, a provider default) asks for the key; `FalsePositive` with the
@@ -116,13 +111,26 @@ text that does. For `unfilled-variable` and `unused-render-key`, read the bindin
 `loaded_at` and each named site: `Valid` when that call is the one that renders
 this template on the path the feature takes and nothing between (a
 `.partial()`, a framework's default inputs, a wrapper that adds keys) fills the
-name; `FalsePositive` with that evidence otherwise. The same root cause found
-by the agent is one `F-*` finding citing the hit by rule and location.
-A fragment may change nothing else on an `L-*`. When a hit is a symptom of a
-larger defect the agent found, keep the `L-*` and cite it from the `F-*`
-finding's `cause` by rule and location (`unclosed-tag at prompts/a.md:3`), not by
-its ID: `L-*` IDs are reassigned on every `--into`.
+name; `FalsePositive` with that evidence otherwise.
 
-A rescan keeps the latest reviewed verdict on the same rule and location as
-`previous_validation` (a later rescan before a new review keeps it too); the
-new hit starts `Unverified` and needs a fresh look.
+The same root cause found by the agent is one `F-*` finding citing the hit by
+rule and location. When a hit is a symptom of a larger defect the agent found,
+keep the `L-*` and cite it from the `F-*` finding's `cause` by rule and location
+(`unclosed-tag at prompts/a.md:3`), not by its ID: `L-*` IDs are reassigned on
+every `--into`.
+
+## Lint in CI
+
+In CI, the lint runs alone, without a review:
+
+```
+python3 scripts/inventory.py <repo> --sarif <file>.sarif --fail-on High [--baseline <review>/findings.json]
+```
+
+`--fail-on` prints each hit at that severity or above as `path:line: severity
+rule: detail` and exits 1 when there is one; `--sarif` writes the hits as SARIF
+2.1.0; `--baseline` suppresses each hit an earlier review judged
+`FalsePositive` or `NotApplicable` (in `validation`, or kept as
+`previous_validation` across a rescan), matched by rule, file, tag and detail
+with line numbers aside. None of them writes inside the repository or changes
+the review's outputs.

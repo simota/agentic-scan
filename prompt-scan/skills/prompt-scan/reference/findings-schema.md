@@ -1,4 +1,4 @@
-# findings.json — the record every output is rendered from
+# findings.json: the record every output is rendered from
 
 **Read when:** REPORT, before writing the first fragment; whenever a fragment
 is refused by `scripts/findings.py merge`.
@@ -30,7 +30,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language, `ja` or `en`; `render.py --lang` defaults to it, and to `ja` when it is absent. Any other value is a schema error, which a fragment setting `meta.lang` repairs |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
-| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell (also when a file read is marked skip-worktree or assume-unchanged, or when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm, or when a configured filter driver's name contains `=`, which keeps `inventory.py` from switching it off, so `git status` is not run). Excerpts come from `commit` only when `dirty` is `false` and the file has no `filter` attribute, otherwise from the working tree |
+| `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell, and also when a file read is marked skip-worktree or assume-unchanged; when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm; or when a configured filter driver's name contains `=`, which keeps `inventory.py` from switching it off, so `git status` is not run. Excerpts come from `commit` only when `dirty` is `false` and the file has no `filter` attribute, otherwise from the working tree |
 
 ## Prompt record
 
@@ -46,6 +46,8 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `output` | | What consumes the output |
 
 ## Finding record
+
+*contract* = required on every `F-*` by `contract_check.py`.
 
 | Field | Required | Meaning |
 |---|---|---|
@@ -63,17 +65,13 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `fix` | contract | One-line direction |
 | `proposal` | improvements | `{before, after}`: the current text (short quote) and the proposed text |
 | `test` | contract | String or list: an eval or test assertion of the good outcome |
-| `validation` | yes | `{verdict, evidence, method}` |
+| `validation` | yes | `{verdict, evidence, method}`; `Valid`, `FalsePositive` and `NotApplicable` need nonblank `validation.evidence` |
 | `status` | | `Open` (default), `Fixed` (the fix is merged), `Accepted` (the risk is accepted by its owner). `scripts/export.py` leaves `Fixed` findings out, marks `Accepted` ones as suppressed in SARIF and gates only on `Open` ones; `scripts/compare.py` can carry `Accepted` into the next review |
 | `references` | | `[{title, url}]`, http(s) only |
 | `source`, `rule`, `previous_validation` | | Written only by `inventory.py` on `L-*` |
 
-*contract* = required on every `F-*` by `contract_check.py`.
-
-`Valid`, `FalsePositive` and `NotApplicable` need nonblank
-`validation.evidence`. `contract_check.py` also requires, on every High and
-Medium finding (`F-*` and `L-*`), a verdict other than `Unverified` and nonblank
-evidence.
+`contract_check.py` also requires, on every High and Medium finding (`F-*`
+and `L-*`), a verdict other than `Unverified` and nonblank evidence.
 
 ## Eval run record
 
@@ -92,10 +90,10 @@ evidence.
 - A known id is updated key by key, so a later fragment can carry only
   `{"id": "F-003", "validation": {…}}`
 - An `L-*` may receive only `validation`
-- New `F-*` ids follow merge order; after VERIFY, `scripts/findings.py renumber
+- New `F-*` ids follow merge order. After VERIFY, `scripts/findings.py renumber
   <out>/findings.json` puts them in severity order (then path and line,
-  excluded findings last) and rewrites every `F-*` reference in the record,
-  except quoted `proposal` text, reference URLs, locations, paths and file
+  excluded findings last) and rewrites every `F-*` reference in the record.
+  It leaves alone quoted `proposal` text, reference URLs, locations, paths and file
   names (a feature id such as `prompts/F-002/` or `F-002.md`), `meta`, prompt records and the
   scanner fields of `L-*` findings (an `L-*` finding's `validation` and `previous_validation` are review
   text, so their references follow)

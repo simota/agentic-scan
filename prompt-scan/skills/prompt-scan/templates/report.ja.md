@@ -39,13 +39,15 @@
 
 <!-- 深刻度順。1 件ごとに下のブロックを繰り返す。詳細は templates/issue.ja.md で起票した issue へリンクする。 -->
 
+詳細は添付の report.pdf とダッシュボード（dashboard.html）を参照してください。
+
 ### {{id}}: {{title}}
 
-- **種別 / 深刻度 / 確度 / 判定:** {{kind}} / {{severity}} / {{confidence}} / {{validation.verdict}}
-- **場所:** `{{location}}`（{{prompt}}）
-- **症状:** {{symptom}}
-- **影響:** {{impact}}
-- **修正方針:** {{fix}}
+- 種別 / 深刻度 / 確度 / 判定: {{kind}} / {{severity}} / {{confidence}} / {{validation.verdict}}
+- 場所: `{{location}}`（{{prompt}}）
+- 症状: {{symptom}}
+- 影響: {{impact}}
+- 修正方針: {{fix}}
 
 ## 4. 確認して問題がなかった項目
 
@@ -62,5 +64,3 @@
 ## 7. 次のステップ
 
 - {{next_steps[]}}
-
-詳細は添付の report.pdf とダッシュボード（dashboard.html）を参照してください。

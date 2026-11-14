@@ -2,11 +2,12 @@
 
 **Read when:** CHECKLIST, to choose which perspectives apply; REVIEW, as the
 sweep over each review unit; REPORT, to fill the `perspectives` list in
-`findings.json`. **Reader:** the agent running the skill.
+`findings.json`. Reader: the agent running the skill.
 
-Apply each perspective within every review unit (`SKILL.md`, *Run contract*),
-work through its hunt steps, and record every perspective in the report —
-including the ones that found nothing and the ones not run.
+Apply each perspective within every review unit (`SKILL.md`, *Run contract*)
+and work through its hunt steps. A step is sound only when the text or code
+that makes it sound can be cited as `path:line`. "The model will figure it
+out" is not evidence.
 
 | Perspective | The question it asks |
 |---|---|
@@ -24,19 +25,6 @@ including the ones that found nothing and the ones not run.
 | Language and tone | Is the output language, register and audience stated and consistent? |
 | Evaluation | Is there an eval, test or golden set that would catch a regression in this prompt? |
 | Maintainability | Is the prompt versioned, deduplicated and owned, so a change in one place does not silently diverge? |
-
-Rules:
-
-- A perspective not applicable to these prompts is recorded as `N/A` with a
-  reason, not silently skipped
-- A perspective that could not be checked statically is recorded as
-  `not checked` with what would be needed
-- Every finding names the perspective that surfaced it in `category`, using the
-  exact name from the table
-- The `note` lists the hunt step IDs applied and each one left out with its
-  reason (e.g. `TI1–TI3; TI4 N/A: no end users`)
-- A step is sound only when the text or code that makes it sound can be cited
-  as `path:line`. "The model will figure it out" is not evidence
 
 ## Hunt steps per perspective
 
@@ -177,3 +165,17 @@ Rules:
 | MT2 | Prompts built from string concatenation scattered across functions, so the full text is visible nowhere | The full template lives in one place |
 | MT3 | Placeholder or TODO text left in a shipped prompt (lint `placeholder`) | None remain |
 | MT4 | No owner or change history for a prompt that controls a production behaviour | The repository records it |
+
+## Recording
+
+Record every perspective in the report, including the ones that found nothing
+and the ones not run:
+
+- A perspective not applicable to these prompts is recorded as `N/A` with a
+  reason, not silently skipped
+- A perspective that could not be checked statically is recorded as
+  `not checked` with what would be needed
+- Every finding names the perspective that surfaced it in `category`, using the
+  exact name from the first table
+- The `note` lists the hunt step IDs applied and each one left out with its
+  reason (e.g. `TI1–TI3; TI4 N/A: no end users`)

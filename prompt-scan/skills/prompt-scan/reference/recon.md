@@ -1,10 +1,10 @@
-# Recon — mapping the prompts and the code around them
+# Recon: mapping the prompts and the code around them
 
 **Read when:** RECON, before any finding is written.
 
 The goal is a map in which every prompt is a row with a known sender, known
-variables and a known consumer. A prompt reviewed without that map is a piece
-of prose; most defects only appear when it is read together with the code.
+variables and a known consumer: most defects only appear when a prompt is read
+together with the code.
 
 ## 1. Run the inventory
 
@@ -32,7 +32,7 @@ registry. Search for those next.
   registry or feature-flag service, environment variables. Record the loader's
   `path:line`; the text itself is outside the review and goes in `limitations`
 - Tool and function definitions passed to the API (`tools=`, `functions=`,
-  schema objects) — their descriptions are prompts
+  schema objects): their descriptions are prompts
 - Files an agent or skill definition tells the model to read (a skill's
   `reference/` files and templates, `@path` imports in `CLAUDE.md`): each is
   part of that prompt and gets its own row
@@ -43,10 +43,10 @@ registry. Search for those next.
 
 ## 3. One row per prompt
 
-For every prompt record, in scratch and later in the `prompts` list. A traced
-binding gives a first `consumer` (its render or send site), `inputs` (its
-`keys`) and, through the call site whose `prompts` names the file, `model`
-(`params`); confirm each by reading the code:
+For every prompt, record these fields, first in scratch and later in the
+`prompts` list. A traced binding gives a first `consumer` (its render or send
+site), `inputs` (its `keys`) and, through the call site whose `prompts` names
+the file, `model` (`params`); confirm each by reading the code:
 
 | Field | What to record |
 |---|---|

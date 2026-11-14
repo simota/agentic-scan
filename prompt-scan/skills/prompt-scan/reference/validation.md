@@ -1,13 +1,15 @@
-# Validation — is each finding real, and would the fix help?
+# Validation: whether each finding is real and the fix would help
 
 **Read when:** VERIFY, for every finding before it reaches the report; EVAL,
 when the requester asked for model runs.
 
-A finding is a hypothesis until it survives an attempt to falsify it. Keep the
-verdict in `validation` (`reference/findings-schema.md`). Severity, confidence
-and verdict are separate: a High finding can be `Likely`, a Low one `Valid`.
+A finding is a hypothesis until it survives an attempt to falsify it.
 
 ## Verdicts
+
+Keep the verdict in `validation` (`reference/findings-schema.md`). Severity,
+confidence and verdict are separate: a High finding can be `Likely`, a Low one
+`Valid`.
 
 | Verdict | Meaning | Evidence needed |
 |---|---|---|
@@ -25,18 +27,18 @@ and verdict are separate: a High finding can be `Likely`, a Low one `Valid`.
 
 Before setting `Valid`, try each that applies, and say in `evidence` which:
 
-1. **Read the prompt as sent.** Rebuild the full message list from the code —
-   system text, framework-added text, tools, history, filled template, prefill
-   (`reference/recon.md` §4). A "missing" instruction is often in another layer
-2. **Look for the compensating code.** A parser that strips prose, a
-   validator that rejects bad values, a retry with a fixed prompt, a filter on
-   tool calls. A prompt defect with a code guard behind it is lower severity or
+1. Read the prompt as sent: rebuild the full message list from the code
+   (system text, framework-added text, tools, history, filled template, prefill;
+   `reference/recon.md` §4). A "missing" instruction is often in another layer
+2. Look for the compensating code: a parser that strips prose, a validator
+   that rejects bad values, a retry with a fixed prompt, a filter on tool
+   calls. A prompt defect with a code guard behind it is lower severity or
    `NotApplicable`
-3. **Check every call site.** A variable defect on one call site may be filled
+3. Check every call site: a variable defect on one call site may be filled
    correctly on the others; scope the finding to the paths that break
-4. **Check the model.** A feature the prompt relies on (prefill, a tool-choice
+4. Check the model: a feature the prompt relies on (prefill, a tool-choice
    mode) may be unsupported by the configured model, or irrelevant for it
-5. **State the competing instruction.** A contradiction finding names both
+5. State the competing instruction: a contradiction finding names both
    lines; an "ignored instruction" finding names what outweighs it
 
 ## Confidence

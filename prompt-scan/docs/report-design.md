@@ -4,13 +4,13 @@ Status: decided 2026-10-11; moved to the shared format 2026-10-12. Applies to
 `report.html` / `report.pdf` and `dashboard.html` rendered by
 `skills/prompt-scan/scripts/render.py`.
 
-The visual system — security-scan's "journal of record": serif text in one
-face for both scripts, sans for labels, monospace for IDs, paths and prompt
-text, numbered sections, captioned booktabs tables and listings, colour only
-for severity — is the shared format of every *-scan skill. It lives in the
-[scan-report-kit](https://github.com/simota/scan-report-kit) repository (its
-design document is `design.md` under that repository's docs directory), next
-to the stylesheets it governs.
+The shared format of every *-scan skill is security-scan's "journal of
+record": serif text in one face for both scripts, sans for labels, monospace
+for IDs, paths and prompt text, numbered sections, captioned booktabs tables
+and listings, colour only for severity. It lives in the
+[scan-report-kit](https://github.com/simota/scan-report-kit) repository, next
+to the stylesheets it governs; its design document is `design.md` under that
+repository's docs directory.
 
 ## How prompt-scan uses it
 
@@ -33,11 +33,11 @@ to the stylesheets it governs.
 
 ## Readers
 
-- **Prompt owners and engineers** fixing findings: need the location, the
+- Prompt owners and engineers fixing findings need the location, the
   cause and a proposal they can paste
-- **Product owners** deciding priority: need the counts by kind and severity
+- Product owners deciding priority need the counts by kind and severity
   and the decisions the review leaves to them
-- **Reviewers** checking the claims: need verdicts, evidence and excerpts at
+- Reviewers checking the claims need verdicts, evidence and excerpts at
   the reviewed revision
 
 ## prompt-scan decisions on top of the shared format
@@ -57,5 +57,5 @@ to the stylesheets it governs.
 - **Self-contained and offline**: no web fonts, no remote assets; the dashboard
   embeds its data as escaped JSON and follows the system dark mode
 - **Order of sections**: summary, inventory, perspectives, checked and sound,
-  findings, eval runs, decisions, limitations, next steps — the reader sees
-  what was looked at before what was found
+  findings, eval runs, decisions, limitations, next steps, so the reader
+  sees what was looked at before what was found

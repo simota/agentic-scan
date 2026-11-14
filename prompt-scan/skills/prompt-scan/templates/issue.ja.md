@@ -1,5 +1,5 @@
 <!--
-1 件の finding を 1 件の issue として登録するテンプレート（1 根本原因 = 1 修正箇所 = 1 issue）。
+1 件の finding を 1 件の issue として登録する（1 根本原因 = 1 修正箇所 = 1 issue）。
 各欄の {{field}} は findings.json の同名フィールドから転記する。空の任意欄は行ごと削除する。
 scripts/export.py issues はすべての finding についてこのテンプレートを埋め、コメント・空の行・空の節を除く。
 

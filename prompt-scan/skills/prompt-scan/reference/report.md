@@ -28,16 +28,17 @@ unless that directory holds both pages rendered from the current
 
 `scripts/export.py summary <out>/findings.json` writes items 1 and 3–6 below
 from the record (`--min-severity Medium` for a long list, which it says it cut);
-start from it, so the chat shows the record's own counts and verdicts, and add
-the rest.
+start from it and add the rest. The chat summary, dashboard and PDF show the
+same verdicts and counts: `findings.json` is the record, and every finding in
+chat exists there.
 
-1. **First line** — counts by kind (defects / improvements) and by severity,
+1. **First line**: counts by kind (defects / improvements) and by severity,
    and the scope: static only, or with requested eval runs. Name any High
    finding not yet `Valid`
-2. **Evidence line** — the reviewed revision (`meta.commit`, and whether the
+2. **Evidence line**: the reviewed revision (`meta.commit`, and whether the
    tree was dirty), how many prompts and call sites were read, what remains
    unknown (model behaviour, prompts outside the repository)
-3. **Findings, by severity** — defects first within a severity, each as:
+3. **Findings, by severity**: defects first within a severity, each as:
 
    ```
    [High|Medium|Low|Info][defect|improvement][Confirmed|Model-dependent|Suspected] title
@@ -51,16 +52,13 @@ the rest.
      verdict: Valid / Likely / … with the evidence in one line
    ```
 
-4. **Checked and sound** — what was examined and held
-5. **Decisions for a human** — intended behaviour the prompts leave open,
+4. **Checked and sound**: what was examined and held
+5. **Decisions for a human**: intended behaviour the prompts leave open,
    model choices to confirm, accepted costs
-6. **Next step** — the fix order (High defects first, then output-contract and
+6. **Next step**: the fix order (High defects first, then output-contract and
    variable defects, then improvements), and which findings need an eval
-7. **Files** — link `dashboard.html` and `report.pdf`; name the scratch
+7. **Files**: link `dashboard.html` and `report.pdf`; name the scratch
    directory
-
-The chat summary, dashboard and PDF show the same verdicts and counts:
-`findings.json` is the record, and every finding in chat exists there.
 
 ## Re-reviews
 
@@ -71,22 +69,22 @@ this review first, then compare:
 python3 scripts/compare.py <earlier>/findings.json <out>/findings.json [--lang ja|en] [--out <scratch>/compare.md]
 ```
 
-Report the counts by class first (new, reopened, persisting, resolved,
-dismissed), then the new and reopened findings, then persisting findings whose
-severity or verdict changed, and a persisting finding the earlier review marked
-`Fixed` as a fix that did not hold. A resolved finding was not reported again:
-call it resolved, never verified, unless an eval run or test shows it.
 Matching is by file, perspective and title (lint findings by rule), not by ID;
-a moved or renamed file reads as one resolved and one new finding.
+a moved or renamed file reads as one resolved and one new finding. Report the
+counts by class first (new, reopened, persisting, resolved, dismissed), then
+the new and reopened findings, then persisting findings whose severity or
+verdict changed, and a persisting finding the earlier review marked `Fixed` as
+a fix that did not hold. A resolved finding was not reported again: call it
+resolved, never verified, unless an eval run or test shows it.
 
 ## Required limitation lines
 
 Kept in English, verbatim, in any report language, so `contract_check.py` can
 find them:
 
-- "model behaviour not executed: static review only" — whenever no
-  `eval_runs` are recorded
-- "report.pdf not produced: no PDF engine" — only with `--no-pdf`
+- "model behaviour not executed: static review only" (whenever no
+  `eval_runs` are recorded)
+- "report.pdf not produced: no PDF engine" (only with `--no-pdf`)
 
 Add, in the report language, every `not_covered` line from `inventory.json`
 that applies, and any prompt in the inventory that was not read.

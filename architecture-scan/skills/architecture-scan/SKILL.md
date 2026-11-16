@@ -31,7 +31,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   quality is relative to these; a rigid module nobody changes costs little
 - **Name the core flows**: the flows whose correctness matters most (payment,
   ordering, provisioning, permissions, billing, data sync). Severity is judged
-  against these
+  against these. Show this list to the requester in one line and use their
+  corrections; when nobody can answer (an unattended or delegated run), record
+  it as assumed in `limitations` and the chat summary, and continue
 - **Derive the design rules before hunting**: the rules this codebase states
   for itself — layer direction, module boundaries, who owns which data, where
   transactions start and end, how failures propagate, how config is read

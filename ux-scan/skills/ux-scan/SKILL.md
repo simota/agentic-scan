@@ -20,8 +20,9 @@ It does not redesign screens or change code. Fixing is a separate, later
 request. A finding a user can see on screen carries a before/after mockup of
 its fix in three tiers, 松竹梅 (`reference/mockups.md`): an illustration kept in the record, not a redesign. It judges against a stated criterion, not taste: "the cards feel
 cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing scale
-is 4/8/12/16" is. Brand voice, palette canon and naming belong to brand-scan;
-speed and bundle size to performance-scan; vulnerabilities to security-scan.
+is 4/8/12/16" is. Speed and bundle size belong to performance-scan and
+vulnerabilities to security-scan. No scan in this set reviews brand voice,
+palette canon or naming: name them in `limitations`.
 
 Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
@@ -36,7 +37,10 @@ Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
   for planned, unsupported and assumed viewports)
 - **Name the primary tasks**: the few things a user comes to do (sign up, find
   and buy, create and share…). Severity is judged by which task a defect blocks
-  or slows, and every finding cites one flow (`reference/flows.md`)
+  or slows, and every finding cites one flow (`reference/flows.md`). Show this
+  list to the requester in one line and use their corrections; when nobody can
+  answer (an unattended or delegated run), record it as assumed in `limitations`
+  and the chat summary, and continue
 - **Find the design system**: tokens, theme, shared components, documented
   patterns. Consistency findings depart from the app's own system; without one,
   they rest on majority usage and say so
@@ -146,4 +150,4 @@ Skip the files when only a checklist was asked for.
 | The requester asks to file the findings: issues, code scanning, a spreadsheet | After REPORT, `scripts/export.py markdown\|sarif\|csv <out>/findings.json --out <file>` into scratch or the path they name; uploading or filing is theirs to do, or yours only when they ask (`reference/follow-up.md`) |
 | The requester asks to compare with an earlier review, re-check after fixes, or gate a release | Review independently to the end, then `scripts/compare.py <earlier>/findings.json <out>/findings.json --out <file>` (`--fail-on <severity>` for a gate); lead the chat summary with regressions, confirm `resolved` findings before calling them fixed, and record the comparison in the record: `--carry-forward <scratch>/carry.json` drafts the fragment that carries earlier acceptances forward and names regressions in `decisions`; read it, then merge it (`reference/follow-up.md`) |
 | Request is "redesign it" or "make it look better" | Out of scope: report the findings and leave the redesign to a later request |
-| Request is about brand voice, palette or naming | That is brand-scan; record only UI clarity (CP) here |
+| Request is about brand voice, palette or naming | No scan in this set reviews it; record only UI clarity (CP) here and name the rest in `limitations` |

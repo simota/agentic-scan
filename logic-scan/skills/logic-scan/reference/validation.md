@@ -13,7 +13,7 @@ evidence.
 
 | Verdict | Meaning | Who may set it |
 |---|---|---|
-| `Valid` | The defect is traced on code that runs, the counterexample's input reaches it from a named entry point, every step from that input to the wrong result is read with nothing on the way correcting it, the oracle states the expected result, and the exposure its severity claims follows from the core flows, the callers or recorded history (an `Info` finding claims none) | Agent or person, with evidence |
+| `Valid` | The defect is traced on code that runs, the counterexample's input reaches it from a named entry point, every step from that input to the wrong result is read with nothing on the way correcting it, the oracle states the expected result (an inferred oracle — the majority implementation, the reviewer's own reading — makes the verdict `Likely` at best and the confidence `Suspected`), and the exposure its severity claims follows from the core flows, the callers or recorded history (an `Info` finding claims none) | Agent or person, with evidence |
 | `Likely` | Strong signals, one necessary link not yet confirmed (one caller unread, the oracle ambiguous, the production setting the result depends on not in the repository) | Agent or person |
 | `Unverified` | Not yet examined | Agent or person: the verdict a finding starts with, always recorded explicitly |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
@@ -79,8 +79,10 @@ anything was executed.
 `analysed` requires a recorded `analysis` with the tool, the command and the
 result. Allowed analysis is read-only and local: `git log`, `git show` and
 `git blame` queries, and an expression evaluated in a fresh interpreter, run
-outside the audited repository and importing nothing from it, to confirm a
-language's own behaviour (`0.1 + 0.2`, Python's `round(0.5)`). Name the tool
+from an empty scratch directory and importing nothing from the audited
+repository, to confirm a language's or its standard library's own behaviour
+(`python3 -I -c 'print(round(0.5))'`, `node -e`, `swift -e` with Foundation
+only — run from that directory, so no package manifest is resolved). Name the tool
 before running it. Never run the application, its test suite, its scripts or
 its configured linters and type checkers (their configuration and plugins are
 the repository's code), never install packages, never contact external

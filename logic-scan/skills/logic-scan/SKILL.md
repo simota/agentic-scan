@@ -70,7 +70,7 @@ Neighbours, and where their questions go instead:
 | Item | Fixed choice |
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them |
-| Review units | One unit per top-level module or package on a core flow (a Go package is a directory, a JS/TS one a workspace member or `src/` subfolder; split one past ~3k lines into clusters of related files), plus one cross-cutting unit (shared helpers for money, time, text, validation and formatting; constants and configuration the rules read). Units are reviewed in core-flow order (`reference/recon.md` §2). Each unit first hunts the ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/conventions.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Each unit numbers its findings in its own block (unit 1 `F-101`…, unit 2 `F-201`…); IDs have three digits, so with more than nine units, or a unit that outgrows its 99 IDs, wait until no unit is running (`renumber` renames every merged record, so a running unit's IDs would stop resolving), merge and `renumber`, then hand out the free hundreds above the last ID |
+| Review units | One unit per top-level module or package on a core flow (a Go package is a directory, a JS/TS one a workspace member or `src/` subfolder, a Swift or Rust one a target or crate; split one past ~3k lines into clusters of related files, such as the files one core flow passes through), plus one cross-cutting unit (shared helpers for money, time, text, validation and formatting; constants and configuration the rules read). Units are reviewed in core-flow order (`reference/recon.md` §2). Each unit first hunts the ledger entries it owns, then sweeps every applicable perspective once. A unit closes only when its close-check matches (`reference/conventions.md` §4). With subagents, one reviewer per unit; without, the same units sequentially. Each unit numbers its findings in its own block (unit 1 `F-101`…, unit 2 `F-201`…); IDs have three digits, so with more than nine units, or a unit that outgrows its 99 IDs, wait until no unit is running (`renumber` renames every merged record, so a running unit's IDs would stop resolving), merge and `renumber`, then hand out the free hundreds above the last ID. Reviewed sequentially by one agent, units may share one sequence from `F-001` instead |
 | Granularity | One finding per remedy, i.e. per change that can be planned and reviewed on its own. The same wrong rounding copied into five callers of one helper is one finding listing them in `trace`; a rule that must have one source before its rounding can be fixed is two findings linked by `depends_on` |
 | IDs | `F-001`… numbered without gaps in severity order (then path), excluded verdicts last. `scripts/findings.py renumber` restores the order and rewrites ID mentions, including `depends_on` and `plan`. After it, use only the new IDs it prints |
 | Severity | The table below, decided before change and confidence; neither raises or lowers it, except that a High finding must be `Confirmed` (below the confidence table) |
@@ -85,7 +85,7 @@ Neighbours, and where their questions go instead:
 |---|---|
 | High | A core flow returns a wrong result on input that occurs in normal use (`reference/recon.md` §7: a month end, a DST change where the customers' zones observe one, a zero quantity, a full-width name, a customer ahead of UTC) **and** there is incident evidence: a fix commit in the window already patched the same rule, or a record in the repository that the wrong result was noticed (a refund script, a support note, a bug report) |
 | Medium | A core flow on input that occurs, without incident evidence; or a non-core flow with incident evidence; or it blocks a change the requester named |
-| Low | The defect is real but on a flow that is neither core nor shown to have gone wrong |
+| Low | The defect is real but on a flow that is neither core nor shown to have gone wrong; or, on any flow, the wrong result is display-only and leaves the person able to act correctly (a label rounded across a threshold, a countdown text that disagrees with its accessible text) |
 | Info | A note: a defect whose wrong result nobody relies on (a debug view, a value no reader uses), or a rule worth centralising when the area is next changed. A defect whose input the entry point refuses has no counterexample: it is `FalsePositive`, not Info. A ledger rule broken where the result is still right is not a finding: it stays `holds`, with the variant in `checked_ok` (`reference/conventions.md` §2) |
 
 Severity is exposure only. How far the fix reaches is `change`; how sure the
@@ -136,7 +136,8 @@ Worked examples:
 ## Phases
 
 Paths under `scripts/`, `reference/` and `templates/` are relative to this
-skill's directory, not the audited repository.
+skill's directory (the one this SKILL.md was loaded from; when it is a
+symlink, either path reaches the same files), not the audited repository.
 
 | Phase | Do | Reference |
 |---|---|---|

@@ -156,6 +156,8 @@ git log --since=<window start> --format= --name-only -- . \
   ':(exclude,glob)**/*_test.py' ':(exclude,glob)**/conftest.py' \
   ':(exclude,glob)**/test/**' ':(exclude,glob)**/tests/**' \
   ':(exclude,glob)**/__tests__/**' ':(exclude,glob)**/__mocks__/**' \
+  ':(exclude,glob)**/Tests/**' ':(exclude,glob)**/*Tests.swift' \
+  ':(exclude,glob)**/*Test.java' ':(exclude,glob)**/*Test.kt' \
   | sort | uniq -c | sort -rn | head -50
 ```
 
@@ -166,7 +168,9 @@ none (an empty one makes git stop with `'/**' is outside repository`); a plain `
 `poetry.lock`, `Gemfile.lock`, `composer.lock` and `uv.lock`. Adjust the test
 patterns to the repository's own layout; `glob` keeps `*` inside one path
 segment, so `test_utils/` is not mistaken for a test. Read the rows for the
-sites in §2: rule code that changes often is where copies drift.
+sites in §2: rule code that changes often is where copies drift. With fewer
+than about 100 commits in the window, read the fix commits (§5) one by one
+instead, and skip this section and function-level churn; say so in scratch.
 
 Function-level churn, when a site's file is large:
 `n=$(git log --since=<window start> -s -L :<function>:<file> --format=%h) && printf '%s\n' "$n" | grep -c .`

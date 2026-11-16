@@ -124,7 +124,7 @@ missing constraint on a table nothing writes is not a finding.
 
 | Step | Hunt | Where to look | Sound when — because |
 |---|---|---|---|
-| TP1 | Money and quantities stored or computed as floating point | Column types (`float`, `double`, `real`), the code's arithmetic on amounts | Money is `decimal`/`numeric` or integer minor units, end to end — because a float cannot store 0.1 and the error is summed |
+| TP1 | Money and quantities stored as floating point | Column types (`float`, `double`, `real`) in the schema and in migrations; floating-point arithmetic on amounts in code is `logic-scan`'s (NM1) | Money columns are `decimal`/`numeric` or integer minor units — because a float column cannot store 0.1, and every row keeps the error it was written with |
 | TP2 | Timestamps without a zone, or local time stored: `timestamp without time zone` fed by a server's local clock, dates computed in the wrong zone | Column types, the application's and database's time zone settings | Instants are stored in UTC or with zone, and dates are computed in a stated zone — because a zone change or DST shifts every stored value |
 | TP3 | Truncation, overflow and encoding: strings longer than the column, silent truncation in a non-strict mode, a 32-bit counter, `utf8` that cannot store every character | Column lengths vs input limits, SQL mode, integer widths, character sets | Inputs are bounded below the column's size, the database refuses what does not fit, and the character set stores all input — because silently changed data is found only when someone reads it |
 

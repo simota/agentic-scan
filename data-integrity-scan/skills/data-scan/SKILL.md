@@ -36,6 +36,7 @@ Neighbours, and where their questions go instead:
 | Personal data, retention, deletion on request | `privacy-scan` |
 | Which data paths have no test? | `test-scan` |
 | Can a table or column be deleted? | `prune-scan` |
+| Wrong results computed in code: float arithmetic and rounding on amounts, time-zone and calendar logic | `logic-scan` |
 
 ## Before starting
 

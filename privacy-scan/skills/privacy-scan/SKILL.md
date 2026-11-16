@@ -35,7 +35,10 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Name the sensitive categories**: health, biometrics, precise location,
   financial and government identifiers, children's data, communications
   content, special categories under the named regulation. Severity is judged
-  against these. Children's data always counts as a sensitive category
+  against these. Children's data always counts as a sensitive category. Show
+  this list to the requester in one line and use their corrections; when nobody
+  can answer (an unattended or delegated run), record it as assumed in
+  `limitations` and the chat summary, and continue
 - **Derive the commitments before hunting**: what this app promises or must
   keep — purposes, retention periods, deletion and export paths, the
   processors it shares with, consent conditions (`reference/commitments.md`).

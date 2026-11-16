@@ -1,0 +1,232 @@
+{
+  "meta": {
+    "project": "acme-shop (fictional sample)",
+    "scope": "api/ and worker/; critical flows: checkout, refunds",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code (sample)",
+    "method": "Static review; git log 12 months",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "en"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "Time is frozen with the frozen_clock fixture",
+     "source": "majority: 23 of 23 time-dependent tests; tests/conftest.py:12", "concern": "CLOCK",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "Workers receive their HTTP client through the constructor",
+     "source": "docs/adr/0007-worker-wiring.md:9", "concern": "DOUBLE", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "B2B line refunds have no test, and two refund fixes shipped without one",
+      "severity": "High",
+      "testability": "Seam",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Untested critical paths",
+      "step": "UC1",
+      "gap": "Line-refund branch unreached by any test",
+      "remedy": "Add Behaviour Test",
+      "location": ["api/refunds/b2b.py:61-104", "api/routes/refunds.py:30"],
+      "scenario": "Refunds are a named critical flow; line refunds are most B2B refunds",
+      "blast_radius": "1 file in api/refunds/; every B2B line refund",
+      "trace": "1. b2b.py:61 splits whole-order and line refunds. 2. tests/test_refunds.py:12 refunds a whole retail order only. 3. Fixes a1b2c3d and d4e5f6a changed b2b.py:80-97 and no test file",
+      "impact": "A wrong refund amount reaches customers and the ledger without a test failing",
+      "exposure": "Critical flow (refunds); fixes a1b2c3d and d4e5f6a changed b2b.py with no test change; 12 commits in the window",
+      "coverage": {"net": "partial", "tests": ["tests/test_refunds.py:12"],
+                   "gaps": "No test reaches b2b.py; b2b.py:64 constructs PaymentGateway() inline"},
+      "asserts": [
+        "A refund of 2 of 5 lines refunds the sum of those lines as rounded today (half-up, b2b.py:97)",
+        "The gateway receives exactly one refund call with that amount",
+        "A refund above the captured amount raises RefundExceedsCapture and calls no gateway"
+      ],
+      "steps": [
+        "1. Pass the gateway into refund_b2b() as a parameter defaulting to PaymentGateway() (verify: tests/test_refunds.py green)",
+        "2. Add the line-refund tests with the FakeGateway of F-002 (verify: they fail when b2b.py:97 rounds half-even, green otherwise)"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "Behaviour tests for B2B line refunds through refund_b2b(), after a gateway seam",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "b2b.py:61-104 is imported only by api/routes/refunds.py:30; no test imports either; git show --stat a1b2c3d d4e5f6a lists no test file"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "The shared gateway mock accepts any amount the real gateway refuses",
+      "severity": "Medium",
+      "testability": "Direct",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Mock fidelity",
+      "step": "MF1",
+      "gap": "Permissive test double",
+      "remedy": "Replace Mock with Fake",
+      "location": "tests/conftest.py:30-44",
+      "scenario": "Every payment and refund test uses this fixture",
+      "blast_radius": "9 test files; the checkout and refund flows",
+      "trace": "1. conftest.py:30 returns MagicMock() for the gateway. 2. Fix e7f8a9b rounded amounts after the real gateway refused three decimals in production. 3. No test would have failed before e7f8a9b",
+      "impact": "Any amount or currency the real gateway refuses passes every test",
+      "exposure": "Checkout and refunds are critical flows; fix e7f8a9b was found in production, not by a test",
+      "coverage": {"net": "partial", "tests": ["tests/test_payments.py:22"],
+                   "gaps": "The mock returns success for any amount and currency"},
+      "asserts": [
+        "FakeGateway refuses an amount with more than two decimals, as the real API does",
+        "FakeGateway records each call so tests assert the amount and currency sent"
+      ],
+      "steps": [
+        "1. Add FakeGateway beside the mock in tests/conftest.py (verify: tests/test_payments.py green)",
+        "2. Move the payment tests to FakeGateway one file at a time (verify: each file green; test_rounding fails with e7f8a9b reverted on a scratch copy)"
+      ],
+      "fix": "A fake gateway that enforces the amount rules, used by every payment test",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/conftest.py:30 returns MagicMock(); e7f8a9b's message names the gateway's 400 on three decimals"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "Order placement tests assert only the status code",
+      "severity": "Medium",
+      "testability": "Direct",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Assertion strength",
+      "step": "AS1",
+      "gap": "Weak assertions on a critical flow",
+      "remedy": "Strengthen Assertions",
+      "location": "tests/test_orders.py:40-118",
+      "scenario": "Checkout is a named critical flow; place() changed in 22 commits in the window",
+      "blast_radius": "1 test file; OrderService.place()",
+      "trace": "1. tests/test_orders.py:40 posts an order and asserts 201. 2. :118 does the same for a discounted order. 3. Neither reads the total or the stored row",
+      "impact": "A wrong total or a missing outbox row passes both tests",
+      "exposure": "Checkout is a critical flow; api/orders/service.py: 22 commits in the window",
+      "coverage": {"net": "partial", "tests": ["tests/test_orders.py:40", "tests/test_orders.py:118"],
+                   "gaps": "Totals, the persisted order and the outbox row are not asserted"},
+      "asserts": [
+        "The response total equals the sum of line prices minus the discount",
+        "One order row and one outbox row are stored with that total"
+      ],
+      "steps": [
+        "1. Assert the total and the stored rows in both tests (verify: tests/test_orders.py green; fails when service.py:190 drops the discount)"
+      ],
+      "fix": "Assert the total, the order row and the outbox row",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/test_orders.py:52 and :130 assert status_code == 201 only"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "Export worker builds its HTTP client at import, so no test can pass its own",
+      "severity": "Low",
+      "testability": "Restructure",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Isolation and shared state",
+      "step": "IS1",
+      "gap": "Module-level client with no constructor seam",
+      "remedy": "Introduce Test Seam",
+      "location": "worker/export.py:22",
+      "scenario": "Every export test has to patch export.client, because nothing else can reach the client",
+      "blast_radius": "1 file in worker/; every Exporter",
+      "trace": "1. worker/export.py:22 creates the client at import. 2. Exporter.__init__ takes no client, against ADR 0007",
+      "impact": "Tests of the export worker can only patch a module global (F-005)",
+      "exposure": "worker/export.py: 2 commits in the window (below the hotspot bar)",
+      "coverage": {"net": "partial", "tests": ["tests/test_export.py:8"],
+                   "gaps": "The client is created at import (export.py:22); no constructor takes it"},
+      "steps": [
+        "1. Move client construction into Exporter.__init__ as a parameter defaulting to today's HttpClient(), callers unchanged (verify: worker tests green, tests/test_export.py unchanged)"
+      ],
+      "convention": "C-02",
+      "fix": "Inject the client as ADR 0007 says, with today's client as the default; coding-refactor work",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "worker/export.py:22 client = HttpClient(); docs/adr/0007-worker-wiring.md:9 requires constructor injection"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "Export tests patch a module global and leak it to later tests",
+      "severity": "Low",
+      "testability": "Direct",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Isolation and shared state",
+      "step": "IS1",
+      "gap": "Patched module global shared across tests",
+      "remedy": "Isolate Shared State",
+      "location": ["worker/export.py:30-58", "tests/test_export.py:8"],
+      "scenario": "tests/test_export.py patches export.client and does not restore it",
+      "blast_radius": "1 test file; every test that runs after it",
+      "trace": "1. tests/test_export.py:8 assigns export.client without restoring it. 2. Exporter.run() at worker/export.py:30-58 reads that global",
+      "impact": "Tests after test_export.py see the patched client; results depend on order",
+      "steps": [
+        "1. Pass a fake client to Exporter in tests/test_export.py and drop the patch (verify: tests pass alone and in reverse order)"
+      ],
+      "depends_on": ["F-004"],
+      "fix": "Construct Exporter with a fake client once F-004 gives it a constructor parameter",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/test_export.py:8 sets export.client = FakeClient() at module level; no teardown restores it"},
+      "status": "Open"
+    },
+    {
+      "id": "F-006",
+      "title": "report_v1 builder has no tests",
+      "severity": "Low",
+      "testability": "Direct",
+      "effort": "M",
+      "confidence": "Suspected",
+      "category": "Untested critical paths",
+      "step": "UC2",
+      "gap": "Untested module",
+      "remedy": "Add Behaviour Test",
+      "location": "legacy/report_v1.py:1",
+      "scenario": "None: the module is not reached",
+      "blast_radius": "1 file",
+      "trace": "1. legacy/report_v1.py:1 defines build(). 2. No import, route or config names it",
+      "impact": "Testing dead code has no exposure",
+      "fix": "Hand to prune-scan as a removal candidate",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "legacy/report_v1.py:1 is imported nowhere; a search for report_v1 in config and routes returns 0"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "Fake payment gateway", "findings": ["F-002"],
+     "prerequisite": "none", "pr_title": "test: fake gateway that enforces amount rules"},
+    {"batch": 2, "title": "Test B2B line refunds", "findings": ["F-001"],
+     "prerequisite": "Decide the correct B2B rounding (see decisions); the tests pin today's until then",
+     "pr_title": "test: B2B line refunds through refund_b2b()"},
+    {"batch": 3, "title": "Assert order totals and rows", "findings": ["F-003"],
+     "prerequisite": "none", "pr_title": "test: assert totals and stored rows in order tests"}
+  ],
+  "perspectives": [
+    {"name": "Untested critical paths", "status": "applied", "note": "UC1-UC3 applied; UC1 found F-001"},
+    {"name": "Error and edge cases", "status": "applied", "note": "EE1-EE3 applied; refund errors fall under F-001"},
+    {"name": "Assertion strength", "status": "applied", "note": "AS1-AS3 applied; AS1 found F-003"},
+    {"name": "Mock fidelity", "status": "applied", "note": "MF1-MF3 applied; MF1 found F-002"},
+    {"name": "Nondeterminism and flakiness", "status": "applied", "note": "ND1 via C-01; ND2-ND3 applied, no sleeps or reruns"},
+    {"name": "Isolation and shared state", "status": "applied", "note": "IS1-IS2 applied; IS1 found F-004 and F-005"},
+    {"name": "Integration and contract seams", "status": "applied", "note": "IC1-IC3 applied; gateway contract falls under F-002"},
+    {"name": "Test level balance", "status": "applied", "note": "TL1-TL2 applied"},
+    {"name": "Regression pinning", "status": "applied", "note": "RP1-RP2 applied; escaped fixes cited in F-001 and F-002"},
+    {"name": "Test data and fixtures", "status": "applied", "note": "TD1-TD2 applied; factories in tests/factories.py used throughout"},
+    {"name": "Disabled and skipped tests", "status": "applied", "note": "DS1-DS2 applied; 2 platform skips with conditions"},
+    {"name": "Suite execution in CI", "status": "applied", "note": "CI1-CI2 applied; .github/workflows/ci.yml runs tests/ and fails on error"}
+  ],
+  "checked_ok": [
+    "api/payments/charge.py: tests/test_charge.py:10-88 assert amount, currency and idempotency key",
+    "Every time-dependent test uses frozen_clock (C-01; 23 of 23 read)"
+  ],
+  "decisions": [
+    "Should B2B line refunds round half-even like retail? The tests in F-001 pin today's half-up",
+    "Confirm C-01 (frozen_clock fixture) as the intended idiom"
+  ],
+  "limitations": [
+    "Tests were not run; coverage is judged from reading the tests",
+    "History before 2025-03 was squashed on migration"
+  ],
+  "next_steps": [
+    "Batch 1 first; hand templates/plan.en.md to coding-test",
+    "F-004 (coding-refactor, alone) then F-005 when worker/ is next touched; F-006 to prune-scan"
+  ]
+}

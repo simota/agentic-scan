@@ -42,7 +42,9 @@ Phases: `RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT`.
   `source` (`documented`, `stated` by the requester, `inferred`) and evidence
   (`path:line` in the README, docs, product spec or landing copy). Purpose fit
   and over-building are judged against this baseline only
-  (`reference/units.md`)
+  (`reference/units.md`). Show this list to the requester in one line and use
+  their corrections; when nobody can answer (an unattended or delegated run),
+  record it as assumed in `limitations` and the chat summary, and continue
 - **Name the consumers**: every client, service, partner and operator that
   calls the app, in and outside the repository. Removal is risky exactly where
   a consumer cannot be seen

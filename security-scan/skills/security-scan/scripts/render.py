@@ -117,6 +117,53 @@ LABELS = {
     },
 }
 
+# How to read the levels: the one source for the legend on both pages. Each line
+# condenses a row of the severity table in SKILL.md (or a confidence rule there and
+# in reference/dependencies.md) and must change with it.
+LABELS["en"].update({
+    "legend": "How to read the levels",
+    "legend_severity": "Severity",
+    "legend_confidence": "Confidence",
+    "legend_sev_High": "An anonymous or ordinary signed-in actor, with nothing beyond what any account has, "
+                       "can read or alter another actor's crown-jewel data, take over an account, bypass "
+                       "authentication or payment, or reach code, SQL or command execution; also an "
+                       "internet-facing end-of-life runtime or framework, or a malicious package.",
+    "legend_sev_Medium": "A High-class impact that needs one condition the attacker does not control (victim "
+                         "interaction or knowledge, an unconfirmed setting, a non-admin privileged role), or "
+                         "direct impact on lower-value data or business rules.",
+    "legend_sev_Low": "A defense-in-depth gap, low-value disclosure, or a path that needs an admin, an insider "
+                      "or an unlikely chain.",
+    "legend_sev_Info": "A hardening note with no attacker path.",
+    "legend_conf_Confirmed": "The code as read shows the condition; it does not depend on a deployment setting.",
+    "legend_conf_Environment-dependent": "The condition depends on a deployment setting (proxy, trusted header, "
+                                         "debug flag, storage ACL); the finding names the setting to check.",
+    "legend_conf_Suspected": "Signals point to the issue but it is not confirmed; the finding says what would "
+                             "confirm it.",
+    "legend_separate": "Severity and confidence are graded separately: confidence never raises or lowers severity. "
+                       "Each further condition the attacker does not control lowers severity one level.",
+    "legend_assumed": "Severity rests on an assumed list; see decisions.",
+})
+LABELS["ja"].update({
+    "legend": "レベルの読み方",
+    "legend_severity": "重大度",
+    "legend_confidence": "確度",
+    "legend_sev_High": "匿名または通常のログイン利用者が、どのアカウントにもある権限だけで、他者の重要データ"
+                       "（クラウンジュエル）の閲覧・改ざん、アカウント乗っ取り、認証や決済の回避、コード・SQL・"
+                       "コマンドの実行に到達できる。インターネットに公開されたサポート終了のランタイム・"
+                       "フレームワーク、悪意あるパッケージも含む。",
+    "legend_sev_Medium": "High と同等の影響だが攻撃者が制御できない条件が1つ必要（被害者の操作や被害者固有の情報、"
+                         "未確認の設定、管理者以外の特権ロール）、または価値の低いデータや業務ルールへの直接の影響。",
+    "legend_sev_Low": "多層防御の不備、価値の低い情報の露出、または管理者・内部者・起こりにくい連鎖を要する経路。",
+    "legend_sev_Info": "攻撃経路のない堅牢化の提案。",
+    "legend_conf_Confirmed": "読んだコードで条件が示され、デプロイ時の設定に依存しない。",
+    "legend_conf_Environment-dependent": "デプロイ時の設定（プロキシ、信頼するヘッダー、デバッグフラグ、"
+                                         "ストレージの ACL）次第で成立する。確認すべき設定を指摘に明記する。",
+    "legend_conf_Suspected": "兆候はあるが未確認。何を確かめれば確定するかを指摘に明記する。",
+    "legend_separate": "重大度と確度は別々に判定します。確度によって重大度は上下しません。"
+                       "攻撃者が制御できない条件が1つ増えるごとに重大度は1段階下がります。",
+    "legend_assumed": "重大度は依頼者が確認していない一覧（仮定）に基づきます。「判断が必要な事項」を参照してください。",
+})
+
 # Shared wording keeps the dashboard and the printable assessment consistent.
 LABELS["en"].update({
     "part": "Source",
@@ -1080,6 +1127,9 @@ ASSESSMENT_CSS = """
 .verification-level{font-weight:700}
 .verification-record section,.workflow-record section{break-inside:auto;page-break-inside:auto}
 .validation-method{break-before:avoid;page-break-before:avoid}
+.level-legend dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:1mm 4mm;margin:1mm 0 3mm;font-size:9pt}
+.level-legend dt{font-weight:700}
+.level-legend dd{margin:0}
 """
 
 
@@ -1735,6 +1785,19 @@ def verification_summary_html(model, L, integrity_summary=None):
             f"<p class='small'>{esc(L['v_note'])}</p>{provenance}</div>")
 
 
+def legend_html(L, axis, section_class):
+    """How to read the levels, shared by the assessment and the dashboard."""
+    def levels(heading, prefix, order):
+        return (f"<h3>{esc(L[heading])}</h3><dl>" +
+                "".join(f"<dt>{esc(level)}</dt><dd>{esc(L[prefix + level])}</dd>" for level in order) + "</dl>")
+    assumed = f"<p class='small'>{esc(L['legend_assumed'])}</p>" if axis == "assumed" else ""
+    return (f"<section class='{esc(section_class)}' id='level-legend' tabindex='-1' aria-labelledby='level-legend-heading'>"
+            f"<h2 id='level-legend-heading'>{esc(L['legend'])}</h2>"
+            f"{levels('legend_severity', 'legend_sev_', SEVERITIES)}"
+            f"{levels('legend_confidence', 'legend_conf_', CONFIDENCES)}"
+            f"<p class='small'>{esc(L['legend_separate'])}</p>{assumed}</section>")
+
+
 def render_assessment_html(data, L, lang, integrity=None):
     L = {**ASSESSMENT_LABELS.get(lang, ASSESSMENT_LABELS["en"]), **L}
     m, st, fs = data["meta"], stats(data), active(data)
@@ -1952,6 +2015,7 @@ def render_assessment_html(data, L, lang, integrity=None):
 {three_pass_html(three_pass_view(data, lang, integrity=integrity), L)}
 <h3 class="limit-heading">{esc(L['a_limits'])}</h3><p class="small">{esc(L['a_uncertainty'])}</p>
 <div class="limits">{bullets(data.get('limitations', []), 'a_limits_empty')}</div></section>
+{legend_html(L, m.get('axis'), 'level-legend')}
 <section id="priority-queue"><h2>{esc(L['a_queue'])}</h2><p class="section-note">{esc(L['a_queue_note'])}</p>{verify_legend}{queue_html}</section>
 {decisions_html}{next_steps_html}
 <section id="recorded-coverage"><h2>{esc(L['a_coverage'])}</h2><p class="section-note">{esc(L['a_coverage_note'])}</p>
@@ -1991,7 +2055,7 @@ __STYLE__
 <header class="appbar"><div class="appbar-in"><span class="brand"><span data-l="eyebrow"></span><span class="appbar-project" id="appbar-project"></span></span><div class="tools"><a class="button" href="assessment.html" data-l="assessment_link"></a><button id="theme" type="button" data-l="theme"></button></div></div></header>
 <div class="shell">
 <nav class="sidebar" id="nav"><h2 class="nav-title" data-l="contents"></h2><ol class="nav-links">
-<li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#decisions-section" data-l="decisions"></a></li><li><a href="#coverage" data-l="nav_coverage"></a></li><li><a href="#findings" data-l="findings_register"></a></li><li><a href="#lists" data-l="nav_lists"></a></li>
+<li><a href="#overview" data-l="summary"></a></li><li><a href="#priority-section" data-l="priority"></a></li><li><a href="#decisions-section" data-l="decisions"></a></li><li><a href="#coverage" data-l="nav_coverage"></a></li><li><a href="#level-legend" data-l="legend"></a></li><li><a href="#findings" data-l="findings_register"></a></li><li><a href="#lists" data-l="nav_lists"></a></li>
 </ol><div class="facets"><h2 class="nav-title" data-l="severity"></h2><div id="facets"></div></div>
 <dl class="keys"><dt data-l="shortcuts" class="nav-title"></dt><dd><kbd>/</kbd> <span data-l="key_search"></span></dd><dd><kbd>j</kbd> <kbd>k</kbd> <span data-l="key_move"></span></dd><dd><kbd>Enter</kbd> <span data-l="key_toggle"></span></dd></dl></nav>
 <main>
@@ -2007,6 +2071,7 @@ __STYLE__
 __EXPERT__
 __THREE_PASS__
 <details class="panel coverage" id="coverage" tabindex="-1" open><summary><span data-l="coverage_heading"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><section><h3 data-l="limitations"></h3><div id="limitations"></div></section><section><h3 data-l="perspectives"></h3><div id="perspectives"></div></section></div></details>
+__LEGEND__
 <details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_sev"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_conf"></h3><div id="c-conf"></div></div><div class="panel"><h3 data-l="by_cat"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div><div class="panel"><h3 data-l="by_verdict"></h3><div id="c-verdict"></div><p class="section-note" data-l="excluded_note"></p></div></div></details>
 <section id="findings" tabindex="-1" aria-labelledby="findings-heading"><div class="section-head"><div><h2 id="findings-heading" data-l="findings_register"></h2><p data-l="findings_note"></p></div></div>
 <div class="panel filters-panel"><div class="filters">
@@ -2155,6 +2220,9 @@ DASHBOARD_CSS = """
 #decisions-section ul{margin:0;padding-left:20px}
 .verify-legend{margin:0 0 14px;color:var(--muted)}
 .verify-legend .action-label{font-family:var(--sans);font-size:12px;font-weight:700;color:var(--accent)}
+.level-legend dl{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:8px 0 14px}
+.level-legend dt{font-size:12px;font-weight:700}
+.level-legend dd{margin:0;overflow-wrap:anywhere}
 .card .n .pair{display:inline-block;white-space:nowrap;margin-right:18px}
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;color:var(--muted);margin-top:4px}
@@ -2210,9 +2278,10 @@ def render_dashboard(data, L, lang, integrity=None):
     replacements = {"__LANG__": lang, "__TITLE__": title, "__NOSCRIPT__": esc(L["no_script"]),
                     "__ASSESSMENT__": esc(L["assessment_link"]), "__DATA__": blob,
                     "__THREE_PASS__": three_pass_html(payload.get("three_pass_view"), L),
-                    "__EXPERT__": expert_html(payload.get("expert_view"), L)}
+                    "__EXPERT__": expert_html(payload.get("expert_view"), L),
+                    "__LEGEND__": legend_html(L, data["meta"].get("axis"), "panel level-legend")}
     # Substitute only template tokens, not token-like strings inside report data.
-    return re.sub(r"__(?:LANG|TITLE|NOSCRIPT|ASSESSMENT|DATA|THREE_PASS|EXPERT)__",
+    return re.sub(r"__(?:LANG|TITLE|NOSCRIPT|ASSESSMENT|DATA|THREE_PASS|EXPERT|LEGEND)__",
                   lambda match: replacements[match.group(0)], DASHBOARD)
 
 

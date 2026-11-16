@@ -173,6 +173,10 @@ when that condition is the shipped default or the repository's own config;
 when the repository does not show the setting either way, that setting is the
 one condition of the Medium row. Name the condition in both cases.
 
+Both report pages print a "How to read the levels" legend (`legend_*` labels in
+`scripts/render.py`) that condenses this table and the confidence rules; change
+it with them, in both languages.
+
 ## When the host refuses an action
 
 Classify the observed failure before deciding what to do; do not infer a safety

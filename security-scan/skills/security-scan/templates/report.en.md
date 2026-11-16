@@ -38,6 +38,28 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Unverified: {{n_unveri
 
 No requests were sent to any deployed environment.
 
+### How to read the levels
+
+<!-- Copied from the legend_* labels in scripts/render.py (the rendered pages carry the same text); keep them in step. -->
+
+| Severity | When |
+|---|---|
+| High | An anonymous or ordinary signed-in actor, with nothing beyond what any account has, can read or alter another actor's crown-jewel data, take over an account, bypass authentication or payment, or reach code, SQL or command execution; also an internet-facing end-of-life runtime or framework, or a malicious package. |
+| Medium | A High-class impact that needs one condition the attacker does not control (victim interaction or knowledge, an unconfirmed setting, a non-admin privileged role), or direct impact on lower-value data or business rules. |
+| Low | A defense-in-depth gap, low-value disclosure, or a path that needs an admin, an insider or an unlikely chain. |
+| Info | A hardening note with no attacker path. |
+
+| Confidence | Meaning |
+|---|---|
+| Confirmed | The code as read shows the condition; it does not depend on a deployment setting. |
+| Environment-dependent | The condition depends on a deployment setting (proxy, trusted header, debug flag, storage ACL); the finding names the setting to check. |
+| Suspected | Signals point to the issue but it is not confirmed; the finding says what would confirm it. |
+
+Severity and confidence are graded separately: confidence never raises or lowers severity. Each further condition the attacker does not control lowers severity one level.
+
+<!-- Keep the next line only when the severity axis is assumed. -->
+Severity rests on an assumed list; see decisions.
+
 ## 3. Findings to act on first
 
 <!-- In severity order; repeat the block per finding and link the issue filed from templates/issue.en.md. -->

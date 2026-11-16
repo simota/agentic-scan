@@ -25,6 +25,20 @@ chain of network and identity edges** (`reference/attack-paths.md`). A public
 bucket holding build logs and a role assumable from any GitHub repository are
 judged by where they lead, not by the rule they break.
 
+Neighbours, and where their questions go instead. The line with
+`security-scan`: a weakness fixed in the infrastructure configuration is a
+finding here; one fixed in the application's source is `security-scan`'s,
+even when a path here starts from it (an SSRF in a workload is cited as the
+entry, not reviewed):
+
+| Question | Skill |
+|---|---|
+| Write the fix | `coding-implement` |
+| The application's own source: routes, authorization, injection, its dependencies and secrets in its code | `security-scan` |
+| Personal data flows, retention and deletion | `privacy-scan` |
+| Behaviour when a cloud dependency fails: timeouts, health checks, rollback | `reliability-scan` |
+| Resources, integrations or permissions nothing uses | `prune-scan` |
+
 ## Before starting
 
 - **Confirm scope and authorization in one line**: which accounts, projects or

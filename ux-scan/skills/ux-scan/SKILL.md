@@ -89,6 +89,10 @@ the assumption is recorded in `limitations`. Data loss is not lowered for being
 on a secondary flow. Third-party widgets count
 only where the app chose and configured them.
 
+The report and dashboard print a level legend that condenses this table and
+the confidence table in `reference/validation.md` (`LABELS` in
+`scripts/render.py`); change it with them.
+
 ## Phases
 
 | Phase | Do | Reference |

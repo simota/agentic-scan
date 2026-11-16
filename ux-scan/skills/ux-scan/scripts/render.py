@@ -79,7 +79,24 @@ LABELS = {
            "screen": "Screen", "viewport": "Viewport", "occurrences": "Occurrences", "impact": "Impact",
            "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]",
            "viewports": "Viewports", "locales": "Locales", "axis": "Severity axis",
-           "axis_confirmed": "confirmed by the requester", "axis_assumed": "assumed; not confirmed by the requester"},
+           "axis_confirmed": "confirmed by the requester", "axis_assumed": "assumed; not confirmed by the requester",
+           # The level legend condenses SKILL.md's severity table and reference/validation.md's
+           # confidence table; change it with them.
+           "levels": "How to read the levels",
+           "levels_severity": {
+               "High": "A primary task cannot be completed, the user's data or input is lost, an essential control "
+                       "is unreachable by keyboard or unnamed for a screen reader, or the layout is broken at a "
+                       "supported viewport.",
+               "Medium": "Significant friction or inconsistency on a primary flow, or a High-class blocker on a "
+                         "secondary flow.",
+               "Low": "Local polish, or a Medium-class friction on a secondary flow.",
+               "Info": "No user-visible effect today."},
+           "levels_confidence": {
+               "Confirmed": "The code alone shows the defect and its reach.",
+               "Runtime-dependent": "The defect is real, but its visible effect depends on rendering not observed.",
+               "Suspected": "It rests on something not read."},
+           "levels_separate": "Severity and confidence are graded separately: confidence never raises or lowers severity.",
+           "levels_assumed": "Severity rests on an assumed list; see decisions."},
     "ja": {"kind": "UX診断", "title": "UX診断書", "dashboard_title": "UX診断結果",
            "running_footer": "UX診断", "fix": "修正", "verify": "先に検証",
            "verify_text": "変更する前に、利用者が実際にこの状態に到達し、他の箇所で補われていないことを確認してください。",
@@ -87,7 +104,20 @@ LABELS = {
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
            "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]",
            "viewports": "ビューポート", "locales": "ロケール", "axis": "重大度の軸",
-           "axis_confirmed": "依頼者が確認済み", "axis_assumed": "仮定（依頼者は未確認）"},
+           "axis_confirmed": "依頼者が確認済み", "axis_assumed": "仮定（依頼者は未確認）",
+           "levels": "レベルの読み方",
+           "levels_severity": {
+               "High": "主要タスクを完了できない、利用者のデータや入力が失われる、必須の操作にキーボードで届かないか"
+                       "スクリーンリーダー向けの名前がない、または対応ビューポートでレイアウトが崩れている。",
+               "Medium": "主要フローでの大きな摩擦や不整合、または副次フローでの High 相当の阻害。",
+               "Low": "局所的な仕上げの問題、または副次フローでの Medium 相当の摩擦。",
+               "Info": "現時点で利用者に見える影響がない。"},
+           "levels_confidence": {
+               "Confirmed": "コードだけで欠陥とその到達範囲が示せる。",
+               "Runtime-dependent": "欠陥は実在するが、見た目への影響は観察していない描画に左右される。",
+               "Suspected": "読んでいないものに依拠している。"},
+           "levels_separate": "重大度と確度は別々に判定する。確度で重大度を上げ下げしない。",
+           "levels_assumed": "重大度は依頼者が確認していない仮定の一覧に基づく。判断事項を参照。"},
 }
 
 
@@ -216,6 +246,49 @@ def judged_scope(meta, flows, T):
     return " · ".join(p for p in parts if p)
 
 
+LEVELS_REPORT_ANCHOR = '<section id="priority-queue">'
+LEVELS_DASHBOARD_ANCHOR = '<details class="chart-section">'
+LEVELS_REPORT_CSS = ".levels th{width:24%}.levels tbody th{border-bottom:0}.levels tbody tr+tr th{border-top:.3pt solid var(--hair)}"
+LEVELS_DASHBOARD_CSS = ".levels th{width:180px}@media(max-width:480px){.levels th{width:38%}}"
+
+
+def levels_html(meta, lang, chrome):
+    """The level legend: each severity and confidence with this scan's condition, then how they combine.
+
+    chrome holds the kit's own labels (scan_report_kit.report.labels_for), so the
+    legend names severity and confidence as the pages' columns do.
+    """
+    T, esc = LABELS[lang], page_shell.esc
+
+    def table(key, levels, badge):
+        rows = "".join("<tr><th scope='row'>" + (f"<span class='badge {esc(k)}'>{esc(k)}</span>" if badge else esc(k))
+                       + f"</th><td>{esc(levels[k])}</td></tr>" for k in levels)
+        return f"<table class='levels'><caption>{esc(chrome[key])}</caption><tbody>{rows}</tbody></table>"
+
+    closing = T["levels_separate"] + (" " + T["levels_assumed"] if meta.get("axis") == "assumed" else "")
+    return (f"{table('severity', T['levels_severity'], True)}{table('confidence', T['levels_confidence'], False)}"
+            f"<p class='section-note levels-note'>{esc(closing)}</p>")
+
+
+def inject_levels(pages, meta, lang, chrome):
+    """report.html and dashboard.html with the level legend; the kit has no section for it."""
+    body, heading = levels_html(meta, lang, chrome), page_shell.esc(LABELS[lang]["levels"])
+    report_page, dashboard = pages["report.html"], pages["dashboard.html"]
+    if report_page.count(LEVELS_REPORT_ANCHOR) != 1 or report_page.count("</head>") != 1:
+        raise RuntimeError("report template changed: cannot place the level legend")
+    if dashboard.count(LEVELS_DASHBOARD_ANCHOR) != 1 or "</head>" not in dashboard:
+        raise RuntimeError("dashboard template changed: cannot place the level legend")
+    report_page = report_page.replace(
+        LEVELS_REPORT_ANCHOR, f'<section id="levels"><h2>{heading}</h2>{body}</section>\n' + LEVELS_REPORT_ANCHOR, 1)
+    dashboard = dashboard.replace(
+        LEVELS_DASHBOARD_ANCHOR,
+        f'<details class="panel levels-panel" id="levels" open><summary><span>{heading}</span></summary>{body}</details>\n'
+        + LEVELS_DASHBOARD_ANCHOR, 1)
+    # The first </head> closes the head: record text comes later, in the body.
+    return {**pages, "report.html": report_page.replace("</head>", f"<style>{LEVELS_REPORT_CSS}</style></head>", 1),
+            "dashboard.html": dashboard.replace("</head>", f"<style>{LEVELS_DASHBOARD_CSS}</style></head>", 1)}
+
+
 def to_common(data, lang, flows=None, repo=None):
     """data (findings.json) as a scan-report/1 record."""
     T, fam, prio = LABELS[lang], FAMILIES[lang], PRIORITY[lang]
@@ -299,6 +372,7 @@ def main(argv=None):
         common = report.validate(to_common(data, a.lang, flows, repo))
         pages = {"dashboard.html": report.render_dashboard(common, a.lang),
                  "report.html": report.render_document(common, a.lang)}
+        pages = inject_levels(pages, data["meta"], a.lang, report.labels_for(common, a.lang))
         companions = []  # (page, label) linked from the dashboard's app bar, in this order
         if files:
             pages["report.html"] = evidence.inject_report(pages["report.html"], data, files, a.lang, href)

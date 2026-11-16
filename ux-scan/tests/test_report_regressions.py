@@ -224,6 +224,40 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
         self.assertIn("重大度の軸: 仮定（依頼者は未確認）", (self.out / "ja" / "report.html").read_text(encoding="utf-8"))
 
+    def test_every_severity_and_confidence_has_a_legend_line_in_both_languages(self):
+        for lang, labels in render.LABELS.items():
+            for key, levels in (("levels_severity", findings.SEVERITIES), ("levels_confidence", findings.CONFIDENCES)):
+                with self.subTest(lang=lang, key=key):
+                    self.assertEqual(list(labels[key]), list(levels))
+                    self.assertTrue(all(labels[key][level].strip() for level in levels))
+
+    def test_the_level_legend_appears_in_the_report_and_dashboard(self):
+        for lang in ("en", "ja"):
+            out = self.out / lang
+            self.assertEqual(self.invoke(lang=lang, out=out)[0], 0)
+            labels = render.LABELS[lang]
+            lines = [*labels["levels_severity"].values(), *labels["levels_confidence"].values(),
+                     labels["levels_separate"]]
+            for page in ("report.html", "dashboard.html"):
+                with self.subTest(lang=lang, page=page):
+                    source = (out / page).read_text(encoding="utf-8")
+                    self.assertEqual(source.count(f">{html.escape(labels['levels'])}<"), 1)
+                    for line in lines:
+                        self.assertIn(html.escape(line), source)
+
+    def test_the_assumed_axis_line_appears_only_when_the_axis_is_assumed(self):
+        for axis in ("confirmed", "assumed"):
+            self.data["meta"]["axis"] = axis
+            self.save_inputs()
+            for lang in ("en", "ja"):
+                out = self.out / axis / lang
+                self.assertEqual(self.invoke(lang=lang, out=out)[0], 0)
+                for page in ("report.html", "dashboard.html"):
+                    with self.subTest(axis=axis, lang=lang, page=page):
+                        source = (out / page).read_text(encoding="utf-8")
+                        line = html.escape(render.LABELS[lang]["levels_assumed"])
+                        (self.assertIn if axis == "assumed" else self.assertNotIn)(line, source)
+
     def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
         del self.data["meta"]["axis"]
         self.save_inputs()

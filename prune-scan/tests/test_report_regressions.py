@@ -159,11 +159,11 @@ class SnippetRegressionTests(unittest.TestCase):
                          "descriptor-relative no-follow opens require POSIX")
     def test_source_replaced_by_symlink_is_not_read(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / "repo"
+            repo = Path(tmp).resolve() / "repo"
             repo.mkdir()
             source = repo / "source.py"
             source.write_text("print('public')\n", encoding="utf-8")
-            outside = Path(tmp) / "outside.py"
+            outside = Path(tmp).resolve() / "outside.py"
             outside.write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
             resolve = Path.resolve
 
@@ -181,11 +181,11 @@ class SnippetRegressionTests(unittest.TestCase):
                          "descriptor-relative no-follow opens require POSIX")
     def test_source_parent_replaced_by_symlink_is_not_read(self):
         with tempfile.TemporaryDirectory() as tmp:
-            repo = Path(tmp) / "repo"
+            repo = Path(tmp).resolve() / "repo"
             source_dir = repo / "src"
             source_dir.mkdir(parents=True)
             (source_dir / "source.py").write_text("print('public')\n", encoding="utf-8")
-            outside = Path(tmp) / "outside"
+            outside = Path(tmp).resolve() / "outside"
             outside.mkdir()
             (outside / "source.py").write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
             resolve = Path.resolve
@@ -204,12 +204,12 @@ class SnippetRegressionTests(unittest.TestCase):
                          "descriptor-relative no-follow opens require POSIX")
     def test_repository_ancestor_replaced_by_symlink_is_not_read(self):
         with tempfile.TemporaryDirectory() as tmp:
-            ancestor = Path(tmp) / "checkout"
+            ancestor = Path(tmp).resolve() / "checkout"
             repo = ancestor / "repo"
             repo.mkdir(parents=True)
             source = repo / "source.py"
             source.write_text("print('public')\n", encoding="utf-8")
-            outside = Path(tmp) / "outside"
+            outside = Path(tmp).resolve() / "outside"
             (outside / "repo").mkdir(parents=True)
             (outside / "repo" / "source.py").write_text("DO_NOT_PUBLISH\n", encoding="utf-8")
             resolve = Path.resolve
@@ -226,7 +226,7 @@ class SnippetRegressionTests(unittest.TestCase):
 
     def check_regular_repository_replacement(self, *, ancestor, boundary, fallback=False):
         with tempfile.TemporaryDirectory() as tmp:
-            base = Path(tmp)
+            base = Path(tmp).resolve()
             checkout = base / "checkout"
             repo = checkout / "repo"
             source = repo / "src" / "source.py"
@@ -316,7 +316,7 @@ class ReportFixture(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
-        self.out = Path(self.tmp.name)
+        self.out = Path(self.tmp.name).resolve()
         self.data = copy.deepcopy(SAMPLE)
         self.data["limitations"].append("report.pdf not produced: no PDF engine in this test")
         self.write_record()

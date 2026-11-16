@@ -1,5 +1,6 @@
 """Repository-boundary and false-positive regressions found in the full review."""
 import contextlib
+import errno
 import io
 import json
 import os
@@ -259,7 +260,7 @@ print(json.dumps(inventory.inventory(root)))
 
     def test_file_growth_after_the_size_check_still_obeys_the_byte_limit(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
+            root = Path(tmp).resolve()
             source = root / "ordinary.py"
             source.write_text("# deprecated marker\n", encoding="utf-8")
             original_stat, original_fstat = Path.stat, os.fstat
@@ -289,6 +290,17 @@ print(json.dumps(inventory.inventory(root)))
             self.assertEqual(result["markers"], [])
 
 
+@contextlib.contextmanager
+def refused_name_skips(case):
+    """Skip case when the filesystem refuses a non-UTF-8 name (APFS: EILSEQ)."""
+    try:
+        yield
+    except OSError as error:
+        if error.errno != errno.EILSEQ:
+            raise
+        case.skipTest("the filesystem refuses non-UTF-8 names")
+
+
 class StructuredInputTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix", "surrogateescape filenames require POSIX")
     def test_non_utf8_filenames_are_skipped_without_aborting_the_scan(self):
@@ -297,8 +309,9 @@ class StructuredInputTests(unittest.TestCase):
             root = parent / "repo"
             root.mkdir()
             (root / "ordinary.py").write_text("def uncalled():\n    pass\n", encoding="utf-8")
-            with open(os.fsencode(root) + b"/helper-\xff.py", "wb") as handle:
-                handle.write(b"# deprecated unreadable-name\n")
+            with refused_name_skips(self):
+                with open(os.fsencode(root) + b"/helper-\xff.py", "wb") as handle:
+                    handle.write(b"# deprecated unreadable-name\n")
             output = parent / "inventory.json"
             with contextlib.redirect_stdout(io.StringIO()):
                 status = inventory.main([str(root), "--out", str(output)])
@@ -313,7 +326,8 @@ class StructuredInputTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             parent = Path(tmp)
             root = Path(os.fsdecode(os.fsencode(parent) + b"/repo-\xff"))
-            root.mkdir()
+            with refused_name_skips(self):
+                root.mkdir()
             (root / "ordinary.py").write_text("def uncalled():\n    pass\n", encoding="utf-8")
             output = parent / "inventory.json"
             with contextlib.redirect_stdout(io.StringIO()):

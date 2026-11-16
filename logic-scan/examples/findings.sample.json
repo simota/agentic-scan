@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "project": "acme-billing (fictional sample)",
+    "scope": "app/ and tests/; core flows: checkout, invoicing, subscription renewal",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code (sample)",
+    "method": "Static review; git log 12 months",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "en"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "Amounts are stored and passed between modules as integer yen",
+     "source": "majority: 14 of 14 amount fields; app/billing/money.py:3", "concern": "NUMBERS",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "Report queries count distinct order ids, never payment rows",
+     "source": "docs/adr/0007-reporting.md:7", "concern": "OTHER", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "The invoice rounds tax per line while the charge rounds it once, so the card is charged a different amount",
+      "severity": "High",
+      "change": "Shared",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Numbers and money",
+      "step": "NM2",
+      "hazard": "The amount charged to the card differs from the invoice total by up to one yen per line",
+      "remedy": "Centralise Rounding",
+      "location": ["app/billing/invoice.py:42", "app/payments/charge.py:88"],
+      "scenario": "Any order with several lines whose tax has a fraction: three lines of 333 yen at 10%",
+      "blast_radius": "Checkout and subscription renewal both charge through charge.py; invoices and the accounting export read invoice.py",
+      "trace": "1. app/billing/invoice.py:42 rounds each line's tax down and sums the lines. 2. app/payments/charge.py:88 sums the net lines, applies the rate once and rounds with Python's round() (half to even). 3. Both feed the customer: the invoice PDF and the card statement. 4. Fixes 9c1d2e4 and 5b7a0f3 refunded 1-yen differences by hand",
+      "impact": "Customers are charged one yen more than their invoice says; support refunds by hand and the accounting export disagrees with the payment provider",
+      "exposure": "Core flow checkout (money); 4 callers of charge.py; fixes 9c1d2e4 and 5b7a0f3 refunded mismatches in the window",
+      "counterexample": {
+        "input": "One order: three lines of 333 yen each, tax rate 10%",
+        "expected": "Invoice total and charged amount both 1,098 yen (tax 33 per line, rounded down)",
+        "actual": "Invoice total 1,098 yen; charged amount 1,099 yen (999 x 0.1 = 99.9, rounded to 100)",
+        "oracle": "docs/billing/tax.md:12 states tax is computed per line and rounded down"
+      },
+      "enforcement": {"net": "partial", "sites": ["tests/billing/test_invoice.py:30"],
+                      "gaps": "The invoice test covers one-line orders only; nothing compares the charged amount with the invoice"},
+      "change_reason": "charge.py:88 is shared by checkout and subscription renewal (4 callers); renewals will charge one yen less on some invoices, which finance must expect",
+      "invariants": [
+        "For every order, the amount charged equals the invoice total",
+        "Tax is computed per line and rounded down, by one function every caller uses"
+      ],
+      "steps": [
+        "1. Move per-line tax into billing.tax.line_tax, call it from invoice.py and charge.py, and add a test: three lines of 333 yen at 10% give 1,098 yen on the invoice and in the charge (verify: the new test fails with the change reverted, at the charge assertion, and the billing suite passes with it)",
+        "2. Update the renewal tests that expected the old charge (verify: the renewal suite passes and expects 1,098 yen for the three-line case)"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "One rounding function, per line and down, used by both the invoice and the charge",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/billing/invoice.py:42 floor per line; app/payments/charge.py:88 round(total * rate); git show 9c1d2e4 5b7a0f3 refund 1-yen differences"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "Checkout hard-codes the tax rate while invoices read it from settings",
+      "severity": "Medium",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Rule duplication and drift",
+      "step": "RD2",
+      "hazard": "The tax rate is defined twice, and only one copy follows the setting",
+      "remedy": "Single Source for the Rule",
+      "location": "app/checkout/preview.py:14-31",
+      "scenario": "The rate changes in settings, as it did once in the window (commit 2e4f6a1); the checkout preview keeps the old one",
+      "blast_radius": "1 module; the checkout preview every customer sees before paying",
+      "trace": "1. app/checkout/preview.py:22 multiplies the total by the literal 1.1. 2. app/billing/invoice.py:18 reads settings.TAX_RATE. 3. Commit 2e4f6a1 changed the setting and not the literal",
+      "impact": "The preview shows a total different from the invoice whenever the setting is not 10%",
+      "exposure": "Core flow checkout; 2 copies of the rate; commit 2e4f6a1 changed one of them in the window",
+      "counterexample": {
+        "input": "settings.TAX_RATE = 0.08, an order of 1,000 yen",
+        "expected": "Preview total 1,080 yen, as the invoice will show",
+        "actual": "Preview total 1,100 yen",
+        "oracle": "app/billing/invoice.py:18 and docs/billing/tax.md:5: the rate is configuration"
+      },
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "No test sets TAX_RATE to anything but 0.1, so the literal and the setting always agree in the suite"},
+      "invariants": [
+        "Every price shown or charged uses settings.TAX_RATE",
+        "With TAX_RATE = 0.08, the preview of a 1,000 yen order is 1,080 yen"
+      ],
+      "steps": [
+        "1. Replace the literal with settings.TAX_RATE through the billing tax module, with a preview test at TAX_RATE = 0.08 (verify: the test gives 1,080 yen, and fails with the change reverted)",
+        "2. Search for other literal rates and route them the same way (verify: grep for 0.1 and 1.1 in app/ finds no tax use)"
+      ],
+      "fix": "Read the rate from one place, the billing tax module",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/checkout/preview.py:22 total * 1.1; app/billing/invoice.py:18 settings.TAX_RATE; git show 2e4f6a1 touches settings only"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "Subscription renewal compares the server's UTC date with the customer's billing day",
+      "severity": "Medium",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Dates, times and time zones",
+      "step": "DT1",
+      "hazard": "On a JST billing day, renewal waits until 09:00 JST, when the server's UTC date catches up",
+      "remedy": "Use Zone-Aware Time",
+      "location": "app/jobs/renew_subscriptions.py:9-20",
+      "scenario": "The renewal job runs hourly; on a customer's billing day it runs at 01:00 JST, when the server's date is still the day before",
+      "blast_radius": "1 job; every subscription in a time zone ahead of UTC",
+      "trace": "1. renew_subscriptions.py:12 takes date.today() on a server set to UTC (config/runtime.py:4). 2. :15 compares it with subscription.billing_day, stored as a JST calendar date. 3. Runs before 09:00 JST see yesterday's date",
+      "impact": "Renewals run up to nine hours late: customers keep access past the end of their period until 09:00 JST and are charged that much later; the hourly runs before 09:00 do nothing for them",
+      "exposure": "Core flow subscription renewal (money); every JST customer; no fix commit in the window",
+      "counterexample": {
+        "input": "billing_day 2026-11-01 (JST); the job runs at 2026-11-01 01:00 JST (2026-10-31 16:00 UTC)",
+        "expected": "The subscription renews on that run",
+        "actual": "date.today() is 2026-10-31, so it is skipped; it renews on the 09:00 JST run, when the UTC date becomes 2026-11-01",
+        "oracle": "docs/billing/subscriptions.md:9: renewal happens on the billing day in the customer's time zone"
+      },
+      "enforcement": {"net": "partial", "sites": ["tests/billing/test_renewal.py:14"],
+                      "gaps": "The renewal test freezes time at 12:00 UTC, where UTC and JST agree on the date"},
+      "invariants": [
+        "A subscription renews on the first run on or after the start of its billing day in the customer's time zone",
+        "A run at 01:00 JST on the billing day renews it"
+      ],
+      "steps": [
+        "1. Compute today in the customer's zone with zoneinfo and compare that with billing_day, with a test freezing time at 2026-10-31 16:00 UTC (verify: the test renews a 2026-11-01 JST subscription, and fails with the change reverted)"
+      ],
+      "fix": "Compare billing_day with the date in the customer's time zone, not the server's",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/jobs/renew_subscriptions.py:12 date.today(); config/runtime.py:4 TZ=UTC; tests/billing/test_renewal.py:14 freezes 12:00 UTC"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "The monthly sales report counts an order once per payment, against the distinct-order rule",
+      "severity": "Low",
+      "change": "Correction",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Collections and aggregation",
+      "step": "CA1",
+      "hazard": "Orders paid in two parts are counted twice",
+      "remedy": "Fix Aggregation Key",
+      "location": ["app/reports/monthly_sales.py:27", "app/reports/queries.sql:12"],
+      "scenario": "Split payments, enabled in 2026-03, give an order two payment rows",
+      "blast_radius": "1 internal report; finance reads it, nothing else consumes it",
+      "trace": "1. queries.sql:12 joins orders to payments. 2. monthly_sales.py:27 counts the joined rows. 3. docs/adr/0007-reporting.md:7 requires counting distinct order ids",
+      "impact": "Order counts in the internal monthly report are overstated since 2026-03",
+      "exposure": "Non-core internal report; split payments are about 4% of orders (docs/ops/payments.md:20)",
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "The report has no test, and its fixture has no split payment"},
+      "change_reason": "Reports for 2026-03 onwards were already sent to finance overstated; correcting them needs a re-run and a note to finance",
+      "steps": [
+        "1. Count distinct order ids, with a fixture order paid in two payments (verify: it counts once, and twice with the change reverted)",
+        "2. Re-run the reports from 2026-03 and send the corrected counts to finance (verify: the corrected counts are lower by the number of split-payment orders)"
+      ],
+      "convention": "C-02",
+      "fix": "Count distinct order ids, as ADR 0007 requires, and correct the reports already sent",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/reports/monthly_sales.py:27 len(rows) over the join at app/reports/queries.sql:12; docs/adr/0007-reporting.md:7 requires COUNT(DISTINCT order_id)"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "Legacy coupon code treats a zero discount as no discount given",
+      "severity": "Low",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Null, empty and missing",
+      "step": "NE1",
+      "hazard": "if discount: skips a recorded zero and falls back to the default",
+      "remedy": "Distinguish Missing from Zero",
+      "location": "app/legacy/coupons.py:31",
+      "scenario": "Nothing calls the module",
+      "blast_radius": "1 module",
+      "trace": "1. coupons.py:31 tests the discount for truth. 2. No route, job or import reaches coupons.py",
+      "impact": "Code nothing calls cannot produce a wrong result",
+      "fix": "Hand to prune-scan as a removal candidate",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "app/legacy/coupons.py:31 is reachable from nowhere; a search for coupons in app/ and tests/ returns only the file itself"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "One source for the tax rate", "findings": ["F-002"],
+     "prerequisite": "none", "pr_title": "fix: read the tax rate from settings in checkout"},
+    {"batch": 2, "title": "One rounding rule for invoice and charge", "findings": ["F-001"],
+     "prerequisite": "Finance agrees that renewals may charge one yen less (see decisions)",
+     "pr_title": "fix: round tax per line, the same way for invoice and charge"},
+    {"batch": 3, "title": "Renew on the customer's date", "findings": ["F-003"],
+     "prerequisite": "none", "pr_title": "fix: compare billing day in the customer's time zone"}
+  ],
+  "perspectives": [
+    {"name": "Boundaries and ranges", "status": "applied", "note": "BD1-BD3 applied; period ends are exclusive throughout (app/billing/period.py:8)"},
+    {"name": "Conditions and branches", "status": "applied", "note": "CB1-CB3 applied"},
+    {"name": "Null, empty and missing", "status": "applied", "note": "NE1-NE3 applied; NE1 found F-005, which nothing reaches"},
+    {"name": "Numbers and money", "status": "applied", "note": "NM1-NM3 applied; floats appear only inside the tax computations of F-001 and F-002, and every stored amount is integer (C-01); NM2 found F-001"},
+    {"name": "Dates, times and time zones", "status": "applied", "note": "DT1-DT3 applied; DT1 found F-003"},
+    {"name": "State and lifecycle", "status": "applied", "note": "SL1-SL3 applied; subscription transitions go through app/billing/subscription.py:40"},
+    {"name": "Collections and aggregation", "status": "applied", "note": "CA1-CA3 applied; CA1 found F-004"},
+    {"name": "Text, encoding and locale", "status": "applied", "note": "TE1-TE3 applied; customer names are NFKC-normalised on save (app/customers/model.py:22)"},
+    {"name": "In-process concurrency and ordering", "status": "applied", "note": "CO1-CO3 applied; no shared mutable state between requests"},
+    {"name": "Rule duplication and drift", "status": "applied", "note": "RD1-RD3 applied; RD2 found F-002"},
+    {"name": "Error paths and defaults", "status": "applied", "note": "ER1-ER3 applied"},
+    {"name": "Equality and types", "status": "applied", "note": "EQ1-EQ3 applied; ids are compared as int everywhere"}
+  ],
+  "checked_ok": [
+    "app/billing/period.py:8-30: billing periods are half-open [start, end) in every reader",
+    "Every stored amount field is integer yen (C-01; 14 of 14 read)"
+  ],
+  "decisions": [
+    "Whether renewals may charge one yen less once F-001 is fixed, and whether past 1-yen overcharges are refunded",
+    "Confirm C-01 (amounts stored and passed as integer yen) as the intended rule"
+  ],
+  "limitations": [
+    "No test was run; counterexamples are traced by reading the code",
+    "History before 2025-03 was squashed on migration"
+  ],
+  "next_steps": [
+    "Batch 1 first; hand templates/plan.en.md to coding-implement",
+    "F-004 with finance's agreement on the corrected reports; F-005 to prune-scan"
+  ]
+}

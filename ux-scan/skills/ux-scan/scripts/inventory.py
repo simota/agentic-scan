@@ -486,8 +486,9 @@ def jsx_child_text(text, i, budget, memo=None):
     memo, a dict kept for one text, holds the answer from each tag start an earlier call passed
     with no element left to match, so "<p><b>x</b> /* … /*" does not re-read the line per "/*".
     """
-    line_start = text.rfind("\n", 0, i) + 1
-    if i - line_start > budget[0]:
+    lo = max(0, i - budget[0] - 1)
+    line_start = text.rfind("\n", lo, i) + 1
+    if (line_start == 0 and lo > 0) or i - line_start > budget[0]:
         budget[0] = 0
         return False
     budget[0] -= i - line_start

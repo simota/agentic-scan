@@ -77,6 +77,10 @@ delivers at least once"), and that condition counts as one the code does not
 control: a High-class risk that needs it is Medium. The condition lowers the
 severity; the confidence label says only how sure the finding is.
 
+Both reports print a "How to read the levels" legend (`scripts/render.py`
+`LABELS`, `level_*` keys) that condenses this table and the confidence
+definitions in `reference/findings-schema.md`; change it with them.
+
 `Environment-dependent` is for deployment and delivery conditions the
 repository does not state (delivery semantics, instance count, client
 retries). A failure that can always happen — a crash or timeout between two

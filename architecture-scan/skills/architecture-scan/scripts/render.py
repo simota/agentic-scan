@@ -83,6 +83,26 @@ LABELS = {
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
         "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
         "axis_assumed": "assumed; not confirmed by the requester",
+        # The level legend condenses SKILL.md's severity table and the confidence
+        # definitions in reference/findings-schema.md; change it with them.
+        "levels": "How to read the levels",
+        "level_High": "The structure already allows incorrect behaviour or data damage on a core "
+                      "flow; or a dependency cycle or boundary breach forces lockstep changes across "
+                      "modules in an area the history shows changes often.",
+        "level_Medium": "A High-class consistency or failure risk that needs one condition the code "
+                        "does not control; or a rule violation that measurably raises change cost on "
+                        "an area that changes, below the High bar for \"changes often\"; or a "
+                        "contract that leaks internal models to external clients.",
+        "level_Low": "A rule violation in stable or peripheral code, an inconsistency of patterns "
+                     "without demonstrated cost, or a missing seam that makes one area hard to test.",
+        "level_Info": "A design note with no demonstrated defect or change cost.",
+        "level_Confirmed": "Follows from the code.",
+        "level_Environment-dependent": "Needs a named deployment or delivery condition that the "
+                                       "repository does not state.",
+        "level_Suspected": "Does not follow from the code alone; a change-cost claim without "
+                           "history is at most Suspected.",
+        "levels_separate": "Severity and confidence are graded separately.",
+        "levels_assumed": "Severity rests on an assumed list; see decisions.",
         "architecture": "Architecture: before and after",
         "before": "Before: the assessed revision",
         "after": "After: with the recorded fix directions applied",
@@ -120,6 +140,23 @@ LABELS = {
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
         "axis": "重大度の軸", "axis_confirmed": "依頼者が確認済み",
         "axis_assumed": "仮定（依頼者は未確認）",
+        "levels": "レベルの読み方",
+        "level_High": "構造上すでに、コアフローで誤った動作やデータ破損が起こり得る。または、依存の循環や"
+                      "境界違反のため、履歴上頻繁に変更される領域で複数モジュールの同時変更が強いられている。",
+        "level_Medium": "High 相当の整合性・障害リスクだが、コードが制御しない条件が一つ必要。または、変更の"
+                        "ある領域で変更コストを測定できるほど上げるルール違反（「頻繁に変更される」の基準"
+                        "未満）。または、内部モデルを外部クライアントに漏らす契約。",
+        "level_Low": "安定した、または周辺のコードでのルール違反、コストが示されていないパターンの不統一、"
+                     "または一領域のテストを難しくする継ぎ目の欠如。",
+        "level_Info": "欠陥も変更コストも示されていない設計上の注記。",
+        "level_Confirmed": "コードから導かれる。",
+        "level_Environment-dependent": "リポジトリが明示していない、配備や配信に関する条件を名指しで"
+                                       "必要とする。",
+        "level_Suspected": "コードだけからは導かれない。履歴の裏付けがない変更コストの主張は最大でも "
+                           "Suspected。",
+        "levels_separate": "重大度と確度は別々に判定します。",
+        "levels_assumed": "重大度は依頼者が確認していない一覧を仮定して判定しています。"
+                          "「人が判断すべき事項」を参照してください。",
         "architecture": "アーキテクチャ: 修正前と修正後",
         "before": "修正前: 診断時点のリビジョン",
         "after": "修正後: 記録した修正方針を適用した姿",
@@ -137,6 +174,13 @@ LABELS = {
 }
 FIELDS = ("location", "scenario", "blast_radius", "trace", "contrast", "impact", "rule",
           "fix", "guard")
+
+
+def level_legend(meta, lang):
+    """The level legend: one (level, meaning) pair per severity and confidence, and a closing line."""
+    t = LABELS[lang]
+    closing = t["levels_separate"] + (" " + t["levels_assumed"] if meta.get("axis") == "assumed" else "")
+    return [(level, t["level_" + level]) for level in (*SEVERITIES, *CONFIDENCES)], closing
 
 
 def counts(findings):
@@ -526,6 +570,9 @@ def render_markdown(doc, lang):
               *([f"| {t['axis']} | {cell(t['axis_' + meta['axis']])} |"]
                 if meta.get("axis") in AXES else []),
               f"| {t['date']} | {cell(meta.get('date', ''))} / {cell(meta.get('assessor', ''))} |", ""]
+    legend, closing = level_legend(meta, lang)
+    lines += [f"## {t['levels']}", "", *(f"- **{level}:** {text(meaning)}" for level, meaning in legend),
+              "", text(closing), ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
@@ -1373,7 +1420,8 @@ def html_sidebar(doc, lang, by_sev):
     """Contents links, then, with findings, the severity facets and keys that act on the register."""
     t, d, e = LABELS[lang], DASH[lang], html_text
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
-           ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"])]
+           ("decisions-section", t["decisions"]), ("coverage", d["nav_coverage"]),
+           ("levels", t["levels"])]
     nav += [("rules-section", t["rules"])] if doc.get("rules") else []
     nav += [("findings", d["findings_register"]), ("architecture", d["nav_architecture"]),
             ("lists", d["nav_lists"])]
@@ -1515,6 +1563,16 @@ def html_coverage(doc, lang):
                    f"<td data-label='{escape(t['note'])}'>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
     return out
+
+
+def html_levels(doc, lang):
+    """What each severity and confidence level means for this scan."""
+    t, e = LABELS[lang], html_text
+    legend, closing = level_legend(doc["meta"], lang)
+    return [f"<section class='panel' id='levels' tabindex='-1'><h2>{e(t['levels'])}</h2>"
+            "<dl class='scope-meta'>"
+            + "".join(f"<dt>{e(level)}</dt><dd>{e(meaning)}</dd>" for level, meaning in legend)
+            + f"</dl><p class='section-note'>{e(closing)}</p></section>"]
 
 
 def html_rules(doc, lang):
@@ -1693,6 +1751,7 @@ def render_html(doc, lang):
                f"<div id='decisions'>"
                f"{bullet_list(doc.get('decisions', []), t['none'])}</div></section>")
     out += html_coverage(doc, lang)
+    out += html_levels(doc, lang)
     out += html_rules(doc, lang)
     out += html_charts(doc, lang, status, by_sev)
     out += html_register(doc, lang, status)

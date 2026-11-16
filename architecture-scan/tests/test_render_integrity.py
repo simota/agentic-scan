@@ -78,8 +78,8 @@ class RenderIntegrityTests(unittest.TestCase):
             with self.subTest(lang=lang):
                 markdown = render.render_markdown(doc, lang)
                 self.assertEqual(len(re.findall(r"^# ", markdown, re.MULTILINE)), 1)
-                # Eight sections plus the architecture diagrams.
-                self.assertEqual(len(re.findall(r"^## ", markdown, re.MULTILINE)), 9)
+                # Nine sections (the level legend among them) plus the architecture diagrams.
+                self.assertEqual(len(re.findall(r"^## ", markdown, re.MULTILINE)), 10)
                 # Two findings plus before, after and the changes between them.
                 self.assertEqual(len(re.findall(r"^### ", markdown, re.MULTILINE)), 5)
                 visible = VisibleText(markdown).text

@@ -122,6 +122,7 @@ ID_LIST = re.compile(r"[\s,、，;；]+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "conventions", "plan", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
+AXES = ("confirmed", "assumed")
 CONVENTION_REQUIRED = ("id", "idiom", "source", "status")
 ALLOWED_CONVENTION_STATUS = {"Valid": ("drifted",), "Likely": ("drifted", "partly read")}
 # Every key the schema knows in a record that is rendered. A typo such as
@@ -519,6 +520,8 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    if "axis" in meta:
+        _choice(meta["axis"], AXES, "meta.axis")
     for key in ("method", "commit", "window"):
         if key in meta and not isinstance(meta[key], str):
             raise SchemaError(f"meta.{key}: must be a string")
@@ -1360,6 +1363,17 @@ def _contract(out, allow):
             if not isinstance(reason, str) or not visible(reason):
                 problems.append(f"{r['id']}: a not-checked convention needs a nonblank string "
                                 "reason")
+    axis = doc["meta"].get("axis")
+    if axis is None:
+        problems.append("meta.axis: record whether the requester confirmed the list severity "
+                        "is judged against (confirmed) or it was assumed (assumed)")
+    elif axis == "assumed":
+        for f in findings:
+            if (f["severity"] == "High" and f["validation"]["verdict"] not in EXCLUDED
+                    and not any(re.search(rf"(?<!\w){re.escape(f['id'])}(?!\w)", item, re.ASCII)
+                                for item in doc.get("decisions", []))):
+                problems.append(f"{f['id']}: its High severity rests on an assumed severity "
+                                "axis (meta.axis); name it in decisions for a person to confirm")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

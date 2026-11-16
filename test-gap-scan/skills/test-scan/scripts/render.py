@@ -83,6 +83,8 @@ LABELS = {
         "testability": "testability", "effort": "effort", "batch": "Batch", "pr_title": "PR title",
         "prerequisite": "prerequisite", "tests": "tests", "gaps": "gaps",
         "window": "History window",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (history, an existing coverage report).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date",
@@ -109,6 +111,8 @@ LABELS = {
         "testability": "テスト容易性", "effort": "規模", "batch": "バッチ", "pr_title": "PR タイトル",
         "prerequisite": "前提条件", "tests": "テスト", "gaps": "不足",
         "window": "履歴の期間",
+        "axis": "重大度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（変更履歴、既存のカバレッジレポート）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日",
@@ -365,6 +369,8 @@ def render_markdown(doc, lang):
               f"| {t['revision']} | {cell(revision(meta))} |"]
     if filled(meta, "window"):
         lines.append(f"| {t['window']} | {cell(meta['window'])} |")
+    if meta.get("axis") in ("confirmed", "assumed"):
+        lines.append(f"| {t['axis']} | {t['axis_' + meta['axis']]} |")
     # One recorded value per cell or line (coverage and lists below too): emphasis
     # never pairs across two values.
     lines += [f"| {t['date']} | {cell(meta.get('date', ''))} |",
@@ -967,6 +973,8 @@ def render_html(doc, lang):
     limitations = doc.get("limitations", [])
     window = (f"<dt>{e(t['window'])}</dt><dd>{e(meta['window'])}</dd>"
               if filled(meta, "window") else "")
+    if meta.get("axis") in ("confirmed", "assumed"):
+        window += f"<dt>{e(t['axis'])}</dt><dd>{e(t['axis_' + meta['axis']])}</dd>"
     out.append(f"<section class='panel coverage' id='coverage' tabindex='-1'><h2>{e(d['coverage_heading'])}<span class='small'>"
                f"{e(d['limitations_count'])}: {len(limitations)}</span></h2>"
                f"<p>{ui(d['coverage_note'])}</p><dl class='scope-meta'>"

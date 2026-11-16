@@ -46,7 +46,9 @@ Neighbours, and where their questions go instead:
   sync). Severity is judged against these; a gap on a flow nobody depends on
   costs little. Show this list to the requester in one line and use their
   corrections; when nobody can answer (an unattended or delegated run), record
-  it as assumed in `limitations` and the chat summary, and continue
+  it as assumed in `limitations` and the chat summary, and continue. Record
+  which in `meta.axis` (`confirmed` or `assumed`); an assumed axis sends every
+  High finding to `decisions`
 - **Fix the history window** (default: 12 months, or the whole history when it
   is shorter) and use it for every exposure claim
 - **Derive the test idiom ledger before hunting**: how this suite already

@@ -42,7 +42,10 @@ judged by where they lead, not by the rule they break.
 - **Name the crown jewels**: the data stores and capabilities whose exposure or
   takeover hurts most — customer data stores, secrets managers and KMS keys,
   organization or project admin, the IaC state and the pipeline that applies it,
-  backups. Severity is judged against these
+  backups. Severity is judged against these. Show this list to the requester in
+  one line and use their corrections; when nobody can answer (an unattended or
+  delegated run), record it as assumed in `limitations` and the chat summary,
+  and continue
 - **Create a new, empty output directory** outside the assessed repository and
   follow the *Run contract* below
 

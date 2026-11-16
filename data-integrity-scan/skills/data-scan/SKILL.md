@@ -95,6 +95,10 @@ Neighbours, and where their questions go instead:
 | Low | The hazard is real but on data that is neither core nor shown to have gone wrong |
 | Info | A note: a hazard with no exposure evidence, a migration already applied in production that broke a ledger rule (the drift is recorded; the risk is the next migration written the same way), or a constraint worth adding when the table is next changed |
 
+Both outputs print a legend, "How to read the levels", that condenses this
+table and the confidence table below (`scripts/render.py`, the `legend_*`
+labels); change it with them.
+
 Severity is exposure only. How the fix reaches production is `rollout`; how
 sure the finding is, is `confidence`:
 
@@ -163,8 +167,8 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, data rule ledger, perspective coverage |
-| `report.md` | The written assessment: verdict counts, then scope and method, findings, plan, data rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
+| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, data rule ledger, perspective coverage, how to read the levels |
+| `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, data rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
 requester's language (`ja` or `en`; for any other language, `en`, with the

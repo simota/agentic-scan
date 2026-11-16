@@ -4,7 +4,7 @@ import time
 import unittest
 from pathlib import Path
 
-from support import complete_doc, contract_problems, finding, findings, render
+from support import complete_doc, contract_problems, finding, findings, render, summary
 
 
 class CheckRuleTests(unittest.TestCase):
@@ -128,6 +128,27 @@ class CheckRuleTests(unittest.TestCase):
         doc["findings"][1]["id"] = "P-001"
         with self.assertRaisesRegex(findings.SchemaError, r"duplicate P-001"):
             findings.validate(doc)
+
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        doc = complete_doc()
+        excluded = {"verdict": "FalsePositive", "method": "static", "evidence": "x.py:1"}
+        doc["findings"].append(finding("P-003", "High", validation=excluded))
+        doc["meta"]["axis"] = "assumed"
+        # P-0011 is another ID, not a mention of P-001.
+        doc["decisions"] = ["Confirm P-0011 against the scale drivers"]
+        self.assertEqual(contract_problems(doc), [
+            "P-001: its High severity rests on an assumed severity axis (meta.axis); "
+            "name it in decisions for a person to confirm"])
+        doc["decisions"].append("Confirm the workloads and scale drivers P-001 rests on")
+        self.assertEqual(contract_problems(doc), [])
+        for lang, row in (("en", "| Severity axis | assumed; not confirmed by the requester |"),
+                          ("ja", "| 深刻度の軸 | 仮定（依頼者は未確認） |")):
+            with self.subTest(lang=lang):
+                self.assertIn(row, render.render_markdown(doc, lang))
+                self.assertIn(row.strip("| ").replace(" | ", ": "),
+                              render.render_html(doc, lang))
+                self.assertIn(row.strip("| ").replace(" | ", ": "),
+                              summary.render_summary(doc, lang, Path("findings.json")))
 
     def test_check_names_a_path_that_is_not_a_directory(self):
         with tempfile.TemporaryDirectory() as directory:

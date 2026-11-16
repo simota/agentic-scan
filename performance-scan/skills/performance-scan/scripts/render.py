@@ -24,7 +24,7 @@ import unicodedata
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
+from findings import (AXES, BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
                       SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
                       finding_locations, finding_status, read_json, resolve_path,
                       SchemaError, validate)
@@ -53,6 +53,8 @@ LABELS = {
         "incomplete_high": "High with incomplete verification",
         "scope_row": "Scope", "perspective": "perspective", "status_col": "Status", "note": "Note",
         "method_row": "Method", "confidence": "Confidence", "verdict_col": "Verdict",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "title_col": "Title", "location_col": "Location", "findings_col": "Cited by", "budget_col": "Budget",
         "item_col": "Item", "value_col": "Value", "perspective_col": "Perspective", "lang": "en",
         "excluded_findings": "Excluded findings", "brand": "PERFORMANCE REVIEW",
@@ -86,6 +88,8 @@ LABELS = {
         "verdict_counts": "検証判定別の件数", "incomplete_high": "検証未完了の High",
         "scope_row": "範囲", "perspective": "観点", "status_col": "状態", "note": "メモ",
         "method_row": "方法", "confidence": "確度", "verdict_col": "検証判定",
+        "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "title_col": "タイトル", "location_col": "場所", "findings_col": "引用する検出事項", "budget_col": "バジェット",
         "item_col": "項目", "value_col": "値", "perspective_col": "観点", "lang": "ja",
         "excluded_findings": "除外した検出事項", "brand": "PERFORMANCE REVIEW",
@@ -410,6 +414,8 @@ def render_markdown(doc, lang):
              (t["revision"], markdown_cell(meta.get("commit", "").strip() or "UNKNOWN"))]
     if meta.get("method", "").strip():
         scope.append((t["method_row"], markdown_cell(meta["method"])))
+    if meta.get("axis") in AXES:
+        scope.append((t["axis"], markdown_cell(t[f"axis_{meta['axis']}"])))
     scope.append((t["date"], f"{markdown_cell(meta.get('date', ''))} / "
                              f"{markdown_cell(meta.get('assessor', ''))}"))
     lines += ["", f"## {t['scope']}", ""]
@@ -589,9 +595,11 @@ def llm_finding(f, t, meta):
     step = f" ({llm_line(f['step'])})" if f.get("step", "").strip() else ""
     out = [f"## {llm_line(f['id'])} · {llm_line(f['title'])}", "",
            f"- {t['project']}: {llm_line(meta.get('project', ''))}",
-           f"- {t['revision']}: {llm_line(meta.get('commit', '').strip() or 'UNKNOWN')}",
-           f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
-           f"- {t['perspective']}: {f['category']}{step}"]
+           f"- {t['revision']}: {llm_line(meta.get('commit', '').strip() or 'UNKNOWN')}"]
+    if meta.get("axis") in AXES:
+        out.append(f"- {t['axis']}: {t['axis_' + meta['axis']]}")
+    out += [f"- {t['severity']}: {f['severity']} · {t['confidence']}: {f['confidence']}",
+            f"- {t['perspective']}: {f['category']}{step}"]
     locations = finding_locations(f)
     if len(locations) == 1:
         out.append(f"- {t['location']}: {llm_line(locations[0])}")
@@ -694,6 +702,8 @@ def render_html(doc, lang):
            f"<h1 id='h'>{e(meta.get('project', ''))}</h1>",
            f"<p class='meta'>{e(meta.get('scope', ''))} · {e(meta.get('commit', '').strip() or 'UNKNOWN')} · "
            + (f"{e(meta['method'])} · " if meta.get("method", "").strip() else "")
+           + (f"{e(t['axis'])}: {e(t['axis_' + meta['axis']])} · "
+              if meta.get("axis") in AXES else "")
            + f"{e(meta.get('date', ''))} · {e(meta.get('assessor', ''))}</p></div>"
            f"<p class='hero-aside'>{e(review_note(findings, t))}</p></div>",
            f"<p class='summary-banner'><strong>{e(incomplete_high)}</strong>{e(verdicts)}</p>",

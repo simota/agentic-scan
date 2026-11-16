@@ -56,7 +56,7 @@ def finding(fid="P-001", severity="High", **extra) -> dict:
 def complete_doc() -> dict:
     return {
         "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
-                 "assessor": "test", "lang": "en"},
+                 "assessor": "test", "lang": "en", "axis": "confirmed"},
         "budgets": [{"id": "B-01", "statement": "constant queries", "source": "baseline",
                      "status": "violated"}],
         "findings": [finding(), finding("P-002", "Low")],

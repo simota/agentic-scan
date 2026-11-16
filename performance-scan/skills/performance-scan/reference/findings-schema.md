@@ -80,7 +80,8 @@ different one keeps its old optional fields (`measurement`, `contrast`,
 `budget`, `step`, `references`): reuse an ID only for the same root cause, and
 renumber by building a fresh `findings.json` from fragments with the final IDs.
 While merging, `meta` may be partial, but any `project`, `scope`, `date`,
-`assessor` or `lang` present must be a nonblank string (`lang`: `ja` or `en`).
+`assessor` or `lang` present must be a nonblank string (`lang`: `ja` or `en`),
+and a present `axis` must be `confirmed` or `assumed`.
 
 ## Shape
 
@@ -93,7 +94,8 @@ While merging, `meta` may be partial, but any `project`, `scope`, `date`,
     "date": "2026-10-09",
     "assessor": "Claude Code (<model>)",
     "method": "Static review",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "budgets": [
     {"id": "B-01", "statement": "Hot list endpoints issue a constant number of queries",
@@ -149,7 +151,7 @@ embedding Markdown link syntax in another field.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `axis` is required for `check` (optional while merging fragments): `confirmed` when the requester confirmed the workloads and scale drivers severity is judged against, `assumed` when nobody answered; while it is `assumed`, every non-excluded High finding is named in `decisions`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
 | `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
 | `findings[].title` | Required nonblank string: the one-line title |
 | `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` enforces both; it does not rank excluded findings by severity) |

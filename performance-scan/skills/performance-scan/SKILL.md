@@ -40,7 +40,9 @@ repository: call the scripts by that path, never a `scripts/` of the audited pro
   history length. Severity is judged by what grows without a cap on a hot path.
   Show this list to the requester in one line and use their corrections; when
   nobody can answer (an unattended or delegated run), record it as assumed in
-  `limitations` and the chat summary, and continue
+  `limitations` and the chat summary, and continue. Record which in `meta.axis`
+  (`confirmed` or `assumed`); an assumed axis sends every High finding to
+  `decisions`
 - **Derive the budgets before hunting**: the bounds this app must keep — latency
   targets, timeouts, page-size defaults, queries per request, payload and
   bundle size, memory limits, job deadlines (`reference/budgets.md`). Essential

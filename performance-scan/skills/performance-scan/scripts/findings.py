@@ -77,6 +77,9 @@ HUNT_STEPS = frozenset(STEP_PERSPECTIVES)
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "budgets", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
+# Whether the requester confirmed the workloads and scale drivers severity is
+# judged against; optional while merging, required by check.
+AXES = ("confirmed", "assumed")
 FINDING_REQUIRED = ("id", "title", "severity", "confidence", "category", "location",
                     "workload", "scale_driver", "cost_model", "request", "impact",
                     "fix", "regression_test", "validation")
@@ -335,6 +338,8 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    if "axis" in meta:
+        _choice(meta["axis"], AXES, "meta.axis")
     _optional_strings(meta, ("commit", "method"), "meta")
     for key in ("findings", "budgets", "perspectives"):
         if not isinstance(doc.get(key, []), list):
@@ -618,6 +623,16 @@ def _record_problems(doc):
                 and f["id"] not in decided):
             problems.append(f"{f['id']}: Accepted, but no decisions line names it; record "
                             "who accepted the cost and why (findings.py set --decision)")
+    axis = doc["meta"].get("axis")
+    if axis is None:
+        problems.append("meta.axis: record whether the requester confirmed the list severity "
+                        "is judged against (confirmed) or it was assumed (assumed)")
+    elif axis == "assumed":
+        for f in findings:
+            if (f["severity"] == "High" and f["validation"]["verdict"] not in EXCLUDED
+                    and f["id"] not in decided):
+                problems.append(f"{f['id']}: its High severity rests on an assumed severity "
+                                "axis (meta.axis); name it in decisions for a person to confirm")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

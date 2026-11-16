@@ -6,7 +6,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from support import complete_doc, findings, render, run_main
+from support import complete_doc, contract_problems, findings, render, run_main
 
 
 class MetadataMergeTests(unittest.TestCase):
@@ -90,6 +90,23 @@ class MetadataMergeTests(unittest.TestCase):
             with redirect_stdout(io.StringIO()), redirect_stderr(io.StringIO()):
                 self.assertEqual(render.main([str(target), "--out", str(out)]), 0)
                 self.assertEqual(findings.main(["check", str(out)]), 0)
+
+
+class SeverityAxisTests(unittest.TestCase):
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        # Optional while merging fragments; check names it when it is missing.
+        findings.validate({"meta": {"project": "demo"}})
+        for value in findings.AXES:
+            findings.validate({"meta": {"axis": value}})
+        for value in ("guessed", "Confirmed", "", None, True, []):
+            with self.subTest(value=value), \
+                    self.assertRaisesRegex(findings.SchemaError, "meta.axis"):
+                findings.validate({"meta": {"axis": value}})
+        doc = complete_doc()
+        del doc["meta"]["axis"]
+        self.assertEqual(contract_problems(doc), [
+            "meta.axis: record whether the requester confirmed the list severity is judged "
+            "against (confirmed) or it was assumed (assumed)"])
 
 
 if __name__ == "__main__":

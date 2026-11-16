@@ -6,7 +6,8 @@
     "date": "2026-10-09",
     "assessor": "Sample (not a real assessment)",
     "method": "Static review",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "budgets": [
     {"id": "B-01", "statement": "Hot list endpoints issue a constant number of queries", "source": "baseline; tests/test_products.py:30 asserts 3 queries", "family": "QRY", "inferred": false, "status": "violated"},

@@ -7,9 +7,9 @@ The chat summary is the third delivery beside dashboard.html and report.md.
 Printing it from the record keeps every count, verdict and ID in chat identical
 to the record: first the status line (severity counts, review basis,
 verification counts and High findings not yet Valid), then the evidence line
-(revision, method, scratch directory), one line per finding by severity, the
-full block of each High finding, checked and sound items, decisions, next steps
-and the rendered files beside FINDINGS.
+(revision, method, severity axis, scratch directory), one line per finding by
+severity, the full block of each High finding, checked and sound items,
+decisions, next steps and the rendered files beside FINDINGS.
 
 `--baseline` adds one line with what changed since an earlier run of the same
 application (`compare.py` has the full comparison). The agent adds what only it
@@ -24,7 +24,7 @@ from pathlib import Path
 import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (SEVERITIES, SchemaError, escape_unencodable_console,  # noqa: E402
+from findings import (AXES, SEVERITIES, SchemaError, escape_unencodable_console,  # noqa: E402
                       finding_locations)
 from render import (LABELS as RENDER_LABELS, counts, is_excluded, markdown_code,  # noqa: E402
                     markdown_finding, markdown_text, review_note, verification_summary)
@@ -76,6 +76,8 @@ def render_summary(doc, lang, findings_path, scratch=None, baseline=None):
     evidence = s["evidence_line"].format(
         commit=meta.get("commit", "").strip() or "UNKNOWN",
         method=meta.get("method", "").strip() or s["default_method"])
+    if meta.get("axis") in AXES:
+        evidence += f" · {t['axis']}: {t['axis_' + meta['axis']]}"
     if scratch:
         evidence += " · " + s["scratch"].format(path=scratch)
     lines += ["", markdown_text(evidence)]

@@ -33,9 +33,10 @@ adds what changed since that run.
    static or included authorised local measurements; the `Likely`,
    `Unverified` and `Unlikely` counts and how many High findings are not
    `Valid`
-2. **Evidence line** — assessed revision, what was read, what the reporting
-   agent traced end to end, what remains environment-unknown (data volumes,
-   deployed indexes and settings), and the scratch directory's path
+2. **Evidence line** — assessed revision, whether the severity axis was
+   confirmed or assumed (`meta.axis`), what was read, what the reporting agent
+   traced end to end, what remains environment-unknown (data volumes, deployed
+   indexes and settings), and the scratch directory's path
 3. **Findings, by severity** — one line each (`P-NNN`, severity, confidence,
    verdict, title, location), then the full block below for High findings
    only; `report.md` carries every block:

@@ -52,7 +52,9 @@ Neighbours, and where their questions go instead:
   each must obey. Severity is judged against these; a wrong result nobody
   relies on costs little. Show this list to the requester in one line and use
   their corrections; when nobody can answer (an unattended or delegated run),
-  record it as assumed in `limitations` and the chat summary, and continue
+  record it as assumed in `limitations` and the chat summary, and continue.
+  Record which in `meta.axis` (`confirmed` or `assumed`); an assumed axis sends
+  every High finding to `decisions`
 - **Fix the history window** (default: 12 months, or the whole history when it
   is shorter) and use it for every exposure claim; fix commits that touched
   the same rule are evidence

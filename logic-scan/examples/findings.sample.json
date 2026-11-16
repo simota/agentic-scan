@@ -7,7 +7,7 @@
     "assessor": "Claude Code (sample)",
     "method": "Static review; git log 12 months",
     "window": "2025-10-15..2026-10-15",
-    "lang": "en"
+    "lang": "en", "axis": "confirmed"
   },
   "conventions": [
     {"id": "C-01", "idiom": "Amounts are stored and passed between modules as integer yen",

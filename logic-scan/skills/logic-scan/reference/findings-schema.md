@@ -113,7 +113,8 @@ renumber, use only the new IDs it printed.
     "assessor": "Claude Code (<model>)",
     "method": "Static review; git log 12 months",
     "window": "2025-10-15..2026-10-15",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "conventions": [
     {"id": "C-01", "idiom": "Amounts are stored and passed between modules as integer yen",
@@ -181,7 +182,7 @@ renumber, use only the new IDs it printed.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`; `lang` is `ja` or `en`. `commit` is the assessed revision (`git rev-parse --short HEAD`). `window` is the history window used for every exposure claim; both are required once a non-excluded finding is `Confirmed` |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`; `lang` is `ja` or `en`. `axis` is required for `check`: `confirmed` when the requester confirmed the list severity is judged against, `assumed` when nobody answered; while it is `assumed`, every non-excluded High finding is named in `decisions`. `commit` is the assessed revision (`git rev-parse --short HEAD`). `window` is the history window used for every exposure claim; both are required once a non-excluded finding is `Confirmed` |
 | `findings[].id` | `F-001`…, gapless, severity order, then path and line of the first location, excluded verdicts last: the order `renumber` gives |
 | `severity` | `High`, `Medium`, `Low`, `Info` — exposure (`SKILL.md`) |
 | `change` | `Local`, `Shared`, `Correction` (`SKILL.md`); required from the first fragment, so REVIEW records its best estimate and VERIFY corrects it (`reference/validation.md`) |

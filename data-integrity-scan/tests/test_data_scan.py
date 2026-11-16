@@ -57,6 +57,30 @@ class Run(unittest.TestCase):
 
 
 class SampleTest(Run):
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        doc = sample()
+        high = [f["id"] for f in doc["findings"]
+                if f["severity"] == "High" and f["validation"]["verdict"] not in findings.EXCLUDED]
+        self.assertTrue(high)
+        doc["meta"]["axis"] = "assumed"
+        named = list(doc["decisions"])
+        doc["decisions"] = [d for d in named
+                            if not any(re.search(rf"(?<!\w){h}(?!\w)", d) for h in high)]
+        self.assertProblem(doc, f"{high[0]}: its High severity rests on an assumed severity axis")
+        doc["decisions"] = named + [f"Confirm the list severity is judged against: "
+                                    f"{', '.join(high)} rest on it"]
+        self.assertEqual(self.problems(doc), [])
+        report = render.rendered_outputs(doc, "en")["report.md"].decode("utf-8")
+        self.assertIn("| Severity axis | assumed; not confirmed by the requester |", report)
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        doc = sample()
+        del doc["meta"]["axis"]
+        self.assertProblem(doc, "meta.axis: record whether the requester confirmed")
+        doc["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(findings.SchemaError, "meta.axis"):
+            findings.validate(doc, complete=True)
+
     def test_sample_passes_the_contract_in_both_languages(self):
         doc = sample()
         self.assertEqual(self.problems(doc), [])

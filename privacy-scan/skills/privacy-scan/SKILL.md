@@ -87,6 +87,8 @@ log service). An `Environment-dependent` finding records each such condition in
 Exposure bounded to a short window by the code itself (a revoked link cached
 for minutes, a local log kept for hours) also lowers the grade one level; an
 external log or error service keeps its own copy, so it is never bounded this way.
+The rendered reports' *How to read the levels* section condenses this table and
+the confidence values (`legend` in `scripts/render.py`); change it with them.
 
 ## Phases
 

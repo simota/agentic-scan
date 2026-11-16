@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import copy
+from html import escape
 import importlib.util
 import io
 import json
@@ -183,6 +184,42 @@ class ContractTests(unittest.TestCase):
         doc["meta"]["axis"] = "guessed"
         with self.assertRaisesRegex(findings.SchemaError, "meta.axis"):
             findings.validate(doc, complete=True)
+
+    def test_every_severity_and_confidence_has_a_legend_line_in_both_languages(self):
+        for lang in ("en", "ja"):
+            legend = render.LABELS[lang]["legend"]
+            for level in findings.SEVERITIES + findings.CONFIDENCES:
+                with self.subTest(lang=lang, level=level):
+                    self.assertTrue(legend.get(level, "").strip())
+
+    def test_the_sample_report_and_dashboard_show_the_legend_in_both_languages(self):
+        doc = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
+        for lang, title in (("en", "How to read the levels"), ("ja", "レベルの読み方")):
+            legend = render.LABELS[lang]["legend"]
+            doc["meta"]["lang"] = lang
+            out = self.build(doc)
+            report = (out / "report.md").read_text(encoding="utf-8")
+            html = (out / "dashboard.html").read_text(encoding="utf-8")
+            with self.subTest(lang=lang):
+                self.assertIn(f"## {title}\n", report)
+                self.assertIn(f"<h2>{title}</h2>", html)
+                for level in findings.SEVERITIES + findings.CONFIDENCES:
+                    self.assertIn(f"- **{level}:** {render.markdown_text(legend[level])}", report)
+                    self.assertIn(f"{level}</span></dt><dd>{escape(legend[level])}</dd>"
+                                  if level in findings.SEVERITIES
+                                  else f"<dt>{level}</dt><dd>{escape(legend[level])}</dd>", html)
+                self.assertIn(render.markdown_text(legend["separate"]), report)
+                self.assertIn(escape(legend["separate"]), html)
+
+    def test_the_assumed_axis_line_appears_only_for_an_assumed_axis(self):
+        for lang in ("en", "ja"):
+            line = render.LABELS[lang]["legend"]["assumed"]
+            for axis in ("confirmed", "assumed"):
+                doc = complete_doc()
+                doc["meta"].update(lang=lang, axis=axis)
+                with self.subTest(lang=lang, axis=axis):
+                    self.assertEqual(line in render.render_markdown(doc, lang), axis == "assumed")
+                    self.assertEqual(escape(line) in render.render_html(doc, lang), axis == "assumed")
 
     def test_render_escapes_html_and_writes_both_languages(self):
         doc = complete_doc()

@@ -25,7 +25,7 @@ from urllib.parse import quote, urlsplit
 # Importing the local helpers must not write bytecode into the skill tree.
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
+from findings import (CONFIDENCES, PERSPECTIVES, SEVERITIES, VERDICTS,  # noqa: E402
                       SchemaError, prepare_cli, read_json, record_problems, validate)
 from findings import commitment_citations, counts as record_counts, excluded as is_excluded  # noqa: E402
 from findings import element_citations, recipients  # noqa: E402
@@ -53,6 +53,29 @@ LABELS = {
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
         "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
         "axis_assumed": "assumed; not confirmed by the requester",
+        # Condenses the severity table in SKILL.md and the confidence row in
+        # reference/findings-schema.md; change it with them.
+        "legend": {
+            "title": "How to read the levels", "severity": "Severity", "confidence": "Confidence",
+            "High": "Personal data (a sensitive category, or broad personal data of many subjects) "
+                    "reaches a party or place the commitments exclude, is processed on a core flow "
+                    "without a consent the commitments require, or survives a deletion or "
+                    "account-closure path in a primary store",
+            "Medium": "A High-class gap lowered one level, personal data kept beyond a stated "
+                      "retention period (High for a sensitive category in a primary store), a "
+                      "deletion or export path that misses a secondary store, or real personal "
+                      "data copied into non-production use",
+            "Low": "Collection beyond need with no further exposure, missing pseudonymisation in "
+                   "internal analytics, identifiers in URLs inside first-party systems, or "
+                   "defence-in-depth gaps in storage protection",
+            "Info": "A note with no demonstrated path to a subject's harm or a broken commitment",
+            "Confirmed": "The gap follows from the code",
+            "Environment-dependent": "The gap needs a named runtime setting, recorded in its conditions",
+            "Suspected": "The code suggests the gap but does not show it",
+            "separate": "Severity and confidence are graded separately; confidence never raises "
+                        "or lowers severity.",
+            "assumed": "Severity rests on an assumed list; see decisions.",
+        },
         "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status", "Findings"),
         "conditions": "conditions",
         "disclaimer": "Technical review of source code, not legal advice; it does not state "
@@ -90,6 +113,23 @@ LABELS = {
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
         "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み",
         "axis_assumed": "仮定（依頼者は未確認）",
+        "legend": {
+            "title": "レベルの読み方", "severity": "深刻度", "confidence": "確度",
+            "High": "個人データ（要配慮・機微な分類、または多数の主体の広範な個人データ）が、"
+                    "約束が除外する相手や場所に届く、約束が求める同意なしに中核フローで処理される、"
+                    "または削除・退会の経路を経ても一次ストアに残る",
+            "Medium": "High に該当する欠陥を 1 段階下げたもの、定めた保持期間を超えた個人データの保持"
+                      "（一次ストアの要配慮・機微な分類なら High）、二次ストア（コピー）を取りこぼす"
+                      "削除・エクスポート経路、または本番以外の用途への実在の個人データの複製",
+            "Low": "それ以上の露出がない必要以上の収集、社内分析での仮名化の欠如、"
+                   "自社システム内での URL 中の識別子、保存時の保護における多層防御の欠如",
+            "Info": "主体への害や約束違反に至る経路が示されていない所見",
+            "Confirmed": "欠陥がコードから直接わかる",
+            "Environment-dependent": "欠陥は名前を挙げた実行時の設定に依存する（前提条件に記録）",
+            "Suspected": "コードから欠陥がうかがえるが、示されてはいない",
+            "separate": "深刻度と確度は別々に判定する。確度で深刻度を上げ下げしない。",
+            "assumed": "深刻度は依頼者が確認していない一覧に基づく。人が判断すべき事項を参照。",
+        },
         "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス", "検出事項"),
         "conditions": "前提条件",
         # Enumerations shown in Japanese; perspective names keep the English name
@@ -206,6 +246,14 @@ def axis_rows(meta, labels):
     """The severity-axis row, when the record says whether the requester confirmed it."""
     axis = meta.get("axis")
     return [(labels["axis"], labels[f"axis_{axis}"])] if axis in ("confirmed", "assumed") else []
+
+
+def legend(meta, labels):
+    """What each severity and confidence level means here, for both reports:
+    (severity rows, confidence rows, closing lines)."""
+    text = labels["legend"]
+    closing = [text["separate"]] + ([text["assumed"]] if meta.get("axis") == "assumed" else [])
+    return ([(s, text[s]) for s in SEVERITIES], [(c, text[c]) for c in CONFIDENCES], closing)
 
 
 def perspective_rows(doc, labels):
@@ -424,6 +472,14 @@ def render_markdown(doc, lang):
               *(markdown_row(row) for row in axis_rows(meta, t)),
               markdown_row((t['review_method'], method)),
               markdown_row((t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")), ""]
+    severity_rows, confidence_rows, closing = legend(meta, t)
+    lines += [f"## {t['legend']['title']}", ""]
+    for key, rows in (("severity", severity_rows), ("confidence", confidence_rows)):
+        lines += [f"**{t['legend'][key]}**", ""]
+        lines += [f"- **{level}:** {markdown_text(text)}" for level, text in rows]
+        lines.append("")
+    for line in closing:
+        lines += [markdown_text(line), ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
@@ -654,6 +710,16 @@ def render_html(doc, lang):
     out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"
                + "".join(f"<dt>{e(k)}</dt><dd>{e(val)}</dd>" for k, val in scope_rows)
                + "</dl></section>")
+    severity_rows, confidence_rows, closing = legend(meta, t)
+    out.append(f"<section class='panel' id='levels'><h2>{e(t['legend']['title'])}</h2>"
+               f"<h3>{e(t['legend']['severity'])}</h3><dl class='scope-meta'>"
+               + "".join(f"<dt><span class='badge {s}'>{s}</span></dt><dd>{e(text)}</dd>"
+                         for s, text in severity_rows)
+               + f"</dl><h3>{e(t['legend']['confidence'])}</h3><dl class='scope-meta'>"
+               + "".join(f"<dt>{e(c)}</dt><dd>{e(text)}</dd>" for c, text in confidence_rows)
+               + "</dl>" + "".join(f"<p class='muted'>{e(line)}</p>" for line in closing)
+               + "</section>")
+
     def filter_button(key, label, n, pressed=False):
         # The count tells what a filter will show before it is pressed.
         return (f"<button type='button' data-filter='{key}' aria-pressed='{str(pressed).lower()}'>"

@@ -100,6 +100,10 @@ Low or Medium, a defect can be any level. Each condition beyond Medium's one
 lowers severity one more level, never below Low; Info stays for notes with no
 behavioural effect.
 
+The "How to read the levels" legend in `dashboard.html` and `report.html`
+condenses this table, this paragraph and the confidence table in
+`reference/validation.md` (`LEGEND` in `scripts/render.py`); change it with them.
+
 ## Phases
 
 | Phase | Do | Reference |

@@ -70,6 +70,59 @@ class RenderTest(unittest.TestCase):
         self.assertIn("&lt;b&gt;x&lt;/b&gt; &amp; y", report)
         self.assertNotIn("<b>x</b>", report)
 
+    def test_every_severity_and_confidence_has_a_legend_line_in_both_languages(self):
+        # A new level in record.py without a legend line fails here.
+        self.assertEqual(sorted(render.LEGEND), sorted(record.LANGS))
+        for lang in record.LANGS:
+            G = render.LEGEND[lang]
+            self.assertEqual(sorted(G["severity"]), sorted(record.SEVERITIES), lang)
+            self.assertEqual(sorted(G["confidence"]), sorted(record.CONFIDENCES), lang)
+            for text in [*G["severity"].values(), *G["confidence"].values(), G["heading"], G["kinds"],
+                         G["graded"], G["assumed"]]:
+                self.assertTrue(text.strip(), lang)
+        self.assertIn("深刻度", render.LEGEND["ja"]["assumed"])  # The ja severity word the pages already use.
+        self.assertEqual(render.LABELS["ja"]["severity"], "深刻度")
+
+    def test_the_legend_appears_in_the_report_and_the_dashboard(self):
+        for lang in record.LANGS:
+            out = self.render(sample(lang), "--lang", lang)
+            report = (out / "report.html").read_text(encoding="utf-8")
+            dashboard = (out / "dashboard.html").read_text(encoding="utf-8")
+            payload = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                                           dashboard, re.S).group(1))
+            G = render.LEGEND[lang]
+            section = re.search(r'<section id="levels"><h2>(.*?)</h2>(.*?)</section>', report, re.S)
+            self.assertIsNotNone(section, lang)
+            self.assertEqual(section.group(1), render.esc(G["heading"]))
+            self.assertEqual(payload["legend"]["heading"], G["heading"])
+            self.assertIn('id="levels-section"', dashboard)
+            for s in record.SEVERITIES:
+                self.assertIn(f'<dt><span class="badge {s}">{s}</span></dt><dd>{render.esc(G["severity"][s])}</dd>',
+                              section.group(2))
+            for c in record.CONFIDENCES:
+                self.assertIn(f'<dt>{c}</dt><dd>{render.esc(G["confidence"][c])}</dd>', section.group(2))
+            self.assertEqual(payload["legend"]["severity"], [[s, G["severity"][s]] for s in record.SEVERITIES])
+            self.assertEqual(payload["legend"]["confidence"], [[c, G["confidence"][c]] for c in record.CONFIDENCES])
+            for note in (G["kinds"], G["graded"]):
+                self.assertIn(f'<p class="small">{render.esc(note)}</p>', section.group(2))
+                self.assertIn(note, payload["legend"]["notes"])
+
+    def test_the_assumed_axis_line_appears_only_for_an_assumed_axis(self):
+        for lang in record.LANGS:
+            line = render.LEGEND[lang]["assumed"]
+            for axis in ("confirmed", "assumed", None):
+                data = sample(lang)
+                if axis:
+                    data["meta"]["axis"] = axis
+                else:
+                    data["meta"].pop("axis")
+                out = self.render(data, "--lang", lang)
+                report = (out / "report.html").read_text(encoding="utf-8")
+                payload = json.loads(re.search(r'<script id="data" type="application/json">(.*?)</script>',
+                                               (out / "dashboard.html").read_text(encoding="utf-8"), re.S).group(1))
+                self.assertEqual(render.esc(line) in report, axis == "assumed", (lang, axis))
+                self.assertEqual(line in payload["legend"]["notes"], axis == "assumed", (lang, axis))
+
     def test_inventory_and_eval_tables_stack_with_labelled_cells(self):
         # On narrow screens the kit's .index rules turn these tables into labelled cards, so a wide
         # column (a long model line) is never cut off; every cell names its column for that layout.

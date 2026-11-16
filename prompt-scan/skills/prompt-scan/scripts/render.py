@@ -96,6 +96,70 @@ LABELS = {
     },
 }
 
+# How to read the levels: the one source for both pages. The severity lines condense SKILL.md's severity
+# table and the paragraph under it, the confidence lines reference/validation.md's confidence table;
+# change these with them.
+LEGEND = {
+    "en": {
+        "heading": "How to read the levels",
+        "severity": {
+            "High": "On ordinary inputs the feature produces wrong output or output its consumer cannot use; or "
+                    "untrusted input can override the instructions while the model holds tools, other users' data "
+                    "or side-effecting actions; or a secret or another user's personal data is placed in a prompt "
+                    "that reaches a lower-trust reader.",
+            "Medium": "A High-class impact that needs one condition the prompt author does not control; or a "
+                      "contradiction that makes behaviour depend on which instruction the model weights.",
+            "Low": "Clarity, structure or example gaps with a limited, plausible effect on quality; avoidable token "
+                   "cost; a defense-in-depth gap at a trust boundary that holds today; or a High-class impact that "
+                   "needs two or more conditions the prompt author does not control.",
+            "Info": "A maintainability or style note with no behavioural effect.",
+        },
+        "confidence": {
+            "Confirmed": "Certain from the text and code alone.",
+            "Model-dependent": "The cause is real, but whether it changes the output depends on how the model "
+                               "weighs it; the recorded eval case would settle it.",
+            "Suspected": "A signal not yet traced end to end.",
+        },
+        "kinds": "Severity is about impact and applies to both kinds: defects and improvements are graded on "
+                 "this one scale.",
+        "graded": "Severity and confidence are graded separately; confidence never raises or lowers severity.",
+        "assumed": "Severity rests on an assumed list; see decisions.",
+    },
+    "ja": {
+        "heading": "レベルの読み方",
+        "severity": {
+            "High": "通常の入力で、誤った出力や利用側が使えない出力になる。または、モデルがツール・他ユーザーのデータ・"
+                    "副作用のある操作を持つ状態で、信頼できない入力が指示を上書きできる。または、秘密情報や他ユーザーの"
+                    "個人データが、より信頼度の低い読み手に届くプロンプトに入る。",
+            "Medium": "High 相当の影響だが、プロンプト作成者が制御できない条件が 1 つ必要。または、指示の矛盾により、"
+                      "モデルがどちらの指示を重視するかで挙動が変わる。",
+            "Low": "明確さ・構成・例の不足による、品質への限定的で起こりうる影響。避けられるトークンコスト。"
+                   "現時点では保たれている信頼境界での多層防御の欠如。または、作成者が制御できない条件が 2 つ以上"
+                   "必要な High 相当の影響。",
+            "Info": "挙動に影響しない、保守性や書き方についての注記。",
+        },
+        "confidence": {
+            "Confirmed": "テキストとコードだけで確定できる。",
+            "Model-dependent": "原因は実在するが、出力が変わるかはモデルの重み付け次第。記録した評価ケースで確かめる。",
+            "Suspected": "端から端まではまだ追跡していない兆候。",
+        },
+        "kinds": "深刻度は影響で決まり、不具合と改善提案の両方を同じ尺度で判定します。",
+        "graded": "深刻度と確度は別々に判定します。確度によって深刻度を上げ下げしません。",
+        "assumed": "深刻度は依頼者が確認していない仮定の一覧に基づきます。「判断が必要な事項」を参照してください。",
+    },
+}
+
+
+def legend(meta, lang):
+    """The level legend for one page: a line per severity and confidence, then the closing notes.
+    The assumed-axis note appears only when meta.axis is `assumed`."""
+    G = LEGEND[lang]
+    notes = [G["kinds"], G["graded"]] + ([G["assumed"]] if meta.get("axis") == "assumed" else [])
+    return {"heading": G["heading"],
+            "severity": [[s, G["severity"][s]] for s in SEVERITIES],
+            "confidence": [[c, G["confidence"][c]] for c in CONFIDENCES],
+            "notes": notes}
+
 
 def ordered(findings):
     """Active findings by severity, then kind and id; excluded ones last."""
@@ -223,14 +287,23 @@ def finding_html(f, L, excerpts):
             f'<table class="finding-state"><tbody>{state}</tbody></table></div>{body}</article>')
 
 
+def legend_html(G, L):
+    """The level legend as two definition lists, severity then confidence, and the closing notes."""
+    sev = "".join(f'<dt><span class="badge {s}">{s}</span></dt><dd>{esc(text)}</dd>' for s, text in G["severity"])
+    conf = "".join(f'<dt>{esc(c)}</dt><dd>{esc(text)}</dd>' for c, text in G["confidence"])
+    return (f'<h3>{esc(L["severity"])}</h3><dl class="legend">{sev}</dl>'
+            f'<h3>{esc(L["confidence"])}</h3><dl class="legend">{conf}</dl>'
+            + "".join(f'<p class="small">{esc(n)}</p>' for n in G["notes"]))
+
+
 def list_section(items, L):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="small">{esc(L["none"])}</p>'
 
 
 # The shared stylesheet (scan_report_kit/assets/document.css, design: scan-report-kit)
 # comes first; these add only the rules for prompt-scan record types: the
-# severity-by-kind counts table, the prompt inventory and eval-run tables, the
-# kind label and before/after proposals.
+# severity-by-kind counts table, the level legend, the prompt inventory and
+# eval-run tables, the kind label and before/after proposals.
 REPORT_CSS = """
 .num{text-align:right}
 .counts .badge{margin:0}
@@ -249,7 +322,10 @@ REPORT_CSS = """
 .proposal figure{margin:0;min-width:0}
 .proposal figcaption{font:700 7.4pt/1.4 var(--sans);letter-spacing:.06em;color:var(--muted);margin-bottom:1mm}
 .proposal pre{margin:0;padding:1.5mm 0 1.5mm 3mm;border-left:.6pt solid var(--rule);font:7.6pt/1.55 var(--mono);white-space:pre-wrap;overflow-wrap:anywhere;word-wrap:break-word;word-break:break-all}
-@media screen and (max-width:600px){.proposal{grid-template-columns:minmax(0,1fr)}.index td.num{text-align:left}}
+.legend{display:grid;grid-template-columns:22mm minmax(0,1fr);gap:1mm 4mm;margin:1.5mm 0 3mm;font-size:9pt}
+.legend dt{font:7.6pt/1.9 var(--sans);color:var(--muted)}.legend dt .badge{margin:0}
+.legend dd{margin:0}
+@media screen and (max-width:600px){.legend{grid-template-columns:minmax(0,1fr);gap:0}.legend dd{margin-bottom:2mm}.proposal{grid-template-columns:minmax(0,1fr)}.index td.num{text-align:left}}
 """
 
 
@@ -276,6 +352,7 @@ def table_or_none(rows, html_table, L):
 
 def render_report_html(data, L, lang, excerpts):
     findings = ordered(data.get("findings", []))
+    G = legend(data.get("meta", {}), lang)
     prompts = data.get("prompts", [])
     inv_cols = ("id", "name", "kind", "location", "consumer", "model")
     prompt_rows = "".join(stacked_row(L, inv_cols, (
@@ -305,6 +382,7 @@ def render_report_html(data, L, lang, excerpts):
         numeric={"cases", "passed", "failed"}), L)
     sections = [
         ("summary", L["abstract"], f'<p class="lead">{esc(summary_line(data, L))}</p>{counts_table(data, L)}'),
+        ("levels", G["heading"], legend_html(G, L)),
         ("inventory", L["s_inventory"], prompt_table), ("perspectives", L["s_perspectives"], persp_table),
         ("checked-ok", L["s_sound"], list_section(data.get("checked_ok", []), L)),
         ("finding-details", L["s_findings"], finding_parts), ("eval-runs", L["s_evals"], eval_part),
@@ -327,8 +405,8 @@ def render_report_html(data, L, lang, excerpts):
 # The shared stylesheet (scan_report_kit/assets/dashboard.css, design: scan-report-kit)
 # comes first; these add only the rules for prompt-scan's dashboard pieces: the
 # decisions panel, the verify-first legend, paired counts on the closed card,
-# the earlier-validation history box and proposal text, which wraps as in the
-# report where the kit's code listing scrolls sideways.
+# the earlier-validation history box, proposal text, which wraps as in the
+# report where the kit's code listing scrolls sideways, and the level legend.
 DASH_CSS = """
 #decisions-section h2{margin-bottom:8px}#decisions-section ul{margin:0;padding-left:20px}
 .verify-legend{margin:0 0 14px;color:var(--muted)}
@@ -338,6 +416,10 @@ DASH_CSS = """
 .history{border:1px dashed var(--line);padding:12px;margin-top:16px}
 .history p{margin:5px 0;white-space:pre-wrap}
 .snippet.proposal-text{white-space:pre-wrap;overflow-wrap:anywhere}
+#levels-section h2{margin-bottom:8px}#levels h3{margin:14px 0 6px}
+.legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:6px 16px;margin:0 0 8px}
+.legend dt{font-family:var(--sans);font-size:12px;color:var(--muted)}.legend dt .badge{margin:0}.legend dd{margin:0}
+@media(max-width:600px){.legend{grid-template-columns:minmax(0,1fr);gap:2px}.legend dd{margin-bottom:8px}}
 """
 
 DASHBOARD = r"""<!doctype html>
@@ -359,6 +441,7 @@ __CSS__
 <div class="cards" id="cards"></div><p class="report-note" data-l="counts_note"></p>
 <div class="cards part-cards" id="part-cards"></div><p class="report-note" data-l="part_note"></p>
 <section aria-labelledby="priority-heading"><div class="section-head"><div><h2 id="priority-heading" data-l="priority"></h2><p data-l="priority_note"></p></div><a href="#findings" data-l="view_all"></a></div><p class="verify-legend" id="verify-legend" hidden></p><div id="priority"></div><p class="section-note" id="queue-note"></p></section>
+<section class="panel" id="levels-section" aria-labelledby="levels-heading"><h2 id="levels-heading"></h2><div id="levels"></div></section>
 <section class="panel" id="decisions-section" aria-labelledby="decisions-heading"><h2 id="decisions-heading" data-l="decisions"></h2><div id="decisions"></div></section>
 <details class="panel coverage" id="coverage" open><summary><span data-l="coverage_heading"></span><span class="small" id="coverage-count"></span></summary><p data-l="coverage_note"></p><dl class="scope-meta" id="scope-meta"></dl><div class="coverage-columns"><section><h3 data-l="limitations"></h3><div id="limitations"></div></section><section><h3 data-l="perspectives"></h3><div id="perspectives"></div></section></div></details>
 <details class="chart-section"><summary data-l="overview"></summary><p class="section-note" data-l="count_basis"></p><div class="grid"><div class="panel"><h3 data-l="by_sev"></h3><div id="c-sev"></div></div><div class="panel"><h3 data-l="by_kind"></h3><div id="c-kind"></div></div><div class="panel"><h3 data-l="by_conf"></h3><div id="c-conf"></div></div><div class="panel"><h3 data-l="by_cat"></h3><div id="c-cat"></div></div><div class="panel"><h3 data-l="by_status"></h3><div id="c-status"></div></div><div class="panel"><h3 data-l="by_verdict"></h3><div id="c-verdict"></div><p class="section-note" data-l="excluded_note"></p></div></div></details>
@@ -460,6 +543,9 @@ function openHash(){var anchor=window.location.hash.slice(1),f=ALL.find(function
 document.addEventListener('click',function(e){var a=e.target.closest('a[href^="#finding-"]');if(a&&a.getAttribute('href')===window.location.hash){e.preventDefault();openHash();}});
 window.addEventListener('hashchange',openHash);draw();if(window.location.hash)openHash();
 listInto(byId('decisions'),D.decisions,L.not_recorded);
+// The level legend: every line comes from render.py's LEGEND, already narrowed to this record.
+byId('levels-heading').textContent=D.legend.heading;[['severity',L.severity],['confidence',L.confidence]].forEach(function(k){byId('levels').appendChild(el('h3',null,k[1]));var dl=el('dl',{'class':'legend'});D.legend[k[0]].forEach(function(row){var dt=el('dt');if(k[0]==='severity')dt.appendChild(el('span',{'class':'badge '+row[0]},row[0]));else dt.textContent=row[0];dl.appendChild(dt);dl.appendChild(el('dd',null,row[1]));});byId('levels').appendChild(dl);});
+D.legend.notes.forEach(function(n){byId('levels').appendChild(el('p',{'class':'muted'},n));});
 ['next_steps','checked_ok'].forEach(function(k){var p=el('section',{'class':'panel'});p.appendChild(el('h2',null,L[k]));listInto(p,D[k],L.not_recorded);byId('lists').appendChild(p);});
 })();
 </script>
@@ -663,7 +749,8 @@ def render_dashboard(data, L, lang, excerpts):
                  "scope": meta.get("scope"),
                  "commit": revision(meta, L), "axis": axis(meta, L),
                  "prompts": ", ".join(f'{p["id"]} {p["name"]}' for p in prompts) or None},
-        "labels": labels, "headline": summary_line(data, L), "report": dashboard_model(data), "findings": items,
+        "labels": labels, "legend": legend(meta, lang), "headline": summary_line(data, L),
+        "report": dashboard_model(data), "findings": items,
         "anchors": {f["id"]: "finding-" + f["id"].lower() for f in data.get("findings", [])},
         "parts": KINDS, "prompt_ids": [p["id"] for p in prompts],
         "order": {"severity": SEVERITIES, "confidence": CONFIDENCES, "status": STATUSES, "verdict": VERDICTS},

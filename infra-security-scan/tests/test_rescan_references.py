@@ -37,7 +37,7 @@ class RescanReferencesTest(unittest.TestCase):
         return json.loads(self.record.read_text(encoding="utf-8"))
 
     def seed_path(self, data, fid):
-        data["meta"].update(project="example", scope="test", date="2026-10-08", assessor="test")
+        data["meta"].update(project="example", scope="test", date="2026-10-08", assessor="test", axis="confirmed")
         data["perspectives"] = [{"name": n, "status": "Applied"} for n in render.perspective_names()]
         data["attack_paths"] = [{"id": "AP-01", "entry": "Internet", "target": "Example bucket",
                                  "status": "open", "edges": ["Public ACL (z.tf:3)"], "findings": [fid]}]

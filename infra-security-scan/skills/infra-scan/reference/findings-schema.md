@@ -77,6 +77,7 @@ digits.
 | `providers` | no | Subset of `aws`, `gcp`, `azure`, `kubernetes` |
 | `inputs` | no | List of inputs read: `{"kind": "iac|plan|snapshot|manifest", "path": "...", "note": "..."}` |
 | `commit` | set by `iac_scan.py` | Git commit of the assessed repository, or `""` outside git |
+| `axis` | for `contract_check.py` | `confirmed` when the requester confirmed the crown jewels severity is judged against, `assumed` when nobody answered; while it is `assumed`, every non-excluded High finding (F-* or I-*) is named in `decisions`. Optional while fragments merge; any other value is refused |
 
 `iac_scan.py --into` writes only `meta.commit`; the first fragment carries the
 rest. A minimal first fragment:
@@ -86,7 +87,7 @@ rest. A minimal first fragment:
   "meta": {"project": "acme-platform", "scope": "AWS account prod; environment prod",
            "date": "2026-10-08", "assessor": "Claude Code (<model>)",
            "method": "Static review of Terraform; no cloud API calls", "providers": ["aws"],
-           "inputs": [{"kind": "iac", "path": "envs/prod/"}]}
+           "inputs": [{"kind": "iac", "path": "envs/prod/"}], "axis": "confirmed"}
 }
 ```
 

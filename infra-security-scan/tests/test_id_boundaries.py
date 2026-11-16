@@ -47,7 +47,7 @@ class IdBoundaryTest(unittest.TestCase):
                     fragment = root / "fragment.json"
                     fragment.write_text(json.dumps({
                         "meta": {"project": "Large estate", "scope": "synthetic fixtures",
-                                 "date": "2026-10-08", "assessor": "test"},
+                                 "date": "2026-10-08", "assessor": "test", "axis": "confirmed"},
                         "perspectives": [{"name": name, "status": "Applied"}
                                          for name in render.perspective_names()],
                         "findings": [{"id": f"I-{n:03d}", "validation": {

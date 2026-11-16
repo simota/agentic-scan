@@ -45,7 +45,7 @@ class ScannerOwnedTextTest(unittest.TestCase):
         """Merge one review finding on an attack path and triage every I-*."""
         fragment = self.root / "review.json"
         fragment.write_text(json.dumps({
-            "meta": {"project": "example", "scope": "test", "date": "2026-10-26", "assessor": "test"},
+            "meta": {"project": "example", "scope": "test", "date": "2026-10-26", "assessor": "test", "axis": "confirmed"},
             "perspectives": [{"name": n, "status": "Applied"} for n in render.perspective_names()],
             "attack_paths": [{"id": "AP-01", "entry": "Internet", "target": "Network", "status": "open",
                               "edges": ["Module from a branch (main.tf:2)"], "findings": [fid]}],

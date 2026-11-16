@@ -177,6 +177,52 @@ class ContractTest(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("meta.project: required", err)
 
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        high = [f["id"] for f in self.data["findings"]
+                if f["severity"] == "High" and f["validation"]["verdict"] not in render.EXCLUDED]
+        self.assertEqual(high, ["F-001", "F-002", "I-001"])
+        self.data["meta"]["axis"] = "assumed"
+        # I-001 is already named; a path component or a longer word does not name F-001.
+        self.data["decisions"].append("See docs/F-001/notes.md and ticket XF-001")
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        for fid in ("F-001", "F-002"):
+            self.assertIn(f"{fid}: its High severity rests on an assumed severity axis (meta.axis); "
+                          "name it in decisions for a person to confirm", err)
+        self.assertNotIn("I-001: its High severity", err)
+        # An excluded finding needs no confirmation.
+        self.data["findings"][1]["validation"]["verdict"] = "FalsePositive"
+        self.write()
+        self.assertNotIn("F-002: its High severity", self.check()[2])
+        self.data["findings"][1]["validation"]["verdict"] = "Valid"
+        self.data["decisions"].append("Confirm the crown jewels F-001 and F-002 rest on")
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 0, err)
+        for name in ("dashboard.html", "assessment.html"):
+            page = (self.out / name).read_text(encoding="utf-8")
+            self.assertIn("Severity axis", page)
+            self.assertIn("assumed; not confirmed by the requester", page)
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(render.main([str(self.out / "findings.json"), "--out", str(self.out),
+                                          "--no-pdf", "--lang", "ja"]), 0)
+        for name in ("dashboard.html", "assessment.html"):
+            page = (self.out / name).read_text(encoding="utf-8")
+            self.assertIn("深刻度の軸", page)
+            self.assertIn("仮定（依頼者は未確認）", page)
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        del self.data["meta"]["axis"]
+        self.write()
+        code, _, err = self.check()
+        self.assertEqual(code, 1)
+        self.assertIn("meta.axis: record whether the requester confirmed the list severity is judged "
+                      "against (confirmed) or it was assumed (assumed)", err)
+        self.data["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(render.SchemaError, "meta.axis"):
+            render.validate(self.data, partial=True)
+
     def test_unreadable_is_2(self):
         (self.out / "findings.json").write_text("{", encoding="utf-8")
         self.assertEqual(self.check()[0], 2)

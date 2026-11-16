@@ -52,6 +52,9 @@ EXCLUDED = {"FalsePositive", "NotApplicable"}
 AP_STATUSES = ("open", "blocked", "unknown")
 P_STATUSES = ("Applied", "N/A", "Not checked")
 INPUT_KINDS = ("iac", "plan", "snapshot", "manifest")
+# meta.axis: did the requester confirm the crown-jewel list severity is judged
+# against, or was it assumed because nobody answered?
+AXES = ("confirmed", "assumed")
 # ASCII digits and \Z: "$" would accept a trailing newline and \d other scripts' digits.
 # Numbering starts at 1; nine digits bound int() well below Python's limit.
 F_ID = re.compile(r"^F-(?!0+\Z)([0-9]{3,9})\Z")
@@ -67,7 +70,7 @@ DATE = re.compile(r"^[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 F_FIELDS = ("actor", "path", "contrast", "impact", "fix", "regression")
 # Keys outside these sets are typos or fields no output shows; refuse them
 # rather than silently dropping what the reviewer wrote.
-META_KEYS = {"project", "scope", "date", "assessor", "method", "providers", "inputs", "commit"}
+META_KEYS = {"project", "scope", "date", "assessor", "method", "providers", "inputs", "commit", "axis"}
 FINDING_KEYS = {"id", "title", "severity", "confidence", "category", "provider", "resources", "location",
                 *F_FIELDS, "controls", "cwe", "attack_paths", "condition", "references", "rule",
                 "detail", "validation"}
@@ -310,6 +313,8 @@ def validate(data, partial=False):
         prov = meta["providers"]
         if not isinstance(prov, list) or any(x not in PROVIDERS[:4] for x in prov):
             add("meta.providers: must be a list of aws, gcp, azure, kubernetes")
+    if "axis" in meta and meta["axis"] not in AXES:
+        add(f"meta.axis: must be one of {', '.join(AXES)}")
     if "inputs" in meta:
         if not isinstance(meta["inputs"], list):
             add("meta.inputs: must be a list")
@@ -564,6 +569,8 @@ LABELS = {
         "linked": "Findings", "id": "ID", "title": "Title",
         "project": "Project", "scope": "Scope", "date": "Date", "assessor": "Assessor",
         "method": "Method", "commit": "Commit", "inputs": "Inputs", "inventory": "Inventory",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "resources_n": "resources", "files_n": "files", "not_run": "Not run",
         "all": "All", "search": "Search", "shown": "shown", "copy": "Copy for LLM", "copied": "Copied",
         "excluded_n": "excluded", "unverified_n": "unverified",
@@ -602,6 +609,8 @@ LABELS = {
         "linked": "関連する検出事項", "id": "ID", "title": "タイトル",
         "project": "対象", "scope": "範囲", "date": "診断日", "assessor": "診断者",
         "method": "方法", "commit": "コミット", "inputs": "入力", "inventory": "インベントリ",
+        "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "resources_n": "リソース", "files_n": "ファイル", "not_run": "未実施",
         "all": "すべて", "search": "検索", "shown": "件表示", "copy": "LLM用にコピー", "copied": "コピーしました",
         "excluded_n": "除外", "unverified_n": "未検証",
@@ -936,6 +945,8 @@ def meta_pairs(data, L, lang="en"):
     meta = data.get("meta", {})
     rows = [(L[k], esc(meta.get(k))) for k in ("project", "scope", "date", "assessor", "method", "commit")
             if meta.get(k)]
+    if meta.get("axis") in AXES:
+        rows.append((L["axis"], esc(L["axis_" + meta["axis"]])))
     if meta.get("inputs"):
         rows.append((L["inputs"], "<br>".join(
             f'{esc(shown(i.get("kind"), lang))}: <code>{esc(i.get("path"))}</code>' + (f' — {esc(i["note"])}' if i.get("note") else "")
@@ -1343,6 +1354,8 @@ def render_assessment(data, L, lang, sources, pdf_note="", changes=None):
                    f"><h2>{t}</h2>{b}</section>" for sid, t, b in sections)
     cover = "".join(f'<p class="meta-line"><strong>{L[k]}</strong><span>{esc(meta.get(k))}</span></p>'
                     for k in ("scope", "date", "assessor", "commit") if meta.get(k))
+    if meta.get("axis") in AXES:
+        cover += f'<p class="meta-line"><strong>{L["axis"]}</strong><span>{esc(L["axis_" + meta["axis"]])}</span></p>'
     return f"""<!doctype html>
 <html lang="{lang}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">

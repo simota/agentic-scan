@@ -45,7 +45,8 @@ judged by where they lead, not by the rule they break.
   backups. Severity is judged against these. Show this list to the requester in
   one line and use their corrections; when nobody can answer (an unattended or
   delegated run), record it as assumed in `limitations` and the chat summary,
-  and continue
+  and continue. Record which in `meta.axis` (`confirmed` or `assumed`); an
+  assumed axis sends every High finding to `decisions`
 - **Create a new, empty output directory** outside the assessed repository and
   follow the *Run contract* below
 

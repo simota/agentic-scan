@@ -7,8 +7,9 @@ OUT_DIR holds findings.json and the rendered outputs. The check covers shape
 and provenance only: schema, ID scheme and order, the fields every F-* finding
 carries, a verdict other than `Unverified` on every finding, every perspective
 recorded once, references that name existing records, the merge gate's
-credential and exploit-string checks over the whole record, I-* findings and
-meta.commit and the inventory identical to iac.json, and the exact output file set, each output
+credential and exploit-string checks over the whole record, meta.axis recorded
+(and, when it is `assumed`, every non-excluded High finding named in decisions),
+I-* findings and meta.commit and the inventory identical to iac.json, and the exact output file set, each output
 nonempty and of its kind (HTML, iac_scan JSON, %PDF), with both HTML reports
 rendered from this findings.json. It cannot tell whether a finding is true.
 
@@ -22,7 +23,8 @@ import sys
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 import findings as record_gate  # noqa: E402
 import render  # noqa: E402
-from common import REVIEW_FIELDS, STATE_OR_VARS, inventory, reviewer_fields  # noqa: E402
+from common import (RECORD_REFERENCE, REVIEW_FIELDS, SEVERITIES, STATE_OR_VARS, find_references,  # noqa: E402
+                    inventory, reviewer_fields)
 
 OUTPUTS = {"findings.json", "iac.json", "dashboard.html", "assessment.html", "assessment.pdf"}
 F_ID = render.F_ID
@@ -87,6 +89,26 @@ def baseline_problems(data, iac_path):
     return problems
 
 
+def axis_problems(data, findings):
+    """meta.axis must be recorded; an assumed one sends each top-severity finding to decisions."""
+    meta = data.get("meta") if isinstance(data.get("meta"), dict) else {}
+    axis = meta.get("axis")
+    if axis is None:
+        return ["meta.axis: record whether the requester confirmed the list severity is judged "
+                "against (confirmed) or it was assumed (assumed)"]
+    if axis != "assumed":
+        return []
+    decisions = data.get("decisions") if isinstance(data.get("decisions"), list) else []
+    # Named as the dangling-reference check reads an ID: not inside a word, path or URL.
+    named = {m.group() for line in decisions if isinstance(line, str)
+             for m in find_references(RECORD_REFERENCE, line)}
+    top = SEVERITIES[0]
+    return [f"{f.get('id')}: its {top} severity rests on an assumed severity axis (meta.axis); "
+            "name it in decisions for a person to confirm"
+            for f in findings if f.get("severity") == top and f.get("id") not in named
+            and not (isinstance(f.get("validation"), dict) and f["validation"].get("verdict") in render.EXCLUDED)]
+
+
 def check(data, out_dir, pdf=True, allow=()):
     problems = []
     add = problems.append
@@ -124,6 +146,7 @@ def check(data, out_dir, pdf=True, allow=()):
             add(f"perspectives: {name!r} recorded {n} times; every perspective exactly once")
     for where, rid in render.dangling_references(data):
         add(f"{where}: names {rid}, which no finding or attack path has (renumbered or removed?)")
+    problems += axis_problems(data, findings)
     if not isinstance(data.get("inventory"), dict):
         add("inventory: missing; run iac_scan.py <repo> --out <out>/iac.json --into <out>/findings.json "
             "(both in one run)")

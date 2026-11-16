@@ -87,6 +87,10 @@ active liability by the High row. Severity assumes the element is unneeded;
 whether it is — inside or outside the repository, or by a human's call — is
 confidence and verdict, never severity.
 
+The rendered pages' "How to read the levels" section (`LABELS[lang]["levels"]`
+in `scripts/render.py`) condenses this table and the confidence table in
+`reference/validation.md`; change it with them.
+
 ## Phases
 
 | Phase | Do | Reference |

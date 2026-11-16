@@ -29,8 +29,8 @@ from contextlib import ExitStack, contextmanager
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (EXCLUDED, RecordError, check_findings, check_units, parse_json,  # noqa: E402
-                      record_exists)
+from findings import (CONFIDENCES, EXCLUDED, SEVERITIES, RecordError, check_findings,  # noqa: E402
+                      check_units, parse_json, record_exists)
 from safe_paths import NOFOLLOW_DIR_FD, SEARCH, descriptor_within, open_directory, within  # noqa: E402
 from safe_output import SAFE_OUTPUT, checked_target, publish_outputs_at, tolerant_stdout  # noqa: E402
 from safe_source import PRIVATE_KEY, SECRET_NAME, SECRET_VALUE, physical_lines, sensitive_source  # noqa: E402
@@ -79,7 +79,29 @@ LABELS = {
            "entry": "Entry point", "occurrences": "Occurrences", "evidence": "Verification",
            "dynamic": "Dynamic and external use checked",
            "now": "Subtraction - remove now", "reduce": "Subtraction - reduce or consolidate",
-           "decide": "Subtraction - decide with a human", "count": "{n}"},
+           "decide": "Subtraction - decide with a human", "count": "{n}",
+           # Condenses the severity table in SKILL.md and the confidence table in
+           # reference/validation.md; change it with them.
+           "levels": {
+               "title": "How to read the levels", "severity": "Severity", "confidence": "Confidence",
+               "High": "An unneeded element that is an active liability: it is still reachable, executes, "
+                       "holds secrets, grants access or carries a known vulnerability.",
+               "Medium": "A significant ongoing cost: a whole unused feature or module, a heavy dependency, "
+                         "a diverging duplicate, data with no reader, or work beyond the purpose or scale.",
+               "Low": "Local cleanup, or a Medium-class cost confined to one small component.",
+               "Info": "No ongoing cost today; recorded for the next review.",
+               "Confirmed": "No reference anywhere, dynamic use checked, and nothing outside the repository "
+                            "can reach it; for purpose findings, the purpose item is documented or stated.",
+               "Externally-dependent": "Unused inside the repository, but something outside could use it "
+                                       "(a public API, another service, an old client, operations or data duties).",
+               "Purpose-dependent": "Rests on an inferred purpose item; a human decides keep or remove.",
+               "Suspected": "Rests on something not read: generated code, a library's internals or "
+                            "configuration outside the repository.",
+               "closing": "Severity is the cost of keeping the element, assuming it is unneeded; each further "
+                          "condition before that cost is real lowers it one level. Confidence is graded "
+                          "separately and never changes severity. A finding resting on an inferred purpose "
+                          "item is Purpose-dependent and goes to decisions.",
+           }},
     "ja": {"kind": "不要要素診断", "title": "不要要素診断書", "dashboard_title": "不要要素診断結果",
            "running_footer": "不要要素診断", "subtract": "引き算", "verify": "先に検証",
            "verify_text": "削除する前に、リポジトリの外(クライアント、他サービス、運用、データの保存義務)で使われていないこと、"
@@ -89,7 +111,25 @@ LABELS = {
            "risk": "削除のリスク", "unit": "レビュー単位", "entry": "入口", "occurrences": "出現箇所",
            "evidence": "検証根拠", "dynamic": "動的・外部利用の確認",
            "now": "引き算 - 今すぐ削除", "reduce": "引き算 - 縮小・統合", "decide": "引き算 - 人が判断",
-           "count": "{n}件"},
+           "count": "{n}件",
+           "levels": {
+               "title": "レベルの読み方", "severity": "重大度", "confidence": "確度",
+               "High": "不要な要素が現に負債になっている: まだ到達できる、実行される、秘密情報を持つ、"
+                       "アクセスを与える、または既知の脆弱性を抱える。",
+               "Medium": "継続的なコストが大きい: 使われていない機能やモジュール丸ごと、重い依存関係、"
+                         "乖離した重複、読み手のいないデータ、目的や規模を超えた作り込み。",
+               "Low": "局所的な片付け、または小さな部品1つに収まる Medium 相当のコスト。",
+               "Info": "現時点で継続的なコストはない。次回のレビューのために記録する。",
+               "Confirmed": "どこからも参照がなく、動的な利用も確認済みで、リポジトリの外からも到達できない。"
+                            "目的に関する指摘では、目的項目が文書化済みか依頼者の言明。",
+               "Externally-dependent": "リポジトリ内では未使用だが、外部(公開 API、他サービス、古いクライアント、"
+                                       "運用、データの保存義務)が使っている可能性がある。",
+               "Purpose-dependent": "推定した目的項目に依拠する。残すか削除するかは人が判断する。",
+               "Suspected": "読んでいないもの(生成コード、ライブラリの内部、リポジトリ外の設定)に依拠する。",
+               "closing": "重大度は、要素が不要だと仮定したときの持ち続けるコストです。そのコストが現実になるまでに"
+                          "条件が1つ加わるごとに1段階下げます。確度は別に判定し、重大度を上げ下げしません。"
+                          "推定した目的項目に依拠する指摘は Purpose-dependent とし、判断事項に回します。",
+           }},
 }
 
 
@@ -271,6 +311,40 @@ def subtraction_lines(findings, lang):
             for key, ids in zip(("now", "reduce", "decide"), subtraction_groups(findings)) if ids]
 
 
+def levels_html(lang, page):
+    """The "How to read the levels" section for page ("report" or "dashboard"), from LABELS only."""
+    V, esc = LABELS[lang]["levels"], report.esc
+
+    def rows(levels, badge):
+        if page == "report":
+            return "<ul>" + "".join(f"<li class='prose'>{badge(k)} {esc(V[k])}</li>" for k in levels) + "</ul>"
+        return "<dl class='scope-meta'>" + "".join(f"<dt>{badge(k)}</dt><dd>{esc(V[k])}</dd>" for k in levels) + "</dl>"
+
+    def severity(k):
+        return f"<span class='badge {esc(k)}'>{esc(k)}</span>"
+
+    def confidence(k):
+        return f"<strong>{esc(k)}</strong>"
+
+    body = (f"<h3>{esc(V['severity'])}</h3>{rows(SEVERITIES, severity)}"
+            f"<h3>{esc(V['confidence'])}</h3>{rows(CONFIDENCES, confidence)}"
+            f"<p class='section-note'>{esc(V['closing'])}</p>")
+    if page == "report":
+        return f"<section id='levels'><h2>{esc(V['title'])}</h2>{body}</section>\n"
+    return f"<details class='panel' id='levels' open><summary>{esc(V['title'])}</summary>{body}</details>\n"
+
+
+# Where each vendored page receives the legend: just before its finding register.
+LEVELS_ANCHORS = {"report": '<section id="finding-register">', "dashboard": '<section id="findings" '}
+
+
+def with_levels(html, lang, page):
+    anchor = LEVELS_ANCHORS[page]
+    if html.count(anchor) != 1:
+        raise ValueError(f"{page} page: no single insertion point for the levels legend; re-check scan_report_kit")
+    return html.replace(anchor, levels_html(lang, page) + anchor, 1)
+
+
 @contextmanager
 def selected_repository(repo):
     """Retain one repository identity for every excerpt in a conversion.
@@ -450,8 +524,8 @@ def render_outputs(a, resources):
         if units_source is not None:
             stamp += f'<meta name="{UNITS_STAMP}" content="sha256:{hashlib.sha256(units_source).hexdigest()}">'
         pages = {name: page.replace("<head>", "<head>" + stamp, 1) for name, page in (
-            ("dashboard.html", report.render_dashboard(common, a.lang)),
-            ("report.html", report.render_document(common, a.lang)))}
+            ("dashboard.html", with_levels(report.render_dashboard(common, a.lang), a.lang, "dashboard")),
+            ("report.html", with_levels(report.render_document(common, a.lang), a.lang, "report")))}
     except (OSError, ValueError, RecordError, report.FormatError) as e:
         print(f"render.py: {e}", file=sys.stderr)
         return 2

@@ -1,7 +1,7 @@
 ---
 name: privacy-scan
 description: "Static privacy review of an application's own source: maps personal data, where it flows and who receives it, then checks minimisation, consent, retention and deletion, data subject rights, third-party sharing, logs and telemetry, exposure, storage, tracking and copies. Outputs a dashboard and a report. Read-only; not legal advice. Use to find privacy gaps or list what to check."
-allowed-tools: Read, Grep, Glob, Bash, Write, Edit
+allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
 ## Owns
@@ -20,6 +20,19 @@ and with the requirements the requester names. Whether a gap is a legal breach
 is a decision for the requester and their counsel; the report says so.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
+
+Neighbours, and where their questions go instead. The line with
+`security-scan`: personal data the application itself sends, keeps or fails
+to delete against its commitments is a finding here; an actor reaching it
+through a missing or bypassable access control is `security-scan`'s:
+
+| Question | Skill |
+|---|---|
+| Write the fix | `coding-implement` |
+| Another user or tenant reading the data by bypassing authorization or tenancy | `security-scan` |
+| Storage exposure and encryption in the cloud configuration | `infra-scan` |
+| Data lost or corrupted by schema, migrations or cascades | `data-scan` |
+| Data or code nobody uses that holds no personal data | `prune-scan` |
 
 ## Before starting
 

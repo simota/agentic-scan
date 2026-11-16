@@ -63,7 +63,10 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 - **Name the trust boundary**: which inputs are untrusted (end-user text, web
   pages, retrieved documents, email, tool results) and which capabilities the
   model holds while reading them (tools, other users' data, actions with side
-  effects). Severity of an injection finding is judged against these
+  effects). Severity of an injection finding is judged against these. Show this
+  list to the requester in one line and use their corrections; when nobody can
+  answer (an unattended or delegated run), record it as assumed in `limitations`
+  and the chat summary, and continue
 - **Create a new, empty output directory** outside the reviewed repository and
   follow the *Run contract* below
 

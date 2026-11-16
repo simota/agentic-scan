@@ -37,12 +37,26 @@ repository: call the scripts by that path, never a `scripts/` of the audited pro
   relative to how often and how latency-sensitively it is paid
 - **Name the scale drivers**: what grows — rows per tenant, items per order,
   users per organisation, file sizes, fan-out targets, concurrent users,
-  history length. Severity is judged by what grows without a cap on a hot path
+  history length. Severity is judged by what grows without a cap on a hot path.
+  Show this list to the requester in one line and use their corrections; when
+  nobody can answer (an unattended or delegated run), record it as assumed in
+  `limitations` and the chat summary, and continue
 - **Derive the budgets before hunting**: the bounds this app must keep — latency
   targets, timeouts, page-size defaults, queries per request, payload and
   bundle size, memory limits, job deadlines (`reference/budgets.md`). Essential
   performance problems are violations of these bounds on some path; a generic
   linter cannot see them because the bounds exist only in this app
+- **Fix the history window** (default: 12 months, or the whole history when it
+  is shorter) and read its performance fixes with read-only `git log`: a commit
+  that added an index, batched a query, capped a page or moved work off the
+  request path is evidence. Hunt the sibling paths the fix did not reach, the
+  same loop, query or handler shape elsewhere
+- **Read runtime exports only when the requester supplies them**: APM traces,
+  slow-query logs, `EXPLAIN` output, row counts or a bundle report that the
+  requester exported and names by path are evidence for workloads and scale
+  drivers, cited by `path:line` and quoted, never extrapolated. Never call a
+  monitoring API or connect to a database to fetch them. An export does not make
+  a finding `measured`, which still needs the before and after runs
 - **Create a new, empty output directory** outside the audited repository and
   follow the *Run contract* below (not for a checklist-only request)
 

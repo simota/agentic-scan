@@ -4,7 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from support import HtmlTreeReader, complete_doc, element_text, finding, findings, render, run_main
+from support import REPO, HtmlTreeReader, complete_doc, element_text, finding, findings, render, run_main
 
 
 class ReportLayoutTests(unittest.TestCase):
@@ -186,6 +186,51 @@ class BlankOptionalFieldTests(unittest.TestCase):
         self.assertNotIn("**contrast:**", report)
         self.assertNotIn("**budget:**", report)
         self.assertNotIn("<dt>contrast</dt>", html)
+
+
+class LevelLegendTests(unittest.TestCase):
+    """The "How to read the levels" legend: one line per level, on both pages, in both languages."""
+
+    def test_every_severity_and_confidence_has_a_legend_line_in_each_language(self):
+        for lang in ("en", "ja"):
+            legend = render.LABELS[lang]["legend"]
+            for level in findings.SEVERITIES + findings.CONFIDENCES + ("separate", "assumed"):
+                with self.subTest(lang=lang, level=level):
+                    self.assertTrue(legend.get(level, "").strip())
+
+    def test_the_sample_report_and_dashboard_carry_the_legend(self):
+        sample = REPO / "examples" / "findings.sample.json"
+        for lang in ("en", "ja"):
+            t = render.LABELS[lang]
+            with self.subTest(lang=lang), tempfile.TemporaryDirectory() as directory:
+                code, _, _ = run_main(render.main, sample, "--out", directory, "--lang", lang)
+                self.assertEqual(code, 0)
+                report = (Path(directory) / "report.md").read_text(encoding="utf-8")
+                html = (Path(directory) / "dashboard.html").read_text(encoding="utf-8")
+                self.assertIn(f"## {t['levels']}\n", report)
+                self.assertIn(f"<h2>{t['levels']}</h2>", html)
+                for level in findings.SEVERITIES + findings.CONFIDENCES:
+                    self.assertIn(f"- **{level}:** {t['legend'][level]}\n", report)
+                    self.assertIn(f"<dt>{level}</dt><dd>{render.html_text(t['legend'][level])}</dd>", html)
+                self.assertIn(t["legend"]["separate"], report)
+                self.assertIn(render.html_text(t["legend"]["separate"]), html)
+
+    def test_the_assumed_axis_line_appears_only_when_the_axis_is_assumed(self):
+        doc = complete_doc()
+        for axis in ("confirmed", "assumed", None):
+            if axis is None:
+                del doc["meta"]["axis"]
+            else:
+                doc["meta"]["axis"] = axis
+            for lang in ("en", "ja"):
+                note = render.LABELS[lang]["legend"]["assumed"]
+                with self.subTest(axis=axis, lang=lang):
+                    report, html = render.render_markdown(doc, lang), render.render_html(doc, lang)
+                    self.assertEqual(note in report, axis == "assumed")
+                    self.assertEqual(render.html_text(note) in html, axis == "assumed")
+        self.assertEqual(render.LABELS["en"]["legend"]["assumed"],
+                         "Severity rests on an assumed list; see decisions.")
+
 
 if __name__ == "__main__":
     unittest.main()

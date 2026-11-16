@@ -24,7 +24,7 @@ import unicodedata
 from urllib.parse import quote, urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from findings import (AXES, BUDGET_MENTION, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
+from findings import (AXES, BUDGET_MENTION, CONFIDENCES, EXCLUDED, MEASUREMENT_RUNS, PERSPECTIVES,  # noqa: E402
                       SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
                       finding_locations, finding_status, read_json, resolve_path,
                       SchemaError, validate)
@@ -66,6 +66,30 @@ LABELS = {
         "nav_lists": "Checks, limits and next steps", "shortcuts": "Keyboard",
         "key_move": "Next / previous finding", "key_toggle": "Show or hide details",
         "filter_shown": "{shown} of {total} findings shown", "filter_empty": "No findings match this filter.",
+        "levels": "How to read the levels",
+        # Condenses the severity table in SKILL.md and the confidence values in
+        # reference/findings-schema.md; change it with them.
+        "legend": {
+            "High": "On a hot path, cost grows with a scale driver that has no cap, or one request "
+                    "blocks a shared resource (event loop, global lock, connection pool) so that other "
+                    "requests stall; or a leak on a hot or warm path reaches the process limit within "
+                    "the restart or deploy interval.",
+            "Medium": "High-class growth that needs one condition the code does not control, independent "
+                      "of the scale driver's own growth; a bounded cost that, at its cap, violates a "
+                      "budget on a hot path; uncapped growth on a warm path; a leak fed only by a cold "
+                      "path; or a deployment-setting mismatch that throttles or OOM-kills processes "
+                      "serving hot paths.",
+            "Low": "Inefficiency on a cold path that stalls nothing shared, a bounded budget violation "
+                   "on a warm path, a missed cache with small cost, or constant-factor waste.",
+            "Info": "A tuning or observability note with no demonstrated cost path.",
+            "Confirmed": "The cost follows from the code.",
+            "Environment-dependent": "The cost needs a named production condition, stated with its "
+                                     "threshold.",
+            "Suspected": "The cost model itself rests on a code link that is not yet confirmed.",
+            "separate": "Severity and confidence are graded separately: confidence never raises or "
+                        "lowers severity.",
+            "assumed": "Severity rests on an assumed list; see decisions.",
+        },
     },
     "ja": {
         "title": "パフォーマンス診断", "scope": "対象と方法",
@@ -101,6 +125,25 @@ LABELS = {
         "nav_lists": "確認結果・制約・次の作業", "shortcuts": "キー操作",
         "key_move": "次・前の検出事項", "key_toggle": "詳細の表示・非表示",
         "filter_shown": "{total} 件中 {shown} 件を表示", "filter_empty": "この条件に該当する検出事項はありません。",
+        "levels": "レベルの読み方",
+        "legend": {
+            "High": "ホットパス上で、上限のない規模の要因に応じてコストが増える、または 1 件のリクエストが"
+                    "共有資源（イベントループ、グローバルロック、コネクションプール）を塞いで他のリクエストを"
+                    "止める。あるいは、ホットまたはウォームパス上のリークが再起動・デプロイの間隔内に"
+                    "プロセスの上限に達する。",
+            "Medium": "コードが制御できない条件（規模の要因自体の増加とは独立したもの）を 1 つ必要とする"
+                      " High 級の増加、上限時にホットパスのバジェットに違反する有界なコスト、ウォームパス上の"
+                      "上限のない増加、コールドパスだけが原因のリーク、またはホットパスを担うプロセスを"
+                      "絞る・OOM で落とすデプロイ設定の不整合。",
+            "Low": "共有資源を止めないコールドパスの非効率、ウォームパス上の有界なバジェット違反、"
+                   "コストの小さいキャッシュの取りこぼし、定数倍の無駄。",
+            "Info": "コストの経路が示されていないチューニングや可観測性の注記。",
+            "Confirmed": "コストがコードから直接導かれる。",
+            "Environment-dependent": "コストが、しきい値とともに名指しした本番環境の条件を必要とする。",
+            "Suspected": "コストモデル自体が、まだ確認できていないコード上のつながりに依存している。",
+            "separate": "深刻度と確度は別々に判定する。確度が深刻度を上げ下げすることはない。",
+            "assumed": "深刻度は依頼者が確認していない一覧に基づく。「人が判断すべき事項」を参照。",
+        },
     },
 }
 # Display names for fixed values. Severity, confidence and verdict names stay as
@@ -356,6 +399,18 @@ def perspective_rows(doc, lang):
     return rows
 
 
+def level_legend(meta, labels):
+    """The legend's groups and closing notes, shared by report.md and the dashboard.
+
+    The assumed-axis note appears only when the record says the axis was assumed.
+    """
+    legend = labels["legend"]
+    groups = ((labels["severity"], [(s, legend[s]) for s in SEVERITIES]),
+              (labels["confidence"], [(c, legend[c]) for c in CONFIDENCES]))
+    notes = [legend["separate"]] + ([legend["assumed"]] if meta.get("axis") == "assumed" else [])
+    return groups, notes
+
+
 def first_location(finding):
     location = finding_locations(finding)
     return location[0] + (f" (+{len(location) - 1})" if len(location) > 1 else "")
@@ -420,6 +475,11 @@ def render_markdown(doc, lang):
                              f"{markdown_cell(meta.get('assessor', ''))}"))
     lines += ["", f"## {t['scope']}", ""]
     lines += markdown_table((t["item_col"], t["value_col"]), scope)
+    lines += ["", f"## {t['levels']}", ""]
+    groups, notes = level_legend(meta, t)
+    for heading, entries in groups:
+        lines += [f"**{heading}**", ""] + [f"- **{name}:** {text}" for name, text in entries] + [""]
+    lines += [("" if t["lang"] == "ja" else " ").join(notes)]
     lines += ["", f"## {t['findings']}", ""]
     if findings:
         headers = ("ID", t["severity"], t["confidence"], t["verdict_col"], t["title_col"],
@@ -499,7 +559,9 @@ td,th{padding:10px}
 tr:last-child td{border-bottom:0}
 .lists{gap:0 28px;margin-top:0}
 .lists ul{margin:0;padding-left:20px}
-@media (max-width:850px){details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
+.legend{display:grid;grid-template-columns:160px minmax(0,1fr);gap:6px 18px;margin:0 0 14px}
+.legend dt{font-size:13px;color:var(--text);font-weight:600}
+@media (max-width:850px){.legend{grid-template-columns:minmax(0,1fr);gap:2px}.legend dd{margin-bottom:8px}details dl{grid-template-columns:minmax(0,1fr);gap:2px}dd{margin-bottom:10px}}
 @media (max-width:480px){.card{padding:12px 2px 6px}}
 @media print{.filters,.detail-actions{display:none}details{break-inside:avoid}}
 /* Application shell: findings are <details>, not the kit's register table, so the
@@ -712,6 +774,12 @@ def render_html(doc, lang):
         out.append(f"<div class='card'><span class='l {s}'>{s}</span><b class='n'>{by_sev[s]}</b></div>")
     out.append(f"<div class='card'><span class='l'>{e(t['excluded'])}</span><b class='n'>{excluded}</b></div></div>"
                "</section>")
+    groups, notes = level_legend(meta, t)
+    out.append(f"<section id='levels' tabindex='-1'><h2>{e(t['levels'])}</h2>"
+               + "".join(f"<h3>{e(heading)}</h3><dl class='legend'>"
+                         + "".join(f"<dt>{e(name)}</dt><dd>{e(text)}</dd>" for name, text in entries)
+                         + "</dl>" for heading, entries in groups)
+               + "".join(f"<p class='section-note'>{e(note)}</p>" for note in notes) + "</section>")
     out.append(f"<section id='findings' tabindex='-1'><h2>{e(t['findings'])}</h2>"
                f"<p class='section-note'>{e(t['findings_note'])}</p>"
                f"<div class='filters-panel'><div class='filters'><button type='button' data-filter='all' "

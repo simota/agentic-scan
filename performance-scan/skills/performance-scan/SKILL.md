@@ -85,6 +85,11 @@ repository: call the scripts by that path, never a `scripts/` of the audited pro
 | Low | Inefficiency on a cold path (admin, one-off, startup) that stalls nothing shared, a bounded budget violation on a warm path, a missed cache with small cost, constant-factor waste |
 | Info | A tuning or observability note with no demonstrated cost path |
 
+The "How to read the levels" legend that `scripts/render.py` prints in
+`report.md` and `dashboard.html` (`legend` in its `LABELS`, per language)
+condenses this table and the confidence values in
+`reference/findings-schema.md`; change it whenever either changes.
+
 The condition the code does not control is what lowers High-class growth to
 Medium; each further such condition lowers it one more level. Record such a
 finding as `Environment-dependent` and name the condition and the threshold at

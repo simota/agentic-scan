@@ -35,7 +35,7 @@ the defect at a single site goes to the neighbour:
 | Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | `reliability-scan` |
 | An actor who can bypass authorization or tenant scoping | `security-scan` |
 | Which behaviour has no test, and what to assert | `test-scan` |
-| What can be deleted | `prune-scan` |
+| What can be deleted, including a workaround, `TODO` or caveat comment that deleting removes (DU3 keeps a rule only a comment enforces on a core flow, and a workaround that needs a type, test or lint rule in its place) | `prune-scan` |
 | Slow paths and unbounded work | `performance-scan` |
 
 ## Before starting

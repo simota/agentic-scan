@@ -571,6 +571,7 @@ LABELS = {
         "method": "Method", "commit": "Commit", "inputs": "Inputs", "inventory": "Inventory",
         "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
         "axis_assumed": "assumed; not confirmed by the requester",
+        "legend": "How to read the levels",
         "resources_n": "resources", "files_n": "files", "not_run": "Not run",
         "all": "All", "search": "Search", "shown": "shown", "copy": "Copy for LLM", "copied": "Copied",
         "excluded_n": "excluded", "unverified_n": "unverified",
@@ -611,6 +612,7 @@ LABELS = {
         "method": "方法", "commit": "コミット", "inputs": "入力", "inventory": "インベントリ",
         "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み",
         "axis_assumed": "仮定（依頼者は未確認）",
+        "legend": "レベルの読み方",
         "resources_n": "リソース", "files_n": "ファイル", "not_run": "未実施",
         "all": "すべて", "search": "検索", "shown": "件表示", "copy": "LLM用にコピー", "copied": "コピーしました",
         "excluded_n": "除外", "unverified_n": "未検証",
@@ -630,6 +632,42 @@ LABELS = {
         "chg_counts": "前回と今回の件数と開いている攻撃経路",
         "chg_findings": "変化した検出事項", "chg_paths": "変化した攻撃経路",
         "chg_none": "検出事項と攻撃経路に変化はありません。", "chg_persisting_n": "件は変化なく継続",
+    },
+}
+
+# The "How to read the levels" section of both pages: one line per severity
+# (condensed from the severity table in SKILL.md, which it must follow) and per
+# confidence (reference/attack-paths.md §4), then the closing lines.
+LEGEND = {
+    "en": {
+        "High": "An entry actor that needs nothing beyond what the internet, any cloud account or any organization "
+                "member already has can read or alter crown-jewel data, gain admin of an account, project, cluster or "
+                "the IaC pipeline, or execute code on a workload holding a privileged identity; or a credential with "
+                "admin reach is committed to the repository.",
+        "Medium": "A High-class impact that needs one condition the attacker does not control alone, or direct "
+                  "exposure of lower-value data; or missing detection on a High-class path.",
+        "Low": "A defense-in-depth gap off any High-class path, or a path that needs an admin or an unlikely chain.",
+        "Info": "A hardening note with no attacker path.",
+        "Confirmed": "Every edge of the path was read in the inputs.",
+        "Environment-dependent": "One edge depends on a stated setting outside the inputs; the assumed condition "
+                                 "names it and the severity is graded as if it holds.",
+        "Suspected": "An edge was inferred, not read in the inputs.",
+        "separate": "Severity and confidence are graded separately; confidence never raises or lowers severity.",
+        "assumed": "Severity rests on an assumed list; see decisions.",
+    },
+    "ja": {
+        "High": "インターネット・任意のクラウドアカウント・任意の組織メンバーが既に持つもの以上を必要としない攻撃主体が、"
+                "重要資産のデータを読み取り・改変できる、アカウント・プロジェクト・クラスタ・IaC パイプラインの管理権限を得られる、"
+                "または特権 ID を持つワークロードでコードを実行できる。管理者権限に届く認証情報がリポジトリにコミットされている場合も含む。",
+        "Medium": "高と同等の影響だが攻撃者が単独では制御できない条件を一つ必要とするもの、または価値の低いデータの直接の露出。"
+                  "高相当の経路で検知が欠けている場合も含む。",
+        "Low": "高相当の経路から外れた多層防御の不足、または管理者権限や起こりにくい連鎖を必要とする経路。",
+        "Info": "攻撃経路のない堅牢化の指摘。",
+        "Confirmed": "経路のすべてのエッジを入力の中で読んで確認した。",
+        "Environment-dependent": "一つのエッジが入力外の明示した設定に依存する。前提条件にその設定を記し、成り立つものとして深刻度を判定する。",
+        "Suspected": "エッジの一部を推測した（入力の中では読めていない）。",
+        "separate": "深刻度と確度は別々に判定する。確度によって深刻度を上げ下げしない。",
+        "assumed": "深刻度は仮定したリストに基づく。判断が必要な事項を参照。",
     },
 }
 
@@ -753,6 +791,17 @@ def counts(data):
     # Every finding status and contract_check.py still wait on, covered I-* included.
     c["unverified"] = len(untriaged(data))
     return c
+
+
+def legend_parts(data, L, lang):
+    """([(group label, [(level shown, meaning)])], [closing lines]) for the level legend."""
+    lines = LEGEND[lang]
+    groups = [(L["severity"], [(shown(s, lang), lines[s]) for s in SEVERITIES]),
+              (L["confidence"], [(shown(c, lang), lines[c]) for c in CONFIDENCES])]
+    closing = [lines["separate"]]
+    if data.get("meta", {}).get("axis") == "assumed":
+        closing.append(lines["assumed"])
+    return groups, closing
 
 
 # ---------------------------------------------------------------- source excerpts
@@ -989,7 +1038,7 @@ tr.no-match .empty{text-align:left}tr.no-match .empty p{margin:0 0 10px}
 tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
 @media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
 /* Application shell: the kit styles the shell; these cover infra-scan's own sections and its five filter controls. */
-.app-shell #attack-paths:focus,.app-shell #perspectives-section:focus,.app-shell #scope-section:focus{outline:0}
+.app-shell #attack-paths:focus,.app-shell #perspectives-section:focus,.app-shell #scope-section:focus,.app-shell #legend-section:focus{outline:0}
 .app-shell .filters{grid-template-columns:minmax(0,2.2fr) repeat(4,minmax(0,1fr))}
 @media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
 @media(max-width:850px){.app-shell .filters{grid-template-columns:repeat(2,minmax(0,1fr))}}
@@ -1216,7 +1265,13 @@ def render_dashboard(data, L, lang, sources, changes=None):
     nav = "".join(f'<li><a href="#{anchor}">{L[key]}</a></li>' for anchor, key in (
         ("overview", "summary"), *((("changes", "changes"),) if changes is not None else ()),
         ("attack-paths", "attack_paths"), ("findings", "findings"),
-        ("perspectives-section", "perspectives"), ("scope-section", "scope_method"), ("lists", "nav_lists")))
+        ("perspectives-section", "perspectives"), ("scope-section", "scope_method"), ("legend-section", "legend"),
+        ("lists", "nav_lists")))
+    groups, closing = legend_parts(data, L, lang)
+    legend = ("".join(f'<h3>{esc(g)}</h3><dl class="scope-meta">'
+                      + "".join(f"<dt>{esc(k)}</dt><dd>{esc(v)}</dd>" for k, v in pairs) + "</dl>"
+                      for g, pairs in groups)
+              + "".join(f'<p class="note small">{esc(n)}</p>' for n in closing))
     change_section = ""
     change_filter = ""
     if changes is not None:
@@ -1258,6 +1313,7 @@ def render_dashboard(data, L, lang, sources, changes=None):
 <tbody>{table}</tbody></table></div></section>
 <section id="perspectives-section" tabindex="-1"><div class="section-head"><div><h2>{L["perspectives"]}</h2></div></div><div id="perspectives">{persp}</div></section>
 <section id="scope-section" tabindex="-1"><div class="section-head"><div><h2>{L["scope_method"]}</h2></div></div><dl class="scope-meta">{meta_rows(data, L, lang)}</dl></section>
+<section id="legend-section" tabindex="-1"><div class="section-head"><div><h2>{L["legend"]}</h2></div></div>{legend}</section>
 <div class="lists" id="lists" tabindex="-1">{lists}</div>
 <footer class="footer">{L["static_note"]}</footer>
 </main>
@@ -1333,6 +1389,10 @@ def render_assessment(data, L, lang, sources, pdf_note="", changes=None):
                f'<tbody><tr><th scope="row">{L["findings"]}</th>{sev_cells}</tr></tbody></table>')
     aps = "".join(ap_html(a, L, lang) for a in data.get("attack_paths", [])) or none
     scope = "".join(f'<p class="meta-line"><strong>{k}</strong><span>{v}</span></p>' for k, v in meta_pairs(data, L, lang))
+    groups, closing = legend_parts(data, L, lang)
+    legend = ("".join(f"<h3>{esc(g)}</h3>" + "".join(f'<p class="meta-line"><strong>{esc(k)}</strong><span>{esc(v)}</span></p>'
+                                                    for k, v in pairs) for g, pairs in groups)
+              + "".join(f'<p class="small">{esc(n)}</p>' for n in closing))
     sections = [
         ("summary", L["summary"], f'<p><strong>{" · ".join(f"{shown(s, lang)} {c[s]}" for s in SEVERITIES)}</strong> — '
                                   f'{L["excluded_n"]} {c["excluded"]}, {L["covered_n"]} {c["covered"]}, '
@@ -1341,6 +1401,7 @@ def render_assessment(data, L, lang, sources, pdf_note="", changes=None):
         *((("changes", COMPARE_LABELS[lang]["heading"], changes_html(changes, L, lang, COMPARE_LABELS[lang])),)
           if changes is not None else ()),
         ("scope", L["scope_method"], scope),
+        ("legend", L["legend"], legend),
         ("attack-paths", L["attack_paths"], aps),
         ("finding-details", L["findings"], by_sev),
         ("excluded", L["excluded"], excl),

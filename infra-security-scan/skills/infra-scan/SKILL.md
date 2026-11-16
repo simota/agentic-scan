@@ -85,6 +85,9 @@ finding is graded as if its stated condition holds, and names that condition in
 `Environment-dependent` or `Suspected`, never `Confirmed`, and its `condition`
 names the unknown edge.
 
+The "How to read the levels" section of both rendered pages condenses this
+table (`LEGEND` in `scripts/render.py`); change the two together.
+
 ## When the host refuses an action
 
 A refusal covers that call, not the assessment. Do not resend it or disguise it.

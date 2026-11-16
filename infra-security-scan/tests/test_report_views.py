@@ -49,7 +49,7 @@ class ReportViewTest(unittest.TestCase):
         self.assertNotIn('class="masthead"', dash)
         nav = dash.split('<nav class="sidebar"')[1].split("</nav>")[0]
         hrefs = re.findall(r'<a href="#([^"]+)">', nav)
-        self.assertEqual(len(hrefs), 6)
+        self.assertEqual(len(hrefs), 7)
         for href in hrefs:
             self.assertIn(f'id="{href}"', dash, href)
         # Facets count what the severity cards count.
@@ -133,6 +133,45 @@ class ReportViewTest(unittest.TestCase):
         self.assertIn('<td>Governance and guardrails</td><td class="gap">Not checked</td>', report)
         self.assertIn('<thead><tr><td></td><th scope="col" class="High">', report)
         self.assertNotIn('<th scope="col"></th>', report)
+
+
+class LevelLegendTest(unittest.TestCase):
+    """Both pages say what each severity and confidence level means, in both languages."""
+
+    def test_every_level_has_a_legend_line_in_both_languages(self):
+        for lang in render.LABELS:
+            for level in (*render.SEVERITIES, *render.CONFIDENCES, "separate", "assumed"):
+                with self.subTest(lang=lang, level=level):
+                    self.assertTrue(render.LEGEND[lang].get(level, "").strip())
+
+    def test_legend_appears_in_both_pages_for_the_samples(self):
+        for source, lang in ((SAMPLE, "en"), (SAMPLE_JA, "ja")):
+            L, lines = render.LABELS[lang], render.LEGEND[lang]
+            for name, page in zip(("dashboard", "assessment"), pages(source, lang)):
+                with self.subTest(lang=lang, page=name):
+                    self.assertIn(f"<h2>{L['legend']}</h2>", page)
+                    for level in (*render.SEVERITIES, *render.CONFIDENCES):
+                        self.assertIn(render.esc(render.shown(level, lang)) + "</", page)
+                        self.assertIn(render.esc(lines[level]), page)
+                    self.assertIn(render.esc(lines["separate"]), page)
+        self.assertIn("How to read the levels", pages(SAMPLE, "en")[1])
+        self.assertIn("レベルの読み方", pages(SAMPLE_JA, "ja")[0])
+
+    def test_assumed_line_only_when_the_axis_is_assumed(self):
+        for source, lang in ((SAMPLE, "en"), (SAMPLE_JA, "ja")):
+            data = json.loads(source.read_text(encoding="utf-8"))
+            assumed = render.esc(render.LEGEND[lang]["assumed"])
+            for axis in ("confirmed", "assumed", None):
+                if axis is None:
+                    data["meta"].pop("axis", None)
+                else:
+                    data["meta"]["axis"] = axis
+                with tempfile.TemporaryDirectory() as tmp:
+                    src = Path(tmp) / "f.json"
+                    src.write_text(json.dumps(data), encoding="utf-8")
+                    for name, page in zip(("dashboard", "assessment"), pages(src, lang)):
+                        with self.subTest(lang=lang, axis=axis, page=name):
+                            (self.assertIn if axis == "assumed" else self.assertNotIn)(assumed, page)
 
 
 if __name__ == "__main__":

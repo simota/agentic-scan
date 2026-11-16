@@ -17,7 +17,8 @@ must be regular files, not symlinks.
   "schema_version": 1,
   "meta": {"project": "Tasklane", "date": "2026-10-12", "assessor": "Claude Code (<model>)",
            "scope": "web app at the recorded commit", "method": "Static review of routes, components, styles and locales",
-           "commit": "0a1b2c3", "viewports": ["360x640", "1280x800"], "locales": ["en", "de"]},
+           "commit": "0a1b2c3", "viewports": ["360x640", "1280x800"], "locales": ["en", "de"],
+           "axis": "confirmed"},
   "summary": "One paragraph for the abstract: the overall state and the two or three findings that matter most.",
   "findings": [
     {"id": "U-001", "title": "Task rows open only on mouse click", "severity": "High", "confidence": "Confirmed",
@@ -48,7 +49,11 @@ Required on every finding: `id`, `title`, `severity`, `confidence`, `status`,
 `assessor`; `schema_version` is the integer `1`, and `date` is a real calendar
 date in `YYYY-MM-DD` form. Optional `meta.viewports` uses the same `WIDTHxHEIGHT`
 format as `flows.json`; `meta.viewports` and `meta.locales` are shown in the
-pages only when `flows.json` lacks them. `commit` is the reviewed repository's `git -C <repo> rev-parse HEAD`
+pages only when `flows.json` lacks them. `meta.axis` is optional while merging and
+required by `contract_check.py`: `confirmed` when the requester confirmed the primary
+tasks severity is judged against, `assumed` when nobody answered; while it is
+`assumed`, every High finding that is not `FalsePositive` or `NotApplicable` is named
+by id in a `decisions` line for a person to confirm. The pages show it beside the scope. `commit` is the reviewed repository's `git -C <repo> rev-parse HEAD`
 when `<repo>` is the top level of its own Git repository (`git -C <repo> rev-parse --show-toplevel`);
 for a directory inside a larger repository, record that repository's commit and name the subdirectory in `scope`. Leave
 `commit` out when the repository is not under Git or has no commit yet, and say

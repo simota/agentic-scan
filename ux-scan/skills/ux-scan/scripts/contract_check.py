@@ -220,6 +220,17 @@ def problems(out, no_pdf=False, allow=()):
         if missing:
             yield (f"perspectives: no entry for {', '.join(missing)}; record each family as applied, "
                    "N/A with the reason, or not checked")
+        axis = data["meta"].get("axis")
+        if axis is None:
+            yield ("meta.axis: record whether the requester confirmed the list severity is judged against "
+                   "(confirmed) or it was assumed (assumed)")
+        elif axis == "assumed":
+            for f in data["findings"]:
+                if (f["severity"] == "High" and f["validation"]["verdict"] not in EXCLUDED
+                        and not any(re.search(rf"(?<![A-Za-z0-9]){re.escape(f['id'])}(?![A-Za-z0-9])", line)
+                                    for line in data.get("decisions", []))):
+                    yield (f"{f['id']}: its High severity rests on an assumed severity axis (meta.axis); "
+                           "name it in decisions for a person to confirm")
         bare = [f["id"] for f in data["findings"] if f["validation"]["verdict"] not in EXCLUDED
                 and not any(evidence.stage(i) == "before" for i in evidence.items(f))]
         if bare:

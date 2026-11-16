@@ -78,14 +78,16 @@ LABELS = {
            "observed": "Observed", "expected": "Expected", "criterion": "Criterion", "flow": "Flow",
            "screen": "Screen", "viewport": "Viewport", "occurrences": "Occurrences", "impact": "Impact",
            "evidence": "Verification", "intent": "Intent checked", "masked": "[masked: looks like a secret]",
-           "viewports": "Viewports", "locales": "Locales"},
+           "viewports": "Viewports", "locales": "Locales", "axis": "Severity axis",
+           "axis_confirmed": "confirmed by the requester", "axis_assumed": "assumed; not confirmed by the requester"},
     "ja": {"kind": "UX診断", "title": "UX診断書", "dashboard_title": "UX診断結果",
            "running_footer": "UX診断", "fix": "修正", "verify": "先に検証",
            "verify_text": "変更する前に、利用者が実際にこの状態に到達し、他の箇所で補われていないことを確認してください。",
            "observed": "現状", "expected": "あるべき状態", "criterion": "判断基準", "flow": "フロー",
            "screen": "画面", "viewport": "ビューポート", "occurrences": "出現箇所", "impact": "影響",
            "evidence": "検証根拠", "intent": "意図の確認", "masked": "[秘密情報らしき行のため非表示]",
-           "viewports": "ビューポート", "locales": "ロケール"},
+           "viewports": "ビューポート", "locales": "ロケール", "axis": "重大度の軸",
+           "axis_confirmed": "依頼者が確認済み", "axis_assumed": "仮定（依頼者は未確認）"},
 }
 
 
@@ -198,7 +200,8 @@ def snippet(repo, location, masked="[masked: looks like a secret]"):
 
 
 def judged_scope(meta, flows, T):
-    """The scope with the supported viewports and locales it was judged against.
+    """The scope with the supported viewports and locales it was judged against, and whether the requester
+    confirmed the primary tasks severity is judged against (meta.axis).
 
     flows.json is the record severity is judged against, so its values win
     over the optional copies in meta.
@@ -208,6 +211,8 @@ def judged_scope(meta, flows, T):
         values = (flows or {}).get(key) or meta.get(key)
         if values:
             parts.append(f"{T[key]}: {', '.join(values)}")
+    if meta.get("axis"):
+        parts.append(f"{T['axis']}: {T['axis_' + meta['axis']]}")
     return " · ".join(p for p in parts if p)
 
 

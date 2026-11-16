@@ -16,7 +16,8 @@
       "en",
       "de",
       "ja"
-    ]
+    ],
+    "axis": "confirmed"
   },
   "summary": "Both primary tasks have blockers. Sign-up wipes what the visitor typed when the server rejects it, saving a new task throws the typed title away, and the task list can only be operated with a mouse: rows are clickable divs and the delete control is an unnamed icon that deletes at once with no undo. At the 360px phone viewport the 480px sidebar pushes the list off-screen, and zoom is disabled. Around these, the task list has no loading, empty or error state, focus is invisible on every .btn button, and task titles are cut off with no way to read them.",
   "findings": [

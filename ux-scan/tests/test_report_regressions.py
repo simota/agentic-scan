@@ -200,6 +200,40 @@ class ReportRegressions(unittest.TestCase):
         self.assertEqual(self.invoke()[0], 0)
         self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
 
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        high = [f["id"] for f in self.data["findings"]
+                if f["severity"] == "High" and f["validation"]["verdict"] not in findings.EXCLUDED]
+        self.assertTrue(high)
+        self.data["meta"]["axis"] = "assumed"
+        named = list(self.data["decisions"])
+        self.data["decisions"] = [line for line in named
+                                  if not any(re.search(rf"(?<![A-Za-z0-9]){h}(?![A-Za-z0-9])", line)
+                                             for h in high)]
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertIn(f"{high[0]}: its High severity rests on an assumed severity axis",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        self.data["decisions"] = named + [f"Confirm the primary tasks severity is judged against: "
+                                          f"{', '.join(high)} rest on them"]
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertEqual(list(contract_check.problems(self.out, no_pdf=True)), [])
+        for page in ("report.html", "dashboard.html"):
+            self.assertIn("Severity axis: assumed; not confirmed by the requester",
+                          (self.out / page).read_text(encoding="utf-8"))
+        self.assertEqual(self.invoke(lang="ja", out=self.out / "ja")[0], 0)
+        self.assertIn("重大度の軸: 仮定（依頼者は未確認）", (self.out / "ja" / "report.html").read_text(encoding="utf-8"))
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        del self.data["meta"]["axis"]
+        self.save_inputs()
+        self.assertEqual(self.invoke()[0], 0)
+        self.assertIn("meta.axis: record whether the requester confirmed",
+                      "\n".join(contract_check.problems(self.out, no_pdf=True)))
+        self.data["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(findings.RecordError, "meta.axis"):
+            findings.check_findings(self.data)
+
     def test_excerpts_mask_suffixed_secret_names_and_url_credentials(self):
         (self.repo / "settings.py").write_text(
             "DEBUG = False\n"

@@ -51,7 +51,9 @@ RECORD_KEYS = ("schema_version", "meta", "summary", "perspectives", "findings", 
 FLOWS_KEYS = ("app", "viewports", "locales", "tokens", "flows")
 FLOW_KEYS = ("id", "name", "priority", "actor", "goal", "source", "evidence", "screens")
 SCREEN_KEYS = ("name", "route", "location")
-META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales")
+META_KEYS = ("project", "date", "assessor", "scope", "method", "commit", "viewports", "locales", "axis")
+# Whether the requester confirmed the primary tasks severity is judged against.
+AXES = ("confirmed", "assumed")
 FINDING_KEYS = ("id", "title", "severity", "confidence", "status", "perspective", "category", "flow_ref", "screen",
                 "viewport", "criterion", "location", "occurrences", "observed", "expected", "impact", "fix",
                 "validation", "references", "mockup", "evidence")
@@ -457,6 +459,8 @@ def check_findings(data, flow_ids=None, ordered=True):
         _viewports(meta["viewports"], "meta.viewports")
     if "locales" in meta:
         _strings(meta["locales"], "meta.locales")
+    if "axis" in meta and meta["axis"] not in AXES:
+        raise RecordError(f"meta.axis: expected one of {', '.join(AXES)}")
     _str(data, "summary", "findings")
     for key in LIST_KEYS:
         if key in data:

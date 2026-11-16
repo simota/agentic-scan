@@ -40,7 +40,8 @@ Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
   or slows, and every finding cites one flow (`reference/flows.md`). Show this
   list to the requester in one line and use their corrections; when nobody can
   answer (an unattended or delegated run), record it as assumed in `limitations`
-  and the chat summary, and continue
+  and the chat summary, and continue. Record which in `meta.axis` (`confirmed`
+  or `assumed`); an assumed axis sends every High finding to `decisions`
 - **Find the design system**: tokens, theme, shared components, documented
   patterns. Consistency findings depart from the app's own system; without one,
   they rest on majority usage and say so

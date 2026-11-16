@@ -93,8 +93,9 @@ stated. List each source with what it covers, strongest first:
 | Rule | Oracle (`path:line` or domain fact) | Kind | Covers boundary values? |
 |---|---|---|---|
 
-A rule with no oracle in the repository is still reviewed, but its findings
-are at most `Suspected` and the rule goes to `decisions`.
+A rule with no oracle in the repository and no domain fact behind it is
+still reviewed, but its findings are at most `Suspected` and the rule goes to
+`decisions`.
 
 ## 4. Settings that change results
 
@@ -193,8 +194,9 @@ Record what the repository shows about real input: fixtures and seeds built
 from production samples, documented customer segments (countries, zones,
 currencies), supported locales, limits in forms, support notes and FAQs in
 the repository, and sizes of real batches. Some classes need no record
-because they occur for every customer over time: month ends, leap days, DST
-changes, the first and last day of any period, zero and one.
+because they occur for every customer over time: month ends, leap days, the
+first and last day of any period, zero and one, and DST changes where the
+customers' zones observe them (Japan's does not).
 
 | Input class | Occurs? | Source (`path:line`, or "calendar") |
 |---|---|---|

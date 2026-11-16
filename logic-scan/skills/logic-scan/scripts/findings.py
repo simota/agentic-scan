@@ -1349,8 +1349,8 @@ def _contract(out, allow):
            if f["validation"]["verdict"] not in EXCLUDED):
         for key, what in (("window", "history window"), ("commit", "assessed revision")):
             if not visible(doc["meta"].get(key) or ""):
-                problems.append(f"meta.{key}: a Confirmed exposure follows from recorded history, "
-                                f"so name the {what}")
+                problems.append(f"meta.{key}: a Confirmed finding is checked against the assessed "
+                                f"revision and history window, so name the {what}")
     # Only a finding that establishes the drift, and says so in `convention`,
     # backs a `drifted` entry.
     named = {cid for f in findings if f["validation"]["verdict"] in ("Valid", "Likely")

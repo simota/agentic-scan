@@ -83,7 +83,7 @@ Effort is a size class for ordering, not a time estimate.
 
 ```json
 {"batch": 1, "title": "One source for the tax rate", "findings": ["F-002"],
- "prerequisite": "none", "pr_title": "fix: read the tax rate from settings in checkout"}
+ "prerequisite": "none", "pr_title": "fix: use the shop's tax rate in the checkout preview"}
 ```
 
 `prerequisite` names what must be true before the batch starts beyond its

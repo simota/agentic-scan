@@ -152,8 +152,7 @@ renumber, use only the new IDs it printed.
         "Tax is computed per line and rounded down, by one function every caller uses"
       ],
       "steps": [
-        "1. Move per-line tax into one function called from invoice.py and charge.py, with a test: three lines of 333 yen at 10% give 1,098 yen on both (verify: the new test fails with the change reverted and passes with it)",
-        "2. Update the renewal tests that expected the old charge (verify: the renewal suite passes)"
+        "1. Move per-line tax into one function called from invoice.py and charge.py, update the renewal tests that expected the old charge, and add a test: three lines of 333 yen at 10% give 1,098 yen on both (verify: the new test fails with the change reverted; the billing and renewal suites pass with it)"
       ],
       "depends_on": [],
       "fix": "One rounding function, per line and down, used by both the invoice and the charge",
@@ -171,7 +170,7 @@ renumber, use only the new IDs it printed.
     {"name": "Numbers and money", "status": "applied", "note": "NM1-NM3 applied; NM2 found F-001"}
   ],
   "checked_ok": ["app/billing/period.py:8-30: billing periods are half-open [start, end) in every reader"],
-  "decisions": ["Whether past 1-yen overcharges are refunded once F-001 is fixed",
+  "decisions": ["Whether renewals may charge one yen less once F-001 is fixed",
                 "Confirm C-01 (amounts stored and passed as integer yen) as the intended rule"],
   "limitations": ["No test was run; counterexamples are traced by reading the code"],
   "next_steps": ["Batch 1 first; hand templates/plan.en.md to coding-implement"]

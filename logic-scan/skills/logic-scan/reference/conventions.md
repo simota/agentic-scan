@@ -86,7 +86,7 @@ each site found (`reference/recon.md` §2); every owned ledger entry has a row
 per site found by search (record the search and its hit count); every
 applicable perspective's hunt steps were applied or left out with a reason;
 every defect row has *Counterexample*, *Oracle* and *Exposure evidence* filled
-(`none` in exposure caps the finding at `Info`; no counterexample means it is
+(`none` in exposure — no core flow, no incident, no record that the input occurs — makes the finding Low at most, or Info when nobody relies on the result; no counterexample means it is
 not a finding yet, but a `lead`, whatever its severity would be); every `lead` is resolved into a finding, a
 `checked_ok` line or a `limitations` line. Record the counts
 (`rules 6, sites 23, entries 5, defects 4, leads 0, blank 0`) in scratch.

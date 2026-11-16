@@ -34,7 +34,7 @@ Neighbours, and where their questions go instead:
 | Write the fix | `coding-implement` |
 | One known bug: reproduce it and find its cause | `coding-debug` |
 | Review one diff before it merges | `coding-review` |
-| Stored data corrupted by schema, migrations, transactions or database-level lost updates; constraints that would keep a status and its fields consistent | `data-scan` |
+| Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | `data-scan` |
 | Who may do what: authorization, tenancy, parameter tampering | `security-scan` |
 | Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | `reliability-scan` |
 | Which logic has no test, and what to assert | `test-scan` |
@@ -83,10 +83,10 @@ Neighbours, and where their questions go instead:
 
 | Severity (exposure) | When |
 |---|---|
-| High | A core flow returns a wrong result on input that occurs in normal use (`reference/recon.md` §7: a month end, a DST change, a zero quantity, a full-width name, a customer ahead of UTC) **and** there is incident evidence: a fix commit in the window already patched the same rule, or a record in the repository that the wrong result reached someone (a refund script, a support note, a bug report) |
+| High | A core flow returns a wrong result on input that occurs in normal use (`reference/recon.md` §7: a month end, a DST change where the customers' zones observe one, a zero quantity, a full-width name, a customer ahead of UTC) **and** there is incident evidence: a fix commit in the window already patched the same rule, or a record in the repository that the wrong result was noticed (a refund script, a support note, a bug report) |
 | Medium | A core flow on input that occurs, without incident evidence; or a non-core flow with incident evidence; or it blocks a change the requester named |
 | Low | The defect is real but on a flow that is neither core nor shown to have gone wrong |
-| Info | A note: a defect whose input cannot occur today (an upstream check excludes it, documented), or a rule worth centralising when the area is next changed. A ledger rule broken where the result is still right is not a finding: it stays `holds`, with the variant in `checked_ok` (`reference/conventions.md` §2) |
+| Info | A note: a defect whose wrong result nobody relies on (a debug view, a value no reader uses), or a rule worth centralising when the area is next changed. A defect whose input the entry point refuses has no counterexample: it is `FalsePositive`, not Info. A ledger rule broken where the result is still right is not a finding: it stays `holds`, with the variant in `checked_ok` (`reference/conventions.md` §2) |
 
 Severity is exposure only. How far the fix reaches is `change`; how sure the
 finding is, is `confidence`:
@@ -103,7 +103,7 @@ enforced today, never why the fix reaches further.
 
 | Confidence | When |
 |---|---|
-| `Confirmed` | The defect is traced through the code with the counterexample, the oracle is stated in the repository or is a domain fact the finding names (a calendar rule, a currency's minor unit, Unicode equivalence), and the exposure follows from recorded history or the named core flows |
+| `Confirmed` | The defect is traced through the code with the counterexample, the oracle is stated in the repository or is a domain fact the finding names (a calendar rule, a currency's minor unit, Unicode equivalence), and the exposure it claims follows from what the repository records: history, the named core flows, or documents and fixtures showing the input occurs |
 | `Environment-dependent` | The result depends on something the repository does not show: the server's time zone or locale, the runtime or library version in production, a feature flag's value, configuration held elsewhere |
 | `Suspected` | The defect is traced but the exposure has no evidence, or the oracle is the reviewer's own idea of how the business should behave — neither stated in the repository nor a domain fact |
 
@@ -169,7 +169,7 @@ chat summary in the requester's language).
 | Asked to review, scan or audit the business logic or its correctness | All six phases |
 | Asked about one flow, rule or module | Scope the review units to what implements it, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | One known bug with a reproduction | Not this skill: `coding-debug`. A scan may follow to find the same defect elsewhere |
-| No stated rules (no specification, docs or tests that assert behaviour) | Say so first. The oracle falls back to the majority implementation and the domain's plain meaning (a calendar, a currency's minor unit); such findings are at most `Suspected` unless another site in the code states the rule, and each inferred rule goes to `decisions` |
+| No stated rules (no specification, docs or tests that assert behaviour) | Say so first. The oracle falls back to domain facts (a calendar, a currency's minor unit), which can still be `Confirmed`, and to the majority implementation, which is an inferred rule: a finding resting on it is at most `Suspected` unless another site in the code states the rule, and each inferred rule goes to `decisions` |
 | History is missing, shallow or squashed | Say so first. Fix-commit claims fall to `Suspected`, so severity rests on the named core flows and the input classes; no High without a fix commit or another record that the wrong result reached someone |
 | The server's time zone, locale or feature flags are not in the repository | Name what the code assumes; a finding whose wrong result rests on them is `Environment-dependent`, and so at most Medium; say so in `limitations` |
 | The code is unreachable, or the flow is retired | `NotApplicable` with evidence, and name `prune-scan` in `next_steps` |

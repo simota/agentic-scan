@@ -501,6 +501,33 @@ class MergeAndRenumberTest(unittest.TestCase):
         self.assertEqual(renamed["findings"], doc["findings"])
         self.assertEqual(renamed["plan"], doc["plan"])
 
+    def test_renumber_rewrites_ids_inside_the_counterexample(self):
+        doc = sample()
+        a, b = by_id(doc, "F-002"), by_id(doc, "F-003")
+        a["id"], b["id"] = "F-003", "F-002"
+        c = by_id(doc, "F-001")["counterexample"]
+        c["actual"] = "1,099 yen, as F-002 also shows"
+        c["oracle"] = "https://wiki.example/F-002 and docs/billing/tax.md:12"
+        renamed, mapping = findings.renumber(doc)
+        self.assertEqual(mapping, {"F-003": "F-002", "F-002": "F-003"})
+        c = by_id(renamed, "F-001")["counterexample"]
+        self.assertEqual(c["actual"], "1,099 yen, as F-003 also shows")
+        self.assertEqual(c["oracle"], "https://wiki.example/F-002 and docs/billing/tax.md:12")
+
+    def test_a_partial_counterexample_is_refused_and_changes_nothing(self):
+        # merge replaces nested objects whole, so a fragment sending one part
+        # would drop the other three; the command refuses it before writing.
+        with tempfile.TemporaryDirectory() as tmp:
+            target, part = Path(tmp) / "findings.json", Path(tmp) / "frag.json"
+            target.write_bytes(SAMPLE.read_bytes())
+            part.write_text(json.dumps({"findings": [{"id": "F-001",
+                                                      "counterexample": {"input": "two lines"}}]}),
+                            encoding="utf-8")
+            result = run_script("findings.py", "merge", target, part)
+            self.assertEqual(result.returncode, 1)
+            self.assertIn("counterexample.expected", result.stderr)
+            self.assertEqual(target.read_bytes(), SAMPLE.read_bytes())
+
     def test_mention_after_a_url_in_japanese_prose_is_rewritten(self):
         # No blank separates a URL from Japanese text; an ID after its particle is prose.
         mapping = {"F-002": "F-003"}
@@ -1865,7 +1892,7 @@ class DocumentedRuleTest(Run):
         for key in ("window", "commit"):
             doc = sample()
             del doc["meta"][key]
-            self.assertProblem(doc, f"meta.{key}: a Confirmed exposure")
+            self.assertProblem(doc, f"meta.{key}: a Confirmed finding is checked")
             for f in doc["findings"]:
                 f["confidence"] = "Environment-dependent"
             self.assertEqual([p for p in self.problems(doc) if p.startswith("meta.")], [])

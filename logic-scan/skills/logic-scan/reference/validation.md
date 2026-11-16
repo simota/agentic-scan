@@ -44,8 +44,10 @@ may instead be only the name of the finding it repeats (`Duplicate of F-004`,
    callers that reach it, fix commits by hash that patched the same rule,
    records that the input occurs (`reference/recon.md` §7). Read each fix
    commit before counting it; a fix to docs or tests is not an incident.
-   Without usable history or a named core flow, confidence is
-   `Environment-dependent` or `Suspected`, never `Confirmed`
+   Without usable history, fix-commit claims are `Suspected`; exposure
+   that rests on a named core flow or a record that the input occurs can
+   still be `Confirmed`. A finding whose result rests on a setting the
+   repository does not show is `Environment-dependent`
 4. **Enforcement today** — everything that keeps the rule true, at
    `path:line`: tests that assert it (and which values they cover), types,
    shared helpers, validations upstream. A test that covers the rule but not
@@ -100,6 +102,10 @@ systems. Each reproduction:
   trace missed a step — record that and re-verify
 - follows the codebase's test conventions, is deterministic (time frozen,
   zone and locale set explicitly) and names the finding (`F-…`) it reproduces
+- leaves the checkout as it found it: after the run, the test file is moved
+  into `<scratch>/repro/` (cited in `analysis.command`) and removed from the
+  repository, so no red, uncommitted test stays behind; the fix later lands
+  with it
 
 Record it with one fragment that keeps the finding `Open` and changes its
 method, and keeps the rest of the record on the assessed revision:

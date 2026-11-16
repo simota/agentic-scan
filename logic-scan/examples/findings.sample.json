@@ -49,8 +49,7 @@
         "Tax is computed per line and rounded down, by one function every caller uses"
       ],
       "steps": [
-        "1. Move per-line tax into billing.tax.line_tax, call it from invoice.py and charge.py, and add a test: three lines of 333 yen at 10% give 1,098 yen on the invoice and in the charge (verify: the new test fails with the change reverted, at the charge assertion, and the billing suite passes with it)",
-        "2. Update the renewal tests that expected the old charge (verify: the renewal suite passes and expects 1,098 yen for the three-line case)"
+        "1. Move per-line tax into billing.tax.line_tax, call it from invoice.py and charge.py, update the renewal tests that expected the old charge, and add a test: three lines of 333 yen at 10% give 1,098 yen on the invoice and in the charge (verify: the new test fails with the change reverted, at the charge assertion; the billing and renewal suites pass with it)"
       ],
       "depends_on": ["F-002"],
       "fix": "One rounding function, per line and down, used by both the invoice and the charge",
@@ -60,40 +59,40 @@
     },
     {
       "id": "F-002",
-      "title": "Checkout hard-codes the tax rate while invoices read it from settings",
+      "title": "Checkout preview hard-codes 10% tax while invoices use each shop's rate",
       "severity": "Medium",
       "change": "Local",
       "effort": "S",
       "confidence": "Confirmed",
       "category": "Rule duplication and drift",
       "step": "RD2",
-      "hazard": "The tax rate is defined twice, and only one copy follows the setting",
+      "hazard": "The tax rate is defined twice, and only the invoice follows the shop's rate",
       "remedy": "Single Source for the Rule",
       "location": "app/checkout/preview.py:14-31",
-      "scenario": "The rate changes in settings, as it did once in the window (commit 2e4f6a1); the checkout preview keeps the old one",
+      "scenario": "A food shop on the 8% reduced rate: every customer of such a shop sees a preview total that differs from the invoice",
       "blast_radius": "1 module; the checkout preview every customer sees before paying",
-      "trace": "1. app/checkout/preview.py:22 multiplies the total by the literal 1.1. 2. app/billing/invoice.py:18 reads settings.TAX_RATE. 3. Commit 2e4f6a1 changed the setting and not the literal",
-      "impact": "The preview shows a total different from the invoice whenever the setting is not 10%",
-      "exposure": "Core flow checkout; 2 copies of the rate; commit 2e4f6a1 changed one of them in the window",
+      "trace": "1. app/checkout/preview.py:22 multiplies the total by the literal 1.1. 2. app/billing/invoice.py:18 reads shop.tax_rate. 3. Commit 2e4f6a1 (feat: per-shop tax rates, not a fix) moved the invoice to shop.tax_rate and left the preview alone. 4. db/seeds/shops.yml:12 and docs/billing/tax.md:5 show food shops at 8%",
+      "impact": "Customers of reduced-rate shops are shown a higher total before paying than they are invoiced",
+      "exposure": "Core flow checkout; food shops on 8% exist (db/seeds/shops.yml:12); 2 copies of the rate, one changed by 2e4f6a1; no support note or refund records the mismatch",
       "counterexample": {
-        "input": "settings.TAX_RATE = 0.08, an order of 1,000 yen",
+        "input": "A shop with tax_rate 0.08, an order of 1,000 yen",
         "expected": "Preview total 1,080 yen, as the invoice will show",
         "actual": "Preview total 1,100 yen",
-        "oracle": "app/billing/invoice.py:18 and docs/billing/tax.md:5: the rate is configuration"
+        "oracle": "docs/billing/tax.md:5: each shop's rate applies to every price it shows or charges"
       },
       "enforcement": {"net": "none", "sites": [],
-                      "gaps": "No test sets TAX_RATE to anything but 0.1, so the literal and the setting always agree in the suite"},
+                      "gaps": "Every preview test uses a 10% shop, so the literal and the shop's rate always agree in the suite"},
       "invariants": [
-        "Every price shown or charged uses settings.TAX_RATE",
-        "With TAX_RATE = 0.08, the preview of a 1,000 yen order is 1,080 yen"
+        "Every price shown or charged uses the shop's tax_rate",
+        "For a shop at 8%, the preview of a 1,000 yen order is 1,080 yen"
       ],
       "steps": [
-        "1. Replace the literal with settings.TAX_RATE through the billing tax module, with a preview test at TAX_RATE = 0.08 (verify: the test gives 1,080 yen, and fails with the change reverted)",
+        "1. Replace the literal with shop.tax_rate through the billing tax module, with a preview test for an 8% shop (verify: the test gives 1,080 yen, and fails with the change reverted)",
         "2. Search for other literal rates and route them the same way (verify: grep for 0.1 and 1.1 in app/ finds no tax use)"
       ],
       "fix": "Read the rate from one place, the billing tax module",
       "validation": {"verdict": "Valid", "method": "static",
-                     "evidence": "app/checkout/preview.py:22 total * 1.1; app/billing/invoice.py:18 settings.TAX_RATE; git show 2e4f6a1 touches settings only"},
+                     "evidence": "app/checkout/preview.py:22 total * 1.1; app/billing/invoice.py:18 shop.tax_rate; git show 2e4f6a1 changes invoice.py only; db/seeds/shops.yml:12 tax_rate: 0.08"},
       "status": "Open"
     },
     {
@@ -155,7 +154,7 @@
       "change_reason": "Reports for 2026-03 onwards were already sent to finance overstated; correcting them needs a re-run and a note to finance",
       "steps": [
         "1. Count distinct order ids, with a fixture order paid in two payments (verify: it counts once, and twice with the change reverted)",
-        "2. Re-run the reports from 2026-03 and send the corrected counts to finance (verify: the corrected counts are lower by the number of split-payment orders)"
+        "2. List the months since 2026-03 whose counts change, for the correction decision (verify: each listed month's difference equals its split-payment orders); re-sending them is finance's decision, not this step"
       ],
       "convention": "C-02",
       "fix": "Count distinct order ids, as ADR 0007 requires, and correct the reports already sent",
@@ -187,7 +186,7 @@
   ],
   "plan": [
     {"batch": 1, "title": "One source for the tax rate", "findings": ["F-002"],
-     "prerequisite": "none", "pr_title": "fix: read the tax rate from settings in checkout"},
+     "prerequisite": "none", "pr_title": "fix: use the shop's tax rate in the checkout preview"},
     {"batch": 2, "title": "One rounding rule for invoice and charge", "findings": ["F-001"],
      "prerequisite": "Finance agrees that renewals may charge one yen less (see decisions)",
      "pr_title": "fix: round tax per line, the same way for invoice and charge"},
@@ -213,7 +212,8 @@
     "Every stored amount field is integer yen (C-01; 14 of 14 read)"
   ],
   "decisions": [
-    "Whether renewals may charge one yen less once F-001 is fixed, and whether past 1-yen overcharges are refunded",
+    "Whether renewals may charge one yen less once F-001 is fixed (past mismatches were already refunded by 9c1d2e4 and 5b7a0f3)",
+    "Whether the monthly reports sent to finance since 2026-03 are corrected and re-sent (F-004)",
     "Confirm C-01 (amounts stored and passed as integer yen) as the intended rule"
   ],
   "limitations": [

@@ -67,7 +67,7 @@ repository: call the scripts by that path, never a `scripts/` of the audited pro
 | Item | Fixed choice |
 |---|---|
 | Independence | Never read another assessment's outputs (an earlier `findings.json`, another host's report) unless the request is to merge or compare them; to compare, finish this run's own record first, then run `scripts/compare.py` on the two records. Your own scratch from this conversation is not another assessment: reuse its recon and keep its `B-` IDs |
-| Review units | One unit per domain plus one cross-cutting unit (one domain unit when there are fewer than about 15 entry points). Each unit hunts the ledger entries it owns, sweeps every applicable perspective once, and closes only when its close-check matches. Ownership, subagents and the close-check: `reference/budgets.md` §4 |
+| Review units | One unit per domain plus one cross-cutting unit (one domain unit when there are fewer than about 15 entry points). Split a unit past ~3k lines into clusters of related files, such as the files one core flow passes through. Each unit hunts the ledger entries it owns, sweeps every applicable perspective once, and closes only when its close-check matches. Ownership, subagents and the close-check: `reference/budgets.md` §4 |
 | Granularity | One finding per root cause, i.e. per fix location. The same N+1 helper used by several endpoints is one finding that lists them in `request`; problems needing different fixes are separate findings |
 | IDs | `P-001`… numbered without gaps in severity order (ties in any stable order, e.g. by first location), with `FalsePositive` and `NotApplicable` findings after all others. No other prefixes |
 | Severity | The table below, decided before confidence; confidence never raises or lowers it |

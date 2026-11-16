@@ -35,6 +35,22 @@ only on an explicit request (see *Decide first*).
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
+Neighbours, and where their questions go instead. The line with
+`security-scan`: whether a prompt keeps untrusted text from overriding its
+instructions (delimiters, roles, the order of instructions and data) is a
+finding here; what an attacker reaches once it does — the tools, data and
+actions the model is allowed, and whether the code authorizes them — is
+`security-scan`'s (IG5):
+
+| Question | Skill |
+|---|---|
+| Apply the proposals | `coding-implement` |
+| Tool calls and model output that act without authorization; secrets in prompts | `security-scan` |
+| Personal data sent to, kept or trained on by a model provider | `privacy-scan` |
+| A wrong result computed in the code around the model call | `logic-scan` |
+| Behaviour when the model API fails, times out or rate-limits | `reliability-scan` |
+| Prompts, agents or tools nothing uses | `prune-scan` |
+
 ## Decide first
 
 | Situation | How to proceed |

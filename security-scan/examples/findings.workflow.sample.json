@@ -4,7 +4,8 @@
     "project": "Synthetic ordered-review fixture",
     "date": "2026-10-06",
     "commit": "1111111111111111111111111111111111111111",
-    "scope": "Fictional input for a local manual-review workflow. No application was assessed and no application test was executed."
+    "scope": "Fictional input for a local manual-review workflow. No application was assessed and no application test was executed.",
+    "axis": "confirmed"
   },
   "assessment": {
     "repository": "synthetic/sample-app",

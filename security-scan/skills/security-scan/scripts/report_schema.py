@@ -24,6 +24,8 @@ CONFIDENCES = ["Confirmed", "Environment-dependent", "Suspected"]
 STATUSES = ["Open", "Fixed", "Accepted"]
 VERDICTS = ["Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotApplicable"]
 EXCLUDED = {"FalsePositive", "NotApplicable"}
+# Whether the requester confirmed the crown jewels severity is judged against (SKILL.md, Before starting).
+AXES = ("confirmed", "assumed")
 # ASCII digits only, no trailing newline: the number becomes part of a link.
 CWE_RE = re.compile(r"CWE-[0-9]{1,5}")
 LOC_RE = re.compile(r"^(?P<path>[^:]+):(?P<start>\d+)(?:-(?P<end>\d+))?$")
@@ -227,6 +229,8 @@ def validate_data(data):
         text_field(meta, k, "meta", required=True)
     for k in ("assessor", "scope", "method", "commit"):
         text_field(meta, k, "meta")
+    if "axis" in meta and meta["axis"] not in AXES:
+        raise SchemaError(f"meta.axis: one of {list(AXES)}")
     if meta.get("source_url") not in (None, ""):
         meta["source_url"] = http_url(meta["source_url"], "meta.source_url")
     findings = data.get("findings")

@@ -4,7 +4,8 @@
     "project": "Synthetic verification fixture",
     "date": "2026-10-06",
     "commit": "1111111111111111111111111111111111111111",
-    "scope": "Illustrative source and local records only; no application tests were executed."
+    "scope": "Illustrative source and local records only; no application tests were executed.",
+    "axis": "confirmed"
   },
   "assessment": {
     "repository": "synthetic/sample-app",

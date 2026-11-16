@@ -51,7 +51,8 @@ class RunContractTests(unittest.TestCase):
     def base(self) -> dict:
         names = self.contract.perspective_names()
         return {
-            "meta": {"project": "Synthetic app", "date": "2026-10-07", "assessor": "Test host (model)"},
+            "meta": {"project": "Synthetic app", "date": "2026-10-07", "assessor": "Test host (model)",
+                     "axis": "confirmed"},
             "findings": [{
                 "id": "F-001", "title": "Order detail lacks an owner check", "severity": "High",
                 "confidence": "Confirmed", "category": "Actor and tenant", "location": "src/orders.py:2",
@@ -122,12 +123,51 @@ class RunContractTests(unittest.TestCase):
             "no verification": lambda d: d["findings"][0].pop("verification"),
             "file-only location": lambda d: d["findings"][0].__setitem__("location", "src/orders.py"),
             "no assessor": lambda d: d["meta"].pop("assessor"),
+            "no severity axis": lambda d: d["meta"].pop("axis"),
         }
         for name, mutate in cases.items():
             with self.subTest(name):
                 broken = copy.deepcopy(data)
                 mutate(broken)
                 self.assertTrue(self.problems(broken), name)
+
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        data = self.build()
+        data["meta"]["axis"] = "assumed"
+        data["findings"].append(dict(copy.deepcopy(data["findings"][0]), id="F-002", severity="Medium",
+                                     location="src/orders.py:1"))
+        self.findings.write_text(json.dumps(data))
+        self.render()
+        # In memory only: a rendered exclusion needs a verification.exclusion record.
+        data["findings"].append(dict(copy.deepcopy(data["findings"][0]), id="F-003",
+                                     validation={"verdict": "FalsePositive", "evidence": "guarded upstream"}))
+        expected = ["F-001: its High severity rests on an assumed severity axis (meta.axis); "
+                    "name it in decisions for a person to confirm"]
+        self.assertEqual(self.problems(data), expected)
+        data["decisions"] = ["Confirm the crown jewels; F-0011 is a different id"]
+        self.assertEqual(self.problems(data), expected)
+        data["decisions"] = ["Confirm the crown jewels: F-001 rests on them"]
+        self.assertEqual(self.problems(data), [])
+        for lang, row in (("en", "<strong>Severity axis</strong> assumed; not confirmed by the requester"),
+                          ("ja", "<strong>重大度の軸</strong> 仮定（依頼者は未確認）")):
+            with self.subTest(lang):
+                out = self.tmp / lang
+                self.assertEqual(self.renderer.main([str(self.findings), "--out", str(out),
+                                                     "--lang", lang, "--no-pdf"]), 0)
+                self.assertIn(row, (out / "assessment.html").read_text(encoding="utf-8"))
+                self.assertIn('"axis": "assumed"', (out / "dashboard.html").read_text(encoding="utf-8"))
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        data = self.build()
+        self.render()
+        del data["meta"]["axis"]
+        self.assertEqual(self.problems(data), [
+            "meta.axis: record whether the requester confirmed the list severity is judged against "
+            "(confirmed) or it was assumed (assumed)"])
+        data["meta"]["axis"] = "guessed"
+        self.assertEqual(self.problems(data), ["meta.axis: one of confirmed, assumed"])
+        with self.assertRaisesRegex(self.renderer.SchemaError, "meta.axis"):
+            self.renderer.validate_data(copy.deepcopy(data))
 
     def test_output_set_is_fixed_unless_allowed(self):
         data = self.build()

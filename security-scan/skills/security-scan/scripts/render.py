@@ -23,7 +23,7 @@ from urllib.parse import quote, unquote, urlsplit, urlunsplit
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from url_redaction import has_url_credentials
 from report_schema import (  # noqa: F401 - re-exported: render.<name> stays the public API
-    CONFIDENCES, CWE_RE, EXCLUDED, LOC_RE, MAX_JSON_DEPTH, SEVERITIES, STATUSES, VERDICTS, SchemaError,
+    AXES, CONFIDENCES, CWE_RE, EXCLUDED, LOC_RE, MAX_JSON_DEPTH, SEVERITIES, STATUSES, VERDICTS, SchemaError,
     http_url, invisible_or_control, json_depth, load, text_field, validate_data, validate_json_values)
 from secret_redaction import (  # noqa: F401 - secret_in_source re-exported as above
     JWT_RE, PRIVATE_KEY_RE, TOKEN_RE, _KEY_END, mask_multiline, redact, secret_candidate, secret_in_source,
@@ -49,6 +49,8 @@ LABELS = {
         "scope": "Scope and method",
         "project": "System", "date": "Date", "assessor": "Assessor",
         "scope_l": "Scope", "method": "Method", "commit": "Revision",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "overview": "Results overview",
         "by_sev": "By severity", "by_conf": "By confidence", "by_cat": "By category",
         "by_status": "By status",
@@ -84,6 +86,8 @@ LABELS = {
         "scope": "診断対象と方法",
         "project": "対象システム", "date": "診断日", "assessor": "診断者",
         "scope_l": "範囲", "method": "方法", "commit": "リビジョン",
+        "axis": "重大度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "overview": "結果概要",
         "by_sev": "重大度別", "by_conf": "確度別", "by_cat": "分類別",
         "by_status": "対応状況別",
@@ -1790,6 +1794,8 @@ def render_assessment_html(data, L, lang, integrity=None):
     scope_lines = "".join(
         f"<p class='meta-line'><strong>{esc(L[label])}</strong> {value(m.get(key))}</p>"
         for label, key in (("scope_l", "scope"), ("method", "method")))
+    if m.get("axis") in AXES:
+        scope_lines += f"<p class='meta-line'><strong>{esc(L['axis'])}</strong> {esc(L['axis_' + m['axis']])}</p>"
 
     metrics = (("a_open", model["open_count"], ""),
                ("a_fix_now", model["fix_now"], "metric-urgent"),
@@ -2048,6 +2054,7 @@ var shownTop=0;D.parts.forEach(function(part){var items=R.queue.filter(function(
 if(R.queue.some(function(item){return item.action==='verify_first';})){var legend=byId('verify-legend');legend.appendChild(el('span',{'class':'action-label'},L.verify_first));legend.appendChild(document.createTextNode(' '+L.verify_first_note));legend.hidden=false;}
 if(!R.queue.length)byId('priority').appendChild(el('div',{'class':'panel muted'},L.no_open));byId('queue-note').textContent=shownTop<R.open_count?fmt(L.queue_more,{shown:shownTop,total:R.open_count}):'';
 ['scope','method','commit'].forEach(function(k){byId('scope-meta').appendChild(el('dt',null,L[k==='scope'?'scope_l':k]));byId('scope-meta').appendChild(el('dd',null,D.meta[k]||L.not_recorded));});
+if(D.meta.axis){byId('scope-meta').appendChild(el('dt',null,L.axis));byId('scope-meta').appendChild(el('dd',null,L['axis_'+D.meta.axis]));}
 byId('coverage-count').textContent=L.limitations_count+': '+D.limitations.length;listInto(byId('limitations'),D.limitations,L.limitations_empty);
 if(!D.perspectives.length)byId('perspectives').appendChild(el('p',{'class':'muted'},L.coverage_missing));
 D.perspectives.forEach(function(p){var box=el('div',{'class':'perspective'});box.appendChild(el('strong',null,p.name));box.appendChild(el('p',null,p.result||L.not_recorded));if(p.note)box.appendChild(el('p',{'class':'muted'},p.note));byId('perspectives').appendChild(box);});
@@ -2175,7 +2182,7 @@ def render_dashboard(data, L, lang, integrity=None):
     workflows = workflow_states(data, integrity=integrity)
     model = _report_model(data, verification_states, workflows, integrity)
     payload = {
-        "meta": {**{key: data["meta"][key] for key in ("project", "date", "assessor", "scope", "method", "commit")
+        "meta": {**{key: data["meta"][key] for key in ("project", "date", "assessor", "scope", "method", "commit", "axis")
                     if key in data["meta"]},
                  **({"source_url": source_base(data["meta"]["source_url"])} if data["meta"].get("source_url") else {})},
         **({"three_pass_view": three_pass_view(data, lang, integrity=integrity)} if "three_pass" in model else {}),

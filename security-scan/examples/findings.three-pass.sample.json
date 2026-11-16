@@ -4,7 +4,8 @@
     "project": "Synthetic three-pass candidate",
     "date": "2026-10-06",
     "commit": "1111111111111111111111111111111111111111",
-    "scope": "Fictional source-review records only. No application or model was executed."
+    "scope": "Fictional source-review records only. No application or model was executed.",
+    "axis": "confirmed"
   },
   "assessment": {
     "repository": "synthetic/sample-app",

@@ -33,6 +33,7 @@ Excluded (FalsePositive / NotApplicable): {{n_excluded}}. Unverified: {{n_unveri
 | Scope | {{meta.scope}} |
 | Revision | {{meta.commit}} |
 | Method | {{meta.method}} |
+| Severity axis | {{meta.axis}} |
 | Date / assessor | {{meta.date}} / {{meta.assessor}} |
 
 No requests were sent to any deployed environment.

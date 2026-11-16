@@ -32,6 +32,7 @@ VERDICTS = {"Valid", "Likely", "Unverified", "Unlikely", "FalsePositive", "NotAp
 CODE_FIELDS = ("actor", "request", "impact", "fix")
 CLAIMS = ("reachability", "preconditions", "defenses", "impact")
 SEVERITY_RANK = {"High": 0, "Medium": 1, "Low": 2, "Info": 3}
+EXCLUDED = ("FalsePositive", "NotApplicable")
 RENDERED = ("dashboard.html", "assessment.html")
 NO_PDF = "assessment.pdf not produced"
 NO_LEDGER = "invariant ledger and close-check not machine-checked"
@@ -142,9 +143,29 @@ def check(data, out_dir, pdf=True, allow=()):
     keys = [order_key(f) for f in sorted(code, key=lambda f: f["id"])
             if isinstance(f.get("severity"), str) and f["severity"] in SEVERITY_RANK
             and not (isinstance(f.get("validation"), dict)
-                     and f["validation"].get("verdict") in ("FalsePositive", "NotApplicable"))]
+                     and f["validation"].get("verdict") in EXCLUDED)]
     if keys != sorted(keys):
         add("F-*: number code findings in severity order (High first), then path and line")
+
+    # Severity is judged against the crown jewels (SKILL.md, Before starting).
+    # When the requester never confirmed them, each High code finding rests on
+    # that assumption and goes to a person. D-* severities come from advisory
+    # databases, not from that list.
+    axis = meta.get("axis")
+    if axis is None:
+        add("meta.axis: record whether the requester confirmed the list severity is judged against "
+            "(confirmed) or it was assumed (assumed)")
+    elif axis not in ("confirmed", "assumed"):
+        add("meta.axis: one of confirmed, assumed")
+    elif axis == "assumed":
+        decisions = [x for x in data.get("decisions", []) if isinstance(x, str)] \
+            if isinstance(data.get("decisions"), list) else []
+        for f in code:
+            if (f.get("severity") == "High"
+                    and not (isinstance(f.get("validation"), dict) and f["validation"].get("verdict") in EXCLUDED)
+                    and not any(re.search(rf"(?<!\w){re.escape(f['id'])}(?!\w)", x, re.ASCII) for x in decisions)):
+                add(f"{f['id']}: its High severity rests on an assumed severity axis (meta.axis); "
+                    "name it in decisions for a person to confirm")
 
     stamp = data.get("dependency_scan")
     if not isinstance(stamp, dict) or stamp.get("tool") != "deps_scan.py":

@@ -4,7 +4,8 @@
     "date": "2026-10-06",
     "assessor": "security-scan",
     "scope": "src/ (API and web)",
-    "method": "static source review, read-only"
+    "method": "static source review, read-only",
+    "axis": "confirmed"
   },
   "findings": [
     {

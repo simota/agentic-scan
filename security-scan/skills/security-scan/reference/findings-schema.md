@@ -126,7 +126,8 @@ verified merely because it contains an evidence string.
     "scope": "what was in scope",
     "method": "static source review, read-only",
     "commit": "optional VCS revision",
-    "source_url": "optional browse URL at that revision, e.g. https://github.com/org/repo/blob/<sha>"
+    "source_url": "optional browse URL at that revision, e.g. https://github.com/org/repo/blob/<sha>",
+    "axis": "confirmed"
   },
   "findings": [
     {
@@ -164,7 +165,14 @@ verified merely because it contains an evidence string.
 
 `meta.project`, `meta.date` and every finding's `id`, `title`, `severity`,
 `confidence` and `location` are required (`contract_check.py` also requires
-`meta.assessor`: host and model, `SKILL.md` *Run contract*), and `id` must be unique. Every
+`meta.assessor`: host and model, `SKILL.md` *Run contract*), and `id` must be unique.
+`meta.axis` records whether the requester confirmed the crown jewels severity
+is judged against (`confirmed`) or nobody answered and they were assumed
+(`assumed`); any other value is refused. It is optional while merging and
+required by `contract_check.py`, which, while it is `assumed`, also requires
+every High `F-*` finding that is not `FalsePositive` or `NotApplicable` to be
+named by ID in a `decisions` entry. `D-*` severities come from advisory
+databases, not from that list, and are exempt. Every
 `perspectives` entry needs a `name`; use the names in `reference/perspectives.md`.
 These names, and each code finding's `category`, stay the English names from
 that table in every report language: `contract_check.py` matches them exactly,

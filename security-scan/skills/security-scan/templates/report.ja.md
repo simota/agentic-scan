@@ -33,6 +33,7 @@
 | 範囲 | {{meta.scope}} |
 | リビジョン | {{meta.commit}} |
 | 方法 | {{meta.method}} |
+| 重大度の軸 | {{meta.axis}} |
 | 診断日 / 診断者 | {{meta.date}} / {{meta.assessor}} |
 
 稼働中の環境にはリクエストを送信していません。

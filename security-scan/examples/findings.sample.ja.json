@@ -5,7 +5,8 @@
     "assessor": "security-scan / デモ用データ",
     "scope": "src/api/ の注文・レポート API と依存関係の記録",
     "method": "静的なソースレビュー。実環境への通信・攻撃は実施していません。",
-    "commit": "demo-revision (架空)"
+    "commit": "demo-revision (架空)",
+    "axis": "confirmed"
   },
   "findings": [
     {

@@ -152,7 +152,8 @@ class Pipeline(unittest.TestCase):
 
     def base(self, findings):
         names = contract_check.perspective_names()
-        return {"meta": {"project": "Synthetic app", "date": "2026-10-10", "assessor": "Test host (model)"},
+        return {"meta": {"project": "Synthetic app", "date": "2026-10-10", "assessor": "Test host (model)",
+                         "axis": "confirmed"},
                 "findings": findings,
                 "perspectives": [{"name": n, "result": "N/A - synthetic"} for n in names],
                 "checked_ok": [], "decisions": [], "next_steps": [],

@@ -32,7 +32,8 @@ class ScanRunTests(unittest.TestCase):
         git(self.repo, "add", ".")
         git(self.repo, "commit", "-q", "-m", "fixture")
         self.meta = self.fragment("meta.json", {"meta": {
-            "project": "Runner fixture", "date": "2026-10-24", "assessor": "Test host (test model)"}})
+            "project": "Runner fixture", "date": "2026-10-24", "assessor": "Test host (test model)",
+            "axis": "confirmed"}})
         created = self.cli("init", self.repo, "--meta", self.meta, "--parent", self.base)
         self.assertEqual(created.returncode, 0, created.stderr)
         self.root = Path(json.loads(created.stdout)["run"])

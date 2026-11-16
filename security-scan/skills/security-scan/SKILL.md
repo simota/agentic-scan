@@ -106,7 +106,8 @@ that a finding is true.
   capability). Severity is judged against these. Show this list to the requester
   in one line and use their corrections; when nobody can answer (an unattended
   or delegated run), record it as assumed in `limitations` and the chat summary,
-  and continue
+  and continue. Record which in `meta.axis` (`confirmed` or `assumed`); an
+  assumed axis sends every High `F-*` finding to `decisions`
 - **Derive the invariants before hunting**: the rules this app must keep —
   who owns what, which role may do what, which state transitions and amounts
   are allowed (`reference/invariants.md`). Essential vulnerabilities are

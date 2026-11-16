@@ -26,6 +26,18 @@ palette canon or naming: name them in `limitations`.
 
 Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
+Neighbours, and where their questions go instead:
+
+| Question | Skill |
+|---|---|
+| Redesign the screens or write the fix | `design-deslop`, `coding-implement` |
+| Slow pages, bundle size, layout work at scale | `performance-scan` |
+| Vulnerabilities, including what a hidden control still lets an actor do | `security-scan` |
+| A wrong value on screen (rounding, dates, totals) — the computation, not its display | `logic-scan` |
+| Consent and privacy choices: what is collected and whether the choice is honoured | `privacy-scan` |
+| Features that build on the brand canon; brand-aligned proposals | `brand-feature-scan` |
+| Screens, routes or components nothing reaches | `prune-scan` |
+
 ## Before starting
 
 - **Confirm scope in one line**: the repository is the requester's, the review

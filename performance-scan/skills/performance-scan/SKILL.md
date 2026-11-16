@@ -21,6 +21,21 @@ production or third-party system.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
+Neighbours, and where their questions go instead. The line with
+`reliability-scan`: cost under the workload as it grows is a finding here;
+what happens when a dependency fails, hangs or slows is `reliability-scan`'s.
+A missing timeout or uncapped retry (IO4) is reported here for the
+connections, workers or latency it holds at normal load, not for the outage
+it lets spread:
+
+| Question | Skill |
+|---|---|
+| Write the fix | `coding-implement` |
+| Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | `reliability-scan` |
+| Data corrupted or locked by migrations, transactions or lost updates | `data-scan` |
+| Structure that forces a slow design (synchronous call chains across modules) | `architecture-scan` |
+| Code, dependencies or features nobody needs | `prune-scan` |
+
 Paths written as `scripts/…`, `reference/…` and `templates/…` are relative to
 this skill's directory (the one holding this file), not to the audited
 repository: call the scripts by that path, never a `scripts/` of the audited project.

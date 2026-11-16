@@ -20,6 +20,24 @@ Refactoring is a separate, later request.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
+Neighbours, and where their questions go instead. Where a perspective here
+meets one of them (CR1, DU1–DU3, DM2, DM3, DM5, TX1–TX5, FH1–FH3, TS1–TS3,
+OP1–OP3), this skill reports the structural cause once — who owns the rule,
+the state or the failure policy, and why the design lets sites diverge — and
+the defect at a single site goes to the neighbour:
+
+| Question | Skill |
+|---|---|
+| Do the refactoring | `coding-refactor` |
+| Which refactorings pay off, in what order, with what safety net (god classes, clones) | `refactor-scan` |
+| A wrong result on realistic input, including a duplicated rule that already gives one | `logic-scan` |
+| Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | `data-scan` |
+| Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | `reliability-scan` |
+| An actor who can bypass authorization or tenant scoping | `security-scan` |
+| Which behaviour has no test, and what to assert | `test-scan` |
+| What can be deleted | `prune-scan` |
+| Slow paths and unbounded work | `performance-scan` |
+
 ## Before starting
 
 - **Confirm scope in one line.** The repository is the requester's, the

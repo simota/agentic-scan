@@ -51,6 +51,8 @@ LABELS = {
         "static_note": "Static review; no personal data was read from any data store.",
         "analysed_note": "Static review plus read-only tool analysis (data-flow or schema scan, history); no personal data was read.",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "commitment_columns": ("ID", "Commitment", "Family", "Source", "Status", "Findings"),
         "conditions": "conditions",
         "disclaimer": "Technical review of source code, not legal advice; it does not state "
@@ -86,6 +88,8 @@ LABELS = {
         "static_note": "静的レビューのみ。データストアから個人データは一切読み取っていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（データフロー・スキーマの走査、変更履歴）を実施。個人データは読み取っていない。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
+        "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "commitment_columns": ("ID", "約束", "分類", "出典", "ステータス", "検出事項"),
         "conditions": "前提条件",
         # Enumerations shown in Japanese; perspective names keep the English name
@@ -196,6 +200,12 @@ def finding_fields(f, labels):
 def revision(meta):
     commit = meta.get("commit", "")
     return commit if commit.strip() else "UNKNOWN"
+
+
+def axis_rows(meta, labels):
+    """The severity-axis row, when the record says whether the requester confirmed it."""
+    axis = meta.get("axis")
+    return [(labels["axis"], labels[f"axis_{axis}"])] if axis in ("confirmed", "assumed") else []
 
 
 def perspective_rows(doc, labels):
@@ -411,6 +421,7 @@ def render_markdown(doc, lang):
               markdown_row((t['project'], meta.get('project', ''))),
               markdown_row((t['scope_row'], meta.get('scope', ''))),
               markdown_row((t['revision'], revision(meta))),
+              *(markdown_row(row) for row in axis_rows(meta, t)),
               markdown_row((t['review_method'], method)),
               markdown_row((t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")), ""]
     lines += [f"## {t['findings']}", ""]
@@ -637,6 +648,7 @@ def render_html(doc, lang):
     scope_rows = [(t['project'], meta.get('project', '')),
                   (t['scope_row'], meta.get('scope', '')),
                   (t['revision'], revision(meta)),
+                  *axis_rows(meta, t),
                   (t['review_method'], method),
                   (t['date'], f"{meta.get('date', '')} / {meta.get('assessor', '')}")]
     out.append(f"<section class='panel'><h2>{e(t['scope'])}</h2><dl class='scope-meta'>"

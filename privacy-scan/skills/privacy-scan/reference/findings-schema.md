@@ -229,7 +229,8 @@ usually holds several findings and commitments.
     "date": "2026-10-09",
     "assessor": "Claude Code (<model>)",
     "method": "Static review",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "commitments": [
     {"id": "C-01", "statement": "No personal field is sent to error tracking",
@@ -280,6 +281,7 @@ usually holds several findings and commitments.
 | Field | Rule |
 |---|---|
 | `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en` |
+| `meta.axis` | Optional while merging, required for `check`: `confirmed` when the requester confirmed the sensitive categories severity is judged against, `assumed` when nobody answered. While it is `assumed`, every non-excluded High finding's ID is named in some `decisions` line. Both reports show it |
 | `meta.commit`, `meta.method` | Optional strings: the assessed revision (`git rev-parse --short HEAD`, read-only) and review method. A nonblank `method` is shown in both reports, including when there are no findings; otherwise the renderer uses its default method description |
 | `findings[].id` | `PV-001`…, gapless, numbered in severity order, then by first location's path (`renumber`); excluded verdicts come last, by path |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |

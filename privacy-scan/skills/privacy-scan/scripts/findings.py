@@ -95,7 +95,8 @@ STEP_ID = re.compile(r"([A-Z]{2})([1-9]\d{0,2})")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "commitments", "data_map", "perspectives", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
-META_KEYS = {*META_REQUIRED, "commit", "method"}
+META_KEYS = {*META_REQUIRED, "commit", "method", "axis"}
+AXES = ("confirmed", "assumed")
 TEXT_FIELDS = ("title", "data", "subjects", "flow", "impact", "fix", "guard")
 # A finding excluded as FalsePositive or NotApplicable needs no remedy.
 ACTION_FIELDS = ("fix", "guard")
@@ -338,6 +339,8 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    if "axis" in meta:
+        _choice(meta["axis"], AXES, "meta.axis")
     _check_prose(meta, ("project", "scope", "date", "assessor", "method"), "meta")
     commit = meta.get("commit")
     # Numeric hexadecimal revisions are valid too; arbitrary commit prose is not exempt.
@@ -808,6 +811,17 @@ def record_problems(doc):
             problems.append(f"commitments[{i}]: {r['id']} is recorded as holds, but {', '.join(broken)} "
                             "(Valid, not Fixed) cites it as broken; set the status to violated, "
                             "or correct the finding")
+    axis = doc.get("meta", {}).get("axis")
+    if axis is None:
+        problems.append("meta.axis: record whether the requester confirmed the list severity "
+                        "is judged against (confirmed) or it was assumed (assumed)")
+    elif axis == "assumed":
+        for f in findings:
+            if (f["severity"] == "High" and not excluded(f)
+                    and not any(re.search(rf"(?<!\w){re.escape(f['id'])}(?!\w)", item, re.ASCII)
+                                for item in doc.get("decisions", []))):
+                problems.append(f"{f['id']}: its High severity rests on an assumed severity "
+                                "axis (meta.axis); name it in decisions for a person to confirm")
     if not doc.get("limitations"):
         problems.append("limitations: state what static reading cannot show")
     if not doc.get("checked_ok"):

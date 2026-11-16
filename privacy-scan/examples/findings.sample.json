@@ -6,7 +6,8 @@
     "date": "2026-10-09",
     "assessor": "Sample (not a real assessment)",
     "method": "Static review",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "commitments": [
     {"id": "C-01", "statement": "No personal field is sent to error tracking", "source": "web/src/legal/privacy.md:44", "family": "CONTAIN", "inferred": false, "status": "violated"},

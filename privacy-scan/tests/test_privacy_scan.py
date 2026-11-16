@@ -53,7 +53,7 @@ def finding(fid="PV-001", severity="High", **extra) -> dict:
 def complete_doc() -> dict:
     return {
         "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
-                 "assessor": "test", "lang": "en"},
+                 "assessor": "test", "lang": "en", "axis": "confirmed"},
         "commitments": [{"id": "C-01", "statement": "no PII in errors", "source": "policy", "status": "violated"}],
         "findings": [finding(), finding("PV-002", "Low", location=["worker/app.py:15"])],
         "perspectives": [{"name": n, "status": "applied", "note": "applied"}
@@ -155,6 +155,34 @@ class ContractTests(unittest.TestCase):
         self.assertIn("Data inventory and minimisation", problems)
         self.assertEqual(
             [p for p in findings.contract_problems(out, ["notes.txt"]) if "notes.txt" in p], [])
+
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        doc = complete_doc()
+        doc["meta"]["axis"] = "assumed"
+        doc["decisions"] = ["Confirm PV-0010 is out of scope"]
+        problems = findings.record_problems(doc)
+        self.assertIn("PV-001: its High severity rests on an assumed severity axis (meta.axis); "
+                      "name it in decisions for a person to confirm", problems)
+        self.assertFalse([p for p in problems if p.startswith("PV-002")], problems)
+        doc["decisions"].append("Confirm the sensitive categories: PV-001 rests on them")
+        out = self.build(doc)
+        self.assertEqual(findings.contract_problems(out), [])
+        self.assertIn("| Severity axis | assumed; not confirmed by the requester |",
+                      (out / "report.md").read_text(encoding="utf-8"))
+        ja = copy.deepcopy(doc)
+        ja["meta"]["lang"] = "ja"
+        self.assertIn("<dt>深刻度の軸</dt><dd>仮定（依頼者は未確認）</dd>",
+                      (self.build(ja) / "dashboard.html").read_text(encoding="utf-8"))
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        doc = complete_doc()
+        del doc["meta"]["axis"]
+        self.assertIn("meta.axis: record whether the requester confirmed the list severity is "
+                      "judged against (confirmed) or it was assumed (assumed)",
+                      findings.record_problems(doc))
+        doc["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(findings.SchemaError, "meta.axis"):
+            findings.validate(doc, complete=True)
 
     def test_render_escapes_html_and_writes_both_languages(self):
         doc = complete_doc()

@@ -38,7 +38,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   against these. Children's data always counts as a sensitive category. Show
   this list to the requester in one line and use their corrections; when nobody
   can answer (an unattended or delegated run), record it as assumed in
-  `limitations` and the chat summary, and continue
+  `limitations` and the chat summary, and continue. Record which in
+  `meta.axis` (`confirmed` or `assumed`); an assumed axis sends every High
+  finding to `decisions`
 - **Derive the commitments before hunting**: what this app promises or must
   keep — purposes, retention periods, deletion and export paths, the
   processors it shares with, consent conditions (`reference/commitments.md`).

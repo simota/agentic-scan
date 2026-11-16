@@ -55,8 +55,9 @@ stale `reason`, no finding
 outside the excluded verdicts sits under a perspective not applied, High and
 Medium findings are traced (not Unverified) and carry evidence, definitive
 evidence cites a `path:line` (a duplicate may name the finding it repeats),
-every finding ID mentioned in prose names a recorded finding, every
-location names a file, both architecture diagrams (before and after) are
+`meta.axis` is recorded and, while it is `assumed`, every High finding outside
+the excluded verdicts is named in `decisions`, every finding ID mentioned in
+prose names a recorded finding, every location names a file, both architecture diagrams (before and after) are
 recorded, and both
 rendered files match what `render.py` produces from the current record
 in `meta.lang`. With `--repo`, each location's file must exist in that
@@ -116,6 +117,9 @@ RULE_LIST = re.compile(r"[\s,、，;；]+")
 LISTS = ("checked_ok", "decisions", "limitations", "next_steps")
 TOP_KEYS = {"meta", "findings", "rules", "perspectives", "architecture", *LISTS}
 META_REQUIRED = ("project", "scope", "date", "assessor", "lang")
+# meta.axis: whether the requester confirmed the list severity is judged
+# against, or it was assumed (SKILL.md, Before starting).
+AXES = ("confirmed", "assumed")
 RULE_REQUIRED = ("id", "statement", "source", "status")
 ALLOWED_RULE_STATUS = {"Valid": ("violated",), "Likely": ("violated", "partly read")}
 # Every key the schema knows in a record that is rendered. A typo such as
@@ -527,6 +531,8 @@ def validate(doc, complete=False):
             _text(meta.get(key), f"meta.{key}")
     if "lang" in meta:
         _choice(meta["lang"], ("ja", "en"), "meta.lang")
+    if "axis" in meta:
+        _choice(meta["axis"], AXES, "meta.axis")
     for key in ("method", "commit"):
         if key in meta and not isinstance(meta[key], str):
             raise SchemaError(f"meta.{key}: must be a string")
@@ -1349,6 +1355,23 @@ def _ledger_problems(doc):
     return problems
 
 
+def _axis_problems(doc):
+    """The severity axis is recorded; an assumed one sends each High finding to decisions."""
+    axis = doc["meta"].get("axis")
+    if axis is None:
+        return ["meta.axis: record whether the requester confirmed the list severity is judged "
+                "against (confirmed) or it was assumed (assumed)"]
+    if axis != "assumed":
+        return []
+    # Named as renumber reads a mention, so the ID stays named after renumber.
+    named = {fid for _, fid in _mentions(doc.get("decisions", []), "decisions")}
+    return [f"{f['id']}: its High severity rests on an assumed severity axis (meta.axis); "
+            "name it in decisions for a person to confirm"
+            for f in doc.get("findings", [])
+            if f["severity"] == "High" and f["validation"]["verdict"] not in EXCLUDED
+            and f["id"] not in named]
+
+
 def _completeness_problems(doc):
     """The run records what held, what could not be checked and both diagrams."""
     problems = []
@@ -1401,6 +1424,7 @@ def contract_problems(out, allow=()):
             problems.append(f"perspective not recorded: {name}")
     problems += _finding_problems(doc)
     problems += _ledger_problems(doc)
+    problems += _axis_problems(doc)
     for where, fid in unknown_mentions(doc):
         problems.append(f"{where}: mentions {fid}, which no finding holds; name a recorded "
                         "finding (after renumber, only the new IDs)")

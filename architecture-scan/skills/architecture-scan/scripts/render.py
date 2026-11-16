@@ -25,7 +25,7 @@ import unicodedata
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
-from findings import (CONFIDENCES, DIAGRAMS, EXCLUDED, PERSPECTIVES, RULE_LIST, SEVERITIES,  # noqa: E402
+from findings import (AXES, CONFIDENCES, DIAGRAMS, EXCLUDED, PERSPECTIVES, RULE_LIST, SEVERITIES,  # noqa: E402
                       STATUSES, VERDICTS, SchemaError, atomic_write_all, as_locations, read_json,
                       safe_output, validate, visible)
 from scan_report_kit import style as kit_style  # noqa: E402
@@ -81,6 +81,8 @@ LABELS = {
         "static_note": "Static review; no code was changed or executed beyond read-only analysis.",
         "analysed_note": "Static review plus read-only tool analysis (dependency graph, history).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date / assessor",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "architecture": "Architecture: before and after",
         "before": "Before: the assessed revision",
         "after": "After: with the recorded fix directions applied",
@@ -116,6 +118,8 @@ LABELS = {
         "static_note": "静的レビューのみ。読み取り専用の解析以外にコードの変更や実行はしていない。",
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（依存グラフ、変更履歴）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日 / 診断者",
+        "axis": "重大度の軸", "axis_confirmed": "依頼者が確認済み",
+        "axis_assumed": "仮定（依頼者は未確認）",
         "architecture": "アーキテクチャ: 修正前と修正後",
         "before": "修正前: 診断時点のリビジョン",
         "after": "修正後: 記録した修正方針を適用した姿",
@@ -519,6 +523,8 @@ def render_markdown(doc, lang):
               f"| {t['project']} | {cell(meta.get('project', ''))} |",
               f"| {t['scope_row']} | {cell(meta.get('scope', ''))} |",
               f"| {t['revision']} | {cell(revision(meta))} |",
+              *([f"| {t['axis']} | {cell(t['axis_' + meta['axis']])} |"]
+                if meta.get("axis") in AXES else []),
               f"| {t['date']} | {cell(meta.get('date', ''))} / {cell(meta.get('assessor', ''))} |", ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
@@ -1495,7 +1501,9 @@ def html_coverage(doc, lang):
            f"<p>{e(d['coverage_note'])}</p><dl class='scope-meta'>"
            f"<dt>{e(t['scope_row'])}</dt><dd>{e(meta.get('scope', ''))}</dd>"
            f"<dt>{e(d['method_row'])}</dt><dd>{e(review_method(doc, lang))}</dd>"
-           f"<dt>{e(t['revision'])}</dt><dd>{e(revision(meta))}</dd></dl>"
+           f"<dt>{e(t['revision'])}</dt><dd>{e(revision(meta))}</dd>"
+           + (f"<dt>{e(t['axis'])}</dt><dd>{e(t['axis_' + meta['axis']])}</dd>"
+              if meta.get("axis") in AXES else "") + "</dl>"
            f"<h3>{e(t['limitations'])}</h3>{bullet_list(limitations, d['limitations_empty'])}"
            f"<h3>{e(t['perspectives'])}</h3><p class='section-note'>"
            f"{e(d['perspective_count'].format(applied=applied, total=len(rows)))}</p>"

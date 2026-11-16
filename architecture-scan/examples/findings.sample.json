@@ -6,7 +6,8 @@
     "date": "2026-10-09",
     "assessor": "Sample (not a real assessment)",
     "method": "Static review; read-only git history; import-linter with a scratch contract",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "rules": [
     {"id": "R-01", "statement": "Only the billing module writes invoices", "source": "docs/adr/0004-billing.md:12", "family": "OWN", "inferred": false, "status": "violated"},

@@ -67,10 +67,10 @@ class RenderRegressionTests(unittest.TestCase):
                 markdown = render.render_markdown(doc, lang)
                 labels = render.LABELS[lang]
                 scope = table_rows(markdown, labels["scope"])
-                self.assertEqual([len(row) for row in scope], [2] * 4)
+                self.assertEqual([len(row) for row in scope], [2] * 5)
                 self.assertEqual([plain_cell(row[1]) for row in scope], [
                     "demo | package", "api/ | worker/\nmore\nfinal", "abc|123",
-                    "2026-10-09 / owner | reviewer",
+                    labels["axis_confirmed"], "2026-10-09 / owner | reviewer",
                 ])
                 rules = table_rows(markdown, labels["rules"])
                 self.assertEqual(len(rules), 1)

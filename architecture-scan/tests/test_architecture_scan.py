@@ -62,7 +62,7 @@ def finding(fid="A-001", severity="High", **extra) -> dict:
 def complete_doc() -> dict:
     return {
         "meta": {"project": "demo", "scope": "repo root", "date": "2026-10-09",
-                 "assessor": "test", "lang": "en"},
+                 "assessor": "test", "lang": "en", "axis": "confirmed"},
         "rules": [{"id": "R-01", "statement": "one writer", "source": "adr", "status": "violated"}],
         "findings": [finding(rule="R-01"), finding("A-002", "Low")],
         "perspectives": [{"name": n, "status": "applied", "note": "applied"}
@@ -179,6 +179,36 @@ class ContractTests(unittest.TestCase):
         self.assertEqual(len(order), 2, order)
         for problem in order:
             self.assertIn("run renumber", problem)
+
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        doc = complete_doc()
+        doc["meta"]["axis"] = "assumed"
+        doc["findings"].append(finding("A-003", "High", validation={
+            "verdict": "FalsePositive", "method": "static", "evidence": "job.py:58"}))
+        problems = findings.contract_problems(self.build(doc))
+        self.assertIn("A-001: its High severity rests on an assumed severity axis (meta.axis); "
+                      "name it in decisions for a person to confirm", problems)
+        self.assertFalse([p for p in problems if p.startswith(("A-002", "A-003"))], problems)
+        doc["decisions"] = ["Confirm the core flows severity is judged against: A-001 rests on them"]
+        out = self.build(doc)
+        self.assertEqual(findings.contract_problems(out), [])
+        self.assertIn("| Severity axis | assumed; not confirmed by the requester |",
+                      (out / "report.md").read_text(encoding="utf-8"))
+        self.assertIn("<dt>Severity axis</dt><dd>assumed; not confirmed by the requester</dd>",
+                      (out / "dashboard.html").read_text(encoding="utf-8"))
+        doc["meta"]["lang"] = "ja"
+        self.assertIn("| 重大度の軸 | 仮定（依頼者は未確認） |",
+                      (self.build(doc) / "report.md").read_text(encoding="utf-8"))
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        doc = complete_doc()
+        del doc["meta"]["axis"]
+        self.assertIn("meta.axis: record whether the requester confirmed the list severity is "
+                      "judged against (confirmed) or it was assumed (assumed)",
+                      findings.contract_problems(self.build(doc)))
+        doc["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(findings.SchemaError, "meta.axis"):
+            findings.validate(doc, complete=True)
 
     def test_render_escapes_html_and_writes_both_languages(self):
         doc = complete_doc()

@@ -33,7 +33,9 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   ordering, provisioning, permissions, billing, data sync). Severity is judged
   against these. Show this list to the requester in one line and use their
   corrections; when nobody can answer (an unattended or delegated run), record
-  it as assumed in `limitations` and the chat summary, and continue
+  it as assumed in `limitations` and the chat summary, and continue. Record
+  which in `meta.axis` (`confirmed` or `assumed`); an assumed axis sends every
+  High finding to `decisions`
 - **Derive the design rules before hunting**: the rules this codebase states
   for itself — layer direction, module boundaries, who owns which data, where
   transactions start and end, how failures propagate, how config is read

@@ -84,6 +84,8 @@ be byte-identical to what `render.py` produces from the current
 - every High and Medium finding not excluded to carry `validation.evidence`
   and a verdict other than `Unverified` (SKILL.md: an untraced High or Medium
   finding is not reported)
+- `meta.axis`, and while it is `assumed`, every High finding not excluded
+  named by its ID in some `decisions` line, for a person to confirm
 - `Valid`, `FalsePositive` and `NotApplicable` evidence to cite a `path:line`
   (a path with a `/` or `\`, a file with an extension, a build or project file
   such as `Makefile`, `BUILD`, `CODEOWNERS` or `README`, or a path or file name
@@ -254,7 +256,8 @@ record. Existing permission bits and symbolic-link destinations are retained.
     "date": "2026-10-09",
     "assessor": "Claude Code (<model>)",
     "method": "Static review with read-only git history",
-    "lang": "en"
+    "lang": "en",
+    "axis": "confirmed"
   },
   "rules": [
     {"id": "R-01", "statement": "Only the billing module writes invoices",
@@ -343,7 +346,7 @@ wrap onto further lines.
 
 | Field | Rule |
 |---|---|
-| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | May be omitted while merging fragments, but must be nonblank strings when present. All are required for `check` and `render`. `lang` is `ja` or `en`, the requester's language: render uses it unless `--lang` overrides it for a preview, and `check` requires both outputs in it. `axis` is required for `check`: `confirmed` when the requester confirmed the list severity is judged against, `assumed` when nobody answered; while it is `assumed`, every High finding not excluded is named in `decisions`. Both reports show it. `commit` is the assessed revision (`git rev-parse --short HEAD`, read-only) |
 | `meta.method` | Optional string: one phrase naming the reading and each read-only tool or history window, e.g. `Static review; git log 12 months; import-linter`. Shown verbatim in both outputs in place of the generic static/analysed note |
 | `findings[].id` | `A-001`…, gapless, numbered in severity order, then path and line of the first location, excluded verdicts after the rest (`renumber` orders them) |
 | `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |

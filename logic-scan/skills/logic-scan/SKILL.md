@@ -92,6 +92,10 @@ Neighbours, and where their questions go instead:
 | Low | The defect is real but on a flow that is neither core nor shown to have gone wrong; or, on any flow, the wrong result is display-only and leaves the person able to act correctly (a label rounded across a threshold, a countdown text that disagrees with its accessible text) |
 | Info | A note: a defect whose wrong result nobody relies on (a debug view, a value no reader uses), or a rule worth centralising when the area is next changed. A defect whose input the entry point refuses has no counterexample: it is `FalsePositive`, not Info. A ledger rule broken where the result is still right is not a finding: it stays `holds`, with the variant in `checked_ok` (`reference/conventions.md` §2) |
 
+Both outputs print a legend, "How to read the levels", that condenses this
+table and the confidence table below (`scripts/render.py`, the `legend_*`
+labels); change it with them.
+
 Severity is exposure only. How far the fix reaches is `change`; how sure the
 finding is, is `confidence`:
 
@@ -159,8 +163,8 @@ symlink, either path reaches the same files), not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage |
-| `report.md` | The written assessment: verdict counts, then scope and method, findings, plan, logic rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
+| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
+| `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, logic rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
 requester's language (`ja` or `en`; for any other language, `en`, with the

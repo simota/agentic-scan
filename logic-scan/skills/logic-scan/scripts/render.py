@@ -91,6 +91,30 @@ LABELS = {
         "analysed_note": "Static review plus read-only tool analysis (history, a test run the requester allowed).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date",
         "assessor": "Assessor", "analysis_command": "analysis command",
+        # The level legend condenses SKILL.md's severity and confidence tables
+        # (one `legend_<level>` per SEVERITIES and CONFIDENCES value); change it with them.
+        "legend": "How to read the levels", "legend_severity": "Severity",
+        "legend_confidence": "Confidence",
+        "legend_High": "A core flow returns a wrong result on input that occurs in normal use, and "
+                       "there is incident evidence: a fix commit in the window already patched the "
+                       "same rule, or a record in the repository shows the wrong result was noticed.",
+        "legend_Medium": "A core flow on input that occurs, without incident evidence; or a non-core "
+                         "flow with incident evidence; or it blocks a change the requester named.",
+        "legend_Low": "A real defect on a flow that is neither core nor shown to have gone wrong; or "
+                      "a display-only wrong result that leaves the person able to act correctly.",
+        "legend_Info": "A note: a defect whose wrong result nobody relies on, or a rule worth "
+                       "centralising when the area is next changed.",
+        "legend_Confirmed": "The defect is traced with the counterexample, the oracle is stated in the "
+                            "repository or is a named domain fact, and the exposure claimed follows "
+                            "from what the repository records.",
+        "legend_Environment-dependent": "The result depends on something the repository does not "
+                                        "show: the server's time zone or locale, the production "
+                                        "runtime or library version, a feature flag, configuration "
+                                        "held elsewhere.",
+        "legend_Suspected": "The defect is traced, but the exposure has no evidence, or the oracle is "
+                            "the reviewer's own idea of how the business should behave.",
+        "legend_separate": "Severity and confidence are graded separately.",
+        "legend_assumed": "Severity rests on an assumed list; see decisions.",
     },
     "ja": {
         "title": "ロジック正しさ診断", "scope": "対象と方法",
@@ -121,6 +145,25 @@ LABELS = {
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（変更履歴、依頼者が許可したテスト実行）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日",
         "assessor": "診断者", "analysis_command": "解析コマンド",
+        "legend": "レベルの読み方", "legend_severity": "重大度", "legend_confidence": "確度",
+        "legend_High": "中核フローが通常の利用で起こる入力に対して誤った結果を返し、かつ事故の証拠がある"
+                       "（期間内の修正コミットが同じルールをすでに直している、または誤った結果に気づいた"
+                       "記録がリポジトリにある）。",
+        "legend_Medium": "中核フローで起こる入力だが事故の証拠がない、中核外のフローで事故の証拠がある、"
+                         "または依頼者が挙げた変更を妨げている。",
+        "legend_Low": "欠陥は実在するが、中核でもなく誤った結果が出た実績もないフローにある。または"
+                      "誤った結果が表示だけで、利用者は正しく行動できる。",
+        "legend_Info": "メモ。誤った結果に誰も依存していない欠陥、または次にその領域を変更するときに"
+                       "一元化する価値のあるルール。",
+        "legend_Confirmed": "反例とともに欠陥をコードで追跡でき、正解の根拠がリポジトリに書かれているか"
+                            "名前を挙げたドメインの事実であり、主張する露出がリポジトリの記録から導ける。",
+        "legend_Environment-dependent": "結果がリポジトリに現れないものに依存する（サーバーのタイムゾーン"
+                                        "やロケール、本番のランタイムやライブラリのバージョン、機能フラグ、"
+                                        "別の場所にある設定）。",
+        "legend_Suspected": "欠陥は追跡できたが、露出に証拠がない、または正解の根拠がレビュー担当者自身の"
+                            "業務の解釈である。",
+        "legend_separate": "重大度と確度は別々に判定する。",
+        "legend_assumed": "重大度は依頼者が確認していないリストに基づく。人が判断すべき事項を参照。",
     },
 }
 FIELDS = ("location", "hazard", "remedy", "scenario", "blast_radius", "trace", "impact",
@@ -305,6 +348,17 @@ def markdown_table_cell(value):
     return markdown_inline(value)
 
 
+def legend(doc, lang):
+    """The level legend: (heading, [(level, meaning)]) per scale, then the closing lines."""
+    t = LABELS[lang]
+    scales = [(t["legend_" + name], [(level, t["legend_" + level]) for level in levels])
+              for name, levels in (("severity", SEVERITIES), ("confidence", CONFIDENCES))]
+    closing = [t["legend_separate"]]
+    if doc["meta"].get("axis") == "assumed":
+        closing.append(t["legend_assumed"])
+    return scales, closing
+
+
 def revision(meta):
     commit = meta.get("commit", "")
     return commit if visible(commit) else "UNKNOWN"
@@ -383,6 +437,12 @@ def render_markdown(doc, lang):
     # never pairs across two values.
     lines += [f"| {t['date']} | {cell(meta.get('date', ''))} |",
               f"| {t['assessor']} | {cell(meta.get('assessor', ''))} |", ""]
+    scales, closing = legend(doc, lang)
+    lines += [f"## {t['legend']}", ""]
+    for heading, levels in scales:
+        lines += [f"**{heading}**", ""] + [f"- **{level}:** {meaning}" for level, meaning in levels] + [""]
+    for line in closing:
+        lines += [line, ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
@@ -611,6 +671,9 @@ DASHBOARD_CSS = """
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 .coverage h2 .small{font-size:13px;font-weight:400;color:var(--muted);margin-left:10px}
 #decisions ul{margin:6px 0;padding-left:20px}
+.legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 18px;margin:8px 0 14px}
+.legend dt{font-family:var(--sans);font-size:13px;font-weight:700}
+.legend dd{margin:0}
 .bar .fill{display:block;width:0}
 .bar .fill.High{background:var(--high)}
 .bar .fill.Medium{background:var(--medium)}
@@ -643,12 +706,12 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .plan .batch ul{margin:4px 0;padding-left:18px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 @media(max-width:850px){.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary .vh{position:static;width:auto;height:auto;overflow:visible;clip:auto;clip-path:none;white-space:normal;display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
-@media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}}
+@media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}.legend{grid-template-columns:minmax(0,1fr);gap:3px}.legend dd{margin-bottom:8px}}
 @media print{.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 /* Application shell: the register is a <div> grid, not the kit's table, so its
    column heads and the focused finding get the shell's pinning and focus marks here.
    The page script sets --filters-h whenever the filter bar shows; without it there is none. */
-.app-shell #decisions-section:focus,.app-shell #plan:focus,.app-shell #rules:focus,.app-shell #charts:focus{outline:0}
+.app-shell #decisions-section:focus,.app-shell #levels:focus,.app-shell #plan:focus,.app-shell #rules:focus,.app-shell #charts:focus{outline:0}
 .app-shell .finding:focus-within>details>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
 @media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
 @media print{.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}.app-shell .reg-head{position:static}}
@@ -880,7 +943,8 @@ def render_html(doc, lang):
     pending = sum(f["validation"]["verdict"] not in DEFINITIVE for f in included)
 
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
-           ("decisions-section", t["decisions"]), ("coverage", d["coverage_heading"]), ("plan", t["plan"])]
+           ("decisions-section", t["decisions"]), ("coverage", d["coverage_heading"]),
+           ("levels", t["legend"]), ("plan", t["plan"])]
     nav += [("rules", t["conventions"])] if doc.get("conventions") else []
     nav += [("charts", d["overview"]), ("findings", d["findings_register"]), ("lists", d["nav_lists"])]
     # Facets and keys drive the register's filters, so they appear only with it, like the filters.
@@ -999,6 +1063,15 @@ def render_html(doc, lang):
     for name, p in rows:
         out.append(f"<tr><td{en}>{e(name)}</td><td{en}>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
+
+    scales, closing = legend(doc, lang)
+    out.append(f"<section class='panel' id='levels' tabindex='-1'><h2>{e(t['legend'])}</h2>")
+    for heading, levels in scales:
+        out.append(f"<h3>{e(heading)}</h3><dl class='legend'>" + "".join(
+            f"<dt><span class='badge {level}'{en}>{level}</span></dt><dd>{ui(meaning)}</dd>"
+            if level in SEVERITIES else f"<dt{en}>{e(level)}</dt><dd>{ui(meaning)}</dd>"
+            for level, meaning in levels) + "</dl>")
+    out.append("".join(f"<p class='section-note'>{ui(line)}</p>" for line in closing) + "</section>")
 
     out.append(f"<section class='panel' id='plan' tabindex='-1'><h2>{e(t['plan'])}</h2><p class='section-note'>"
                f"{e(d['plan_note'])}</p>")

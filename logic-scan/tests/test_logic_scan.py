@@ -666,6 +666,46 @@ class RenderTest(unittest.TestCase):
             self.assertEqual(result.stdout.strip(), "ok", result.stdout + result.stderr)
 
 
+class LegendTest(unittest.TestCase):
+    """Both outputs say what each severity and confidence level means (SKILL.md's tables)."""
+
+    def test_every_level_has_a_legend_line_in_both_languages(self):
+        for lang in ("en", "ja"):
+            for level in (*findings.SEVERITIES, *findings.CONFIDENCES):
+                with self.subTest(lang=lang, level=level):
+                    self.assertTrue(findings.visible(render.LABELS[lang].get(f"legend_{level}", "")))
+
+    def test_the_report_and_dashboard_show_the_legend(self):
+        doc = sample()
+        for lang in ("en", "ja"):
+            t = render.LABELS[lang]
+            report = render.render_markdown(doc, lang)
+            html = render.render_html(doc, lang)
+            self.assertIn(f"## {t['legend']}\n", report)
+            self.assertIn(f"<h2>{render.html_text(t['legend'])}</h2>", html)
+            self.assertIn("<li><a href=\"#levels\">", html)
+            for level in (*findings.SEVERITIES, *findings.CONFIDENCES):
+                meaning = t[f"legend_{level}"]
+                self.assertIn(f"- **{level}:** {meaning}\n", report)
+                shown = render.html_text(meaning)
+                self.assertIn(f"<dd>{render.mark_english(shown) if lang == 'ja' else shown}</dd>", html)
+            self.assertIn(t["legend_separate"], report)
+            self.assertIn(render.html_text(t["legend_separate"]), html)
+
+    def test_the_assumed_axis_line_appears_only_when_the_axis_is_assumed(self):
+        doc = sample()
+        for axis in ("confirmed", "assumed"):
+            doc["meta"]["axis"] = axis
+            for lang in ("en", "ja"):
+                line = render.LABELS[lang]["legend_assumed"]
+                with self.subTest(axis=axis, lang=lang):
+                    self.assertEqual(line in render.render_markdown(doc, lang), axis == "assumed")
+                    self.assertEqual(render.html_text(line) in render.render_html(doc, lang),
+                                     axis == "assumed")
+        self.assertEqual(render.LABELS["en"]["legend_assumed"],
+                         "Severity rests on an assumed list; see decisions.")
+
+
 def _playwright():
     """The global Node and Playwright install, if this machine has both (CI may not)."""
     node = shutil.which("node")
@@ -1549,7 +1589,7 @@ class DashboardContentTest(unittest.TestCase):
         html = self.html(doc)
         links = re.findall(r"<li><a href=\"#([a-z-]+)\">", html.split("</nav>")[0])
         self.assertEqual(links, ["overview", "priority-section", "decisions-section", "coverage",
-                                 "plan", "rules", "charts", "findings", "lists"])
+                                 "levels", "plan", "rules", "charts", "findings", "lists"])
         for target in links:
             self.assertEqual(html.count(f"id='{target}'"), 1, target)
         doc["conventions"] = []

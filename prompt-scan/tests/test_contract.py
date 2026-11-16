@@ -3,7 +3,7 @@ from pathlib import Path
 import tempfile
 import unittest
 
-from helpers import SAMPLE_APP, contract_check, inventory, render, run, sample, write_json
+from helpers import SAMPLE_APP, contract_check, inventory, record, render, run, sample, write_json
 
 
 class ContractTest(unittest.TestCase):
@@ -75,6 +75,44 @@ class ContractTest(unittest.TestCase):
             code, err = self.problems(self.build(mutate))
             self.assertEqual(code, 1, message)
             self.assertIn(message, err)
+
+    def test_an_assumed_severity_axis_sends_each_high_finding_to_decisions(self):
+        high = [f["id"] for f in sample()["findings"]
+                if f["severity"] == "High" and f["validation"]["verdict"] not in record.EXCLUDED]
+        self.assertTrue(any(h.startswith("F-") for h in high) and any(h.startswith("L-") for h in high))
+
+        def assumed(decision=None, lang="en"):
+            def mutate(d):
+                d["meta"].update(axis="assumed", lang=lang)
+                if decision:
+                    d["decisions"].append(decision)
+            return mutate
+        code, err = self.problems(self.build(assumed()))
+        self.assertEqual(code, 1)
+        for h in high:
+            self.assertIn(f"{h}: its High severity rests on an assumed severity axis", err)
+        # F-0010 is not F-001: the id is matched on ASCII boundaries.
+        code, err = self.problems(self.build(assumed("F-0010 and LL-001 are unrelated")))
+        self.assertIn("F-001: its High severity", err)
+        named = f"Confirm the trust boundary: {'、'.join(high)}の重大度はこれに依る"
+        out = self.build(assumed(named))
+        code, err = self.problems(out)
+        self.assertEqual(code, 0, err)
+        report = (out / "report.html").read_text(encoding="utf-8")
+        self.assertIn("<strong>Severity axis</strong><span>assumed; not confirmed by the requester</span>", report)
+        out = self.build(assumed(named, "ja"), lang="ja")
+        self.assertIn("<strong>深刻度の軸</strong><span>仮定（依頼者は未確認）</span>",
+                      (out / "report.html").read_text(encoding="utf-8"))
+        self.assertIn('"axis": "仮定（依頼者は未確認）"', (out / "dashboard.html").read_text(encoding="utf-8"))
+
+    def test_the_severity_axis_is_recorded_as_confirmed_or_assumed(self):
+        code, err = self.problems(self.build(lambda d: d["meta"].pop("axis")))
+        self.assertEqual(code, 1)
+        self.assertIn("meta.axis: record whether the requester confirmed", err)
+        data = sample()
+        data["meta"]["axis"] = "guessed"
+        with self.assertRaisesRegex(record.SchemaError, "meta.axis must be one of confirmed, assumed"):
+            record.validate_data(data)
 
     def test_ids_past_f_999_run_without_gaps(self):
         def grow(d):

@@ -4,7 +4,7 @@
     python3 contract_check.py OUT_DIR [--no-pdf] [--allow NAME ...]
 
 OUT_DIR holds findings.json and the rendered outputs. Checks the output file
-set, ID scheme, that L-* findings and inventory.json come from one scan, the
+set, the severity axis (meta.axis), ID scheme, that L-* findings and inventory.json come from one scan, the
 fields every F-* finding carries, perspective coverage, the limitations the
 contract requires, and that each rendered page was rendered from the current
 findings.json. --allow ja or --allow en names a second-language copy, which
@@ -121,6 +121,7 @@ def check(out, no_pdf=False, allow=()):
     problems = output_problems(out, digest, no_pdf, allow)
     problems += inventory_problems(out, data)
     problems += meta_problems(data.get("meta", {}))
+    problems += axis_problems(data)
     problems += id_problems(data.get("findings", []))
     canonical = perspective_names()
     problems += field_problems(data, canonical)
@@ -177,6 +178,22 @@ def meta_problems(meta):
     if "commit" not in meta:
         problems.append("meta.commit is missing: run inventory.py <repo> --into <out>/findings.json")
     return problems
+
+
+def axis_problems(data):
+    """meta.axis is recorded; while it is assumed, every High finding still in the report is named in decisions."""
+    axis = data.get("meta", {}).get("axis")
+    if axis is None:
+        return ["meta.axis: record whether the requester confirmed the list severity is judged against "
+                "(confirmed) or it was assumed (assumed)"]
+    if axis != "assumed":
+        return []
+    decisions = data.get("decisions", [])
+    return [f"{f['id']}: its High severity rests on an assumed severity axis (meta.axis); "
+            "name it in decisions for a person to confirm"
+            for f in data.get("findings", [])
+            if f["severity"] == "High" and f["validation"]["verdict"] not in record.EXCLUDED
+            and not any(merge_tool.mentions(item, f["id"]) for item in decisions)]
 
 
 def id_problems(findings):

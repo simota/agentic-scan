@@ -66,7 +66,8 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
   effects). Severity of an injection finding is judged against these. Show this
   list to the requester in one line and use their corrections; when nobody can
   answer (an unattended or delegated run), record it as assumed in `limitations`
-  and the chat summary, and continue
+  and the chat summary, and continue. Record which in `meta.axis` (`confirmed`
+  or `assumed`); an assumed axis sends every High finding to `decisions`
 - **Create a new, empty output directory** outside the reviewed repository and
   follow the *Run contract* below
 

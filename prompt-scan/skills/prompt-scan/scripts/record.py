@@ -29,6 +29,8 @@ EVAL_ID = re.compile(r"E-[0-9]{3}")
 LOC_RE = re.compile(r"^(?P<path>[^:\s][^:]*):(?P<start>[0-9]+)(?:-(?P<end>[0-9]+))?$")
 # Report languages; render.py holds a label set for each.
 LANGS = ("en", "ja")
+# Whether the requester confirmed the trust boundary severity is judged against (meta.axis).
+AXES = ("confirmed", "assumed")
 MAX_JSON_DEPTH = 100
 
 
@@ -95,6 +97,8 @@ def _validate_meta(meta):
     if meta.get("lang") is not None and meta["lang"] not in LANGS:
         raise SchemaError(f"meta.lang must be one of {', '.join(sorted(LANGS))} "
                           '(findings.py merge a fragment {"meta": {"lang": ...}} to set it)')
+    if meta.get("axis") is not None and meta["axis"] not in AXES:
+        raise SchemaError(f"meta.axis must be one of {', '.join(AXES)}")
     if meta.get("commit") is not None and not re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", str(meta["commit"])):
         raise SchemaError("meta.commit must be a full Git object id or null")
     if meta.get("dirty") is not None and not isinstance(meta["dirty"], bool):

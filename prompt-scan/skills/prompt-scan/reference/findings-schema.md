@@ -29,6 +29,7 @@ contract's completeness rules. `examples/findings.sample.json` (English) and
 | `assessor` | Host and model, e.g. `Claude Code (<model>)` |
 | `scope` | What was reviewed, in one line |
 | `lang` | Report language, `ja` or `en`; `render.py --lang` defaults to it, and to `ja` when it is absent. Any other value is a schema error, which a fragment setting `meta.lang` repairs |
+| `axis` | Whether the requester confirmed the trust boundary severity is judged against: `confirmed`, or `assumed` when nobody answered. Required for `contract_check.py`; any other value is a schema error. While it is `assumed`, every non-excluded High finding is named by ID in `decisions` |
 | `commit` | Full Git object id of the reviewed revision, or `null` outside Git |
 | `dirty` | `true` when the scanned directory differed from `commit` at scan time (uncommitted changes, untracked files, or ignored or submodule files the inventory read); `null` when Git could not tell, and also when a file read is marked skip-worktree or assume-unchanged; when the only differences are unstaged edits to files under a filter driver such as Git LFS, which only its clean command could confirm; or when a configured filter driver's name contains `=`, which keeps `inventory.py` from switching it off, so `git status` is not run. Excerpts come from `commit` only when `dirty` is `false` and the file has no `filter` attribute, otherwise from the working tree |
 
@@ -109,7 +110,8 @@ A minimal first fragment:
 ```json
 {
   "meta": {"target": "acme-support-bot", "date": "2026-10-11",
-           "assessor": "Claude Code (<model>)", "scope": "prompts under app/llm", "lang": "en"},
+           "assessor": "Claude Code (<model>)", "scope": "prompts under app/llm", "lang": "en",
+           "axis": "confirmed"},
   "prompts": [{"id": "P-01", "name": "Support answer", "kind": "system",
                "location": "app/llm/prompts/support.md:1", "consumer": "app/llm/answer.py:42"}]
 }

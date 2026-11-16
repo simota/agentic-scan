@@ -194,6 +194,11 @@ UNTOUCHED = {"meta", "prompts"}
 LINT_REVIEWED = {"validation", "previous_validation"}
 
 
+def mentions(text, ident):
+    """Whether text names the record id ident (F-001, L-002), with CODE_REF's ASCII boundaries."""
+    return re.search(rf"(?<![A-Za-z0-9_]){re.escape(ident)}(?![A-Za-z0-9_])", text) is not None
+
+
 def order_key(f):
     """The run contract's F-* order: severity, then path and line (the old id breaks ties)."""
     m = record.LOC_RE.match(f["location"])

@@ -6,6 +6,7 @@
     "assessor": "Claude Code (example)",
     "scope": "Prompts under app/llm and the code that sends and parses them",
     "lang": "en",
+    "axis": "confirmed",
     "commit": null,
     "dirty": null
   },

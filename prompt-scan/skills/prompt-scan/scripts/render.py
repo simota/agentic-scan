@@ -40,6 +40,8 @@ LABELS = {
         "target": "Target", "commit": "Revision", "dirty": "uncommitted changes present",
         "dirty_unknown": "uncommitted changes not determined", "date": "Date",
         "assessor": "Assessor", "scope": "Scope", "abstract": "Summary",
+        "axis": "Severity axis", "axis_confirmed": "confirmed by the requester",
+        "axis_assumed": "assumed; not confirmed by the requester",
         "summary_line": "{total} findings ({defects} defects, {improvements} improvements); "
                         "{high} High, {medium} Medium. {excluded} excluded with evidence.",
         "table_counts": "Findings by severity and kind",
@@ -68,6 +70,7 @@ LABELS = {
         "target": "対象", "commit": "リビジョン", "dirty": "未コミットの変更あり",
         "dirty_unknown": "未コミットの変更は未確認", "date": "診断日",
         "assessor": "診断者", "scope": "範囲", "abstract": "要旨",
+        "axis": "深刻度の軸", "axis_confirmed": "依頼者が確認済み", "axis_assumed": "仮定（依頼者は未確認）",
         "summary_line": "指摘 {total} 件（不具合 {defects} 件、改善提案 {improvements} 件）。"
                         "High {high} 件、Medium {medium} 件。根拠付きで除外 {excluded} 件。",
         "table_counts": "深刻度と種別ごとの指摘数",
@@ -135,11 +138,17 @@ def revision(meta, L):
     return commit[:12] + (f" ({state})" if state else "")
 
 
+def axis(meta, L):
+    """Whether the requester confirmed the trust boundary severity is judged against, or None if unrecorded."""
+    return L["axis_" + meta["axis"]] if meta.get("axis") else None
+
+
 def meta_lines(data, L):
     meta = data.get("meta", {})
     revision_text = revision(meta, L) or "—"
     rows = [(L["commit"], revision_text), (L["date"], meta.get("date") or "—"),
-            (L["assessor"], meta.get("assessor") or "—"), (L["scope"], meta.get("scope") or "—")]
+            (L["assessor"], meta.get("assessor") or "—"), (L["scope"], meta.get("scope") or "—"),
+            (L["axis"], axis(meta, L) or "—")]
     return "".join(f'<p class="meta-line"><strong>{esc(k)}</strong><span>{esc(v)}</span></p>' for k, v in rows)
 
 
@@ -393,7 +402,7 @@ D.parts.forEach(function(part){var c=R.parts[part],d=el('div',{'class':'card','d
 var shownTop=0;D.parts.forEach(function(part){var items=R.queue.filter(function(item){return item.kind===part;}).map(function(item){return {finding:ALL.find(function(f){return f.id===item.id;}),action:item.action,anchor:D.anchors[item.id]};}),high=items.filter(function(item){return item.finding.severity==='High';}).length,top=items.slice(0,Math.max(4,Math.min(high,12))),hiddenHigh=high-top.filter(function(item){return item.finding.severity==='High';}).length;shownTop+=top.length;if(!R.queue.length)return;byId('priority').appendChild(el('h3',{'class':'part-heading',id:'priority-'+part},L['part_'+part]));var list=el('div',{'class':'priority-list'});byId('priority').appendChild(list);if(!top.length)list.appendChild(el('div',{'class':'panel muted'},L.part_none_open));top.forEach(function(item){var f=item.finding,p=el('article',{'class':'panel priority-item sev-'+f.severity}),head=el('div',{'class':'priority-top'});head.appendChild(badge(f));head.appendChild(el('span',{'class':'action-label'},L[item.action]));p.appendChild(head);var h=el('h3');h.appendChild(el('a',{href:'#'+item.anchor},f.id+' · '+f.title));p.appendChild(h);p.appendChild(el('div',{'class':'verdict'},f.confidence+' · '+f.verdict));p.appendChild(el('code',{'class':'location'},f.location));if(f.impact)p.appendChild(el('p',{'class':'impact'},f.impact));if(item.action==='fix_now')p.appendChild(el('p',{'class':'action'},f.fix||L.missing_fix));list.appendChild(p);});if(hiddenHigh>0)byId('priority').appendChild(el('p',{'class':'section-note more-high','data-part':part},pl('more_high',hiddenHigh)));});
 if(R.queue.some(function(item){return item.action==='verify_first';})){var legend=byId('verify-legend');legend.appendChild(el('span',{'class':'action-label'},L.verify_first));legend.appendChild(document.createTextNode(' '+L.verify_first_note));legend.hidden=false;}
 if(!R.queue.length)byId('priority').appendChild(el('div',{'class':'panel muted'},L.no_open));byId('queue-note').textContent=shownTop<R.open_count?fmt(L.queue_more,{shown:shownTop,total:R.open_count}):'';
-[['scope','scope_l'],['commit','commit'],['prompts','prompts_l']].forEach(function(k){byId('scope-meta').appendChild(el('dt',null,L[k[1]]));byId('scope-meta').appendChild(el('dd',null,D.meta[k[0]]||L.not_recorded));});
+[['scope','scope_l'],['commit','commit'],['axis','axis'],['prompts','prompts_l']].forEach(function(k){byId('scope-meta').appendChild(el('dt',null,L[k[1]]));byId('scope-meta').appendChild(el('dd',null,D.meta[k[0]]||L.not_recorded));});
 byId('coverage-count').textContent=L.limitations_count+': '+D.limitations.length;listInto(byId('limitations'),D.limitations,L.limitations_empty);
 if(!D.perspectives.length)byId('perspectives').appendChild(el('p',{'class':'muted'},L.coverage_missing));
 D.perspectives.forEach(function(p){var box=el('div',{'class':'perspective'});box.appendChild(el('strong',null,p.name));box.appendChild(el('p',null,L.results[p.result]||p.result||L.not_recorded));if(p.note)box.appendChild(el('p',{'class':'muted'},p.note));byId('perspectives').appendChild(box);});
@@ -652,7 +661,7 @@ def render_dashboard(data, L, lang, excerpts):
     payload = {
         "meta": {"target": meta.get("target", ""), "date": meta.get("date"), "assessor": meta.get("assessor"),
                  "scope": meta.get("scope"),
-                 "commit": revision(meta, L),
+                 "commit": revision(meta, L), "axis": axis(meta, L),
                  "prompts": ", ".join(f'{p["id"]} {p["name"]}' for p in prompts) or None},
         "labels": labels, "headline": summary_line(data, L), "report": dashboard_model(data), "findings": items,
         "anchors": {f["id"]: "finding-" + f["id"].lower() for f in data.get("findings", [])},

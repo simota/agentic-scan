@@ -6,6 +6,7 @@
     "assessor": "Claude Code (example)",
     "scope": "app/llm 配下のプロンプトと、それを送信・解析するコード",
     "lang": "ja",
+    "axis": "confirmed",
     "commit": null,
     "dirty": null
   },

@@ -50,7 +50,9 @@ Neighbours, and where their questions go instead:
   costs most (money, prices, tax, entitlements, quotas, inventory, deadlines
   and renewals, anything billed, audited or sent to a customer) and the rules
   each must obey. Severity is judged against these; a wrong result nobody
-  relies on costs little
+  relies on costs little. Show this list to the requester in one line and use
+  their corrections; when nobody can answer (an unattended or delegated run),
+  record it as assumed in `limitations` and the chat summary, and continue
 - **Fix the history window** (default: 12 months, or the whole history when it
   is shorter) and use it for every exposure claim; fix commits that touched
   the same rule are evidence

@@ -115,7 +115,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	for f in $(DOCS); do \
 	  grep -ohE '`[^`]+`' "$$f" | tr -c 'A-Za-z0-9._<>/-' '\n' \
 	    | grep -E '^(reference|scripts|templates)/[A-Za-z]' | sort -u | while read -r ref; do \
-	    for r in $$(case "$$ref" in *'<lang>'*) echo "$$ref" | sed 's/<lang>/ja/'; echo "$$ref" | sed 's/<lang>/en/';; *) echo "$$ref";; esac); do \
+	    for r in $$(case "$$ref" in (*'<lang>'*) echo "$$ref" | sed 's/<lang>/ja/'; echo "$$ref" | sed 's/<lang>/en/';; (*) echo "$$ref";; esac); do \
 	      [ -f "$(SKILL)/$$r" ] || echo "MISS $$f cites $$r, which does not exist"; \
 	    done; \
 	  done; \

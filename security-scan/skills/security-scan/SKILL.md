@@ -103,12 +103,20 @@ that a finding is true.
   and they are invisible until the actors are named
 - **Name the crown jewels**: the data whose exposure or tampering would hurt
   most (other tenants' records, prices and contracts, credentials, PII, admin
-  capability). Severity is judged against these
+  capability). Severity is judged against these. Show this list to the requester
+  in one line and use their corrections; when nobody can answer (an unattended
+  or delegated run), record it as assumed in `limitations` and the chat summary,
+  and continue
 - **Derive the invariants before hunting**: the rules this app must keep —
   who owns what, which role may do what, which state transitions and amounts
   are allowed (`reference/invariants.md`). Essential vulnerabilities are
   violations of these rules on some path; default scanners cannot see them
   because the rules exist only in this app
+- **Fix the history window** (default: 12 months, or the whole history when it
+  is shorter) and read its security fixes with read-only `git log`: a commit
+  that added a missing check, escaped an input or narrowed a role is evidence.
+  Hunt the sibling paths the fix did not reach, the same shape on another route,
+  model or tenant boundary
 - **Create a new, empty output directory** outside the audited repository and
   inside a host-declared writable root. Prefer a fresh system-temp directory
   when it is writable; resolve its physical path (macOS temp paths may be

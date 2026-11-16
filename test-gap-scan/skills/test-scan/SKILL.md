@@ -84,6 +84,10 @@ Neighbours, and where their questions go instead:
 | Low | The gap is real but on code that is neither critical nor a hotspot |
 | Info | A note: a gap with no exposure evidence, or a test that would be worth writing when the area is next touched |
 
+Both outputs print a legend, "How to read the levels", that condenses this
+table and the confidence table below (`scripts/render.py`, the `legend_*`
+labels); change it with them.
+
 Severity is exposure only. How directly a test can reach the behaviour is
 `testability`; how sure the finding is, is `confidence`:
 
@@ -135,8 +139,8 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage |
-| `report.md` | The written assessment: verdict counts, then scope and method, findings, plan, idiom ledger, perspective coverage, checked and adequately tested, what could not be checked, decisions for a human, next steps |
+| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage, how to read the levels |
+| `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, idiom ledger, perspective coverage, checked and adequately tested, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
 requester's language (`ja` or `en`; for any other language, `en`, with the

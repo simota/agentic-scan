@@ -89,6 +89,29 @@ LABELS = {
         "analysed_note": "Static review plus read-only tool analysis (history, an existing coverage report).",
         "project": "System", "scope_row": "Scope", "revision": "Revision", "date": "Date",
         "assessor": "Assessor", "analysis_command": "analysis command",
+        # The level legend condenses SKILL.md's severity and confidence tables
+        # (one `legend_<level>` per SEVERITIES and CONFIDENCES value); change it with them.
+        "legend": "How to read the levels", "legend_severity": "Severity",
+        "legend_confidence": "Confidence",
+        "legend_High": "The gap sits on a critical flow and the evidence shows a defect would pass "
+                       "today: a fix commit in the window changed the flow's code with no test "
+                       "added or changed for it, the only test of the behaviour is skipped, flaky "
+                       "or asserts nothing about it, or a test double accepts what the real "
+                       "dependency refuses.",
+        "legend_Medium": "The gap sits on a critical flow without escaped-defect evidence, or on a "
+                         "hotspot outside the critical flows with escaped-defect evidence, or it "
+                         "blocks a change the requester named.",
+        "legend_Low": "A real gap on code that is neither critical nor a hotspot.",
+        "legend_Info": "A note: a gap with no exposure evidence, or a test worth writing when the "
+                       "area is next touched.",
+        "legend_Confirmed": "The gap is traced in the code and the tests, and the exposure follows "
+                            "from recorded history or the named critical flows.",
+        "legend_Environment-dependent": "The exposure depends on something the repository does not "
+                                        "show: tests in another repository, a CI configuration "
+                                        "held elsewhere, history squashed or migrated.",
+        "legend_Suspected": "The gap is traced but the exposure has no evidence.",
+        "legend_separate": "Severity and confidence are graded separately.",
+        "legend_assumed": "Severity rests on an assumed list; see decisions.",
     },
     "ja": {
         "title": "テスト診断", "scope": "対象と方法",
@@ -117,6 +140,24 @@ LABELS = {
         "analysed_note": "静的レビューに加え、読み取り専用のツール解析（変更履歴、既存のカバレッジレポート）を実施。",
         "project": "システム", "scope_row": "範囲", "revision": "リビジョン", "date": "診断日",
         "assessor": "診断者", "analysis_command": "解析コマンド",
+        "legend": "レベルの読み方", "legend_severity": "重大度", "legend_confidence": "確度",
+        "legend_High": "テストの不足が重要フローにあり、"
+                       "かつ今なら不具合がすり抜けるという証拠がある（期間内の修正コミットがそのフローのコードを変えたのにテストを追加も変更もしていない、"
+                       "その振る舞いの唯一のテストがスキップされている・不安定・それについて何も検証していない、"
+                       "またはテストダブルが本物の依存先が拒むものを受け入れている）。",
+        "legend_Medium": "テストの不足が重要フローにあるが見逃された不具合の証拠がない、"
+                         "重要フロー外のホットスポットにあって見逃された不具合の証拠がある、"
+                         "または依頼者が挙げた変更を妨げている。",
+        "legend_Low": "テストの不足は実在するが、重要でもホットスポットでもないコードにある。",
+        "legend_Info": "メモ。露出の証拠がないテストの不足、"
+                       "または次にその領域に手を入れるときに書く価値のあるテスト。",
+        "legend_Confirmed": "コードとテストでテストの不足を追跡でき、"
+                            "露出が記録された履歴または名前を挙げた重要フローから導ける。",
+        "legend_Environment-dependent": "露出がリポジトリに現れないものに依存する（別リポジトリのテスト、"
+                                        "別の場所にある CI の設定、squash や移行された履歴）。",
+        "legend_Suspected": "テストの不足は追跡できたが、露出に証拠がない。",
+        "legend_separate": "重大度と確度は別々に判定する。",
+        "legend_assumed": "重大度は依頼者が確認していないリストに基づく。人が判断すべき事項を参照。",
     },
 }
 FIELDS = ("location", "gap", "remedy", "scenario", "blast_radius", "trace", "impact",
@@ -297,6 +338,17 @@ def markdown_table_cell(value):
     return markdown_inline(value)
 
 
+def legend(doc, lang):
+    """The level legend: (heading, [(level, meaning)]) per scale, then the closing lines."""
+    t = LABELS[lang]
+    scales = [(t["legend_" + name], [(level, t["legend_" + level]) for level in levels])
+              for name, levels in (("severity", SEVERITIES), ("confidence", CONFIDENCES))]
+    closing = [t["legend_separate"]]
+    if doc["meta"].get("axis") == "assumed":
+        closing.append(t["legend_assumed"])
+    return scales, closing
+
+
 def revision(meta):
     commit = meta.get("commit", "")
     return commit if visible(commit) else "UNKNOWN"
@@ -375,6 +427,12 @@ def render_markdown(doc, lang):
     # never pairs across two values.
     lines += [f"| {t['date']} | {cell(meta.get('date', ''))} |",
               f"| {t['assessor']} | {cell(meta.get('assessor', ''))} |", ""]
+    scales, closing = legend(doc, lang)
+    lines += [f"## {t['legend']}", ""]
+    for heading, levels in scales:
+        lines += [f"**{heading}**", ""] + [f"- **{level}:** {meaning}" for level, meaning in levels] + [""]
+    for line in closing:
+        lines += [line, ""]
     lines += [f"## {t['findings']}", ""]
     if not findings:
         lines += [t["none"], ""]
@@ -602,6 +660,9 @@ DASHBOARD_CSS = """
 .card .n .u{font-family:var(--sans);font-size:11px;letter-spacing:.06em;color:var(--muted);margin-left:6px}
 .coverage h2 .small{font-size:13px;font-weight:400;color:var(--muted);margin-left:10px}
 #decisions ul{margin:6px 0;padding-left:20px}
+.legend{display:grid;grid-template-columns:max-content minmax(0,1fr);gap:8px 18px;margin:8px 0 14px}
+.legend dt{font-family:var(--sans);font-size:13px;font-weight:700}
+.legend dd{margin:0}
 .bar .fill{display:block;width:0}
 .bar .fill.High{background:var(--high)}
 .bar .fill.Medium{background:var(--medium)}
@@ -634,12 +695,12 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 .plan .batch ul{margin:4px 0;padding-left:18px}
 .vh{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);clip-path:inset(50%);white-space:nowrap}
 @media(max-width:850px){.reg-head{display:none}.finding>details>summary{grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;padding:14px}.finding>details>summary .vh{position:static;width:auto;height:auto;overflow:visible;clip:auto;clip-path:none;white-space:normal;display:block;color:var(--muted);font-size:10px;font-family:var(--sans)}.reg-title{grid-column:1/-1;grid-row:1}.reg-cat{grid-column:span 2}.detail{padding:16px}.detail dl{grid-template-columns:minmax(0,1fr);gap:3px}.detail dd{margin-bottom:10px}}
-@media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}}
+@media(max-width:480px){.detail-actions{flex-direction:column;align-items:flex-start}.legend{grid-template-columns:minmax(0,1fr);gap:3px}.legend dd{margin-bottom:8px}}
 @media print{.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 /* Application shell: the register is a <div> grid, not the kit's table, so its
    column heads and the focused finding get the shell's pinning and focus marks here.
    The page script sets --filters-h whenever the filter bar shows; without it there is none. */
-.app-shell #decisions-section:focus,.app-shell #plan:focus,.app-shell #rules:focus,.app-shell #charts:focus{outline:0}
+.app-shell #decisions-section:focus,.app-shell #levels:focus,.app-shell #plan:focus,.app-shell #rules:focus,.app-shell #charts:focus{outline:0}
 .app-shell .finding:focus-within>details>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
 @media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
 @media print{.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}.app-shell .reg-head{position:static}}
@@ -871,7 +932,8 @@ def render_html(doc, lang):
     pending = sum(f["validation"]["verdict"] not in DEFINITIVE for f in included)
 
     nav = [("overview", d["nav_summary"]), ("priority-section", d["priority"]),
-           ("decisions-section", t["decisions"]), ("coverage", d["coverage_heading"]), ("plan", t["plan"])]
+           ("decisions-section", t["decisions"]), ("coverage", d["coverage_heading"]),
+           ("levels", t["legend"]), ("plan", t["plan"])]
     nav += [("rules", t["conventions"])] if doc.get("conventions") else []
     nav += [("charts", d["overview"]), ("findings", d["findings_register"]), ("lists", d["nav_lists"])]
     # Facets and keys drive the register's filters, so they appear only with it, like the filters.
@@ -990,6 +1052,15 @@ def render_html(doc, lang):
     for name, p in rows:
         out.append(f"<tr><td{en}>{e(name)}</td><td{en}>{e(p['status'])}</td><td>{e(p['note'])}</td></tr>")
     out.append("</tbody></table></div></section>")
+
+    scales, closing = legend(doc, lang)
+    out.append(f"<section class='panel' id='levels' tabindex='-1'><h2>{e(t['legend'])}</h2>")
+    for heading, levels in scales:
+        out.append(f"<h3>{e(heading)}</h3><dl class='legend'>" + "".join(
+            f"<dt><span class='badge {level}'{en}>{level}</span></dt><dd>{ui(meaning)}</dd>"
+            if level in SEVERITIES else f"<dt{en}>{e(level)}</dt><dd>{ui(meaning)}</dd>"
+            for level, meaning in levels) + "</dl>")
+    out.append("".join(f"<p class='section-note'>{ui(line)}</p>" for line in closing) + "</section>")
 
     out.append(f"<section class='panel' id='plan' tabindex='-1'><h2>{e(t['plan'])}</h2><p class='section-note'>"
                f"{e(d['plan_note'])}</p>")

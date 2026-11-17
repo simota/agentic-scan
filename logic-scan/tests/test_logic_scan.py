@@ -2376,7 +2376,7 @@ class LineCountTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
 class ReconCommandTest(unittest.TestCase):
-    """The history commands in recon.md, run as written on a small repository."""
+    """The function-level churn commands in recon.md, run as written (recon.py: test_recon.py)."""
 
     RECON = (SKILL / "reference" / "recon.md").read_text(encoding="utf-8")
 
@@ -2409,52 +2409,6 @@ class ReconCommandTest(unittest.TestCase):
             command = command.replace(f"<{name}>", value)
         return subprocess.run(["bash", "-c", command], cwd=self.repo,
                               capture_output=True, text=True, env=self.env)
-
-    def test_churn_leaves_out_tests_locks_and_generated_files(self):
-        block = re.search(r"## 6\. Rule-code churn.*?```\n(.*?)```", self.RECON, re.S)[1]
-        command = block.replace("\\\n", " ")
-        kept = ["src/app.ts", "src/test_utils/helpers.py", "src/latest/x.ts"]
-        left_out = [
-            "packages/core/dist/index.d.ts", "pnpm-lock.yaml", "package-lock.json",
-            "yarn.lock", "Cargo.lock", "go.sum", "packages/core/test/cart.ts",
-            "src/cart.test-d.ts", "src/__mocks__/api.ts", "e2e/login.cy.ts",
-            "src/cart.test.ts", "src/cart.spec.ts", "src/__tests__/a.ts", "tests/test_a.py",
-            "pkg/a_test.go", "app/src/test/java/ATest.java"]
-        self.commit("one", {name: "1" for name in kept + left_out})
-        out = self.run_doc(command, **{"window start": "2000-01-01", "generated": "**/dist"})
-        self.assertEqual(out.stderr, "")
-        self.assertEqual(sorted(line.split(None, 1)[1] for line in out.stdout.splitlines()),
-                         sorted(kept))
-
-    def test_bug_fix_grep_matches_whole_words(self):
-        command = re.search(r"\(`(git log --since=<window start> -i -E --grep=.*?)`,",
-                            self.RECON)[1]
-        fixes = ["fix: rounding", "Fixed crash on save", "fixing the parser", "hotfix login", "bugfix: parser",
-                 "Bugs in the parser", "Bug 12: empty cart", "fixes #4"]
-        others = ["refactor: prefix legacy helpers", "chore: add debug logging",
-                  "test: add fixtures", "docs: suffix rules"]
-        for i, message in enumerate(fixes + others):
-            self.commit(message, {"f.txt": str(i)})
-        # A merge's subject names the branch, not a fix.
-        self.git("checkout", "-q", "-b", "fix/side")
-        self.commit("docs: side note", {"side.txt": "1"})
-        self.git("checkout", "-q", "-")
-        self.git("merge", "-q", "--no-ff", "-m", "Merge branch 'fix/side'", "fix/side")
-        out = self.run_doc(command, **{"window start": "2000-01-01T00:00"})
-        self.assertEqual(sorted(line.split(" ", 1)[1] for line in out.stdout.splitlines()),
-                         sorted(fixes))
-
-    def test_shallow_history_is_detected(self):
-        block = re.search(r"## 2\. Core flows, rules and history window.*?```\n(.*?)```", self.RECON, re.S)[1]
-        self.assertIn("git rev-parse --is-shallow-repository", block)
-        for i in range(3):
-            self.commit(f"c{i}", {"f.txt": str(i)})
-        shallow = Path(self.tmp.name) / "shallow"
-        subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{self.repo}", str(shallow)],
-                       check=True, capture_output=True, env=self.env)
-        out = subprocess.run(["bash", "-c", block], cwd=shallow, capture_output=True, text=True,
-                             env=self.env)
-        self.assertEqual(out.stdout.splitlines()[1], "true")
 
     def test_function_churn_prints_no_count_when_git_finds_no_function(self):
         command = re.search(r"`(n=\$\(git log .*?)`\n", self.RECON)[1]

@@ -2276,7 +2276,7 @@ class LineCountTest(unittest.TestCase):
 
 @unittest.skipUnless(shutil.which("git") and shutil.which("bash"), "needs git and bash")
 class ReconCommandTest(unittest.TestCase):
-    """The history commands in recon.md, run as written on a small repository."""
+    """The function-level churn commands in recon.md, run as written (recon.py: test_recon.py)."""
 
     RECON = (SKILL / "reference" / "recon.md").read_text(encoding="utf-8")
 
@@ -2309,77 +2309,6 @@ class ReconCommandTest(unittest.TestCase):
             command = command.replace(f"<{name}>", value)
         return subprocess.run(["bash", "-c", command], cwd=self.repo,
                               capture_output=True, text=True, env=self.env)
-
-    def test_churn_leaves_out_tests_locks_and_generated_files(self):
-        block = re.search(r"## 3\. Hotspots.*?```\n(.*?)```", self.RECON, re.S)[1]
-        command = block.replace("\\\n", " ")
-        kept = ["src/app.ts", "src/test_utils/helpers.py", "src/latest/x.ts",
-                "src/respec/spec.ts", "src/Shop.Testing/a.cs"]
-        left_out = [
-            "packages/core/dist/index.d.ts", "pnpm-lock.yaml", "package-lock.json",
-            "yarn.lock", "Cargo.lock", "go.sum", "packages/core/test/cart.ts",
-            "src/cart.test-d.ts", "src/__mocks__/api.ts", "e2e/login.cy.ts",
-            "src/cart.test.ts", "src/cart.spec.ts", "src/__tests__/a.ts", "tests/test_a.py",
-            "pkg/a_test.go", "app/src/test/java/ATest.java", "spec/models/user_spec.rb",
-            "lib/cart_spec.rb", "src/Shop.Tests/CartTests.cs", "cypress/checkout.cy.ts",
-            "tests/conftest.py", "src/a_test.py"]
-        self.commit("one", {name: "1" for name in kept + left_out})
-        out = self.run_doc(command, **{"window start": "2000-01-01", "generated": "**/dist"})
-        self.assertEqual(out.stderr, "")
-        self.assertEqual(sorted(line.split(None, 1)[1] for line in out.stdout.splitlines()),
-                         sorted(kept))
-
-    def test_bug_fix_grep_matches_whole_words(self):
-        command = re.search(r"\(`(git log --since=<window start> -i -E --grep=.*?)`,",
-                            self.RECON)[1]
-        fixes = ["fix: rounding", "Fixed crash on save", "fixing the parser", "hotfix login", "bugfix: parser",
-                 "Bugs in the parser", "Bug 12: empty cart", "fixes #4"]
-        others = ["refactor: prefix legacy helpers", "chore: add debug logging",
-                  "test: add fixtures", "docs: suffix rules"]
-        for i, message in enumerate(fixes + others):
-            self.commit(message, {"f.txt": str(i)})
-        # A merge's subject names the branch, not a fix.
-        self.git("checkout", "-q", "-b", "fix/side")
-        self.commit("docs: side note", {"side.txt": "1"})
-        self.git("checkout", "-q", "-")
-        self.git("merge", "-q", "--no-ff", "-m", "Merge branch 'fix/side'", "fix/side")
-        out = self.run_doc(command, **{"window start": "2000-01-01T00:00"})
-        self.assertEqual(sorted(line.split(" ", 1)[1] for line in out.stdout.splitlines()),
-                         sorted(fixes))
-
-    def test_fixes_that_touched_no_test_are_listed(self):
-        command = re.search(r"\n  ```\n  (git log .*?)\n  ```", self.RECON, re.S)[1]
-        command = command.replace("\\\n", " ")
-        self.commit("feat: refunds", {"src/refund.py": "1", "tests/test_refund.py": "1"})
-        self.commit("fix: rounding", {"src/refund.py": "2"})
-        self.commit("fix: partial refunds", {"src/refund.py": "3", "tests/test_refund.py": "2"})
-        self.commit("bugfix: cart", {"src/cart.ts": "1", "src/cart.test.ts": "1"})
-        self.commit("hotfix: login", {"pkg/login.go": "1"})
-        self.commit("fix: login test", {"pkg/login_test.go": "1"})
-        self.commit("chore: fixture", {"src/refund.py": "4"})
-        # The same test-file definition as the hotspot command (recon.md §3).
-        self.commit("fix: e2e login", {"src/login.ts": "1", "e2e/login.cy.ts": "1"})
-        self.commit("fix: checkout", {"src/checkout.ts": "1", "cypress/checkout.cy.ts": "1"})
-        self.commit("fix: user model", {"app/models/user.rb": "1",
-                                        "spec/models/user_spec.rb": "1"})
-        self.commit("fix: cart totals", {"src/Cart.cs": "1", "src/Shop.Tests/CartTests.cs": "1"})
-        self.commit("fix: inspector", {"src/respec/spec.ts": "1"})
-        out = self.run_doc(command, **{"window start": "2000-01-01T00:00"})
-        self.assertEqual(out.stderr, "")
-        self.assertEqual(sorted(line.split(" ", 1)[1] for line in out.stdout.splitlines()),
-                         ["fix: inspector", "fix: rounding", "hotfix: login"])
-
-    def test_shallow_history_is_detected(self):
-        block = re.search(r"## 2\. Critical flows and history window.*?```\n(.*?)```", self.RECON, re.S)[1]
-        self.assertIn("git rev-parse --is-shallow-repository", block)
-        for i in range(3):
-            self.commit(f"c{i}", {"f.txt": str(i)})
-        shallow = Path(self.tmp.name) / "shallow"
-        subprocess.run(["git", "clone", "-q", "--depth", "1", f"file://{self.repo}", str(shallow)],
-                       check=True, capture_output=True, env=self.env)
-        out = subprocess.run(["bash", "-c", block], cwd=shallow, capture_output=True, text=True,
-                             env=self.env)
-        self.assertEqual(out.stdout.splitlines()[1], "true")
 
     def test_function_churn_prints_no_count_when_git_finds_no_function(self):
         command = re.search(r"`(n=\$\(git log .*?)`\n", self.RECON)[1]

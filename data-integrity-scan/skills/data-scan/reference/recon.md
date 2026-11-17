@@ -45,27 +45,32 @@ holds only on the paths that check it.
 
 Fix the history window once (default 12 months, or the whole history if
 shorter) and record it in `meta.window` (`2025-10-15..2026-10-15`); the issue
-and plan templates read it from there. The commands below take its start as
+and plan templates read it from there. One read-only script reads the history
+for the window, the fix commits (§4) and the write-path churn (§5); name it
+before running it. It runs only `git rev-parse`, `git rev-list` and
+`git log`, never the repository's own code:
+
+```
+python3 <skill>/scripts/recon.py <checkout> --out <scratch>/recon-git.json \
+  [--exclude '**/dist']... [--source-root src]... [--since <window start>]
+```
+
+`--exclude` takes one glob per generated or vendored directory (`**/dist`
+also finds `packages/*/dist` in a monorepo); `--source-root` limits the churn
+to the review units' source roots. The JSON stays in scratch: the output
+directory holds only what `check` allows.
+
+Read `warnings` and `window` first. `shallow` true means the clone holds less
+history than it shows, and its first commit is only where the clone was cut:
+widening the window cannot help, so treat it as missing history (`SKILL.md`,
+*Decide first*). `whole_history` true means the repository is younger than
+the window, and `window.value` already starts at its first commit. Copy
+`window.value` into `meta.window` with a fragment. A history that is a single
+import commit, squashed per release, or migrated without authorship makes
+every fix-commit claim `Environment-dependent` or `Suspected`; say so in the
+chat's first line. The commands below take the window's start as
 `<window start>` with a time of day, `2025-10-15T00:00`: a bare date counts
 from the current time of day, so it would drop that day's earlier commits.
-Check that the history is usable:
-
-```
-git rev-parse --short HEAD
-git rev-parse --is-shallow-repository
-git log --reverse --format='%h %cs' | head -1
-git log --since=<window start> --oneline | wc -l
-git log --since=<window start> --merges --oneline | wc -l
-```
-
-A shallow clone (`true`) holds less history than it shows, and its first
-commit is only where the clone was cut: widening the window cannot help, so
-treat it as missing history (`SKILL.md`, *Decide first*). In a full clone, a
-first commit later than the window start means the repository is younger than
-the window: use the whole history, from that commit, and record it in
-`meta.window`. A history that is a single import commit, squashed per release,
-or migrated without authorship makes every fix-commit claim
-`Environment-dependent` or `Suspected`; say so in the chat's first line.
 
 ## 3. Schema source of truth, migration tool and deploy order
 
@@ -86,16 +91,13 @@ or migrated without authorship makes every fix-commit claim
 
 ## 4. Migrations and fixes in the window
 
-- **Fix commits**: commits whose message or linked issue marks a fix
-  (`git log --since=<window start> -i -E --grep='(^|[^[:alnum:]])((hot|bug)?fix(e[sd]|ing)?|bugs?)([^[:alnum:]]|$)' --no-merges --format='%h %s'`,
-  whole words, so `prefix`, `debug` and `fixture` do not count, and no merge
-  commit, whose subject names a `fix/` branch rather than a fix,
-  adjusted to the repository's convention — conventional commits, issue
-  labels). Append `-- <data paths>` (models, migrations, data access, jobs
-  that write core tables) to keep the fixes that touched data code.
-  `--grep` searches the whole message, so a commit can match on its body
-  while `%s` shows only the subject: read each one (`git show -s <hash>`)
-  before citing it. A fix that repaired rows (a data migration, a one-off
+- **Fix commits** (`fixes` in `recon-git.json`): non-merge commits whose
+  message marks a fix, as whole words, so `prefix`, `debug` and `fixture` do
+  not count. Pass `--fix-pattern` to follow the repository's convention
+  (conventional commits, issue labels). Keep the fixes whose `files` touch
+  data code (models, migrations, data access, jobs that write core tables).
+  `matched_in: body` means only the message body matched: read each fix
+  (`git show -s <hash>`) before citing it. A fix that repaired rows (a data migration, a one-off
   script, an `UPDATE` in a migration) or changed a write path is the High
   evidence: data already went wrong there
 - **Migrations changed in the window**: each migration file added, modified,
@@ -116,32 +118,18 @@ or migrated without authorship makes every fix-commit claim
 
 ## 5. Write-path churn
 
-Churn per source file in the window, excluding generated, vendored and lock
-files, and test files:
-
-```
-git log --since=<window start> --format= --name-only -- . \
-  ':(exclude,glob)<generated>/**' ':(exclude,glob)**/*.lock' \
-  ':(exclude,glob)**/package-lock.json' ':(exclude,glob)**/pnpm-lock.yaml' \
-  ':(exclude,glob)**/go.sum' \
-  ':(exclude,glob)**/*_test.go' ':(exclude,glob)**/*.test.*' \
-  ':(exclude,glob)**/*.spec.*' ':(exclude,glob)**/*.test-d.*' \
-  ':(exclude,glob)**/*.cy.*' ':(exclude,glob)**/test_*.py' \
-  ':(exclude,glob)**/*_test.py' ':(exclude,glob)**/conftest.py' \
-  ':(exclude,glob)**/test/**' ':(exclude,glob)**/tests/**' \
-  ':(exclude,glob)**/__tests__/**' ':(exclude,glob)**/__mocks__/**' \
-  | sort | uniq -c | sort -rn | head -50
-```
-
-`<generated>` is a glob for each generated or vendored directory, one
-pathspec each (`**/dist`, `vendor`), and the pathspec is dropped when there is
-none (an empty one makes git stop with `'/**' is outside repository`); a plain `':!dist'` misses
-`packages/*/dist` in a monorepo. `*.lock` covers `yarn.lock`, `Cargo.lock`,
-`poetry.lock`, `Gemfile.lock`, `composer.lock` and `uv.lock`. Adjust the test
-patterns to the repository's own layout; `glob` keeps `*` inside one path
-segment, so `test_utils/` is not mistaken for a test. Read the rows for the
-writers in §2: a write path that changes often is where a new path that skips
-the invariant appears.
+`hotspots` in `recon-git.json` is the churn per source file in the window,
+most commits first, leaving out lock files (`*.lock`, `package-lock.json`,
+`pnpm-lock.yaml`, `go.sum`), the `--exclude` globs and test files by one
+definition (`test_file_rule`): a file under a directory named `test`, `tests`,
+`__tests__`, `__mocks__`, `spec`, `e2e` or `Tests`, or ending in `.Tests`; or a
+file named `*_test.*`, `*.test.*`, `*.spec.*`, `*.test-d.*`, `*.cy.*`,
+`*_spec.rb`, `test_*.py`, `conftest.py`, `*Test.java`, `*Test.kt` or
+`*Tests.swift`. `*` stays inside one path segment, so `test_utils/` is not a
+test. When the repository's layout differs, name the misread files in
+`limitations` and read them by hand. Read the rows for the writers in §2: a
+write path that changes often is where a new path that skips the invariant
+appears.
 
 Function-level churn, when a writer's file is large:
 `n=$(git log --since=<window start> -s -L :<function>:<file> --format=%h) && printf '%s\n' "$n" | grep -c .`

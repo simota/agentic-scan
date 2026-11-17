@@ -108,6 +108,9 @@ skills/data-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges fragments; renumbers; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
+  scripts/recon.py             git history for RECON: window, hotspots, fixes (stdlib only)
+  scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
+  scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
   scripts/scan_report_kit/     vendored scan-report-kit
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor

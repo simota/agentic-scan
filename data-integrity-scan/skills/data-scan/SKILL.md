@@ -188,7 +188,7 @@ chat summary in the requester's language).
 | A hazard is a deliberate, documented trade-off (an ADR accepting eventual consistency, a reference across services reconciled by a job) | Not a finding unless the evidence shows it no longer holds; then a `decisions` item |
 | Generated or vendored code, or another service's schema | Out of scope; record it in `limitations` |
 | Asked to prove an invariant holds | GUARD: migrations on a disposable local database, or a constraint-violation test in the repo's own suite, never a shared or production database |
-| Asked to hand the plan to an executor or file it | Draft from `findings.json` by hand (no script fills the templates): `templates/plan.<lang>.md` for the plan, `templates/issue.<lang>.md` per finding. Excluded findings are never filed. Drafts go in `<scratch>/drafts/` unless asked for `<out>/drafts/` (then `check <out> --allow drafts`). Filing, sending or executing is the requester's step |
+| Asked to hand the plan to an executor or file it | Run `scripts/drafts.py <out>/findings.json --out <scratch>/drafts` after `renumber`: it fills `templates/plan.<lang>.md` as `plan.md` and `templates/issue.<lang>.md` per finding not excluded, `Fixed` or `Accepted` (`--id F-NNN` to choose), every value copied from the record. Then write what only a person can: each `<to fill in>` (the decisions a batch waits on). Excluded findings are never filed. Only when asked for `<out>/drafts/`, write there and run `check <out> --allow drafts`. Filing, sending or executing is the requester's step |
 
 ## Always / Never
 

@@ -65,6 +65,13 @@ Then invoke `architecture-scan` (or `/architecture-scan`).
 
 ## Outputs
 
+During recon, one read-only script builds the Python import graph (never
+importing or running the checkout):
+
+```sh
+python3 -I skills/architecture-scan/scripts/depgraph.py /path/to/checkout --out scratch/depgraph.json   # modules, edges, cycles, diagram
+```
+
 Every output is rendered from one record, `findings.json`, which the agent
 builds from JSON fragments rather than heredocs:
 
@@ -157,6 +164,7 @@ skills/architecture-scan/
   reference/validation.md      verdicts, the four claims, read-only analysis, fitness functions
   reference/findings-schema.md findings.json shape, merge semantics and render command
   reference/report.md          checklist and findings report formats
+  scripts/depgraph.py          Python import graph for recon: edges, cycles, layers, diagram (stdlib only)
   scripts/findings.py          merges JSON fragments; renumbers; records triage; checks the run contract (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates

@@ -40,15 +40,31 @@ of import sites, an example `path:line`. In TypeScript and JavaScript count
 variants); run it with `GOPROXY=off` so it fetches nothing, and keep Go's
 own module mode, which reads `vendor/` when the repository has one.
 
-In Python, count function-level imports as well as top-level ones (a
-function-level import is the usual way around a circular `ImportError`, so it
-often *is* the cycle), treat imports under `if TYPE_CHECKING:` as type-only,
-and resolve relative imports and `__init__` re-exports. `pydeps --show-deps
---no-output` prints the graph when installed, and `lint-imports --no-cache`
-checks the repository's own contracts (without `--no-cache` it writes a cache
-into the checkout); otherwise a stdlib `ast` walk over the checkout, kept in
-scratch and run with `python3 -I`, is read-only analysis too (record it as
-`analysis`).
+In Python, run the read-only graph script; name it before running it. It reads
+every `.py` file with `ast` and never imports or runs one:
+
+```
+python3 -I <skill>/scripts/depgraph.py <checkout> --out <scratch>/depgraph.json \
+  [--source-root src]... [--exclude GLOB]... [--modules <scratch>/modules.json]
+```
+
+It counts function-level imports as well as top-level ones (a function-level
+import is the usual way around a circular `ImportError`, so it often *is* the
+cycle), records imports under `if TYPE_CHECKING:` as type-only and leaves them
+out of `cycles`, and resolves relative imports and `__init__` re-exports.
+Without `--modules` a module is each package below the packages every file
+shares. Write `modules.json` from §2 when the declared structure differs, and
+to judge upward edges: `layers` from top to bottom, each module's `paths`
+globs and `layer`, and framework, ORM or vendor SDK packages as `external`
+prefixes with their layer. Read `unparsed` first: a file this Python cannot
+parse contributes no edges, so name it in `limitations`. `unresolved` lists
+dynamic imports of a computed name for the *Control* cell below; `upward`,
+`into_internals` and `hubs` are leads for the flags below, never findings by
+themselves. `diagram` is the `{nodes, edges}` shape of `architecture.before`:
+copy it into a fragment, trimmed to the modules the report discusses.
+`pydeps --show-deps --no-output` and `lint-imports --no-cache` remain the
+tools for a repository that already configures them (without `--no-cache`
+lint-imports writes a cache into the checkout).
 
 On the JVM, module edges come from `project(":x")` in `settings.gradle(.kts)`
 and `build.gradle(.kts)`, or `<module>` and `<dependency>` in `pom.xml`;

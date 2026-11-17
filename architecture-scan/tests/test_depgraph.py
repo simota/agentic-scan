@@ -131,6 +131,21 @@ class DepGraph(unittest.TestCase):
         self.assertEqual(len(pairs), len(set(pairs)))
         self.assertTrue(all(a != b and a in ids and b in ids for a, b in pairs))
 
+    def test_namespace_packages_resolve_from_the_source_root(self):
+        for rel in list(self.repo.rglob("__init__.py")):
+            rel.unlink()
+        g = self.graph()
+        self.assertEqual([m["id"] for m in g["modules"]],
+                         ["billing", "broken", "cli", "orders", "web"])
+        self.assertEqual(self.edge(g, "cli", "orders")["sites"], 1)
+        self.assertEqual(self.edge(g, "web", "orders")["kinds"]["runtime"], 1)
+        self.assertNotIn("src/acme/orders/service.py:3", [u["path_line"] for u in g["unmatched"]])
+
+    def test_imports_naming_the_checkout_that_reach_no_file_are_unmatched(self):
+        (self.repo / "src/acme/cli.py").write_text("import acme.payments\nimport json\n", encoding="utf-8")
+        g = self.graph()
+        self.assertEqual(g["unmatched"], [{"path_line": "src/acme/cli.py:1", "import": "acme.payments"}])
+
     def test_diagram_ids_are_made_valid_and_unique(self):
         d = depgraph.diagram(["9lives", "a b", "a_b"], {"9lives": "module", "a b": "module", "a_b": "module"}, [])
         self.assertEqual([n["id"] for n in d["nodes"]], ["m_9lives", "a_b", "a_b_2"])

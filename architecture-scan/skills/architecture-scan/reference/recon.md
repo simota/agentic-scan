@@ -57,7 +57,9 @@ shares. Write `modules.json` from §2 when the declared structure differs, and
 to judge upward edges: `layers` from top to bottom, each module's `paths`
 globs and `layer`, and framework, ORM or vendor SDK packages as `external`
 prefixes with their layer. Read `unparsed` first: a file this Python cannot
-parse contributes no edges, so name it in `limitations`. `unresolved` lists
+parse contributes no edges, so name it in `limitations`. `unmatched` lists
+imports that name a package of the checkout yet reach no file in it (a
+missing module, a path the script cannot follow): read each. `unresolved` lists
 dynamic imports of a computed name for the *Control* cell below; `upward`,
 `into_internals` and `hubs` are leads for the flags below, never findings by
 themselves. `diagram` is the `{nodes, edges}` shape of `architecture.before`:

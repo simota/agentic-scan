@@ -8,7 +8,9 @@ Reads every `.py` file with `ast.parse`; nothing in REPO is imported or run.
 Counts top-level, function-level, `if TYPE_CHECKING:` (type-only) and
 `importlib.import_module("literal")` / `__import__("literal")` (dynamic)
 imports; resolves relative imports and names a package's `__init__.py`
-re-exports from a submodule. Imports that resolve to no file in REPO are left
+re-exports from a submodule. A file answers both to its name through its
+packages' `__init__.py` files and to its path from its source root, so
+namespace packages (no `__init__.py`) resolve too. Imports that resolve to no file in REPO are left
 out unless modules.json names them as external.
 
 Modules: by default one per package below the packages every file shares
@@ -27,7 +29,9 @@ The JSON written to --out holds `modules`, `edges` (sites per kind and one
 left out because they never run), `upward`, `into_internals` (imports of a
 package module's file other than its `__init__.py`: leads, not findings),
 `hubs` (distinct importing modules), `unresolved` (dynamic imports of a
-computed name), `unparsed` (files this Python cannot parse) and `diagram`, the
+computed name), `unmatched` (imports that name a package or file of the
+checkout yet reach no file in it), `unparsed` (files this Python cannot
+parse) and `diagram`, the
 `{nodes, edges}` shape `architecture.before` takes. Exit status: 0 written,
 2 invalid arguments or modules.json.
 """
@@ -156,11 +160,27 @@ class Imports(ast.NodeVisitor):
         self.generic_visit(node)
 
 
+def path_name(rel, roots):
+    """The import name of a file read from its source root, as a namespace package is (PEP 420)."""
+    root = next((r for r in roots if rel.startswith(r + "/")), "")
+    parts = rel[len(root) + 1 if root else 0:-3].split("/")
+    return ".".join(parts[:-1] if parts[-1] == "__init__" else parts)
+
+
 class Resolver:
-    def __init__(self, files, parsed):
+    """Each file answers to its __init__.py chain name and to its path from its source root."""
+
+    def __init__(self, files, parsed, roots=()):
         present = set(files)
-        self.by_name = {dotted_name(rel, present): rel for rel in files}
-        self.name_of = {rel: name for name, rel in self.by_name.items()}
+        self.by_name, self.name_of = {}, {}
+        for rel in files:
+            names = {dotted_name(rel, present), path_name(rel, roots)}
+            for name in names:
+                self.by_name.setdefault(name, rel)
+            self.name_of[rel] = max(names, key=lambda n: (n.count("."), n))
+        self.known = {".".join(name.split(".")[:n]) for name in self.by_name if name
+                      for n in range(1, name.count(".") + 2)}
+        self.tops = {name.split(".")[0] for name in self.known}
         self.parsed = parsed
 
     def package_of(self, rel):
@@ -187,18 +207,25 @@ class Resolver:
                     return target[0]
         return None
 
+    def absolute(self, rel, base, level):
+        """The absolute name a relative import means, or None when it climbs above the root."""
+        if not level:
+            return base
+        package = self.package_of(rel).split(".") if self.package_of(rel) else []
+        if level - 1 > len(package):
+            return None
+        package = package[:len(package) - (level - 1)]
+        return ".".join(package + ([base] if base else []))
+
     def target(self, rel, base, names, level, seen=None, follow=True):
         """The files one import statement reaches, or [] when none is in the checkout.
 
         With follow, a name a package's __init__.py re-exports reaches the file
         it comes from; without, the file the statement names.
         """
-        if level:
-            package = self.package_of(rel).split(".") if self.package_of(rel) else []
-            if level - 1 > len(package):
-                return []
-            package = package[:len(package) - (level - 1)]
-            base = ".".join(package + ([base] if base else []))
+        base = self.absolute(rel, base, level)
+        if base is None:
+            return []
         if not names:
             hit = self.deepest(base)
             return [hit] if hit else []
@@ -335,7 +362,8 @@ def build(repo, roots=(), exclude=(), modules_path=None):
         parsed[rel] = visitor.found
         computed += [{"path_line": f"{rel}:{line}", "call": call} for line, call in visitor.computed]
 
-    resolver = Resolver(files, parsed)
+    resolver = Resolver(files, parsed, roots)
+    unmatched = []
     module_of = default_modules(files, resolver.name_of)
     globbed = [(m, [glob_regex(p) for p in m.get("paths", [])]) for m in declared]
     for rel in files:
@@ -359,6 +387,9 @@ def build(repo, roots=(), exclude=(), modules_path=None):
         for line, kind, base, names, level in parsed[rel]:
             targets = resolver.target(rel, base, names, level)
             named = resolver.target(rel, base, names, level, follow=False)
+            full = resolver.absolute(rel, base, level)
+            if (level or base.split(".")[0] in resolver.tops) and full not in resolver.known:
+                unmatched.append({"path_line": f"{rel}:{line}", "import": "." * level + base})
             if not targets and not level:
                 targets = named = [f"external:{mid}" for prefix, mid in external
                                    if base == prefix or base.startswith(prefix + ".")][:1]
@@ -402,6 +433,7 @@ def build(repo, roots=(), exclude=(), modules_path=None):
                            for (a, b, t), ex in sorted(internal.items())],
         "hubs": [{"module": m, "fan_in": n} for m, n in sorted(fan_in.items(), key=lambda kv: (-kv[1], kv[0]))],
         "unresolved": computed,
+        "unmatched": unmatched,
         "unparsed": unparsed,
         "diagram": diagram(module_ids, {m: "external" if m in external_ids else "module" for m in module_ids},
                            edges),

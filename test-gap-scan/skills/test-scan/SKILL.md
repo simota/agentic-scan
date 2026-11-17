@@ -161,7 +161,7 @@ chat summary in the requester's language).
 | Generated or vendored code | Out of scope; record it in `limitations` |
 | The requester wants coverage numbers | Read an existing coverage report file in the repository or the CI artifacts the requester provides, name it, and record tool, command and result in the `analysis` of each finding that relies on it. Never run the suite to produce one, never install packages into the audited repository |
 | Asked to prove a test would catch the defect | GUARD: the test in the repo's own suite, green on the current code, red on a scratch copy with the behaviour broken |
-| Asked to hand the plan to an executor or file it | Draft from `findings.json` by hand (no script fills the templates): `templates/plan.<lang>.md` for the plan, `templates/issue.<lang>.md` per finding. Excluded findings are never filed. Drafts go in `<scratch>/drafts/` unless asked for `<out>/drafts/` (then `check <out> --allow drafts`). Filing, sending or executing is the requester's step |
+| Asked to hand the plan to an executor or file it | Run `scripts/drafts.py <out>/findings.json --out <scratch>/drafts` after `renumber`: it fills `templates/plan.<lang>.md` as `plan.md` and `templates/issue.<lang>.md` per finding not excluded, `Fixed` or `Accepted` (`--id F-NNN` to choose), every value copied from the record. Then write what only a person can: each `<to fill in>` (the decisions a batch waits on). Excluded findings are never filed. Only when asked for `<out>/drafts/`, write there and run `check <out> --allow drafts`. Filing, sending or executing is the requester's step |
 
 ## Always / Never
 

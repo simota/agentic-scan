@@ -14,7 +14,7 @@ python3 scripts/findings.py check <out> [--allow NAME]...   # one --allow per na
 
 The scripts use only the standard library and also run under `python3 -I`.
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline,
-filter by severity, styled by the vendored scan-report-kit in
+filter by severity, styled by the bundled report kit in
 `scripts/scan_report_kit/`) and `<out>/report.md`. Exit codes: `0` written, `1` an
 output could not be saved, `2` the record does not match the shape (the field
 is named) or the command line is invalid. `render.py` still renders a draft

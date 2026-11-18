@@ -130,10 +130,8 @@ dashboard preserves line breaks and indentation in analysis commands.
 The dashboard uses the shared *-scan report format,
 [scan-report-kit](https://github.com/simota/scan-report-kit): its
 journal-style stylesheet (light and dark themes, serif text, booktabs tables,
-severity inks) followed only by rules for privacy-scan's own records. The kit
-is vendored in `skills/privacy-scan/scripts/scan_report_kit/`; change it
-upstream and re-vendor, never in place (`make check` verifies the copy
-against its MANIFEST).
+severity inks) followed only by rules for privacy-scan's own records. The copy in
+`skills/privacy-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 To file findings, the skill drafts with `scripts/drafts.py` from
 `templates/issue.{ja,en}.md` (one root cause per issue) and
@@ -158,7 +156,7 @@ skills/privacy-scan/
   scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files
-  scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
+  scripts/scan_report_kit/     bundled report kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or DPO
 examples/findings.sample.json  fictional sample for make demo / make check

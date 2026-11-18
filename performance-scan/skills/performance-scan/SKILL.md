@@ -22,9 +22,9 @@ production or third-party system.
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. The line with
-a reliability review: cost under the workload as it grows is a finding here;
-what happens when a dependency fails, hangs or slows belongs to a reliability
-review.
+an architecture review: cost under the workload as it grows is a finding here;
+what happens when a dependency fails, hangs or slows belongs to its failure
+handling and operability review.
 A missing timeout or uncapped retry (IO4) is reported here for the
 connections, workers or latency it holds at normal load, not for the outage
 it lets spread:
@@ -32,7 +32,7 @@ it lets spread:
 | Question | Where it goes |
 |---|---|
 | Write the fix | A separate implementation request (out of scope here) |
-| Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | A reliability review (out of scope here) |
+| Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | An architecture review of failure handling and operability (out of scope here) |
 | Data corrupted or locked by migrations, transactions or lost updates | A data-integrity review of the data layer (out of scope here) |
 | Structure that forces a slow design (synchronous call chains across modules) | An architecture review (out of scope here) |
 | Code, dependencies or features nobody needs | A review of what can be removed (out of scope here) |

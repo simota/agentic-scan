@@ -31,10 +31,10 @@ the defect at a single site goes to the neighbour:
 | Do the refactoring | `coding-refactor` |
 | Which refactorings pay off, in what order, with what safety net (god classes, clones) | `refactor-scan` |
 | A wrong result on realistic input, including a duplicated rule that already gives one | `logic-scan` |
-| Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | `data-scan` |
+| Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | `data-integrity-scan` |
 | Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | `reliability-scan` |
 | An actor who can bypass authorization or tenant scoping | `security-scan` |
-| Which behaviour has no test, and what to assert | `test-scan` |
+| Which behaviour has no test, and what to assert | `test-gap-scan` |
 | What can be deleted, including a workaround, `TODO` or caveat comment that deleting removes (DU3 keeps a rule only a comment enforces on a core flow, and a workaround that needs a type, test or lint rule in its place) | `prune-scan` |
 | Slow paths and unbounded work | `performance-scan` |
 

@@ -1,0 +1,209 @@
+{
+  "meta": {
+    "project": "acme-shop (fictional sample)",
+    "scope": "app/ and db/; core tables: orders, customers, wallets",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code (sample)",
+    "method": "Static review; git log 12 months",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "en", "axis": "confirmed"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "Money columns are decimal(12,2), never float",
+     "source": "majority: 9 of 9 money columns; db/schema.rb:40", "concern": "TYPES",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "Primary keys are bigint",
+     "source": "docs/adr/0011-migrations.md:7", "concern": "SCHEMA", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "orders.customer_id has no foreign key, and two fixes already repaired orphaned orders",
+      "severity": "High",
+      "rollout": "Staged",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Schema constraints",
+      "step": "SC2",
+      "hazard": "Orders can reference a customer that no longer exists",
+      "remedy": "Add Foreign Key",
+      "location": ["app/admin/customers_controller.rb:42", "db/schema.rb:88"],
+      "scenario": "An admin deletes a customer with orders; the delete skips model callbacks, so the orders stay behind",
+      "blast_radius": "orders and customers; invoicing and the monthly revenue export read both",
+      "trace": "1. db/schema.rb:88 declares orders.customer_id as bigint with no foreign key. 2. app/models/order.rb:8 checks belongs_to only on save through the model. 3. customers_controller.rb:42 calls delete_all, skipping dependent: :restrict_with_error on app/models/customer.rb:4. 4. Fixes 9c1d2e4 and 5b7a0f3 repaired orphaned orders by hand",
+      "impact": "Orders whose customer is gone break invoicing and drop out of revenue reports",
+      "exposure": "Core table orders; 3 writers of customer_id; fixes 9c1d2e4 and 5b7a0f3 patched orphaned rows in the window",
+      "enforcement": {"net": "partial", "sites": ["app/models/order.rb:8", "app/models/customer.rb:4"],
+                      "gaps": "Only the model checks it; delete_all at customers_controller.rb:42 and raw SQL bypass it, and the schema has no constraint"},
+      "rollout_reason": "Orphaned orders already exist, so the key cannot be validated until they are cleaned; validating it in the migration that adds it would also block writes to orders for the length of the scan",
+      "invariants": [
+        "Every orders.customer_id references an existing customers.id",
+        "Deleting a customer who has orders is refused by the database, not only by the model"
+      ],
+      "steps": [
+        "1. List orphaned orders with a read-only query and decide their owner (verify: the count on a staging copy is the one reported to the requester)",
+        "2. Add the foreign key as NOT VALID in its own migration (verify: the migration takes under a second on a staging copy; inserting an order for a missing customer is refused)",
+        "3. VALIDATE CONSTRAINT in a later migration once no orphan is left (verify: validation passes on a staging copy; orders and customers stay writable while it runs)"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "Clean the orphans, then add the foreign key in two migrations: NOT VALID, then VALIDATE",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "db/schema.rb:88 has no add_foreign_key for orders; customers_controller.rb:42 calls delete_all; git show 9c1d2e4 5b7a0f3 updates orders with missing customers"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "Customer merge deletes the duplicate before moving its orders, with no transaction",
+      "severity": "Medium",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Transaction boundaries",
+      "step": "TB1",
+      "hazard": "A failure between the delete and the move leaves orders orphaned",
+      "remedy": "Widen Transaction Boundary",
+      "location": "app/jobs/merge_customers_job.rb:14-31",
+      "scenario": "The job is retried on any error (config/sidekiq.yml:4); a timeout after the delete repeats nothing useful",
+      "blast_radius": "1 job; customers and orders",
+      "trace": "1. merge_customers_job.rb:22 deletes the duplicate customer. 2. :28 then moves its orders to the kept customer. 3. No transaction wraps the two writes",
+      "impact": "Orders of a merged customer point at a deleted row; once F-001 adds the foreign key, the job fails halfway instead",
+      "exposure": "Core tables customers and orders; the job runs nightly over every flagged duplicate",
+      "enforcement": {"net": "partial", "sites": ["app/models/customer.rb:4"],
+                      "gaps": "The model refuses deleting a customer with orders, but the job calls delete, which skips that check"},
+      "invariants": [
+        "After a merge, every order of the duplicate belongs to the kept customer",
+        "A merge that fails at any step leaves both customers and all orders as they were"
+      ],
+      "steps": [
+        "1. Wrap the move and the delete in one transaction, moving the orders first (verify: job spec green; a raise between the two writes leaves both customers and their orders unchanged)",
+        "2. Make the job skip a duplicate that is already gone (verify: running the job twice on the same pair changes nothing the second time)"
+      ],
+      "fix": "One transaction, orders moved before the duplicate is deleted",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/jobs/merge_customers_job.rb:22 Customer.where(id: dup).delete_all runs before :28; no transaction block in the file"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "Wallet debit reads the balance and writes it back without a lock",
+      "severity": "Medium",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Concurrency and lost updates",
+      "step": "CU1",
+      "hazard": "Two concurrent debits both pass the balance check",
+      "remedy": "Lock Rows for Update",
+      "location": "app/services/wallet/debit.rb:9-20",
+      "scenario": "A double-clicked checkout or a retried request debits the same wallet twice at once",
+      "blast_radius": "1 service; every wallet payment",
+      "trace": "1. debit.rb:12 reads wallet.balance. 2. :15 compares it with the amount. 3. :18 saves balance - amount, with no row lock or version column",
+      "impact": "The balance goes below zero, or one of two debits is lost",
+      "exposure": "Core table wallets (money); 2 writers of wallets.balance; no fix commit in the window",
+      "enforcement": {"net": "partial", "sites": ["app/models/wallet.rb:7"],
+                      "gaps": "The model validates balance >= 0 on the value it read; nothing in the schema stops a racing write"},
+      "invariants": [
+        "wallets.balance never goes below zero",
+        "Two concurrent debits of 30 from a balance of 50 leave 20 and one refused debit"
+      ],
+      "steps": [
+        "1. Load the wallet with a row lock inside the debit transaction (verify: wallet spec green; two threads debiting 30 from 50 leave 20 and one refusal)"
+      ],
+      "fix": "Lock the wallet row for the read-check-write, then add a check constraint when the area is next touched",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/services/wallet/debit.rb:12-18 reads and saves without lock or lock_version; db/schema.rb:61 has no check on balance"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "audit_events uses an integer primary key, against the bigint rule",
+      "severity": "Low",
+      "rollout": "Downtime",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Keys and identity",
+      "step": "KI2",
+      "hazard": "The id sequence runs out at about 2.1 billion",
+      "remedy": "Widen Column Type",
+      "location": ["db/migrate/20230102120000_create_audit_events.rb:3", "db/schema.rb:12"],
+      "scenario": "audit_events grows by about 40 million rows a month",
+      "blast_radius": "1 table; the audit log, which nothing else references",
+      "trace": "1. The migration at :3 creates audit_events with id: :integer. 2. db/schema.rb:12 shows the integer key. 3. docs/ops/capacity.md:14 records 38% of the range in use",
+      "impact": "Inserts into audit_events fail once the sequence passes the integer range",
+      "exposure": "Non-core table; 38% of the id range used (docs/ops/capacity.md:14)",
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "Nothing guards the integer range: the schema declares the key integer, and no check or alert watches the sequence's headroom"},
+      "rollout_reason": "Changing the key to bigint rewrites audit_events under an exclusive lock; at its size that blocks audit writes for minutes",
+      "steps": [
+        "1. In a maintenance window, change audit_events.id and its sequence to bigint (verify: on a staging copy the rewrite finishes within the window and inserts resume)"
+      ],
+      "convention": "C-02",
+      "fix": "Widen the key to bigint in a scheduled window, as ADR 0011 requires",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "db/migrate/20230102120000_create_audit_events.rb:3 id: :integer; docs/adr/0011-migrations.md:7 requires bigint keys"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "legacy_exports table has no primary key",
+      "severity": "Low",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Keys and identity",
+      "step": "KI3",
+      "hazard": "Rows cannot be told apart",
+      "remedy": "Use Surrogate Key",
+      "location": "db/migrate/20190405090000_create_legacy_exports.rb:2",
+      "scenario": "Nothing writes or reads the table",
+      "blast_radius": "1 table",
+      "trace": "1. The migration at :2 creates legacy_exports with id: false. 2. No model, query or job names it",
+      "impact": "A table nothing writes cannot be corrupted",
+      "fix": "Hand on as a removal candidate to a review of what can be deleted",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "db/migrate/20190405090000_create_legacy_exports.rb:2 is the only mention; a search for legacy_exports in app/ and lib/ returns 0"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "Atomic customer merge", "findings": ["F-002"],
+     "prerequisite": "none", "pr_title": "fix: merge customers in one transaction"},
+    {"batch": 2, "title": "Foreign key on orders.customer_id", "findings": ["F-001"],
+     "prerequisite": "Decide who owns the orphaned orders (see decisions); the foreign key waits until then",
+     "pr_title": "db: foreign key from orders to customers, added NOT VALID then validated"},
+    {"batch": 3, "title": "Lock the wallet row on debit", "findings": ["F-003"],
+     "prerequisite": "none", "pr_title": "fix: lock the wallet row for debits"}
+  ],
+  "perspectives": [
+    {"name": "Schema constraints", "status": "applied", "note": "SC1-SC3 applied; SC2 found F-001"},
+    {"name": "Application-only invariants", "status": "applied", "note": "AI1-AI3 applied; the wallet check falls under F-003"},
+    {"name": "Migration locking and rewrites", "status": "applied", "note": "ML1-ML3 applied; indexes on large tables are built concurrently"},
+    {"name": "Irreversible and destructive changes", "status": "applied", "note": "IR1-IR2 applied; every drop in the window was a two-step removal"},
+    {"name": "Deploy compatibility", "status": "applied", "note": "DP1-DP3 applied; migrations run before the new code (bin/deploy:31)"},
+    {"name": "Backfills and data migrations", "status": "applied", "note": "BF1-BF3 applied; the one backfill in the window is batched"},
+    {"name": "Transaction boundaries", "status": "applied", "note": "TB1-TB3 applied; TB1 found F-002"},
+    {"name": "Concurrency and lost updates", "status": "applied", "note": "CU1-CU3 applied; CU1 found F-003"},
+    {"name": "Deletion and cascades", "status": "applied", "note": "DE1-DE3 applied; the admin delete falls under F-001"},
+    {"name": "Types and precision", "status": "applied", "note": "TP1 via C-01; TP2-TP3 applied, timestamps are stored with zone"},
+    {"name": "Keys and identity", "status": "applied", "note": "KI1-KI3 applied; KI2 found F-004"},
+    {"name": "Backup and restore assumptions", "status": "applied", "note": "BR1-BR2 applied; docs/ops/restore.md:5 records a restore drill in 2026-08"}
+  ],
+  "checked_ok": [
+    "app/services/orders/place.rb:21-64: order, lines and payment are written in one transaction",
+    "Every money column is decimal(12,2) (C-01; 9 of 9 read)"
+  ],
+  "decisions": [
+    "Who owns the orders orphaned before F-001 is fixed: reassign them, or keep them under a placeholder customer?",
+    "Confirm C-01 (money as decimal(12,2)) as the intended rule"
+  ],
+  "limitations": [
+    "No database was connected; table sizes come from docs/ops/capacity.md",
+    "History before 2025-03 was squashed on migration"
+  ],
+  "next_steps": [
+    "Batch 1 first; hand templates/plan.en.md to whoever writes the fix",
+    "F-004 in the next scheduled maintenance window; F-005 to a review of what can be deleted"
+  ]
+}

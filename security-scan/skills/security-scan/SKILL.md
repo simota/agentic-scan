@@ -28,7 +28,7 @@ Privacy perspective (PR1) here is a quick check, not that review:
 | Question | Skill |
 |---|---|
 | Write the fix | `coding-implement` |
-| Cloud configuration: IAM, network exposure, buckets, Kubernetes manifests | `infra-scan` |
+| Cloud configuration: IAM, network exposure, buckets, Kubernetes manifests | `infra-security-scan` |
 | Minimisation, consent, retention, deletion and export of personal data; personal data in logs, telemetry or third-party SDKs | `privacy-scan` |
 | Why authorization or tenant scoping is enforced per call site, so one path can lack it (the design, not the hole) | `architecture-scan` |
 | An endpoint or dependency nothing needs, kept as a liability | `prune-scan` |

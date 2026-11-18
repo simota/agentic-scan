@@ -127,15 +127,13 @@ The dashboard and the assessment use the shared *-scan report format,
 document (`docs/design.md` in that repository) sets the journal-style
 assessment (numbered sections, captioned booktabs tables, one mincho face for
 both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
-engine and safe writes are vendored under `skills/infra-scan/scripts/scan_report_kit/`;
+engine and safe writes live under `skills/infra-scan/scripts/scan_report_kit/`;
 `render.py` adds only the rules for infra-scan's own records (attack paths,
 perspective status, covered and excluded rows). The dashboard opts into the
 kit's application shell: a sticky app bar, a contents sidebar with per-severity
 counts that filter the register, pinned register filters and column heads, and
 the keys `/` (search), `j`/`k` (next or previous finding) and Enter (show or
-hide details). Change the kit upstream and
-re-vendor, never in place: `make check` verifies the copy against
-`scripts/scan_report_kit/MANIFEST`.
+hide details). The copy is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 ## Layout
 
@@ -154,7 +152,7 @@ skills/infra-scan/
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts
   scripts/common.py        shared constants, JSON loading and atomic writes
-  scripts/scan_report_kit/ vendored scan-report-kit: shared stylesheets, PDF engine, safe writes
+  scripts/scan_report_kit/ bundled report kit: shared stylesheets, PDF engine, safe writes
   templates/               issue and report drafts (ja/en)
 examples/                  sample findings.json (ja/en)
 tests/                     unit tests and fixtures

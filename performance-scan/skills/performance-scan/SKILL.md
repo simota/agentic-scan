@@ -32,7 +32,7 @@ it lets spread:
 |---|---|
 | Write the fix | `coding-implement` |
 | Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | `reliability-scan` |
-| Data corrupted or locked by migrations, transactions or lost updates | `data-scan` |
+| Data corrupted or locked by migrations, transactions or lost updates | `data-integrity-scan` |
 | Structure that forces a slow design (synchronous call chains across modules) | `architecture-scan` |
 | Code, dependencies or features nobody needs | `prune-scan` |
 

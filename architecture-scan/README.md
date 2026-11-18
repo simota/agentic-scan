@@ -171,7 +171,7 @@ skills/architecture-scan/
   scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting;
                                carries triage forward and gates regressions
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
-  scripts/scan_report_kit/     vendored scan-report-kit: the shared dashboard stylesheet
+  scripts/scan_report_kit/     shared dashboard stylesheet (from the retired scan-report-kit)
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -183,7 +183,7 @@ tests/                         offline tests for the scripts and the documents
 ```sh
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
-             # scripts parse, the vendored scan-report-kit matches its MANIFEST,
+             # scripts parse,
              # sample renders in ja/en and passes the run contract, and
              # drafts, compare, sarif and triage run on it
 make demo    # render the sample into a new private temp dir, or DEMO_OUT=dir (LANG_OUT=en for English)
@@ -204,6 +204,5 @@ adds only the rules for architecture-scan's own records (the findings register,
 coloured severity bars). The page opts into the kit's application shell: a
 sticky app bar, a contents sidebar with per-severity counts that filter the
 register, pinned register filters and head row, and the keys `/` (search),
-`j`/`k` (next or previous finding) and Enter (show or hide details). The kit is vendored in
-`skills/architecture-scan/scripts/scan_report_kit/`; change it upstream and
-re-vendor, never in place (`make check` verifies the copy).
+`j`/`k` (next or previous finding) and Enter (show or hide details). The copy in `skills/architecture-scan/scripts/scan_report_kit/`
+is maintained in this repository (scan-report-kit is retired); edit it in place.

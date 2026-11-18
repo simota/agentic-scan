@@ -190,8 +190,6 @@ check: test ## verify the skill is self-contained and internally consistent
 	  $(PYTHON) -W error -c 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \
 	done; \
-	( cd $(QSKILL)/scripts/scan_report_kit && { if command -v shasum >/dev/null 2>&1; then shasum -a 256 -c --quiet MANIFEST; else sha256sum -c --quiet MANIFEST; fi; } ) >&2 \
-	  || { echo "MISS scripts/scan_report_kit differs from its MANIFEST - change scan-report-kit upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  [ -e "$$sample" ] || { echo "MISS no examples/findings.sample*.json to render and check" >&2; fail=1; continue; }; \

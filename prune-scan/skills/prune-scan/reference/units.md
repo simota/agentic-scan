@@ -4,9 +4,8 @@
 written, and whenever REVIEW meets an entry point, consumer or purpose question
 no unit covers yet.
 
-`units.json` is to this skill what flows are to ux-scan and the canon ledger
-to brand-feature-scan: the baseline every finding is measured against. Unused elements are
-measured against the entry points and consumers; excess and purpose fit against
+`units.json` is the baseline every finding is measured against. Unused
+elements are measured against the entry points and consumers; excess and purpose fit against
 the purpose items.
 
 ## 1. RECON: what to map

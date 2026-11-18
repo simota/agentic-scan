@@ -13,12 +13,11 @@ jobs is a candidate even when it is used. The burden of proof is on keeping,
 but every finding rests on stated evidence — a purpose baseline recorded with
 its sources, usage, scale, reference searches — never taste.
 
-Built on the method of [security-scan](https://github.com/simota/security-scan):
+Its method:
 a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
-rendered with the shared [scan-report-kit](https://github.com/simota/scan-report-kit) format.
-Its layout mirrors the sibling [ux-scan](https://github.com/simota/ux-scan).
+rendered with the report kit bundled under `skills/prune-scan/scripts/scan_report_kit/`.
 
 It is read-only and never deletes anything; removal is a later request.
 Access logs the requester supplies are counted per route and public asset, so a
@@ -95,8 +94,8 @@ Python 3.10, 3.12 and 3.14, and on macOS with Python 3.14. The Linux/Python 3.12
 job also renders and verifies both the English and Japanese sample PDFs with
 Chrome. These checks run for every pull request and every push to `main`.
 
-`skills/prune-scan/scripts/scan_report_kit/` started as a copy of scan-report-kit and
-is maintained in this repository (scan-report-kit is retired); edit it in place.
+`skills/prune-scan/scripts/scan_report_kit/` is the bundled report kit and
+is maintained in this repository; edit it in place.
 
 `examples/larder/` is a fictional app with deliberate unneeded, over-built and
 out-of-purpose elements; the sample units and findings in `examples/` describe

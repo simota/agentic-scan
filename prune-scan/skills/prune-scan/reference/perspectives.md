@@ -62,11 +62,11 @@ the rest in `occurrences`, and Medium when the copies diverge. A comment that
 is part of an element already reported (a flag's "kept for the old checkout")
 goes with that finding, not as a second one.
 
-The line with architecture-scan's DU3: what deleting the comment or the
+The line with an architecture review: what deleting the comment or the
 workaround removes is a finding here, copies included. A rule on a core flow
-that only a comment enforces (CM2 there), and a workaround that cannot go
-without a type, test or lint rule taking its place, are DU3's: moving a rule
-into structure is a design change, not a subtraction.
+that only a comment enforces, and a workaround that cannot go without a type,
+test or lint rule taking its place, belong to that review (out of scope here):
+moving a rule into structure is a design change, not a subtraction.
 
 ## Unused features (`UF`)
 

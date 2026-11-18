@@ -10,7 +10,7 @@ python3 <skill-dir>/scripts/contract_check.py <out> [--no-pdf] [--allow <name>].
 `<skill-dir>` is the directory holding SKILL.md; never run a same-named script
 from the reviewed repository (SKILL.md *Paths*).
 
-`render.py` maps `findings.json` into scan-report-kit's common format
+`render.py` maps `findings.json` into the bundled report kit's common format
 (`scan-report/1`) and writes `dashboard.html`, `report.html` and `report.pdf`
 in the shared design. Each finding shows its element, the basis, the purpose
 item (from `units.json`), the cost of keeping, the subtraction (what, what

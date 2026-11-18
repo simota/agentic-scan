@@ -31,10 +31,10 @@ remove or reduce to, what remains, what is lost), the risk of removing it and
 how sure the finding is — or, when only a plan is asked for, a checklist
 tailored to this app.
 
-It never deletes anything. Removal is a separate, later request. Speed belongs
-to performance-scan, structure and coupling to architecture-scan, vulnerabilities
-to security-scan (a liability found here is reported for its cost of keeping,
-not audited as a vulnerability).
+It never deletes anything. Removal is a separate, later request. Speed, structure
+and coupling, and vulnerabilities are out of scope here: they belong to a
+performance review, an architecture review and a security review (a liability
+found here is reported for its cost of keeping, not audited as a vulnerability).
 
 Phases: `RECON → UNITS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
@@ -116,7 +116,7 @@ in `scripts/render.py`) condenses this table and the confidence table in
 | `findings.json` | The canonical findings and narrative used by the dashboard and report, alongside the purpose and review units in `units.json` |
 | `units.json` | The purpose baseline, entry points, consumers and review units the review judged against |
 | `inventory.json` | `inventory.py` candidates (symbols, orphan files, dependencies, env vars, flags, locale keys, assets, CSS, routes, scripts, skipped tests, commented code, caveat comments, markers, schema) |
-| `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
+| `dashboard.html` | Interactive, self-contained dashboard (the bundled report kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings; next steps open with the subtraction summary |
 
 Skip the files when only a checklist was asked for. A removal plan
@@ -150,4 +150,4 @@ outputs: write them to scratch, or pass their names to `contract_check.py --allo
 | The requester asks to run the app, its tests or coverage | Allowed only as asked: run from a copy or with the repository's own command, install dependencies only with their consent, write nothing inside the repository, never touch shared or production backends or databases. Cite each observation (command, output path in scratch) in `validation.evidence`. Rendering `report.pdf` with headless Chrome is not opening a browser and needs no such request |
 | Data: tables, columns, buckets, queues | Judge from schema, migrations and code only; never query a database. Data removal is at most `Likely` with `Externally-dependent` until retention and legal duties are confirmed (`decisions`) |
 | Generated code, vendored code, lockfiles | Not findings in themselves; report the generator, its config or the vendoring decision instead |
-| Request is about speed, structure or security | performance-scan, architecture-scan or security-scan; here record only what can be removed |
+| Request is about speed, structure or security | Out of scope: a performance, architecture or security review; here record only what can be removed |

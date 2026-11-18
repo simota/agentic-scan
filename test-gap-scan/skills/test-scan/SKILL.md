@@ -30,7 +30,7 @@ Neighbours, and where their questions go instead:
 | Question | Skill |
 |---|---|
 | Write the tests | `coding-test` |
-| Does this one change work? Verify a feature with recorded evidence | `verify-scan` |
+| Does this one change work? Verify a feature with recorded evidence | `feature-verify` |
 | Which refactorings pay off, and is their safety net enough? | `refactor-scan` |
 | Is the structure itself hard to test (layering, hidden dependencies)? | `architecture-scan` |
 | Can a test or test helper be deleted? | `prune-scan` |

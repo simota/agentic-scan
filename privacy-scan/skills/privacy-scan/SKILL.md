@@ -22,17 +22,17 @@ is a decision for the requester and their counsel; the report says so.
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. The line with
-`security-scan`: personal data the application itself sends, keeps or fails
+a security review: personal data the application itself sends, keeps or fails
 to delete against its commitments is a finding here; an actor reaching it
-through a missing or bypassable access control is `security-scan`'s:
+through a missing or bypassable access control belongs to a security review:
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the fix | `coding-implement` |
-| Another user or tenant reading the data by bypassing authorization or tenancy | `security-scan` |
-| Storage exposure and encryption in the cloud configuration | `infra-security-scan` |
-| Data lost or corrupted by schema, migrations or cascades | `data-integrity-scan` |
-| Data or code nobody uses that holds no personal data | `prune-scan` |
+| Write the fix | A separate implementation request (out of scope here) |
+| Another user or tenant reading the data by bypassing authorization or tenancy | A security review of the application's source (out of scope here) |
+| Storage exposure and encryption in the cloud configuration | A security review of the cloud infrastructure configuration (out of scope here) |
+| Data lost or corrupted by schema, migrations or cascades | A data-integrity review of the data layer (out of scope here) |
+| Data or code nobody uses that holds no personal data | A review of what can be removed (out of scope here) |
 
 ## Before starting
 

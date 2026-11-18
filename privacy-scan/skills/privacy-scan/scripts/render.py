@@ -540,7 +540,7 @@ def render_markdown(doc, lang):
 
 
 # Rules for privacy-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
+# stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit).
 DASHBOARD_CSS = """
 .filter-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
 button[aria-pressed="true"]{border-color:var(--text);background:var(--soft)}
@@ -615,8 +615,8 @@ background:var(--panel);color:var(--text);border:1px solid var(--line);border-ra
 """
 CSS = kit_style.dashboard_css() + DASHBOARD_CSS
 
-# The theme choice is a per-viewer convenience shared with the other *-scan
-# dashboards (scan-report-kit's key and behaviour). Storage may be absent or
+# The theme choice is a per-viewer convenience, stored under the bundled
+# report kit's key with the kit's behaviour. Storage may be absent or
 # throw; the page then follows the system theme.
 THEME_KEY = "scan-report-kit.theme"
 JS = """

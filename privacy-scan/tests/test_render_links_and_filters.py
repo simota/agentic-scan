@@ -72,7 +72,7 @@ class LayoutTests(unittest.TestCase):
         self.assertIn(".tablewrap{overflow-x:auto", css)
         for selector in ("dd", "li", "td"):
             self.assertRegex(css, selector + r"\{[^}]*white-space:pre-line")
-        # Light and dark themes come from scan-report-kit: the system setting and the toggle.
+        # Light and dark themes come from the bundled report kit: the system setting and the toggle.
         self.assertIn("color-scheme:light", css)
         self.assertIn('@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){color-scheme:dark', css)
         self.assertIn(':root[data-theme="dark"]{color-scheme:dark', css)

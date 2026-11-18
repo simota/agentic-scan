@@ -127,11 +127,11 @@ and update their target files.
 Reports retain the recorded review method even with zero findings, and the
 dashboard preserves line breaks and indentation in analysis commands.
 
-The dashboard uses the shared *-scan report format,
-[scan-report-kit](https://github.com/simota/scan-report-kit): its
+The dashboard uses the report kit bundled under
+`skills/privacy-scan/scripts/scan_report_kit/`: its
 journal-style stylesheet (light and dark themes, serif text, booktabs tables,
-severity inks) followed only by rules for privacy-scan's own records. The copy in
-`skills/privacy-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+severity inks) followed only by rules for privacy-scan's own records. The kit
+is maintained in this repository; edit it in place.
 
 To file findings, the skill drafts with `scripts/drafts.py` from
 `templates/issue.{ja,en}.md` (one root cause per issue) and
@@ -156,7 +156,7 @@ skills/privacy-scan/
   scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)
   scripts/render.py            findings.json -> dashboard.html / report.md (stdlib only)
   scripts/output_io.py         stages UTF-8 output before replacing files
-  scripts/scan_report_kit/     bundled report kit: the shared *-scan dashboard stylesheet
+  scripts/scan_report_kit/     bundled report kit: the shared dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or DPO
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -177,7 +177,3 @@ make demo    # render the sample into $TMPDIR/privacy-scan-demo (LANG_OUT=en for
 Requirements: Python 3.9+. No third-party packages.
 CI (`.github/workflows/check.yml`) runs `make check` on Python 3.9 and 3.13 on
 Linux, and on macOS (GNU Make 3.81 and BSD tools).
-
-The format follows the sibling `security-scan`, `performance-scan` and
-`architecture-scan` skills (same phases, run contract, verdicts and report
-shape), adapted to personal data protection.

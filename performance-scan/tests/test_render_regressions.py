@@ -196,7 +196,7 @@ class RenderRegressions(unittest.TestCase):
         # (white-space:nowrap); a bare li rule broke "Summary" into "Sum/mar/y".
         root = HtmlTreeReader(render.render_html(self.doc, "en")).root
         styles = element_text(root.find(".//style"))
-        own = re.sub(r"/\*.*?\*/", "", styles[len(render.kit_style.dashboard_css()):], flags=re.S)
+        own = re.sub(r"/\*.*?\*/", "", styles[len(render.report_style.dashboard_css()):], flags=re.S)
         for selectors, declarations in re.findall(r"([^{}]+)\{([^{}]*)\}", own):
             if re.search(r"white-space|overflow-wrap|word-break", declarations):
                 for selector in selectors.split(","):

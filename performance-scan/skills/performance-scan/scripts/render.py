@@ -28,7 +28,7 @@ from findings import (AXES, BUDGET_MENTION, CONFIDENCES, EXCLUDED, MEASUREMENT_R
                       SEVERITIES, VERDICTS, escape_unencodable_console, file_mode,
                       finding_locations, finding_status, read_json, resolve_path,
                       SchemaError, validate)
-from scan_report_kit import style as kit_style  # noqa: E402
+import report_style  # noqa: E402
 
 LABELS = {
     "en": {
@@ -519,7 +519,7 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# The bundled report kit's dashboard style (scan_report_kit/) comes first, with the page opted into its application shell
+# The dashboard stylesheet (report_assets/dashboard.css) comes first, with the page opted into its application shell
 # (app bar, contents sidebar with severity facets, pinned filter bar); these
 # rules cover only what performance-scan renders differently: <details>
 # findings, severity filter buttons, h2 section rules, summary card spacing and
@@ -571,7 +571,7 @@ tr:last-child td{border-bottom:0}
 .app-shell details[data-sev]:focus-within>summary{background:var(--tint);box-shadow:inset 2px 0 0 var(--text)}
 @media print{.app-shell details[data-sev]:focus-within>summary{background:none;box-shadow:none}}
 """
-CSS = kit_style.dashboard_css() + CSS
+CSS = report_style.dashboard_css() + CSS
 
 JS = """
 const filters=[...document.querySelectorAll('[data-filter]')],facets=[...document.querySelectorAll('.facet')],

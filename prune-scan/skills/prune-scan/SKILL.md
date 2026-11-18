@@ -120,7 +120,7 @@ in `scripts/render.py`) condenses this table and the confidence table in
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings; next steps open with the subtraction summary |
 
 Skip the files when only a checklist was asked for. A removal plan
-(`scripts/plan.py`) and usage counts (`scripts/usage.py`) are not contracted
+(`scripts/plan.py`), usage counts (`scripts/usage.py`) and a SARIF export (`scripts/sarif.py`) are not contracted
 outputs: write them to scratch, or pass their names to `contract_check.py --allow`.
 
 ## Done when
@@ -141,6 +141,7 @@ outputs: write them to scratch, or pass their names to `contract_check.py --allo
 | Asked only what to check, or for a checklist | RECON, UNITS and CHECKLIST only; deliver the checklist (`reference/report.md`) and write no output files |
 | Asked to delete, clean up or "just remove it" | Out of scope for this run: report the findings, then offer the removal plan; removal is a later, separate request |
 | Asked for a removal plan, a work checklist or issues; or the later removal request itself | `scripts/plan.py <out>/findings.json` on the settled record: ordered remove-now and reduce steps, steps that wait for a decision, the decisions themselves, files several steps share (`reference/plan.md`). In the removal request, work it from the top and stop at the steps that wait for a decision |
+| Asked to send findings to code scanning, a CI annotation or an IDE | `scripts/sarif.py <out>/findings.json --out <scratch>/prune.sarif --repo <repo> [--min-severity Medium]`: SARIF 2.1.0, one result per finding to act on at its `location` (`occurrences` as related locations; excluded, `Unlikely`, `Unverified` and `Fixed` left out, `Accepted` suppressed), the subtraction and validation under `properties`. Uploading it is the requester's step |
 | Asked what changed since an earlier prune-scan, or to review again after removals | Run the full contract into a new output directory, then `scripts/compare.py <earlier-out> <out> --repo <repo>`: what was resolved, persists, changed or is new, which inventory candidates appeared, and a fragment that carries confirmed removals into the record as `Fixed` (`reference/follow-up.md`) |
 | No documented purpose | Infer the purpose items from the README, navigation, landing copy and most-used entry points; mark them `inferred`. Findings resting on them are `Purpose-dependent`, at most `Likely`, and each goes in `decisions`; put "confirm the purpose and non-goals" first in `decisions` |
 | The requester states the purpose or non-goals | Record them as `stated` purpose items with the requester as evidence ("requester, <date>") |

@@ -16,7 +16,7 @@ import findings  # noqa: E402
 
 class CliHelpTests(unittest.TestCase):
     def test_every_argparse_option_has_help(self):
-        for name in ("inventory.py", "render.py", "contract_check.py", "compare.py", "usage.py", "plan.py"):
+        for name in ("inventory.py", "render.py", "contract_check.py", "compare.py", "usage.py", "plan.py", "sarif.py"):
             tree = ast.parse((SCRIPTS / name).read_text(encoding="utf-8"))
             for node in ast.walk(tree):
                 if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "add_argument":

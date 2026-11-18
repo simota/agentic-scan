@@ -163,7 +163,7 @@ symlink, either path reaches the same files), not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the application shell of the report kit bundled under `scripts/scan_report_kit/` (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
+| `dashboard.html` | Self-contained dashboard in the application shell of the stylesheet in `scripts/report_assets/dashboard.css` (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, logic rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the

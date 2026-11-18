@@ -110,7 +110,7 @@ skills/logic-scan/
   scripts/recon.py             git history for RECON: window, churn, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
-  scripts/scan_report_kit/     bundled report kit
+  scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -129,5 +129,5 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 
 Requirements: Python 3.9+. No third-party packages.
 
-The dashboard uses the report kit bundled under
-`skills/logic-scan/scripts/scan_report_kit/`, which is maintained in this repository; edit it in place.
+The dashboard uses the stylesheet in
+`skills/logic-scan/scripts/report_assets/dashboard.css`, which is maintained in this repository; edit it in place.

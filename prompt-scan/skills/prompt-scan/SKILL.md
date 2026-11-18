@@ -48,7 +48,7 @@ to a security review of the application's source (IG5):
 | Tool calls and model output that act without authorization; secrets in prompts | A security review of the application's source (out of scope here) |
 | Personal data sent to, kept or trained on by a model provider | A privacy review of personal data handling (out of scope here) |
 | A wrong result computed in the code around the model call | A business-logic review (out of scope here) |
-| Behaviour when the model API fails, times out or rate-limits | A reliability review (out of scope here) |
+| Behaviour when the model API fails, times out or rate-limits | An architecture review of failure handling and operability (out of scope here) |
 | Prompts, agents or tools nothing uses | A review of what can be removed (out of scope here) |
 
 ## Decide first

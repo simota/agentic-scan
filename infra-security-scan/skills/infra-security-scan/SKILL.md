@@ -36,7 +36,7 @@ entry, not reviewed):
 | Write the fix | An implementation task |
 | The application's own source: routes, authorization, injection, its dependencies and secrets in its code | A security review of the application's source |
 | Personal data flows, retention and deletion | A privacy review |
-| Behaviour when a cloud dependency fails: timeouts, health checks, rollback | A reliability review |
+| Behaviour when a cloud dependency fails: timeouts, health checks, rollback | An architecture review of the application's failure handling and operability |
 | Resources, integrations or permissions nothing uses | A dead-code and removal review |
 
 ## Before starting

@@ -105,7 +105,7 @@ skills/test-scan/
   scripts/recon.py             git history for RECON: window, hotspots, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
-  scripts/scan_report_kit/     vendored scan-report-kit
+  scripts/scan_report_kit/     bundled report kit
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -117,7 +117,7 @@ tests/                         offline tests for the scripts and the documents
 ```sh
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
-             # scripts parse, the vendored scan-report-kit matches its MANIFEST,
+             # scripts parse,
              # sample renders in ja/en and passes the run contract
 make demo    # render the sample into a new private temp dir (LANG_OUT=en for English)
 ```
@@ -127,6 +127,5 @@ Requirements: Python 3.9+. No third-party packages.
 The record format, scripts and run contract are forked from the sibling
 `refactor-scan` skill (same verdicts, plan model and report shape), adapted
 to test-suite review. The dashboard uses
-[scan-report-kit](https://github.com/simota/scan-report-kit), vendored in
-`skills/test-scan/scripts/scan_report_kit/`; change it upstream and
-re-vendor, never in place.
+[scan-report-kit](https://github.com/simota/scan-report-kit), whose copy in
+`skills/test-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.

@@ -196,8 +196,6 @@ check: test ## verify the skill is self-contained and internally consistent
 	  $(PYTHON) -W error -c 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \
 	done; \
-	$(PYTHON) -c 'import hashlib, pathlib, sys; d = pathlib.Path(sys.argv[1]); rows = [l.split(None, 1) for l in (d / "MANIFEST").read_text(encoding="utf-8").splitlines() if l.strip()]; bad = [n for h, n in rows if not (d / n).is_file() or hashlib.sha256((d / n).read_bytes()).hexdigest() != h]; print("".join(f"FAILED {n}\n" for n in bad), end="", file=sys.stderr); sys.exit(1 if bad else 0)' $(QSKILL)/scripts/scan_report_kit \
-	  || { echo "MISS scripts/scan_report_kit differs from its MANIFEST - change scan-report-kit upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	for sample in examples/findings.sample*.json; do \
 	  [ -e "$$sample" ] || { echo "MISS no examples/findings.sample*.json to render and check" >&2; fail=1; continue; }; \

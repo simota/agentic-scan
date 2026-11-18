@@ -1,0 +1,173 @@
+# Findings file — the single source for every output
+
+**Read when:** REPORT, before producing the dashboard and the report. Write the
+results to `findings.json` once; the dashboard, `report.md` and the chat
+summary use the same recorded facts.
+
+Render with (paths relative to this skill's directory):
+
+```
+python3 scripts/render.py <out>/findings.json --out <out> [--lang ja|en]
+python3 scripts/findings.py check <out> [--allow NAME]
+```
+
+`render.py` writes `<out>/dashboard.html` (self-contained, works offline,
+filterable) and `<out>/report.md`. Exit codes: `0` written; `1` an output could
+not be encoded or written (unencodable text in the record, or a destination
+problem: the destination directory must be writable); `2` the input or command
+line is wrong (the message names the file and, for shape errors, the field).
+`findings.py` exits `1` when a merge is refused or `check` finds violations (one
+per line on stderr; a path that is not a directory is reported as such) and `2`
+on a usage error. `check` requires the three outputs to be readable, nonempty
+regular files (symbolic links to such files are fine) and validates structure,
+not whether rendered text is current or a finding is true.
+
+Inputs are strict UTF-8 JSON in regular files (symbolic links to them are
+fine): unique member names at every level, no `NaN`/`Infinity`, no number
+beyond the float range. Write piped or generated content to a regular file
+first. A refused command changes no record or report; run merges and renders
+one at a time. Replacements are atomic and keep existing permission bits and
+symbolic links; new files start private.
+
+## Writing the file
+
+Build `findings.json` from fragments, never from a heredoc or a generated
+script:
+
+```
+# file-write tool: <scratch>/frag-001.json = {"meta": {...}, "budgets": [...], "findings": [...]}
+python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-001.json
+# file-write tool: <scratch>/frag-002.json = {"findings": [...], "perspectives": [...]}
+python3 scripts/findings.py merge <out>/findings.json <scratch>/frag-002.json
+```
+
+- Write one to five findings per fragment; the first fragment carries `meta`.
+- One REPORT coordinator runs all merges to the same `findings.json`, one at a
+  time; parallel reviewers write draft findings and notes in scratch, which
+  are never merged as they are.
+  Merges are not safe to run concurrently: one can overwrite another's changes.
+- Reviewers label findings in their scratch notes with temporary IDs
+  (`U<unit>-<n>`) and keep `perspectives` out of their drafts. After VERIFY the
+  coordinator assigns the final `P-NNN` in severity order and writes each
+  finding fragment once with that ID, so no merge has to renumber.
+
+Merge semantics:
+
+- `meta` updates key by key
+- `findings` and `budgets` match by `id`: a known record is updated key by key
+  (so a later fragment can add just `validation` to `P-003`; nested objects
+  such as `validation` and `measurement` are replaced whole, so send all their
+  keys), a new one is
+  appended. Duplicate IDs within one fragment are refused
+- `perspectives` match by `name` and replace the whole entry, so reviewer
+  drafts carry no `perspectives` (only the coordinator writes fragments); the
+  coordinator writes one final entry per perspective: `applied` if any unit
+  applied it, `not checked` if any unit could not check it, otherwise `N/A`,
+  with a note joining
+  the unit notes (`orders: DB1 via B-01; DB2–DB4 applied; billing: DB5 N/A …`)
+- `checked_ok`, `decisions`, `limitations` and `next_steps` append without
+  duplicates
+
+A refused merge writes nothing. Each finding must be complete in the fragment
+that first adds it (the record's structure is validated after every fragment;
+the cross-field rules of `check`, such as evidence citations and `holds`
+budgets, run only in `check`), and every entry in `findings`, `budgets` and
+`perspectives` must be an object with a nonblank string `id` or `name`. The
+existing and combined records need unique finding IDs, budget IDs and
+perspective names; repeated perspective names within one fragment replace in
+order, so the last one wins. A merge never removes a key, so an update that turns a finding into a
+different one keeps its old optional fields (`measurement`, `contrast`,
+`budget`, `step`, `references`): reuse an ID only for the same root cause, and
+renumber by building a fresh `findings.json` from fragments with the final IDs.
+While merging, `meta` may be partial, but any `project`, `scope`, `date`,
+`assessor` or `lang` present must be a nonblank string (`lang`: `ja` or `en`),
+and a present `axis` must be `confirmed` or `assumed`.
+
+## Shape
+
+```json
+{
+  "meta": {
+    "project": "acme-shop",
+    "scope": "API and web front end at the repository root",
+    "commit": "3f2a9c1",
+    "date": "2026-10-09",
+    "assessor": "Claude Code (<model>)",
+    "method": "Static review",
+    "lang": "en",
+    "axis": "confirmed"
+  },
+  "budgets": [
+    {"id": "B-01", "statement": "Hot list endpoints issue a constant number of queries",
+     "source": "baseline; tests/test_orders.py:40 asserts 3 queries", "family": "QRY",
+     "inferred": false, "status": "violated"}
+  ],
+  "findings": [
+    {
+      "id": "P-001",
+      "title": "Order list lazy-loads items per order and products per item (N+1)",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Database access",
+      "step": "DB1",
+      "location": ["app/orders/serializers.py:42", "app/orders/views.py:18"],
+      "workload": "Every signed-in user opening the order list (hot; polled every 30 s)",
+      "scale_driver": "N = orders per page (max 100); M = items per order (uncapped)",
+      "cost_model": "1 + N + N × M data queries: one for orders, N for items, N × M for lazy-loaded products; excludes fixed request overhead",
+      "request": "1. The requested tenant page contains N=100 orders, each with M=20 items referencing distinct products; relation caches are empty. 2. GET /api/orders?page=<n>&page_size=100",
+      "contrast": "GET /api/orders/<id> prefetches items and their products at app/orders/views.py:61",
+      "impact": "Expected (B-01): constant data queries. Actual: 1 + 100 + 100 × 20 = 2101 data queries per page, growing with uncapped items per order even at a fixed page size; response latency was not measured",
+      "budget": "B-01",
+      "fix": "Prefetch items and products on the list queryset at app/orders/views.py:18",
+      "regression_test": "After prefetching, GET /api/orders data-query counts are equal for (N,M)=(1,1), (50,1), (1,20), (50,20); each response still contains all expected orders, items and products",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "views.py:18 fetches orders without prefetch; serializers.py:42 evaluates order.items.all() once per order and reads item.product once per item without select_related or a shared product cache"},
+      "status": "Open",
+      "references": [{"title": "Django prefetch_related", "url": "https://docs.djangoproject.com/en/stable/ref/models/querysets/#prefetch-related"}]
+    }
+  ],
+  "perspectives": [
+    {"name": "Database access", "status": "applied", "note": "DB1 via B-01; DB2-DB6 applied"}
+  ],
+  "checked_ok": ["Product list paginates with a cursor and prefetches images (app/products/views.py:22)"],
+  "decisions": ["Confirm the intended maximum items per order"],
+  "limitations": ["Production data volumes and deployed indexes were not observed"],
+  "next_steps": ["Fix P-001, then add the query-count test"]
+}
+```
+
+## Field rules
+
+Findings, budgets, perspectives and the objects inside a finding (`validation`,
+`measurement`, `references[]`) accept only the keys listed here; any other key
+(often a typo such as `budjet`) is refused. `meta` may carry extra keys, which
+nothing renders. A record written by an older version with other keys is
+refused by `merge`, `render` and `check` alike; since a merge never removes a
+key, rebuild it from fragments without them.
+
+String values are plain text, not authored Markdown or HTML. Renderers escape
+them for their output context; use `references[]` for links rather than
+embedding Markdown link syntax in another field.
+
+| Field | Rule |
+|---|---|
+| `meta.project`, `scope`, `date`, `assessor`, `lang` | Required for `check` and `render`. `lang` is `ja` or `en`. `axis` is required for `check` (optional while merging fragments): `confirmed` when the requester confirmed the workloads and scale drivers severity is judged against, `assumed` when nobody answered; while it is `assumed`, every non-excluded High finding is named in `decisions`. `commit` is an optional string for the assessed revision (`git rev-parse --short HEAD`, read-only) and `method` an optional string describing the review method (`Static review`, `Static review plus local measurement`); omission or an empty string is allowed, and an omitted or empty `commit` renders as `UNKNOWN` |
+| `findings`, `budgets`, `perspectives` | Optional arrays; omission and an empty array are allowed. A present value must be an array, never an object, string or `null`. `check` additionally requires every perspective to be recorded |
+| `findings[].title` | Required nonblank string: the one-line title |
+| `findings[].id` | A string consisting of `P-` followed by exactly three ASCII digits (`0`–`9`), with no surrounding whitespace (`P-001`…), so one record holds at most 999 findings. Gapless, numbered in severity order; number `FalsePositive` and `NotApplicable` findings after all others (`check` enforces both; it does not rank excluded findings by severity) |
+| `severity` | `High`, `Medium`, `Low`, `Info` (`SKILL.md` table) |
+| `confidence` | `Confirmed` (cost follows from the code), `Environment-dependent` (needs a named production condition, stated with its threshold in `scale_driver` or `impact`), `Suspected` (the cost model itself rests on an unconfirmed code link; `check` refuses it with verdict `Valid`) |
+| `category` | One perspective name from `reference/perspectives.md`, exactly |
+| `step` | Optional string: the hunt step ID from `reference/perspectives.md` (`DB1`…), exactly; `check` refuses a nonblank value that is not one, or one that belongs to another perspective than `category` (`DB3` with `Caching`) |
+| `location` | A `path:line` (or `path:start-end`) string, or a nonempty list of them. The nonblank path may contain spaces or colons, but not line breaks; the final colon separates the line suffix. Line numbers are positive integers, and a range's end must not precede its start |
+| `workload`, `scale_driver`, `cost_model`, `request`, `impact`, `fix`, `regression_test` | Required nonblank strings (`reference/budgets.md` §5) |
+| `contrast`, `budget` | Optional strings: the sibling path that keeps the budget; the ledger ID. Omission or an empty string is allowed; a present value must be a string. `budget` holds exactly one ID, and `check` requires a nonblank `budget` to name an ID in `budgets[]`; name other violated budgets in `impact`, where every `B-NN` is read as a further violated budget (it must exist, it is listed under *Cited by*, and it must not be `holds` while the finding is `Valid` and unfixed), so do not name budgets that hold there |
+| `validation.verdict` | Required, with no default: `Valid`, `Likely`, `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`; the definitive three need nonblank string `evidence`, which `check` requires to cite at least one `path:line` or `path#L42`. Write the line as `path:42` or `path#L42` (`path:L42` and `path line 42` do not count). The path must look like a file: a directory part, a dot with something after it, or a conventional extensionless root name such as `Makefile`, `Taskfile`, `BUILD` or `CHANGELOG`. Not counted, and named with a reason by `check`: a URL; a `host:port` (`localhost`, an IPv4 address, or a name ending in a fixed list of host suffixes such as `.com` or `.internal`; `.dev`, `.test`, `.local`, `.org` and similar also count as hosts when the name is lowercase or has three or more dot-separated parts); a module path whose first segment is such a host and whose last has no dot (`github.com/foo/bar:3`); a bare number, ratio or time in any script's digits (`1.5:1`, `12:30`, `2024/123:3`, `１/２：３`, `-1/2:3`), also when written straight after kana, kanji or hangul (`比率は1.5:1`, `約２.５：１`; CJK punctuation such as `、`, `。`, `（` and `「` separates a citation from the prose around it, so `比は2:1、app/views.py:18` counts); a root-level name starting with a digit, or with `v` or `V` and a digit, after any range operators such as `~`, `^` or `>=`, whatever follows (`^v2.0.0:3`, `1!2.3:4`, `1.2.3.post1:4`, `v1.2.3-rc.1+build.5:4`, `v2rc1.post2:4`; a Flyway migration such as `V3__add_index.sql:2` still counts; cite a file named like that with its directory or `./`, e.g. `./2.0.txt:3`, `./v8.json:2`, `db/001_init.sql:4`); a path ending in `.`, `..` or a separator, which names a directory (`src/..:3`); a word followed by a version, whatever qualifier follows (`Python-3.12.1:2`, `OpenSSL_3.0.0-alpha:2`, `log4j-2.17.1:4`, `Node.js-20.11.0:2`, `python-dateutil-2.8.2:4`, `Python-v3.12.1:2`, `version1.2.3+build.5:4`; without `-` or `_` the number needs three parts, and a name ending in an extension (up to five letters and digits, letter first) that is not a version, platform or distribution qualifier such as `.post1`, `.RELEASE`, `.el9` or `.win_amd64` is a file (short qualifiers that double as extensions, such as `m`, `a`, `el` or `deb`, count as qualifiers only with a number: `Widget-1.2.3.m:10` is a file), so `python3.11:3`, `jquery-3.6.0.min.js:1`, `Dockerfile.22.04:2` and `libfoo.so.1.2.3:2` still count); a package spec with `@` or an operator before a dotted version (`react@18.2.0:4`, `python==1.2.3:4`, `@types/node@20.1.0:2`, `golang.org/x/sync@v0.17.0:3`; `icon@2x.png:3` and, under a directory, a name ending in an extension such as `vendor/lodash@4.17.21.tgz:1` still count); a protocol version: a named protocol in any case or spelling (`HTTP/1.1:200`, `HTTP/2:200`, `tls/1.3:1`, `TLSv1.3:443`, `SSH-2.0:22`, `SMB/3.1.1:445`), or any name starting with a capital letter, then a slash and a dotted number (`RDP/10.0:3389`, `OData/4.0:1`, `JSON-RPC/2.0:1`); a named protocol also with a draft or implementation tag such as `HTTP/3-draft-29:1` or `SSH-2.0-OpenSSH_9.6:22` unless the name ends in a letter-led extension like `http2-server.go`; other directories count, e.g. `DB/123:4`, `db/1.5:3`, so a lowercase protocol outside the named list (STOMP, CoAP, OData and the others in `scripts/citations.py`) is read as a path, and a directory really named like a protocol is cited as `./HTTP/2:3`; a capital abbreviation (`N/A:1`); or a bare word (`timeout:30`, `TTL:300`). The rule checks shape, not existence: a code member such as `time.Second:30` has a file's shape and counts, so cite source positions, not identifiers. Cite any other extensionless file, and file names the host rule would catch, with a directory or `./`, e.g. `bin/server:12`, `./NOTES:3`, `config/settings.local:3`. For other verdicts, `evidence` may be omitted or empty while merging and rendering but must be a string when present; `check` still requires nonblank `evidence` for every `High` and `Medium` finding, which for `Likely` names the unconfirmed link |
+| `validation.method` | Required: `static` or `measured`; `measured` requires `measurement` |
+| `measurement` | When present, an object with a nonblank string `environment` and two objects `before` and `after`, each with nonblank strings `command`, `result` and `log` (the raw output of that run), from authorised local runs of the same harness without and with the fix direction (`reference/validation.md`). Both runs are required. This shape is checked for both `static` and `measured`; `measured` requires the object |
+| `status` | `Open` (default), `Fixed`, `Accepted` (the owner accepts the cost, with the decision recorded in `decisions`; `check` requires a `decisions` line naming the ID of every included `Accepted` finding). Every non-excluded finding is counted in the totals whatever its status. After the run, change it with `python3 scripts/findings.py set <out>/findings.json P-NNN … --status <status> [--decision TEXT] [--render]` rather than a hand-written fragment |
+| `references[]` | Optional array of objects with a required nonblank string `url` and an optional string `title`. Only absolute `http(s)` URLs, `mailto:` and relative paths become links; any other URL (including `//host`) is shown as text. An omitted or blank `title` uses the URL as the link label |
+| `budgets[]` | `id` (a string consisting of `B-` followed by at least two ASCII digits, with no surrounding whitespace; `B-01`…), `statement`, `source`, `status` (`holds`, `violated`, `partly read`, `not checked`); a `not checked` budget needs a nonblank `reason` for `check`, and `check` refuses `holds` while a `Valid` finding that is not `Fixed` names the budget. A present `reason` must be a string (empty allowed while merging); reports show it only while the status is `partly read` or `not checked`. `family` (`QRY`, `SIZE`, `CPLX`, `LAT`, `RES` or `FE`, from `reference/budgets.md` §2) and `inferred` are optional |
+| `budgets[].inferred` | Optional boolean (`true` or `false`). Omission is allowed; all other types, including strings, numbers and `null`, are refused |
+| `perspectives[]` | `name` (exact), `status` (`applied`, `N/A`, `not checked`), `note` (required nonblank string: steps applied, steps left out with reasons). `check` requires `applied` for the `category` of every finding that is not `FalsePositive` or `NotApplicable` |
+| `checked_ok`, `limitations` | Required nonempty for `check`; `decisions`, `next_steps` optional |

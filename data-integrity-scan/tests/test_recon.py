@@ -10,7 +10,7 @@ import sys
 import tempfile
 import unittest
 
-SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "data-scan" / "scripts"
+SCRIPTS = Path(__file__).resolve().parent.parent / "skills" / "data-integrity-scan" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 sys.dont_write_bytecode = True
 

@@ -53,7 +53,7 @@ Write in the requester's language.
    duplicated data, hazards someone may choose to accept
 7. **Next step** — batch 1, and the hand-off (`templates/plan.<lang>.md` to
    `coding-implement`); questions for `architecture-scan`,
-   `performance-scan`, `privacy-scan`, `test-scan` or `prune-scan`
+   `performance-scan`, `privacy-scan`, `test-gap-scan` or `prune-scan`
 8. **Files** — link `dashboard.html` and `report.md` rendered from
    `findings.json`. The output directory holds exactly the set named in
    `SKILL.md` (*Run contract*)

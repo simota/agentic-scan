@@ -1,7 +1,7 @@
-# data-scan — install helpers
+# data-integrity-scan — install helpers
 #
 #   make help      list the targets
-#   make link      symlink skills/data-scan into every installed host's skills dir
+#   make link      symlink skills/data-integrity-scan into every installed host's skills dir
 #   make unlink    remove every symlink to this skill from those dirs
 #   make status    show what is installed, per host
 #   make test      run the offline regression tests
@@ -38,7 +38,7 @@ INSTALL_MAKEFILE := $(shell candidate=$(call shell_quote,$(MAKEFILE_LIST)); \
   while [ ! -f "$$candidate" ]; do \
     case "$$candidate" in (*' '*) candidate=$${candidate$(HASH)* };; (*) break;; esac; \
   done; printf '%s\n' "$$candidate")
-NAME    := data-scan
+NAME    := data-integrity-scan
 REPO    := $(shell CDPATH= cd -- "$$(dirname -- $(call shell_quote,$(INSTALL_MAKEFILE)))" && pwd)
 SKILL   := $(REPO)/skills/$(NAME)
 QSKILL  := $(call shell_quote,$(SKILL))

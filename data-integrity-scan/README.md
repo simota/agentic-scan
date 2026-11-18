@@ -1,4 +1,4 @@
-# data-scan
+# data-integrity-scan
 
 An agent skill for a **static, read-only review of your own application's
 data layer**: its schema, migrations, transactions and the code that writes
@@ -63,11 +63,11 @@ Every output is rendered from one record, `findings.json`, which the agent
 builds from JSON fragments rather than heredocs:
 
 ```sh
-python3 skills/data-scan/scripts/findings.py merge out/findings.json frag-001.json
-python3 skills/data-scan/scripts/findings.py renumber out/findings.json  # severity, then path
-python3 skills/data-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
-python3 skills/data-scan/scripts/findings.py check out --repo /path/to/assessed/checkout
-python3 skills/data-scan/scripts/findings.py counts out/findings.json    # n_* summary counts
+python3 skills/data-integrity-scan/scripts/findings.py merge out/findings.json frag-001.json
+python3 skills/data-integrity-scan/scripts/findings.py renumber out/findings.json  # severity, then path
+python3 skills/data-integrity-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
+python3 skills/data-integrity-scan/scripts/findings.py check out --repo /path/to/assessed/checkout
+python3 skills/data-integrity-scan/scripts/findings.py counts out/findings.json    # n_* summary counts
 ```
 
 `findings.py check` enforces the run contract: exactly `findings.json`,
@@ -91,12 +91,12 @@ make status
 make unlink
 ```
 
-Then invoke `data-scan` (or `/data-scan`).
+Then invoke `data-integrity-scan` (or `/data-integrity-scan`).
 
 ## Layout
 
 ```
-skills/data-scan/
+skills/data-integrity-scan/
   SKILL.md                     phases, run contract, severity/rollout, decisions, rules
   reference/recon.md           core tables and writers, schema, migrations, deploy order, fixes, sizes
   reference/conventions.md     the data rule ledger, trace rows, close-check
@@ -131,7 +131,7 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 Requirements: Python 3.9+. No third-party packages.
 
 The record format, scripts and run contract are forked from the sibling
-`test-scan` skill (itself forked from `refactor-scan`: same verdicts, plan
+`test-gap-scan` skill (itself forked from `refactor-scan`: same verdicts, plan
 model and report shape), adapted to data-layer review. The dashboard uses
 [scan-report-kit](https://github.com/simota/scan-report-kit), whose copy in
-`skills/data-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+`skills/data-integrity-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.

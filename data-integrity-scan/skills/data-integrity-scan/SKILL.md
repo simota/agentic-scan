@@ -1,5 +1,5 @@
 ---
-name: data-scan
+name: data-integrity-scan
 description: "Read-only review of an app's data layer: maps core tables, every write path, schema and migrations, then finds where data can be corrupted, lost or locked: missing constraints, app-only invariants, locking migrations, unsafe deploys and backfills, transaction gaps, lost updates, cascades, money as float, duplicate keys. Dashboard + report; never touches a database. Not for query speed."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
@@ -34,7 +34,7 @@ Neighbours, and where their questions go instead:
 | Who owns which data, and do modules reach into each other's tables? | `architecture-scan` |
 | Missing indexes, slow or unbounded queries | `performance-scan` |
 | Personal data, retention, deletion on request | `privacy-scan` |
-| Which data paths have no test? | `test-scan` |
+| Which data paths have no test? | `test-gap-scan` |
 | Can a table or column be deleted? | `prune-scan` |
 | Wrong results computed in code: float arithmetic and rounding on amounts, time-zone and calendar logic | `logic-scan` |
 

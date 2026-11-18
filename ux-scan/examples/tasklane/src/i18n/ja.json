@@ -1,0 +1,6 @@
+{
+  "task": {"new": "新しいタスク", "import": "インポート", "titleLabel": "タイトル"},
+  "common": {"save": "保存"},
+  "signup": {"password": "パスワード", "submit": "アカウントを作成", "invalid": "入力が無効です", "failed": "エラー 500"},
+  "settings": {"title": "設定", "name": "名前"}
+}

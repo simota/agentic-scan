@@ -1,0 +1,6 @@
+{
+  "task": {"new": "New task", "import": "Import", "titleLabel": "Title"},
+  "common": {"save": "Save"},
+  "signup": {"password": "Password", "submit": "Create account", "invalid": "Invalid input", "failed": "Error 500"},
+  "settings": {"title": "Settings", "name": "Name"}
+}

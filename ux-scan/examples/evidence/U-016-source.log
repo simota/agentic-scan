@@ -1,0 +1,10 @@
+$ awk 'NR>=7 && NR<=11 {print FILENAME ":" FNR ": " $0}' src/pages/Settings.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/pages/Settings.tsx:7:       <label htmlFor="name">{t("settings.name")}</label>
+src/pages/Settings.tsx:8:       <input id="name" name="name" autoComplete="name" />
+src/pages/Settings.tsx:9:       <a className="save-link" style={{ padding: 10, background: "#2563eb", color: "#fff" }} onClick={save}>
+src/pages/Settings.tsx:10:         {t("common.save")}
+src/pages/Settings.tsx:11:       </a>

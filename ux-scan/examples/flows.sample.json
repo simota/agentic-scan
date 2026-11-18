@@ -1,0 +1,29 @@
+{
+  "app": "Tasklane (fictional sample)",
+  "viewports": ["360x640", "768x1024", "1280x800"],
+  "locales": ["en", "de", "ja"],
+  "tokens": {"source": "src/styles/tokens.css:2", "spacing": [4, 8, 12, 16, 24, 32],
+             "font_sizes": [12, 14, 16, 20, 24, 32], "breakpoints": [640, 1024], "z_index": [10, 100, 1000]},
+  "flows": [
+    {"id": "FL-01", "name": "Sign up", "priority": "primary", "actor": "New visitor",
+     "goal": "Create an account with email and password.", "source": "documented", "evidence": "docs/design.md:5",
+     "screens": [{"name": "Sign-up form", "route": "/signup", "location": "src/components/SignupForm.tsx:4"}]},
+    {"id": "FL-02", "name": "Add, open and delete tasks", "priority": "primary", "actor": "Signed-in member",
+     "goal": "Capture a task, open it, and remove it when done.", "source": "documented", "evidence": "docs/design.md:5",
+     "screens": [{"name": "Dashboard", "route": "/", "location": "src/pages/Dashboard.tsx:7"},
+                 {"name": "Task list", "route": "/", "location": "src/components/TaskList.tsx:5"},
+                 {"name": "Add task dialog", "route": "/", "location": "src/components/AddTaskModal.tsx:4"}]},
+    {"id": "FL-03", "name": "Find archived tasks", "priority": "secondary", "actor": "Signed-in member",
+     "goal": "Look up a task that was archived.", "source": "inferred", "evidence": "src/App.tsx:17 defines /archive",
+     "screens": [{"name": "Archive", "route": "/archive", "location": "src/pages/Archive.tsx:1"}]},
+    {"id": "FL-04", "name": "Edit settings", "priority": "secondary", "actor": "Signed-in member",
+     "goal": "Change the display name.", "source": "inferred", "evidence": "src/components/Nav.tsx:7 links /settings",
+     "screens": [{"name": "Settings", "route": "/settings", "location": "src/pages/Settings.tsx:3"}]},
+    {"id": "FL-05", "name": "App shell and shared styles", "priority": "shared", "actor": "Every user",
+     "goal": "Navigation, page frame and the styles every screen inherits.", "source": "inferred",
+     "evidence": "index.html:7-8 load tokens.css and src/styles/app.css on every route",
+     "screens": [{"name": "Page frame", "route": "*", "location": "index.html:1"},
+                 {"name": "Main navigation", "route": "*", "location": "src/components/Nav.tsx:3"},
+                 {"name": "Global styles", "route": "*", "location": "src/styles/app.css:1"}]}
+  ]
+}

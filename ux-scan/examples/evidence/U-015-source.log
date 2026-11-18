@@ -1,0 +1,10 @@
+$ awk 'NR>=14 && NR<=18 {print FILENAME ":" FNR ": " $0}' src/pages/Dashboard.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:52Z
+---
+src/pages/Dashboard.tsx:14:       <section>
+src/pages/Dashboard.tsx:15:         <Button variant="primary" onClick={() => setAdding(true)}>{t("task.new")}</Button>
+src/pages/Dashboard.tsx:16:         <Button variant="primary">{t("task.import")}</Button>
+src/pages/Dashboard.tsx:17:         <TaskList />
+src/pages/Dashboard.tsx:18:       </section>

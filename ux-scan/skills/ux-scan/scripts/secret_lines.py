@@ -1,0 +1,658 @@
+"""Decide which source lines an excerpt must not publish. Standard library only.
+
+Two independent tests, both linear in the line length:
+
+- Known credential formats are always masked: provider token prefixes, JWTs,
+  private-key blocks, credentials in URLs and command lines, and bearer or
+  basic authorization values.
+- A secret-like name (password, secret, token, api key, credentials…) is
+  masked when the value assigned to it is a literal that is not a label.
+  Labels (a capitalised word or a phrase repeating the name's keyword, such
+  as "Password" or "Enter your password", or non-ASCII text such as "パスワード"), types, expressions, references
+  (process.env.X), booleans, colours and lengths stay visible, because forms and locale files are exactly what a UX review
+  cites.
+
+These are conservative heuristics, not a credential audit.
+"""
+
+import re
+
+SHOWN_CHARACTERS = 240
+# Text after the shown part that is still searched, so a credential whose
+# identifying end lies just past the cut is found.
+LOOKAHEAD = 512
+
+KNOWN_SECRET = re.compile(
+    r"\beyJ[\w-]{8,}\.[\w-]{8,}\.[\w-]*"                  # JWT
+    r"|\bAIza[\w-]{30}"                                    # Google API key
+    r"|\b(?:sk|rk|pk)_(?:live|test)_\w"                    # Stripe
+    r"|\bwhsec_\w|\bsk-(?:proj-|ant-)?[\w-]{16}"          # webhook secrets, OpenAI, Anthropic
+    r"|\bgh[pousr]_\w{20}|\bgithub_pat_\w|\bglpat-[\w-]{10}"  # GitHub, GitLab
+    r"|\bxox[abpr]-\w|hooks\.slack\.com/services/"         # Slack
+    r"|\bSG\.[\w-]{16,}\.|\bAKIA[0-9A-Z]{16}\b"            # SendGrid, AWS
+    r"|-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----"     # PEM and PGP armour
+    r"|://[^/\s:@\"'`]*:[^/\s@\"'`]+@"                     # scheme://user:password@host, also redis://:password@host
+    r"|(?i:(?<!\S)--(?:password|passwd|pass|token|secret|api-?key)(?:=|\s+)[\"']?(?![-$<{%\\])[^\s\"'])"  # --password value
+    r"|(?i:\bbearer\s+(?=[\w.~+/-]*\d)[\w.~+/-]{16,})"
+    r"|(?i:\bauthorization\W+basic\s+[A-Za-z0-9+/]{8,})|(?i:\bauthorization\W+bearer\s+[\w.~+/-]{16,})"
+    r"|(?i:\bcurl\b[^\n]*?\s(?:-u\s*|--user(?:=|\s+))[^\s:]+:\S)|(?i:\bmysql\b[^\n]*?\s-p\S)")
+# The start of a known format at the very end of the shown text.
+CUT_SECRET = re.compile(r"(?i)(?:\bbearer\s+[\w.~+/-]*|://[^/\s:@\"'`]*:[^/\s@\"'`]*|\b(?:sk|rk|pk)_(?:live|test)_?"
+                        r"|\bgh[pousr]_\w*|\bgithub_pat_\w*|\bxox[abpr]-?|\bAKIA[0-9A-Z]*|\beyJ[\w.-]*"
+                        r"|\bAIza[\w-]*|-----BEGIN[A-Z ]*)\Z")
+
+_KEYWORD = (r"secret|passw(?:or)?d|pwd|passphrase|pass|api[_-]?keys?|private[_-]?key"
+            r"|access[_-]?key|credentials?|token|client[_-]?id")
+# A name part may follow the keyword only when it is key-like or an environment
+# or version tag (SECRET_KEY, SECRET_KEY_BASE, AWS_SECRET_ACCESS_KEY, PASSWORD_ADMIN,
+# DB_PASSWORD_PROD, AUTH_TOKEN_V2),
+# so passwordLabel, tokenColor or password_reset_url are UI names, not secrets.
+_SUFFIX = (r"(?:[_.-]?(?:access[_-]?)?(?:keys?|token|hash|salt|pem|value|secret))?"
+           r"(?:[_-](?:base|confirm(?:ation)?|admin|root|master))?"
+           r"(?:[_-](?:prod|production|dev|development|staging|test|live|local|v?\d+))*\d*")
+# The keyword starts a name part: after a non-letter, as a capitalised word after
+# any letter (camelCase passwordHash, acronym prefixes DBPassword, APISecret), or
+# inside an upper-case name (DBPASSWORD, APITOKEN, MYSECRET); a long lower-case
+# keyword may also end a lower-case name (mypassword, csrftoken), but a bare
+# "pass" may not (bypass, compass).
+NAME_START = (r"(?:(?<![A-Za-z])|(?<=[A-Za-z])(?=[A-Z][a-z])|(?<=[A-Za-z])(?=[A-Z]{2}(?![a-z]))"
+              r"|(?<=[a-z])(?=passw|secret|token|api_?key|passphrase))")
+SECRET_NAME = re.compile(NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")(?![A-Za-z])")
+# Closing quotes or brackets (also a subscript, ["password"]), an optional type (Go "Password string = …"), then an
+# assignment: = : := ?= ||= &&= ??= =>, XML >value< or value="…"; == compares.
+ASSIGNMENT = re.compile(r"(?:[\"'`](?:\s*\])?|\]|\s+[A-Za-z_][\w.]*(?=\s*:?=))?\s*(?::=|\|\|=|&&=|\?\?=|\?=|=>|[:=](?!=))\s*"
+                        r"|\"?\s+value=|\"?>(?=[^<\s])")
+# A form field named by the secret-like name (name="password"): its value or defaultValue may follow other
+# attributes. A label, id or type="password" names no value, so only the name attribute reaches this far.
+FIELD_NAME = re.compile(r"(?i)(?<![\w:-])name\s*=\s*(?:\{\s*)?[\"'`]?[\w.\[\]-]{0,64}\Z")
+ATTRIBUTE_NAME = re.compile(r"[^\s\"'=<>/{}`]+")
+EQUALS = re.compile(r"\s*=\s*")
+UNQUOTED_VALUE = re.compile(r"[^\s\"'=<>`{}]+")
+FIELD_VALUE_NAMES = ("value", "defaultvalue")
+# Where a / starts a regular expression rather than dividing: after an operator, an opening delimiter, => or a
+# keyword that takes an operand (return, throw, yield, case…).
+REGEX_BEFORE = re.compile(r"(?:[(,=:\[!&|?{};]|=>|\b(?:return|typeof|case|do|else|in|of|new|delete|void|throw|yield"
+                          r"|await|instanceof))\s*\Z")
+# A value or defaultValue attribute that may come before the field's name (attribute order is free).
+VALUE_ATTRIBUTE = re.compile(r"(?i)(?<![\w:@.-])(?:value|defaultValue)\s*=\s*")
+FIELD_NAME_VALUE = re.compile(r"[\w.\[\]-]{1,64}")
+# A type annotation, then the assignment: password: string = "…", password?: str | None = "…".
+ANNOTATED = re.compile(r"[\"']?\??\s*:\s*[A-Za-z_][\w.]*(?:<[^<>=\n]{0,64}>|\[[^\]=\n]{0,64}\])?"
+                       r"(?:\s*\|\s*[A-Za-z_][\w.]*)*\s*=(?![=>])\s*")
+# The end of a line whose assigned value continues on the next one.
+OPEN_END = re.compile(r"(?:\|\||\?\?|&&|\bor|\band|[-+*/(\[{,?:=])\s*\Z")
+# A YAML block scalar indicator (|, >, |-, >2, |+ # note), after any tag or anchor (!!str |, &pw >):
+# the value is the more indented lines below.
+BLOCK_SCALAR = re.compile(r"(?:[!&]\S*[ \t]+)*[|>](?:[1-9][-+]?|[-+][1-9]?)?(?:[ \t]+#.*)?\Z")
+# A secret flag whose value follows a shell line continuation: --password \\
+FLAG_CONTINUES = re.compile(r"(?i)(?<!\S)(--(?:password|passwd|pass|token|secret|api-?key))(?:=|\s+)\\\Z")
+BLOCK_COMMENT = re.compile(r"/\*.*?\*/")
+LEADING_COMMENTS = re.compile(r"\A(?:/\*.*?\*/\s*)+")
+COMMENT_LINE = re.compile(r"(?://|#|/\*|\*|<!--)")
+# A quoted secret name as a call's first argument: define('DB_PASSWORD', 'v'), setdefault("SECRET_KEY", "v").
+CALL_ARGUMENT = re.compile(r"\(\s*[\"'`][\w.-]{0,64}?" + NAME_START + r"(?i:(?:" + _KEYWORD + r")" + _SUFFIX + r")[\"'`]\s*,\s*")
+# Any non-empty quoted literal, spaces included ("correct horse battery staple").
+QUOTED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)+)\1")
+# A quoted literal with no closing quote before the end of the searched text.
+UNCLOSED_VALUE = re.compile(r"[\[({]?\s*([\"'`])((?:(?!\1)[^\\\n]|\\.)*)\Z")
+# Up to eight opening delimiters of an expression: {, ((, [{ ….
+EXPRESSION_START = re.compile(r"(?:[{(\[]\s*){1,8}")
+BARE_VALUE = re.compile(r"([^\s\"'`,;(){}\[\]<]+)")
+REFERENCE = re.compile(r"[A-Za-z_$][\w$]*(?:\.[\w$]+|\[[^\]]*\])+")
+# A NAME=value line with no space before "=": .env files, Java properties, export lines.
+# A plain $VAR or ${VAR}; ${VAR:-default} and its kin carry a default that is judged as a value.
+# (${VAR:?message} carries an error message, not a value.)
+# It must be the whole value: ${VALUE}hunter2 or $VALUE-hunter2 carries a literal.
+ENV_REFERENCE = re.compile(r"\$(?:\{[A-Za-z_]\w*(?::?\?[^}]*)?\}|[A-Za-z_]\w*)"
+                           # ${VALUE} hunter2 carries a literal too; # and // start a comment only after a space.
+                           # A quote ends it only directly, and only as a closing quote (see _code_reference):
+                           # ${VALUE} "hunter2" and ${VALUE}"hunter2" carry a literal.
+                           r"(?=[\"'`]|\s*(?:[,;)}\]]|\Z)|\s+(?:#|//))")
+# In configuration files only the end of the line or a spaced # comment ends a reference.
+CONFIG_REFERENCE_END = re.compile(r"[ \t]*(?:\Z|\r?$)|[ \t]+#", re.MULTILINE)
+ENV_DEFAULT = re.compile(r"\$\{[A-Za-z_]\w*:?[-=+]([^}\s]*)\}")
+# Files whose values are configuration, judged with config=True.
+CONFIG_FILE = re.compile(r"(?i)(?:^|/)(?:\.env[\w.-]*|[^/]*\.(?:properties|env|ini|cfg|conf|toml|ya?ml))$")
+ENV_LINE = re.compile(r"\s*(?:export\s+)?[A-Za-z_][\w.-]*=(?![=>])")
+# An environment pair anywhere on a line: ENV DB_PASSWORD=v, docker run -e API_TOKEN=v, --env=PW=v, env PW=v cmd.
+ENV_PAIR = re.compile(r"(?<![^\s=])[A-Z][A-Z0-9_]*=\Z")
+# Before an argument list or a tag still open, NAME=value is a keyword argument or attribute, not a pair.
+CALL_OR_TAG = re.compile(r"\(|<[A-Za-z]")
+IDENTIFIER = re.compile(r"[A-Za-z_$][\w$]*")
+# A literal that a reference or expression falls back to: process.env.X || "…", x ?? "…", x or "…".
+# Ternary branches are not read: they mostly choose between UI values (isMobile ? "sm" : "md").
+FALLBACK = re.compile(r"(?:\|\||\?\?|\bor\b)\s*(?:[({\[]\s*){0,8}(?=[\"'`])")  # also || ("…")
+STATEMENT_END = re.compile(r"[,;}\n]")
+# An environment lookup that names the secret, up to its name: process.env.DB_PASSWORD, process.env["API_TOKEN"],
+# import.meta.env.VITE_API_KEY, os.getenv("DB_PASSWORD"), os.environ["SECRET_KEY"], Deno.env.get("TOKEN").
+ENV_LOOKUP = re.compile(r"(?:\benv|\bENV|\benviron|\bgetenv)\s*(?:\.get\s*\(|\(|\[|\.)\s*[\"'`]?[\w-]{0,64}\Z")
+# The rest of the lookup after a name that ends it (the closing quote, ] or ) and the space before a
+# fallback): PASSWORD_RESET_URL names a UI setting, not the password.
+LOOKUP_REST = re.compile(r"(?![\w-])[\"'`]?\s*[\])]?\s*")
+# A fallback operator that ends the line: the literal follows on a later one.
+OPEN_FALLBACK = re.compile(r"(?:\|\||\?\?|\bor)\s*\Z")
+NOT_SECRET = re.compile(r"(?i)(?:true|false|null|none|undefined|nil|string|number|boolean|bool|int|str|any|"
+                        r"include|same-origin|omit|strong|weak|medium)\W*")
+COLOR_OR_LENGTH = re.compile(r"#[0-9a-fA-F]{3,8}|-?\d+(?:\.\d+)?(?:px|rem|em|%|vh|vw|ms|s)")
+# CSS custom properties; Sass and Less variables hold colours and lengths, exempt as values.
+VARIABLE_PREFIX = re.compile(r"--[\w-]*\Z")
+
+
+LABEL_WORD = re.compile(r"[A-Z][a-z]+(?:[-'][A-Za-z]+)*[.:?!…]*")
+# Two or more words of letters, without digits or underscores ("Enter your password").
+LABEL_PHRASE = re.compile(r"[^\W\d_]+(?:[-'][^\W\d_]+)*(?:[,.:;?!…]*\s+[^\W\d_]+(?:[-'][^\W\d_]+)*)+[.:?!…]*")
+
+
+def _is_label(value, name):
+    """A UI label for this name: a capitalised word that repeats the name's keyword
+    ("Password", "Passwort"), words without digits that include it ("Enter your
+    password"), or text with no ASCII word at all ("パスワード").
+
+    A value with digits, underscores or lower-case letters only ("password123",
+    "token_abc"), or a phrase without the keyword ("correct horse battery
+    staple"), is a credential.
+    """
+    keyword = SECRET_NAME.match(name)
+    stem = re.sub(r"[^a-z]", "", keyword.group(0).lower())[:5] if keyword else ""
+    return ((bool(stem) and stem in value.lower()
+             and (LABEL_WORD.fullmatch(value) is not None or LABEL_PHRASE.fullmatch(value) is not None))
+            or (not re.search(r"[A-Za-z0-9]{2}", value) and re.search(r"[^\x00-\x7f]", value) is not None))
+
+
+def _string_end(text, i):
+    """The offset of the quote closing the string that opens at i, past backslash escapes, or None."""
+    quote, i = text[i], i + 1
+    while i < len(text):
+        if text[i] == "\\":
+            i += 2
+            continue
+        if text[i] == quote:
+            return i
+        i += 1
+    return None
+
+
+def _regex_end(text, i):
+    """The offset of the / closing the regular-expression literal that opens at i, or None."""
+    i, in_class = i + 1, False
+    while i < len(text) and text[i] != "\n":
+        c = text[i]
+        if c == "\\":
+            i += 1
+        elif c == "[":
+            in_class = True
+        elif c == "]":
+            in_class = False
+        elif c == "/" and not in_class:
+            return i
+        i += 1
+    return None
+
+
+def _braces_end(text, i):
+    """The offset after the {…} expression opening at i, or None. Nested braces, strings, comments and
+    regular-expression literals are skipped. A / starts a regex where an operand cannot end: after the previous
+    token, comments aside, is ( , = : [ ! & | ? { } ; => or an operand-taking keyword such as return or throw."""
+    depth, token_end = 0, i
+    while i < len(text):
+        c = text[i]
+        if c in "\"'`":
+            i = _string_end(text, i)
+            if i is None:
+                return None
+        elif text.startswith("/*", i):
+            i = text.find("*/", i + 2)
+            if i < 0:
+                return None
+            i += 2
+            continue  # A comment is not a token: the one before it still decides what / means.
+        elif text.startswith("//", i):
+            return None  # A line comment runs past this line's expression.
+        elif c == "/" and REGEX_BEFORE.search(text, max(0, token_end - 16), token_end):
+            i = _regex_end(text, i)
+            if i is None:
+                return None
+        elif c == "{":
+            depth += 1
+        elif c == "}":
+            depth -= 1
+            if not depth:
+                return i + 1
+        elif c.isspace():
+            i += 1
+            continue
+        i += 1
+        token_end = i
+    return None
+
+
+def _attributes(text, i, first=False):
+    """The attributes of the tag continuing at i, as [lower-case name, value start or None, value end or None],
+    whether the text ends inside the tag (its attributes go on on the next line), and how far the text was read:
+    an unclosed quote or brace reads to its end, so callers need not read that text again.
+
+    One pass, which stops at > or />, or at text that is not an attribute. first: i is already at an attribute.
+    """
+    attributes = []
+    while True:
+        start = i
+        while i < len(text) and text[i].isspace():
+            i += 1
+        if i >= len(text):
+            return attributes, True, len(text)
+        if i == start and not first:
+            return attributes, False, i  # Attributes are separated by whitespace.
+        first = False
+        if text[i] == "{":  # A JSX spread.
+            i = _braces_end(text, i)
+            if i is None:
+                return attributes, False, len(text)
+            continue
+        attribute = ATTRIBUTE_NAME.match(text, i)
+        if not attribute:
+            return attributes, False, i  # > or /> ends the tag.
+        equals = EQUALS.match(text, attribute.end())
+        if not equals:  # A boolean attribute: disabled, readonly.
+            attributes.append([attribute.group(0).lower(), None, None])
+            i = attribute.end()
+            continue
+        entry = [attribute.group(0).lower(), equals.end(), None]
+        attributes.append(entry)  # Before its value, which may be cut off.
+        i = equals.end()
+        if i >= len(text):
+            return attributes, False, len(text)
+        if text[i] in "\"'`":
+            close = text.find(text[i], i + 1)  # HTML values have no backslash escapes.
+            i = None if close < 0 else close + 1
+        elif text[i] == "{":
+            i = _braces_end(text, i)
+        else:
+            unquoted = UNQUOTED_VALUE.match(text, i)
+            i = unquoted.end() if unquoted else None
+        if i is None:
+            return attributes, False, len(text)
+        entry[2] = i
+
+
+def _field_value(text, i):
+    """Where the value or defaultValue after the name="…" attribute at i begins, past any attributes in between,
+    or None. The end of the text when the tag goes on past it without a value (attributes on the following lines).
+    Also how far the text was read.
+    """
+    attributes, open_, read = _attributes(text, i, first=True)
+    if not attributes or attributes[0][2] is None or not _secret_field_name(text[attributes[0][1]:attributes[0][2]]):
+        return None, read  # name=password-hint names a hint, not a secret.
+    starts = [start for name, start, _ in attributes[1:] if name in FIELD_VALUE_NAMES and start is not None]
+    return (starts[0] if starts else len(text) if open_ else None), read
+
+
+def _secret_field_name(value):
+    """The secret-like name a name attribute's value ends in (password, db_password, user[password]), or None."""
+    field = value.strip("{}\"'` \t")
+    if not FIELD_NAME_VALUE.fullmatch(field):
+        return None
+    secrets = [m for m in SECRET_NAME.finditer(field) if re.fullmatch(r"\]*", field[m.end():])]
+    return secrets[-1].group(0) if secrets else None
+
+
+def _values_before_names(text):
+    """(value start, secret-like name) for a value or defaultValue written before a secret-like name="…".
+
+    Each tag is walked once from its first value attribute; later value attributes inside the walk are its own."""
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, _, position = _attributes(text, value.start(), first=True)
+        position = max(position, value.end())
+        names = [i for i, (name, _, end) in enumerate(attributes) if name == "name" and end is not None]
+        secret = names and _secret_field_name(text[attributes[names[0]][1]:attributes[names[0]][2]])
+        if secret:
+            for name, start, _ in attributes[:names[0]]:
+                if name in FIELD_VALUE_NAMES and start is not None:
+                    yield start, secret
+
+
+def _value_starts(text):
+    """(offset where an assigned value begins, the secret-like name) pairs."""
+    read = 0  # How far field tags have been read: a name inside that text was judged with its tag.
+    for name in SECRET_NAME.finditer(text):
+        if VARIABLE_PREFIX.search(text, max(0, name.start() - 64), name.start()):
+            continue  # A CSS custom property such as --token-color.
+        if name.start() and text[name.start() - 1] in "/\\":
+            continue  # A path such as /etc/passwd.
+        assignment = ANNOTATED.match(text, name.end()) or ASSIGNMENT.match(text, name.end())
+        if assignment:
+            yield assignment.end(), name.group(0)
+        # Also judged apart: name=password class=x value="…" reads as a typed declaration above.
+        field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+        if field and field.start() >= read:
+            start, read = _field_value(text, field.start())
+            if start is not None:
+                yield start, name.group(0)
+    yield from _values_before_names(text)
+    for call in CALL_ARGUMENT.finditer(text):
+        yield call.end(), SECRET_NAME.search(call.group(0)).group(0)
+
+
+def _secret_literal(quoted, name):
+    """Whether a matched QUOTED_VALUE is a credential rather than a label, keyword, colour or length."""
+    value = quoted.group(2)
+    if ENV_REFERENCE.fullmatch(value):
+        return False  # "${DB_PASSWORD}" or "$PW": a variable, quoted.
+    default = ENV_DEFAULT.fullmatch(value)
+    if default and (not default.group(1) or default.group(1).startswith("$")):
+        return False
+    return not (_is_label(value, name) or NOT_SECRET.fullmatch(value) or COLOR_OR_LENGTH.fullmatch(value))
+
+
+def _inside_call_or_tag(text, end):
+    """Whether text[:end] leaves a ( or a <Tag open: Client(TOKEN=auth.token, <Field PASSWORD=pw."""
+    opened = [m for m in CALL_OR_TAG.finditer(text, 0, end)]
+    return any(text.find(")" if m[0] == "(" else ">", m.end(), end) < 0 for m in opened)
+
+
+def _code_reference(text, bare, config=False):
+    """Whether a bare value is code: a digit-free identifier or reference (currentPassword,
+    auth.currentPassword). In configuration files and on NAME=value lines (.env, .properties)
+    a bare value is always a literal, and a digit in the root (Pa55.word) marks a value too."""
+    value = bare.group(1)
+    default = ENV_DEFAULT.match(text, bare.start())
+    if default:  # ${VAR:-default}: the default is the value.
+        return not default.group(1) or default.group(1).startswith("$") or bool(
+            NOT_SECRET.fullmatch(default.group(1).strip("\"'")))
+    if reference := ENV_REFERENCE.match(text, bare.start()):
+        after = text[reference.end():reference.end() + 1]
+        # A quote ends the reference only when it closes a quote opened just before it ("${PW}");
+        # elsewhere it starts a word the shell concatenates: ${VALUE}"hunter2" carries a literal.
+        if after in "\"'`" and after and text[bare.start() - 1:bare.start()] != after:
+            return False
+        if config and not CONFIG_REFERENCE_END.match(text, reference.end() + (after in "\"'`" and bool(after))):
+            return False  # In configuration , ; ) ] } do not end a value: ${VALUE} , hunter2 is one.
+        return True  # $VAR or ${VAR}: an environment or shell variable, not its value.
+    if text.startswith("${", bare.start()):
+        return False  # ${VALUE} followed by more text: not a whole reference, so a literal.
+    dotted = REFERENCE.fullmatch(value) is not None
+    if (config or not (dotted or IDENTIFIER.fullmatch(value)) or ENV_LINE.match(text)
+            or (ENV_PAIR.search(text, 0, bare.start()) and not _inside_call_or_tag(text, bare.start()))):
+        return False  # Configuration files and environment pairs hold values, never code.
+    if re.search(r"\d", IDENTIFIER.match(value).group(0)):
+        return False  # hunter2.secret reads as a value, not an object.
+    return True  # In code a string literal is quoted, so a bare identifier is a reference.
+
+
+def _fallback_secret(text, start, name):
+    """Whether the statement from start on falls back to a credential literal (x || "…", x ?? "…")."""
+    stop = STATEMENT_END.search(text, start)
+    for operator in FALLBACK.finditer(text, start, stop.start() if stop else min(len(text), start + 200)):
+        quoted = QUOTED_VALUE.match(text, operator.end())  # The delimiters before it are consumed already.
+        if quoted and _secret_literal(quoted, name):
+            return True
+    return False
+
+
+def _lookups(text):
+    """(start of the lookup, the secret-like name, offset after the lookup) for each environment
+    lookup that names a secret: process.env.DB_PASSWORD, os.getenv("API_TOKEN")."""
+    for name in SECRET_NAME.finditer(text):
+        lookup = ENV_LOOKUP.search(text, max(0, name.start() - 96), name.start())
+        rest = LOOKUP_REST.match(text, name.end())
+        if lookup and rest:
+            yield lookup.start(), name.group(0), rest.end()
+
+
+def _lookup_fallback(text):
+    """Whether an environment lookup that names a secret falls back to a credential literal:
+    process.env.DB_PASSWORD || "…", os.getenv("API_TOKEN") or "…"."""
+    return any(FALLBACK.match(text, rest) and _fallback_secret(text, rest, name) for _, name, rest in _lookups(text))
+
+
+def _assigned_secret(text, config=False):
+    for rest, name in _value_starts(text):
+        quoted = QUOTED_VALUE.match(text, rest)
+        if quoted:
+            if _secret_literal(quoted, name):
+                return True
+            continue
+        unclosed = UNCLOSED_VALUE.match(text, rest)
+        if unclosed and unclosed.group(2) and _secret_literal(unclosed, name):
+            return True  # A literal cut off by the line limit, or left open.
+        expression = EXPRESSION_START.match(text, rest)
+        if expression:
+            quoted = QUOTED_VALUE.match(text, expression.end())
+            if quoted and _secret_literal(quoted, name):
+                return True  # A literal inside nested delimiters: (("…")), {("…")}.
+        if _fallback_secret(text, rest, name):
+            return True
+        bare = BARE_VALUE.match(text, expression.end() if expression else rest)
+        if bare and text.startswith("(", bare.end()):
+            # A call such as useState(…) or String("…"), also inside {…}: a literal first argument is the value.
+            quoted = QUOTED_VALUE.match(text, bare.end())
+            if quoted and _secret_literal(quoted, name):
+                return True
+            continue
+        if expression:
+            continue  # An expression, such as password={password}.
+        if (bare and not _code_reference(text, bare, config) and not NOT_SECRET.fullmatch(bare.group(1))
+                and not COLOR_OR_LENGTH.fullmatch(bare.group(1))):
+            return True  # A bare env or properties value is never a UI label.
+    return False
+
+
+CONTINUATION_LINES = 5  # Lines after a name that a wrapped value may sit on.
+
+
+REGEX_KEYWORDS = {"return", "typeof", "case", "do", "else", "in", "of", "new", "delete", "void", "throw", "yield",
+                  "await", "instanceof"}
+REGEX_LITERAL = re.compile(r"/(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n\[])+/[a-z]*")
+
+
+def _unclosed(text):
+    """Whether text leaves a ( [ or { open, outside quoted literals and comments: password = (\n x\n || "…"."""
+    bare = re.sub(r"\"(?:[^\"\\]|\\.)*\"|'(?:[^'\\]|\\.)*'|`(?:[^`\\]|\\.)*`", "", text)
+    bare = re.sub(r"/\*.*?(?:\*/|\Z)|//.*|(?<!\S)#.*", "", bare)  # Comments are not syntax: x // ).
+    # Nor are regular-expression literals: /[)]/.test(x). A "/" after an operand divides.
+    def literal(match):
+        before = re.search(r"([\w$]+|[)\]])\s*\Z", bare[:match.start()])
+        return match[0] if before and before[1] not in REGEX_KEYWORDS else " "
+    bare = REGEX_LITERAL.sub(literal, bare)
+    return sum(bare.count(c) for c in "([{") > sum(bare.count(c) for c in ")]}")
+
+
+def _opens_comment(text):
+    """Whether text ends inside a /* block comment it opened."""
+    return text.rfind("/*") > text.rfind("*/")
+
+
+def _open_names(text):
+    """Start offsets of secret-like names whose assigned value continues on the next line: nothing
+    follows the assignment (password =), or the line ends in an operator or opening delimiter
+    (password = process.env.PW ||)."""
+    starts = []
+    if _opens_comment(text):
+        text = text[:text.rfind("/*")].rstrip()  # password = x || /* dev … continues after the comment.
+    for name in SECRET_NAME.finditer(text):
+        tail = text[name.start():]
+        if any(rest >= len(tail) or OPEN_END.search(tail, rest) for rest, _ in _value_starts(tail)):
+            starts.append(name.start())
+        elif field := _open_field(text, name):
+            starts.append(field)  # From name=, so the joined text still names the field.
+    # process.env.DB_PASSWORD || at the end of the line: from the lookup, so the joined text still reads as one.
+    starts.extend(start for start, _, rest in _lookups(text) if OPEN_FALLBACK.match(text, rest))
+    value = _open_value(text)
+    if value is not None:
+        starts.append(value)
+    return sorted(starts)
+
+
+def _open_field(text, name):
+    """Where name="…" starts when the field's tag goes on past the end of text, or None."""
+    field = FIELD_NAME.search(text, max(0, name.start() - 80), name.start())
+    return field.start() if field and _field_value(text, field.start())[0] == len(text) else None
+
+
+def _open_value(text):
+    """Where a value or defaultValue starts whose tag goes on past the end of text before naming the field
+    (value="…" on one line, name="password" on a later one), or None."""
+    position = 0
+    while value := VALUE_ATTRIBUTE.search(text, position):
+        attributes, open_, position = _attributes(text, value.start(), first=True)
+        if open_ and not any(name == "name" for name, _, _ in attributes):
+            return value.start()
+        position = max(position, value.end())
+    return None
+
+
+def _open_tag(text):
+    """Whether text ends inside the tag of a secret-named field before its value, or of a value before its name."""
+    return (any(_open_field(text, name) is not None for name in SECRET_NAME.finditer(text))
+            or _open_value(text) is not None)
+
+
+def _without_line_comment(line):
+    """line without a trailing // comment that starts outside its strings (https:// is not one)."""
+    i = 0
+    while i < len(line):
+        if line[i] in "\"'`":
+            close = _string_end(line, i)
+            if close is None:
+                return line
+            i = close
+        elif line.startswith("//", i) and (i == 0 or line[i - 1].isspace()):
+            return line[:i].rstrip()
+        i += 1
+    return line
+
+
+def _block_scalar_lines(lines, index, stop, config):
+    """Indexes of a secret-like name's YAML block scalar (password: |) and the lines that hold its
+    value, every later line indented deeper than the name (blank lines included), or an empty set."""
+    text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
+    rest = next((rest for rest, _ in _value_starts(text) if BLOCK_SCALAR.match(text, rest)), None)
+    if rest is None:
+        return set()
+    indent = len(text) - len(text.lstrip())
+    body = []
+    for following in range(index + 1, min(len(lines), stop)):
+        line = lines[following]
+        if line.strip() and len(line) - len(line.lstrip()) <= indent:
+            break
+        body.append(following)
+    value = " ".join(lines[i].strip() for i in body if lines[i].strip())
+    return {index, *body} if value and secret_line(text[:rest] + value, config) else set()
+
+
+def _enclosing_lines(lines, start):
+    """Indexes of the lines above start that are each indented less than the one after them: the
+    YAML keys that may open a block scalar holding line start, nearest first."""
+    first = next((i for i in range(start, len(lines)) if lines[i].strip()), None)
+    if first is None:
+        return
+    indent = len(lines[first]) - len(lines[first].lstrip())
+    for above in range(min(start, len(lines)) - 1, -1, -1):
+        line = lines[above]
+        if indent == 0:
+            return
+        if line.strip() and len(line) - len(line.lstrip()) < indent:
+            indent = len(line) - len(line.lstrip())
+            yield above
+
+
+def continued_secret_lines(lines, start, stop, config=False):
+    """Indexes in lines[start:stop] of a value wrapped onto a later line than its secret-like name
+    (export const clientToken =\n  "…";) or flag (--password \\\n  "…"), with the name's line.
+
+    A line whose assignment continues is judged from the name on, joined with the
+    following lines that are neither blank nor comments for as long as the joined
+    expression still ends in an operator (at most five lines on); start may lie one
+    line before the excerpt.
+    """
+    hidden = set()
+    if config:  # An excerpt that starts inside a block scalar opened further up than start.
+        hidden.update(next((block for above in _enclosing_lines(lines, max(0, start))
+                            if (block := _block_scalar_lines(lines, above, stop, config))), set()))
+    for index in range(max(0, start), min(len(lines), stop)):
+        if config and (block := _block_scalar_lines(lines, index, stop, config)):
+            hidden.update(block)  # A YAML block scalar: every line of its value, however many.
+            continue
+        text = lines[index][:SHOWN_CHARACTERS + LOOKAHEAD].rstrip()
+        flag = FLAG_CONTINUES.search(text)
+        names = _open_names(text)
+        if not (names or flag):
+            continue
+        # From the name on, so a long line before it cannot push the value past the limit.
+        joined, used = flag.group(1) if flag else text[names[-1]:], [index]
+        in_comment = _opens_comment(joined)
+        if in_comment:
+            joined = joined[:joined.rfind("/*")].rstrip()
+        for following in range(index + 1, min(len(lines), index + 1 + CONTINUATION_LINES)):
+            value = lines[following].strip()
+            if in_comment:  # Inside a block comment that opened after the operator: skip to its end.
+                close = value.find("*/")
+                if close < 0:
+                    continue
+                value, in_comment = value[close + 2:].strip(), False
+            value = LEADING_COMMENTS.sub("", value)  # /* dev */ "…": the value follows the comment.
+            if not value or COMMENT_LINE.match(value):
+                in_comment = _opens_comment(value)
+                continue  # A blank line or a comment between the name and its value.
+            # Without its trailing // comment, which would otherwise run on over the lines joined after it.
+            joined = joined + " " + _without_line_comment(value[:SHOWN_CHARACTERS + LOOKAHEAD])
+            used.append(following)
+            if secret_line(joined, config):
+                hidden.update(used)
+                break
+            if _opens_comment(joined):  # A comment opened on this line: its value follows the comment.
+                joined, in_comment = joined[:joined.rfind("/*")].rstrip(), True
+                continue
+            if not OPEN_END.search(joined) and not _unclosed(joined) and not _open_tag(joined):
+                break  # The expression or the field's tag ended without a credential.
+            # Still open (process.env.PW ||, or an unclosed "("): the value continues on the next line.
+    return hidden
+
+
+def secret_line(line, config=False):
+    """Whether the shown part of line must be masked.
+
+    config is true for configuration files (.env, .properties, YAML…), where a
+    bare value such as Sommer.x is a literal, never a code reference.
+    """
+    searched = line[:SHOWN_CHARACTERS + LOOKAHEAD]
+    # Assignments are judged with block comments blanked, so a comment can neither hide a value
+    # (password = x || /* dev */ "…") nor pose as one (password = /* note */ auth.pw); each
+    # comment's own text is judged too, for a secret written inside it.
+    comments = BLOCK_COMMENT.findall(searched) if "/*" in searched else []
+    uncommented = BLOCK_COMMENT.sub(lambda m: " " * len(m.group(0)), searched) if comments else searched
+    if (KNOWN_SECRET.search(searched) or _assigned_secret(uncommented, config) or _lookup_fallback(uncommented)
+            or any(_assigned_secret(comment[2:-2], config) for comment in comments)):
+        return True
+    return len(line) > SHOWN_CHARACTERS and bool(CUT_SECRET.search(line[:SHOWN_CHARACTERS]))
+
+
+BASE64_LINE = re.compile(r"\s*[A-Za-z0-9+/]{40,}={0,2}\s*")
+
+
+def _base64_only(line):
+    """A line of key material: 40+ base64 characters mixing digits and both letter cases."""
+    return (BASE64_LINE.fullmatch(line) is not None and any(c.isdigit() for c in line)
+            and any(c.isupper() for c in line) and any(c.islower() for c in line))
+
+
+PRIVATE_KEY_BEGIN = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY(?: BLOCK)?-----")
+
+
+def private_key_lines(lines):
+    """Indexes of lines inside complete -----BEGIN … PRIVATE KEY [BLOCK]----- … -----END blocks
+    (PEM and PGP armour), or base64-only lines.
+
+    A BEGIN with no END after it hides nothing more than its own line, which
+    secret_line already masks.
+    """
+    hidden, begin = set(), None
+    for index, line in enumerate(lines):
+        if PRIVATE_KEY_BEGIN.search(line):
+            begin = index
+        if begin is not None and "-----END" in line:
+            hidden.update(range(begin, index + 1))
+            begin = None
+        if _base64_only(line):
+            hidden.add(index)
+    return hidden

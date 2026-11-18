@@ -1,0 +1,6 @@
+{
+  "task": {"new": "Neue Aufgabe erstellen", "import": "Importieren", "titleLabel": "Titel"},
+  "common": {"save": "Speichern"},
+  "signup": {"password": "Passwort", "submit": "Konto erstellen", "invalid": "Ungültige Eingabe", "failed": "Fehler 500"},
+  "settings": {"title": "Einstellungen", "name": "Name"}
+}

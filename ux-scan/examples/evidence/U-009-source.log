@@ -1,0 +1,10 @@
+$ awk 'NR>=5 && NR<=9 {print FILENAME ":" FNR ": " $0}' src/components/Nav.tsx
+cwd: examples/tasklane
+exit: 0
+captured: 2026-10-26T22:56:51Z
+---
+src/components/Nav.tsx:5:     <nav aria-label="Main">
+src/components/Nav.tsx:6:       <NavLink to="/">Tasks</NavLink>
+src/components/Nav.tsx:7:       <NavLink to="/settings">Settings</NavLink>
+src/components/Nav.tsx:8:     </nav>
+src/components/Nav.tsx:9:   );

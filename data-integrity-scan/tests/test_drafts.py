@@ -143,12 +143,12 @@ class Drafts(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("renumber", err)
 
-    def test_drafts_load_without_scan_report_kit(self):
+    def test_drafts_load_without_the_report_modules(self):
         probe = ("import builtins, sys\n"
                  "real = builtins.__import__\n"
                  "def guard(name, *a, **k):\n"
-                 "    if name.startswith('scan_report_kit'):\n"
-                 "        raise ImportError('scan_report_kit is not allowed here')\n"
+                 "    if name.startswith('report_'):\n"
+                 "        raise ImportError('report modules are not allowed here')\n"
                  "    return real(name, *a, **k)\n"
                  "builtins.__import__ = guard\n"
                  f"sys.path.insert(0, {str(SCRIPTS)!r})\n"

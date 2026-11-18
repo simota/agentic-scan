@@ -1,0 +1,7 @@
+F-001  High    Valid          src/api/orders.py:42
+D-001  High    Unverified     package-lock.json:18
+F-002  Medium  Likely         src/api/pagination.py:7
+F-003  Low     Unverified     deploy/php.ini:9
+F-004  High    FalsePositive  src/api/reports.py:88
+F-005  Low     Valid          src/api/middleware.py:23
+F-006  Info    Unverified     docs/logging.md:12

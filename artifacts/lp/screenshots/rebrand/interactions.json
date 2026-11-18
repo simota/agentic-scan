@@ -1,0 +1,42 @@
+{
+ "anchors": [],
+ "install_in_view": true,
+ "copy": [
+  true,
+  true
+ ],
+ "copy_label": [
+  "コピー済み",
+  "コピー済み"
+ ],
+ "toast": "コマンドをコピーしました",
+ "tab_after_right": [
+  "tab-ux",
+  false,
+  true
+ ],
+ "tab_end": "tab-prompt",
+ "tab_home": "tab-sec",
+ "faq_open": true,
+ "focus2": [
+  "wordmark",
+  "solid",
+  "2px"
+ ],
+ "errors": [],
+ "reduced_motion_opacity": [
+  "1",
+  "1",
+  "1",
+  "1",
+  "1",
+  "1",
+  "1"
+ ],
+ "nojs_panels_visible": [
+  true,
+  true,
+  true,
+  true
+ ]
+}

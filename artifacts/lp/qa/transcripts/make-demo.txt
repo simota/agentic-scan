@@ -1,0 +1,2 @@
+wrote ../out/security-scan/dashboard.html
+wrote ../out/security-scan/assessment.html

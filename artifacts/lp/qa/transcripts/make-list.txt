@@ -1,0 +1,12 @@
+architecture-scan
+bug-scan
+data-integrity-scan
+infra-security-scan
+logic-scan
+performance-scan
+privacy-scan
+prompt-scan
+prune-scan
+security-scan
+test-gap-scan
+ux-scan

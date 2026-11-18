@@ -133,6 +133,55 @@ class Sarif(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("severity", self.err)
 
+    def run_on_bytes(self, data, *extra):
+        (self.tmp / "findings.json").write_bytes(data)
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            code = sarif.main([str(self.tmp / "findings.json"), *map(str, extra)])
+        return code, err.getvalue()
+
+    def test_unreadable_or_mistyped_input_exits_2_with_a_reason(self):
+        cases = {
+            "empty file": b"",
+            "not JSON": b"{findings: [",
+            "a list, not a record": b"[]",
+            "a string, not a record": b'"findings"',
+            "findings is not a list": json.dumps(dict(SAMPLE, findings="F-001")).encode(),
+            "a finding is not an object": json.dumps(dict(SAMPLE, findings=["F-001"])).encode(),
+        }
+        for label, data in cases.items():
+            with self.subTest(label):
+                code, err = self.run_on_bytes(data)
+                self.assertEqual(code, 2, err)
+                self.assertTrue(err.startswith("sarif.py: "), err)
+
+    def test_a_missing_record_and_a_repo_that_is_not_a_directory_exit_2(self):
+        err = io.StringIO()
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(err):
+            self.assertEqual(sarif.main([str(self.tmp / "absent.json")]), 2)
+        code, _ = self.export(copy.deepcopy(SAMPLE), "--repo", self.tmp / "units.json")
+        self.assertEqual(code, 2)
+        self.assertIn("not a directory", self.err)
+
+    def test_zero_findings_is_a_valid_log_with_no_results(self):
+        record = copy.deepcopy(SAMPLE)
+        record["findings"] = []
+        code, log = self.export(record)
+        self.assertEqual(code, 0, self.err)
+        self.assertEqual(log["runs"][0]["results"], [])
+        self.assertEqual(log["runs"][0]["tool"]["driver"]["rules"], [])
+
+    def test_one_finding_at_and_above_the_severity_threshold(self):
+        record = copy.deepcopy(SAMPLE)
+        one = next(f for f in record["findings"] if f["severity"] != "High" and sarif.exported(f, "Info"))
+        record["findings"] = [one]
+        code, at = self.export(record, "--min-severity", one["severity"])
+        self.assertEqual(code, 0, self.err)
+        self.assertEqual([r["properties"]["findingId"] for r in at["runs"][0]["results"]], [one["id"]])
+        stricter = sarif.SEVERITIES[sarif.SEVERITIES.index(one["severity"]) - 1]
+        _, above = self.export(record, "--min-severity", stricter)
+        self.assertEqual(above["runs"][0]["results"], [])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -138,7 +138,9 @@ python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/finding
 | `skills/prompt-scan/scripts/record.py` | The `findings.json` contract every script shares: vocabulary, strict parsing, schema, atomic replacement |
 | `skills/prompt-scan/scripts/excerpt.py` | What a report may quote from the reviewed repository, and the redaction applied to it |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |
-| `skills/prompt-scan/scripts/scan_report_kit/` | The bundled report kit: shared stylesheets, PDF engine, safe writes |
+| `skills/prompt-scan/scripts/report_style.py` | Stylesheets in `skills/prompt-scan/scripts/report_assets/` as inline CSS |
+| `skills/prompt-scan/scripts/report_pdf.py` | PDF engine (headless Chrome, else WeasyPrint) |
+| `skills/prompt-scan/scripts/report_output.py` | Safe writes into a report directory |
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |
 | `docs/report-design.md` | How the report uses the shared report format |
 

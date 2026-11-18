@@ -43,7 +43,7 @@ class RenderTest(unittest.TestCase):
         # Same storage key as the kit's dashboard runtime, so the choice carries across dashboards that use it;
         # both reads and writes are guarded, since storage can throw.
         dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
-        kit = (SCRIPTS / "scan_report_kit" / "assets" / "dashboard.js").read_text(encoding="utf-8")
+        kit = (SCRIPTS / "report_assets" / "dashboard.js").read_text(encoding="utf-8")
         self.assertIn("'scan-report-kit.theme'", kit)
         self.assertIn("THEME_KEY='scan-report-kit.theme'", dashboard)
         self.assertIn("try{var saved=window.localStorage.getItem(THEME_KEY)", dashboard)

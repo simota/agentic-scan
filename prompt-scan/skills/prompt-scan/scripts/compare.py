@@ -47,7 +47,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
 from record import EXCLUDED, LOC_RE, SEVERITIES, SchemaError  # noqa: E402
 from excerpt import mask  # noqa: E402
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
 
 CLASSES = ("new", "reopened", "persisting", "resolved", "dismissed")
 TRACKED = ("severity", "kind", "confidence", "verdict", "status")

@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 
-from .output import unsafe_target
+from report_output import unsafe_target
 
 CHROME_CANDIDATES = [
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",

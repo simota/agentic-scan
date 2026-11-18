@@ -6,8 +6,8 @@
 With --repo, each finding's `location` excerpt is embedded, read and redacted as excerpt.py describes
 (the commit's blob for a scan of a clean tree, else the working tree; credential-shaped values masked;
 credential files never quoted). The record is checked against record.py's schema first.
---lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the bundled
-report kit (scan_report_kit/): the PDF is printed by headless
+--lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from
+report_style.py, report_pdf.py and report_output.py: the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
 PROMPT_SCAN_PDF_TIMEOUT seconds (default: 120 plus 0.05 per finding, at most 900).
 
@@ -23,10 +23,10 @@ from pathlib import Path
 import re
 import sys
 
-# The kit sits next to this script; -I and PYTHONSAFEPATH leave the script's directory off sys.path.
+# The report modules sit next to this script; -I and PYTHONSAFEPATH leave the script's directory off sys.path.
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_report_kit import pdf as kit_pdf, style as kit_style  # noqa: E402
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+import report_pdf, report_style  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
 # The record's vocabulary and schema, and the excerpt rules, are shared with the other tools.
 from record import (CONFIDENCES, EXCLUDED, KINDS, SEVERITIES, STATUSES, STRING_LISTS,  # noqa: E402
                     VERDICTS, SchemaError, id_key, load)
@@ -300,7 +300,7 @@ def list_section(items, L):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="small">{esc(L["none"])}</p>'
 
 
-# The shared stylesheet (scan_report_kit/assets/document.css, the bundled report kit)
+# The shared stylesheet (report_assets/document.css, the bundled report kit)
 # comes first; these add only the rules for prompt-scan record types: the
 # severity-by-kind counts table, the level legend, the prompt inventory and
 # eval-run tables, the kind label and before/after proposals.
@@ -396,13 +396,13 @@ def render_report_html(data, L, lang, excerpts):
     title = f'{L["title"]} — {target}'.rstrip(" —")
     return (f'<!doctype html><html lang="{lang}"><head><meta charset="utf-8">'
             f'<meta name="viewport" content="width=device-width,initial-scale=1"><title>{esc(title)}</title>'
-            f'<style>{kit_style.document_css(L["running_footer"])}{REPORT_CSS}</style></head><body>'
+            f'<style>{report_style.document_css(L["running_footer"])}{REPORT_CSS}</style></head><body>'
             f'<header class="report-header"><p class="kicker">{esc(L["running_footer"])}</p><h1>{esc(L["title"])}</h1>'
             f'<p class="project">{esc(target or "—")}</p>{meta_lines(data, L)}</header>'
             f'<main>{body}</main></body></html>')
 
 
-# The shared stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit)
+# The shared stylesheet (report_assets/dashboard.css, the bundled report kit)
 # comes first; these add only the rules for prompt-scan's dashboard pieces: the
 # decisions panel, the verify-first legend, paired counts on the closed card,
 # the earlier-validation history box, proposal text, which wraps as in the
@@ -761,7 +761,7 @@ def render_dashboard(data, L, lang, excerpts):
     # Escape every less-than sign: <!-- and <script also change HTML parsing.
     blob = json.dumps(payload, ensure_ascii=False).replace("<", "\\u003c") \
         .replace("\u2028", "\\u2028").replace("\u2029", "\\u2029")
-    replacements = {"__CSS__": kit_style.dashboard_css() + DASH_CSS,
+    replacements = {"__CSS__": report_style.dashboard_css() + DASH_CSS,
                     "__LANG__": lang, "__TITLE__": esc(f'{labels["dash_title"]} - {meta.get("target", "")}'),
                     "__NOSCRIPT__": esc(labels["no_script"]), "__REPORT__": esc(labels["report_link"]),
                     "__DATA__": blob}
@@ -776,14 +776,14 @@ OUTPUTS = ("dashboard.html", "report.html", "report.pdf")
 
 
 def to_pdf(html_path, pdf_path, failures, timeout=None):
-    """Print html_path with scan_report_kit.pdf (Chrome, else WeasyPrint). Returns the engine name or None.
+    """Print html_path with report_pdf (Chrome, else WeasyPrint). Returns the engine name or None.
 
     Each engine that was found but did not produce a PDF is appended to failures
     as one readable string; engine stderr is masked (mask) before it is recorded.
     """
     found = []
-    timeout = kit_pdf.pdf_timeout(env=TIMEOUT_ENV) if timeout is None else timeout
-    engine = kit_pdf.to_pdf(html_path, pdf_path, found, timeout, redact=mask)
+    timeout = report_pdf.pdf_timeout(env=TIMEOUT_ENV) if timeout is None else timeout
+    engine = report_pdf.to_pdf(html_path, pdf_path, found, timeout, redact=mask)
     failures.extend(f"{name} {reason}" + (f": {detail}" if detail else "") for name, reason, detail in found)
     return engine
 
@@ -825,7 +825,7 @@ def main(argv=None):
         print(f"render.py: cannot write outputs to {out}: {e}", file=sys.stderr)
         return 2
     failures = []
-    timeout = kit_pdf.pdf_timeout(len(data.get("findings", [])), env=TIMEOUT_ENV)
+    timeout = report_pdf.pdf_timeout(len(data.get("findings", [])), env=TIMEOUT_ENV)
     engine = to_pdf(out / "report.html", out / "report.pdf", failures, timeout)
     if not engine:
         reason = "; ".join(failures) if failures else "no PDF engine found (Chrome/Chromium or weasyprint)"

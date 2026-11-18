@@ -46,7 +46,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import bindings as binding_tool  # noqa: E402
 import record  # noqa: E402
 from excerpt import SECRET_RE, has_secret_needle, sensitive, source_lines  # noqa: E402
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
 
 VCS_DIRS = {".git", ".hg", ".svn"}
 SKIP_DIRS = VCS_DIRS | {"node_modules", ".venv", "venv", "env", "__pycache__", "dist", "build",

@@ -12,8 +12,8 @@ judgements (E1) unless a row names a reproducible check (E2) or a measurement
 
 All four areas apply: the repository ships Python tooling (design,
 architecture) and two generated UIs, `dashboard.html` and `report.html`
-(visual, UX). The vendored kit (`skills/prompt-scan/scripts/scan_report_kit/`)
-is out of scope for changes: it is checked against its `MANIFEST` and changed
+(visual, UX). The then-vendored report kit (since moved into the `report_*.py` modules)
+was out of scope for changes: it is checked against its `MANIFEST` and changed
 upstream only. It is in scope as the design system prompt-scan's own rules must
 stay consistent with.
 

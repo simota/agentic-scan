@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-ASSETS = Path(__file__).resolve().parent / "assets"
+ASSETS = Path(__file__).resolve().parent / "report_assets"
 
 
 def _asset(name):

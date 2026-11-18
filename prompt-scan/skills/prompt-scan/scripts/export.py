@@ -35,7 +35,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import record  # noqa: E402
 from record import EXCLUDED, KINDS, LOC_RE, SEVERITIES, SchemaError, id_key  # noqa: E402
 from excerpt import mask  # noqa: E402
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
 
 SKILL = Path(__file__).resolve().parents[1]
 SARIF_SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"

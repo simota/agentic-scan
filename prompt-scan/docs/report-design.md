@@ -7,14 +7,14 @@ Status: decided 2026-10-11; moved to the shared format 2026-10-12. Applies to
 The shared report format is a "journal of
 record": serif text in one face for both scripts, sans for labels, monospace
 for IDs, paths and prompt text, numbered sections, captioned booktabs tables
-and listings, colour only for severity. It lives in the report kit bundled under
-`skills/prompt-scan/scripts/scan_report_kit/`, with the stylesheets it governs.
+and listings, colour only for severity. It lives in
+`skills/prompt-scan/scripts/report_assets/`, with the stylesheets it governs.
 
 ## How prompt-scan uses it
 
-- `skills/prompt-scan/scripts/scan_report_kit/` is the bundled report kit
-  (stylesheets, PDF engine, safe writes), maintained in this repository; edit
-  it in place.
+- (`report_style.py`, `report_pdf.py`, `report_output.py`) and `skills/prompt-scan/scripts/report_assets/`
+  (stylesheets, PDF engine, safe writes) are maintained in this repository; edit
+  them in place.
 - `render.py` inlines the shared stylesheets first and appends only the rules
   for prompt-scan record types: `REPORT_CSS` (the severity-by-kind counts
   table, the prompt inventory and eval-run tables, the kind label,

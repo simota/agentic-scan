@@ -120,6 +120,30 @@ class History(RepoCase):
         self.assertEqual(fixes["fix: rounding in pay"]["matched_in"], "subject")
         self.assertEqual(doc["warnings"], [])
 
+    def test_today_excludes_later_commits_from_all_statistics(self):
+        self.repo.commit("2026-11-16", "init", "src/a.py")
+        self.repo.commit("2026-11-17", "fix: included", "src/a.py")
+        self.repo.commit("2026-11-18", "fix: future", "src/future.py")
+        doc = self.run_recon()
+        self.assertEqual(doc["commits"], 2)
+        self.assertEqual([h["path"] for h in doc["hotspots"]], ["src/a.py"])
+        self.assertEqual([f["subject"] for f in doc["fixes"]], ["fix: included"])
+
+    def test_today_includes_last_second_but_excludes_later_merges(self):
+        self.repo.commit("2026-11-16", "init", "src/a.py")
+        self.repo.git("checkout", "-q", "-b", "feature")
+        self.repo.commit("2026-11-17", "fix: end of day", "src/a.py")
+        stamp = f"{TODAY}T23:59:59"
+        self.repo.git("commit", "--amend", "--no-edit", "--date", stamp,
+                      env={"GIT_COMMITTER_DATE": stamp})
+        self.repo.git("checkout", "-q", "main")
+        self.repo.git("merge", "--no-ff", "-m", "merge after window", "feature",
+                      env={"GIT_AUTHOR_DATE": "2026-11-18T00:00:00",
+                           "GIT_COMMITTER_DATE": "2026-11-18T00:00:00"})
+        doc = self.run_recon()
+        self.assertEqual((doc["commits"], doc["merges"]), (2, 0))
+        self.assertEqual([f["subject"] for f in doc["fixes"]], ["fix: end of day"])
+
     def test_exclude_and_source_root(self):
         self.build()
         doc = self.run_recon("--exclude", "**/dist", "--source-root", "src/")
@@ -164,7 +188,9 @@ class Cases(RepoCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(text, encoding="utf-8")
         self.repo.git("add", "-A")
-        self.repo.git("commit", "-q", "-m", message)
+        self.repo.git("commit", "-q", "-m", message,
+                      env={"GIT_AUTHOR_DATE": f"{TODAY}T12:00:00",
+                           "GIT_COMMITTER_DATE": f"{TODAY}T12:00:00"})
 
     def test_churn_leaves_out_tests_locks_and_generated_files(self):
         kept = ["src/app.ts", "src/test_utils/helpers.py", "src/latest/x.ts",
@@ -216,3 +242,4 @@ class Cases(RepoCase):
 
 if __name__ == "__main__":
     unittest.main()
+

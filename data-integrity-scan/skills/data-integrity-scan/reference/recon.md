@@ -60,6 +60,10 @@ also finds `packages/*/dist` in a monorepo); `--source-root` limits the churn
 to the review units' source roots. The JSON stays in scratch: the output
 directory holds only what `check` allows.
 
+`--today YYYY-MM-DD` sets the inclusive end of the history window, through
+23:59:59 in the local timezone used by git. Later commits do not contribute
+to counts, hotspots or fix lists; `head` still identifies the checkout HEAD.
+
 Read `warnings` and `window` first. `shallow` true means the clone holds less
 history than it shows, and its first commit is only where the clone was cut:
 widening the window cannot help, so treat it as missing history (`SKILL.md`,
@@ -177,3 +181,4 @@ In scratch: the core-table and writer table, the unit list in core-table
 order, the schema and deploy notes, the fix commits that touched data code,
 the migrations changed in the window, the churn rows for writers, the size
 hints, the rule counts. End by deriving the data rule ledger.
+

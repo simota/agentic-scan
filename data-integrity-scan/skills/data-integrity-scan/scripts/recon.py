@@ -130,9 +130,10 @@ def months_before(day, months):
     return date(year, month, min(day.day, monthrange(year, month)[1]))
 
 
-def log_records(repo, since, *args):
+def log_records(repo, since, until, *args):
     """Commits in the window as (hash, date, subject, files), newest first."""
-    out = git(repo, "log", f"--since={since}T00:00", "--no-ext-diff", "--no-textconv",
+    out = git(repo, "log", f"--since={since}T00:00", f"--until={until}T23:59:59",
+              "--no-ext-diff", "--no-textconv",
               f"--format={RECORD}%h{FIELD}%cs{FIELD}%s", "--name-only", *args)
     records = []
     for chunk in out.split(RECORD)[1:]:
@@ -165,15 +166,17 @@ def recon(repo, today, since=None, months=12, exclude=(), source_roots=(),
         warnings.append(f"the repository is younger than the window: the whole history from "
                         f"{first_hash} ({first_day}) is used")
     since_arg = start.isoformat()
+    until_arg = today.isoformat()
 
-    commits = int(git(repo, "rev-list", "--count", f"--since={since_arg}T00:00", "HEAD").strip())
+    commits = int(git(repo, "rev-list", "--count", f"--since={since_arg}T00:00",
+                      f"--until={until_arg}T23:59:59", "HEAD").strip())
     merges = int(git(repo, "rev-list", "--count", "--merges", f"--since={since_arg}T00:00",
-                     "HEAD").strip())
+                     f"--until={until_arg}T23:59:59", "HEAD").strip())
 
     exclude_res = [glob_regex(g.rstrip("/")) for g in exclude]
     roots = [r.strip("/") for r in source_roots]
     churn = {}
-    for _, _, _, files in log_records(repo, since_arg):
+    for _, _, _, files in log_records(repo, since_arg, until_arg):
         for path in set(files):
             if is_test_file(path) or is_lock_file(path) or excluded(path, exclude_res):
                 continue
@@ -189,7 +192,7 @@ def recon(repo, today, since=None, months=12, exclude=(), source_roots=(),
               "touched_tests": any(is_test_file(f) for f in files),
               "matched_in": "subject" if subject_re.search(subject) else "body"}
              for commit, day, subject, files in log_records(
-                 repo, since_arg, "-i", "-E", f"--grep={fix_pattern}", "--no-merges")]
+                 repo, since_arg, until_arg, "-i", "-E", f"--grep={fix_pattern}", "--no-merges")]
 
     return {
         "head": head,
@@ -256,3 +259,4 @@ def main(argv=None):
 
 if __name__ == "__main__":
     sys.exit(main())
+

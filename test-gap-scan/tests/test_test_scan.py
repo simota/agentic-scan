@@ -817,6 +817,16 @@ class DocumentsTest(unittest.TestCase):
             steps = sorted(set(re.findall(rf"^\| ({prefix}[0-9]+) \|", text, re.M)))
             self.assertEqual(steps, [f"{prefix}{i}" for i in range(1, count + 1)], prefix)
 
+    def test_sound_constructs_cite_existing_steps(self):
+        hunt, sound = self.read("reference/perspectives.md").split("## Sound constructs")
+        known = set(re.findall(r"^\| ([A-Z]{2}[0-9]+) \|", hunt, re.M))
+        rows = re.findall(r"^\| ([A-Z]{2}[0-9]+(?:, [A-Z]{2}[0-9]+)*) \|(.*)\|$", sound, re.M)
+        self.assertTrue(rows)
+        for steps, rest in rows:
+            self.assertLessEqual(set(steps.split(", ")), known, steps)
+            # Sound, unsound, why: three more cells (a `\|` inside a cell is not a separator).
+            self.assertEqual(len(re.split(r"(?<!\\)\|", rest)), 3, steps)
+
     def test_remedies_match_the_catalog(self):
         text = self.read("reference/remedies.md").split("## Preservation pitfalls")[0]
         names = re.findall(r"^\| ([A-Z][^|]+?) \| [A-Z]{2}[0-9]", text, re.M)

@@ -106,6 +106,9 @@ skills/test-gap-scan/
   scripts/recon.py             git history for RECON: window, hotspots, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
+  scripts/compare.py           an earlier run vs a later one: new, resolved, persisting; carried
+                               Accepted status and decisions; --fail-on regression gate (stdlib only)
+  scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDEs (stdlib only)
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor

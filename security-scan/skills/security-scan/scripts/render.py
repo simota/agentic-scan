@@ -1109,7 +1109,7 @@ ASSESSMENT_LABELS = {
 
 
 # Rules for security-scan record types only; the shared document stylesheet
-# (scan_report_kit/assets/document.css, docs: scan-report-kit) comes first.
+# (scan_report_kit/assets/document.css, the bundled report kit) comes first.
 ASSESSMENT_CSS = """
 .evidence-cell{font-size:8pt}
 .evidence-cell div+div{margin-top:.8mm}

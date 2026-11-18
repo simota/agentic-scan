@@ -20,18 +20,18 @@ executes or changes the assessed application.
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. The line between this skill
-and `privacy-scan`: an actor reaching personal data a control should have
+and a privacy review: an actor reaching personal data a control should have
 denied is a finding here; personal data the application itself sends, keeps
-or fails to delete against its own commitments is `privacy-scan`'s, and the
+or fails to delete against its own commitments belongs to a privacy review, and the
 Privacy perspective (PR1) here is a quick check, not that review:
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the fix | `coding-implement` |
-| Cloud configuration: IAM, network exposure, buckets, Kubernetes manifests | `infra-security-scan` |
-| Minimisation, consent, retention, deletion and export of personal data; personal data in logs, telemetry or third-party SDKs | `privacy-scan` |
-| Why authorization or tenant scoping is enforced per call site, so one path can lack it (the design, not the hole) | `architecture-scan` |
-| An endpoint or dependency nothing needs, kept as a liability | `prune-scan` |
+| Write the fix | A separate implementation request (out of scope here) |
+| Cloud configuration: IAM, network exposure, buckets, Kubernetes manifests | A security review of the cloud infrastructure configuration (out of scope here) |
+| Minimisation, consent, retention, deletion and export of personal data; personal data in logs, telemetry or third-party SDKs | A privacy review of personal data handling (out of scope here) |
+| Why authorization or tenant scoping is enforced per call site, so one path can lack it (the design, not the hole) | An architecture review (out of scope here) |
+| An endpoint or dependency nothing needs, kept as a liability | A review of what can be removed (out of scope here) |
 
 ## Execution command
 

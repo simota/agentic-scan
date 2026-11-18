@@ -224,7 +224,7 @@ totals include `Open`, `Fixed` and `Accepted`, excluding `FalsePositive` and
 traceability. Filters affect only the finding register, with a visible result
 count and a reset button. Choose Included, Excluded only, or All records, and
 open details with a keyboard or a direct finding link. The dashboard uses
-scan-report-kit's application shell: a sticky app bar, a contents sidebar with
+the bundled report kit's application shell: a sticky app bar, a contents sidebar with
 per-severity counts (pressing one returns to Included and clears the other
 filters and the search, so the register shows exactly the rows counted), pinned
 register filters, and the keys `/` (search), `j`/`k` (next or previous finding)
@@ -258,12 +258,12 @@ characters per line; visible notes identify shortened excerpts. Previous
 validation, when available, is labelled as historical and never changes the
 current verdict or counts.
 
-Report typography follows the shared *-scan report format, scan-report-kit
+Report typography follows the shared report format of the bundled report kit
 (see `docs/report-design.md`): a journal-style assessment (numbered
 sections, captioned booktabs tables and listings, one mincho face for both
 scripts) and a dashboard in the same system. The kit's stylesheets and PDF
 engine live in `skills/security-scan/scripts/scan_report_kit/`,
-which is maintained in this repository (scan-report-kit is retired); edit it in place.
+which is maintained in this repository; edit it in place.
 
 The PDF is printed with headless Chrome/Chromium (`CHROME=/path/to/binary` to
 choose one), falling back to WeasyPrint. With neither available the HTML files

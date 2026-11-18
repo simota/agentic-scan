@@ -1,0 +1,689 @@
+# security-scan
+
+An agent skill for a **static, read-only security review of your own
+application's source code**. It maps the application, reviews it from several
+perspectives, verifies what it finds, and delivers the result as a chat
+summary, an interactive dashboard and an assessment PDF.
+
+> Use it only on code you own or are authorized to assess. The skill reads
+> source; it does not edit code and does not send traffic to deployed systems.
+
+## What it does
+
+```
+RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
+ map      tailor       one pass   re-read    findings.json
+ routes,  perspectives per        High and   ├─ dashboard.html
+ auth,    to this app  perspective Medium    ├─ assessment.pdf
+ tenancy                          findings   └─ chat summary
+```
+
+- **Recon** builds the attack-surface map: stack and versions, every entry point
+  with its auth and role guard, how tenant isolation is enforced and what escapes
+  it, data sinks, config, dependencies
+- **Perspectives** — fifteen review angles (actor and tenant, role and
+  privilege, identity and session, input handling, data exposure, business
+  rules, files, availability, configuration, secrets, dependencies, build and
+  delivery, integrations, client side, privacy). Each one applied, not
+  applicable, or not checked is recorded in the report
+- **Dependencies and supply chain** — `scripts/deps_scan.py` inventories every
+  manifest and lockfile and flags missing lockfiles, floating versions, git/URL
+  sources, extra registries (dependency confusion), install-time scripts, CI
+  actions not pinned to a SHA, risky workflow triggers and unpinned base images.
+  It also flags plaintext package sources and disabled TLS checks, literal
+  registry credentials, the "pwn request" (a privileged workflow running PR
+  code), `permissions: write-all`, `secrets: inherit` and Compose images.
+  With `--audit` it runs osv-scanner (including malicious-package reports),
+  plus `composer audit`, and `npm audit`/`pip-audit` as fallbacks for locks
+  OSV did not cover, and lists every audit it could not run
+- **Validation** — every finding gets a verdict (`Valid`, `Likely`,
+  `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence.
+  New structured records link four claims (reachability, preconditions, defenses
+  and impact) to revision-pinned evidence, falsification checks and independent
+  reviewer records. Static support, isolated runtime reproduction and unknown
+  environment conditions remain distinct. Legacy verdicts are preserved but
+  cannot become fix-ready without structured evidence. Dependency advisories
+  remain auto-triaged and then reviewed per package; exclusions stay visible
+- **Local evidence integrity** *(opt-in)* — read safe local artifact files,
+  compare their actual SHA-256 digests, and compare source artifacts with a blob
+  at the declared commit in an explicitly supplied owned local Git repository.
+  Separate receipts and report provenance distinguish checked bytes from declared
+  records; no hashes certify the claim, reviewer or execution
+  (`reference/evidence-integrity.md`)
+- **Fix verification** *(on explicit request)* — record the same local case
+  failing a secure assertion for the right reason before the fix, passing after,
+  and passing positive-control and regression cases. Recorded `Fixed` remains
+  separate from evidenced retest completion. Owned local or throwaway code only;
+  synthetic fixtures and inert inputs, never a working exploit
+  (`reference/fix-verification.md`)
+- **Reproducibility bundles** *(on explicit request)* — generate deterministic
+  synthetic seed data, reproduction and cleanup scripts, a hash-bound manifest,
+  and two-run evidence. The first supported template models SQLite owner
+  scoping locally; it does not execute the assessed application or verify its
+  fix. Unsupported cases receive a manual-adaptation scaffold
+  (`reference/reproduction-bundles.md`)
+- **Verify** — every High and Medium finding is re-read end to end before it is
+  reported; each carries severity and confidence separately
+- **Report** — one `findings.json` supplies the dashboard and assessment, with
+  a shared verification model and explicit evidence limitations
+- **Rescan and hand-off** — compare two runs (new, reopened, persisting, not
+  reported) with an optional CI gate, and export SARIF for code scanning, CSV
+  for trackers and per-finding issue drafts
+
+Ask for "what should we check" and it stops after the checklist. Ask it to
+check or audit and it runs all phases.
+
+## Install
+
+```sh
+make link                 # symlink into every installed host's skills dir
+make link AGENT=claude    # one host only
+make status
+make unlink
+```
+
+Then invoke `security-scan` (or `/security-scan`).
+
+### Try it on the bundled sample
+
+```sh
+make demo                       # Japanese, with PDF, into $TMPDIR/security-scan-demo
+make demo LANG_OUT=en NO_PDF=1  # English, HTML only
+make demo DEMO_INPUT=/path/to/findings.json  # custom data
+```
+
+The default Japanese demo uses `examples/findings.sample.ja.json`, an explicitly
+fictional report with confirmed, uncertain, fixed, accepted and excluded records.
+The English demo uses `examples/findings.sample.json`.
+
+### Avoiding unnecessary interruptions
+
+A request to review your local repository is sufficient to start the static
+review and write its local reports; the skill reuses authorization already
+given in the session. Output and scratch directories are fresh directories in
+host-declared writable locations outside the audited checkout, with physical
+paths resolved for symlinked temp directories. Findings are descriptive JSON
+fragments written through the file-edit tool, not executable demonstrations or
+finding text embedded in shell commands.
+
+Failures are handled by their actual cause: local record-validation errors are
+corrected, necessary sandbox requests use the host's approval mechanism, and
+unavailable optional checks remain visible as limitations while independent
+review work continues. A host safety or approval rejection stops that action;
+it is not retried through another tool or wording. The skill reports the action
+and the stated reason. These instructions reduce avoidable interruptions; they
+do not change host permissions or guarantee that a host will accept every call.
+
+For a concrete execution command, use `scan_run.py` (POSIX, standard library
+only). It creates a private run, gives every child command a deadline, records
+checkpoints, and publishes only successful staged outputs. An interrupted
+process cannot leave its partial report or writer lock in the published output.
+PDF failures preserve HTML with an explicit limitation; online advisory queries
+remain opt-in. See [the execution guide](docs/execution-runner.md) for commands,
+exit codes and recovery. The skill uses this command for its mechanical steps;
+source review and the existing evidence/contract checks remain necessary.
+
+After reviewing and recording findings, `scan_run.py finish <run>` performs
+the remaining report operations without stopping at an incomplete optional
+step: first-time offline inventory, rendering, then the contract check. It
+reports all outcomes together, preserves existing dependency review, and leaves
+failed inventory for an explicit permitted retry. `status <run>` also exposes
+a read-only snapshot while another operation is running. The agent records
+each phase with `phase <run> <PHASE> [--done N --total M]`, and
+`progress <run> --text` shows the phase, percent complete and an estimated
+finish time from the run's own pace.
+
+### Same result on every host
+
+Claude Code, Codex and Antigravity load the same `SKILL.md`, whose *Run
+contract* fixes the choices hosts used to make differently: a fresh output
+directory and no reading of other runs' reports, review units (resource
+domains plus one cross-cutting unit), one finding per root cause, `F-NNN` /
+`D-NNN` IDs, `D-*` only from `deps_scan.py --into`, schema version 2 with source
+evidence from `evidence_capture.py`, one severity table, and a fixed output set.
+`contract_check.py` enforces the mechanical parts before the summary:
+
+```sh
+python3 skills/security-scan/scripts/findings.py merge out/findings.json frag-001.json   # fragments, never heredocs
+python3 skills/security-scan/scripts/evidence_capture.py /path/to/repo --findings out/findings.json src/a.py src/b.py
+python3 skills/security-scan/scripts/deps_scan.py /path/to/repo --audit --out out/deps.json --into out/findings.json
+python3 skills/security-scan/scripts/render.py out/findings.json --out out --repo /path/to/repo
+python3 skills/security-scan/scripts/contract_check.py out      # 0 ok, 1 lists each violation, 2 unreadable input
+```
+
+`render.py` stamps both HTML files with
+`<meta name="security-scan-source" content="sha256:…">`, the digest of the
+`findings.json` bytes it rendered; `contract_check.py` reports a page whose
+stamp does not match the current file as not rendered from it.
+
+The check covers shape and provenance markers, not whether a finding is true;
+hosts can still find different issues, but no longer report them differently.
+After source capture, fragments can also add `test_runs`, `three_pass`,
+`evidence_integrity`, `invariant_ledger` and incremental `expert` records. Profile fields merge one
+level deep; nested lists are replaced explicitly. Assessment pins and workflow
+journals stay owned by their respective capture/workflow commands.
+
+### Expert grade
+
+Ask for an expert, commercial-grade or "no compromise" assessment and the skill
+prices a worker envelope, asks for consent to the ceiling, engines and data
+boundary, then runs every judgment through workers that did not produce what
+they judge: two independent recon maps, three discovery angles per scope cell,
+variant analysis, an omission challenge, independent condition tracing,
+refutation panels, calibrated double severity rating with CWE, cold reads by
+executive / engineer / auditor personas, and a non-participant QA audit
+(`skills/security-scan/reference/expert-mode.md`). Host spawn commands live
+only in `reference/engine-map.md`. The report gains an *Assessment method and
+assurance* section, and the run is labelled expert-grade only when the gate
+passes:
+
+```sh
+python3 skills/security-scan/scripts/expert_audit.py out   # 0 complete; 3 held, degraded or no expert record
+# If fresh evidence integrity is required, check it in the audit process too:
+python3 skills/security-scan/scripts/expert_audit.py out \
+  --evidence-root out --evidence-repository /path/to/repo
+```
+
+The records prove the process was recorded, not that every vulnerability was
+found; the report never states a detection rate.
+
+### Detection benchmark evidence
+
+Maintainers can validate already-recorded, independently adjudicated static
+source-review runs with `make detection-benchmark`. The offline fixture models
+both vulnerable and reviewed benign source locations and emits sealed JSON plus
+a human TP/FP/FN/TN summary with precision, recall, F1, false-positive rate,
+spread across three runs, input/model/condition identity, and recorded cost.
+Unsettled findings stay non-scoring candidates. This is mechanism evidence for
+security-scan only: it does not run a target, call a provider, measure a public
+corpus, or establish ARTEX outcome parity. See `docs/detection-benchmark.md`.
+
+## Outputs
+
+```sh
+python3 skills/security-scan/scripts/render.py findings.json --out ./report --lang ja --repo /path/to/audited/repo
+```
+
+| File | Contents |
+|---|---|
+| `dashboard.html` | Prioritized fix/validate queue, explicit uncertainty and coverage limits, report-wide totals, accessible searchable findings with included/excluded views and deep links. Self-contained, offline, light and dark |
+| `assessment.html` | The assessment document, print-styled for A4 |
+| `assessment.pdf` | Decision-ready first page, fix/validate queue, scope and limits, linked finding register, full evidence, excluded records and page numbers |
+
+Both outputs distinguish potential severity, confidence, recorded validation
+and evidence-derived verification. An open finding is ready to plan a fix only
+when it is `Valid`, `Confirmed` and has sufficient structured verification;
+legacy records or incomplete evidence call for validation first. The queue sorts
+by severity, then readiness to fix, then ID. No risk score or deadline is invented.
+`Fixed` and `Accepted` describe recorded status; the separately derived retest
+state shows whether the required before/after and control records exist.
+
+Unverified, insufficient-verification and excluded counts are explicit. Headline
+totals include `Open`, `Fixed` and `Accepted`, excluding `FalsePositive` and
+`NotApplicable`; the validation distribution includes all records for
+traceability. Filters affect only the finding register, with a visible result
+count and a reset button. Choose Included, Excluded only, or All records, and
+open details with a keyboard or a direct finding link. The dashboard uses
+the bundled report kit's application shell: a sticky app bar, a contents sidebar with
+per-severity counts (pressing one returns to Included and clears the other
+filters and the search, so the register shows exactly the rows counted), pinned
+register filters, and the keys `/` (search), `j`/`k` (next or previous finding)
+and Enter (show or hide details). Missing coverage is unknown, and zero findings
+is never presented as a guarantee of security.
+
+Each finding carries its evidence: code findings embed the lines around
+`path:line` (with `--repo`, best-effort redaction) and link to the
+source when `meta.source_url` is set; library findings link to the advisory,
+the fix commit or pull request on GitHub, and related articles.
+
+Sensitive paths (`.env*`, credential files such as `.pgpass`, `.htpasswd` and
+`.docker/config.json`, Terraform `*.tfstate`/`*.tfvars`, and private keys) and
+files containing private-key blocks do not embed source excerpts; a `Secrets`
+finding keeps its excerpt unless a cited line still holds a secret-like value.
+URL credentials, known token formats (GitHub, GitLab, Slack, AWS, Stripe,
+Google API, OpenAI, Anthropic, npm, Hugging Face, SendGrid, JWTs), Slack,
+Discord and Telegram webhook/bot URLs, `Bearer`/`Basic` Authorization values,
+secret assignments (also subscripts such as `cfg["SECRET_KEY"] = "…"`), literal
+`jwt.sign`/`encode` keys and literal fallback defaults are masked in other
+excerpts, but redaction is heuristic, not a guarantee. With a clean
+`assessment.commit` pin, excerpts come from the `evidence/source/` copy or the
+blob at that commit (else none is shown), never from later working-tree
+edits. Inspect reports before sharing them; without `--repo`, source is not
+embedded. `source_link` and `snippet` are derived fields and cannot be
+injected through input JSON. All report links must be absolute HTTP(S) URLs
+without credentials or controls; token-like query and fragment parameters are
+dropped from displayed reference links, and `meta.source_url` is used
+without its query or fragment. Excerpts are capped at 200 lines and 240
+characters per line; visible notes identify shortened excerpts. Previous
+validation, when available, is labelled as historical and never changes the
+current verdict or counts.
+
+Report typography follows the shared report format
+(see `docs/report-design.md`): a journal-style assessment (numbered
+sections, captioned booktabs tables and listings, one mincho face for both
+scripts) and a dashboard in the same system. The stylesheets and PDF
+engine live in (`report_style.py`, `report_pdf.py`, `report_output.py`) next to `skills/security-scan/scripts/render.py`,
+which are maintained in this repository; edit it in place.
+
+The PDF is printed with headless Chrome/Chromium (`CHROME=/path/to/binary` to
+choose one), falling back to WeasyPrint. With neither available the HTML files
+are still written and the script exits `3`. Exit `2` means `findings.json` does
+not match the schema (the message names the field) or an output could not be
+written. Validation evidence must be
+a string; `Valid`, `FalsePositive` and `NotApplicable` require a nonblank string.
+Null, booleans, numbers, arrays and objects cannot justify an exclusion.
+Required report text (including finding IDs, titles and locations) must be
+nonblank strings; malformed types are rejected before output, rather than
+coerced into text or allowed to cause a traceback. Optional text can be omitted
+or empty. See the schema for object/list fields and the absent source-URL case.
+
+### Filing and reporting findings
+
+`skills/security-scan/templates/` holds Markdown templates whose fields map to
+`findings.json` (`ja` and `en`):
+
+| Template | Use |
+|---|---|
+| `issue.<lang>.md` | One finding as one issue: classification, static reproduction, evidence, fix direction, done-when checklist |
+| `report.<lang>.md` | One report to an owner or security contact: counts, scope, priority findings, dependencies, sound items, limits, decisions |
+
+Do not file an unfixed High or Medium as a public issue on a public repository;
+use a private tracker or a GitHub Security Advisory. Templates carry the same
+rules as the report: no working payloads, no secret values, and no source
+excerpts for readers who cannot already see the repository.
+
+`export.py issues` fills the issue template from the record, one draft per
+open finding plus an `index.md`, and labels each open High or Medium for a
+private tracker:
+
+```sh
+python3 skills/security-scan/scripts/export.py issues out/findings.json --out drafts --lang ja
+```
+
+### Rescan comparison and CI gate
+
+After fixing, a second, independent run shows what changed. `compare.py`
+matches findings by file, weakness class (CWE or perspective), line proximity
+and title (IDs are per run) and groups them as new, reopened, persisting
+(with severity, confidence, verdict or status changes), not reported, and ruled
+out. "Not reported" is deliberately not "fixed": the comparison says whether
+the current run checked that perspective, and a fix is confirmed by a
+regression test or retest record.
+
+```sh
+python3 skills/security-scan/scripts/compare.py before/out after/out --markdown delta.md --json delta.json
+python3 skills/security-scan/scripts/compare.py before/out after/out --fail-on High   # exit 1 on an open new, reopened, escalated or regressed High
+```
+
+### Triage: risk acceptance, ownership and rescans
+
+After the report, record what is decided about each finding. An acceptance
+needs a reason and a review date, a fix needs the change that fixed it, and an
+owner or ticket can be assigned to open work, one finding or many at a time.
+The decision is kept with its history and shown in the dashboard,
+assessment, CSV, SARIF and issue drafts; it never changes the verdict.
+
+```sh
+python3 skills/security-scan/scripts/triage.py set out/findings.json F-003 --status Accepted \
+  --reason "Reachable only from the admin VPN" --review-by 2027-01-31 --owner payments-team
+python3 skills/security-scan/scripts/triage.py set out/findings.json F-001 F-002 --owner alice
+python3 skills/security-scan/scripts/triage.py summary out/findings.json --fail-on-overdue   # owners, overdue and due acceptances
+python3 skills/security-scan/scripts/triage.py carry before/out after/out                    # keep decisions on a rescan
+```
+
+`carry` copies unexpired acceptances and assignments to the matching findings
+of a later run. It does not carry an acceptance whose review date has passed
+or whose severity rose, or a `Fixed` finding that was reported again. An
+acceptance past its review date counts as open in `compare.py --fail-on`, is
+emitted unsuppressed in SARIF, and is marked in the dashboard. See
+`skills/security-scan/reference/triage.md`.
+
+### SARIF and CSV exports
+
+`export.py sarif` writes SARIF 2.1.0 for GitHub code scanning and IDEs: a rule
+per finding, level and `security-severity` from severity, CWE help links,
+suppressions for ruled-out and accepted findings, and a run-independent
+fingerprint so alerts follow findings across rescans. `export.py csv` writes a
+tracker/spreadsheet row per finding with formula-like cells neutralized. Both
+mask secret-looking values like the reports. See
+`skills/security-scan/reference/compare-and-export.md`.
+
+```sh
+python3 skills/security-scan/scripts/export.py sarif out/findings.json --out results.sarif
+python3 skills/security-scan/scripts/export.py csv out/findings.json --out findings.csv --bom
+```
+
+### Optional three-pass assurance
+
+For a recorded **discovery → conditions → independent challenge and decision**
+sequence, add the schema-version-2 `three_pass` profile. It requires an explicit
+perspective/target coverage plan, evidence-backed discovery (including N/A and
+zero-candidate cells), three distinct declared actors, four claim-specific
+negative checks, and independent review covering every claim's evidence at all
+severities. Existing findings and reports without this profile keep their
+existing interpretation.
+
+Use the existing manual workflow handoffs, then run:
+
+```sh
+python3 skills/security-scan/scripts/verification_workflow.py audit findings.json --require-complete
+python3 skills/security-scan/scripts/render.py findings.json --out /tmp/three-pass-report --lang ja
+```
+
+The audit and English/Japanese dashboard, HTML assessment and PDF show per-pass
+counts and remaining gaps. Aggregate completion covers every planned scope cell
+and every current candidate workflow; missing workflows and changed inputs block
+readiness. Zero candidates stays held. Distinct actor names are declarations,
+not authenticated identities, and three passes imply no accuracy percentage,
+security guarantee or complete vulnerability detection. The CLI accepts review
+records and does not call AI providers or execute target tests.
+
+See [the profile and handoff guide](skills/security-scan/reference/three-pass-check.md)
+for the schema, scope-challenge aggregation, safe local workflow and limitations.
+`make benchmark` checks deterministic synthetic acceptance/hold cases; its results
+measure these record-handling rules, not vulnerability detection accuracy.
+
+### Ordered verification handoffs
+
+The optional local workflow splits verification into **conditions → independent
+falsification → evidence-based decision**. Reviewers receive a structured
+handoff and submit their observations; the CLI validates the result and advances
+only the permitted next stage. It records progress and input/output lineage,
+holds unresolved work, and makes an old review stale when its inputs change.
+
+This coordinates submitted review work. It does not launch AI reviewers, require
+an API key, execute evidence commands or run tests against an application.
+Different reviewer labels separate responsibilities but do not authenticate
+people. The existing evidence rules still decide whether a result is sufficient;
+a completed stage or several agreeing reviewers cannot certify it by themselves.
+See `skills/security-scan/reference/verification-workflow.md` for the commands,
+stage contract and resuming interrupted work.
+
+### Generating reproduction scripts and seed data
+
+Only when explicitly requested, a reproduction bundle tied to a finding can be
+generated. The current execution template is a SQLite owner-boundary model with
+synthetic owners and resources. It does not execute the real application, its
+authentication or authorization layer, or a fix commit. The example below uses
+the bundled synthetic data and needs no network.
+
+```sh
+work=$(mktemp -d "${TMPDIR:-/tmp}/security-scan-repro.XXXXXX")
+work=$(cd "$work" && pwd -P)
+python3 skills/security-scan/scripts/reproduction.py generate \
+  examples/findings.workflow.sample.json --finding F-001 \
+  --plan examples/reproduction.plan.sample.json --out "$work/bundle"
+python3 skills/security-scan/scripts/reproduction.py verify \
+  "$work/bundle" --findings examples/findings.workflow.sample.json
+python3 skills/security-scan/scripts/reproduction.py run \
+  "$work/bundle" --findings examples/findings.workflow.sample.json \
+  --out "$work/results"
+```
+
+Give unused paths whose parent directories exist for the bundle and the results.
+Results are written to `results/results.json`, `results/records.json` and
+`results/evidence/`. The bundle contains seed, reproduction, cleanup and
+repeat-run scripts. It initializes from a fixed seed and checks that the
+secure-expectation assertion fails on the pre-fix model and passes on the fixed
+model, and that the control cases (the legitimate owner's access and a
+nonexistent resource) pass. It runs twice with cleanup in between and checks
+that the semantic hashes of the fixtures and observations match.
+
+On success, `results.json` has `status: completed` and `repeatable: true`.
+Generation and integrity verification alone leave it `not_run`; execution errors
+and unsupported cases are never counted as success.
+
+The manifest binds the finding, the assessed revision, the selected evidence
+records, the configuration and the generated code. Re-verification rejects the
+bundle if the original findings change or the generated code is modified.
+Results are stored separately from the findings and never automatically promote
+a finding to `Valid`, `Fixed` or runtime-verified. A recorded target commit or
+evidence hash does not prove that the target code was actually executed.
+
+`verification_workflow.py bundle` generates the same bundle. Applying this to a
+real application needs a separate check of target, authorization and isolation,
+and a test that crosses the real boundary in that application's own test
+harness. See `skills/security-scan/reference/reproduction-bundles.md` for details
+and how unsupported cases are handled.
+
+### Checking evidence files against their hashes and commits
+
+Beyond the recorded hashes, local evidence files can be re-read and checked on
+every run. `evidence.location` is a file path relative to the evidence root, and
+`source_path` is a file path inside an explicitly named local Git repository.
+Source is also checked against the blob at the declared full commit ID. Display
+locations with line numbers, and URLs, are not used as evidence file paths.
+
+```sh
+python3 skills/security-scan/scripts/evidence_integrity.py verify findings.json \
+  --root /path/to/local-evidence --repository /path/to/owned-local-repo \
+  --out /path/to/new-receipt.json
+python3 skills/security-scan/scripts/render.py findings.json \
+  --evidence-root /path/to/local-evidence \
+  --evidence-repository /path/to/owned-local-repo \
+  --out /path/to/new-report --lang ja --no-pdf
+```
+
+The receipt is a separate file from the findings; it never rewrites findings or
+verdicts. Reports, workflows and reproduction bundles re-check against the same
+evidence root and repository when they use it; loading an old receipt alone does
+not make anything verified. Existing data is still treated as declared, and past
+evidence gains no verified credit. Setting `"evidence_integrity": {"required": true}`
+at the top level of a `schema_version: 2` file makes any finding without a fresh
+check fail the structured-verification and retest conditions.
+
+Source can be verified only against a clean commit; dirty source pins are not
+supported. Nothing is fetched over the network, and no Git hooks, target
+application or recorded commands are run. Matching runtime or environment hashes
+do not prove that logged events, the executed code or the environment conditions
+are true, and a source match does not prove that a vulnerability exists. See
+[the safety limits and an example that uses only a new synthetic Git repository](skills/security-scan/reference/evidence-integrity.md).
+The synthetic hashes in the bundled samples cannot verify real files.
+
+### Structured verification records
+
+New evidence-backed assessments use `schema_version: 2`, a pinned `assessment`,
+a shared `evidence` registry, optional `test_runs`, and per-finding `verification`
+and `remediation` records. Only explicit version `2` opts into the new rules.
+Versionless and version-1 files keep their recorded verdicts, exclusions and
+arbitrary old extension fields, including fields named `verification`, `evidence`
+or `remediation`; these are not interpreted as structured proof. Their findings
+remain legacy/insufficient. Findings without structured verification also remain
+legacy inside version-2 files. No old field silently grants fix-ready or
+runtime-confirmed status.
+
+The verifier rejects broken evidence/run references, inconsistent revision pins
+and unsupported definitive claims. It derives the verification basis and retest
+state; a supplied label cannot certify itself. Missing independent High review,
+unknown environment conditions and unresolved evidence remain visible. A skipped,
+blocked, unsupported or errored run never counts as a pass. An incomplete listed
+current-version run can leave static support intact, but prevents a runtime or
+verified-retest label even if another run reproduced the issue. A listed
+real-boundary security test already passing its secure assertion contradicts
+`Valid`; a legitimate failing security assertion contradicts `FalsePositive` or
+`NotApplicable`. Either keeps verification incomplete. `Unverified`, `Likely`
+and `Unlikely` also stay incomplete even with complete evidence fields; recorded
+verdicts are never automatically upgraded. A verified retest requires
+runtime-supported original reproduction.
+
+Structural verification checks declared records; it does not by itself read
+artifacts or verify their hashes. That is the job of the separate opt-in local
+evidence check above, which adds no scanners, network retrieval, credentials or
+application-test execution. Without its required-integrity policy, existing
+record-level behavior remains, with provenance identifying what was declared and
+what was freshly checked. Neither route authenticates reviewers, proves recorded
+execution or establishes that all paths were examined. The separate reproduction
+runner verifies its own generated files and runs only its synthetic local
+template; it never executes application code or stored evidence commands.
+Runtime work against an application still requires explicit permission for
+owned local or throwaway code. Broader asset/coverage inventories remain outside
+this implementation's scope.
+
+The format and exact rules are documented in
+`skills/security-scan/reference/findings-schema.md`. The explicitly synthetic
+`examples/findings.verification.sample.json` demonstrates the version-2 records;
+its invented commits, evidence and run outcomes are not real assessment results.
+Render it with:
+
+```sh
+python3 skills/security-scan/scripts/render.py examples/findings.verification.sample.json --out /tmp/security-scan-verification-demo --no-pdf
+```
+
+### Dependency and supply-chain scan
+
+```sh
+python3 skills/security-scan/scripts/deps_scan.py /path/to/repo                 # static, offline
+python3 skills/security-scan/scripts/deps_scan.py /path/to/repo --audit \
+        --into findings.json                                                    # + advisory databases
+make deps TARGET=/path/to/repo AUDIT=1
+```
+
+`--audit` sends the package list to public advisory databases. Install
+[osv-scanner](https://github.com/google/osv-scanner) for every-ecosystem
+coverage and malicious-package detection. Without it, installed Composer, npm
+and pip-audit tools provide limited fallbacks. Automatic `cargo audit` execution
+is disabled: Cargo lockfiles require OSV coverage, otherwise the audit is
+recorded in `not_run` rather than running Cargo against the target checkout.
+
+npm explicitly includes prod, dev, optional and peer dependencies, even when
+`.npmrc` or the environment omits them, and disables lifecycle scripts.
+The npm fallback requires a single-project lock and neutralizes inherited
+workspace mode; shared workspace or linked package locks require OSV coverage,
+otherwise they are explicitly incomplete. The audit runs on an isolated copy of
+the lock against the public npm registry, with empty user and global npmrc files
+and no inherited `npm_config_*` variables, so a project `.npmrc` cannot redirect
+the advisory request.
+
+Composer runs with `--no-plugins --no-scripts` against a temporary copy of the
+lockfile, an auditor-owned manifest and an empty Composer home. Project/global
+exclusions and `COMPOSER*` environment overrides are not inherited; abandoned
+packages are explicitly reported. Custom repository configuration is not copied,
+and its advisory coverage is recorded as incomplete. The original project files
+are unchanged. See `AUDIT_SAFETY.md` for the boundaries of these fallbacks.
+
+The pip-audit fallback accepts only plain `name==version` requirements, copied
+into a temporary input and audited with `--no-deps --disable-pip`. Includes,
+URLs, options, extras, markers and floating versions are reported as not run
+rather than resolved. No dependency code is intentionally installed or built.
+Use trusted audit-tool installations.
+
+Python lockfiles (`uv.lock`, `poetry.lock`, `Pipfile.lock`, `pdm.lock`) require
+OSV coverage; the scanner never substitutes its own Python environment. Errors
+and malformed results from fallback tools are recorded in `not_run`. Use
+`--audit --strict` to exit `3` when any audit is incomplete (JSON output is still
+written); `--strict` is a completeness check, not a vulnerability severity gate.
+The default remains exit `0` after a completed scan invocation.
+
+Shared lockfiles are associated with explicitly declared Cargo and npm/Yarn
+workspace members, respecting exclusions and nested workspace boundaries.
+Cargo workspace TOML parsing requires Python 3.11+; on Python 3.9/3.10, missing
+parser support is recorded as incomplete. Implicit Cargo path-dependency
+membership, explicit `package.workspace` pointers and pnpm YAML membership are
+not guessed: unresolved ownership is listed in `not_run`.
+
+Workflow interpolation checks distinguish ordinary block-style `steps[*].run`
+scalars from `env` and `with` data. Safe environment-variable handoffs are not
+reported as direct shell interpolation. This is a conservative YAML subset;
+aliased/tagged steps and flow-style structures require manual review and are
+recorded as incomplete when recognized.
+
+On `--into`, prior manual dependency verdicts are kept as `previous_validation`
+only for the same location, package/version, title and advisory IDs. They do not
+silently replace the new triage verdict: revalidate exclusions after every
+scan because source and configuration may have changed.
+
+## Layout
+
+```
+skills/security-scan/
+  SKILL.md                     phases, decisions, rules, outputs
+  reference/recon.md           building the attack-surface map
+  reference/perspectives.md    the review perspectives
+  reference/dependencies.md    dependency, vulnerability and supply-chain review
+  reference/validation.md      verdicts and how each finding is validated
+  reference/verification-workflow.md conditions, falsification and decision handoffs
+  reference/three-pass-check.md optional discovery/conditions/challenge coverage profile
+  reference/evidence-integrity.md local artifact bytes, source commits and safety limits
+  reference/fix-verification.md local regression tests that lock a fix in
+  reference/reproduction-bundles.md deterministic synthetic seed/repro bundles and limits
+  reference/report.md          checklist and findings report formats
+  reference/expert-mode.md     expert-grade multi-agent run card, envelope and calibration anchors
+  reference/engine-map.md      the only place host spawn tools and preflights are named
+  reference/findings-schema.md findings.json and the render command
+  reference/compare-and-export.md rescan comparison, CI gate, SARIF / CSV / issue-draft exports
+  reference/invariants.md      invariant ledger, path trace, close-check, static reproduction
+  reference/coverage-trace.md  ASVS / API Top 10 / CWE Top 25 mapped to perspectives and hunt steps
+  scripts/deps_scan.py         dependency inventory, supply-chain checks, audits (stdlib only)
+  scripts/scan_run.py          private checkpoints, command deadlines and staged publication (POSIX)
+  scripts/findings.py          merges JSON fragments into findings.json; refuses literal attack strings;
+                               renumber restores the F-* severity order
+  scripts/evidence_capture.py  assessed-revision source -> evidence/ and schema-2 records
+  scripts/contract_check.py    run-contract gate shared by every host
+  scripts/expert.py            expert-grade gate derivation (independence, redundancy, panels, calibration)
+  scripts/expert_audit.py      expert-grade gate over records, run files and the rendered report
+  scripts/render.py            findings.json -> dashboard / assessment PDF (stdlib only)
+  scripts/report_schema.py     the findings.json contract: enumerations, validation, parsing
+  scripts/compare.py           two assessments -> new / reopened / persisting / not reported; --fail-on gate
+  scripts/export.py            findings.json -> SARIF 2.1.0, CSV, issue drafts
+  scripts/finding_keys.py      run-independent finding identity (fingerprint, matching keys)
+  scripts/output_files.py      masked, atomic, symlink-refusing writes for derived files
+  scripts/secret_redaction.py  secret detection and masking for excerpts and report text
+  scripts/verification.py      evidence consistency and derived verification/retest states
+  scripts/evidence_integrity.py read-only local evidence verification and separate receipts
+  scripts/verification_workflow.py ordered local review handoffs, progress and lineage
+  scripts/reproduction.py      generate, verify and run isolated synthetic bundles
+  scripts/reproduction_runtime.py trusted standalone seed/repro/cleanup runtime
+  scripts/three_pass.py        three-pass coverage profile checks
+  scripts/invariant_ledger.py  opt-in invariant ledger and static-reproduction checks
+  scripts/url_redaction.py     URL credential, query and fragment redaction for reports
+  scripts/payloads.py          literal attack strings refused by merges and workflow submissions
+  scripts/report_style.py      stylesheets in report_assets/ as inline CSS
+  scripts/report_pdf.py        PDF engine (headless Chrome, else WeasyPrint)
+  scripts/report_output.py     safe writes into a report directory
+  templates/issue.{ja,en}.md     one finding as one issue
+  templates/report.{ja,en}.md    findings report to an owner or security contact
+examples/findings.sample.json  fictional legacy sample for make demo LANG_OUT=en / make check
+examples/findings.sample.ja.json  fictional Japanese legacy sample (default make demo)
+examples/findings.three-pass.sample.json  synthetic three-pass profile example
+examples/findings.workflow.sample.json    fictional verification-workflow starter input
+examples/findings.verification.sample.json  synthetic structured-verification example
+examples/reproduction.plan.sample.json      deterministic SQLite owner-scope demo plan
+```
+
+## Development
+
+```sh
+make test    # offline unit/regression tests; all audit subprocesses are mocked
+make check   # tests plus citations and relative links resolve in every document
+             # (scripts/ci/check_doc_refs.py), references headed, frontmatter
+             # valid, scripts compile, sample renders, deps_scan.py runs on this repo
+```
+
+Requirements: Python 3.9+ (Python 3.11+ for Cargo workspace ownership parsing);
+Chrome/Chromium or WeasyPrint for the PDF; osv-scanner and/or the supported
+ecosystem audit tools for `--audit`.
+
+GitHub CI also requires real Chromium interaction and Japanese/English PDF
+checks with zero skipped tests. See [CI checks and local reproduction](docs/ci.md)
+for the pinned tooling, synthetic artifacts and stricter test command.
+
+### Performance measurements
+
+Run the offline performance fixtures with Python's standard library:
+
+```sh
+python3 scripts/ci/benchmark_performance.py
+# Run the same fixtures against a separate, trusted baseline checkout:
+python3 scripts/ci/benchmark_performance.py --scripts-dir /path/to/baseline/skills/security-scan/scripts
+```
+
+The fixtures scan 600 npm workspace members sharing a root lockfile and attach
+500 finding excerpts from one 10,000-line source file. JSON output includes
+five timed samples, their median, the Python/platform identity and a SHA-256
+digest of each complete result. Compare revisions on the same machine and
+require matching output digests before comparing timings. Fixture creation,
+warmup, input copying and result hashing are excluded from the timed region.
+Use `--repeats`, `--workspaces`, `--findings` and `--source-lines` to adjust the
+workload. These synthetic fixtures make no network requests and do not measure
+advisory services, full report generation or PDF conversion; no machine-dependent
+timing threshold is imposed on CI.

@@ -12,6 +12,7 @@ REPO = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(REPO / "skills" / "data-integrity-scan" / "scripts"))
 import compare  # noqa: E402
 import findings  # noqa: E402
+import render  # noqa: E402
 
 SAMPLE = json.loads((REPO / "examples" / "findings.sample.json").read_text(encoding="utf-8"))
 
@@ -91,6 +92,43 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         fragment = json.loads(carry.read_text(encoding="utf-8"))
         self.assertEqual(fragment, {"findings": [{"id": new["findings"][1]["id"], "status": "Accepted"}]})
+
+    def test_carried_triage_survives_merge_render_and_check(self):
+        old = sample()
+        old["findings"][1]["status"] = "Accepted"
+        accepted = old["findings"][1]["id"]
+        old["decisions"] = old.get("decisions", []) + [
+            f"{accepted}は QA lead が受け入れた: the rounding stays until the Q3 migration",
+            f"{accepted} and F-999 share a cause"]
+        dropped = copy.deepcopy(old)
+        dropped["findings"] = [f for f in dropped["findings"] if f["id"] != old["findings"][0]["id"]]
+        dropped["findings"][0]["status"] = "Open"
+        dropped["decisions"] = [item for item in dropped["decisions"] if accepted not in item]
+        gone = old["findings"][0]["id"]
+        for batch in dropped.get("plan", []):
+            batch["findings"] = [fid for fid in batch["findings"] if fid != gone]
+        dropped["plan"] = [batch for batch in dropped.get("plan", []) if batch["findings"]]
+        for number, batch in enumerate(dropped["plan"], 1):
+            batch["batch"] = number
+        new, mapping = findings.renumber(dropped)
+        later = mapping.get(accepted, accepted)
+        out = self.tmp / "out"
+        out.mkdir()
+        record = out / "findings.json"
+        record.write_text(json.dumps(new, ensure_ascii=False), encoding="utf-8")
+        carry = self.tmp / "carry.json"
+        code, _, err = run(str(self.write("old.json", old)), str(record), "--carry", str(carry),
+                           "--out", str(self.tmp / "cmp.md"))
+        self.assertEqual(code, 0, err)
+        fragment = json.loads(carry.read_text(encoding="utf-8"))
+        self.assertEqual(fragment["findings"], [{"id": later, "status": "Accepted"}])
+        # The item naming F-999, which has no counterpart, is not carried with a stale ID.
+        self.assertEqual(fragment["decisions"],
+                         [f"{later}は QA lead が受け入れた: the rounding stays until the Q3 migration"])
+        with contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()):
+            self.assertEqual(findings.main(["merge", str(record), str(carry)]), 0)
+            self.assertEqual(render.main([str(record), "--out", str(out)]), 0)
+        self.assertEqual(findings.contract_problems(out), [])
 
     def test_the_gate_fails_on_a_new_or_reappeared_finding(self):
         old, new = sample(), sample()

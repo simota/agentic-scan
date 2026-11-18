@@ -29,9 +29,14 @@ it writes FILE (outside the run's output directory, or add it with `check
 `--carry FRAGMENT` writes the triage people already did on the earlier record
 as a fragment for the later one, so an independent re-run does not lose it:
 for each persisting finding still `Open` now, an earlier `Accepted` status
-(unless the severity rose since, which reopens the decision). A finding marked
-`Fixed` that is found again is not carried: it is flagged as reappeared
-instead. Verdicts, severities and every other judgment are never carried. Merge it with `findings.py merge`
+(unless the severity rose since, which reopens the decision), together with
+each earlier `decisions` item that names it, its finding IDs rewritten to the
+later ones, since `check` wants every `Accepted` finding named in `decisions`
+with who decided and why. An item that also names an earlier finding with no
+counterpart now is not carried; the summary says so, and that decision is
+written again by hand. A finding marked `Fixed` that is found again is not
+carried: it is flagged as reappeared instead. Verdicts, severities and every
+other judgment are never carried. Merge it with `findings.py merge`
 before the later record is renumbered again, then render.
 
 `--fail-on SEVERITY` makes the comparison a regression gate: exit 3 when the
@@ -46,14 +51,15 @@ a regression (the outputs are still written).
 import argparse
 import json
 from pathlib import Path
+import re
 import sys
 import unicodedata
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (EXCLUDED, PERSPECTIVES, SEVERITIES, SchemaError,  # noqa: E402
-                      _atomic_write_all, as_locations, cited_conventions, read_json,
-                      safe_output, split_location, validate)
+                      _atomic_write_all, _rewrite_ids, as_locations, cited_conventions,
+                      read_json, safe_output, split_location, validate)
 from markdown_safe import as_text, markdown_code, markdown_inline  # noqa: E402
 from render import revision  # noqa: E402
 
@@ -236,7 +242,7 @@ def compare(old_doc, new_doc):
     """The comparison as plain data; both outputs are written from it."""
     pairs, unpaired_old, unpaired_new = pair_findings(old_doc, new_doc)
     result = {"new": [], "resolved": [], "persisting": [], "now_excluded": [],
-              "now_reported": []}
+              "now_reported": [], "ids": {o["id"]: n["id"] for o, n in pairs}}
     for o, n in pairs:
         if excluded(o) and excluded(n):
             continue
@@ -359,9 +365,29 @@ def as_markdown(result, old_doc, new_doc, lang):
     return "\n".join(lines) + "\n"
 
 
-def carry(result):
+class _Renaming(dict):
+    """An old-to-new ID mapping that records each mentioned ID it cannot rename."""
+
+    def __init__(self, mapping):
+        super().__init__(mapping)
+        self.missing = set()
+
+    def get(self, key, default=None):
+        if key not in self:
+            self.missing.add(key)
+        return super().get(key, default)
+
+
+def carried_decision(item, ids):
+    """The decision with its finding IDs renamed, or None when it names one gone now."""
+    renaming = _Renaming(ids)
+    text = _rewrite_ids(item, renaming)
+    return None if renaming.missing else text
+
+
+def carry(result, old_doc):
     """(fragment, lines): the earlier triage to carry into the later record, and what was done."""
-    updates, lines = [], []
+    updates, decisions, lines = [], [], []
     for o, n, _, _ in result["persisting"]:
         if o.get("status") != "Accepted" or n.get("status", "Open") != "Open":
             continue
@@ -371,7 +397,18 @@ def carry(result):
             continue
         updates.append({"id": n["id"], "status": "Accepted"})
         lines.append(f"carried {o['id']} → {n['id']}: Accepted")
-    return {"findings": updates}, lines
+        # Mentions as check reads them: ASCII boundaries, so "F-003は" names F-003.
+        naming = [item for item in old_doc.get("decisions", [])
+                  if re.search(rf"(?<!\w){o['id']}(?!\w)", item, re.ASCII)]
+        kept = [text for text in (carried_decision(item, result["ids"]) for item in naming) if text]
+        decisions += [text for text in kept if text not in decisions]
+        if not kept:
+            lines.append(f"  no decision carried for {n['id']}: name who accepted it and why in "
+                         "decisions before check")
+    fragment = {"findings": updates}
+    if decisions:
+        fragment["decisions"] = decisions
+    return fragment, lines
 
 
 def regressions(result, threshold):
@@ -433,7 +470,7 @@ def main(argv=None):
     if args.out is not None:
         files[Path(args.out)] = output.encode("utf-8")
     if args.carry is not None:
-        fragment, carried = carry(result)
+        fragment, carried = carry(result, old_doc)
         files[Path(args.carry)] = (json.dumps(fragment, ensure_ascii=False, indent=2)
                                    + "\n").encode("utf-8")
     if files:

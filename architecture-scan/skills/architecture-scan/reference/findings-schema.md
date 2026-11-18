@@ -21,7 +21,7 @@ python3 scripts/findings.py check <out> --repo <checkout> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, works offline; the
-same layout as security-scan's, styled by the bundled `scripts/scan_report_kit/`: open-risk cards, a "start here" queue, coverage
+styled by the report kit bundled under `scripts/scan_report_kit/`: open-risk cards, a "start here" queue, coverage
 and limitations, overview charts and a findings register filterable by record
 set, severity, confidence, perspective, status, verdict and text, with a
 copy-for-LLM button per finding) and `<out>/report.md`. Every value is in the

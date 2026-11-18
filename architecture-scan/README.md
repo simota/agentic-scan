@@ -171,7 +171,7 @@ skills/architecture-scan/
   scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting;
                                carries triage forward and gates regressions
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
-  scripts/scan_report_kit/     shared dashboard stylesheet (from the retired scan-report-kit)
+  scripts/scan_report_kit/     bundled report kit: the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -193,16 +193,11 @@ Requirements: Python 3.9+. No third-party packages. `make check` also needs
 `shasum` or `sha256sum`; pandoc and node are optional (the GFM parser and
 dashboard script syntax tests skip without them).
 
-The format follows the sibling `security-scan` and `performance-scan` skills
-(same phases, run contract, verdicts and report shape), adapted to application
-design.
-
-The dashboard uses the shared *-scan report format,
-[scan-report-kit](https://github.com/simota/scan-report-kit): its stylesheet
+The dashboard uses the report kit bundled under
+`skills/architecture-scan/scripts/scan_report_kit/`: its stylesheet
 (light and dark themes, journal-style typography) comes first, and `render.py`
 adds only the rules for architecture-scan's own records (the findings register,
 coloured severity bars). The page opts into the kit's application shell: a
 sticky app bar, a contents sidebar with per-severity counts that filter the
 register, pinned register filters and head row, and the keys `/` (search),
-`j`/`k` (next or previous finding) and Enter (show or hide details). The copy in `skills/architecture-scan/scripts/scan_report_kit/`
-is maintained in this repository (scan-report-kit is retired); edit it in place.
+`j`/`k` (next or previous finding) and Enter (show or hide details). The kit is maintained in this repository; edit it in place.

@@ -24,19 +24,19 @@ Neighbours, and where their questions go instead. Where a perspective here
 meets one of them (CR1, DU1–DU3, DM2, DM3, DM5, TX1–TX5, FH1–FH3, TS1–TS3,
 OP1–OP3), this skill reports the structural cause once — who owns the rule,
 the state or the failure policy, and why the design lets sites diverge — and
-the defect at a single site goes to the neighbour:
+the defect at a single site goes to the neighbouring review (out of scope here):
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Do the refactoring | `coding-refactor` |
-| Which refactorings pay off, in what order, with what safety net (god classes, clones) | `refactor-scan` |
-| A wrong result on realistic input, including a duplicated rule that already gives one | `logic-scan` |
-| Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | `data-integrity-scan` |
-| Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | `reliability-scan` |
-| An actor who can bypass authorization or tenant scoping | `security-scan` |
-| Which behaviour has no test, and what to assert | `test-gap-scan` |
-| What can be deleted, including a workaround, `TODO` or caveat comment that deleting removes (DU3 keeps a rule only a comment enforces on a core flow, and a workaround that needs a type, test or lint rule in its place) | `prune-scan` |
-| Slow paths and unbounded work | `performance-scan` |
+| Do the refactoring | Carrying out the change is a separate request |
+| Which refactorings pay off, in what order, with what safety net (god classes, clones) | A refactoring review |
+| A wrong result on realistic input, including a duplicated rule that already gives one | A business-logic correctness review |
+| Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | A data-integrity review of the schema and write paths |
+| Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | A reliability review of failure behaviour |
+| An actor who can bypass authorization or tenant scoping | A security review of the application's source |
+| Which behaviour has no test, and what to assert | A test-gap review of the suite |
+| What can be deleted, including a workaround, `TODO` or caveat comment that deleting removes (DU3 keeps a rule only a comment enforces on a core flow, and a workaround that needs a type, test or lint rule in its place) | A review of what can be deleted or simplified |
+| Slow paths and unbounded work | A performance review |
 
 ## Before starting
 
@@ -143,7 +143,7 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard (security-scan layout, scan-report-kit styles): counts, priority queue, filterable findings, before and after architecture diagrams, design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard (styled by the report kit bundled under `scripts/scan_report_kit/`): counts, priority queue, filterable findings, before and after architecture diagrams, design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, before and after architecture diagrams, rules, coverage, sound items, limitations, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the

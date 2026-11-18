@@ -9,7 +9,7 @@ from test_architecture_scan import REPO, complete_doc, findings, make_env, rende
 
 
 def page_style(doc=None):
-    """The stylesheet the rendered dashboard inlines (scan-report-kit's, then this skill's)."""
+    """The stylesheet the rendered dashboard inlines (the bundled report kit's, then this skill's)."""
     html = render.render_html(doc or complete_doc(), "en")
     return re.search(r"<style>(.*?)</style>", html, re.S)[1]
 

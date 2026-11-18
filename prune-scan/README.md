@@ -18,8 +18,7 @@ a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
 rendered with the shared [scan-report-kit](https://github.com/simota/scan-report-kit) format.
-Its layout mirrors the siblings [ux-scan](https://github.com/simota/ux-scan) and
-[brand-scan](https://github.com/simota/brand-scan).
+Its layout mirrors the sibling [ux-scan](https://github.com/simota/ux-scan).
 
 It is read-only and never deletes anything; removal is a later request.
 Access logs the requester supplies are counted per route and public asset, so a
@@ -73,7 +72,7 @@ the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 |---|---|
 | `scripts/inventory.py REPO --out inventory.json [--units units.json]` | Unreferenced symbols, orphan files, unimported / duplicated / platform-replaceable dependencies, env vars read versus declared, feature flags and their values, unreferenced locale keys, assets and CSS classes, routes nothing names, uninvoked scripts and targets, loose files, skipped tests, commented-out code, workaround and caveat comments, dated deprecation markers, unreferenced tables and columns; capped after measuring, with `limits` and `truncated` |
 | `scripts/findings.py units\|merge\|check\|renumber` | Validate the units and findings; merge JSON fragments atomically; renumber findings into severity order |
-| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit |
+| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the bundled report kit |
 | `scripts/compare.py EARLIER LATER [--repo REPO] [--json OUT] [--fragment OUT]` | Follow-up review: match findings across two reviews by what they name (ids are renumbered every time) into resolved, accepted, ruled out, persisting with changes, missing, new and reopened; inventory candidates that appeared or are gone; whether missing findings' files still exist; a merge fragment that carries them as `Fixed` |
 | `scripts/usage.py INVENTORY LOG... [--findings F] [--mount PREFIX]... [--json OUT]` | Usage evidence: requests per route in `routes` and per public asset in `assets_unreferenced`, from Common/Combined Log Format, load balancer lines or JSON lines (`.gz` too); status classes, first and last request, an evidence line naming source, window and query; each open finding tied to its routes with a reading; unmatched path shapes, masked. No client address, agent or query string is output |
 | `scripts/plan.py FINDINGS [--unit UNIT]... [--out PLAN.md] [--json OUT]` | Removal plan from the settled record: checkbox steps (remove now, then reduce or consolidate) ordered by severity and by the ordering prose in each finding's risk ("after P-010"), steps waiting for an undecided or kept prerequisite, the decisions with their questions, files several steps share, and what to run after the removals |
@@ -96,10 +95,8 @@ Python 3.10, 3.12 and 3.14, and on macOS with Python 3.14. The Linux/Python 3.12
 job also renders and verifies both the English and Japanese sample PDFs with
 Chrome. These checks run for every pull request and every push to `main`.
 
-`skills/prune-scan/scripts/scan_report_kit/` is a vendored copy of
-scan-report-kit; `make check` verifies it against its MANIFEST. Change it
-upstream and re-vendor (`make vendor DEST=<this repo>/skills/prune-scan/scripts`
-in scan-report-kit), never in place.
+`skills/prune-scan/scripts/scan_report_kit/` started as a copy of scan-report-kit and
+is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 `examples/larder/` is a fictional app with deliberate unneeded, over-built and
 out-of-purpose elements; the sample units and findings in `examples/` describe

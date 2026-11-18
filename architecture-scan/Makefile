@@ -185,7 +185,7 @@ check: test ## verify the skill is self-contained and internally consistent
 	[ "$$d" -le 400 ] || { echo "MISS description is $$d chars; listings truncate well before that" >&2; fail=1; }; \
 	if grep -nE '`[^`]*\.\./' $(DOCS) >&2; then \
 	  echo "MISS a cited path reaches through a parent directory" >&2; fail=1; fi; \
-	for p in $(QSKILL)/scripts/*.py $(QSKILL)/scripts/scan_report_kit/*.py; do \
+	for p in $(QSKILL)/scripts/*.py; do \
 	  [ -e "$$p" ] || continue; \
 	  $(PYTHON) -W error -c 'import ast,pathlib,sys; ast.parse(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"), sys.argv[1])' "$$p" \
 	    || { echo "MISS $$p does not parse cleanly (syntax or warning)" >&2; fail=1; }; \

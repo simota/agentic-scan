@@ -28,7 +28,7 @@ sys.dont_write_bytecode = True  # leave no __pycache__ beside the skill
 from findings import (AXES, CONFIDENCES, DIAGRAMS, EXCLUDED, PERSPECTIVES, RULE_LIST, SEVERITIES,  # noqa: E402
                       STATUSES, VERDICTS, SchemaError, atomic_write_all, as_locations, read_json,
                       safe_output, validate, visible)
-from scan_report_kit import style as kit_style  # noqa: E402
+import report_style  # noqa: E402
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -772,7 +772,7 @@ DASH = {
 }
 
 # Rules for architecture-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css).
+# stylesheet (report_assets/dashboard.css).
 DASHBOARD_CSS = """
 .action-label,.reg-head,.reg-meta,.detail dt,.small,.toggle-label{font-family:var(--sans)}
 .action-label{font-size:12px;font-weight:700;color:var(--accent)}
@@ -861,7 +861,7 @@ table.rules td,table.coverage-table td{overflow-wrap:anywhere}
 .arch-text li,.arch-changes li{overflow-wrap:anywhere}
 @media print{.arch-scroll{overflow:visible;border:0}.arch-svg{max-width:100%;height:auto}.arch-figure{break-inside:avoid}.filters-panel,.copy-finding,.toggle-label{display:none!important}.priority-item{break-inside:avoid}.finding{display:block!important}}
 """
-CSS = kit_style.dashboard_css() + DASHBOARD_CSS
+CSS = report_style.dashboard_css() + DASHBOARD_CSS
 
 JS = """
 (function(){

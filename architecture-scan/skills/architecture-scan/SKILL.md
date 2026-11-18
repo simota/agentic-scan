@@ -143,7 +143,7 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | First line status and counts, findings by severity, decisions for a human |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard (styled by the report kit bundled under `scripts/scan_report_kit/`): counts, priority queue, filterable findings, before and after architecture diagrams, design rules, perspective coverage |
+| `dashboard.html` | Self-contained dashboard (styled by `scripts/report_assets/dashboard.css`): counts, priority queue, filterable findings, before and after architecture diagrams, design rules, perspective coverage |
 | `report.md` | The written assessment: scope, findings, before and after architecture diagrams, rules, coverage, sound items, limitations, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the

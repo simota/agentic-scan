@@ -144,15 +144,14 @@ python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/finding
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |
 | `docs/report-design.md` | How the report uses the shared *-scan report format |
 
-The report and dashboard use the shared *-scan report format from the vendored
-scan-report-kit (see `docs/report-design.md`): a journal-style report (numbered sections, captioned booktabs tables and
+The report and dashboard use the shared *-scan report format from the bundled
+report kit (see `docs/report-design.md`): a journal-style report (numbered sections, captioned booktabs tables and
 listings, one mincho face for both scripts) and a dashboard in the same system.
-Change the kit upstream and re-vendor, never in place (`make check` verifies the
-copy against its `MANIFEST`).
+The copy is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 ## Development
 
 ```sh
 make test    # offline unit tests
-make check   # tests + consistency of SKILL.md, references, samples and the vendored kit
+make check   # tests + consistency of SKILL.md, references, and samples
 ```

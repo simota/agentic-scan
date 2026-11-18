@@ -1,0 +1,294 @@
+"""Regressions for digit separators, technical numbers and exempt identifiers."""
+import unittest
+
+from test_privacy_scan import complete_doc, finding, findings
+
+
+def refused(text):
+    try:
+        findings._no_personal_values(text, "field")
+    except findings.SchemaError:
+        return True
+    return False
+
+
+class NumberGuardTests(unittest.TestCase):
+    def test_unicode_dashes_separate_digits_like_hyphens(self):
+        for dash in ("‐", "‑", "‒", "–", "—", "―",
+                     "−", "ー", "ｰ"):
+            with self.subTest(dash=ascii(dash)):
+                self.assertTrue(refused(dash.join(["4111", "1111", "1111", "1111"])))
+                self.assertTrue(refused(f"My Number 1234{dash}5678{dash}9012"))
+
+    def test_card_groups_with_other_separators_are_refused(self):
+        for value in ("4111.1111.1111.1111", "4111/1111/1111/1111", "4111_1111_1111_1111",
+                      "4111+1111+1111+1111", "3782.822463.10005", "card 4111.1111.1111.11"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+    def test_three_groups_of_four_digits_remain_allowed(self):
+        # Date-partitioned paths, port and year lists share the 4-4-4 shape.
+        for value in ("logs/2026/1016/0930.log", "dump_2026_1016_1230.sql",
+                      "listens on 8080/8443/9443", "FY2023/2024/2025", "sizes 1024+2048+4096",
+                      "2026.10.16", "123.4567.8901", "10.0.0.1:5432"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_technical_numbers_remain_allowed(self):
+        for value in ("2026-10-01-2026-10-09", "2026-10-01 - 2026-10-09",
+                      "123e4567-e89b-12d3-a456-426614174000",
+                      "00000000-0000-0000-0000-000000000000",
+                      "192.168.100.200", "10.0.0.1/24", "1.2.3.4567", "2026.10.09",
+                      "2026-10-09T15:33:53Z", "api/app.py:1000-2000"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_masking_does_not_hide_an_adjacent_number(self):
+        for value in ("2026-10-09 4111 1111 1111 1111", "2026-10-09-4111-1111-1111",
+                      "123e4567-e89b-12d3-a456-426614174000 090 1234 5678 90"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+    def test_malformed_urls_are_also_form_decoded(self):
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [
+            {"url": "https://a℀b.example.com/?q=4111+1111+1111+1111"}]
+        with self.assertRaises(findings.SchemaError):
+            findings.validate(doc)
+
+
+class RunOnExampleDomainTests(unittest.TestCase):
+    """Japanese prose writes no space after an address."""
+
+    def test_reserved_examples_followed_by_japanese_text_are_allowed(self):
+        for value in ("通知はuser@example.comに送られる", "宛先はuser@shop.testです",
+                      "user@ｅｘａｍｐｌｅ．ｃｏｍに送る"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_other_domains_followed_by_japanese_text_are_refused(self):
+        for value in ("通知はuser@gmail.comに送られる", "user@example.com.evil.jpに",
+                      "user@example.co.jpに", "user@example.comん.jp", "user@example.comx",
+                      "user@example.comに送る。次はtaro@gmail.comへ", "user@例え.テスト",
+                      # Only the last label is cut, so IDN suffixes keep the domain whole.
+                      "user@example.comé.рф", "user@example.comん.みんな",
+                      # A sentence break in the run-on text also keeps it whole.
+                      "user@example.comに送る。次はtaro@example.orgへ"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+
+class ExemptIdentifierTests(unittest.TestCase):
+    def test_long_line_numbers_and_ledger_ids_are_not_exempt(self):
+        for location in ("src/a.py:4111111111111111", "src/a.py:1-4111111111111111"):
+            with self.subTest(location=location), self.assertRaises(findings.SchemaError):
+                findings.validate({"findings": [finding(location=location)]})
+        with self.assertRaises(findings.SchemaError):
+            findings.validate({"findings": [finding(commitment="C-4111111111111111")]})
+        doc = complete_doc()
+        doc["commitments"][0]["id"] = "C-090123456789"
+        with self.assertRaises(findings.SchemaError):
+            findings.validate(doc)
+        findings.validate({"findings": [finding(location="src/a.py:123456789-123456789",
+                                                commitment="C-123456")]})
+
+    def test_duplicate_perspectives_in_the_record_are_not_blamed_on_the_fragment(self):
+        doc = complete_doc()
+        doc["perspectives"].append(dict(doc["perspectives"][0]))
+        with self.assertRaises(findings.SchemaError) as raised:
+            findings.merge(doc, {"perspectives": []}, "frag.json")
+        self.assertTrue(str(raised.exception).startswith("perspectives["), str(raised.exception))
+
+
+if __name__ == "__main__":
+    unittest.main()
+
+
+class EncodedValueTests(unittest.TestCase):
+    def test_encoded_and_invisibly_split_values_are_refused(self):
+        for value in ("GET /api?email=alice%40corp.com", "alice&#64;corp.com", "alice&#x40;corp.com",
+                      "alice&commat;corp.com", "alice%2540corp.com",
+                      "alice@corp​.com", "alice@​corp.com", "alice@corp⁠.com",
+                      "alice@corp­.com", "4111​1111​1111​1111",
+                      "4111%201111%201111%201111"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+        doc = complete_doc()
+        doc["findings"][0]["references"] = [
+            {"url": "https://x.test/?e=alice%2540corp.com"}]
+        with self.assertRaises(findings.SchemaError):
+            findings.validate(doc)
+
+    def test_encoded_placeholders_and_plain_percentages_remain_allowed(self):
+        for value in ("user%40example.com", "100% of requests & 50% of jobs",
+                      "a &amp; b", "&lt;email&gt;", "%ZZ not encoding"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_hex_digests_are_not_digit_runs(self):
+        for value in ("commit 0a1b2c3d4e5f678901234567890abcdef1234567",
+                      "sha256 1234567890123a" + "0" * 50,
+                      "pod-123e4567-e89b-12d3-a456-426614174000",
+                      "123e4567e89b12d3a456426614174000"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+        # Without a hex letter or next to a dash-joined digit, the digits still count.
+        for value in ("0" * 40, "41111111111-123e4567-e89b-12d3-a456-426614174000",
+                      "123e4567-e89b-12d3-a456-426614174000-0"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+
+class DateMaskTests(unittest.TestCase):
+    def test_dates_cannot_split_a_longer_number(self):
+        for value in ("4111-2026-01-01-1111", "1234-5678-2026-01-01", "1234-2026-01-01-5678-9012"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+        for value in ("2026-10-01-2026-10-09", "2026-10-01-2026-10-09-2026-10-12",
+                      "from 2026-10-01 to 2026-10-09"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+
+class FinalReviewTests(unittest.TestCase):
+    def test_a_date_followed_by_a_time_of_day_is_allowed(self):
+        self.assertFalse(refused("backup-2024-01-01-120000.sql"))
+        self.assertTrue(refused("4111-2026-01-01-111111-2222"))
+        self.assertTrue(refused("2026-01-01-111111-2222"))
+
+    def test_excluded_findings_also_need_a_valid_step(self):
+        doc = complete_doc()
+        doc["findings"][1]["validation"] = {"verdict": "FalsePositive", "method": "static",
+                                            "evidence": "scrubber at app.py:30"}
+        doc["findings"][1]["step"] = "ZZ9"
+        self.assertTrue(any(p.startswith("PV-002.step") for p in findings.record_problems(doc)))
+
+
+class SeparatorAdjacencyTests(unittest.TestCase):
+    def test_dates_and_uuids_next_to_digits_across_any_separator_are_not_masked(self):
+        for value in ("4111 2026-01-01 1111", "4111–2026-01-01–1111",
+                      "4111\t2026-01-01\t1111", "4111 2026-01-01", "2026-01-01 1111 2222",
+                      "1234 5678 12345678-1234-1234-1234-123456789012"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+
+    def test_ranges_times_and_isolated_values_stay_masked(self):
+        for value in ("2026-10-01 - 2026-10-09", "2026-10-01 – 2026-10-09",
+                      "backup 2024-01-01 120000.sql", "run 123e4567-e89b-12d3-a456-426614174000 ok",
+                      "on 2026-10-09, 1234 accounts"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))
+
+
+class DigitRunTests(unittest.TestCase):
+    def test_chained_dates_cannot_hide_extra_digits(self):
+        for value in ("123 2026-01-01 2026-02-02", "2026-01-01 2026-02-02 123",
+                      "2026-01-01 123 2026-02-02", "2026-01-01-120000-1234",
+                      "12 2026-01-01-120000"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+    def test_runs_made_only_of_dates_and_times_stay_masked(self):
+        for value in ("2026-01-01 2026-02-02 2026-03-03", "2026-01-01-120000-2026-01-02-235959",
+                      "from 2026-01-01T10:00 to 2026-01-02"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_a_time_counts_only_after_a_date(self):
+        self.assertTrue(refused("120000-2026-01-01"))
+
+    def test_hex_digests_between_digit_groups_are_not_masked(self):
+        digest = "0a1b2c3d4e5f678901234567890abcdef1234567"
+        # Masked, this digest would hide the twelfth digit of the number beside it.
+        edge = "9" + "ab" * 20
+        self.assertTrue(refused(f"41111111111 {edge}"))
+        for value in (f"commit {digest} merged", f"sha256 {digest}", f"{digest} utf8"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+
+class FuzzFindingTests(unittest.TestCase):
+    """Cases found by property-based fuzzing of the guard."""
+
+    def test_tokens_between_digit_groups_keep_their_edge_digits(self):
+        for value in ("123456 12345678-1234-1234-1234-123456789012 123456",
+                      "ref 1 12345678-1234-1234-1234-123456789012",
+                      "\u0660 12345678-1234-1234-1234-123456789012",
+                      "\u06670312011856311a87011a4a1459184610"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+        # Digits attached to a word are part of the word, as in `sha256 <digest>`.
+        for value in ("sha256 1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef",
+                      "sha1 12345678901bcdef12345678901bcdef12345678",
+                      "utf8 12345678-1234-1234-1234-1234567890ab"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+
+    def test_long_uuid_chains_are_linear(self):
+        import time
+        chain = " ".join(["12345678-1234-1234-1234-123456789012"] * 6000)
+        started = time.perf_counter()
+        refused(chain)
+        self.assertLess(time.perf_counter() - started, 5)
+
+    def test_clock_times_in_date_ranges_are_allowed(self):
+        for value in ("Times 2024-03-15 10:22:33 \u2013 2024-03-15 11:22:33",
+                      "between 2024-03-15 10:22 and 2024-03-16 09:05",
+                      "2024-03-15 10:22:33 - 2024-03-15 11:22:33"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))
+        # Free digits beside a clock time still count.
+        self.assertTrue(refused("4111 1111 1111 2024-03-15 10:22"))
+
+    def test_package_versions_are_not_e_mail_addresses(self):
+        for value in ("react@18.2.0", "lodash@4.17.21", "@types/node@20.11.0",
+                      "sdk@1.2.3-beta", "next@14.0.0-canary.12", "tool@2.0.0+build.5"):
+            with self.subTest(value=value):
+                self.assertFalse(refused(value))
+        for value in ("user@192.0.2.1", "user@corp.co.jp", "user@[192.0.2.1]",
+                      "taro@beta.example-corp.com", "user@1.2.3-corp.io"):
+            with self.subTest(value=value):
+                self.assertTrue(refused(value))
+
+
+class TechnicalNeighbourTests(unittest.TestCase):
+    """Dates, UUIDs and digests stay exempt next to each other."""
+
+    UUID = "550e8400-e29b-41d4-a716-446655440000"
+    DIGEST = "0a1b2c3d4e5f678901234567890abcdef1234567"
+
+    def test_adjacent_technical_values_are_allowed(self):
+        uuid, digest = self.UUID, self.DIGEST
+        for value in (f"{uuid} 2026-10-09", f"{uuid} – 2026-10-09",
+                      f"2026-10-09 {uuid}", f"{uuid} {uuid}", f"{uuid}, {uuid}",
+                      f"{digest} 2026-10-09", f"2026-10-09 {digest}", f"{digest} {uuid}",
+                      f"request {uuid} 2026-10-09 10:22:33 - 2026-10-09 11:22:33"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))
+
+    def test_free_numbers_beside_technical_values_still_count(self):
+        uuid, digest = self.UUID, self.DIGEST
+        for value in (f"{uuid} 1234 2026-10-09", f"{uuid} 2026-10-09 1234",
+                      f"2026-10-09 1234 {uuid}", f"{digest} 4111 1111 1111",
+                      f"{uuid} {uuid} 1", f"090123456 {uuid} 2026-10-09"):
+            with self.subTest(value=ascii(value)):
+                self.assertTrue(refused(value))
+
+
+class InvisibleSplitTests(unittest.TestCase):
+    def test_default_ignorable_characters_cannot_split_a_number(self):
+        # Combining grapheme joiner, Khmer inherent vowels, Mongolian variation
+        # selectors, variation selectors (also the supplement) and Hangul fillers
+        # display as nothing but are not format (Cf) characters.
+        for split in ("͏", "឴", "឵", "᠋", "᠏", "︀", "️",
+                      "\U000e0100", "ᅟ", "ᅠ", "ㅤ", "ﾠ", "￰"):
+            with self.subTest(split=ascii(split)):
+                self.assertTrue(refused(f"account 123456{split}789012"))
+                self.assertTrue(refused(f"taro{split}@gmail.com"))
+                self.assertTrue(refused(f"taro@gmail{split}.com"))
+
+    def test_visible_marks_and_hangul_text_are_unchanged(self):
+        for value in ("한국어 2026-10-09", "café ガ 123456",
+                      "❤️ 12345 67890"):
+            with self.subTest(value=ascii(value)):
+                self.assertFalse(refused(value))

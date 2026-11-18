@@ -1,0 +1,78 @@
+<!--
+Files one finding as one issue (one root cause = one fix location = one issue).
+Copy each {{field}} from the field of the same name in findings.json, verbatim and in the record's
+language. Delete optional rows, lines and sections left empty (no conditions, no references); without a step, drop
+` — {{step}}` and keep the Perspective row.
+`location` may be a list: write each entry as its own code span, comma-separated; the first is the fix location.
+A blank meta.commit is written UNKNOWN, as in report.md. Mark an inferred commitment's statement (inferred).
+{{open_questions[]}}: the finding's conditions, then the decisions and limitations lines that name its ID.
+`scripts/drafts.py` fills this template from findings.json by these rules; review the draft before filing.
+
+Before filing:
+- No personal data values: name fields and use placeholders (<customer email>)
+- An unfixed (status: Open or Accepted) High goes to a private tracker, not a public issue
+- This is a technical finding, not a legal opinion. Route compliance questions to counsel or the DPO
+-->
+
+**Title:** [{{severity}}] {{title}} ({{id}})
+
+## Summary
+
+| Item | Value |
+|---|---|
+| ID | {{id}} |
+| Severity | {{severity}} |
+| Confidence | {{confidence}} |
+| Conditions | {{conditions}} |
+| Verdict | {{validation.verdict}} (method: {{validation.method}}) |
+| Perspective | {{category}} — {{step}} |
+| Location | `{{location}}` |
+| Assessed revision | {{meta.commit}} |
+| Date / assessor | {{meta.date}} / {{meta.assessor}} |
+
+## What happens
+
+{{impact}}
+
+- **Personal data:** {{data}}
+- **Data subjects:** {{subjects}}
+- **Broken commitment:** {{commitment}} — {{commitments[id].statement}} (source: {{commitments[id].source}})
+
+## Flow
+
+{{flow}}
+
+**Contrast (the flow that keeps the commitment):** {{contrast}}
+
+<!-- List every affected call site; the same root cause stays in one issue. -->
+
+## Evidence
+
+{{validation.evidence}}
+
+## Fix direction
+
+{{fix}}
+
+- **Guard (synthetic data only):** {{guard}}
+
+## References
+
+- [{{references[].title}}]({{references[].url}})
+
+## Open questions
+
+<!-- Add what else is open: vendor-side settings, contracts and DPAs, data actually present, deployed regions. -->
+- {{open_questions[]}}
+
+## Done when
+
+- [ ] The fix is merged
+- [ ] The guard fails before the fix and passes after it, with synthetic data
+- [ ] The affected feature still works (positive control)
+- [ ] Data already sent or retained before the fix has an owner and a decision (purge, notify, accept)
+- [ ] `status` in findings.json is `Fixed`
+
+---
+
+_Technical finding from a static source review, not a legal opinion._

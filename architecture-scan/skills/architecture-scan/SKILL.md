@@ -33,7 +33,6 @@ the defect at a single site goes to the neighbouring review (out of scope here):
 | Question | Where it goes |
 |---|---|
 | Do the refactoring | Carrying out the change is a separate request |
-| Which refactorings pay off, in what order, with what safety net (god classes, clones) | A refactoring review |
 | A wrong result on realistic input, including a duplicated rule that already gives one | A business-logic correctness review |
 | Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | A data-integrity review of the schema and write paths |
 | An actor who can bypass authorization or tenant scoping | A security review of the application's source |

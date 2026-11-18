@@ -1,7 +1,7 @@
 """The app shell of the pages render.py writes beside the dashboard.
 
-evidence.html and mockups.html share the dashboard's look (scan-report-kit's
-dashboard CSS), its app bar and its theme toggle, and the dashboard links to
+evidence.html and mockups.html share the dashboard's look (the bundled report
+kit's dashboard CSS), its app bar and its theme toggle, and the dashboard links to
 each of them from its app bar. One shell keeps those pages and links alike.
 Standard library only.
 """

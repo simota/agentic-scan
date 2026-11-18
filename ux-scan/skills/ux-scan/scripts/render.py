@@ -3,7 +3,7 @@
 
     python3 render.py FINDINGS --out DIR [--lang ja|en] [--repo REPO] [--no-pdf]
 
-Maps the record into scan-report-kit's common format (scan-report/1) and writes
+Maps the record into the bundled report kit's common format (scan-report/1) and writes
 DIR/dashboard.html, DIR/report.html and DIR/report.pdf (headless Chrome, else
 WeasyPrint; CHROME picks the binary, UX_SCAN_PDF_TIMEOUT the seconds), plus
 DIR/mockups.html when a Valid or Likely finding carries a before/after mockup, and

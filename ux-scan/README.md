@@ -6,12 +6,11 @@ hierarchy, components, interaction states, forms, feedback, microcopy,
 accessibility, motion, internationalized layout and perceived performance —
 and reports every place the interface gets in the way of a user's task.
 
-Built on the method of [security-scan](https://github.com/simota/security-scan):
+Its method:
 a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
-rendered with the shared [scan-report-kit](https://github.com/simota/scan-report-kit) format.
-Its layout mirrors the sibling [prune-scan](https://github.com/simota/prune-scan).
+rendered with the report kit bundled under `skills/ux-scan/scripts/scan_report_kit/`.
 
 It is read-only and judges against a stated criterion, not taste: "the cards
 feel cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing
@@ -124,8 +123,8 @@ Concurrent renders to one output directory are refused. The renderer keeps a
 that start and finish during verification. Keep it with the report outputs;
 recovery and compatibility details are in `skills/ux-scan/reference/report.md`.
 
-`skills/ux-scan/scripts/scan_report_kit/` started as a copy of scan-report-kit and
-is maintained in this repository (scan-report-kit is retired); edit it in place.
+`skills/ux-scan/scripts/scan_report_kit/` is the bundled report kit and
+is maintained in this repository; edit it in place.
 
 `examples/tasklane/` is a fictional app with deliberate UX defects; the sample
 flows and findings in `examples/` describe it and are not a review of any real product.

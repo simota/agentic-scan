@@ -20,23 +20,23 @@ It does not redesign screens or change code. Fixing is a separate, later
 request. A finding a user can see on screen carries a before/after mockup of
 its fix in three tiers, 松竹梅 (`reference/mockups.md`): an illustration kept in the record, not a redesign. It judges against a stated criterion, not taste: "the cards feel
 cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing scale
-is 4/8/12/16" is. Speed and bundle size belong to performance-scan and
-vulnerabilities to security-scan. No scan in this set reviews brand voice,
-palette canon or naming: name them in `limitations`.
+is 4/8/12/16" is. Speed and bundle size belong to a performance review and
+vulnerabilities to a security review, both out of scope here. Brand voice,
+palette canon and naming are not reviewed here: name them in `limitations`.
 
 Phases: `RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
-Neighbours, and where their questions go instead:
+Questions out of scope here, and the work they belong to instead:
 
-| Question | Skill |
+| Question | Belongs to |
 |---|---|
-| Redesign the screens or write the fix | `ui-deslop`, `coding-implement` |
-| Slow pages, bundle size, layout work at scale | `performance-scan` |
-| Vulnerabilities, including what a hidden control still lets an actor do | `security-scan` |
-| A wrong value on screen (rounding, dates, totals) — the computation, not its display | `logic-scan` |
-| Consent and privacy choices: what is collected and whether the choice is honoured | `privacy-scan` |
-| Features that build on the brand canon; brand-aligned proposals | `brand-feature-scan` |
-| Screens, routes or components nothing reaches | `prune-scan` |
+| Redesign the screens or write the fix | A redesign or implementation task |
+| Slow pages, bundle size, layout work at scale | A performance review |
+| Vulnerabilities, including what a hidden control still lets an actor do | A security review of the application's source |
+| A wrong value on screen (rounding, dates, totals) — the computation, not its display | A business-logic review |
+| Consent and privacy choices: what is collected and whether the choice is honoured | A privacy review |
+| Features that build on the brand canon; brand-aligned proposals | A brand review |
+| Screens, routes or components nothing reaches | A dead-code and removal review |
 
 ## Before starting
 
@@ -124,7 +124,7 @@ the confidence table in `reference/validation.md` (`LABELS` in
 | `findings.json` | The single source every other output is rendered from |
 | `flows.json` | The flows, screens, token scales, viewports and locales the review judged against |
 | `inventory.json` | `inventory.py` candidates (routes, scales, widths, states, inputs, images, focus, motion, truncation, locales) |
-| `dashboard.html` | Interactive, self-contained dashboard (scan-report-kit) |
+| `dashboard.html` | Interactive, self-contained dashboard (the bundled report kit) |
 | `report.html` / `report.pdf` | The formal report: summary, priority, coverage, register, findings, each with its screenshots and log excerpts, before and after side by side |
 | `evidence/` / `evidence.html` | The cited screenshots, videos and logs, and a page showing them per finding, before and after, videos playable (`reference/evidence.md`) |
 | `mockups.html` | Before/after mockups, side by side or under a slider, per viewport, with pickers when a mockup has tiers (松竹梅), alternative proposals or states and an all-proposals view; for every visible `Valid` or `Likely` finding (`reference/mockups.md`) |
@@ -167,4 +167,4 @@ Skip the files when only a checklist was asked for.
 | The requester asks to file the findings: issues, code scanning, a spreadsheet | After REPORT, `scripts/export.py markdown\|sarif\|csv <out>/findings.json --out <file>` into scratch or the path they name; uploading or filing is theirs to do, or yours only when they ask (`reference/follow-up.md`) |
 | The requester asks to compare with an earlier review, re-check after fixes, or gate a release | Review independently to the end, then `scripts/compare.py <earlier>/findings.json <out>/findings.json --out <file>` (`--fail-on <severity>` for a gate); lead the chat summary with regressions, confirm `resolved` findings before calling them fixed, and record the comparison in the record: `--carry-forward <scratch>/carry.json` drafts the fragment that carries earlier acceptances forward and names regressions in `decisions`; read it, then merge it (`reference/follow-up.md`) |
 | Request is "redesign it" or "make it look better" | Out of scope: report the findings and leave the redesign to a later request |
-| Request is about brand voice, palette or naming | No scan in this set reviews it; record only UI clarity (CP) here and name the rest in `limitations` |
+| Request is about brand voice, palette or naming | Not reviewed here; record only UI clarity (CP) here and name the rest in `limitations` |

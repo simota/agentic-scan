@@ -153,6 +153,14 @@ outbound API clients and where they are wrapped, webhooks. For each place where
 a database write and a message or external call happen in one flow, record
 the order and what happens if the second step fails.
 
+For each outbound client and consumer, also record its timeout, retry and
+breaker settings (or the library default when none is set), the pool or
+concurrency limit it shares, and its dead-letter queue. For each process type,
+record its SIGTERM handling and grace period, its liveness and readiness
+probes, and its error reporter. Note where alert rules, SLOs, runbooks, the
+deploy pipeline and its rollback step live in the repository, or that they do
+not. These feed FH3–FH7 and OP2–OP7.
+
 ## 7. Conventions
 
 How the codebase handles, and whether it handles consistently:

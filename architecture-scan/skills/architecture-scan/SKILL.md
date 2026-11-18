@@ -1,6 +1,6 @@
 ---
 name: architecture-scan
-description: "Read-only architecture review of your own app: maps modules, dependencies, data ownership and hotspots, then checks layering, boundaries, coupling, cohesion, consistency, failure handling, contracts, config, testability and operability. Outputs a dashboard and a report. Use for design audits, dependency cycles or structural risks. Not for security, performance or refactoring."
+description: "Read-only architecture review of your own app: maps modules, dependencies, data ownership and hotspots, then checks layering, boundaries, coupling, cohesion, consistency, failure handling (timeouts, retries), contracts, config, testability and operability (shutdown, probes). Outputs a dashboard and a report. Use for design and reliability audits. Not for security, performance or refactoring."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---
 
@@ -18,11 +18,15 @@ It does not refactor code and does not judge taste. A structure that differs
 from a textbook but causes no defect and no change cost is not a finding.
 Refactoring is a separate, later request.
 
+Failure behaviour is in scope down to the single call site: a missing timeout,
+a retry storm, a poison message, an unsafe shutdown, a lying health check, an
+alert nobody can act on, a release with no way back (FH3–FH7, OP2–OP7).
+
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. Where a perspective here
-meets one of them (CR1, DU1–DU3, DM2, DM3, DM5, TX1–TX5, FH1–FH3, TS1–TS3,
-OP1–OP3), this skill reports the structural cause once — who owns the rule,
+meets one of them (CR1, DU1–DU3, DM2, DM3, DM5, TX1–TX5, FH1, TS1–TS3,
+OP1), this skill reports the structural cause once — who owns the rule,
 the state or the failure policy, and why the design lets sites diverge — and
 the defect at a single site goes to the neighbouring review (out of scope here):
 
@@ -32,7 +36,6 @@ the defect at a single site goes to the neighbouring review (out of scope here):
 | Which refactorings pay off, in what order, with what safety net (god classes, clones) | A refactoring review |
 | A wrong result on realistic input, including a duplicated rule that already gives one | A business-logic correctness review |
 | Stored data corrupted, lost or locked: constraints, migrations, transactions, lost updates, money and time column types | A data-integrity review of the schema and write paths |
-| Timeouts, retries, idempotency of retried calls, shutdown, health checks, alerts, rollback | A reliability review of failure behaviour |
 | An actor who can bypass authorization or tenant scoping | A security review of the application's source |
 | Which behaviour has no test, and what to assert | A test-gap review of the suite |
 | What can be deleted, including a workaround, `TODO` or caveat comment that deleting removes (DU3 keeps a rule only a comment enforces on a core flow, and a workaround that needs a type, test or lint rule in its place) | A review of what can be deleted or simplified |

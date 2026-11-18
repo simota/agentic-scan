@@ -33,7 +33,7 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   coupling, domain model and data ownership, consistency and transactions,
   failure handling, API and event contracts, configuration, testability,
   operability, duplication of patterns, dependencies and evolution) with about
-  40 hunt steps and a table of sound vs look-alike constructs
+  50 hunt steps and a table of sound vs look-alike constructs
 - **Validation** — every finding gets a verdict (`Valid`, `Likely`,
   `Unverified`, `Unlikely`, `FalsePositive`, `NotApplicable`) with evidence,
   checked against four claims: reach, consequence, mitigations and whether the

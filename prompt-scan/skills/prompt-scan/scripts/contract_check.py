@@ -1,0 +1,301 @@
+#!/usr/bin/env python3
+"""Check a finished review against the run contract in SKILL.md.
+
+    python3 contract_check.py OUT_DIR [--no-pdf] [--allow NAME ...]
+
+OUT_DIR holds findings.json and the rendered outputs. Checks the output file
+set, the severity axis (meta.axis), ID scheme, that L-* findings and inventory.json come from one scan, the
+fields every F-* finding carries, perspective coverage, the limitations the
+contract requires, and that each rendered page was rendered from the current
+findings.json. --allow ja or --allow en names a second-language copy, which
+must then be a complete re-render in OUT_DIR/<lang>/ (its own report.pdf
+unless --no-pdf); any other allowed name may be absent. It checks shape and
+provenance markers only; it cannot tell whether a finding is true.
+
+Exit codes: 0 contract holds, 1 violations listed on stderr, 2 unreadable input.
+"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import re
+import sys
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import findings as merge_tool  # noqa: E402
+import inventory as inventory_tool  # noqa: E402
+import record  # noqa: E402
+
+SKILL = Path(__file__).resolve().parents[1]
+OUTPUTS = {"findings.json", "inventory.json", "dashboard.html", "report.html", "report.pdf"}
+RENDERED = ("dashboard.html", "report.html")
+REQUIRED_TEXT = ("symptom", "cause", "impact", "fix")
+NO_PDF = "report.pdf not produced: no PDF engine"
+NO_EVAL = "model behaviour not executed: static review only"
+STAMP = re.compile(rb'<meta name="prompt-scan-source" content="sha256:([0-9a-f]{64})">')
+
+
+def perspective_names():
+    """Canonical names, from the first table in reference/perspectives.md."""
+    names, in_table = [], False
+    for line in (SKILL / "reference" / "perspectives.md").read_text(encoding="utf-8").splitlines():
+        if not line.startswith("|"):
+            if names:
+                break
+            continue
+        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        if cells[0] == "Perspective":
+            in_table = True
+        elif in_table and not set(cells[0]) <= set("-: "):
+            names.append(cells[0])
+    return names
+
+
+def stamp_problems(directory, digest, label):
+    problems = []
+    for name in RENDERED:
+        page = directory / name
+        if not page.is_file():
+            continue
+        m = STAMP.search(page.read_bytes()[:4096])
+        if not m:
+            problems.append(f"{label}{name} has no prompt-scan source stamp; re-render it with render.py")
+        elif m.group(1).decode() != digest:
+            problems.append(f"{label}{name} was rendered from an older findings.json; re-render after the last merge")
+    return problems
+
+
+HTML_LANG = re.compile(rb'<html lang="([^"]*)"')
+
+
+def copy_problems(out, lang, digest, no_pdf):
+    """An allowed language, <out>/<lang>/, must hold a complete re-render of the current findings.json in it."""
+    directory, label = out / lang, f"{lang}/"
+    rerender = f"render.py <out>/findings.json --out <out>/{lang} --lang {lang} --repo <repo>"
+    if directory.is_symlink() or not directory.is_dir():
+        return [f"{label} is not a directory: re-render the second-language copy with {rerender}"]
+    problems = []
+    for name in RENDERED + (() if no_pdf else ("report.pdf",)):
+        if (directory / name).is_symlink() or not (directory / name).is_file():
+            problems.append(f"{label}{name} is missing or not a regular file: re-render with {rerender}")
+    if no_pdf and os.path.lexists(directory / "report.pdf"):
+        problems.append(f"--no-pdf given but {label}report.pdf exists")
+    problems += stamp_problems(directory, digest, label)
+    for name in RENDERED:
+        page = directory / name
+        m = HTML_LANG.search(page.read_bytes()[:4096]) if page.is_file() and not page.is_symlink() else None
+        if m and m.group(1).decode("ascii", "replace") != lang:
+            problems.append(f"{label}{name} is rendered in {m.group(1).decode('ascii', 'replace')!r}: "
+                            f"re-render with {rerender}")
+    return problems
+
+
+def scan_problems(inventory, data):
+    """inventory.json and the L-* findings must come from the one `inventory.py --out … --into …` run."""
+    rerun = "re-run inventory.py <repo> --out <out>/inventory.json --into <out>/findings.json"
+    problems = []
+    meta = data.get("meta", {})
+    if "commit" in meta and (inventory.get("commit"), inventory.get("dirty")) != (meta["commit"], meta.get("dirty")):
+        problems.append(f"inventory.json and findings.json record different Git states: {rerun}")
+    # --into writes each L-* exactly as lint_findings() builds it; review adds only validation, and a rescan
+    # previous_validation. Anything else that differs was edited by hand (a severity lowered, say).
+    def scanned(f):
+        return {k: v for k, v in f.items() if k not in merge_tool.LINT_REVIEWED}
+    try:
+        expected = [scanned(f) for f in inventory_tool.lint_findings(inventory["lint"])]
+    except (KeyError, TypeError, AttributeError):
+        expected = None
+    recorded = sorted((scanned(f) for f in data.get("findings", []) if f["id"].startswith("L-")),
+                      key=lambda f: record.id_key(f["id"]))
+    if recorded != expected:
+        problems.append(f"L-* findings do not match inventory.json lint: {rerun}")
+    return problems
+
+
+def check(out, no_pdf=False, allow=()):
+    """Every contract violation in the finished output directory out, in a stable order."""
+    raw = record.read_regular(out / "findings.json")
+    data = record.load(out / "findings.json", raw)
+    digest = hashlib.sha256(raw).hexdigest()
+    problems = output_problems(out, digest, no_pdf, allow)
+    problems += inventory_problems(out, data)
+    problems += meta_problems(data.get("meta", {}))
+    problems += axis_problems(data)
+    problems += id_problems(data.get("findings", []))
+    canonical = perspective_names()
+    problems += field_problems(data, canonical)
+    problems += perspective_problems(data.get("perspectives", []), canonical)
+    problems += limitation_problems(data, no_pdf)
+    return problems
+
+
+def output_problems(out, digest, no_pdf, allow):
+    """The output file set, and that each page was rendered from this findings.json."""
+    problems = []
+    present = {p.name for p in out.iterdir()}
+    expected = OUTPUTS - ({"report.pdf"} if no_pdf else set())
+    for name in sorted(expected - present):
+        problems.append(f"missing output {name}")
+    for name in sorted(expected & present):
+        # A directory or FIFO under an output's name would skip the stamp and inventory checks below.
+        if (out / name).is_symlink() or not (out / name).is_file():
+            problems.append(f"{name} is not a regular file")
+    for name in sorted(present - OUTPUTS - set(allow)):
+        problems.append(f"unexpected file {name} in the output directory (contract_check.py --allow {name} if asked for)")
+    if no_pdf and "report.pdf" in present:
+        problems.append("--no-pdf given but report.pdf exists")
+    problems += stamp_problems(out, digest, "")
+    for name in allow:
+        if name in record.LANGS:
+            problems += copy_problems(out, name, digest, no_pdf)
+        elif (out / name).is_dir():
+            problems += stamp_problems(out / name, digest, f"{name}/")
+    return problems
+
+
+def inventory_problems(out, data):
+    if not (out / "inventory.json").is_file():
+        return []
+    problems = []
+    try:
+        inventory = json.loads((out / "inventory.json").read_text(encoding="utf-8"))
+    except (OSError, ValueError, RecursionError) as e:
+        problems.append(f"inventory.json is unreadable: {e}")
+        inventory = {}
+    if not isinstance(inventory, dict) or inventory.get("tool") != "inventory.py":
+        problems.append("inventory.json was not written by inventory.py")
+    else:
+        if (inventory.get("prompt_files") or inventory.get("inline_prompts")) and not data.get("prompts"):
+            problems.append("inventory.json lists prompt files or inline prompts but findings.json records no prompts")
+        problems += scan_problems(inventory, data)
+    return problems
+
+
+def meta_problems(meta):
+    problems = [f"meta.{key} is missing" for key in ("target", "date", "assessor")
+                if not str(meta.get(key) or "").strip()]
+    if "commit" not in meta:
+        problems.append("meta.commit is missing: run inventory.py <repo> --into <out>/findings.json")
+    return problems
+
+
+def axis_problems(data):
+    """meta.axis is recorded; while it is assumed, every High finding still in the report is named in decisions."""
+    axis = data.get("meta", {}).get("axis")
+    if axis is None:
+        return ["meta.axis: record whether the requester confirmed the list severity is judged against "
+                "(confirmed) or it was assumed (assumed)"]
+    if axis != "assumed":
+        return []
+    decisions = data.get("decisions", [])
+    return [f"{f['id']}: its High severity rests on an assumed severity axis (meta.axis); "
+            "name it in decisions for a person to confirm"
+            for f in data.get("findings", [])
+            if f["severity"] == "High" and f["validation"]["verdict"] not in record.EXCLUDED
+            and not any(merge_tool.mentions(item, f["id"]) for item in decisions)]
+
+
+def id_problems(findings):
+    """F-* numbering and order, which records come from inventory.py, and High/Medium verdicts."""
+    problems = []
+    code = [f for f in findings if f["id"].startswith("F-")]
+    if sorted((f["id"] for f in code), key=record.id_key) != [f"F-{n:03d}" for n in range(1, len(code) + 1)]:
+        problems.append(f"F-* ids must run F-001..F-{len(code):03d} without gaps")
+    active = sorted((f for f in code if f["validation"]["verdict"] not in record.EXCLUDED), key=lambda f: record.id_key(f["id"]))
+    if active != sorted(active, key=merge_tool.order_key):
+        problems.append("F-* ids are not in severity order, then path and line (excluded findings are exempt): "
+                        "run findings.py renumber <out>/findings.json")
+    for f in findings:
+        if f["id"].startswith("L-") and f.get("source") != "inventory.py":
+            problems.append(f"{f['id']}: L-* findings come only from inventory.py --into")
+        if f["id"].startswith("F-") and {"source", "rule", "previous_validation"} & f.keys():
+            problems.append(f"{f['id']}: source, rule and previous_validation belong to inventory.py's L-* findings")
+        if f["severity"] in ("High", "Medium"):
+            if f["validation"]["verdict"] == "Unverified":
+                problems.append(f"{f['id']}: a {f['severity']} finding needs a verdict other than Unverified")
+            elif not str(f["validation"].get("evidence") or "").strip():
+                problems.append(f"{f['id']}: a {f['severity']} finding needs validation.evidence")
+    return problems
+
+
+def field_problems(data, canonical):
+    """The fields every F-* finding must carry."""
+    problems = []
+    has_prompts = bool(data.get("prompts"))
+    for f in data.get("findings", []):
+        if not f["id"].startswith("F-"):
+            continue
+        ident = f["id"]
+        for key in REQUIRED_TEXT:
+            if not str(f.get(key) or "").strip():
+                problems.append(f"{ident}: {key} is missing")
+        test = f.get("test")
+        if not (test.strip() if isinstance(test, str) else any(str(t).strip() for t in test or [])):
+            problems.append(f"{ident}: test (an eval or test assertion of the good outcome) is missing")
+        if not record.LOC_RE.match(f["location"]):
+            problems.append(f"{ident}: location must be path:line")
+        if f["kind"] == "improvement":
+            for key in ("before", "after"):
+                if not str((f.get("proposal") or {}).get(key) or "").strip():
+                    problems.append(f"{ident}: an improvement needs proposal.{key}")
+        if has_prompts and not f.get("prompt"):
+            problems.append(f"{ident}: prompt (the P-NN it affects) is missing")
+        if f["category"] not in canonical:
+            problems.append(f"{ident}: category {f['category']!r} is not a perspective name")
+    return problems
+
+
+def perspective_problems(perspectives, canonical):
+    problems = []
+    recorded = [p["name"] for p in perspectives]
+    for name in canonical:
+        if recorded.count(name) != 1:
+            problems.append(f"perspective {name!r} must be recorded exactly once (applied, N/A or not checked)")
+    for name in sorted(set(recorded) - set(canonical)):
+        problems.append(f"unknown perspective {name!r}")
+    for p in perspectives:
+        if p["result"] != "applied" and not str(p.get("note") or "").strip():
+            problems.append(f"perspective {p['name']!r} is {p['result']} without a reason in note")
+    return problems
+
+
+def limitation_problems(data, no_pdf):
+    """The limitations the contract requires: no eval run, no PDF."""
+    problems = []
+    limitations = data.get("limitations", [])
+
+    def has_line(text):
+        return any(text in line for line in limitations)
+    if data.get("eval_runs"):
+        if has_line(NO_EVAL):
+            problems.append(f"eval_runs are recorded, so drop the limitation {NO_EVAL!r}")
+    elif not has_line(NO_EVAL):
+        problems.append(f"no eval_runs: limitations must say {NO_EVAL!r}")
+    if no_pdf and not has_line(NO_PDF):
+        problems.append(f"--no-pdf: limitations must say {NO_PDF!r}")
+    if not no_pdf and has_line(NO_PDF):
+        problems.append(f"report.pdf is expected, so drop the limitation {NO_PDF!r}")
+    return problems
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p.add_argument("out", type=Path)
+    p.add_argument("--no-pdf", action="store_true")
+    p.add_argument("--allow", action="append", default=[], metavar="NAME")
+    a = p.parse_args(argv)
+    try:
+        problems = check(a.out, a.no_pdf, a.allow)
+    except (record.SchemaError, OSError) as e:
+        print(f"contract_check.py: {e}", file=sys.stderr)
+        return 2
+    if problems:
+        print("\n".join(problems), file=sys.stderr)
+        return 1
+    print(f"contract ok - {a.out}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

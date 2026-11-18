@@ -1,5 +1,5 @@
 ---
-name: test-scan
+name: test-gap-scan
 description: "Read-only review of an app's test suite: maps critical flows, escaped defects and the test map, then finds where a defect would slip through: untested critical paths, missing edge and error cases, weak assertions, unfaithful mocks, flakiness, shared state, missing contract tests, skipped tests, suites CI never runs. Each finding says what to assert. Dashboard + report; never edits."
 allowed-tools: Read, Grep, Glob, Bash, Write
 ---

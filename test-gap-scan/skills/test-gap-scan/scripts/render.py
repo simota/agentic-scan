@@ -513,7 +513,7 @@ DASH = {
     },
 }
 
-# Rules for test-scan record types only, after the shared dashboard
+# Rules for test-gap-scan record types only, after the shared dashboard
 # stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
 DASHBOARD_CSS = """
 .action-label,.reg-head,.reg-meta,.detail dt,.small,.toggle-label{font-family:var(--sans)}

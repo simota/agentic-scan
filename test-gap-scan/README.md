@@ -1,4 +1,4 @@
-# test-scan
+# test-gap-scan
 
 An agent skill for a **static, read-only review of your own application's
 test suite**. It maps the critical flows, the defects that already escaped,
@@ -56,11 +56,11 @@ Every output is rendered from one record, `findings.json`, which the agent
 builds from JSON fragments rather than heredocs:
 
 ```sh
-python3 skills/test-scan/scripts/findings.py merge out/findings.json frag-001.json
-python3 skills/test-scan/scripts/findings.py renumber out/findings.json  # severity, then path
-python3 skills/test-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
-python3 skills/test-scan/scripts/findings.py check out --repo /path/to/assessed/checkout
-python3 skills/test-scan/scripts/findings.py counts out/findings.json    # n_* summary counts
+python3 skills/test-gap-scan/scripts/findings.py merge out/findings.json frag-001.json
+python3 skills/test-gap-scan/scripts/findings.py renumber out/findings.json  # severity, then path
+python3 skills/test-gap-scan/scripts/render.py out/findings.json --out out   # language: meta.lang
+python3 skills/test-gap-scan/scripts/findings.py check out --repo /path/to/assessed/checkout
+python3 skills/test-gap-scan/scripts/findings.py counts out/findings.json    # n_* summary counts
 ```
 
 `findings.py check` enforces the run contract: exactly `findings.json`,
@@ -85,12 +85,12 @@ make status
 make unlink
 ```
 
-Then invoke `test-scan` (or `/test-scan`).
+Then invoke `test-gap-scan` (or `/test-gap-scan`).
 
 ## Layout
 
 ```
-skills/test-scan/
+skills/test-gap-scan/
   SKILL.md                     phases, run contract, severity/testability, decisions, rules
   reference/recon.md           critical flows, hotspots, escaped defects, test map, runner and CI
   reference/conventions.md     the test idiom ledger, trace rows, close-check
@@ -128,4 +128,4 @@ The record format, scripts and run contract are forked from the sibling
 `refactor-scan` skill (same verdicts, plan model and report shape), adapted
 to test-suite review. The dashboard uses
 [scan-report-kit](https://github.com/simota/scan-report-kit), whose copy in
-`skills/test-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+`skills/test-gap-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.

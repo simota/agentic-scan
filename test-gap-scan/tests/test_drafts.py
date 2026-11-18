@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parent.parent
-SCRIPTS = REPO / "skills" / "test-scan" / "scripts"
+SCRIPTS = REPO / "skills" / "test-gap-scan" / "scripts"
 SAMPLE = REPO / "examples" / "findings.sample.json"
 sys.path.insert(0, str(SCRIPTS))
 sys.dont_write_bytecode = True

@@ -1,4 +1,4 @@
-"""Offline tests for test-scan's scripts and the documents they encode."""
+"""Offline tests for test-gap-scan's scripts and the documents they encode."""
 import contextlib
 import copy
 import io
@@ -15,7 +15,7 @@ import unittest
 from unittest import mock
 
 REPO = Path(__file__).resolve().parent.parent
-SKILL = REPO / "skills" / "test-scan"
+SKILL = REPO / "skills" / "test-gap-scan"
 SCRIPTS = SKILL / "scripts"
 SAMPLE = REPO / "examples" / "findings.sample.json"
 sys.path.insert(0, str(SCRIPTS))
@@ -2360,7 +2360,7 @@ class MakefileTest(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.skills = Path(self.tmp.name) / "skills dir"  # a space, as in real paths
         self.skills.mkdir()
-        self.link = self.skills / "test-scan"
+        self.link = self.skills / "test-gap-scan"
 
     def tearDown(self):
         self.tmp.cleanup()

@@ -7,7 +7,8 @@
 BASELINE and CURRENT are two findings.json records of the same app, each passing
 findings.py check. Ids are renumbered per review and lines move, so findings are matched
 by content: the same hunt step, file and title first; then the same hunt step and file,
-by title likeness or a nearby line; then a near-identical title anywhere (a moved file).
+by title likeness or a nearby line; then the only finding left at that step and file on both
+sides; then a near-identical title anywhere (a moved file).
 Each match or leftover is one change:
 
   new        reported now, not before (or ruled out before)
@@ -100,6 +101,15 @@ def match(baseline, current):
         if ratio >= SAME_FILE_LIKENESS or distance <= NEAR_LINES:
             candidates.append(((1, -ratio, distance), b, c))
     take(candidates)
+    # The only unpaired finding at its place on both sides is the same finding, even when a fix
+    # moved its line and the title was reworded: identity must not hinge on a locator that moves.
+    olds, news = {}, {}
+    for b in left.values():
+        olds.setdefault(place(b)[0], []).append(b)
+    for c in right.values():
+        news.setdefault(place(c)[0], []).append(c)
+    take([((0,), bs[0], news[key][0]) for key, bs in olds.items()
+          if len(bs) == 1 and len(news.get(key, ())) == 1])
     take([((2, -ratio), b, c) for b in left.values() for c in right.values()
           if (ratio := likeness(b, c)) >= MOVED_LIKENESS])
     pairs += [(b, None) for b in left.values()] + [(None, c) for c in right.values()]

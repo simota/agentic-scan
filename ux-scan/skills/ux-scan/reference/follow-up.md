@@ -43,7 +43,8 @@ python3 <skill-dir>/scripts/compare.py <earlier>/findings.json <out>/findings.js
 
 Ids are renumbered in every review and lines move, so findings are matched by content: the
 same hunt step, file and title; then the same hunt step and file with a similar title or a
-start line within 3 lines; then a near-identical title anywhere, for a file that moved. Each
+start line within 3 lines; then the only finding left at that step and file on both sides,
+however reworded or moved; then a near-identical title anywhere, for a file that moved. Each
 change is one of:
 
 | Change | Means | Then |

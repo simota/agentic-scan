@@ -107,6 +107,23 @@ class CompareTests(unittest.TestCase):
         self.assertEqual(result["open"]["baseline"]["High"], 6)
         self.assertEqual(result["open"]["current"]["High"], 5)
 
+    def test_a_lone_finding_keeps_its_identity_when_reworded_and_moved(self):
+        # A fix above it moved the line by 20 and the next review worded the title afresh.
+        # It is still the only RS2 finding in app.css on both sides, so it is the same finding,
+        # not one resolved plus one new (which would also drop a carried acceptance).
+        cur = copy.deepcopy(SAMPLE)
+        by_id(cur, "U-006").update(title="Phone layout breaks: fixed-width side panel wider than the screen",
+                                   location="src/styles/app.css:26")
+        result = json.loads(self.run_compare("--format", "json", cur=self.record("lone", cur))[1])
+        self.assertEqual(result["counts"]["new"], 0)
+        self.assertEqual(result["counts"]["resolved"], 0)
+        # Two AX4 findings share TaskList.tsx, so neither is paired by place alone when both are reworded.
+        cur = copy.deepcopy(SAMPLE)
+        by_id(cur, "U-004").update(title="Trash control unnamed for screen readers", location="src/components/TaskList.tsx:40")
+        by_id(cur, "U-021").update(title="Profile pictures lack text alternatives", location="src/components/TaskList.tsx:60")
+        result = json.loads(self.run_compare("--format", "json", cur=self.record("crowded", cur))[1])
+        self.assertEqual(result["counts"]["new"], 2)
+
     def test_regressions_and_carried_acceptance(self):
         base = copy.deepcopy(SAMPLE)
         by_id(base, "U-005")["status"] = "Fixed"

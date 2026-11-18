@@ -1,0 +1,9 @@
+{
+  "bindings": [
+    {"role": "roles/storage.objectViewer", "members": ["allUsers"]},
+    {"role": "roles/editor", "members": ["serviceAccount:123456789-compute@developer.gserviceaccount.com"]},
+    {"role": "roles/viewer", "members": ["group:dev@example.com"]}
+  ],
+  "etag": "BwXexample",
+  "version": 1
+}

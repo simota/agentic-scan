@@ -1,0 +1,39 @@
+# Fixture: deliberately weak Kubernetes manifests for iac_scan tests.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agent
+  namespace: ops
+spec:
+  template:
+    spec:
+      hostNetwork: true
+      containers:
+        - name: agent
+          image: example/agent:1.0
+          securityContext:
+            privileged: true
+      volumes:
+        - name: root
+          hostPath:
+            path: /
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: everyone-admin
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: system:authenticated
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: app-config
+type: Opaque
+data:
+  setting: ZXhhbXBsZQ==

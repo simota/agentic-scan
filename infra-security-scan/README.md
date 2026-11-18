@@ -122,17 +122,17 @@ and is skipped with a warning if neither works; then run
 `contract_check.py OUT --no-pdf`. Each engine gets a timeout scaled to the
 number of findings (`SCAN_REPORT_PDF_TIMEOUT=<seconds>` to override).
 
-The dashboard and the assessment use the report format of the report kit
-bundled under `skills/infra-security-scan/scripts/scan_report_kit/`: it sets
+The dashboard and the assessment use the shared report format of
+`skills/infra-security-scan/scripts/report_assets/`: it sets
 the journal-style assessment (numbered sections, captioned booktabs tables, one mincho face for
-both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
-engine and safe writes live under `skills/infra-security-scan/scripts/scan_report_kit/`;
+both scripts) and the dashboard in the same system. The stylesheets, PDF
+engine and safe writes live in (`report_style.py`, `report_pdf.py`, `report_output.py`) next to `skills/infra-security-scan/scripts/render.py`;
 `render.py` adds only the rules for infra-security-scan's own records (attack paths,
 perspective status, covered and excluded rows). The dashboard opts into the
-kit's application shell: a sticky app bar, a contents sidebar with per-severity
+stylesheet's application shell: a sticky app bar, a contents sidebar with per-severity
 counts that filter the register, pinned register filters and column heads, and
 the keys `/` (search), `j`/`k` (next or previous finding) and Enter (show or
-hide details). The kit is maintained in this repository; edit it in place.
+hide details). These modules are maintained in this repository; edit them in place.
 
 ## Layout
 
@@ -151,7 +151,9 @@ skills/infra-security-scan/
   scripts/contract_check.py  verify a finished run
   scripts/redaction.py     redaction and excerpt scrubbing shared by the scripts
   scripts/common.py        shared constants, JSON loading and atomic writes
-  scripts/scan_report_kit/ bundled report kit: shared stylesheets, PDF engine, safe writes
+  scripts/report_style.py  stylesheets in report_assets/ as inline CSS
+  scripts/report_pdf.py    PDF engine (headless Chrome, else WeasyPrint)
+  scripts/report_output.py safe writes into a report directory
   templates/               issue and report drafts (ja/en)
 examples/                  sample findings.json (ja/en)
 tests/                     unit tests and fixtures

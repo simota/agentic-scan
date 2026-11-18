@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))  # also under python -I
 import render  # noqa: E402
 from common import SEV_RANK, SEVERITIES, has_symlink_parent  # noqa: E402
 from redaction import CREDENTIAL  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 TEMPLATES = Path(__file__).resolve().parents[1] / "templates"
 PLACEHOLDER = re.compile(r"\{\{\s*([A-Za-z_][\w.]*(?:\[\])?(?:\.[\w]+)?)\s*\}\}")

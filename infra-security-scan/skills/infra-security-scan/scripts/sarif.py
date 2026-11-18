@@ -51,7 +51,7 @@ import render  # noqa: E402
 from common import LOCATION, SEV_RANK, SEVERITIES, has_symlink_parent  # noqa: E402
 from issues import mask  # noqa: E402
 from redaction import CREDENTIAL  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
 INFORMATION_URI = "https://github.com/simota/infra-security-scan"

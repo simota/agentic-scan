@@ -252,7 +252,7 @@ class PdfTest(unittest.TestCase):
         self.env = patch.dict(os.environ, {"CHROME": ""})
         self.env.start()
         self.addCleanup(self.env.stop)
-        candidates = patch.object(render.kit_pdf, "CHROME_CANDIDATES", ["test-chrome"])
+        candidates = patch.object(render.report_pdf, "CHROME_CANDIDATES", ["test-chrome"])
         candidates.start()
         self.addCleanup(candidates.stop)
 

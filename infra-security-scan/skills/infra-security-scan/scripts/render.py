@@ -38,8 +38,8 @@ from common import (BASELINE_REFERENCE, CARRY_NOTE, LOCATION, MAX_JSON_DEPTH, RE
                     SEV_RANK, SEVERITIES, STRING_LISTS, find_references, has_symlink_parent, json_depth, meta_prose,
                     reviewer_fields, shape_problems, unique_object)
 from redaction import hide_credentials, scrub_lines, split_lines
-from scan_report_kit import pdf as kit_pdf, style as kit_style
-from scan_report_kit.output import unsafe_target, write_output
+import report_pdf, report_style
+from report_output import unsafe_target, write_output
 
 SKILL = Path(__file__).resolve().parents[1]
 
@@ -1016,7 +1016,7 @@ def meta_pairs(data, L, lang="en"):
     return rows
 
 
-# Shared stylesheets (the bundled scan_report_kit/assets) come first;
+# Shared stylesheets (report_assets/) come first;
 # these add only the rules for infra-security-scan record types: attack paths, the
 # perspective status, covered/excluded rows and the scope list.
 # Attack-path status inks: open is the High ink, unknown the Medium ink, blocked muted.
@@ -1283,7 +1283,7 @@ def render_dashboard(data, L, lang, sources, changes=None):
     return f"""<!doctype html>
 <html lang="{lang}" class="app-shell">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(title)}</title><style>{kit_style.dashboard_css()}{DASH_CSS}</style></head>
+<title>{esc(title)}</title><style>{report_style.dashboard_css()}{DASH_CSS}</style></head>
 <body>
 <header class="appbar"><div class="appbar-in"><span class="brand"><span>{L["brand"]}</span><span class="appbar-project">{esc(meta.get("project", ""))}</span></span><div class="tools">
 <a class="button" href="assessment.html">{L["assessment"]}</a><button id="theme" type="button" aria-pressed="false">{L["theme"]}</button></div></div></header>
@@ -1420,7 +1420,7 @@ def render_assessment(data, L, lang, sources, pdf_note="", changes=None):
     return f"""<!doctype html>
 <html lang="{lang}">
 <head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>{esc(L["assessment"])} — {esc(meta.get("project", ""))}</title><style>{kit_style.document_css(L["running_footer"])}{ASSESSMENT_CSS}</style></head>
+<title>{esc(L["assessment"])} — {esc(meta.get("project", ""))}</title><style>{report_style.document_css(L["running_footer"])}{ASSESSMENT_CSS}</style></head>
 <body>
 <header class="report-header"><p class="kicker">{L["brand"]}</p><h1>{L["doc_title"]}</h1>
 <p class="project">{esc(meta.get("project", ""))}</p>{cover}
@@ -1443,7 +1443,7 @@ def scrub_text(text):
 
 
 def to_pdf(html_path, pdf_path, failed=None, timeout=None):
-    """Print with scan_report_kit.pdf.to_pdf (Chrome, else WeasyPrint); leave no PDF when neither succeeds.
+    """Print with report_pdf.to_pdf (Chrome, else WeasyPrint); leave no PDF when neither succeeds.
 
     Engines that were found but did not produce a PDF, and a CHROME that does
     not exist, are appended to `failed` as one readable string each. Engine
@@ -1454,7 +1454,7 @@ def to_pdf(html_path, pdf_path, failed=None, timeout=None):
     if chrome and not (os.path.isabs(chrome) and os.path.exists(chrome)) and not shutil.which(chrome):
         failed.append(f"CHROME={chrome} (not found)")
     failures = []
-    engine = kit_pdf.to_pdf(html_path, pdf_path, failures, kit_pdf.pdf_timeout() if timeout is None else timeout,
+    engine = report_pdf.to_pdf(html_path, pdf_path, failures, report_pdf.pdf_timeout() if timeout is None else timeout,
                             redact=scrub_text)
     failed.extend(f"{name} ({reason})" + (f": {detail}" if detail else "") for name, reason, detail in failures)
     if engine is None:
@@ -1546,7 +1546,7 @@ def main(argv=None):
     print(f"wrote {out / 'dashboard.html'}\nwrote {assessment}")
     if not a.no_pdf:
         failed = []
-        engine = to_pdf(assessment, pdf, failed, kit_pdf.pdf_timeout(len(data.get("findings", []))))
+        engine = to_pdf(assessment, pdf, failed, report_pdf.pdf_timeout(len(data.get("findings", []))))
         if engine:
             print(f"wrote {pdf} ({engine})")
         else:

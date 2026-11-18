@@ -234,7 +234,7 @@ skills/performance-scan/
   scripts/issues.py            findings.json -> one issue draft per open finding
   scripts/compare.py           two findings.json -> new / resolved / changed, a CI gate, --carry
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and editors
-  scripts/scan_report_kit/     bundled report kit: the shared *-scan dashboard stylesheet
+  scripts/scan_report_kit/     bundled report kit: the shared dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -260,14 +260,9 @@ The Makefile tests isolate their home, agent paths and demo settings in temporar
 fixtures, so exported local configuration does not redirect test installations
 or reports. Explicit per-test overrides still exercise custom paths.
 
-The format follows the sibling `security-scan` skill (same phases, run
-contract, verdicts and report shape), adapted from vulnerabilities to
-performance.
-
-The dashboard uses the shared *-scan report format,
-[scan-report-kit](https://github.com/simota/scan-report-kit): its dashboard
+The dashboard uses the report kit bundled under
+`skills/performance-scan/scripts/scan_report_kit/`: its dashboard
 stylesheet (light and dark themes, journal-style typography) comes first, the
 page opts into its application shell (`html.app-shell`), and `render.py` adds only the rules for what this skill renders differently
 (collapsible findings, severity filter buttons, budget and coverage tables).
-The copy in `skills/performance-scan/scripts/scan_report_kit/`
-is maintained in this repository (scan-report-kit is retired); edit it in place. `report.md` is unchanged.
+The kit is maintained in this repository; edit it in place. `report.md` is unchanged.

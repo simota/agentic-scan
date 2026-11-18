@@ -22,19 +22,20 @@ production or third-party system.
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. The line with
-`reliability-scan`: cost under the workload as it grows is a finding here;
-what happens when a dependency fails, hangs or slows is `reliability-scan`'s.
+a reliability review: cost under the workload as it grows is a finding here;
+what happens when a dependency fails, hangs or slows belongs to a reliability
+review.
 A missing timeout or uncapped retry (IO4) is reported here for the
 connections, workers or latency it holds at normal load, not for the outage
 it lets spread:
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the fix | `coding-implement` |
-| Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | `reliability-scan` |
-| Data corrupted or locked by migrations, transactions or lost updates | `data-integrity-scan` |
-| Structure that forces a slow design (synchronous call chains across modules) | `architecture-scan` |
-| Code, dependencies or features nobody needs | `prune-scan` |
+| Write the fix | A separate implementation request (out of scope here) |
+| Timeouts, retries and fallbacks when a dependency fails; health checks, shutdown, rollback | A reliability review (out of scope here) |
+| Data corrupted or locked by migrations, transactions or lost updates | A data-integrity review of the data layer (out of scope here) |
+| Structure that forces a slow design (synchronous call chains across modules) | An architecture review (out of scope here) |
+| Code, dependencies or features nobody needs | A review of what can be removed (out of scope here) |
 
 Paths written as `scripts/…`, `reference/…` and `templates/…` are relative to
 this skill's directory (the one holding this file), not to the audited

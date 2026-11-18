@@ -519,8 +519,7 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# The shared *-scan dashboard style (scan-report-kit, vendored in
-# scan_report_kit/) comes first, with the page opted into its application shell
+# The bundled report kit's dashboard style (scan_report_kit/) comes first, with the page opted into its application shell
 # (app bar, contents sidebar with severity facets, pinned filter bar); these
 # rules cover only what performance-scan renders differently: <details>
 # findings, severity filter buttons, h2 section rules, summary card spacing and

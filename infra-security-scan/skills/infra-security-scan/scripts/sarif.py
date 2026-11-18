@@ -17,7 +17,7 @@ uploaded by this script.
   `security-severity` (High 8.0, Medium 5.5, Low 3.0, Info 0.5) is set on each
   result and, as the worst of its results, on each rule, which is where GitHub
   reads it
-- Fingerprints: `partialFingerprints["infraScan/v1"]` hashes the kind, rule or
+- Fingerprints: `partialFingerprints["infraSecurityScan/v1"]` hashes the kind, rule or
   perspective, provider, sorted resources and file — not the ID, which
   `renumber` changes, nor the line — so an alert keeps its identity across runs
 - Attack paths: each linked `AP-*` becomes a code flow whose steps are its
@@ -54,7 +54,7 @@ from redaction import CREDENTIAL  # noqa: E402
 from scan_report_kit.output import write_output  # noqa: E402
 
 SCHEMA = "https://json.schemastore.org/sarif-2.1.0.json"
-INFORMATION_URI = "https://github.com/simota/infra-scan"
+INFORMATION_URI = "https://github.com/simota/infra-security-scan"
 LEVEL = {"High": "error", "Medium": "warning", "Low": "note", "Info": "note"}
 SECURITY_SEVERITY = {"High": "8.0", "Medium": "5.5", "Low": "3.0", "Info": "0.5"}
 SNAPSHOT_PREFIX = "@snapshots/"
@@ -171,7 +171,7 @@ def code_flows(f, paths, clean):
 
 
 def tags(f):
-    out = ["security", f"infra-scan/{slug(f.get('category'))}", f"provider/{f.get('provider')}"]
+    out = ["security", f"infra-security-scan/{slug(f.get('category'))}", f"provider/{f.get('provider')}"]
     cwe = f.get("cwe")
     if isinstance(cwe, str) and cwe.startswith("CWE-"):
         out.append(f"external/cwe/{cwe.lower()}")
@@ -219,7 +219,7 @@ def build(data, lang="en", min_severity="Info", masked=False, counted_only=False
                 rule = {"id": rid, "name": rid,
                         "shortDescription": {"text": clean(L["review_rule"].format(category))},
                         "fullDescription": {"text": clean(L["review_help"].format(category))},
-                        "properties": {"tags": ["security", f"infra-scan/{slug(f.get('category'))}"],
+                        "properties": {"tags": ["security", f"infra-security-scan/{slug(f.get('category'))}"],
                                        "category": f.get("category")}}
             rule["helpUri"] = INFORMATION_URI
             rule["defaultConfiguration"] = {"level": LEVEL.get(sev, "note")}
@@ -231,7 +231,7 @@ def build(data, lang="en", min_severity="Info", masked=False, counted_only=False
             rule["defaultConfiguration"]["level"] = LEVEL[sev]
         worst[rid] = min(worst.get(rid, 9), SEV_RANK.get(sev, 9))
         result = {"ruleId": rid, "level": LEVEL.get(sev, "note"), "message": message(f, lang, clean),
-                  "partialFingerprints": {"infraScan/v1": fingerprint(f)},
+                  "partialFingerprints": {"infraSecurityScan/v1": fingerprint(f)},
                   "properties": {"id": f.get("id"), "severity": sev, "confidence": f.get("confidence"),
                                  "verdict": f.get("validation", {}).get("verdict"),
                                  "category": f.get("category"), "provider": f.get("provider"),
@@ -268,12 +268,12 @@ def build(data, lang="en", min_severity="Info", masked=False, counted_only=False
         results.append(result)
     meta = data.get("meta", {})
     run = {
-        "tool": {"driver": {"name": "infra-scan", "informationUri": INFORMATION_URI,
+        "tool": {"driver": {"name": "infra-security-scan", "informationUri": INFORMATION_URI,
                             "rules": sorted(rules.values(), key=lambda r: r["id"])}},
         "originalUriBaseIds": {"%SRCROOT%": {"description": {"text": "The assessed repository root"}},
                                "SNAPSHOTS": {"description": {"text": "Read-only exports the requester supplied "
                                                                      "(iac_scan.py --snapshots)"}}},
-        "automationDetails": {"id": f"infra-scan/{slug(meta.get('project', 'estate'))}/"},
+        "automationDetails": {"id": f"infra-security-scan/{slug(meta.get('project', 'estate'))}/"},
         "columnKind": "unicodeCodePoints",
         "results": results,
         "properties": {k: clean(meta[k]) for k in ("project", "scope", "date", "assessor", "method") if meta.get(k)},

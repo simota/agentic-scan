@@ -1,4 +1,4 @@
-# infra-scan
+# infra-security-scan
 
 An agent skill for a **static, read-only security review of cloud
 infrastructure from its configuration** — Terraform / OpenTofu (`.tf`, `.tofu`), plan JSON,
@@ -98,8 +98,8 @@ make link AGENT=claude     # one host only
 make status
 ```
 
-Then ask the agent, e.g. "infra-scan で `infra/` を診断して" or
-"/infra-scan audit the terraform in this repo".
+Then ask the agent, e.g. "infra-security-scan で `infra/` を診断して" or
+"/infra-security-scan audit the terraform in this repo".
 
 ## Commands
 
@@ -109,11 +109,11 @@ make check                                 # tests + skill self-consistency
 make scan TARGET=../my-infra OUT=/tmp/infra-out   # baseline only; OUT outside TARGET
 make scan TARGET=../my-infra SNAPSHOTS=/tmp/exports OUT=/tmp/infra-out  # with exports
 make demo LANG_OUT=ja                      # render the sample report
-python3 skills/infra-scan/scripts/compare.py /tmp/infra-out-oct /tmp/infra-out   # what changed
-python3 skills/infra-scan/scripts/render.py /tmp/infra-out/findings.json --out /tmp/infra-out \
+python3 skills/infra-security-scan/scripts/compare.py /tmp/infra-out-oct /tmp/infra-out   # what changed
+python3 skills/infra-security-scan/scripts/render.py /tmp/infra-out/findings.json --out /tmp/infra-out \
   --previous /tmp/infra-out-oct           # reports open with the comparison
-python3 skills/infra-scan/scripts/issues.py /tmp/infra-out/findings.json --out /tmp/drafts --lang ja
-python3 skills/infra-scan/scripts/sarif.py /tmp/infra-out/findings.json --out /tmp/infra-scan.sarif  # code scanning
+python3 skills/infra-security-scan/scripts/issues.py /tmp/infra-out/findings.json --out /tmp/drafts --lang ja
+python3 skills/infra-security-scan/scripts/sarif.py /tmp/infra-out/findings.json --out /tmp/infra-security-scan.sarif  # code scanning
 ```
 
 Python 3.10+, standard library only. PDF output uses headless Chrome / Chromium
@@ -127,8 +127,8 @@ The dashboard and the assessment use the shared *-scan report format,
 document (`docs/design.md` in that repository) sets the journal-style
 assessment (numbered sections, captioned booktabs tables, one mincho face for
 both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
-engine and safe writes live under `skills/infra-scan/scripts/scan_report_kit/`;
-`render.py` adds only the rules for infra-scan's own records (attack paths,
+engine and safe writes live under `skills/infra-security-scan/scripts/scan_report_kit/`;
+`render.py` adds only the rules for infra-security-scan's own records (attack paths,
 perspective status, covered and excluded rows). The dashboard opts into the
 kit's application shell: a sticky app bar, a contents sidebar with per-severity
 counts that filter the register, pinned register filters and column heads, and
@@ -138,7 +138,7 @@ hide details). The copy is maintained in this repository (scan-report-kit is ret
 ## Layout
 
 ```
-skills/infra-scan/
+skills/infra-security-scan/
   SKILL.md                 run contract, phases, severity, decisions
   reference/               recon, attack paths, perspectives, AWS, GCP,
                            Kubernetes/Azure, snapshots, validation, schema, report

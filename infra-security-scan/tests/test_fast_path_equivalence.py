@@ -9,7 +9,7 @@ import sys
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "infra-scan" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "infra-security-scan" / "scripts"))
 import compare  # noqa: E402
 import iac_scan  # noqa: E402
 import render  # noqa: E402

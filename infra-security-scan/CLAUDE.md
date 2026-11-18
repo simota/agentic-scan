@@ -3,7 +3,7 @@
 Agent skill for static security review of cloud infrastructure configuration
 (sibling of `../security-scan`).
 
-- The skill lives in `skills/infra-scan/`; `SKILL.md` is the contract, and every
+- The skill lives in `skills/infra-security-scan/`; `SKILL.md` is the contract, and every
   `reference/*.md` must be named in it and start with a `**Read when:**` line
 - `scripts/` are Python 3.10+ standard library only; no PyYAML, no cloud SDKs
 - `make test` runs the unit tests; `make check` runs them plus the skill

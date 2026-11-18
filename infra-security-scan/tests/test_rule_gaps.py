@@ -6,7 +6,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "infra-scan" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "infra-security-scan" / "scripts"))
 import iac_scan  # noqa: E402
 
 OPEN_SSH = '''resource "aws_security_group" "ssh" {

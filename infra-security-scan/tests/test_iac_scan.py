@@ -10,7 +10,7 @@ import unittest
 from contextlib import redirect_stderr, redirect_stdout
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "infra-scan" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "infra-security-scan" / "scripts"))
 import iac_scan  # noqa: E402
 
 FIXTURES = ROOT / "tests" / "fixtures"
@@ -131,7 +131,7 @@ class RuleTest(TempDir):
         self.assertEqual(fired, set(iac_scan.RULES))
 
     def test_each_rule_names_a_known_perspective(self):
-        table = (ROOT / "skills" / "infra-scan" / "reference" / "perspectives.md").read_text(encoding="utf-8")
+        table = (ROOT / "skills" / "infra-security-scan" / "reference" / "perspectives.md").read_text(encoding="utf-8")
         for rule, meta in iac_scan.RULES.items():
             self.assertIn(f"| {meta[2]} |", table, rule)
 

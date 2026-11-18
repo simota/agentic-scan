@@ -1,6 +1,6 @@
-# infra-scan — install helpers
+# infra-security-scan — install helpers
 #
-#   make link      symlink skills/infra-scan into every installed host's skills dir
+#   make link      symlink skills/infra-security-scan into every installed host's skills dir
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
@@ -14,7 +14,7 @@
 #   make link SKILLS_DIR=/some/path    # one literal path; AGENT unused
 #   make demo LANG_OUT=en NO_PDF=1     # English, HTML only
 
-NAME    := infra-scan
+NAME    := infra-security-scan
 REPO    := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 # make splits words on spaces; refuse instead of acting on a truncated path.
 ifneq ($(word 2,$(REPO)),)
@@ -84,7 +84,7 @@ link: ## symlink the skill into every installed host's skills dir
 	  echo "linked   $$d -> $(SKILL)"; n=$$((n+1)); \
 	done; \
 	if [ $$n -eq 0 ]; then echo "nothing linked - $(if $(SKILLS_DIR)$(PROJECT),$(firstword $(subst |, ,$(TARGETS))) does not exist,no skills directory found for: $(AGENT))" >&2; exit 1; fi; \
-	echo "invoke it with:  infra-scan   (or /infra-scan in a slash-command harness)"
+	echo "invoke it with:  infra-security-scan   (or /infra-security-scan in a slash-command harness)"
 
 unlink: ## remove the symlinks this Makefile created
 	@$(NOSPACE) for t in $(QTARGETS); do \

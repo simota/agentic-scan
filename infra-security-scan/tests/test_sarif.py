@@ -8,7 +8,7 @@ import tempfile
 import unittest
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "skills" / "infra-scan" / "scripts"))
+sys.path.insert(0, str(ROOT / "skills" / "infra-security-scan" / "scripts"))
 import sarif  # noqa: E402
 
 SAMPLE = ROOT / "examples" / "findings.sample.json"
@@ -97,18 +97,18 @@ class StructureTest(unittest.TestCase):
 class IdentityTest(unittest.TestCase):
     def test_fingerprint_survives_renumbering_and_line_moves(self):
         data = sample()
-        before = {r["properties"]["id"]: r["partialFingerprints"]["infraScan/v1"] for r in results(sarif.build(data))}
+        before = {r["properties"]["id"]: r["partialFingerprints"]["infraSecurityScan/v1"] for r in results(sarif.build(data))}
         moved = copy.deepcopy(data)
         f = next(x for x in moved["findings"] if x["id"] == "F-001")
         f["id"] = "F-900"
         f["location"] = f["location"].rsplit(":", 1)[0] + ":99"
         for a in moved["attack_paths"]:
             a["findings"] = ["F-900" if i == "F-001" else i for i in a.get("findings", [])]
-        after = by_id(sarif.build(moved))["F-900"]["partialFingerprints"]["infraScan/v1"]
+        after = by_id(sarif.build(moved))["F-900"]["partialFingerprints"]["infraSecurityScan/v1"]
         self.assertEqual(before["F-001"], after)
 
     def test_fingerprints_differ_between_root_causes(self):
-        prints = [r["partialFingerprints"]["infraScan/v1"] for r in results(sarif.build(sample()))]
+        prints = [r["partialFingerprints"]["infraSecurityScan/v1"] for r in results(sarif.build(sample()))]
         self.assertEqual(len(prints), len(set(prints)))
 
 

@@ -1,4 +1,4 @@
-"""Usage: metrics.py SCRIPTS_DIR. Static structure metrics of skills/infra-scan/scripts (stdlib ast)."""
+"""Usage: metrics.py SCRIPTS_DIR. Static structure metrics of skills/infra-security-scan/scripts (stdlib ast)."""
 import ast, sys, pathlib, collections
 S = pathlib.Path(sys.argv[1]); mods = {p.stem: p for p in S.glob("*.py")}
 graph = collections.defaultdict(set); names = collections.Counter(); private = []

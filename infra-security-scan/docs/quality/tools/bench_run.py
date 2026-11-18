@@ -1,6 +1,6 @@
 """Usage: bench_run.py REPO. Median wall time of render.py on the samples (with --repo tests/fixtures) and iac_scan on tests/fixtures, 11 runs."""
 import statistics, subprocess, sys, tempfile, time, os
-R = sys.argv[1]; S = R + "/skills/infra-scan/scripts"
+R = sys.argv[1]; S = R + "/skills/infra-security-scan/scripts"
 def bench(cmd):
     xs = []
     for _ in range(11):

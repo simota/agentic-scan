@@ -133,7 +133,7 @@ def load(path):
 
 # Both HTML reports carry the digest of the record they show, so
 # contract_check.py can tell a report rendered before the last merge.
-RECORD_STAMP = re.compile(r'<meta name="infra-scan-record" content="sha256:([0-9a-f]{64})">')
+RECORD_STAMP = re.compile(r'<meta name="infra-security-scan-record" content="sha256:([0-9a-f]{64})">')
 
 
 def record_digest(data):
@@ -144,7 +144,7 @@ def record_digest(data):
 
 def stamp(page, digest):
     return page.replace('<meta charset="utf-8">',
-                        f'<meta charset="utf-8"><meta name="infra-scan-record" content="sha256:{digest}">', 1)
+                        f'<meta charset="utf-8"><meta name="infra-security-scan-record" content="sha256:{digest}">', 1)
 
 
 def load_record(path):
@@ -552,7 +552,7 @@ def validate(data, partial=False):
 
 LABELS = {
     "en": {
-        "doc_title": "Infrastructure security assessment", "brand": "INFRA-SCAN",
+        "doc_title": "Infrastructure security assessment", "brand": "INFRA-SECURITY-SCAN",
         "running_footer": "INFRASTRUCTURE SECURITY ASSESSMENT",
         "assessment": "Assessment report", "theme": "Dark theme",
         "summary": "Summary", "findings": "Findings", "attack_paths": "Attack paths",
@@ -593,7 +593,7 @@ LABELS = {
         "chg_none": "No finding or attack path changed.", "chg_persisting_n": "persisting without a change",
     },
     "ja": {
-        "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SCAN",
+        "doc_title": "インフラ セキュリティ診断", "brand": "INFRA-SECURITY-SCAN",
         "running_footer": "インフラ セキュリティ診断",
         "assessment": "診断報告書", "theme": "ダークテーマ",
         "summary": "概要", "findings": "検出事項", "attack_paths": "攻撃経路",
@@ -1017,7 +1017,7 @@ def meta_pairs(data, L, lang="en"):
 
 
 # Shared stylesheets (scan_report_kit/assets, docs: scan-report-kit) come first;
-# these add only the rules for infra-scan record types: attack paths, the
+# these add only the rules for infra-security-scan record types: attack paths, the
 # perspective status, covered/excluded rows and the scope list.
 # Attack-path status inks: open is the High ink, unknown the Medium ink, blocked muted.
 DASH_CSS = """
@@ -1037,7 +1037,7 @@ tr.no-match .empty{text-align:left}tr.no-match .empty p{margin:0 0 10px}
 .lists section{min-width:0}
 tr.excluded td{color:var(--muted)}tr.excluded .finding-toggle{text-decoration:line-through}
 @media print{.detail-actions{display:none}tr.row:not([hidden])+tr.detail{display:table-row!important}}
-/* Application shell: the kit styles the shell; these cover infra-scan's own sections and its five filter controls. */
+/* Application shell: the kit styles the shell; these cover infra-security-scan's own sections and its five filter controls. */
 .app-shell #attack-paths:focus,.app-shell #perspectives-section:focus,.app-shell #scope-section:focus,.app-shell #legend-section:focus{outline:0}
 .app-shell .filters{grid-template-columns:minmax(0,2.2fr) repeat(4,minmax(0,1fr))}
 @media(max-width:1099px){.app-shell .filters{grid-template-columns:repeat(3,minmax(0,1fr))}}
@@ -1086,14 +1086,14 @@ ASSESSMENT_CSS = """
 DASH_JS = r"""
 (function(){
 var root=document.documentElement;
-try{var t=localStorage.getItem('infra-scan-theme');if(t)root.setAttribute('data-theme',t);}catch(e){}
+try{var t=localStorage.getItem('infra-security-scan-theme');if(t)root.setAttribute('data-theme',t);}catch(e){}
 // The toggle is pressed while the dark theme shows, chosen here or by the system.
 var themeBtn=document.getElementById('theme'),scheme=matchMedia('(prefers-color-scheme: dark)');
 function dark(){var t=root.getAttribute('data-theme');return t?t==='dark':scheme.matches;}
 function syncTheme(){themeBtn.setAttribute('aria-pressed',String(dark()));}
 themeBtn.addEventListener('click',function(){
   var next=dark()?'light':'dark';root.setAttribute('data-theme',next);
-  try{localStorage.setItem('infra-scan-theme',next);}catch(e){}
+  try{localStorage.setItem('infra-security-scan-theme',next);}catch(e){}
   syncTheme();
 });
 if(scheme.addEventListener)scheme.addEventListener('change',syncTheme);

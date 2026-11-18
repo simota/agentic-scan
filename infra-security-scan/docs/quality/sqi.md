@@ -1,4 +1,4 @@
-# SQI — Software Quality Improvement Index (infra-scan)
+# SQI — Software Quality Improvement Index (infra-security-scan)
 
 評価基準・重み・測定条件は **改善作業の前に** このファイルで確定し、改善前ベースラインと同じコミットで
 固定した。改善後の再採点は同じ基準で行い、結果は末尾「改善後」に追記する（基準本文は改変しない）。
@@ -10,7 +10,7 @@ SQI はこのリポジトリのための独自ルーブリックであり物理�
 
 | 項目 | 固定値 |
 |---|---|
-| 対象コード | `skills/infra-scan/scripts/*.py`（ベンダー品 `scan_report_kit/` は上流で変更する契約のため評価対象外。ただし生成 UI の見え方には含まれる） |
+| 対象コード | `skills/infra-security-scan/scripts/*.py`（ベンダー品 `scan_report_kit/` は上流で変更する契約のため評価対象外。ただし生成 UI の見え方には含まれる） |
 | UI | `render.py` が生成する `dashboard.html`（対話型）と `assessment.html`（印刷用。PDF はこの HTML の印刷） |
 | データ | `examples/findings.sample.json`（en）、`examples/findings.sample.ja.json`（ja）、スケール用 `tools/make_big.py`（1,009 件） |
 | ビューポート | 1280 / 1024 / 768 / 390 / 320 px、ライト・ダーク（`prefers-color-scheme`） |

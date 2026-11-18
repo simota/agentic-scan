@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(REPO / "skills" / "infra-scan" / "scripts"))
+sys.path.insert(0, str(REPO / "skills" / "infra-security-scan" / "scripts"))
 import compare  # noqa: E402
 import render  # noqa: E402
 
@@ -292,7 +292,7 @@ class RenderPreviousTest(unittest.TestCase):
     def test_the_stamp_still_names_only_the_current_record(self):
         current = retest(sample())
         _, dash, doc = self.render(current, SAMPLE)
-        stamp = f'<meta name="infra-scan-record" content="sha256:{render.record_digest(current)}">'
+        stamp = f'<meta name="infra-security-scan-record" content="sha256:{render.record_digest(current)}">'
         self.assertIn(stamp, dash)
         self.assertIn(stamp, doc)
 

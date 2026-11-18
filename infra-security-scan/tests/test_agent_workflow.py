@@ -9,7 +9,7 @@ import tempfile
 import unittest
 
 REPO = Path(__file__).resolve().parents[1]
-SCRIPTS = REPO / "skills" / "infra-scan" / "scripts"
+SCRIPTS = REPO / "skills" / "infra-security-scan" / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 import findings  # noqa: E402
 import iac_scan  # noqa: E402

@@ -36,7 +36,7 @@ Neighbours, and where their questions go instead (all out of scope here):
 | Review one diff before it merges | A code review of that change |
 | Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | A data-integrity review of the schema and write paths |
 | Who may do what: authorization, tenancy, parameter tampering | A security review of the application's source |
-| Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | A reliability review of failure behaviour |
+| Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | An architecture review of failure handling and operability |
 | Which logic has no test, and what to assert | A test-gap review of the suite |
 | Slow paths and unbounded work | A performance review |
 | Code nothing reaches | A review of what can be deleted |

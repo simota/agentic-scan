@@ -1,0 +1,1178 @@
+{
+  "schema_version": 1,
+  "meta": {
+    "project": "Larder (fictional sample)",
+    "date": "2026-10-12",
+    "assessor": "prune-scan / sample data",
+    "scope": "examples/larder: server API, web app, schema, tests, tooling and docs",
+    "method": "Static subtraction review against the purpose baseline, entry points and consumers in units.json",
+    "commit": "sample"
+  },
+  "summary": "Larder exists to track one household's pantry and send an email reminder; much of the repository does not serve that. Five elements are active liabilities: a finished A/B test still writes visitor IPs on every request, /debug/dump hands out every secret, a Stripe webhook accepts unsigned writes after Stripe was removed, a Mailchimp key is kept for a dead integration, and sign-in asks for full calendar access. Beyond what is unused, two features are used but do not earn their place: a household leaderboard serving a documented non-goal, and a four-channel notification registry for an email-only job. Subtracting them leaves the same product, smaller and easier to change.",
+  "findings": [
+    {
+      "id": "P-001",
+      "title": "A finished A/B test still runs on every request and stores visitor IPs",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-09",
+      "element": "Finished price A/B experiment (assign_bucket)",
+      "location": "server/ab_test.py:7",
+      "occurrences": [
+        "server/ab_test.py:7",
+        "server/app.py:14"
+      ],
+      "observed": "@app.before_request bucket_visitor -> assign_bucket() INSERTs (remote_addr, bucket) when no cookie",
+      "basis": "The module says the experiment ended 2025-03-31 and variant A won (server/ab_test.py:1; inventory markers, overdue). Nothing reads experiment_assignments or the bucket: no SELECT, no cookie read besides the guard.",
+      "impact": "A database write on every request without a bucket cookie, and personal data (IP addresses) collected for a purpose that no longer exists.",
+      "subtraction": {
+        "action": "remove",
+        "what": "server/ab_test.py and the before_request hook at server/app.py:14.",
+        "remains": "Requests go straight to their handlers; variant A pricing is already the only pricing.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None in code. The table it fills is P-009; drop it only after its retention question is settled.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep experiment_assignments: only the INSERT at server/ab_test.py:9 and the DDL; grep bucket: no reader.",
+        "dynamic_checked": "Searched getattr/registry dispatch, templates, CI and docs for assign_bucket and the table name; none."
+      }
+    },
+    {
+      "id": "P-002",
+      "title": "Unauthenticated /debug/dump returns the whole app config, secrets included",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "UF3",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-06",
+      "element": "Route GET /debug/dump",
+      "location": "server/app.py:56",
+      "observed": "return jsonify({key: str(value) for key, value in app.config.items()})",
+      "basis": "No client, test, doc or script names /debug/dump (inventory unreferenced_routes); it is a leftover debugging aid, not part of any core job (PB-03, PB-04).",
+      "impact": "Anyone who finds the path reads SECRET_KEY and MAILCHIMP_API_KEY (app.config is loaded from server/config.py).",
+      "subtraction": {
+        "action": "remove",
+        "what": "The /debug/dump route.",
+        "remains": "Debugging uses local logs or a debugger.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None; rotate SECRET_KEY afterwards, since it may already have been read.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory routes: /debug/dump mentions 0; no auth decorator or before_request check guards it.",
+        "dynamic_checked": "Searched ops docs, CI, Makefile and monitoring config for the path; none."
+      }
+    },
+    {
+      "id": "P-003",
+      "title": "Stripe webhook still accepts unsigned posts after Stripe was removed",
+      "severity": "High",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "PI2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-07",
+      "element": "Webhook POST /webhooks/stripe",
+      "location": "server/app.py:61",
+      "occurrences": [
+        "server/app.py:61",
+        "server/items.py:39"
+      ],
+      "observed": "stripe_webhook() passes request.json to record_payment(), which INSERTs into payments; no signature check",
+      "basis": "No code imports stripe (inventory unimported_dependencies), no screen takes payment, and nothing reads payments.",
+      "impact": "Anyone can write rows into payments; the endpoint exists only as attack surface.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The route, items.record_payment, and the stripe pin (P-020).",
+        "remains": "No payment surface at all, which matches the product.",
+        "loses": "Nothing in the app; Stripe may log failed deliveries until its endpoint is deleted."
+      },
+      "risk": "Stripe may still be configured to deliver events here; confirm in the Stripe dashboard (decisions).",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep stripe: the route, payments.stripe_id and the pin; no import, no SELECT on payments.",
+        "dynamic_checked": "The only possible caller is outside the repository (Stripe); not observable statically."
+      }
+    },
+    {
+      "id": "P-004",
+      "title": "Mailchimp API key is still loaded for an integration that no longer exists",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CF2",
+      "unit_ref": "UN-05",
+      "element": "Setting MAILCHIMP_API_KEY",
+      "location": "server/config.py:6",
+      "occurrences": [
+        "server/config.py:6",
+        ".env.example:3"
+      ],
+      "observed": "MAILCHIMP_API_KEY = os.getenv(\"MAILCHIMP_API_KEY\")",
+      "basis": "No code reads config.MAILCHIMP_API_KEY and no mail list code exists; notifications go through server/notify.py.",
+      "impact": "A live third-party secret is kept in every environment and exposed by /debug/dump (P-002).",
+      "subtraction": {
+        "action": "remove",
+        "what": "The setting and its .env.example line; revoke the key at Mailchimp.",
+        "remains": "Configuration lists only services the app calls.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None in code.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory env_read: one read, at the definition; grep MAILCHIMP: config.py and .env.example only.",
+        "dynamic_checked": "app.config.from_object exposes every constant by name; searched app.config[...] and .get(...) uses; none."
+      }
+    },
+    {
+      "id": "P-005",
+      "title": "Sign-in requests full Google Calendar access that nothing uses",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "PI1",
+      "unit_ref": "UN-01",
+      "element": "OAuth scope https://www.googleapis.com/auth/calendar",
+      "location": "server/oauth.py:9",
+      "observed": "SCOPES = [\"openid\", \"email\", \"https://www.googleapis.com/auth/calendar\"]",
+      "basis": "No code calls a Calendar API and on_login stores only the email; no core job involves calendars (PB-03, PB-04).",
+      "impact": "Every user grants read and write access to their calendar; the consent screen asks for more than the product needs.",
+      "subtraction": {
+        "action": "reduce",
+        "what": "The calendar scope.",
+        "remains": "openid and email, enough to sign in.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "Users who already granted it keep the grant until they revoke it; nothing in the app breaks.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep googleapis and calendar: only this line; requests is used only by server/notify.py.",
+        "dynamic_checked": "No token is stored, so no other service can use it."
+      }
+    },
+    {
+      "id": "P-006",
+      "title": "moment duplicates dayjs and is used only in a branch the flag never takes",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP2",
+      "unit_ref": "UN-05",
+      "element": "Dependency moment",
+      "location": "package.json:15",
+      "occurrences": [
+        "package.json:15",
+        "web/src/pages/Item.tsx:1"
+      ],
+      "observed": "import moment from \"moment\" — used once, in the else branch of isEnabled(\"new_checkout\")",
+      "basis": "inventory duplicate_purpose: dates (dayjs, moment); dayjs serves web/src/lib/date.ts. The one moment call is in the dead branch of P-010.",
+      "impact": "A second date library (about ten times dayjs's size) in the web bundle.",
+      "subtraction": {
+        "action": "remove",
+        "what": "moment from package.json and its import, together with P-010.",
+        "remains": "dayjs as the only date library.",
+        "loses": "The relative-time text of the old checkout, which no user sees."
+      },
+      "risk": "Remove after P-010, or the old branch fails to compile.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep moment: package.json and web/src/pages/Item.tsx only.",
+        "dynamic_checked": "No dynamic import() or require of moment; no CDN script tag."
+      }
+    },
+    {
+      "id": "P-007",
+      "title": "The household leaderboard serves a documented non-goal",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "PX2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-03",
+      "purpose_ref": "PB-05",
+      "element": "Household leaderboard (GET /api/leaderboard and its widget)",
+      "location": "server/app.py:40",
+      "occurrences": [
+        "server/app.py:40",
+        "server/leaderboard.py:5",
+        "web/src/components/Leaderboard.tsx:6",
+        "web/src/pages/Home.tsx:27"
+      ],
+      "observed": "Home renders <Leaderboard />, which ranks households by items saved via GET /api/leaderboard",
+      "basis": "README.md:11 lists comparison between households as a non-goal; Larder is for one household (PB-02). The feature is used (Home renders it), and that is why it is a subtraction, not dead code.",
+      "impact": "A route, a module, a component, a column (items.household) and a cross-household query to maintain, all pulling the product toward something it says it is not.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The route, server/leaderboard.py, Leaderboard.tsx and its use on Home.",
+        "remains": "Home shows the household's own pantry only.",
+        "loses": "The weekly ranking of households, a non-goal."
+      },
+      "risk": "Users who liked the widget lose it; items.household becomes unused (drop it with P-024's migration).",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Documented non-goal (README.md:11); the only caller of /api/leaderboard is Leaderboard.tsx.",
+        "dynamic_checked": "No other consumer in units.json calls it; the iOS app 2.x uses /api/v1/items only (docs/clients.md:6)."
+      }
+    },
+    {
+      "id": "P-008",
+      "title": "CSV export endpoint has no caller in the app",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "UF1",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-05",
+      "element": "Route GET /api/export/csv",
+      "location": "server/app.py:51",
+      "occurrences": [
+        "server/app.py:51",
+        "server/items.py:31"
+      ],
+      "observed": "export_csv() writes every item as CSV; no screen links to it",
+      "basis": "inventory unreferenced_routes: 0 mentions; no screen, script or doc names it; no core job asks for export.",
+      "impact": "A public endpoint and its formatting code kept in step with the item model.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The route and items.export_csv.",
+        "remains": "Items are read through /api/items.",
+        "loses": "A CSV download for anyone who bookmarked it, if anyone did."
+      },
+      "risk": "Someone may call it by hand or from a script outside the repository.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep export/csv: the route only.",
+        "dynamic_checked": "Outside callers cannot be seen statically; access logs would settle it."
+      }
+    },
+    {
+      "id": "P-009",
+      "title": "Write-only table of visitor IPs from the finished experiment",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA2",
+      "unit_ref": "UN-03",
+      "element": "Table experiment_assignments",
+      "location": "server/db/schema.sql:22",
+      "observed": "CREATE TABLE experiment_assignments (visitor TEXT, bucket TEXT)",
+      "basis": "Written only by P-001; no code reads it.",
+      "impact": "Personal data kept with no purpose; it grows with traffic.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The table, by a migration, after P-001.",
+        "remains": "No experiment data.",
+        "loses": "The raw assignments, if anyone still wanted to analyse them."
+      },
+      "risk": "Retention or deletion duties for personal data may apply; export or delete under that policy.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep experiment_assignments: DDL and one INSERT.",
+        "dynamic_checked": "Analysts or BI tools outside the repository may read it; not visible here."
+      }
+    },
+    {
+      "id": "P-010",
+      "title": "new_checkout is on everywhere, yet both checkout paths are maintained",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF1",
+      "unit_ref": "UN-01",
+      "element": "Feature flag new_checkout (server and web)",
+      "location": "server/flags.py:4",
+      "occurrences": [
+        "server/flags.py:4",
+        "web/src/flags.ts:3",
+        "server/items.py:16",
+        "web/src/pages/Item.tsx:17"
+      ],
+      "observed": "FLAGS = {\"new_checkout\": True} and flags.ts new_checkout: true; both if/else branches kept",
+      "basis": "inventory feature_flags: new_checkout true in both definitions, no override, 2 checks; the old branch can never run. utils.py:9 says \"new_checkout is on everywhere\".",
+      "impact": "Every change to item pricing or checkout is made twice; the old branch keeps moment alive (P-006).",
+      "subtraction": {
+        "action": "remove",
+        "what": "The flag, its two definitions and the old branches.",
+        "remains": "The new checkout path, unconditional.",
+        "loses": "The ability to switch back to the old checkout, unused since rollout."
+      },
+      "risk": "None in code; tests/test_items.py:7 already asserts the new format.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "No environment variable, remote flag service or config file overrides FLAGS.",
+        "dynamic_checked": "Searched FLAGS[...] assignments and is_enabled callers built from strings; none."
+      }
+    },
+    {
+      "id": "P-011",
+      "title": "XML partner export is imported only by its own test",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC2",
+      "unit_ref": "UN-01",
+      "element": "Module server/legacy_export.py",
+      "location": "server/legacy_export.py:1",
+      "occurrences": [
+        "server/legacy_export.py:1",
+        "tests/test_legacy_export.py:1"
+      ],
+      "observed": "export_xml() builds an <items> feed; tests/test_legacy_export.py is its only importer",
+      "basis": "inventory orphan_files: test_importers only; the docstring says the partner contract ended.",
+      "impact": "A whole module and a test that run in CI and must follow every change to list_items.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The module and tests/test_legacy_export.py.",
+        "remains": "No XML feed.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None; no route exposes it.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep legacy_export and export_xml: the module and its test only.",
+        "dynamic_checked": "No importlib, entry point or string-built module name refers to it."
+      }
+    },
+    {
+      "id": "P-012",
+      "title": "Four notification channels for a product whose job is an email reminder",
+      "severity": "Medium",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "OB1",
+      "unit_ref": "UN-01",
+      "purpose_ref": "PB-04",
+      "element": "Notification channel registry (email, Slack, SMS, webhook)",
+      "location": "server/notify.py:23",
+      "occurrences": [
+        "server/notify.py:23",
+        "server/notify.py:28",
+        "server/notify.py:33",
+        "server/notify.py:38"
+      ],
+      "observed": "NOTIFIERS = {email, slack, sms, webhook}; NOTIFY_CHANNELS defaults to \"email\"",
+      "basis": "The core job is an email reminder (PB-04). .env.example sets NOTIFY_CHANNELS=email and declares SMTP_HOST only; SLACK_WEBHOOK_URL, SMS_GATEWAY_URL and NOTIFY_WEBHOOK_URL are read but declared nowhere (inventory env_read_not_declared).",
+      "impact": "Three channels with their own secrets, error modes and HTTP calls to keep working for no configured user.",
+      "subtraction": {
+        "action": "reduce",
+        "what": "SlackNotifier, SmsNotifier, WebhookNotifier and the registry.",
+        "remains": "One send() that emails the reminder.",
+        "loses": "Slack, SMS and webhook delivery, configured by no known deployment."
+      },
+      "risk": "A production environment might set NOTIFY_CHANNELS beyond email; check the deployed settings (decisions).",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "units.json PB-04 (documented); inventory env_read_not_declared lists the three channel URLs.",
+        "dynamic_checked": "Deployed environment variables are outside the repository."
+      }
+    },
+    {
+      "id": "P-013",
+      "title": "Reports screen is linked from nowhere and calls an API that does not exist",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "UF2",
+      "unit_ref": "UN-02",
+      "entry_ref": "EP-12",
+      "element": "Screen /reports (Reports.tsx)",
+      "location": "web/src/App.tsx:14",
+      "occurrences": [
+        "web/src/App.tsx:14",
+        "web/src/pages/Reports.tsx:1"
+      ],
+      "observed": "<Route path=\"/reports\" element={<Reports />} />; Reports fetches /api/reports/summary",
+      "basis": "inventory unreferenced_routes: /reports has 0 mentions; Nav links only / and sign-in. No server route serves /api/reports/summary, so the screen cannot work.",
+      "impact": "A broken screen reachable by URL, a route and a page to maintain.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The route and web/src/pages/Reports.tsx.",
+        "remains": "Home and the item screen.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None; the screen errors today.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep /reports and reports/summary: the route, the page and the locale key only.",
+        "dynamic_checked": "No navigate() or href built from strings reaches /reports."
+      }
+    },
+    {
+      "id": "P-014",
+      "title": "Two price formatters disagree: 250 cents is $2.50 with formatPrice, $3 with toCurrency",
+      "severity": "Medium",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DU1",
+      "unit_ref": "UN-02",
+      "element": "Price formatter toCurrency (beside formatPrice)",
+      "location": "web/src/lib/currency.ts:2",
+      "occurrences": [
+        "web/src/lib/currency.ts:2",
+        "web/src/lib/money.ts:1"
+      ],
+      "observed": "toCurrency rounds to whole dollars; formatPrice keeps cents",
+      "basis": "Two implementations of one capability, both live (Home uses formatPrice, Item uses toCurrency); the comment says toCurrency was added for the reports screen (P-013).",
+      "impact": "One price formats two ways depending on the screen; every currency change must be made twice.",
+      "subtraction": {
+        "action": "consolidate",
+        "what": "web/src/lib/currency.ts into formatPrice.",
+        "remains": "One formatter, with cents.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "The item page shows cents instead of whole dollars (250 cents: \"$3\" becomes \"$2.50\"); that is the intended display.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep toCurrency: Item.tsx and Reports.tsx; grep formatPrice: Home.tsx.",
+        "dynamic_checked": "Both are static imports."
+      }
+    },
+    {
+      "id": "P-015",
+      "title": "LEGACY_CDN_URL is declared but never read",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CF1",
+      "unit_ref": "UN-05",
+      "element": "Setting LEGACY_CDN_URL",
+      "location": ".env.example:4",
+      "basis": "inventory env_declared_not_read; assets are served from web/public.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The .env.example line.",
+        "remains": "Settings the code reads.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep LEGACY_CDN: .env.example only.",
+        "dynamic_checked": "No env-name building (prefix + name) in the code."
+      }
+    },
+    {
+      "id": "P-016",
+      "title": "deploy-heroku CI job is disabled with if: false",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT3",
+      "unit_ref": "UN-04",
+      "element": "CI job deploy-heroku and Make target",
+      "location": ".github/workflows/ci.yml:10",
+      "occurrences": [
+        ".github/workflows/ci.yml:10",
+        "Makefile:15"
+      ],
+      "observed": "if: false; runs make deploy-heroku (git push heroku main)",
+      "basis": "The job can never run; the Make target is invoked only by it.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The job and the Make target.",
+        "remains": "CI that runs the tests.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "inventory scripts: deploy-heroku invoked once, from the disabled job.",
+        "dynamic_checked": "No workflow_call or other workflow reuses the job."
+      }
+    },
+    {
+      "id": "P-017",
+      "title": "protos target generates stubs from a proto/ directory that no longer exists",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT4",
+      "unit_ref": "UN-04",
+      "element": "Make target protos and scripts/gen_protos.sh",
+      "location": "Makefile:12",
+      "occurrences": [
+        "Makefile:12",
+        "scripts/gen_protos.sh:1"
+      ],
+      "basis": "inventory uninvoked_scripts: protos; the script's own comment says proto/ was removed in 2024.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The target and the script.",
+        "remains": "Makefile targets that work.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "No proto/ directory or server/gen import exists.",
+        "dynamic_checked": "Not invoked by CI, docs or other targets."
+      }
+    },
+    {
+      "id": "P-018",
+      "title": "lodash and jest are declared but unused",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP1",
+      "unit_ref": "UN-05",
+      "element": "Dependencies lodash and jest (and script test:jest)",
+      "location": "package.json:14",
+      "occurrences": [
+        "package.json:14",
+        "package.json:22",
+        "package.json:9"
+      ],
+      "basis": "inventory unimported_dependencies: lodash unreferenced; jest script_only through test:jest, which nothing invokes (uninvoked_scripts); tests run with vitest.",
+      "subtraction": {
+        "action": "remove",
+        "what": "lodash, jest and the test:jest script.",
+        "remains": "One test runner, vitest.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "No import of lodash; no jest.config or jest globals.",
+        "dynamic_checked": "No require() built from strings; no CDN tag."
+      }
+    },
+    {
+      "id": "P-019",
+      "title": "node-fetch is replaceable by Node 20's global fetch",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP3",
+      "unit_ref": "UN-05",
+      "element": "Dependency node-fetch",
+      "location": "package.json:16",
+      "occurrences": [
+        "package.json:16",
+        "scripts/seed.js:2"
+      ],
+      "basis": "inventory platform_replaceable; engines requires Node >= 20 (package.json:4); only scripts/seed.js uses it.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The dependency and its require.",
+        "remains": "The platform's fetch.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None for the seed script's plain POSTs.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "seed.js uses only fetch(url, {method, headers, body}).",
+        "dynamic_checked": "Not imported by web code."
+      }
+    },
+    {
+      "id": "P-020",
+      "title": "simplejson, six and stripe are pinned but never imported",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DP1",
+      "unit_ref": "UN-05",
+      "element": "Dependencies simplejson, six and stripe",
+      "location": "requirements.txt:3",
+      "occurrences": [
+        "requirements.txt:3",
+        "requirements.txt:4",
+        "requirements.txt:5"
+      ],
+      "basis": "inventory unimported_dependencies: all three unreferenced; simplejson and six are also platform_replaceable.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The three pins.",
+        "remains": "Dependencies the code imports.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None; stripe goes with P-003.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep import simplejson/six/stripe: none.",
+        "dynamic_checked": "No importlib.import_module with these names; no plugin entry points."
+      }
+    },
+    {
+      "id": "P-021",
+      "title": "Thermal-printer shelf labels sit outside what a household pantry app is for",
+      "severity": "Low",
+      "confidence": "Purpose-dependent",
+      "status": "Open",
+      "perspective": "PX1",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-02",
+      "purpose_ref": "PB-06",
+      "element": "Shelf-label printing (GET /api/items/<id>/label)",
+      "location": "server/app.py:35",
+      "occurrences": [
+        "server/app.py:35",
+        "server/labels.py:5",
+        "web/src/pages/Item.tsx:16"
+      ],
+      "observed": "zpl_label() returns ZPL for barcode printers; the item page links \"Print shelf label\"",
+      "basis": "Larder's users are one household with a browser (PB-02); no doc mentions printers, so PB-06 is inferred. ZPL output is useful only with a thermal barcode printer.",
+      "impact": "A route, a module and a button that most users cannot use.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The route, server/labels.py and the item-page link.",
+        "remains": "The item page without a print action.",
+        "loses": "Label printing for any household that owns a ZPL printer."
+      },
+      "risk": "If some households do print labels, they lose it; the owner decides (decisions).",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "The feature is reachable and used by the item page; only its fit to the purpose is in question.",
+        "dynamic_checked": "No other consumer in units.json calls the label route."
+      }
+    },
+    {
+      "id": "P-022",
+      "title": "Deprecated /api/v1/items is still served for iOS 2.x",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "AP2",
+      "unit_ref": "UN-01",
+      "entry_ref": "EP-04",
+      "element": "Route GET /api/v1/items",
+      "location": "server/app.py:45",
+      "observed": "# Deprecated 2024-01; kept for the iOS app 2.x",
+      "basis": "Deprecated since 2024-01 (inventory markers, overdue); iOS 3.0 moved to /api/items in 2025-02 (docs/clients.md:6). Only docs name the path.",
+      "impact": "A second response shape to keep in step with /api/items.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The v1 route.",
+        "remains": "/api/items only.",
+        "loses": "iOS 2.x installs that never updated stop listing items."
+      },
+      "risk": "The share of iOS 2.x installs is unknown (docs/clients.md:6).",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep /api/v1: the route, docs/clients.md and docs/v1-migration.md.",
+        "dynamic_checked": "Mobile clients are outside the repository; the minimum supported version decides it."
+      }
+    },
+    {
+      "id": "P-023",
+      "title": "Compatibility shim for the 0.x client is past its removal date",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DU3",
+      "unit_ref": "UN-01",
+      "element": "Compatibility shim get_items_v0",
+      "location": "server/compat.py:1",
+      "observed": "get_items_v0(*args, **kwargs) only forwards to list_items; \"Remove after 2025-06-30\"",
+      "basis": "inventory orphan_files and unreferenced_symbols: nothing imports it; inventory markers: removal date overdue.",
+      "subtraction": {
+        "action": "remove",
+        "what": "server/compat.py.",
+        "remains": "Callers use list_items directly.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep compat and get_items_v0: none outside the file.",
+        "dynamic_checked": "No route or string-built import uses it."
+      }
+    },
+    {
+      "id": "P-024",
+      "title": "Two columns and an index that no application code reads or writes",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA1",
+      "unit_ref": "UN-03",
+      "element": "Columns items.legacy_sku and users.fax_number, index idx_items_legacy_sku",
+      "location": "server/db/schema.sql:7",
+      "occurrences": [
+        "server/db/schema.sql:7",
+        "server/db/schema.sql:9",
+        "server/db/schema.sql:14"
+      ],
+      "basis": "inventory sql_columns_unreferenced: legacy_sku and fax_number. Only the unloaded demo seed writes legacy_sku (P-026).",
+      "impact": "An index maintained on every insert; a personal-data column (fax numbers) kept for nothing.",
+      "subtraction": {
+        "action": "remove",
+        "what": "Both columns and the index, by a migration.",
+        "remains": "items and users with the columns the code uses.",
+        "loses": "Whatever old data the columns hold."
+      },
+      "risk": "Existing rows may hold data under retention duties; export before dropping if so.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep legacy_sku and fax_number outside SQL: none.",
+        "dynamic_checked": "Reports or tools outside the repository could query them; not visible here."
+      }
+    },
+    {
+      "id": "P-025",
+      "title": "old_audit_log is never read or written",
+      "severity": "Low",
+      "confidence": "Externally-dependent",
+      "status": "Open",
+      "perspective": "DA1",
+      "unit_ref": "UN-03",
+      "element": "Table old_audit_log",
+      "location": "server/db/schema.sql:27",
+      "basis": "inventory sql_tables_unreferenced.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The table, by a migration.",
+        "remains": "The live schema only.",
+        "loses": "Historical audit rows, if any."
+      },
+      "risk": "Audit logs often carry retention duties; archive first if one applies.",
+      "validation": {
+        "verdict": "Likely",
+        "evidence": "grep old_audit_log outside SQL: none.",
+        "dynamic_checked": "Compliance tooling outside the repository may read it."
+      },
+      "impact": "Nothing writes it, so it costs only storage and a place in every schema change; the cost is confined to one table."
+    },
+    {
+      "id": "P-026",
+      "title": "Trade-show seed file nothing loads",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DA3",
+      "unit_ref": "UN-03",
+      "element": "Seed file server/db/seed_demo.sql",
+      "location": "server/db/seed_demo.sql:1",
+      "basis": "inventory unreferenced_files; it fills legacy_sku (P-024); npm run seed is the seeding path.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The file.",
+        "remains": "scripts/seed.js as the one seeding path.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep seed_demo: none.",
+        "dynamic_checked": "Not named by Makefile, CI or docs."
+      }
+    },
+    {
+      "id": "P-027",
+      "title": "A storage-backend interface and registry with exactly one backend",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "OB2",
+      "unit_ref": "UN-01",
+      "purpose_ref": "PB-03",
+      "element": "StorageBackend abstraction and BACKENDS registry",
+      "location": "server/store.py:8",
+      "occurrences": [
+        "server/store.py:8",
+        "server/store.py:23",
+        "server/store.py:26"
+      ],
+      "observed": "class StorageBackend(ABC); BACKENDS = {\"sqlite\": SqliteBackend}; backend(name=\"sqlite\")",
+      "basis": "One implementation, one registry entry, and no caller passes a name; the docstring cites a planned Postgres port that no doc or issue tracks. Adding, listing and removing items (PB-03) needs one store.",
+      "impact": "An indirection every reader has to step through for a choice nobody makes.",
+      "subtraction": {
+        "action": "reduce",
+        "what": "The ABC, the registry and the name parameter.",
+        "remains": "One query() function over SQLite.",
+        "loses": "A seam for a second backend, cheap to reintroduce if a port is ever scheduled."
+      },
+      "risk": "Call sites change from backend().query to query; mechanical.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep backend(: every call passes no argument; grep BACKENDS: definition and use only.",
+        "dynamic_checked": "No config or env selects a backend."
+      }
+    },
+    {
+      "id": "P-028",
+      "title": "Two helpers in utils.py have no caller",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC1",
+      "unit_ref": "UN-01",
+      "element": "Functions format_price_legacy and slugify",
+      "location": "server/utils.py:8",
+      "occurrences": [
+        "server/utils.py:8",
+        "server/utils.py:13"
+      ],
+      "basis": "inventory unreferenced_symbols: both have no reference outside their definition.",
+      "subtraction": {
+        "action": "remove",
+        "what": "Both functions.",
+        "remains": "format_price as the one price helper.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep format_price_legacy and slugify: definitions only.",
+        "dynamic_checked": "No getattr on utils, no template filter registration."
+      }
+    },
+    {
+      "id": "P-029",
+      "title": "Commented-out parse_price block",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC3",
+      "unit_ref": "UN-01",
+      "element": "Commented-out parse_price",
+      "location": "server/utils.py:17-22",
+      "basis": "inventory commented_code: six lines of code in comments; version control keeps the history.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The block.",
+        "remains": "utils.py with live code only.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "Lines 17-22 are all comments.",
+        "dynamic_checked": "Comments never execute."
+      }
+    },
+    {
+      "id": "P-030",
+      "title": "A test skipped since 2024-02 asserts nothing",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "TT2",
+      "unit_ref": "UN-04",
+      "element": "Skipped test test_delete_item",
+      "location": "tests/test_items.py:10",
+      "observed": "@pytest.mark.skip(reason=\"flaky since 2024-02\") def test_delete_item(): items.delete_item(1)",
+      "basis": "inventory skipped_tests; the body has no assertion, so even unskipped it would check nothing.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The skipped test.",
+        "remains": "Tests that run and assert.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "delete_item stays untested, as it effectively is today.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "The test body is one call with no assert.",
+        "dynamic_checked": "No other suite imports it."
+      }
+    },
+    {
+      "id": "P-031",
+      "title": "Unused font file OldSans.woff2",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS1",
+      "unit_ref": "UN-02",
+      "element": "Font web/public/fonts/OldSans.woff2",
+      "location": "web/public/fonts/OldSans.woff2:1",
+      "basis": "inventory assets_unreferenced; no @font-face or preload names it.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The file.",
+        "remains": "Assets the pages load.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "Under public/, so an outside page could hotlink it; unlikely for a font.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep OldSans: none.",
+        "dynamic_checked": "No CSS url() built at run time."
+      }
+    },
+    {
+      "id": "P-032",
+      "title": "A HACK comment asks every caller to Number() price_cents instead of the API guaranteeing a number",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "CM2",
+      "unit_ref": "UN-02",
+      "element": "Caveat comment in listItems",
+      "location": "web/src/api.ts:5",
+      "observed": "The Item type says price_cents is a number; the comment says it can be a string and leaves the conversion to every caller. The one caller (web/src/pages/Home.tsx:22) passes it to formatPrice without Number().",
+      "basis": "inventory caveat_comments (HACK). The rule exists only as a comment, so nothing enforces it and the only caller already skips it; the next change copies either the comment or the omission. add_item (server/items.py:22) stores price_cents as sent, which is how a string could reach the table.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The comment, once structure carries its rule: add_item rejects a price_cents that is not an integer, listItems returns Number(price_cents) so the Item type holds, and a test that posts \"250\" expects the rejection.",
+        "remains": "The Item type and a boundary check that enforce what the comment asked of each caller.",
+        "loses": "Nothing: the rule moves into code that no reader can skip."
+      },
+      "risk": "A client that posts price_cents as a string gets an error instead of a stored string; no client in the repository does.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep price_cents: the type and comment in api.ts, Home.tsx:22 without Number(), server/items.py:22 inserting it unchecked.",
+        "dynamic_checked": "A comment is never executed; its claim was checked against the type, the server and the callers."
+      }
+    },
+    {
+      "id": "P-033",
+      "title": "OldButton is imported nowhere",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC2",
+      "unit_ref": "UN-02",
+      "element": "Component OldButton",
+      "location": "web/src/components/OldButton.tsx:2",
+      "basis": "inventory orphan_files; its comment waits for a settings page that does not exist.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The file.",
+        "remains": "Button as the one button.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep OldButton: the file itself.",
+        "dynamic_checked": "No lazy() or dynamic import of the path."
+      }
+    },
+    {
+      "id": "P-034",
+      "title": "holiday_banner is always off; its banner, style and image ship anyway",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "FF1",
+      "unit_ref": "UN-02",
+      "element": "Feature flag holiday_banner",
+      "location": "web/src/flags.ts:4",
+      "occurrences": [
+        "web/src/flags.ts:4",
+        "web/src/pages/Home.tsx:18",
+        "web/src/styles/app.css:5",
+        "web/public/img/holiday-banner.png:1"
+      ],
+      "basis": "inventory feature_flags: value false, one check, no override.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The flag, the banner JSX, .promo-banner and holiday-banner.png.",
+        "remains": "Home without a banner slot.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "Marketing may want a seasonal banner again; it can come back as content, not a dormant flag.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "flags.ts is the only source of flag values.",
+        "dynamic_checked": "No remote config or URL parameter flips flags."
+      }
+    },
+    {
+      "id": "P-035",
+      "title": "Two locale keys are never referenced",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS3",
+      "unit_ref": "UN-02",
+      "element": "Locale keys promo.holiday and checkout.legacy_notice",
+      "location": "web/src/i18n/en.json:6",
+      "occurrences": [
+        "web/src/i18n/en.json:6",
+        "web/src/i18n/en.json:7",
+        "web/src/i18n/ja.json:6",
+        "web/src/i18n/ja.json:7"
+      ],
+      "basis": "inventory i18n_unreferenced in en and ja; the only dynamic prefix is item.status.",
+      "subtraction": {
+        "action": "remove",
+        "what": "Both keys in every locale.",
+        "remains": "Strings the UI shows.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None; no t() call or template prefix reaches these keys.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep promo.holiday and legacy_notice: locale files only.",
+        "dynamic_checked": "Checked t() calls built from template literals: only item.status.*."
+      }
+    },
+    {
+      "id": "P-036",
+      "title": "CSS class .legacy-grid is used by no markup",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS2",
+      "unit_ref": "UN-02",
+      "element": "CSS class .legacy-grid",
+      "location": "web/src/styles/app.css:7",
+      "basis": "inventory css_unreferenced; no dynamic class prefixes found.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The rule.",
+        "remains": "Styles the screens use.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep legacy-grid: app.css only.",
+        "dynamic_checked": "No classList or className built from strings with this name."
+      }
+    },
+    {
+      "id": "P-037",
+      "title": "Migration note linked from nowhere, superseded by docs/clients.md",
+      "severity": "Info",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "AS4",
+      "unit_ref": "UN-04",
+      "element": "Document docs/v1-migration.md",
+      "location": "docs/v1-migration.md:1",
+      "basis": "inventory unreferenced_files; it records the web app's move (2024-01) and defers the iOS side to release notes, which docs/clients.md:6 and P-022 already cover.",
+      "subtraction": {
+        "action": "remove",
+        "what": "The file, or fold one line into docs/clients.md.",
+        "remains": "docs/clients.md as the one client document.",
+        "loses": "Nothing: no caller, user or job depends on it."
+      },
+      "risk": "None.",
+      "validation": {
+        "verdict": "Valid",
+        "evidence": "grep v1-migration: none.",
+        "dynamic_checked": "Not published by a docs site config."
+      }
+    },
+    {
+      "id": "P-038",
+      "title": "on_startup looks unreferenced but is dispatched by name",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "status": "Open",
+      "perspective": "DC1",
+      "unit_ref": "UN-01",
+      "element": "Function hooks.on_startup",
+      "location": "server/hooks.py:4",
+      "basis": "inventory unreferenced_symbols lists on_startup: its name appears only at the definition.",
+      "subtraction": {
+        "action": "remove",
+        "what": "Nothing; it is used.",
+        "remains": "Unchanged.",
+        "loses": "Not applicable."
+      },
+      "risk": "Removing it would break app start-up.",
+      "validation": {
+        "verdict": "FalsePositive",
+        "evidence": "server/app.py:10-11 calls getattr(hooks, f\"on_{event}\") for each of config.STARTUP_EVENTS = (\"startup\",).",
+        "dynamic_checked": "The getattr dispatch is the dynamic use."
+      }
+    }
+  ],
+  "perspectives": [
+    {
+      "name": "DC Dead code",
+      "result": "4 findings, 1 excluded",
+      "note": "Symbols, orphan files and comment blocks from the inventory, each searched for dynamic use."
+    },
+    {
+      "name": "CM Comments",
+      "result": "1 finding",
+      "note": "Line comments from caveat_comments. The kept-for and kept-until notes (server/utils.py:9, server/app.py:47, web/src/components/OldButton.tsx:1) go with P-028, P-022 and P-033."
+    },
+    {
+      "name": "UF Unused features",
+      "result": "3 findings",
+      "note": "Every route and screen in units.json against its callers."
+    },
+    {
+      "name": "FF Feature flags and experiments",
+      "result": "3 findings",
+      "note": "Two code flags and one experiment; no remote flag service."
+    },
+    {
+      "name": "DP Dependencies",
+      "result": "4 findings",
+      "note": "package.json and requirements.txt; typescript, vite and vitest are tooling in use."
+    },
+    {
+      "name": "CF Configuration and environment",
+      "result": "2 findings",
+      "note": "Env reads against .env.example; PAGE_SIZE is read and used."
+    },
+    {
+      "name": "DA Data and schema",
+      "result": "4 findings",
+      "note": "Schema only; no database was queried."
+    },
+    {
+      "name": "AS Assets and content",
+      "result": "4 findings",
+      "note": "Images, fonts, CSS classes, locale keys and docs."
+    },
+    {
+      "name": "TT Tests and tooling",
+      "result": "3 findings",
+      "note": "Make targets, package scripts, CI jobs and skipped tests."
+    },
+    {
+      "name": "DU Duplication",
+      "result": "2 findings",
+      "note": "Price formatters and the 0.x shim."
+    },
+    {
+      "name": "AP API surface",
+      "result": "1 finding",
+      "note": "Public endpoints against the declared consumers; response fields not audited per client."
+    },
+    {
+      "name": "PI Permissions and integrations",
+      "result": "2 findings",
+      "note": "OAuth scopes, webhooks and third-party SDKs."
+    },
+    {
+      "name": "PX Purpose fit",
+      "result": "2 findings",
+      "note": "Every used feature asked what the core jobs (PB-03, PB-04) would lose without it."
+    },
+    {
+      "name": "OB Over-built",
+      "result": "2 findings",
+      "note": "Registries, abstractions and settings against the scale in units.json; i18n ships two used locales, so it stays."
+    }
+  ],
+  "checked_ok": [
+    "PAGE_SIZE is read and used (server/items.py:11); it is missing from .env.example, which is documentation, not removal.",
+    "/auth/callback has no caller in the repository; Google calls it after sign-in (consumer Google OAuth).",
+    "typescript, vite and vitest are tooling: .tsx sources and package scripts use them.",
+    "Locale keys item.status.* are reached through t(`item.status.${status}`) (web/src/pages/Item.tsx:13).",
+    "make dev and make lint are documented developer commands (README.md:16, README.md:20).",
+    "i18n ships two locales that the UI uses; not over-built for this product."
+  ],
+  "limitations": [
+    "Static reading only: production traffic, deployed environment variables, the database contents and the Stripe and Google consoles were not seen.",
+    "The share of iOS 2.x installs is unknown (docs/clients.md:6).",
+    "Reference counts are by name; code generated at build time was not present.",
+    "Sample record: meta.commit is a placeholder."
+  ],
+  "decisions": [
+    "P-021: label printing rests on an inferred purpose item (PB-06); the owner decides whether households print shelf labels.",
+    "P-003: confirm the Stripe webhook endpoint is deleted in the Stripe dashboard, then remove the route.",
+    "P-008 and P-022: confirm no outside client calls /api/export/csv, and set the minimum supported iOS version.",
+    "P-009, P-024 and P-025: confirm retention duties for experiment assignments, fax numbers and audit rows before dropping data.",
+    "P-012: confirm production NOTIFY_CHANNELS is email only."
+  ],
+  "next_steps": [
+    "Remove /debug/dump and the Mailchimp setting first, then rotate SECRET_KEY and revoke the Mailchimp key (P-002, P-004).",
+    "Re-run inventory.py after the removals; orphans often appear in waves."
+  ]
+}

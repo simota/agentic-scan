@@ -1,0 +1,8 @@
+{
+  "nav": { "home": "食品庫", "signin": "ログイン" },
+  "home": { "title": "あなたの食品庫", "remove": "削除", "leaderboard": "今週の上位世帯" },
+  "item": { "price": "購入へ進む", "label": "棚ラベルを印刷", "status": { "fresh": "新鮮", "expired": "期限切れ" } },
+  "reports": { "title": "レポート" },
+  "promo": { "holiday": "ホリデーセール開催中!" },
+  "checkout": { "legacy_notice": "旧チェックアウトを使用しています。" }
+}

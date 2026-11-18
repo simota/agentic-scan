@@ -1,0 +1,8 @@
+.page { max-width: 960px; margin: 0 auto; }
+.nav { display: flex; gap: 16px; }
+.btn { padding: 8px 12px; }
+.btn-old { border: 1px solid #999; }
+.promo-banner { width: 100%; }
+.leaderboard { border-top: 1px solid #ddd; }
+.legacy-grid { display: grid; grid-template-columns: repeat(3, 1fr); }
+.legacy-checkout { color: #777; }

@@ -1,0 +1,14 @@
+name: ci
+on: [push]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make test
+      - run: npm test
+  deploy-heroku:
+    if: false
+    runs-on: ubuntu-latest
+    steps:
+      - run: make deploy-heroku

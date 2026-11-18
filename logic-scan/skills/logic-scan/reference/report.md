@@ -53,8 +53,8 @@ Write in the requester's language.
    disagree with each other, results already produced wrong and whether to
    correct them, defects someone may choose to accept
 7. **Next step** — batch 1, and the hand-off (`templates/plan.<lang>.md` to
-   `coding-implement`); questions for `data-scan`, `security-scan`,
-   `reliability-scan`, `test-scan` or `prune-scan`
+   `coding-implement`); questions for `data-integrity-scan`, `security-scan`,
+   `reliability-scan`, `test-gap-scan` or `prune-scan`
 8. **Files** — link `dashboard.html` and `report.md` rendered from
    `findings.json`. The output directory holds exactly the set named in
    `SKILL.md` (*Run contract*)

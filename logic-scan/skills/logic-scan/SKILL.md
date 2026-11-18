@@ -34,10 +34,10 @@ Neighbours, and where their questions go instead:
 | Write the fix | `coding-implement` |
 | One known bug: reproduce it and find its cause | `coding-debug` |
 | Review one diff before it merges | `coding-review` |
-| Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | `data-scan` |
+| Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | `data-integrity-scan` |
 | Who may do what: authorization, tenancy, parameter tampering | `security-scan` |
 | Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | `reliability-scan` |
-| Which logic has no test, and what to assert | `test-scan` |
+| Which logic has no test, and what to assert | `test-gap-scan` |
 | Slow paths and unbounded work | `performance-scan` |
 | Code nothing reaches | `prune-scan` |
 

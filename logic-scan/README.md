@@ -130,7 +130,7 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 Requirements: Python 3.9+. No third-party packages.
 
 The record format, scripts and run contract are forked from the sibling
-`data-scan` skill (itself forked from `test-scan` and `refactor-scan`: same
+`data-integrity-scan` skill (itself forked from `test-gap-scan` and `refactor-scan`: same
 verdicts, plan model and report shape), adapted to business-logic review: the
 `rollout` axis became `change`, and findings gained a `counterexample`. The
 dashboard uses [scan-report-kit](https://github.com/simota/scan-report-kit),

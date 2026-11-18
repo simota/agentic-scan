@@ -133,6 +133,46 @@ class CompareTests(unittest.TestCase):
         self.assertIn(f"regression: reappeared {new['findings'][1]['id']}", err)
         self.assertEqual(self.compared(sample(), sample(), "--fail-on", "Info")[0], 0)
 
+    def test_unreadable_or_mistyped_records_exit_1_with_a_schema_reason(self):
+        good = self.write("good.json", sample())
+        cases = {
+            "empty file": b"",
+            "not JSON": b"{findings: [",
+            "duplicate key": b'{"meta": {}, "meta": {}}',
+            "a list, not a record": b"[]",
+            "findings is not a list": json.dumps(dict(sample(), findings="F-001")).encode(),
+            "a finding is not an object": json.dumps(dict(sample(), findings=["F-001"])).encode(),
+            "an unknown severity": json.dumps(dict(sample(), findings=[
+                dict(sample()["findings"][0], severity="Critical")])).encode(),
+        }
+        for label, data in cases.items():
+            for side in ("old", "new"):
+                with self.subTest(label, side=side):
+                    bad = self.tmp / "bad.json"
+                    bad.write_bytes(data)
+                    argv = (str(bad), str(good)) if side == "old" else (str(good), str(bad))
+                    code, out, err = run(*argv)
+                    self.assertEqual(code, 1, err)
+                    self.assertTrue(err.startswith("schema: "), err)
+                    self.assertEqual(out, "")
+
+    def test_a_missing_record_exits_1(self):
+        code, _, err = run(str(self.tmp / "absent.json"), str(self.write("good.json", sample())))
+        self.assertEqual(code, 1)
+        self.assertIn("schema: ", err)
+
+    def test_zero_findings_on_either_side(self):
+        empty = sample()
+        empty["findings"], empty["plan"] = [], []
+        empty["decisions"] = [d for d in empty.get("decisions", []) if "F-" not in d]
+        result = json.loads(self.compared(empty, empty, "--format", "json")[1])
+        self.assertEqual(result["summary"], {"new": 0, "resolved": 0, "persisting": 0, "changed": 0,
+                                             "reappeared": 0, "now_excluded": 0, "now_reported": 0})
+        result = json.loads(self.compared(empty, sample(), "--format", "json")[1])
+        self.assertEqual(result["summary"]["new"],
+                         sum(f["validation"]["verdict"] not in compare.EXCLUDED for f in sample()["findings"]))
+        self.assertEqual(self.compared(empty, sample(), "--fail-on", "Info")[0], 3)
+
     def test_japanese_markdown(self):
         code, out, _ = self.compared(sample(), sample(), "--lang", "ja")
         self.assertEqual(code, 0)

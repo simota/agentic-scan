@@ -13,7 +13,7 @@ The output is a defect register plus figures drawn from one record. Each open de
 
 It reads the source and the git history. It does not fix code, run the application, or read live
 data. One live bug's root cause belongs to `coding-debug`; domain audits belong to the other
-`*-scan` skills; the order of repayment belongs to `quality-debt`.
+`*-scan` skills; the order of refactoring belongs to `refactor-scan`.
 
 Phases: `RECON → CATALOG → HISTORY → TRIAGE → REVIEW → VERIFY → RECONCILE → REPORT`.
 

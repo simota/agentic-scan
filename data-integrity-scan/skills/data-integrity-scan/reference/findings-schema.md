@@ -170,7 +170,7 @@ renumber, use only the new IDs it printed.
   "decisions": ["Who owns the orders orphaned before F-001 is fixed?",
                 "Confirm C-01 (money as decimal(12,2)) as the intended rule"],
   "limitations": ["No database was connected; table sizes come from docs/ops/capacity.md"],
-  "next_steps": ["Batch 1 first; hand templates/plan.en.md to coding-implement"]
+  "next_steps": ["Batch 1 first; hand templates/plan.en.md to whoever writes the fix"]
 }
 ```
 

@@ -161,7 +161,7 @@
       "blast_radius": "1 table",
       "trace": "1. The migration at :2 creates legacy_exports with id: false. 2. No model, query or job names it",
       "impact": "A table nothing writes cannot be corrupted",
-      "fix": "Hand to prune-scan as a removal candidate",
+      "fix": "Hand on as a removal candidate to a review of what can be deleted",
       "validation": {"verdict": "NotApplicable", "method": "static",
                      "evidence": "db/migrate/20190405090000_create_legacy_exports.rb:2 is the only mention; a search for legacy_exports in app/ and lib/ returns 0"},
       "status": "Open"
@@ -203,7 +203,7 @@
     "History before 2025-03 was squashed on migration"
   ],
   "next_steps": [
-    "Batch 1 first; hand templates/plan.en.md to coding-implement",
-    "F-004 in the next scheduled maintenance window; F-005 to prune-scan"
+    "Batch 1 first; hand templates/plan.en.md to whoever writes the fix",
+    "F-004 in the next scheduled maintenance window; F-005 to a review of what can be deleted"
   ]
 }

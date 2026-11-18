@@ -52,8 +52,8 @@ Write in the requester's language.
    look wrong (reported, never rewritten in passing), who owns orphaned or
    duplicated data, hazards someone may choose to accept
 7. **Next step** — batch 1, and the hand-off (`templates/plan.<lang>.md` to
-   `coding-implement`); questions for `architecture-scan`,
-   `performance-scan`, `privacy-scan`, `test-gap-scan` or `prune-scan`
+   whoever writes the fix); questions that belong to an architecture,
+   performance, privacy, test-gap or deletion review (out of scope here)
 8. **Files** — link `dashboard.html` and `report.md` rendered from
    `findings.json`. The output directory holds exactly the set named in
    `SKILL.md` (*Run contract*)

@@ -1,5 +1,5 @@
 <!--
-coding-implement または担当者に渡すデータ整合性の修正計画。batch は findings.json の plan[]、各 finding の欄は
+修正を書くエージェントまたは担当者に渡すデータ整合性の修正計画。batch は findings.json の plan[]、各 finding の欄は
 findings[] から転記する。plan[] のエントリごとに batch の節を、その中の ID ごとに finding の節を繰り返す。
 除外された finding（FalsePositive / NotApplicable）は載せない。Likely / Unlikely / Unverified の finding は確定した事実として
 書かず、最初の手順で未確定の点を確かめる。実行者は着手前に、各 location を自分の

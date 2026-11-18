@@ -16,8 +16,8 @@ reviewable batches.
 > exception is GUARD: on request and with permission, it runs the migrations
 > against a disposable local database, or adds a constraint-violation test to
 > the repository's suite, showing the invariant a finding names now holds.
-> Writing the fix is a separate request (`coding-implement` takes the plan as
-> input).
+> Writing the fix is a separate request (the plan is written so an agent or a
+> person can execute it).
 
 ## What it does
 
@@ -130,8 +130,5 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 
 Requirements: Python 3.9+. No third-party packages.
 
-The record format, scripts and run contract are forked from the sibling
-`test-gap-scan` skill (itself forked from `refactor-scan`: same verdicts, plan
-model and report shape), adapted to data-layer review. The dashboard uses
-[scan-report-kit](https://github.com/simota/scan-report-kit), whose copy in
-`skills/data-integrity-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+The dashboard uses the report kit bundled under
+`skills/data-integrity-scan/scripts/scan_report_kit/`, which is maintained in this repository; edit it in place.

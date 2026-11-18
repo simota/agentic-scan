@@ -20,23 +20,23 @@ asked for, a checklist tailored to this application.
 
 It does not change the schema or the data, connect to a database, or run
 migrations, the application or its tests. Writing the fix is a separate,
-later request (`coding-implement` takes `templates/plan.<lang>.md` as its
-input). A missing constraint is not the measure: a constraint nothing can
+later request (`templates/plan.<lang>.md` is written so an agent or a person
+can execute it). A missing constraint is not the measure: a constraint nothing can
 violate (one writer, a table nobody writes) is not a finding beyond `Info`.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → PLAN → REPORT`.
 
-Neighbours, and where their questions go instead:
+Neighbours, and where their questions go instead (all out of scope here):
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the fix or the migration | `coding-implement` |
-| Who owns which data, and do modules reach into each other's tables? | `architecture-scan` |
-| Missing indexes, slow or unbounded queries | `performance-scan` |
-| Personal data, retention, deletion on request | `privacy-scan` |
-| Which data paths have no test? | `test-gap-scan` |
-| Can a table or column be deleted? | `prune-scan` |
-| Wrong results computed in code: float arithmetic and rounding on amounts, time-zone and calendar logic | `logic-scan` |
+| Write the fix or the migration | A separate request to write the code |
+| Who owns which data, and do modules reach into each other's tables? | An architecture review |
+| Missing indexes, slow or unbounded queries | A performance review |
+| Personal data, retention, deletion on request | A privacy review |
+| Which data paths have no test? | A test-gap review of the suite |
+| Can a table or column be deleted? | A review of what can be deleted |
+| Wrong results computed in code: float arithmetic and rounding on amounts, time-zone and calendar logic | A business-logic correctness review |
 
 ## Before starting
 
@@ -144,7 +144,7 @@ Worked examples:
   citing the migration rule as drifted when the ledger states one, and the
   risk named is the next migration written the same way
 - A `legacy_exports` table with no primary key that nothing reads or writes:
-  not a hazard; `NotApplicable`, and `prune-scan` in `next_steps`
+  not a hazard; `NotApplicable`, and a review of what can be deleted in `next_steps`
 
 ## Phases
 
@@ -167,7 +167,7 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, data rule ledger, perspective coverage, how to read the levels |
+| `dashboard.html` | Self-contained dashboard in the application shell of the report kit bundled under `scripts/scan_report_kit/` (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, data rule ledger, perspective coverage, how to read the levels |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, data rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
@@ -184,7 +184,7 @@ chat summary in the requester's language).
 | The repository has no schema or migrations (schema managed elsewhere, a hosted database edited by hand) | Say so first. Review the write paths against the constraints the code assumes; schema findings fall to `Environment-dependent`; record the perspectives that need the schema as `not checked` with where it lives |
 | History is missing, shallow or squashed | Say so first. Fix-commit claims fall to `Suspected` or `Environment-dependent`, so severity rests on the named core tables; no High without either history or a write path traced with no enforcement |
 | Table sizes or the deploy order are not in the repository | Treat growing core tables as large and say so in `limitations`; a finding whose severity rests on size or order is `Environment-dependent`, and so at most Medium |
-| The table is unused, or the code that writes it is dead | `NotApplicable` with evidence, and name `prune-scan` in `next_steps` |
+| The table is unused, or the code that writes it is dead | `NotApplicable` with evidence, and name a review of what can be deleted in `next_steps` |
 | A hazard is a deliberate, documented trade-off (an ADR accepting eventual consistency, a reference across services reconciled by a job) | Not a finding unless the evidence shows it no longer holds; then a `decisions` item |
 | Generated or vendored code, or another service's schema | Out of scope; record it in `limitations` |
 | Asked to prove an invariant holds | GUARD: migrations on a disposable local database, or a constraint-violation test in the repo's own suite, never a shared or production database |

@@ -95,7 +95,7 @@ copy of production available), or `none`.
 ## 6. Hand-off
 
 `templates/plan.<lang>.md` turns the plan into the input for
-`coding-implement` or a person: one section per batch with its findings'
+an agent or a person who writes the fix: one section per batch with its findings'
 steps, invariants, verify lines and rollout. It is drafted only when asked
 (`SKILL.md`, *Decide first*). The executor re-reads each finding's locations
 at their own revision before starting: the record describes the assessed

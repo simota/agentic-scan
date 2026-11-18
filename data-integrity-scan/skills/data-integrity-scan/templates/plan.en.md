@@ -1,5 +1,5 @@
 <!--
-The data-integrity plan handed to coding-implement or a person. Copy from findings.json: plan[] for the batches,
+The data-integrity plan handed to the agent or person who writes the fix. Copy from findings.json: plan[] for the batches,
 findings[] for each finding's fields. Repeat the batch block per plan[] entry and the finding block per ID in it.
 Excluded findings (FalsePositive, NotApplicable) never appear; a Likely, Unlikely or Unverified finding is not written as
 established: its first step confirms what is still open. The executor re-reads every location at its own

@@ -25,7 +25,7 @@ class CitationTests(unittest.TestCase):
             for match in CITATION.finditer(doc.read_text(encoding="utf-8")):
                 for path in expand(match.group(1)):
                     cited.add(path)
-                    # A trailing slash cites a directory (the vendored scan_report_kit/).
+                    # A trailing slash cites a directory (such as report_assets/).
                     exists = (SKILL / path).is_dir() if path.endswith("/") else (SKILL / path).is_file()
                     self.assertTrue(exists, f"{doc.name} cites {path}")
         # Guard the pattern itself: it must see the files the docs rely on.

@@ -31,7 +31,7 @@ from findings import commitment_citations, counts as record_counts, excluded as 
 from findings import element_citations, recipients  # noqa: E402
 from output_io import write_utf8_files  # noqa: E402
 from personal_values import LINE_BREAKS  # noqa: E402
-from scan_report_kit import style as kit_style  # noqa: E402
+import report_style  # noqa: E402
 
 LABELS = {
     "en": {
@@ -540,7 +540,7 @@ def render_markdown(doc, lang):
 
 
 # Rules for privacy-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit).
+# stylesheet (report_assets/dashboard.css, the bundled report kit).
 DASHBOARD_CSS = """
 .filter-buttons{display:flex;gap:8px;flex-wrap:wrap;margin:0 0 12px}
 button[aria-pressed="true"]{border-color:var(--text);background:var(--soft)}
@@ -613,7 +613,7 @@ background:var(--panel);color:var(--text);border:1px solid var(--line);border-ra
 .datamap td:nth-child(6),.datamap td:nth-child(7),.datamap td:nth-child(5){grid-column:1/-1}
 .recipients td:nth-child(1),.recipients td:nth-child(2){grid-column:1/-1}}
 """
-CSS = kit_style.dashboard_css() + DASHBOARD_CSS
+CSS = report_style.dashboard_css() + DASHBOARD_CSS
 
 # The theme choice is a per-viewer convenience, stored under the bundled
 # report kit's key with the kit's behaviour. Storage may be absent or

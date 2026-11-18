@@ -31,7 +31,6 @@ Neighbours, and where their questions go instead:
 |---|---|
 | Write the tests | A separate implementation request (out of scope here) |
 | Does this one change work? Verify a feature with recorded evidence | Verification of that change with recorded evidence (out of scope here) |
-| Which refactorings pay off, and is their safety net enough? | A refactoring review (out of scope here) |
 | Is the structure itself hard to test (layering, hidden dependencies)? | An architecture review (out of scope here) |
 | Can a test or test helper be deleted? | A review of what can be removed (out of scope here) |
 

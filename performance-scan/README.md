@@ -234,7 +234,7 @@ skills/performance-scan/
   scripts/issues.py            findings.json -> one issue draft per open finding
   scripts/compare.py           two findings.json -> new / resolved / changed, a CI gate, --carry
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and editors
-  scripts/scan_report_kit/     vendored scan-report-kit: the shared *-scan dashboard stylesheet
+  scripts/scan_report_kit/     bundled report kit: the shared *-scan dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -249,7 +249,6 @@ tests/                         offline tests for the scripts and the documents
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse, description <= 400 bytes, no cited ../ paths,
-             # vendored scan_report_kit matches its MANIFEST,
              # sample renders in ja/en and passes the run contract,
              # compare (with --carry), summary, issue drafts and SARIF run on the samples
 make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
@@ -270,6 +269,5 @@ The dashboard uses the shared *-scan report format,
 stylesheet (light and dark themes, journal-style typography) comes first, the
 page opts into its application shell (`html.app-shell`), and `render.py` adds only the rules for what this skill renders differently
 (collapsible findings, severity filter buttons, budget and coverage tables).
-The kit is vendored in `skills/performance-scan/scripts/scan_report_kit/`;
-change it upstream and re-vendor, never in place (`make check` verifies the
-copy). `report.md` is unchanged.
+The copy in `skills/performance-scan/scripts/scan_report_kit/`
+is maintained in this repository (scan-report-kit is retired); edit it in place. `report.md` is unchanged.

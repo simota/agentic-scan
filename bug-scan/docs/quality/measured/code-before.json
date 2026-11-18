@@ -1,0 +1,247 @@
+{
+ "corpus": [
+  {
+   "case": "section is a number",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: 'int' object is not iterable"
+  },
+  {
+   "case": "section is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: findings: entries must be objects"
+  },
+  {
+   "case": "meta is a string",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "AttributeError: 'str' object has no attribute 'items'"
+  },
+  {
+   "case": "fragment is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/3.json: must be a JSON object"
+  },
+  {
+   "case": "summary is a number",
+   "exit": 0,
+   "traceback": false,
+   "corrupted": false,
+   "message": ""
+  },
+  {
+   "case": "string list given as a string",
+   "exit": 0,
+   "traceback": false,
+   "corrupted": true,
+   "message": ""
+  },
+  {
+   "case": "remove is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: remove: must be an object"
+  },
+  {
+   "case": "remove items is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: remove: 'x' is not recorded in next_steps"
+  },
+  {
+   "case": "perspective is a string",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "AttributeError: 'str' object has no attribute 'get'"
+  },
+  {
+   "case": "perspectives is a string",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "AttributeError: 'str' object has no attribute 'get'"
+  },
+  {
+   "case": "surface without id",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "KeyError: 'id'"
+  },
+  {
+   "case": "surfaces is a number",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: 'int' object is not iterable"
+  },
+  {
+   "case": "pattern is a list",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: unhashable type: 'list'"
+  },
+  {
+   "case": "status is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/13.json: BG-001.status: ['Open'] is not one of Open, Triaged, Reopened, Unverified, Accepted, Fixed, Verified"
+  },
+  {
+   "case": "location is a number",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: expected string or bytes-like object"
+  },
+  {
+   "case": "id is a list",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: unhashable type: 'list'"
+  },
+  {
+   "case": "relations is a number",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: 'int' object is not iterable"
+  },
+  {
+   "case": "path is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/17.json: BG-001.path[0]: must be an object"
+  },
+  {
+   "case": "siblings is a number",
+   "exit": 1,
+   "traceback": true,
+   "corrupted": false,
+   "message": "TypeError: 'int' object is not iterable"
+  },
+  {
+   "case": "repro steps is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/19.json: BG-001.repro.steps: must be a list of nonblank strings"
+  },
+  {
+   "case": "event origin commits is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/20.json: E-1.origin.commits: must be a list of hex references; E-1: Traced needs origin commits and a reason that expla"
+  },
+  {
+   "case": "issue feeds is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmp4qsa4gig/21.json: I-1.feeds: 3 is not one of BP01, BP02, BP03, BP04, BP05, BP06, BP07, BP08, BP09, BP10, BP11, BP12, Unclassifie"
+  }
+ ],
+ "corpus_tracebacks": 11,
+ "corpus_corrupted": 1,
+ "corpus_cases": 22,
+ "render_refusals": [
+  "relation-to-missing-id CRASH KeyError 'BG-099'",
+  "unknown-gate CRASH ValueError 'G-99' is not in list",
+  "unknown-surface rendered"
+ ],
+ "lost_updates_per_200": [
+  136,
+  137,
+  130
+ ],
+ "import_graph": {
+  "findings": [
+   "common"
+  ],
+  "render": [
+   "common",
+   "diagrams",
+   "findings"
+  ],
+  "surfaces": [
+   "common"
+  ],
+  "ledger": [
+   "common"
+  ],
+  "contract_check": [
+   "common",
+   "findings",
+   "render"
+  ],
+  "import_findings": [
+   "common"
+  ],
+  "common": [],
+  "diagrams": [
+   "common"
+  ],
+  "compare": [
+   "common"
+  ],
+  "history": [
+   "common"
+  ]
+ },
+ "import_cycles": [],
+ "duplicate_rules": {
+  "closed status literal outside common": 6,
+  "excluded verdict literal outside common": 3,
+  "severity order literal outside common": 1,
+  "text-cleaning helper copies": 2,
+  "is_excluded copies": 3
+ },
+ "own_python_lines": 2669,
+ "ruff": [
+  [
+   "B905",
+   3
+  ],
+  [
+   "C901",
+   14
+  ],
+  [
+   "E731",
+   5
+  ],
+  [
+   "E741",
+   5
+  ],
+  [
+   "F401",
+   0
+  ],
+  [
+   "F841",
+   0
+  ]
+ ],
+ "tests": [
+  "Ran 45 tests in 5.270s",
+  "",
+  "OK"
+ ],
+ "kit_manifest_ok": true,
+ "render_build_ms_median30": 13.77
+}

@@ -1,0 +1,49 @@
+{
+ "page_order": [
+  "overview",
+  "priority-section",
+  "coverage",
+  "figures",
+  "findings",
+  "lists"
+ ],
+ "nav_order": [
+  "overview",
+  "priority-section",
+  "coverage",
+  "findings",
+  "lists",
+  "figures"
+ ],
+ "nav_matches_page": false,
+ "tab_stops_total": 176,
+ "tab_stops_before_first_record": 168,
+ "figure_tab_stops": 130,
+ "figure_parts": 130,
+ "figure_parts_named": 0,
+ "figure_parts_linking_to_a_record": 0,
+ "svg_root_role": [
+  "img"
+ ],
+ "table_heads_with_scope": "0/48",
+ "tip_role": "status",
+ "figure_index_links": 0,
+ "T5_arrow_moves": false,
+ "T2_one_activation_opens_record": false,
+ "axe_dashboard": [],
+ "script_errors": [],
+ "report_inert_focus_stops": 130,
+ "report_links_to_records": 0,
+ "axe_report": [
+  {
+   "id": "empty-table-header",
+   "impact": "minor",
+   "nodes": 1,
+   "overlay": 0,
+   "sample": ".metrics > thead > tr > th[scope=\"col\"]:nth-child(1)"
+  }
+ ],
+ "report_script_errors": [
+  "Could not parse CSS stylesheet"
+ ]
+}

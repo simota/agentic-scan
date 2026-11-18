@@ -1,0 +1,201 @@
+{
+  "surfaces": [
+    {
+      "id": "SC-02",
+      "kind": "screen",
+      "name": "チェックアウト",
+      "note": "/checkout",
+      "location": "web/checkout/CouponForm.tsx:18",
+      "basis": "traced"
+    },
+    {
+      "id": "SC-03",
+      "kind": "screen",
+      "name": "注文履歴",
+      "note": "/orders",
+      "location": "web/orders/List.tsx:22",
+      "basis": "traced"
+    },
+    {
+      "id": "SC-07",
+      "kind": "screen",
+      "name": "管理: 返金",
+      "note": "/admin/refunds",
+      "location": "web/admin/Refunds.tsx:40",
+      "basis": "traced"
+    },
+    {
+      "id": "SC-09",
+      "kind": "screen",
+      "name": "請求書",
+      "note": "/invoices/:id",
+      "location": "web/billing/Invoice.tsx:33",
+      "basis": "traced"
+    },
+    {
+      "id": "API-01",
+      "kind": "api",
+      "name": "POST /orders",
+      "note": "注文の確定",
+      "location": "api/orders/routes.py:31",
+      "basis": "traced"
+    },
+    {
+      "id": "API-02",
+      "kind": "api",
+      "name": "POST /billing/charge",
+      "note": "課金",
+      "location": "api/billing/routes.py:14",
+      "basis": "traced"
+    },
+    {
+      "id": "API-03",
+      "kind": "api",
+      "name": "POST /admin/refunds",
+      "note": "返金の受付",
+      "location": "api/admin/refunds.py:20",
+      "basis": "traced"
+    },
+    {
+      "id": "API-04",
+      "kind": "api",
+      "name": "GET /invoices/{id}",
+      "note": "請求書の取得",
+      "location": "api/billing/routes.py:52",
+      "basis": "traced"
+    },
+    {
+      "id": "API-05",
+      "kind": "api",
+      "name": "GET /orders",
+      "note": "注文一覧",
+      "location": "api/orders/routes.py:64",
+      "basis": "traced"
+    },
+    {
+      "id": "JOB-01",
+      "kind": "job",
+      "name": "refund_job",
+      "note": "返金ジョブ",
+      "location": "worker/refunds/job.py:58",
+      "basis": "traced"
+    },
+    {
+      "id": "DB-01",
+      "kind": "db",
+      "name": "orders",
+      "note": "注文",
+      "location": "migrations/0007_orders.sql:3",
+      "basis": "traced"
+    },
+    {
+      "id": "DB-02",
+      "kind": "db",
+      "name": "coupons",
+      "note": "クーポン",
+      "location": "migrations/0009_coupons.sql:2",
+      "basis": "traced"
+    },
+    {
+      "id": "DB-03",
+      "kind": "db",
+      "name": "invoices",
+      "note": "請求書",
+      "location": "migrations/0012_invoices.sql:4",
+      "basis": "traced"
+    },
+    {
+      "id": "DB-04",
+      "kind": "db",
+      "name": "refunds",
+      "note": "返金",
+      "location": "migrations/0015_refunds.sql:2",
+      "basis": "traced"
+    },
+    {
+      "id": "EXT-01",
+      "kind": "ext",
+      "name": "決済ゲートウェイ",
+      "note": "外部サービス",
+      "location": "api/billing/client.py:12",
+      "basis": "traced"
+    }
+  ],
+  "links": [
+    {
+      "from": "SC-02",
+      "to": "API-01",
+      "basis": "inferred"
+    },
+    {
+      "from": "SC-02",
+      "to": "API-02",
+      "basis": "traced"
+    },
+    {
+      "from": "SC-03",
+      "to": "API-05",
+      "basis": "traced"
+    },
+    {
+      "from": "SC-07",
+      "to": "API-03",
+      "basis": "traced"
+    },
+    {
+      "from": "SC-09",
+      "to": "API-04",
+      "basis": "inferred"
+    },
+    {
+      "from": "API-01",
+      "to": "DB-01",
+      "basis": "traced"
+    },
+    {
+      "from": "API-01",
+      "to": "DB-02",
+      "basis": "traced"
+    },
+    {
+      "from": "API-02",
+      "to": "DB-03",
+      "basis": "traced"
+    },
+    {
+      "from": "API-02",
+      "to": "EXT-01",
+      "basis": "inferred"
+    },
+    {
+      "from": "API-03",
+      "to": "JOB-01",
+      "basis": "traced"
+    },
+    {
+      "from": "API-04",
+      "to": "DB-03",
+      "basis": "traced"
+    },
+    {
+      "from": "API-05",
+      "to": "DB-01",
+      "basis": "traced"
+    },
+    {
+      "from": "JOB-01",
+      "to": "DB-04",
+      "basis": "inferred"
+    },
+    {
+      "from": "JOB-01",
+      "to": "DB-03",
+      "basis": "traced"
+    },
+    {
+      "from": "JOB-01",
+      "to": "EXT-01",
+      "basis": "traced"
+    }
+  ]
+}

@@ -1,0 +1,247 @@
+{
+ "corpus": [
+  {
+   "case": "section is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/0.json: gates: must be a list"
+  },
+  {
+   "case": "section is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/1.json: findings: must be a list"
+  },
+  {
+   "case": "meta is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/2.json: meta: must be an object"
+  },
+  {
+   "case": "fragment is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/3.json: must be a JSON object"
+  },
+  {
+   "case": "summary is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/4.json: summary: must be a string"
+  },
+  {
+   "case": "string list given as a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/5.json: next_steps: must be a list"
+  },
+  {
+   "case": "remove is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/6.json: remove: must be an object"
+  },
+  {
+   "case": "remove items is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/7.json: remove.next_steps: must be a list"
+  },
+  {
+   "case": "perspective is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/8.json: perspectives: entries must be objects"
+  },
+  {
+   "case": "perspectives is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/9.json: perspectives: must be a list"
+  },
+  {
+   "case": "surface without id",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/10.json: BG-001.surfaces[0]: id is required"
+  },
+  {
+   "case": "surfaces is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/11.json: BG-001.surfaces: must be a list"
+  },
+  {
+   "case": "pattern is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/12.json: BG-001.pattern: ['x'] is not one of BP01, BP02, BP03, BP04, BP05, BP06, BP07, BP08, BP09, BP10, BP11, BP12, Un"
+  },
+  {
+   "case": "status is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/13.json: BG-001.status: ['Open'] is not one of Open, Triaged, Reopened, Unverified, Accepted, Fixed, Verified"
+  },
+  {
+   "case": "location is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/14.json: BG-001: location 3 must be path:line"
+  },
+  {
+   "case": "id is a list",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/15.json: findings: id must be a string"
+  },
+  {
+   "case": "relations is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/16.json: BG-001.relations: must be a list"
+  },
+  {
+   "case": "path is a string",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/17.json: BG-001.path: must be a list"
+  },
+  {
+   "case": "siblings is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/18.json: BG-001.sibling_sites: must be a list"
+  },
+  {
+   "case": "repro steps is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/19.json: BG-001.repro.steps: must be a list of nonblank strings"
+  },
+  {
+   "case": "event origin commits is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/20.json: E-1.origin.commits: must be a list of hex references; E-1: Traced needs origin commits and a reason that expla"
+  },
+  {
+   "case": "issue feeds is a number",
+   "exit": 2,
+   "traceback": false,
+   "corrupted": false,
+   "message": "findings.py: /tmp/claude-501/tmpdv4yk6pc/21.json: I-1.feeds: 3 is not one of BP01, BP02, BP03, BP04, BP05, BP06, BP07, BP08, BP09, BP10, BP11, BP12, Unclassifie"
+  }
+ ],
+ "corpus_tracebacks": 0,
+ "corpus_corrupted": 0,
+ "corpus_cases": 22,
+ "render_refusals": [
+  "relation-to-missing-id named-error BG-001: relation points at BG-099, which is not recorded",
+  "unknown-gate named-error E-001: gate G-99 is not recorded",
+  "unknown-surface rendered"
+ ],
+ "lost_updates_per_200": [
+  0,
+  0,
+  0
+ ],
+ "import_graph": {
+  "findings": [
+   "common"
+  ],
+  "render": [
+   "common",
+   "diagrams",
+   "findings"
+  ],
+  "surfaces": [
+   "common"
+  ],
+  "ledger": [
+   "common"
+  ],
+  "contract_check": [
+   "common",
+   "findings",
+   "render"
+  ],
+  "import_findings": [
+   "common"
+  ],
+  "common": [],
+  "diagrams": [
+   "common"
+  ],
+  "compare": [
+   "common"
+  ],
+  "history": [
+   "common"
+  ]
+ },
+ "import_cycles": [],
+ "duplicate_rules": {
+  "closed status literal outside common": 0,
+  "excluded verdict literal outside common": 0,
+  "severity order literal outside common": 0,
+  "text-cleaning helper copies": 1,
+  "is_excluded copies": 1
+ },
+ "own_python_lines": 2795,
+ "ruff": [
+  [
+   "B905",
+   3
+  ],
+  [
+   "C901",
+   16
+  ],
+  [
+   "E731",
+   5
+  ],
+  [
+   "E741",
+   5
+  ],
+  [
+   "F401",
+   0
+  ],
+  [
+   "F841",
+   0
+  ]
+ ],
+ "tests": [
+  "Ran 60 tests in 5.462s",
+  "",
+  "OK"
+ ],
+ "kit_manifest_ok": true,
+ "render_build_ms_median30": 10.32
+}

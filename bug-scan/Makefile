@@ -93,8 +93,6 @@ check: test ## verify the skill is self-contained and internally consistent
 	  $(PYTHON) -c 'import ast,sys; ast.parse(open(sys.argv[1],encoding="utf-8").read(), sys.argv[1], feature_version=(3,9))' "$$p" \
 	    || { echo "MISS $$p does not parse on Python 3.9" >&2; fail=1; }; \
 	done; \
-	( cd $$skill/scripts/scan_report_kit && shasum -a 256 -c --quiet MANIFEST ) >&2 \
-	  || { echo "MISS scan_report_kit differs from its MANIFEST: change it upstream and re-vendor" >&2; fail=1; }; \
 	out=$$(mktemp -d "$${TMPDIR:-/tmp}/$(NAME)-check.XXXXXX") || exit 1; \
 	cp examples/findings.sample.json "$$out/findings.json"; cp examples/surfaces.sample.json "$$out/surfaces.json"; cp examples/history.sample.json "$$out/history.json"; \
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $$skill/scripts/findings.py renumber "$$out/findings.json" | grep -q 'already in order' \

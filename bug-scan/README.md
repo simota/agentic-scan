@@ -89,7 +89,7 @@ skills/bug-scan/
   SKILL.md                 phases, run contract, severity, decisions
   reference/               recon, gates, surfaces, history, taxonomy, tracking, validation, diagrams, schema, report
   scripts/                 standard library only
-  scripts/scan_report_kit/ vendored shared report format; change it upstream and re-vendor
+  scripts/scan_report_kit/ shared report format, maintained here (scan-report-kit is retired)
 examples/                  fictional acme-shop record, for make demo and make check
 tests/                     offline tests
 docs/plans/                the design and a diagram sample
@@ -100,6 +100,6 @@ docs/quality/              the SQI rubric, its measured report and the audit scr
 
 ```sh
 make test    # offline unit tests (needs git)
-make check   # tests plus references, frontmatter, the vendored kit and a sample render in ja and en
+make check   # tests plus references, frontmatter and a sample render in ja and en
 make demo    # render the sample; DEMO_OUT=dir, LANG_OUT=en, NO_PDF=1
 ```

@@ -262,8 +262,8 @@ Report typography follows the shared *-scan report format, scan-report-kit
 (see `docs/report-design.md`): a journal-style assessment (numbered
 sections, captioned booktabs tables and listings, one mincho face for both
 scripts) and a dashboard in the same system. The kit's stylesheets and PDF
-engine are vendored in `skills/security-scan/scripts/scan_report_kit/`;
-change them upstream and re-vendor, never in place (`make check` verifies the copy).
+engine live in `skills/security-scan/scripts/scan_report_kit/`,
+which is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 The PDF is printed with headless Chrome/Chromium (`CHROME=/path/to/binary` to
 choose one), falling back to WeasyPrint. With neither available the HTML files
@@ -637,7 +637,7 @@ skills/security-scan/
   scripts/invariant_ledger.py  opt-in invariant ledger and static-reproduction checks
   scripts/url_redaction.py     URL credential, query and fragment redaction for reports
   scripts/payloads.py          literal attack strings refused by merges and workflow submissions
-  scripts/scan_report_kit/     vendored scan-report-kit: shared stylesheets, PDF engine, safe writes
+  scripts/scan_report_kit/     bundled report kit: shared stylesheets, PDF engine, safe writes
   templates/issue.{ja,en}.md     one finding as one issue
   templates/report.{ja,en}.md    findings report to an owner or security contact
 examples/findings.sample.json  fictional legacy sample for make demo LANG_OUT=en / make check

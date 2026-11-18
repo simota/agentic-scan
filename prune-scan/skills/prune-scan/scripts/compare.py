@@ -38,7 +38,7 @@ from findings import (EXCLUDED, PURPOSE_FAMILIES, RecordError, SEVERITIES, check
                       dump, load_json, merge, record_exists, renumber)
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import descriptor_within, open_directory, within  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 TRACKED = ("severity", "confidence", "verdict", "action", "status")
 EXAMPLES = 5

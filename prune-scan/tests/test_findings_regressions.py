@@ -365,7 +365,7 @@ class RecordValidationTests(unittest.TestCase):
 
     def test_valid_multiline_prose_and_international_urls_still_render(self):
         import render
-        from scan_report_kit import report
+        import report_format as report
 
         data = record()
         data["findings"][0]["basis"] = "First observation.\nSecond observation."

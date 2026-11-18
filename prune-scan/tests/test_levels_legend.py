@@ -14,7 +14,7 @@ sys.path.insert(0, str(SCRIPTS))
 
 import render  # noqa: E402
 from findings import CONFIDENCES, SEVERITIES  # noqa: E402
-from scan_report_kit.report import esc  # noqa: E402
+from report_format import esc  # noqa: E402
 
 SAMPLES = {"en": ROOT / "examples" / "findings.sample.json", "ja": ROOT / "examples" / "findings.sample.ja.json"}
 

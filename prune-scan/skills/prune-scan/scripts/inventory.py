@@ -40,7 +40,7 @@ from findings import RecordError, check_units, parse_json  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import NOFOLLOW_DIR_FD as SAFE_DIR_OPEN, SEARCH, descriptor_within, open_directory, within  # noqa: E402
 from safe_source import physical_lines, sensitive_source  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 
 

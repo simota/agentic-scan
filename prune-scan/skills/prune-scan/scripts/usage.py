@@ -40,7 +40,7 @@ from inventory import PARAM, REGEX_ROUTE_TOKEN  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 from safe_source import sensitive_source  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 METHODS = ("GET", "HEAD", "POST", "PUT", "PATCH", "DELETE", "OPTIONS", "TRACE", "CONNECT")
 # Route definitions that serve any method (Flask route, Django path, FastAPI api_route, Express all).

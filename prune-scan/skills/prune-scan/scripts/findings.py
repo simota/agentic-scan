@@ -31,8 +31,8 @@ from datetime import date
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_report_kit.output import write_output  # noqa: E402
-from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
+from report_output import write_output  # noqa: E402
+from report_format import FormatError, LINE_BREAKS, http_url  # noqa: E402
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
 

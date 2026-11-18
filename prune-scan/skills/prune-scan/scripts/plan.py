@@ -35,7 +35,7 @@ from findings import (EXCLUDED, RecordError, check_findings, dump, load_json, re
                       rewrite_prose, units_beside)
 from safe_output import SAFE_OUTPUT, tolerant_stdout, write_output_at  # noqa: E402
 from safe_paths import open_directory  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 MARK = "\x00"
 # Prose that orders one subtraction after another, read around a marked reference.

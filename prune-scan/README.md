@@ -17,7 +17,7 @@ Its method:
 a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
-rendered with the report kit bundled under `skills/prune-scan/scripts/scan_report_kit/`.
+rendered by `skills/prune-scan/scripts/report_format.py` and its `report_*.py` siblings.
 
 It is read-only and never deletes anything; removal is a later request.
 Access logs the requester supplies are counted per route and public asset, so a
@@ -94,8 +94,9 @@ Python 3.10, 3.12 and 3.14, and on macOS with Python 3.14. The Linux/Python 3.12
 job also renders and verifies both the English and Japanese sample PDFs with
 Chrome. These checks run for every pull request and every push to `main`.
 
-`skills/prune-scan/scripts/scan_report_kit/` is the bundled report kit and
-is maintained in this repository; edit it in place.
+The report modules (`report_format.py`, `report_style.py`, `report_pdf.py`,
+`report_output.py`) and `skills/prune-scan/scripts/report_assets/`
+are maintained in this repository; edit them in place.
 
 `examples/larder/` is a fictional app with deliberate unneeded, over-built and
 out-of-purpose elements; the sample units and findings in `examples/` describe

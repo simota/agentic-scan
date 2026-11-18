@@ -18,7 +18,7 @@ evidence.
 | `Unverified` | Not yet examined | Agent or person: the verdict a finding starts with, always recorded explicitly |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
 | `FalsePositive` | Evidence contradicts the claim (an upstream validation excludes the input; a later step corrects the value; the oracle states the result the code gives) | Agent or person, with evidence |
-| `NotApplicable` | A fix here has no point (code nothing reaches — a `prune-scan` item; a flow retired with a date; generated code) | Agent or person, with evidence |
+| `NotApplicable` | A fix here has no point (code nothing reaches — an item for a review of what can be deleted; a flow retired with a date; generated code) | Agent or person, with evidence |
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
 `validation.evidence` citing `path:line`; a duplicate marked `NotApplicable`
@@ -118,7 +118,7 @@ finding `Fixed` and updates `enforcement` to cite the test. Then render and
 check again.
 
 `status: Fixed` records that the work was done: a fix written by
-`coding-implement` or a person, with the counterexample's test passing.
+an agent or a person, with the counterexample's test passing.
 `status: Accepted` records that a person chose to leave the result as it is;
 only they set it, and `decisions` names the finding, who decided and why.
 Neither needs a plan batch.

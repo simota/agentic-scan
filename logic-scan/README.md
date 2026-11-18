@@ -14,8 +14,8 @@ sequenced into a plan of reviewable batches.
 > history; it does not run the application, its tests or its scripts. The
 > one exception is REPRO: on request and with permission, it writes a
 > finding's counterexample as a failing test in the repository's own suite
-> and runs it. Writing the fix is a separate request (`coding-implement`
-> takes the plan as input).
+> and runs it. Writing the fix is a separate request (the plan is
+> written so an agent or a person can execute it).
 
 ## What it does
 
@@ -129,10 +129,5 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 
 Requirements: Python 3.9+. No third-party packages.
 
-The record format, scripts and run contract are forked from the sibling
-`data-integrity-scan` skill (itself forked from `test-gap-scan` and `refactor-scan`: same
-verdicts, plan model and report shape), adapted to business-logic review: the
-`rollout` axis became `change`, and findings gained a `counterexample`. The
-dashboard uses [scan-report-kit](https://github.com/simota/scan-report-kit),
-whose copy in
-`skills/logic-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+The dashboard uses the report kit bundled under
+`skills/logic-scan/scripts/scan_report_kit/`, which is maintained in this repository; edit it in place.

@@ -379,9 +379,9 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# The dashboard follows security-scan's layout and visual language: masthead,
+# The dashboard uses the bundled report kit's layout and visual language: masthead,
 # summary, counts, a priority queue, coverage, overview charts and a filterable
-# register. Unlike security-scan it is rendered here, not by its script, so it
+# register. It is rendered here, not by the kit's own script, so it
 # reads in full without JavaScript and runs under a hash-only CSP.
 DASH = {
     "en": {
@@ -525,7 +525,7 @@ DASH = {
 }
 
 # Rules for logic-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
+# stylesheet (scan_report_kit/assets/dashboard.css).
 DASHBOARD_CSS = """
 .action-label,.reg-head,.reg-meta,.detail dt,.small,.toggle-label{font-family:var(--sans)}
 .action-label{font-size:12px;font-weight:700;color:var(--accent)}

@@ -178,7 +178,7 @@
       "blast_radius": "1 module",
       "trace": "1. coupons.py:31 tests the discount for truth. 2. No route, job or import reaches coupons.py",
       "impact": "Code nothing calls cannot produce a wrong result",
-      "fix": "Hand to prune-scan as a removal candidate",
+      "fix": "Hand on as a removal candidate to a review of what can be deleted",
       "validation": {"verdict": "NotApplicable", "method": "static",
                      "evidence": "app/legacy/coupons.py:31 is reachable from nowhere; a search for coupons in app/ and tests/ returns only the file itself"},
       "status": "Open"
@@ -221,7 +221,7 @@
     "History before 2025-03 was squashed on migration"
   ],
   "next_steps": [
-    "Batch 1 first; hand templates/plan.en.md to coding-implement",
-    "F-004 with finance's agreement on the corrected reports; F-005 to prune-scan"
+    "Batch 1 first; hand templates/plan.en.md to whoever writes the fix",
+    "F-004 with finance's agreement on the corrected reports; F-005 to a review of what can be deleted"
   ]
 }

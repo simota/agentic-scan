@@ -174,7 +174,7 @@ renumber, use only the new IDs it printed.
   "decisions": ["Whether renewals may charge one yen less once F-001 is fixed",
                 "Confirm C-01 (amounts stored and passed as integer yen) as the intended rule"],
   "limitations": ["No test was run; counterexamples are traced by reading the code"],
-  "next_steps": ["Batch 1 first; hand templates/plan.en.md to coding-implement"]
+  "next_steps": ["Batch 1 first; hand templates/plan.en.md to whoever writes the fix"]
 }
 ```
 

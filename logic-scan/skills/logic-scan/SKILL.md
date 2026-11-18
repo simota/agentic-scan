@@ -20,26 +20,26 @@ batches another agent or a person can execute. When only a plan of what to
 look at is asked for, a checklist tailored to this application.
 
 It does not change code, and does not run the application or its tests.
-Writing the fix is a separate, later request (`coding-implement` takes
-`templates/plan.<lang>.md` as its input). Taste is not the measure: code that
+Writing the fix is a separate, later request (`templates/plan.<lang>.md` is
+written so an agent or a person can execute it). Taste is not the measure: code that
 reads oddly but gives the right result on every input it can receive is not a
 finding beyond `Info`, and a defect no caller can reach is `NotApplicable`.
 
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → PLAN → REPORT`.
 
-Neighbours, and where their questions go instead:
+Neighbours, and where their questions go instead (all out of scope here):
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the fix | `coding-implement` |
-| One known bug: reproduce it and find its cause | `coding-debug` |
-| Review one diff before it merges | `coding-review` |
-| Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | `data-integrity-scan` |
-| Who may do what: authorization, tenancy, parameter tampering | `security-scan` |
-| Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | `reliability-scan` |
-| Which logic has no test, and what to assert | `test-gap-scan` |
-| Slow paths and unbounded work | `performance-scan` |
-| Code nothing reaches | `prune-scan` |
+| Write the fix | A separate request to write the code |
+| One known bug: reproduce it and find its cause | A debugging request for that one bug |
+| Review one diff before it merges | A code review of that change |
+| Stored data corrupted by schema, migrations, transactions or database-level lost updates; column types for money and time; constraints that would keep a status and its fields consistent | A data-integrity review of the schema and write paths |
+| Who may do what: authorization, tenancy, parameter tampering | A security review of the application's source |
+| Behaviour when a dependency fails: timeouts, retries, fallbacks that hide a failed call, double submits and idempotency of retried calls | A reliability review of failure behaviour |
+| Which logic has no test, and what to assert | A test-gap review of the suite |
+| Slow paths and unbounded work | A performance review |
+| Code nothing reaches | A review of what can be deleted |
 
 ## Before starting
 
@@ -138,7 +138,7 @@ Worked examples:
   that says distinct orders, already sent monthly to finance: Low (non-core),
   `Correction` (the sent reports stay wrong), `Confirmed`
 - `if discount:` treating a zero discount as absent, in a module nothing
-  imports: not a defect anyone can reach; `NotApplicable`, and `prune-scan`
+  imports: not a defect anyone can reach; `NotApplicable`, and a review of what can be deleted
   in `next_steps`
 
 ## Phases
@@ -163,7 +163,7 @@ symlink, either path reaches the same files), not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
+| `dashboard.html` | Self-contained dashboard in the application shell of the report kit bundled under `scripts/scan_report_kit/` (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings with their counterexamples, logic rule ledger, perspective coverage, how to read the levels |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, logic rule ledger, perspective coverage, checked and found sound, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
@@ -177,11 +177,11 @@ chat summary in the requester's language).
 | Asked "where could our logic be wrong" or "what should we check" without wanting the full review | RECON and CHECKLIST only: the core-flow and rule tables and the checklist in chat, the full ledger in `<scratch>/checklist.md` when it is long |
 | Asked to review, scan or audit the business logic or its correctness | All six phases |
 | Asked about one flow, rule or module | Scope the review units to what implements it, plus the cross-cutting unit; say the rest was not read in `limitations` |
-| One known bug with a reproduction | Not this skill: `coding-debug`. A scan may follow to find the same defect elsewhere |
+| One known bug with a reproduction | Not this skill: debug that one bug as a separate request. A scan may follow to find the same defect elsewhere |
 | No stated rules (no specification, docs or tests that assert behaviour) | Say so first. The oracle falls back to domain facts (a calendar, a currency's minor unit), which can still be `Confirmed`, and to the majority implementation, which is an inferred rule: a finding resting on it is at most `Suspected` unless another site in the code states the rule, and each inferred rule goes to `decisions` |
 | History is missing, shallow or squashed | Say so first. Fix-commit claims fall to `Suspected`, so severity rests on the named core flows and the input classes; no High without a fix commit or another record that the wrong result reached someone |
 | The server's time zone, locale or feature flags are not in the repository | Name what the code assumes; a finding whose wrong result rests on them is `Environment-dependent`, and so at most Medium; say so in `limitations` |
-| The code is unreachable, or the flow is retired | `NotApplicable` with evidence, and name `prune-scan` in `next_steps` |
+| The code is unreachable, or the flow is retired | `NotApplicable` with evidence, and name a review of what can be deleted in `next_steps` |
 | A result is a deliberate, documented trade-off (an ADR accepting truncation, a rounding the regulator requires) | Not a finding unless the evidence shows it no longer holds; then a `decisions` item |
 | Generated or vendored code | Out of scope; record it in `limitations` |
 | Asked to prove a finding | REPRO: the counterexample as a test in the repository's own suite, run with permission on the assessed revision, never against shared or production systems |

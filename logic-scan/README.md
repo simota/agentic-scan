@@ -110,7 +110,7 @@ skills/logic-scan/
   scripts/recon.py             git history for RECON: window, churn, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
-  scripts/scan_report_kit/     vendored scan-report-kit
+  scripts/scan_report_kit/     bundled report kit
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
 examples/findings.sample.json  fictional sample for make demo / make check
@@ -122,7 +122,7 @@ tests/                         offline tests for the scripts and the documents
 ```sh
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
-             # scripts parse, the vendored scan-report-kit matches its MANIFEST,
+             # scripts parse,
              # sample renders in ja/en and passes the run contract
 make demo    # render the sample into a new private temp dir (LANG_OUT=en for English)
 ```
@@ -134,5 +134,5 @@ The record format, scripts and run contract are forked from the sibling
 verdicts, plan model and report shape), adapted to business-logic review: the
 `rollout` axis became `change`, and findings gained a `counterexample`. The
 dashboard uses [scan-report-kit](https://github.com/simota/scan-report-kit),
-vendored in `skills/logic-scan/scripts/scan_report_kit/`; change it upstream
-and re-vendor, never in place.
+whose copy in
+`skills/logic-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.

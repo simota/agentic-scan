@@ -35,7 +35,7 @@ from findings import (CONFIDENCES, CONTROL, CONVENTION_STATUSES, DEFINITIVE,  # 
                       safe_output, shown_line, validate, visible)
 from markdown_safe import (BIDI_CONTROLS, as_text, block_safe, heading_text,  # noqa: E402
                            markdown_code, markdown_inline, markdown_table_cell)
-from scan_report_kit import style as kit_style  # noqa: E402
+import report_style  # noqa: E402
 
 URL_SCHEME = re.compile(r"https?://", re.IGNORECASE)
 SCHEME = re.compile(r"[A-Za-z][A-Za-z0-9+.-]*:")
@@ -513,7 +513,7 @@ DASH = {
 }
 
 # Rules for test-gap-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit).
+# stylesheet (report_assets/dashboard.css, the bundled report kit).
 DASHBOARD_CSS = """
 .action-label,.reg-head,.reg-meta,.detail dt,.small,.toggle-label{font-family:var(--sans)}
 .action-label{font-size:12px;font-weight:700;color:var(--accent)}
@@ -566,7 +566,7 @@ details.excluded .reg-title>span:first-child{text-decoration:line-through}
 @media(min-width:1100px){.app-shell .reg-head{position:sticky;z-index:4;top:calc(var(--appbar-h) + var(--filters-h,0px));background:var(--bg)}}
 @media print{.app-shell .finding:focus-within>details>summary{background:none;box-shadow:none}.app-shell .reg-head{position:static}}
 """
-KIT_CSS = kit_style.dashboard_css()
+KIT_CSS = report_style.dashboard_css()
 # The kit's print palette, `html:root` (0,1,1), loses to its own dark rule
 # `:root:not([data-theme="light"])` (0,2,0), so a dark system theme would print
 # pale text on white. Its light palette is restated here at (0,2,1) until the

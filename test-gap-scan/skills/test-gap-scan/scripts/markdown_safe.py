@@ -1,7 +1,7 @@
 """Make recorded text safe to place in GitHub-flavoured Markdown.
 
 Shared by render.py (report.md) and drafts.py, so both escape recorded text
-the same way. Standard library and findings.py only: no scan_report_kit.
+the same way. Standard library and findings.py only: no report_style.
 """
 
 from html import escape

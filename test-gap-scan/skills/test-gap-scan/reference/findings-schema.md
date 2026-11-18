@@ -18,7 +18,7 @@ python3 scripts/findings.py check <out> --repo <checkout> [--allow NAME]
 ```
 
 `render.py` writes `<out>/dashboard.html` (self-contained, offline, styled by
-the bundled `scripts/scan_report_kit/`: counts, a priority queue, the plan as
+`scripts/report_assets/dashboard.css`: counts, a priority queue, the plan as
 ordered batches, a findings register filterable by severity, testability, effort,
 confidence, perspective, status, verdict and text, the test idiom ledger,
 perspective coverage, a copy-for-LLM button per finding) and `<out>/report.md`.

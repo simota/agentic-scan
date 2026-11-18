@@ -30,8 +30,8 @@ through a missing or bypassable access control is `security-scan`'s:
 |---|---|
 | Write the fix | `coding-implement` |
 | Another user or tenant reading the data by bypassing authorization or tenancy | `security-scan` |
-| Storage exposure and encryption in the cloud configuration | `infra-scan` |
-| Data lost or corrupted by schema, migrations or cascades | `data-scan` |
+| Storage exposure and encryption in the cloud configuration | `infra-security-scan` |
+| Data lost or corrupted by schema, migrations or cascades | `data-integrity-scan` |
 | Data or code nobody uses that holds no personal data | `prune-scan` |
 
 ## Before starting

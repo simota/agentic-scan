@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "project": "acme-shop (fictional)",
+    "scope": "Monorepo: api/, worker/, web/",
+    "commit": "0000000",
+    "date": "2026-10-09",
+    "assessor": "Sample (not a real assessment)",
+    "method": "Static review; read-only git history; import-linter with a scratch contract",
+    "lang": "en",
+    "axis": "confirmed"
+  },
+  "rules": [
+    {"id": "R-01", "statement": "Only the billing module writes invoices", "source": "docs/adr/0004-billing.md:12", "family": "OWN", "inferred": false, "status": "violated"},
+    {"id": "R-02", "statement": "Domain modules do not import the ORM or vendor SDKs", "source": ".importlinter:3 layers contract", "family": "LAYER", "inferred": false, "status": "violated"},
+    {"id": "R-03", "statement": "Every message consumer is idempotent", "source": "inferred from worker/consumers/base.py:20 dedup helper used by 5 of 6 consumers", "family": "TX", "inferred": true, "status": "violated"},
+    {"id": "R-04", "statement": "Public API responses use DTOs, never ORM entities", "source": "api/README.md:40", "family": "CONTRACT", "inferred": false, "status": "not checked", "reason": "GraphQL resolvers were outside the agreed scope"},
+    {"id": "R-05", "statement": "FAIL baseline: failures are not swallowed on a core flow", "source": "baseline; api/errors.py:8 translates every error once at the edge", "family": "FAIL", "inferred": true, "status": "holds"}
+  ],
+  "findings": [
+    {
+      "id": "A-001",
+      "title": "Refund job writes invoices directly, skipping billing's tax rules",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Domain model and data ownership",
+      "step": "DM1",
+      "location": ["worker/refunds/job.py:58", "api/billing/service.py:120"],
+      "scenario": "Refund flow (core): every refund issued by support",
+      "blast_radius": "invoices table; 2 writers in 2 deployable units",
+      "trace": "1. worker/refunds/job.py:58 updates invoices.total directly. 2. api/billing/service.py:120 recomputes tax on every invoice change. 3. Nothing under worker/refunds/ calls service.py:120, so refunded invoices keep the old tax",
+      "contrast": "api/orders/cancel.py:40 calls BillingService.adjust()",
+      "impact": "Expected (R-01): every invoice change goes through billing. Actual: refunded invoices keep the pre-refund tax amount",
+      "rule": "R-01",
+      "fix": "Call BillingService.adjust() from the refund job instead of updating the table",
+      "guard": "R-01: CI search fails on writes to invoices outside api/billing/",
+      "validation": {"verdict": "Valid", "method": "static", "evidence": "job.py:58 raw UPDATE; no call to billing in worker/refunds/"},
+      "status": "Open"
+    },
+    {
+      "id": "A-002",
+      "title": "Shipment consumer is not idempotent on redelivery",
+      "severity": "Medium",
+      "confidence": "Environment-dependent",
+      "category": "Consistency and transactions",
+      "step": "TX2",
+      "location": "worker/consumers/shipment.py:31",
+      "scenario": "Order shipping (core): one message per shipped parcel",
+      "blast_radius": "stock_levels table; 1 consumer",
+      "trace": "1. worker/consumers/shipment.py:31 decrements stock per message. 2. It does not use the dedup helper at worker/consumers/base.py:20. 3. A redelivered message runs shipment.py:31 again and decrements twice",
+      "contrast": "worker/consumers/payment.py:18 uses the dedup helper",
+      "impact": "Expected (R-03): one effect per message. Actual: stock drifts low on every redelivery, if the broker delivers at least once",
+      "rule": "R-03",
+      "fix": "Use the dedup helper keyed on the message ID, in the same transaction as the decrement",
+      "guard": "R-03: test delivers the same shipment message twice and asserts one decrement",
+      "validation": {"verdict": "Likely", "method": "static", "evidence": "shipment.py:31 has no dedup; broker delivery semantics not in the repository"},
+      "status": "Open"
+    },
+    {
+      "id": "A-003",
+      "title": "Pricing domain imports the ORM session",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Boundaries and layering",
+      "step": "BL1",
+      "location": "api/pricing/domain/discounts.py:3",
+      "scenario": "Changing discount rules (changed 4 times in 12 months)",
+      "blast_radius": "1 module, 2 import sites",
+      "trace": "1. discounts.py:3 imports db.session. 2. Discount rules query coupons inside the domain function",
+      "contrast": "api/orders/domain/quote.py:12 receives repositories by injection",
+      "impact": "Expected (R-02): domain code is persistence-free. Actual: discount rules can only be tested with a database",
+      "rule": "R-02",
+      "fix": "Pass a coupon repository into the discount function",
+      "guard": "R-02: add api.pricing.domain to the import-linter layers contract",
+      "validation": {"verdict": "Valid", "method": "analysed", "evidence": "discounts.py:3"},
+      "analysis": {"tool": "import-linter", "command": "lint-imports --config <scratch>/pricing-layers.ini", "result": "1 broken contract in the scratch copy of the layers contract with api.pricing.domain added: api.pricing.domain -> db"},
+      "status": "Open"
+    }
+  ],
+  "perspectives": [
+    {"name": "Boundaries and layering", "status": "applied", "note": "BL1 via R-02; BL2-BL4 applied, 0 cycles"},
+    {"name": "Cohesion and responsibility", "status": "applied", "note": "CR1-CR3 applied"},
+    {"name": "Coupling", "status": "applied", "note": "CP1-CP4 applied; co-change over 12 months"},
+    {"name": "Domain model and data ownership", "status": "applied", "note": "DM1 via R-01; DM2-DM5 applied"},
+    {"name": "Consistency and transactions", "status": "applied", "note": "TX2 via R-03; TX1, TX3-TX5 applied"},
+    {"name": "Failure handling", "status": "applied", "note": "FH1-FH3 applied"},
+    {"name": "API and event contracts", "status": "not checked", "note": "AC1 via R-04, AC2-AC3 not checked: GraphQL resolvers out of scope; needs the resolvers and schema read"},
+    {"name": "Configuration and environment", "status": "applied", "note": "CF1-CF3 applied"},
+    {"name": "Testability", "status": "applied", "note": "TS1-TS3 applied"},
+    {"name": "Operability", "status": "applied", "note": "OP1-OP3 applied"},
+    {"name": "Duplication and consistency of patterns", "status": "applied", "note": "DU1-DU2 applied"},
+    {"name": "Dependencies and evolution", "status": "applied", "note": "DE1-DE3 applied"}
+  ],
+  "architecture": {
+    "before": {
+      "note": "Module graph at the assessed revision; red edges are the ones A-001 to A-003 cite",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "orm", "label": "db (ORM session)"},
+        {"id": "broker", "label": "Message broker", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base (dedup)"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "writes"},
+        {"from": "refunds", "to": "invoices", "label": "raw UPDATE", "finding": "A-001"},
+        {"from": "pricing", "to": "orm", "label": "imports db.session", "finding": "A-003"},
+        {"from": "broker", "to": "shipment", "label": "shipment messages"},
+        {"from": "shipment", "to": "stock", "label": "decrements", "finding": "A-002"}
+      ]
+    },
+    "after": {
+      "note": "The same graph with the fix directions of A-001 to A-003 applied",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "coupons", "label": "api/pricing coupon repository"},
+        {"id": "orm", "label": "db (ORM session)"},
+        {"id": "broker", "label": "Message broker", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base (dedup)"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "refunds", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "writes"},
+        {"from": "pricing", "to": "coupons", "label": "injected repository"},
+        {"from": "coupons", "to": "orm", "label": "queries coupons"},
+        {"from": "broker", "to": "shipment", "label": "shipment messages"},
+        {"from": "shipment", "to": "dedup", "label": "dedup by message ID"},
+        {"from": "shipment", "to": "stock", "label": "decrements once per message"}
+      ]
+    }
+  },
+  "checked_ok": ["api/ has no cycles between its modules (import graph, 0 cycles)", "Order placement uses a transactional outbox (api/orders/outbox.py:15)"],
+  "decisions": ["Confirm that every consumer must be idempotent (R-03 is inferred)"],
+  "limitations": ["Broker delivery semantics in production were not observed", "GraphQL resolvers were not read"],
+  "next_steps": ["Fix A-001 and add the single-writer check to CI", "Confirm broker semantics, then fix A-002"]
+}

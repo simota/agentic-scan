@@ -131,7 +131,7 @@ guideline or a preferred UI pattern is not, by itself, a WCAG requirement.
 - CP2 Error, empty and help text is specific and actionable; no status codes,
   stack traces or internal jargon shown to users
 - CP3 One concept, one word within the UI copy, for clarity (brand terminology
-  and voice are brand-scan's)
+  and voice are out of scope)
 - CP4 Instructions where they are needed, not relying on shape, colour or
   position alone ("press the green button")
 

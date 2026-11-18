@@ -11,11 +11,11 @@ a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
 rendered with the shared [scan-report-kit](https://github.com/simota/scan-report-kit) format.
-Its layout mirrors the sibling [brand-scan](https://github.com/simota/brand-scan).
+Its layout mirrors the sibling [prune-scan](https://github.com/simota/prune-scan).
 
 It is read-only and judges against a stated criterion, not taste: "the cards
 feel cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing
-scale is 4/8/12/16" is. Brand voice and palette canon are brand-scan's.
+scale is 4/8/12/16" is. Brand voice and palette are out of scope.
 
 ```
 RECON → FLOWS → CHECKLIST → REVIEW → VERIFY → REPORT
@@ -77,7 +77,7 @@ The full list with hunt steps is `skills/ux-scan/reference/perspectives.md`.
 | `scripts/inventory.py REPO --out inventory.json [--flows flows.json]` | Routes and orphan routes, token sources, spacing / type / breakpoint / z-index literals, fixed widths, tap targets, focus outlines, zoom locks, click handlers on non-interactive elements, images, inputs, icon-only buttons, missing state branches, destructive actions, motion, truncation, locale expansion; with flows, values off the token scales and widths beyond the smallest viewport |
 | `scripts/findings.py flows\|merge\|check\|renumber` | Validate the flows and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/capture.py screenshot URL --viewport WxH --out FILE` / `log --out FILE -- CMD…` | Evidence files: a PNG from headless Chrome, or a command's output with its command line and exit status, secrets masked |
-| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the vendored scan-report-kit, with each finding's screenshots and log excerpts (before/after) embedded, plus `evidence.html` when findings cite evidence and `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
+| `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the bundled report kit, with each finding's screenshots and log excerpts (before/after) embedded, plus `evidence.html` when findings cite evidence and `mockups.html` (before/after mockups, side by side or under a slider) when findings carry a `mockup` |
 | `scripts/export.py sarif\|markdown\|csv findings.json --out FILE` | Hand the findings on: SARIF 2.1.0 for GitHub code scanning (stable fingerprints across re-reviews), one Markdown issue draft per open finding, or a CSV triage sheet (formula cells neutralized); `--min-severity`, `--ids`, `--prefix` |
 | `scripts/compare.py BASELINE CURRENT --out FILE [--fail-on SEVERITY]` | Compare two reviews of the same app: new, regressed, resolved, fixed, ruled-out and persisting findings matched by content across renumbering and moved lines, open counts by severity, and a gate that exits 1 on new or regressed findings at or above a severity; `--carry-forward FRAGMENT` drafts the merge fragment that carries earlier acceptances forward and names regressions |
 | `scripts/progress.py OUT [--strict]` | What a review in progress still owes, per review unit in task order: inventory candidates no finding or record line has decided yet (with the hunt steps they feed), flows with no trace, missing perspective families, `Unverified` verdicts, missing or uncited evidence, mockups without tiers, numbering not yet in severity order, and the next step |
@@ -124,10 +124,8 @@ Concurrent renders to one output directory are refused. The renderer keeps a
 that start and finish during verification. Keep it with the report outputs;
 recovery and compatibility details are in `skills/ux-scan/reference/report.md`.
 
-`skills/ux-scan/scripts/scan_report_kit/` is a vendored copy of
-scan-report-kit; `make check` verifies it against its MANIFEST. Change it
-upstream and re-vendor (`make vendor DEST=<this repo>/skills/ux-scan/scripts`
-in scan-report-kit), never in place.
+`skills/ux-scan/scripts/scan_report_kit/` started as a copy of scan-report-kit and
+is maintained in this repository (scan-report-kit is retired); edit it in place.
 
 `examples/tasklane/` is a fictional app with deliberate UX defects; the sample
 flows and findings in `examples/` describe it and are not a review of any real product.

@@ -3,7 +3,7 @@
 **Read when:** RECON (mapping the app) and FLOWS — before any finding is
 written, and whenever REVIEW meets a screen or task no flow covers yet.
 
-Flows are the review units, the way a canon is for brand-scan: every finding
+Flows are the review units, the way the canon ledger is for brand-feature-scan: every finding
 cites the flow it affects, and severity is judged by which task a defect blocks.
 
 ## 1. RECON: what to map

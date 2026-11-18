@@ -92,8 +92,8 @@ dependencies (a decision confirmed, a test database available in CI), or
 
 ## 6. Hand-off
 
-`templates/plan.<lang>.md` turns the plan into the input for `coding-test` or
-a person (a `Restructure` batch is `coding-refactor` work): one section per batch with its findings' steps, what to assert,
+`templates/plan.<lang>.md` turns the plan into the input for whoever writes the
+tests, an agent or a person (a `Restructure` batch is behaviour-preserving refactoring work): one section per batch with its findings' steps, what to assert,
 verify lines and testability. It is drafted only when asked (`SKILL.md`,
 *Decide first*). The executor re-reads each finding's locations at their own
 revision before starting: the record describes the assessed revision. Steps

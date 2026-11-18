@@ -18,7 +18,7 @@ a plan of batches another agent or a person can execute. When only a plan of
 what to look at is asked for, a checklist tailored to this application.
 
 It does not write tests. Writing them is a separate, later request
-(`coding-test` takes `templates/plan.<lang>.md` as its input). Coverage
+(`templates/plan.<lang>.md` is written so an agent or a person can execute it). Coverage
 percentage is not the measure: a line executed by a test that asserts
 nothing is untested, and an uncovered line nobody changes and no flow needs
 is not a finding beyond `Info`.
@@ -27,13 +27,13 @@ Phases: `RECON → CHECKLIST → REVIEW → VERIFY → PLAN → REPORT`.
 
 Neighbours, and where their questions go instead:
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Write the tests | `coding-test` |
-| Does this one change work? Verify a feature with recorded evidence | `feature-verify` |
-| Which refactorings pay off, and is their safety net enough? | `refactor-scan` |
-| Is the structure itself hard to test (layering, hidden dependencies)? | `architecture-scan` |
-| Can a test or test helper be deleted? | `prune-scan` |
+| Write the tests | A separate implementation request (out of scope here) |
+| Does this one change work? Verify a feature with recorded evidence | Verification of that change with recorded evidence (out of scope here) |
+| Which refactorings pay off, and is their safety net enough? | A refactoring review (out of scope here) |
+| Is the structure itself hard to test (layering, hidden dependencies)? | An architecture review (out of scope here) |
+| Can a test or test helper be deleted? | A review of what can be removed (out of scope here) |
 
 ## Before starting
 
@@ -95,7 +95,7 @@ Severity is exposure only. How directly a test can reach the behaviour is
 |---|---|
 | `Direct` | A test can reach the behaviour through today's public entry points and the suite's existing fixtures and doubles; no production code changes |
 | `Seam` | A small, behaviour-preserving production change is needed first: a parameter, constructor argument or adapter for the clock, randomness, a client or a file system, defaulting to today's value |
-| `Restructure` | The behaviour cannot be reached without restructuring production code (logic inside a framework callback, a constructor doing I/O, a module-level singleton). The restructuring is its own finding: remedy `Introduce Test Seam` or another that fits, steps that only restructure and keep behaviour (each `verify:` the existing tests green), `coverage.gaps` saying what blocks the test, alone in its plan batch, executed by `coding-refactor`. The finding that adds the tests `depends_on` it, records the testability it has once the restructuring is done, and is planned in a later batch |
+| `Restructure` | The behaviour cannot be reached without restructuring production code (logic inside a framework callback, a constructor doing I/O, a module-level singleton). The restructuring is its own finding: remedy `Introduce Test Seam` or another that fits, steps that only restructure and keep behaviour (each `verify:` the existing tests green), `coverage.gaps` saying what blocks the test, alone in its plan batch, executed as a behaviour-preserving refactoring. The finding that adds the tests `depends_on` it, records the testability it has once the restructuring is done, and is planned in a later batch |
 
 | Confidence | When |
 |---|---|
@@ -116,7 +116,7 @@ Worked examples:
   clock, while the suite freezes time everywhere else: drift from the clock
   idiom; Medium on a critical flow, otherwise Low
 - A 300-line report builder with no tests that nothing imports: not a test
-  gap; `NotApplicable`, and `prune-scan` in `next_steps`
+  gap; `NotApplicable`, and a removal review in `next_steps`
 
 ## Phases
 
@@ -139,7 +139,7 @@ skill's directory, not the audited repository.
 |---|---|
 | Chat summary | The shape in `reference/report.md`: first line status and counts, the evidence line, findings by severity, the plan's batches, decisions for a human, what was checked and the next step |
 | `findings.json` | The single source every other output is rendered from |
-| `dashboard.html` | Self-contained dashboard in the scan-report-kit application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage, how to read the levels |
+| `dashboard.html` | Self-contained dashboard in the bundled report kit's application shell (app bar, contents sidebar with severity facets, `/` and j/k keys, pinned filter bar): counts, priority queue, the plan as ordered batches, filterable findings, test idiom ledger, perspective coverage, how to read the levels |
 | `report.md` | The written assessment: verdict counts, then scope and method, how to read the levels, findings, plan, idiom ledger, perspective coverage, checked and adequately tested, what could not be checked, decisions for a human, next steps |
 
 Skip the files when only a checklist was asked for. Set `meta.lang` to the
@@ -155,8 +155,8 @@ chat summary in the requester's language).
 | Asked about one module, feature or flow | Scope the review units to what it touches, plus the cross-cutting unit; say the rest was not read in `limitations` |
 | The repository has no tests at all | Say so first. Findings are the critical flows in order, each one `Add Behaviour Test` with what to assert, plus `Run Tests in CI` when no job would run them; skip the perspectives that need tests to read (`N/A` with that reason) |
 | History is missing, shallow or squashed | Say so first. Escaped-defect claims fall to `Suspected` or `Environment-dependent`, so severity rests on the named critical flows; no High without either history or a traced skipped, flaky or empty test |
-| The gap is untestable because of the design (a constructor doing I/O, logic in a framework callback) | Two findings: a `Restructure` finding for the behaviour-preserving production change (executed by `coding-refactor`; name `refactor-scan` in `next_steps` only when the restructuring needs its own refactoring review), and the test finding that `depends_on` it and says what the test must assert. The `Restructure` finding stands alone in its batch, with no exception, not even for characterization tests: tests that pin today's behaviour before it are a finding of their own in an earlier batch |
-| The code is dead or the feature unused | `NotApplicable` with evidence, and name `prune-scan` in `next_steps`. Testing dead code has no exposure |
+| The gap is untestable because of the design (a constructor doing I/O, logic in a framework callback) | Two findings: a `Restructure` finding for the behaviour-preserving production change (executed as a behaviour-preserving refactoring; name a refactoring review in `next_steps` only when the restructuring needs its own review), and the test finding that `depends_on` it and says what the test must assert. The `Restructure` finding stands alone in its batch, with no exception, not even for characterization tests: tests that pin today's behaviour before it are a finding of their own in an earlier batch |
+| The code is dead or the feature unused | `NotApplicable` with evidence, and name a removal review in `next_steps`. Testing dead code has no exposure |
 | A gap is a deliberate, documented trade-off (an ADR, a comment saying the path is covered by a contract suite elsewhere) | Not a finding unless the evidence shows it no longer holds; then a `decisions` item |
 | Generated or vendored code | Out of scope; record it in `limitations` |
 | The requester wants coverage numbers | Read an existing coverage report file in the repository or the CI artifacts the requester provides, name it, and record tool, command and result in the `analysis` of each finding that relies on it. Never run the suite to produce one, never install packages into the audited repository |

@@ -1,5 +1,5 @@
 <!--
-The test plan handed to coding-test or a person. Copy from findings.json: plan[] for the batches,
+The test plan handed to whoever writes the tests, an agent or a person. Copy from findings.json: plan[] for the batches,
 findings[] for each finding's fields. Repeat the batch block per plan[] entry and the finding block per ID in it.
 Excluded findings (FalsePositive, NotApplicable) never appear; a Likely, Unlikely or Unverified finding is not written as
 established: its first step confirms what is still open. The executor re-reads every location at its own

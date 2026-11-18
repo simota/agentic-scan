@@ -18,7 +18,7 @@ exclusion and evidence.
 | `Unverified` | Not yet examined | Agent or person: the verdict a finding starts with, always recorded explicitly |
 | `Unlikely` | Signals point away, but the claim has not been ruled out | Agent or person |
 | `FalsePositive` | Evidence contradicts the claim (a test under another name asserts it; the fix did add a regression test) | Agent or person, with evidence |
-| `NotApplicable` | A test here has no point (dead code — a `prune-scan` item; generated code; a module scheduled for removal with a date) | Agent or person, with evidence |
+| `NotApplicable` | A test here has no point (dead code — an item for a removal review; generated code; a module scheduled for removal with a date) | Agent or person, with evidence |
 
 `Valid`, `FalsePositive` and `NotApplicable` require nonblank
 `validation.evidence` citing `path:line`; a duplicate marked `NotApplicable`
@@ -94,7 +94,7 @@ is cited at its test function's line).
 Then render and check again.
 
 `status: Fixed` records that the work was done: tests written by
-`coding-test`, a person, or GUARD. `status: Accepted` records that a person
+an agent, a person, or GUARD. `status: Accepted` records that a person
 chose to leave the gap as it is; only they set it, and `decisions` names the
 finding, who decided and why. Neither needs a plan batch.
 

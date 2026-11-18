@@ -50,8 +50,8 @@ Write in the requester's language.
    looked wrong (pinned as it is, never fixed in passing), gaps someone may
    choose to accept
 7. **Next step** — batch 1, and the hand-off (`templates/plan.<lang>.md` to
-   `coding-test`); questions for `refactor-scan`, `architecture-scan` or
-   `prune-scan`
+   whoever writes the tests); questions for a refactoring, architecture or
+   removal review
 8. **Files** — link `dashboard.html` and `report.md` rendered from
    `findings.json`. The output directory holds exactly the set named in
    `SKILL.md` (*Run contract*)

@@ -13,7 +13,8 @@ batches.
 > the application. The one exception is GUARD: on request and with
 > permission, it adds the tests a finding names to the repository's suite,
 > runs them, and shows each one fails with the behaviour broken. Writing the
-> tests is a separate request (`coding-test` takes the plan as input).
+> tests is a separate request; the plan is written so an agent or a person can
+> execute it.
 
 ## What it does
 
@@ -124,8 +125,5 @@ make demo    # render the sample into a new private temp dir (LANG_OUT=en for En
 
 Requirements: Python 3.9+. No third-party packages.
 
-The record format, scripts and run contract are forked from the sibling
-`refactor-scan` skill (same verdicts, plan model and report shape), adapted
-to test-suite review. The dashboard uses
-[scan-report-kit](https://github.com/simota/scan-report-kit), whose copy in
-`skills/test-gap-scan/scripts/scan_report_kit/` is maintained in this repository (scan-report-kit is retired); edit it in place.
+The dashboard uses the report kit bundled under
+`skills/test-gap-scan/scripts/scan_report_kit/`, which is maintained in this repository; edit it in place.

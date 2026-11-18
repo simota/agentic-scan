@@ -365,10 +365,9 @@ def render_markdown(doc, lang):
     return "\n".join(lines)
 
 
-# The dashboard follows security-scan's layout and visual language: masthead,
-# summary, counts, a priority queue, coverage, overview charts and a filterable
-# register. Unlike security-scan it is rendered here, not by its script, so it
-# reads in full without JavaScript and runs under a hash-only CSP.
+# The dashboard layout: masthead, summary, counts, a priority queue, coverage,
+# overview charts and a filterable register. It is rendered here so it reads in
+# full without JavaScript and runs under a hash-only CSP.
 DASH = {
     "en": {
         "eyebrow": "TEST SUITE REVIEW",
@@ -514,7 +513,7 @@ DASH = {
 }
 
 # Rules for test-gap-scan record types only, after the shared dashboard
-# stylesheet (scan_report_kit/assets/dashboard.css, docs: scan-report-kit).
+# stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit).
 DASHBOARD_CSS = """
 .action-label,.reg-head,.reg-meta,.detail dt,.small,.toggle-label{font-family:var(--sans)}
 .action-label{font-size:12px;font-weight:700;color:var(--accent)}

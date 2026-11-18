@@ -169,7 +169,7 @@ renumber, use only the new IDs it printed.
   "decisions": ["Should B2B line refunds round half-even like retail? The tests in F-001 pin today's half-up",
                 "Confirm C-01 (frozen_clock fixture) as the intended idiom"],
   "limitations": ["Tests were not run; coverage is judged from reading the tests"],
-  "next_steps": ["Batch 1 first; hand templates/plan.en.md to coding-test"]
+  "next_steps": ["Batch 1 first; hand templates/plan.en.md to whoever writes the tests"]
 }
 ```
 

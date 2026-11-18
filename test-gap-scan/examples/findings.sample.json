@@ -138,7 +138,7 @@
         "1. Move client construction into Exporter.__init__ as a parameter defaulting to today's HttpClient(), callers unchanged (verify: worker tests green, tests/test_export.py unchanged)"
       ],
       "convention": "C-02",
-      "fix": "Inject the client as ADR 0007 says, with today's client as the default; coding-refactor work",
+      "fix": "Inject the client as ADR 0007 says, with today's client as the default; a behaviour-preserving refactoring, done on its own",
       "validation": {"verdict": "Valid", "method": "static",
                      "evidence": "worker/export.py:22 client = HttpClient(); docs/adr/0007-worker-wiring.md:9 requires constructor injection"},
       "status": "Open"
@@ -184,7 +184,7 @@
       "blast_radius": "1 file",
       "trace": "1. legacy/report_v1.py:1 defines build(). 2. No import, route or config names it",
       "impact": "Testing dead code has no exposure",
-      "fix": "Hand to prune-scan as a removal candidate",
+      "fix": "Hand to a separate removal review as a candidate for deletion",
       "validation": {"verdict": "NotApplicable", "method": "static",
                      "evidence": "legacy/report_v1.py:1 is imported nowhere; a search for report_v1 in config and routes returns 0"},
       "status": "Open"
@@ -226,7 +226,7 @@
     "History before 2025-03 was squashed on migration"
   ],
   "next_steps": [
-    "Batch 1 first; hand templates/plan.en.md to coding-test",
-    "F-004 (coding-refactor, alone) then F-005 when worker/ is next touched; F-006 to prune-scan"
+    "Batch 1 first; hand templates/plan.en.md to whoever writes the tests",
+    "F-004 (behaviour-preserving refactoring, alone) then F-005 when worker/ is next touched; F-006 to a removal review"
   ]
 }

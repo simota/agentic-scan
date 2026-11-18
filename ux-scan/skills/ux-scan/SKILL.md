@@ -30,7 +30,7 @@ Neighbours, and where their questions go instead:
 
 | Question | Skill |
 |---|---|
-| Redesign the screens or write the fix | `design-deslop`, `coding-implement` |
+| Redesign the screens or write the fix | `ui-deslop`, `coding-implement` |
 | Slow pages, bundle size, layout work at scale | `performance-scan` |
 | Vulnerabilities, including what a hidden control still lets an actor do | `security-scan` |
 | A wrong value on screen (rounding, dates, totals) — the computation, not its display | `logic-scan` |

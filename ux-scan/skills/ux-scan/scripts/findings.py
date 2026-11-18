@@ -33,8 +33,8 @@ from unicodedata import category as unicode_category
 from urllib.parse import urlsplit
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
-from scan_report_kit.report import FormatError, LINE_BREAKS, http_url  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
+from report_format import FormatError, LINE_BREAKS, http_url  # noqa: E402
 import evidence as evidence_files  # noqa: E402
 from prose_ids import FINDING_ID, RenumberError, rewrite_prose as _rewrite_prose  # noqa: E402
 

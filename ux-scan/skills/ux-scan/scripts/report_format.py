@@ -12,7 +12,7 @@ from datetime import date
 from unicodedata import normalize
 from urllib.parse import unquote, urlsplit
 
-from . import style
+import report_style as style
 
 FORMAT = "scan-report/1"
 SEVERITIES = ["High", "Medium", "Low", "Info"]

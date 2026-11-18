@@ -9,7 +9,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from scan_report_kit.output import unsafe_target, write_output  # noqa: E402
+from report_output import unsafe_target, write_output  # noqa: E402
 from findings import EXCLUDED, SEVERITIES, RecordError, check_findings, check_flows, flow_ids, load_json  # noqa: E402
 from evidence import DIRECTORY, PAGE as EVIDENCE_PAGE  # noqa: E402
 from mockups import PAGE as MOCKUPS_PAGE  # noqa: E402

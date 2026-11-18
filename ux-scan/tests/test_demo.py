@@ -14,7 +14,7 @@ sys.path.insert(0, str(ROOT / "scripts" / "ci"))
 
 import prepare_sample  # noqa: E402
 from render import OUTPUT_GENERATION  # noqa: E402
-from scan_report_kit import output  # noqa: E402
+import report_output as output  # noqa: E402
 
 
 class SamplePreparationTests(unittest.TestCase):

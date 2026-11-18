@@ -26,7 +26,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from evidence import FILE, KINDS, MAX_BYTES  # noqa: E402
 from file_io import tolerant_console  # noqa: E402
-from scan_report_kit.pdf import CHROME_CANDIDATES  # noqa: E402
+from report_pdf import CHROME_CANDIDATES  # noqa: E402
 from secret_lines import SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402
 
 VIEWPORT = re.compile(r"^([1-9][0-9]{2,3})x([1-9][0-9]{2,3})\Z")

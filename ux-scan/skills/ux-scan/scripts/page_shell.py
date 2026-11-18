@@ -8,7 +8,7 @@ Standard library only.
 
 import html
 
-from scan_report_kit import style
+import report_style as style
 
 DASHBOARD_REPORT_LINK = '<a class="button" href="report.html" data-l="report_link"></a>'
 # The dashboard's app bar is one 56px row, and with these links its tools no longer
@@ -43,7 +43,7 @@ def esc(text):
 def page(*, lang, title, policy, css, chrome, project, dashboard, body, script=""):
     """A complete page: the dashboard's CSS and app bar, then body inside main.
 
-    chrome holds the dashboard's own labels (scan_report_kit.report.labels_for), so
+    chrome holds the dashboard's own labels (report_format.labels_for), so
     the app bar names the report link and the theme toggle exactly as the dashboard
     does; dashboard is this page's label for the link back to it.
     """

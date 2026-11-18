@@ -7,7 +7,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SCRIPTS = ROOT / "skills" / "ux-scan" / "scripts"
-VENDORED = "scan_report_kit"
 # Modules every other script may build on; they import no other script.
 LEAVES = {"file_io", "secret_lines", "prose_ids"}
 
@@ -28,8 +27,8 @@ class ImportGraphTests(unittest.TestCase):
         self.local = {p.stem for p in SCRIPTS.glob("*.py")}
         self.graph = {p.stem: imports(p) for p in SCRIPTS.glob("*.py")}
 
-    def test_scripts_import_only_the_standard_library_each_other_and_the_vendored_kit(self):
-        allowed = set(sys.stdlib_module_names) | self.local | {VENDORED}
+    def test_scripts_import_only_the_standard_library_and_each_other(self):
+        allowed = set(sys.stdlib_module_names) | self.local
         for name, deps in sorted(self.graph.items()):
             self.assertEqual(sorted(deps - allowed), [], name)
 

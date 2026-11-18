@@ -10,7 +10,7 @@ Its method:
 a fixed run contract, phases, perspectives with hunt steps, a severity table
 decided before confidence, verdicts with falsification, one finding per fix
 location, JSON fragments merged by a checker, and a dashboard plus a PDF report
-rendered with the report kit bundled under `skills/ux-scan/scripts/scan_report_kit/`.
+rendered by `skills/ux-scan/scripts/report_format.py` and its `report_*.py` siblings.
 
 It is read-only and judges against a stated criterion, not taste: "the cards
 feel cramped" is not a finding; "`.card` uses `padding: 13px` where the spacing
@@ -123,8 +123,9 @@ Concurrent renders to one output directory are refused. The renderer keeps a
 that start and finish during verification. Keep it with the report outputs;
 recovery and compatibility details are in `skills/ux-scan/reference/report.md`.
 
-`skills/ux-scan/scripts/scan_report_kit/` is the bundled report kit and
-is maintained in this repository; edit it in place.
+The report modules (`report_format.py`, `report_style.py`, `report_pdf.py`,
+`report_output.py`) and `skills/ux-scan/scripts/report_assets/`
+are maintained in this repository; edit them in place.
 
 `examples/tasklane/` is a fictional app with deliberate UX defects; the sample
 flows and findings in `examples/` describe it and are not a review of any real product.

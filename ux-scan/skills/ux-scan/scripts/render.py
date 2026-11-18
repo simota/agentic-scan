@@ -32,7 +32,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from file_io import read_regular, tolerant_console, within  # noqa: E402
 from secret_lines import CONFIG_FILE, CONTINUATION_LINES, SHOWN_CHARACTERS, continued_secret_lines, private_key_lines, secret_line  # noqa: E402,F401
 from findings import EXCLUDED, RecordError, canonical_digest, check_findings, check_flows, flow_ids, loads_json  # noqa: E402
-from scan_report_kit import output, pdf, report  # noqa: E402
+import report_output as output, report_pdf as pdf, report_format as report  # noqa: E402
 import evidence  # noqa: E402
 import mockups  # noqa: E402
 import page_shell  # noqa: E402
@@ -255,7 +255,7 @@ LEVELS_DASHBOARD_CSS = ".levels th{width:180px}@media(max-width:480px){.levels t
 def levels_html(meta, lang, chrome):
     """The level legend: each severity and confidence with this scan's condition, then how they combine.
 
-    chrome holds the kit's own labels (scan_report_kit.report.labels_for), so the
+    chrome holds the kit's own labels (report_format.labels_for), so the
     legend names severity and confidence as the pages' columns do.
     """
     T, esc = LABELS[lang], page_shell.esc

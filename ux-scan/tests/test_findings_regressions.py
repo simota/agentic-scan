@@ -146,7 +146,7 @@ class ValidationRegressions(unittest.TestCase):
 
     def test_checked_unicode_and_reference_urls_are_renderable(self):
         import render
-        from scan_report_kit import report
+        import report_format as report
 
         urls = (
             "https://example.com/path?next=%2Fcheckout#section",
@@ -1247,7 +1247,7 @@ class TransactionRegressions(unittest.TestCase):
             fragment.write_text('{"summary":"updated"}', encoding="utf-8")
             before = target.read_bytes()
             error = io.StringIO()
-            with mock.patch("scan_report_kit.output.os.replace", side_effect=PermissionError("replace denied")):
+            with mock.patch("report_output.os.replace", side_effect=PermissionError("replace denied")):
                 with contextlib.redirect_stderr(error):
                     result = findings.main(["merge", str(target), str(fragment)])
             self.assertEqual(result, 2)

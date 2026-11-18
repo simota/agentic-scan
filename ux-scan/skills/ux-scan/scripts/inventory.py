@@ -31,7 +31,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from file_io import read_regular, tolerant_console, within  # noqa: E402
 from findings import RecordError, canonical_digest, check_flows, load_json, loads_json  # noqa: E402
-from scan_report_kit.output import write_output  # noqa: E402
+from report_output import write_output  # noqa: E402
 
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "vendor", "dist", "build", "out", ".next", ".nuxt",
              ".svelte-kit", "coverage", ".venv", "venv", "__pycache__", "Pods", ".gradle", "target",

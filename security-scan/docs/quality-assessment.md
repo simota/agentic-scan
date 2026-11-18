@@ -12,8 +12,8 @@ rate or perceived difficulty is reported.
 
 ## Scope
 
-- Design and architecture: `skills/security-scan/scripts/` (the vendored
-  `scripts/scan_report_kit/` is excluded from change: `make check` pins it to
+- Design and architecture: `skills/security-scan/scripts/` (the then-vendored
+  report kit, since moved into the `report_*.py` modules, was excluded from change: `make check` pins it to
   its MANIFEST, so it can only be changed upstream) and `scripts/ci/`.
 - Visual design and UI/UX: the two generated pages, `dashboard.html` and
   `assessment.html`, rendered from the five samples in `examples/`

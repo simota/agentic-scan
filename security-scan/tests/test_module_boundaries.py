@@ -11,13 +11,14 @@ import unittest
 
 SCRIPTS = Path(__file__).resolve().parents[1] / "skills" / "security-scan" / "scripts"
 PRESENTATION = {"render"}
-# Contract modules sit below every tool: they may not reach up to presentation or the PDF kit.
+# Contract modules sit below every tool: they may not reach up to presentation or the PDF and style modules.
 CONTRACT = {"report_schema", "secret_redaction", "url_redaction"}
+REPORT_MODULES = {"report_output", "report_pdf", "report_style"}
 
 
 def local_imports(path, deferred=True):
     """Sibling modules imported by one script: module level only, or also inside functions."""
-    local = {p.stem for p in SCRIPTS.glob("*.py")} | {"scan_report_kit"}
+    local = {p.stem for p in SCRIPTS.glob("*.py")}
     tree = ast.parse(path.read_text(encoding="utf-8"), str(path))
     nodes = ast.walk(tree) if deferred else tree.body
     found = set()
@@ -78,7 +79,7 @@ class ModuleBoundaryTests(unittest.TestCase):
         for name in sorted(CONTRACT):
             with self.subTest(module=name):
                 self.assertIn(name, self.graph)
-                self.assertFalse(self.graph[name] & (PRESENTATION | {"scan_report_kit"}), self.graph[name])
+                self.assertFalse(self.graph[name] & (PRESENTATION | REPORT_MODULES), self.graph[name])
 
     def test_no_import_cycles_at_load_time(self):
         graph = {p.stem: local_imports(p, deferred=False) for p in SCRIPTS.glob("*.py")}

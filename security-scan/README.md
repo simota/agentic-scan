@@ -258,12 +258,12 @@ characters per line; visible notes identify shortened excerpts. Previous
 validation, when available, is labelled as historical and never changes the
 current verdict or counts.
 
-Report typography follows the shared report format of the bundled report kit
+Report typography follows the shared report format
 (see `docs/report-design.md`): a journal-style assessment (numbered
 sections, captioned booktabs tables and listings, one mincho face for both
-scripts) and a dashboard in the same system. The kit's stylesheets and PDF
-engine live in `skills/security-scan/scripts/scan_report_kit/`,
-which is maintained in this repository; edit it in place.
+scripts) and a dashboard in the same system. The stylesheets and PDF
+engine live in (`report_style.py`, `report_pdf.py`, `report_output.py`) next to `skills/security-scan/scripts/render.py`,
+which are maintained in this repository; edit it in place.
 
 The PDF is printed with headless Chrome/Chromium (`CHROME=/path/to/binary` to
 choose one), falling back to WeasyPrint. With neither available the HTML files
@@ -637,7 +637,9 @@ skills/security-scan/
   scripts/invariant_ledger.py  opt-in invariant ledger and static-reproduction checks
   scripts/url_redaction.py     URL credential, query and fragment redaction for reports
   scripts/payloads.py          literal attack strings refused by merges and workflow submissions
-  scripts/scan_report_kit/     bundled report kit: shared stylesheets, PDF engine, safe writes
+  scripts/report_style.py      stylesheets in report_assets/ as inline CSS
+  scripts/report_pdf.py        PDF engine (headless Chrome, else WeasyPrint)
+  scripts/report_output.py     safe writes into a report directory
   templates/issue.{ja,en}.md     one finding as one issue
   templates/report.{ja,en}.md    findings report to an owner or security contact
 examples/findings.sample.json  fictional legacy sample for make demo LANG_OUT=en / make check

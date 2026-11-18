@@ -35,8 +35,8 @@ from three_pass import derive_three_pass
 from contract_check import read_regular
 from expert import derive_expert
 from invariant_ledger import ledger_html
-from scan_report_kit import pdf as kit_pdf, style as kit_style
-from scan_report_kit.output import write_output
+import report_pdf, report_style
+from report_output import write_output
 
 # Report parts: the application's own design, code and configuration, then the
 # scanner-owned dependency and supply-chain records (D-*, reference/dependencies.md).
@@ -1109,7 +1109,7 @@ ASSESSMENT_LABELS = {
 
 
 # Rules for security-scan record types only; the shared document stylesheet
-# (scan_report_kit/assets/document.css, the bundled report kit) comes first.
+# (report_assets/document.css, the bundled report kit) comes first.
 ASSESSMENT_CSS = """
 .evidence-cell{font-size:8pt}
 .evidence-cell div+div{margin-top:.8mm}
@@ -1999,7 +1999,7 @@ def render_assessment_html(data, L, lang, integrity=None):
                      "".join(card(f, True) for f in excluded) + "</section>" if excluded else "")
 
     # The running footer is CSS text, not a label: localize it explicitly.
-    assessment_css = kit_style.document_css(L["a_running_footer"]) + ASSESSMENT_CSS
+    assessment_css = report_style.document_css(L["a_running_footer"]) + ASSESSMENT_CSS
     return f"""<!doctype html>
 <html lang="{esc(lang)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
 <title>{esc(L['title'])} - {esc(m['project'])}</title><style>{assessment_css}</style></head><body>
@@ -2032,12 +2032,12 @@ def render_assessment_html(data, L, lang, integrity=None):
 
 def pdf_timeout(findings=0):
     """Seconds one engine may take: SECURITY_SCAN_PDF_TIMEOUT, else scaled by report size."""
-    return kit_pdf.pdf_timeout(findings, env="SECURITY_SCAN_PDF_TIMEOUT")
+    return report_pdf.pdf_timeout(findings, env="SECURITY_SCAN_PDF_TIMEOUT")
 
 
 def to_pdf(html_path, pdf_path, failures=None, timeout=None):
-    """Print html_path to pdf_path (scan_report_kit.pdf.to_pdf); engine stderr is secret-redacted."""
-    return kit_pdf.to_pdf(html_path, pdf_path, failures, pdf_timeout() if timeout is None else timeout, redact=redact)
+    """Print html_path to pdf_path (report_pdf.to_pdf); engine stderr is secret-redacted."""
+    return report_pdf.to_pdf(html_path, pdf_path, failures, pdf_timeout() if timeout is None else timeout, redact=redact)
 
 
 DASHBOARD = r"""<!doctype html>
@@ -2237,7 +2237,7 @@ td .verification-level{font-family:var(--sans);font-size:11px;font-weight:400;co
 table.register>tbody>tr>td:nth-child(3),table.register>tbody>tr>td:nth-child(5){overflow-wrap:break-word}
 @media(min-width:851px){.app-shell table.register>thead>tr>th:nth-child(3){width:120px}.app-shell table.register>thead>tr>th:nth-child(5){width:116px}}
 """
-DASHBOARD = DASHBOARD.replace("__STYLE__", kit_style.dashboard_css() + DASHBOARD_CSS, 1)
+DASHBOARD = DASHBOARD.replace("__STYLE__", report_style.dashboard_css() + DASHBOARD_CSS, 1)
 
 
 def render_dashboard(data, L, lang, integrity=None):

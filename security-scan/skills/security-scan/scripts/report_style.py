@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-ASSETS = Path(__file__).resolve().parent / "assets"
+ASSETS = Path(__file__).resolve().parent / "report_assets"
 
 
 def _asset(name):
@@ -31,8 +31,3 @@ def document_css(running_footer):
 def dashboard_css():
     """Stylesheet for the interactive dashboard (light and dark themes)."""
     return _asset("dashboard.css")
-
-
-def dashboard_js():
-    """Runtime for the common-format dashboard built by report.render_dashboard."""
-    return _asset("dashboard.js")

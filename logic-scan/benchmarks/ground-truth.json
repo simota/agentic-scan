@@ -1,0 +1,40 @@
+{
+  "fixture": "fixture-shop",
+  "line_tolerance": 2,
+  "cases": [
+    {"id": "GT-01", "steps": ["BD3"], "rule": "docs/rules.md rule 2", "title": "Bulk discount starts at 11, not 10",
+     "sites": [{"file": "shop/pricing.py", "anchor": "if qty > BULK_DISCOUNT_MIN_QTY:"}]},
+    {"id": "GT-02", "steps": ["NE1"], "rule": "docs/rules.md rule 5", "title": "Staff shipping fee of 0 is ignored, standard fee charged",
+     "sites": [{"file": "shop/shipping.py", "anchor": "if order.get(\"staff_shipping_fee\"):"}]},
+    {"id": "GT-03", "steps": ["RD2", "RD1"], "rule": "docs/rules.md rule 4", "title": "Free-shipping threshold redefined as 3,000",
+     "sites": [{"file": "shop/shipping.py", "anchor": "FREE_SHIPPING_THRESHOLD = 3000"}]},
+    {"id": "GT-04", "steps": ["NM2", "NM1", "RD1"], "rule": "docs/rules.md rule 1", "title": "Charge rounds tax once with round() on a float; invoice rounds down per line",
+     "sites": [{"file": "shop/checkout.py", "anchor": "tax = round(net * rate)"}]},
+    {"id": "GT-05", "steps": ["ER1", "ER3"], "rule": "docs/rules.md rule 1", "title": "Tax service failure charges 0% tax",
+     "sites": [{"file": "shop/tax_service.py", "anchor": "return 0.0"}]},
+    {"id": "GT-06", "steps": ["NM3"], "rule": "docs/rules.md rule 9", "title": "Point rate in percent used as a fraction (100x points)",
+     "sites": [{"file": "shop/checkout.py", "anchor": "return int(net * rate)"}]},
+    {"id": "GT-07", "steps": ["BD1"], "rule": "docs/rules.md rule 7", "title": "Promotion still active at its exclusive end",
+     "sites": [{"file": "shop/coupons.py", "anchor": "promotion[\"starts_at\"] <= at <= promotion[\"ends_at\"]"}]},
+    {"id": "GT-08", "steps": ["SL1"], "rule": "docs/rules.md rule 10", "title": "Shipped orders can be cancelled",
+     "sites": [{"file": "shop/orders.py", "anchor": "CANCELLABLE = {\"pending\", \"paid\", \"shipped\"}"}]},
+    {"id": "GT-09", "steps": ["DT1", "DT3"], "rule": "docs/rules.md rule 11 and preamble", "title": "Today taken in the server's zone, not Japan time",
+     "sites": [{"file": "shop/orders.py", "anchor": "today = date.today()"}]},
+    {"id": "GT-10", "steps": ["CA2", "CB1"], "rule": "docs/rules.md rule 12", "title": "Oldest address used instead of the most recent",
+     "sites": [{"file": "shop/orders.py", "anchor": "return customer[\"addresses\"][0]"}]},
+    {"id": "GT-11", "steps": ["CA3"], "rule": "general", "title": "Mutable default argument shares lines across orders",
+     "sites": [{"file": "shop/orders.py", "anchor": "def add_lines(order, lines=[]):"}]},
+    {"id": "GT-12", "steps": ["DT2"], "rule": "docs/rules.md rule 13", "title": "Monthly renewal adds 30 days",
+     "sites": [{"file": "shop/subscriptions.py", "anchor": "timedelta(days=30)"}]},
+    {"id": "GT-13", "steps": ["TE1", "EQ3"], "rule": "docs/rules.md rule 14", "title": "Email uniqueness compared without case or space normalisation",
+     "sites": [{"file": "shop/accounts.py", "anchor": "user[\"email\"] == email"}]}
+  ],
+  "decoys": [
+    {"id": "DC-01", "title": "Quantity guard rejects 0 and below (rule 3)", "sites": [{"file": "shop/pricing.py", "anchor": "if qty <= 0:"}]},
+    {"id": "DC-02", "title": "Per-line tax rounded down (rule 1)", "sites": [{"file": "shop/pricing.py", "anchor": "rounding=ROUND_DOWN))"}]},
+    {"id": "DC-03", "title": "Unknown region has no surcharge (rule 6)", "sites": [{"file": "shop/shipping.py", "anchor": "REGION_SURCHARGE.get(region, 0)"}]},
+    {"id": "DC-04", "title": "Campaign window is half-open (rule 7)", "sites": [{"file": "shop/coupons.py", "anchor": "campaign[\"starts_at\"] <= at < campaign[\"ends_at\"]"}]},
+    {"id": "DC-05", "title": "Same-day cutoff read in Japan time (rule 11)", "sites": [{"file": "shop/orders.py", "anchor": "paid_at.astimezone(TOKYO).hour < SAME_DAY_CUTOFF_HOUR"}]},
+    {"id": "DC-06", "title": "Missing profile raises instead of returning a default", "sites": [{"file": "shop/accounts.py", "anchor": "except KeyError:"}]}
+  ]
+}

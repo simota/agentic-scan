@@ -1,5 +1,7 @@
 # logic-scan — install helpers
 #
+#   make bench-score FINDINGS=path/findings.json [TRUTH=ground-truth-console.json]
+#                  score a run on a benchmarks/ fixture
 #   make help      list the targets
 #   make link      symlink skills/logic-scan into every installed host's skills dir
 #   make unlink    remove every symlink to this skill from those dirs
@@ -97,7 +99,7 @@ DEMO_OUT ?=
 LANG_OUT ?= ja
 DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
 
-.PHONY: help link unlink status check demo test
+.PHONY: help link unlink status check demo test bench-score
 # `make -j link unlink` must still run the goals in the order given.
 .NOTPARALLEL:
 
@@ -220,3 +222,8 @@ demo: ## render the sample into DEMO_OUT, or a new private temp dir
 	PYTHONDONTWRITEBYTECODE=1 $(PYTHON) $(QSKILL)/scripts/render.py $(call shell_quote,$(DEMO_INPUT)) \
 	  --out "$$out" --lang $(call shell_quote,$(LANG_OUT)) \
 	  || { status=$$?; [ -z "$$made" ] || rmdir -- "$$out" 2>/dev/null; exit $$status; }
+
+TRUTH ?= ground-truth.json
+bench-score: ## score FINDINGS=path/findings.json [TRUTH=ground-truth-console.json]
+	@[ -n $(call shell_quote,$(FINDINGS)) ] || { echo "set FINDINGS=path/to/findings.json" >&2; exit 2; }
+	@cd $(call shell_quote,$(REPO)) && PYTHONDONTWRITEBYTECODE=1 $(PYTHON) benchmarks/score.py $(call shell_quote,$(FINDINGS)) --truth $(call shell_quote,$(TRUTH))

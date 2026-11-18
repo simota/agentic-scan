@@ -110,10 +110,14 @@ skills/logic-scan/
   scripts/recon.py             git history for RECON: window, churn, fixes (stdlib only)
   scripts/markdown_safe.py     escapes recorded text for Markdown (stdlib only)
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
+  scripts/compare.py           an earlier run vs a later one: new, resolved, persisting; carried
+                               Accepted status; --fail-on regression gate (stdlib only)
+  scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDEs (stdlib only)
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
 examples/findings.sample.json  fictional sample for make demo / make check
+benchmarks/                    seeded-defect fixtures, their ground truth and score.py
 tests/                         offline tests for the scripts and the documents
 ```
 
@@ -125,7 +129,15 @@ make check   # tests plus citations resolve, references headed, frontmatter vali
              # scripts parse,
              # sample renders in ja/en and passes the run contract
 make demo    # render the sample into a new private temp dir (LANG_OUT=en for English)
+make bench-score FINDINGS=out/findings.json [TRUTH=ground-truth-console.json]
+             # score a run on a benchmarks/ fixture: recall, step, decoys flagged
 ```
+
+The benchmark is run by copying one `benchmarks/fixture-*` directory, alone, into a
+fresh git repository, running the skill on it, and scoring the `findings.json`. The
+reviewing agent must never see `benchmarks/`, which holds the answers. Both fixtures
+are found in full by the current skill, so the benchmark guards against regressions;
+it does not measure headroom.
 
 Requirements: Python 3.9+. No third-party packages.
 

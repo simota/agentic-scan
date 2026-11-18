@@ -25,19 +25,19 @@ chain of network and identity edges** (`reference/attack-paths.md`). A public
 bucket holding build logs and a role assumable from any GitHub repository are
 judged by where they lead, not by the rule they break.
 
-Neighbours, and where their questions go instead. The line with
-`security-scan`: a weakness fixed in the infrastructure configuration is a
-finding here; one fixed in the application's source is `security-scan`'s,
-even when a path here starts from it (an SSRF in a workload is cited as the
+Questions out of scope here, and the work they belong to instead. The line
+with a security review of the application's source: a weakness fixed in the
+infrastructure configuration is a finding here; one fixed in the application's
+source belongs to that review, even when a path here starts from it (an SSRF in a workload is cited as the
 entry, not reviewed):
 
-| Question | Skill |
+| Question | Belongs to |
 |---|---|
-| Write the fix | `coding-implement` |
-| The application's own source: routes, authorization, injection, its dependencies and secrets in its code | `security-scan` |
-| Personal data flows, retention and deletion | `privacy-scan` |
-| Behaviour when a cloud dependency fails: timeouts, health checks, rollback | `reliability-scan` |
-| Resources, integrations or permissions nothing uses | `prune-scan` |
+| Write the fix | An implementation task |
+| The application's own source: routes, authorization, injection, its dependencies and secrets in its code | A security review of the application's source |
+| Personal data flows, retention and deletion | A privacy review |
+| Behaviour when a cloud dependency fails: timeouts, health checks, rollback | A reliability review |
+| Resources, integrations or permissions nothing uses | A dead-code and removal review |
 
 ## Before starting
 

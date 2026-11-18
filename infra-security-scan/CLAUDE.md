@@ -1,7 +1,7 @@
 # CLAUDE.md
 
 Agent skill for static security review of cloud infrastructure configuration
-(sibling of `../security-scan`).
+(the application's own source is out of scope).
 
 - The skill lives in `skills/infra-security-scan/`; `SKILL.md` is the contract, and every
   `reference/*.md` must be named in it and start with a `**Read when:**` line

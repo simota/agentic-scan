@@ -1016,7 +1016,7 @@ def meta_pairs(data, L, lang="en"):
     return rows
 
 
-# Shared stylesheets (scan_report_kit/assets, docs: scan-report-kit) come first;
+# Shared stylesheets (the bundled scan_report_kit/assets) come first;
 # these add only the rules for infra-security-scan record types: attack paths, the
 # perspective status, covered/excluded rows and the scope list.
 # Attack-path status inks: open is the High ink, unknown the Medium ink, blocked muted.

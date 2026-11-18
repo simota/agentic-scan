@@ -11,8 +11,8 @@ summary, an interactive dashboard and an assessment PDF.
 > reads configuration; it never runs `terraform plan/apply`, never calls a cloud
 > API, and never sends traffic to deployed resources.
 
-Sibling of [security-scan](../security-scan) (application source review): same
-phases, record-first workflow and report shape, applied to infrastructure.
+It reviews infrastructure configuration only; the application's own source is
+out of scope. It works in phases, records first and renders a fixed report shape.
 
 ## What it does
 
@@ -122,10 +122,9 @@ and is skipped with a warning if neither works; then run
 `contract_check.py OUT --no-pdf`. Each engine gets a timeout scaled to the
 number of findings (`SCAN_REPORT_PDF_TIMEOUT=<seconds>` to override).
 
-The dashboard and the assessment use the shared *-scan report format,
-[scan-report-kit](https://github.com/simota/scan-report-kit): its design
-document (`docs/design.md` in that repository) sets the journal-style
-assessment (numbered sections, captioned booktabs tables, one mincho face for
+The dashboard and the assessment use the report format of the report kit
+bundled under `skills/infra-security-scan/scripts/scan_report_kit/`: it sets
+the journal-style assessment (numbered sections, captioned booktabs tables, one mincho face for
 both scripts) and the dashboard in the same system. The kit's stylesheets, PDF
 engine and safe writes live under `skills/infra-security-scan/scripts/scan_report_kit/`;
 `render.py` adds only the rules for infra-security-scan's own records (attack paths,
@@ -133,7 +132,7 @@ perspective status, covered and excluded rows). The dashboard opts into the
 kit's application shell: a sticky app bar, a contents sidebar with per-severity
 counts that filter the register, pinned register filters and column heads, and
 the keys `/` (search), `j`/`k` (next or previous finding) and Enter (show or
-hide details). The copy is maintained in this repository (scan-report-kit is retired); edit it in place.
+hide details). The kit is maintained in this repository; edit it in place.
 
 ## Layout
 

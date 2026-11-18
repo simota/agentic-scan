@@ -6,8 +6,8 @@
 With --repo, each finding's `location` excerpt is embedded, read and redacted as excerpt.py describes
 (the commit's blob for a scan of a clean tree, else the working tree; credential-shaped values masked;
 credential files never quoted). The record is checked against record.py's schema first.
---lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the vendored
-scan-report-kit (scan_report_kit/): the PDF is printed by headless
+--lang defaults to `meta.lang`, else ja. Styles, PDF printing and safe writes come from the bundled
+report kit (scan_report_kit/): the PDF is printed by headless
 Chrome/Chromium (CHROME overrides the path), else WeasyPrint, each within
 PROMPT_SCAN_PDF_TIMEOUT seconds (default: 120 plus 0.05 per finding, at most 900).
 
@@ -300,7 +300,7 @@ def list_section(items, L):
     return "<ul>" + "".join(f"<li>{esc(x)}</li>" for x in items) + "</ul>" if items else f'<p class="small">{esc(L["none"])}</p>'
 
 
-# The shared stylesheet (scan_report_kit/assets/document.css, design: scan-report-kit)
+# The shared stylesheet (scan_report_kit/assets/document.css, the bundled report kit)
 # comes first; these add only the rules for prompt-scan record types: the
 # severity-by-kind counts table, the level legend, the prompt inventory and
 # eval-run tables, the kind label and before/after proposals.
@@ -402,7 +402,7 @@ def render_report_html(data, L, lang, excerpts):
             f'<main>{body}</main></body></html>')
 
 
-# The shared stylesheet (scan_report_kit/assets/dashboard.css, design: scan-report-kit)
+# The shared stylesheet (scan_report_kit/assets/dashboard.css, the bundled report kit)
 # comes first; these add only the rules for prompt-scan's dashboard pieces: the
 # decisions panel, the verify-first legend, paired counts on the closed card,
 # the earlier-validation history box, proposal text, which wraps as in the
@@ -473,7 +473,7 @@ function listInto(box,items,empty){if(!items.length){box.appendChild(el('p',{'cl
 document.title=L.dash_title+' - '+D.meta.target;byId('h').textContent=D.meta.target;
 byId('meta').textContent=[D.meta.date,D.meta.assessor].filter(Boolean).join(' · ');
 document.querySelectorAll('[data-l]').forEach(function(e){e.textContent=L[e.getAttribute('data-l')];});
-// The theme choice is remembered under the kit's key, as sibling *-scan dashboards do. Storage may be
+// The theme choice is remembered under the bundled report kit's key. Storage may be
 // absent or throw (private windows, blocked site data); the page then follows the system theme.
 var THEME_KEY='scan-report-kit.theme';try{var saved=window.localStorage.getItem(THEME_KEY);if(saved==='light'||saved==='dark')document.documentElement.dataset.theme=saved;}catch(e){}
 byId('theme').onclick=function(){var root=document.documentElement,dark=root.dataset.theme?root.dataset.theme==='dark':window.matchMedia('(prefers-color-scheme: dark)').matches;root.dataset.theme=dark?'light':'dark';try{window.localStorage.setItem(THEME_KEY,root.dataset.theme);}catch(e){}};
@@ -553,7 +553,7 @@ D.legend.notes.forEach(function(n){byId('levels').appendChild(el('p',{'class':'m
 </html>
 """
 
-# Dashboard wording follows security-scan's dashboard; the record's kinds stand where its parts were.
+# Dashboard wording; the record's kinds (defect, improvement) are its parts.
 DASH_LABELS = {
     "en": {
         "eyebrow": "PROMPT REVIEW", "dash_title": "Prompt Findings",
@@ -705,7 +705,7 @@ DASH_LABELS = {
 
 
 def dashboard_model(data):
-    """Counts and the open queue, as security-scan's dashboard shows them."""
+    """Counts and the open queue, as the dashboard shows them."""
     findings = data.get("findings", [])
     included = [f for f in findings if f["validation"]["verdict"] not in EXCLUDED]
     open_ = [f for f in included if f.get("status", "Open") == "Open"]

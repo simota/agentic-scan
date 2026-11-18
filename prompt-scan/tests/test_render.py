@@ -40,7 +40,7 @@ class RenderTest(unittest.TestCase):
         self.assertEqual(json.loads(payload)["findings"][0]["title"], "</script><b>x</b>")
 
     def test_dashboard_remembers_the_theme_as_the_kit_does(self):
-        # Same storage key as the kit's dashboard runtime, so the choice carries across *-scan dashboards;
+        # Same storage key as the kit's dashboard runtime, so the choice carries across dashboards that use it;
         # both reads and writes are guarded, since storage can throw.
         dashboard = (self.render(sample()) / "dashboard.html").read_text(encoding="utf-8")
         kit = (SCRIPTS / "scan_report_kit" / "assets" / "dashboard.js").read_text(encoding="utf-8")

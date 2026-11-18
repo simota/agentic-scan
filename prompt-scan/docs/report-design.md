@@ -4,20 +4,17 @@ Status: decided 2026-10-11; moved to the shared format 2026-10-12. Applies to
 `report.html` / `report.pdf` and `dashboard.html` rendered by
 `skills/prompt-scan/scripts/render.py`.
 
-The shared format of every *-scan skill is security-scan's "journal of
+The shared report format is a "journal of
 record": serif text in one face for both scripts, sans for labels, monospace
 for IDs, paths and prompt text, numbered sections, captioned booktabs tables
-and listings, colour only for severity. It lives in the
-[scan-report-kit](https://github.com/simota/scan-report-kit) repository, next
-to the stylesheets it governs; its design document is `design.md` under that
-repository's docs directory.
+and listings, colour only for severity. It lives in the report kit bundled under
+`skills/prompt-scan/scripts/scan_report_kit/`, with the stylesheets it governs.
 
 ## How prompt-scan uses it
 
-- `skills/prompt-scan/scripts/scan_report_kit/` is a vendored copy of the kit
-  (stylesheets, PDF engine, safe writes). `make check` fails if it is edited in
-  place; change the kit upstream, then run its
-  `make vendor DEST=<this repo>/skills/prompt-scan/scripts`.
+- `skills/prompt-scan/scripts/scan_report_kit/` is the bundled report kit
+  (stylesheets, PDF engine, safe writes), maintained in this repository; edit
+  it in place.
 - `render.py` inlines the shared stylesheets first and appends only the rules
   for prompt-scan record types: `REPORT_CSS` (the severity-by-kind counts
   table, the prompt inventory and eval-run tables, the kind label,
@@ -54,8 +51,8 @@ repository's docs directory.
   highlighted, masked before rendering
 - **Dashboard in the kit's vocabulary**: masthead, summary banner, count
   cards, "Start here" queue, coverage panel, charts, the filterable findings
-  register (`table.register`) and "Copy for LLM"; defect and improvement take
-  the place of security-scan's application and dependency parts
+  register (`table.register`) and "Copy for LLM"; defect and improvement are
+  the record's parts
 - **Self-contained and offline**: no web fonts, no remote assets; the dashboard
   embeds its data as escaped JSON and follows the system dark mode
 - **Order of sections**: summary, inventory, perspectives, checked and sound,

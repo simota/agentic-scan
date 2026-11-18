@@ -8,10 +8,8 @@ work but would work better) three ways: a chat summary, an interactive
 dashboard and a PDF report. It does not edit prompts or code, and does not send
 anything to a model unless you explicitly ask it to run evals.
 
-The layout and run contract follow
-[security-scan](https://github.com/simota/security-scan): one `SKILL.md`,
-references read per phase, scripts that own the record, a contract check every
-run must pass.
+The layout and run contract: one `SKILL.md`, references read per phase,
+scripts that own the record, a contract check every run must pass.
 
 ## What it does
 
@@ -140,14 +138,14 @@ python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/finding
 | `skills/prompt-scan/scripts/record.py` | The `findings.json` contract every script shares: vocabulary, strict parsing, schema, atomic replacement |
 | `skills/prompt-scan/scripts/excerpt.py` | What a report may quote from the reviewed repository, and the redaction applied to it |
 | `skills/prompt-scan/scripts/contract_check.py` | Checks a finished output directory against the run contract |
-| `skills/prompt-scan/scripts/scan_report_kit/` | Vendored [scan-report-kit](https://github.com/simota/scan-report-kit): shared stylesheets, PDF engine, safe writes |
+| `skills/prompt-scan/scripts/scan_report_kit/` | The bundled report kit: shared stylesheets, PDF engine, safe writes |
 | `skills/prompt-scan/templates/` | Issue and summary-report drafts (ja/en) |
-| `docs/report-design.md` | How the report uses the shared *-scan report format |
+| `docs/report-design.md` | How the report uses the shared report format |
 
-The report and dashboard use the shared *-scan report format from the bundled
+The report and dashboard use the shared report format from the bundled
 report kit (see `docs/report-design.md`): a journal-style report (numbered sections, captioned booktabs tables and
 listings, one mincho face for both scripts) and a dashboard in the same system.
-The copy is maintained in this repository (scan-report-kit is retired); edit it in place.
+The kit is maintained in this repository; edit it in place.
 
 ## Development
 

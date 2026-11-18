@@ -36,20 +36,20 @@ only on an explicit request (see *Decide first*).
 Phases: `RECON → CHECKLIST → REVIEW → VERIFY → REPORT`.
 
 Neighbours, and where their questions go instead. The line with
-`security-scan`: whether a prompt keeps untrusted text from overriding its
+a security review: whether a prompt keeps untrusted text from overriding its
 instructions (delimiters, roles, the order of instructions and data) is a
 finding here; what an attacker reaches once it does — the tools, data and
-actions the model is allowed, and whether the code authorizes them — is
-`security-scan`'s (IG5):
+actions the model is allowed, and whether the code authorizes them — belongs
+to a security review of the application's source (IG5):
 
-| Question | Skill |
+| Question | Where it goes |
 |---|---|
-| Apply the proposals | `coding-implement` |
-| Tool calls and model output that act without authorization; secrets in prompts | `security-scan` |
-| Personal data sent to, kept or trained on by a model provider | `privacy-scan` |
-| A wrong result computed in the code around the model call | `logic-scan` |
-| Behaviour when the model API fails, times out or rate-limits | `reliability-scan` |
-| Prompts, agents or tools nothing uses | `prune-scan` |
+| Apply the proposals | A separate implementation request (out of scope here) |
+| Tool calls and model output that act without authorization; secrets in prompts | A security review of the application's source (out of scope here) |
+| Personal data sent to, kept or trained on by a model provider | A privacy review of personal data handling (out of scope here) |
+| A wrong result computed in the code around the model call | A business-logic review (out of scope here) |
+| Behaviour when the model API fails, times out or rate-limits | A reliability review (out of scope here) |
+| Prompts, agents or tools nothing uses | A review of what can be removed (out of scope here) |
 
 ## Decide first
 

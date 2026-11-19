@@ -1,35 +1,35 @@
-# 01 ターミナルセッション記録
+# 01 Terminal Session Transcript
 
-モック: `01-terminal-session.html`
+Mockup: `01-terminal-session.html`
 
-## コンセプト
+## Concept
 
-レポートを、`findings.json` に jq をかけたセッションの記録として見せる。各ブロックは「コマンド → 出力 → 人が読むための一行の注記」の順に並ぶ。
+Present the report as a transcript of a session running jq on `findings.json`. Each block follows the same order: command → output → a one-line note for the reader.
 
-## なぜ agentic-scan らしいか
+## Why It Fits agentic-scan
 
-- LP の中心にある約束「製品が実際に動く場所で、製品の実物を見せる」(`artifacts/lp/creative-strategy.md`)をレポートでも守る。モックに載せた 4 つの jq コマンドは、`security-scan/examples/findings.sample.ja.json` に対して実際に実行し、出力が一致することを確かめた。
-- LP の `.term` と `.ln-mark` の語彙をそのまま使う。等幅の書体がブランドを担い、注記は和文のサンセリフにする。F-004 の行(FalsePositive)を塗って残す、LP の署名の行も同じ。
-- 出力の上に描き足したもの(件数の棒、「該当」「根拠」「修正方針」のタグ)は、注記で「コマンドの出力ではない」と書いて区別している。
+- Carry the LP's central promise into the report: “Show the actual product where it runs” (`artifacts/lp/creative-strategy.md`). All 4 jq commands in the mockup were run against `security-scan/examples/findings.sample.ja.json` to verify that the output matched.
+- Reuse the LP's `.term` and `.ln-mark` visual vocabulary. Monospace type carries the brand, and notes use a Japanese sans-serif. Highlight and retain the F-004 (FalsePositive) line, as in the LP's signature line.
+- A note marks additions drawn over the output (count bars and the 「該当」「根拠」「修正方針」 tags) with 「コマンドの出力ではない」 (not part of the command output).
 
-## 他スキルへの横展開
+## Adapting It to Other Skills
 
-- 4 つのブロック(meta、重大度別の件数、一覧、1 件の詳細)はスキルが違っても同じ形で作れる。違うのは jq のパスだけ。
-- スキル固有のフィールドは、詳細ブロックの `paths(scalars)` が自動で平らにして出す。例: ux-scan の画面と flow、bug-scan の再現手順や関連、logic-scan の反例。
-- 塗る行(該当・根拠・修正方針)はキーの名前で決める。スキルごとに 3 つのキー名を設定すれば済む。
+- The 4 blocks (meta, counts by severity, list, and details for 1 finding) can use the same structure across skills. Only the jq paths change.
+- The detail block's `paths(scalars)` automatically flattens and displays skill-specific fields. Examples include screens and flow in ux-scan, reproduction steps and relationships in bug-scan, and counterexamples in logic-scan.
+- The key names determine which lines to highlight (該当, 根拠, 修正方針). Configure 3 key names per skill.
 
-## 既存の render.py / dashboard.css に入れるときの変更範囲と工数感(見積もり)
+## Changes and Estimated Effort for the Existing render.py / dashboard.css
 
-- 静的な出力として `session.html` を新しく 1 枚足すのがいちばん安全。今の dashboard の検索やキーボード操作は残せる。
-  - render.py にテンプレート関数を 1 つ足す。jq と同じ整形(tsv、`paths`)を Python で書く。
-  - 表示するコマンドの文字列は定数にする。
-  - 1 スキルあたり半日から 1 日。
-- dashboard そのものを置き換えると、フィルターと展開の UI を作り直すことになる。そうすると 1 スキルあたり数日かかる。
-- dashboard.css は、トークンの差し替え(`--bg` などを LP の値に揃える)だけなら全スキルで機械的に置き換えられる。11 個の dashboard.css は 2 系統(282 行が 8 個、270 行が 3 個)に分かれているので、2 回の置換で済む。
+- Adding 1 new static output page, `session.html`, is the safest approach. The current dashboard search and keyboard interactions can stay in place.
+  - Add 1 template function to render.py. Implement the same formatting as jq (tsv, `paths`) in Python.
+  - Store the displayed command strings as constants.
+  - Half a day to 1 day per skill.
+- Replacing the dashboard itself would require rebuilding the filter and expansion UI. That would take several days per skill.
+- If dashboard.css needs only token changes (matching `--bg` and similar tokens to the LP values), the updates can be applied mechanically across all skills. The 11 dashboard.css files fall into 2 families (8 with 282 lines and 3 with 270 lines), so 2 replacements are enough.
 
-## 弱点
+## Limitations
 
-- 指摘が数十件を超えると、一覧のブロックが長くなる。フィルターも並べ替えもない。
-- 載せたコマンドが実際に動くことを保証し続ける必要がある。スキーマを変えたらコマンドも直す。
-- 360px 幅では、長い jq コマンドが 4〜5 行に折り返して場所をとる。
-- 経営層など、端末に慣れていない読み手には向かない。
+- Once there are more than a few dozen findings, the list block gets long. It has no filtering or sorting.
+- The displayed commands must keep working. Update them whenever the schema changes.
+- At 360px, long jq commands wrap to 4–5 lines and take up space.
+- This design is unsuitable for readers unfamiliar with terminals, such as executives.

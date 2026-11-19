@@ -1,40 +1,40 @@
-# 02 CI パイプライン実行ログ
+# 02 CI Pipeline Run Log
 
-モック: `02-ci-pipeline.html`
+Mockup: `02-ci-pipeline.html`
 
-## コンセプト
+## Concept
 
-1 回のスキャンを CI の 1 回の実行(run)として見せる。並べる要素は次のとおり。
+Present each scan as 1 CI run. Include the following elements.
 
-- 工程のグラフ(RECON → CHECKLIST → REVIEW → VERIFY → REPORT)
-- 重大度別のサマリ
-- 観点ごとの matrix
-- 指摘ごとの annotation(ファイル:行)
-- 1 件を工程順に追ったログ
+- Stage graph (RECON → CHECKLIST → REVIEW → VERIFY → REPORT)
+- Summary by severity
+- Matrix by perspective
+- An annotation for each finding (file:line)
+- A log that traces 1 finding through the stages
 
-## なぜ agentic-scan らしいか
+## Why It Fits agentic-scan
 
-- LP は、スキルごとに README の工程を `.pipe` として載せている。この案はその工程を、レポートの骨組みとして読める形にしたもの。
-- 「読んで、反証してから、渡す」の VERIFY が、独立した 1 工程として目に見える。VERIFY の段には判定の内訳(Valid 2 · Likely 1 · Unverified 3 · FalsePositive 1)を置いた。
-- perspectives を matrix のジョブに見立てた。ファイル処理は「対象外」として、スキップされたジョブと同じ見た目にした。何を確かめていないかが一目でわかる。
-- 赤は High にだけ使う(LP の規則)。CI でよくある「成功は緑」はやめた。記号の色は重大度か、墨色だけにした。
+- The LP shows the stages from each skill's README as a `.pipe`. This design makes those stages the structure of the report.
+- The VERIFY in 「読んで、反証してから、渡す」 is visible as a distinct stage. The VERIFY stage shows the verdict breakdown (Valid 2 · Likely 1 · Unverified 3 · FalsePositive 1).
+- Treat perspectives as matrix jobs. File handling is marked 「対象外」 and styled as a skipped job. Readers can see at a glance what was left unchecked.
+- Use red only for High, following the LP rule. Symbols use severity colors or ink, dropping the usual CI convention of green for success.
 
-## 他スキルへの横展開
+## Adapting It to Other Skills
 
-- 工程の名前は、各スキルの README の工程をそのまま入れる。LP によれば、bug-scan は 8 段、ux-scan は FLOWS を含む 6 段。段の数が違っても、グラフは grid の列数を変えるだけで対応できる。
-- 各段の一行の要約は、`findings.json` から機械的に出せるものに限る(件数や判定の内訳)。所要時間やジョブの番号は記録にないので出さない。
-- annotation の形(file:line + タイトル + ID · 判定 · 状態)は全スキルで共通にできる。SARIF への書き出しとも対応がとりやすい。
+- Use the stage names from each skill's README. According to the LP, bug-scan has 8 stages and ux-scan has 6, including FLOWS. To accommodate different stage counts, change only the number of grid columns in the graph.
+- Limit each one-line stage summary to values that can be derived mechanically from `findings.json` (counts and verdict breakdowns). Durations and job numbers are absent from the records and are omitted.
+- The annotation format (file:line + title + ID · verdict · status) can be shared across all skills. It also maps readily to SARIF exports.
 
-## 既存の render.py / dashboard.css に入れるときの変更範囲と工数感(見積もり)
+## Changes and Estimated Effort for the Existing render.py / dashboard.css
 
-- 今の dashboard の hero と cards を、工程のグラフとサマリの box に置き換える。register の表は annotation のリストに差し替えるか、残す。
-- 詳細の展開(`tr.detail`)は、行番号つきのログの見た目に CSS で寄せられる。
-- 工程ごとの要約の値を payload に足す。これは render.py の `render_dashboard()` に辞書を 1 つ足すくらいで済む。
-- 工数は、CSS と HTML テンプレートの差し替えが 1 スキルあたり 1〜2 日。共通の部品にできれば、2 つ目以降はもっと短い。
-- 注意点: 工程の名前とその順番の一次情報は README にしかない。`findings.json` に工程の記録はない。表示するにはスキルごとの定数が必要になる。
+- Replace the current dashboard hero and cards with the stage graph and a summary box. Replace the register table with the annotation list or retain the table.
+- Use CSS to style expanded details (`tr.detail`) as a log with line numbers.
+- Add per-stage summary values to the payload. This calls for roughly 1 additional dictionary in `render_dashboard()` in render.py.
+- Replacing the CSS and HTML template takes 1–2 days per skill. With shared components, the second and subsequent skills take less time.
+- The README is the only source of truth for stage names and order. `findings.json` has no stage records. Displaying stages requires per-skill constants.
 
-## 弱点
+## Limitations
 
-- 工程はどれも「完了」になるので、グラフが情報を運ばない。違いが出るのは VERIFY の内訳だけ。
-- CI の画面に慣れていない読み手には、run、matrix、annotation の比喩が通じない。
-- 実在の CI サービスの画面に似せすぎると、他社のサービスに見える。このモックでは、ブランド名、色、アイコンを特定のサービスに寄せていない。
+- Every stage reads 「完了」, so the graph itself conveys no information. Only the VERIFY breakdown varies.
+- Readers unfamiliar with CI interfaces may miss the run, matrix, and annotation metaphors.
+- Too close a resemblance to an existing CI interface can make the report look like another company's service. This mockup avoids matching any specific service's brand name, colors, or icons.

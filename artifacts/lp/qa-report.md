@@ -1,55 +1,55 @@
-# QA レポート(ターミナル / エージェント版)
+# QA report (terminal / agent version)
 
-確認したブラウザ: macOS 上の Google Chrome(Playwright の `channel="chrome"`、ヘッドレス)。ページは `python3 -m http.server` でローカルから配信した。Chrome の起動とローカルサーバーは、サンドボックスの外で実行した。
+Browser checked: Google Chrome on macOS (Playwright `channel="chrome"`, headless). The page was served locally with `python3 -m http.server`. Chrome and the local server were run outside the sandbox.
 
-## 実施したこと
+## What was done
 
-| 確認 | 結果 | 記録 |
+| Check | Result | Record |
 |---|---|---|
-| 320 / 375 / 768 / 1024 / 1440 / 1920px × ライト / ダーク(12 通り) | 12 通りとも、横スクロールなし、はみ出した要素なし、コンソールエラーなし、失敗したリクエストなし | `screenshots/rebrand/layout.json` |
-| ファーストビュー | 全幅で H1 と主 CTA が最初の画面に入る。1024px 以上では台帳もファーストビューに入る。375px では台帳の見出しとコマンドが下端に入る | `screenshots/rebrand/final/` |
-| 見出しの改行 | 320〜1920px で、H1 が「コードに触れずに、/ 裏の取れた指摘を。」の 2 行に収まる | 目で確認 |
-| ページ内リンク | `#` で始まるリンクすべてに行き先がある(行き先のないリンク 0 件) | `interactions.json` |
-| コピーボタン | 2 つとも、クリップボードの中身が `data-copy` と一致。ラベルが「コピー済み」に変わり、トーストが出る | 同上 |
-| タブのキーボード操作 | → で ux-scan に移り、パネルが切り替わる。End で最後、Home で最初に移る | 同上 |
-| FAQ | クリックで開く | 同上 |
-| フォーカスの表示 | Tab の 2 回目でワードマークに 2px の実線の outline が出る | `final/focus-1440.webp` |
-| 動きを減らす設定 | 台帳の 7 行とも、読み込んだ直後から不透明度 1 | `interactions.json` |
-| JS 無効 | 出力サンプルの 4 枚がすべて表示される | 同上 |
-| ui-deslop の検出器 | `3 files, 0 open hits, 0 exempt, 34 cues`(手がかりの 34 件は文脈を読んで確認した。詳しくは pdca-report) | — |
-| 端末の出力が本物か | ページの 3 つの出力ブロックが、保存した実行結果と文字単位で一致 | `qa/transcripts/` |
+| 320 / 375 / 768 / 1024 / 1440 / 1920px × light / dark (12 combinations) | In all 12: no horizontal scrolling, no overflowing elements, no console errors, no failed requests | `screenshots/rebrand/layout.json` |
+| First view | At every width, the H1 and primary CTA fit in the first screen. At 1024px and up, the ledger is also in the first view. At 375px the ledger heading and command reach the bottom edge | `screenshots/rebrand/final/` |
+| Heading line breaks | From 320 to 1920px, the H1 fits in 2 lines: 「コードに触れずに、/ 裏の取れた指摘を。」 | Checked visually |
+| In-page links | Every link starting with `#` has a target (0 links without a target) | `interactions.json` |
+| Copy buttons | For both, the clipboard contents match `data-copy`. The label changes to 「コピー済み」 ("Copied") and a toast appears | Same as above |
+| Tab keyboard operation | → moves to ux-scan and the panel switches. End moves to the last, Home to the first | Same as above |
+| FAQ | Opens on click | Same as above |
+| Focus indicator | On the 2nd Tab, a 2px solid outline appears on the wordmark | `final/focus-1440.webp` |
+| Reduced motion | All 7 ledger rows have opacity 1 right after load | `interactions.json` |
+| JS disabled | All 4 output samples are shown | Same as above |
+| ui-deslop detector | `3 files, 0 open hits, 0 exempt, 34 cues` (the 34 cues were checked by reading their context; details in pdca-report) | — |
+| Is the terminal output real | The page's 3 output blocks match the saved run results character for character | `qa/transcripts/` |
 
-## Lighthouse 12.2.1(ラボ計測。ローカル配信でヘッドレス Chrome)
+## Lighthouse 12.2.1 (lab measurement; served locally, headless Chrome)
 
 | | Performance | Accessibility | Best Practices | SEO | LCP | CLS | TBT |
 |---|---|---|---|---|---|---|---|
-| モバイル | 100 | 100 | 100 | 100 | 1.1 s | 0 | 0 ms |
-| デスクトップ | 100 | 100 | 100 | 100 | 0.3 s | 0 | 0 ms |
+| Mobile | 100 | 100 | 100 | 100 | 1.1 s | 0 | 0 ms |
+| Desktop | 100 | 100 | 100 | 100 | 0.3 s | 0 | 0 ms |
 
-最初の計測では、モバイルの Accessibility が 97 だった。原因は 2 つで、どちらも直して再計測した。
+In the first measurement, mobile Accessibility was 97. There were 2 causes; both were fixed and re-measured.
 
-- ワードマークの `aria-label` が、見えている文字を含んでいなかった。
-- `make list` の索引のリンクが高さ 20px しかなかった(24px 未満)。
+- The wordmark's `aria-label` did not contain the visible text.
+- The `make list` index links were only 20px tall (under 24px).
 
-レポートは `lighthouse/rebrand/`。
+Reports are in `lighthouse/rebrand/`.
 
-## 見つけて直した不具合
+## Defects found and fixed
 
-- 320 / 375px で横幅が 568px まで広がっていた。grid の列が `<pre>` の幅に引っ張られていたので、`minmax(0, 1fr)` と `min-width: 0` で直した。
-- 出力の行が 1 行おきに空いていた。block 要素の span と改行の文字が重なっていたので、inline-block で直した。
-- 1440px で、H1 が語の途中で折れていた(「触れず/に、」)。文字サイズの上限と列の比率を見直して直した。
-- コマンドの行が折り返されずに切れていた。セレクタの優先順位の問題だった。
-- `make list` の枠が、列の高さいっぱいまで伸びていた(`align-self: start` で直した)。
-- 「右の指摘は」という文が、モバイルでは位置と合わなかった。
-- Lighthouse の 2 件(上記)。
+- At 320 / 375px the width expanded to 568px. Grid columns were being pulled by the width of `<pre>`; fixed with `minmax(0, 1fr)` and `min-width: 0`.
+- Output rows had a blank line between every row. Block-level spans overlapped with newline characters; fixed with inline-block.
+- At 1440px the H1 broke mid-word (「触れず/に、」). Fixed by revising the font-size cap and column ratio.
+- Command lines were cut off instead of wrapping. It was a selector specificity problem.
+- The `make list` box stretched to the full column height (fixed with `align-self: start`).
+- The sentence 「右の指摘は」 ("the findings on the right") did not match the layout on mobile.
+- The 2 Lighthouse issues (above).
 
-## 確かめていないこと
+## Not verified
 
-- Safari、Firefox、実機のスマートフォン(iOS / Android)
-- スクリーンリーダー(VoiceOver / NVDA)での読み上げ
-- 実際の操作での応答速度(INP)。ラボ計測の TBT だけで、実ユーザーのデータはない
-- 本番相当の配信(圧縮、キャッシュ、CDN)
-- 権限のない状態で GitHub のリンクを開いたときの表示
-- コントラスト比の計算。Lighthouse の color-contrast 監査は通ったが、すべての組み合わせを自分で計算してはいない
-- Windows など、ui-monospace が SF Mono にならない環境での等幅書体の見え方
-- 独立した評価者によるレビュー
+- Safari, Firefox, real smartphones (iOS / Android)
+- Screen reader output (VoiceOver / NVDA)
+- Responsiveness in real interaction (INP). Only lab TBT; no real-user data
+- Production-equivalent delivery (compression, caching, CDN)
+- What is shown when opening the GitHub link without access
+- Contrast ratio calculation. The Lighthouse color-contrast audit passed, but not every combination was calculated by hand
+- How the monospace type looks in environments where ui-monospace does not resolve to SF Mono, such as Windows
+- Review by an independent evaluator

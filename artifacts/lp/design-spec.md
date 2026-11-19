@@ -1,63 +1,63 @@
-# デザイン仕様(ターミナル / エージェント版)
+# Design spec (terminal / agent version)
 
-トークンはすべて `site/styles.css` の `:root` にあり、それ以外の値は使わない。
+All tokens live in `:root` in `site/styles.css`; no other values are used.
 
-## ワードマーク
+## Wordmark
 
-`r--` + `agentic-scan`。
+`r--` + `agentic-scan`.
 
-- `r--` は、読み取り専用ファイルの権限の文字列で、製品の一番の約束(コードを書き換えない)を記号にしたもの。
-- 墨色の小さな札の中に等幅で置き、その後ろに等幅の太字で名前を続ける。
-- favicon も同じ `r--`。
+- `r--` is the permission string of a read-only file, a symbol for the product's first promise (it does not rewrite code).
+- It is set in monospace inside a small ink-colored tag, followed by the name in bold monospace.
+- The favicon is the same `r--`.
 
-## 色
+## Color
 
-| トークン | ライト | ダーク | 役割 |
+| Token | Light | Dark | Role |
 |---|---|---|---|
-| `--bg` | #f4f5f7 | #0f1217 | 地。冷たいグレーで、紙の色ではない |
-| `--surface` | #ffffff | #151a21 | ボタン、入力の見本、画像の台 |
-| `--term` | #eceef2 | #0a0d11 | 端末の出力ブロック |
-| `--ink` | #12161c | #e3e7ec | 文字と主ボタン |
-| `--muted` | #545d68 | #9ba4ae | 補足、プロンプト記号 |
-| `--line` | #d3d8df | #29313b | 枠と区切り |
-| `--accent` | #1f3f66 | #a9c3e6 | リンク、FalsePositive、ラベル(ダッシュボードの accent と同じ値) |
-| `--mark` | #dfe7f2 | #1a2638 | 署名の行(F-004)と強調の下線 |
-| `--high` / `--medium` / `--low` / `--info` | #8a1c1c / #7a4800 / #24476e / #5a5a5a | #f2a19a / #e8bf7a / #a9c3e6 / #b3aea4 | 重大度。スキルのダッシュボード(`report_assets/dashboard.css`)と同じ値 |
-| `--band` 系 | 墨色の帯 | surface の帯 | verify の節だけを反転させる |
+| `--bg` | #f4f5f7 | #0f1217 | Background. A cool gray, not a paper color |
+| `--surface` | #ffffff | #151a21 | Buttons, input samples, image backing |
+| `--term` | #eceef2 | #0a0d11 | Terminal output blocks |
+| `--ink` | #12161c | #e3e7ec | Text and the primary button |
+| `--muted` | #545d68 | #9ba4ae | Supporting text, prompt symbols |
+| `--line` | #d3d8df | #29313b | Borders and dividers |
+| `--accent` | #1f3f66 | #a9c3e6 | Links, FalsePositive, labels (same value as the dashboard accent) |
+| `--mark` | #dfe7f2 | #1a2638 | The signature row (F-004) and emphasis underlines |
+| `--high` / `--medium` / `--low` / `--info` | #8a1c1c / #7a4800 / #24476e / #5a5a5a | #f2a19a / #e8bf7a / #a9c3e6 / #b3aea4 | Severity. Same values as the skills' dashboard (`report_assets/dashboard.css`) |
+| `--band` family | Ink band | Surface band | Inverts only the verify section |
 
-赤は High の表示にだけ使う。操作の色は墨色とアクセント色にする。
+Red is used only to show High. Interactive elements use ink and the accent color.
 
-## 書体
+## Type
 
-- `--mono`: ui-monospace, SF Mono, Menlo, Consolas … → 日本語はヒラギノ角ゴ / Noto Sans JP に落ちる。ブランドを担う書体。
-- `--sans`: Hiragino Sans, Noto Sans JP, Yu Gothic UI … 本文と見出し。
-- 見出しはゴシックの 800。文節ごとに `inline-block` にして、語の途中で改行しないようにした。
-- 端末ブロックは `--fs-term`。ヒーローの台帳(52 桁)はコンテナの幅に合わせて文字の大きさを変える(`100cqi / 31.5`)。7 行すべてが、横スクロールなしで 343px 幅(375px の画面)に収まる。
-- Web フォントは読み込まない(依存なし、レイアウトの揺れなし)。
+- `--mono`: ui-monospace, SF Mono, Menlo, Consolas … → Japanese falls back to Hiragino Kaku Gothic / Noto Sans JP. The typeface that carries the brand.
+- `--sans`: Hiragino Sans, Noto Sans JP, Yu Gothic UI … Body text and headings.
+- Headings are Gothic at weight 800. Each phrase is `inline-block` so lines never break mid-word.
+- Terminal blocks use `--fs-term`. The hero ledger (52 columns) scales its font size to the container width (`100cqi / 31.5`). All 7 rows fit in 343px (a 375px screen) without horizontal scrolling.
+- No web fonts are loaded (no dependencies, no layout shift).
 
-## 余白・形・動き
+## Spacing, shape, motion
 
-- 余白: `--s1`〜`--s9`(4px〜112px)、`--gutter` 16px / 32px、本文の最大幅 `--measure` 40em。
-- 形: 角丸は `--radius` 4px と `--radius-s` 2px のみ。線は 1px / 2px。タップ領域は `--tap` 44px、索引のリンクは `--target` 28px。
-- 動き: `--t-fast` 120ms(押す・ホバー)、`--t` 220ms、`--stagger` 70ms。
-  - 入場の演出はヒーローの台帳の 7 行だけで、行が 70ms ずつ順に現れる(不透明度と 0.5 文字分の横移動)。
-  - タイピングの模倣はしない。
-  - `prefers-reduced-motion: reduce` では演出をすべて止め、すぐに最終の状態を見せる(実測した不透明度は 7 行とも 1)。
+- Spacing: `--s1`–`--s9` (4px–112px), `--gutter` 16px / 32px, maximum body width `--measure` 40em.
+- Shape: border radius is only `--radius` 4px and `--radius-s` 2px. Lines are 1px / 2px. Tap targets are `--tap` 44px; index links are `--target` 28px.
+- Motion: `--t-fast` 120ms (press, hover), `--t` 220ms, `--stagger` 70ms.
+  - The only entrance effect is on the 7 rows of the hero ledger, which appear one after another at 70ms intervals (opacity and a horizontal shift of 0.5 characters).
+  - No imitation of typing.
+  - Under `prefers-reduced-motion: reduce`, all effects stop and the final state shows immediately (measured opacity is 1 for all 7 rows).
 
-## レスポンシブ
+## Responsive
 
-- 720px 未満:
-  - ナビを隠す(ワードマークと導入ボタンは残す)。
-  - 主 CTA を全幅にする。
-  - ヒーローの台帳を画面の端まで広げる。
-  - `make list` の索引を 2 段組にする。
-  - ダッシュボードの画像は 390px 幅で撮った版に差し替える。
-- 1024px 以上: ヒーローを 2 列(1.2 : 1)にする。skills は、索引(sticky)と本文の 2 列にする。
-- 1200px 以上: スキルの説明を 2 列にする。
+- Below 720px:
+  - Hide the nav (the wordmark and install button remain).
+  - Make the primary CTA full width.
+  - Extend the hero ledger to the screen edges.
+  - Lay out the `make list` index in 2 columns.
+  - Swap dashboard images for versions captured at 390px width.
+- 1024px and up: the hero has 2 columns (1.2 : 1). skills has 2 columns: index (sticky) and body.
+- 1200px and up: skill descriptions in 2 columns.
 
-## 部品
+## Components
 
-- 端末ブロック `.term`: 見出しの行(何の出力かを書く)、本文(`$` のコマンド行、出力)、注記。ウィンドウ枠の飾りはない。
-- `.ln-mark`: 署名の行を全幅で塗る。
-- タブ: WAI-ARIA のタブのパターン。JS が無効なら 4 枚とも表示する。
-- コピーボタン: クリップボードに書き込み、ラベルとトーストで結果を知らせる。
+- Terminal block `.term`: a header row (stating what the output is), a body (`$` command lines, output), and a note. No window-frame decoration.
+- `.ln-mark`: fills the signature row across the full width.
+- Tabs: the WAI-ARIA tabs pattern. With JS disabled, all 4 are shown.
+- Copy button: writes to the clipboard and reports the result with its label and a toast.

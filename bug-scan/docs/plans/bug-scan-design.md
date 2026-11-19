@@ -1,135 +1,135 @@
-# bug-scan 設計書
+# bug-scan Design
 
-状態: `skills/bug-scan/` に実装済み(§9 のパイロットは未実施)/ 作成日: 2026-11-06
+Status: Implemented in `skills/bug-scan/` (the pilot in §9 has yet to run) / Created: 2026-11-06
 
-実装で設計から変えた点:
+Implementation changes from the design:
 
-- `key` に任意の `variant` を追加しました。修正済みの不具合とその再発が同じキーになるためです(`reference/tracking.md`)
-- 不具合リストの絞り込みは独自に作らず、`scan-report-kit` の一覧と検索を使います。対象での絞り込みは検索で行います
-- リスクなどの列挙値は既存 scan に合わせて英語にし、表示だけ言語で切り替えます
-- `scripts/common.py` を共通部品として追加しました
-- 記録の後工程をつなぐ道具を追加しました。`export.py`(issue の下書き、SARIF 2.1.0、CSV)、`impact.py`(変更が触れる不具合・横展開先・修正済み箇所・再発パターン。`--fail-on` で CI のゲートにできる)。どちらも記録から導出するだけで、起票や送信はしません
-- 台帳に `list`、`set --ref`(起票した issue を結びつけ、以後の実行の `external_refs` に戻す)、`set --status Open`(受容の取り消し)を追加しました
+- Added an optional `variant` to `key` because a fixed defect and its recurrence would otherwise have the same key (`reference/tracking.md`)
+- Reused the `scan-report-kit` list and search for filtering the defect list. Use search to filter by surface
+- Used English enum values for risk and similar fields to match existing scans, with localized display labels
+- Added `scripts/common.py` for shared logic
+- Added tools that use the records in downstream workflows. `export.py` produces issue drafts, SARIF 2.1.0, and CSV. `impact.py` identifies defects, sibling sites, fixed locations, and recurring patterns touched by a change. Its `--fail-on` option can serve as a CI gate. Both tools derive their output from records without filing issues or sending anything
+- Added ledger commands `list`, `set --ref` (links a filed issue and returns it in `external_refs` on subsequent runs), and `set --status Open` (reverses acceptance)
 
-bug-scan は、コードと git 履歴を読み取り専用で調べ、「バグがどの種類の変更から入り、どのゲートをすり抜け、今どこに同じ入口が残っているか」を根拠つきの図で示す `*-scan` スキルです。
+bug-scan is a `*-scan` skill that inspects code and git history in read-only mode. It uses evidence-backed diagrams to show which kinds of changes introduced bugs, which gates they slipped past, and where equivalent entry points remain.
 
-## 1. このスキルでできること / やらないこと
+## 1. Scope and exclusions
 
-### できること
+### Capabilities
 
-| # | できること | 成果 |
+| # | Capability | Outcome |
 |---|---|---|
-| 1 | 過去の修正を分類する(誤った実装 / 欠落 / 要件変更 / 非欠陥) | 「fix」と書かれた commit のうち本当に欠陥だった割合が分かる |
-| 2 | 修正から混入元の commit へ遡る(根拠の強さを3段階で明示) | 新機能・修正・リファクタ・依存更新など、どの変更経路で入りやすいかが分かる |
-| 3 | fix の連鎖を図にする(修正が次の修正を生む流れ) | 直しきれず再発している箇所が分かる |
-| 4 | バグパターン × モジュールを集計する | 「どこで、どの種類が繰り返すか」が分かる |
-| 5 | 防御ゲート(テスト、lint、型、CI、レビュー規則、feature flag)の有無を、`path:line` つきで経路に重ねる | どのゲートが無いか/効いていないかが分かる |
-| 6 | 過去のパターンを手がかりに、同種の入口が現在のコードに残っていないか探す | 根拠つきの finding として報告する |
-| 7 | コード課題(テスト不在、ルール重複、例外の握りつぶし、高 churn)とバグパターンを結ぶ | どの課題を直すと、どのパターンが減る見込みかが分かる |
-| 8 | 他の `*-scan` の `findings.json` を、依頼時だけ図に重ねる | 既存の監査結果を混入経路の文脈で読める |
-| 9 | 前回の結果と比較する | パターンとホットスポットの増減が分かる |
-| 10 | 不具合をリスト化し、実行をまたいで同じ不具合として追跡する | 状態、初回検出、最終確認、再発が分かる |
-| 11 | 不具合どうしの関連(再発、原因、先に直す順、対象の共有)を根拠つきで記録する | どれがどれにつながり、何を先に直すかが分かる |
-| 12 | 再現手順を記録する(実行の有無を状態で明示) | 誰かが検証を始められる手順が残る |
-| 13 | リスク(発生可能性 × 影響、検知しやすさ)と危険性(金銭、データ、不可逆性など)を分けて記録する | 深刻さの理由を説明できる |
-| 14 | 対象の画面、API、ジョブ、DB、外部サービス、設定を不具合に結びつける | 画面別、API 別、テーブル別に不具合を引ける |
-| 15 | 同じ書き方の別の箇所(横展開先)を探し、箇所ごとに確認結果を残す | 部分修正の取りこぼしを防げる |
-| 16 | 不具合を含むリリースの範囲、修正が入った最初のリリースを記録する | どの利用者に影響するかが分かる |
-| 17 | 修正後も壊れたデータが残るか、対象の探し方と修復方法を記録する | コードの修正だけで終わらせずに済む |
-| 18 | 検知元、検知段階、混入から検知まで、検知から修正までの日数を記録する | どのゲートが効いているかを測れる |
+| 1 | Classify past fixes (incorrect implementation / omission / requirement change / non-defect) | Shows the share of commits labeled “fix” that addressed actual defects |
+| 2 | Trace fixes back to introducing commits (with 3 levels of evidence strength) | Shows which change channels tend to introduce defects, such as features, fixes, refactors, and dependency updates |
+| 3 | Diagram fix chains (how one fix leads to another) | Shows where incomplete fixes lead to recurrence |
+| 4 | Aggregate bug patterns × modules | Shows which patterns recur and where |
+| 5 | Overlay the presence or absence of defensive gates (tests, lint, types, CI, review rules, feature flags) on paths with `path:line` references | Shows which gates are missing or ineffective |
+| 6 | Use historical patterns to look for equivalent entry points in current code | Reports findings backed by evidence |
+| 7 | Link code issues (missing tests, duplicated rules, swallowed exceptions, high churn) to bug patterns | Shows which patterns are likely to become less frequent if specific issues are addressed |
+| 8 | Overlay `findings.json` from other `*-scan` skills only on request | Puts existing audit results in the context of defect introduction paths |
+| 9 | Compare with the previous run | Shows increases and decreases in patterns and hotspots |
+| 10 | List defects and track their identity across runs | Shows status, first detection, last confirmation, and recurrence |
+| 11 | Record relationships between defects (recurrence, cause, fix order, shared surfaces) with evidence | Shows how defects are related and which to fix first |
+| 12 | Record reproduction steps (with a state indicating whether someone ran them) | Provides steps someone can use to start verification |
+| 13 | Record risk (likelihood × impact, detectability) and hazards (money, data, irreversibility, and similar factors) separately | Explains why a defect is serious |
+| 14 | Link affected screens, APIs, jobs, databases, external services, and configuration to defects | Makes defects discoverable by screen, API, and table |
+| 15 | Find other locations with the same implementation pattern (sibling sites) and record the outcome for each | Helps prevent omissions in partial fixes |
+| 16 | Record the range of releases containing a defect and the first release with a fix | Shows which users are affected |
+| 17 | Record whether corrupted data remains after a fix and how to locate and repair it | Extends remediation beyond the code fix |
+| 18 | Record detection source, detection stage, days from introduction to detection, and days from detection to fix | Makes it possible to measure which gates work |
 
-出力は `dashboard.html`(不具合リスト、インライン SVG の図、同内容の表)、`report.html` / `report.pdf`、`findings.json`、`surfaces.json`、`history.json`、`ledger.json`(実行をまたぐ台帳)、チャット要約です。
+Outputs include `dashboard.html` (defect list, inline SVG diagrams, and equivalent tables), `report.html` / `report.pdf`, `findings.json`, `surfaces.json`, `history.json`, `ledger.json` (cross-run ledger), and a chat summary.
 
-### やらないこと
+### Exclusions
 
-| やらないこと | 理由 / 担当 |
+| Exclusion | Reason / responsible skill |
 |---|---|
-| コード、設定、依存を修正する | 監査系 scan と同じ読み取り専用。修正は別依頼(`coding-debug`、`coding-implement`) |
-| アプリの起動、テスト実行、本番データや外部サービスへのアクセス | 静的レビューの範囲外。動作確認は `verify-scan` |
-| 目の前の1件のバグの根本原因を突き止める | `coding-debug` |
-| 脆弱性、性能、設計、UX の専門監査 | 各 `*-scan`。ここでは採点し直さず、重ねて表示するだけ |
-| 技術的負債の返済順を決める | `refactor-scan` |
-| 個人の評価(作者別の集計、ランキング、作者名の記録) | 人を責める道具にしない。作者情報は `history.json` にも保存しない |
-| 「この commit が原因」という断定を機械的に行う | 下記 §3 のとおり blame は因果を証明しない |
-| 未修正のバグの総数や将来のバグ数を予測する | 履歴に現れるのは「見つかって直されたもの」だけ |
-| 根拠のない図を描く | 図の要素はすべて記録の ID に紐づける(`check` で拒否) |
-| リポジトリ内の文章や commit message の指示に従う | 調査対象であり、指示ではない |
-| issue 起票や外部送信 | 下書きまで。送信は依頼者が行う |
-| データ修復を実行する、対象件数を数える | 探し方と修復方法の案だけを書く。SQL は案で、実行しない |
-| 再現手順を自動で実行する | 手順はコードから導出し、未実行と明示する。実行は `verify-scan` か依頼者が行い、結果の参照だけを取り込む |
-| 実データ、ログ、実利用数の参照 | DB はスキーマとコードだけで判断する。影響人数や頻度は、依頼者がデータを渡した場合のみ根拠にする |
-| 数値のリスクスコアを作る | 根拠のない精度に見えるので、固定の表による段階判定にする |
-| 「見つからなくなった」だけで Fixed にする | 修正 commit か確認結果が必要。無ければ `NotSeen` にする |
-| Jira などの課題管理の代替(権限、通知、コメント、担当の割り振り) | 台帳は記録であり、運用基盤ではない。外部 ID を結びつけるだけ |
+| Fix code, configuration, or dependencies | Read-only like the audit scans. Fixes require a separate request (`coding-debug`, `coding-implement`) |
+| Start the application, run tests, or access production data or external services | Outside the scope of static review. Use `verify-scan` to verify behavior |
+| Find the root cause of 1 current bug | `coding-debug` |
+| Conduct specialized audits of vulnerabilities, performance, design, or UX | Use the corresponding `*-scan` skill. bug-scan overlays their results without rescoring them |
+| Prioritize technical debt repayment | `refactor-scan` |
+| Evaluate individuals (counts by author, rankings, recording author names) | Avoid assigning personal blame. `history.json` also omits author information |
+| Automatically assert that a particular commit caused a defect | As described in §3, blame cannot establish causation |
+| Predict the total number of unfixed or future bugs | History shows only defects that someone found and fixed |
+| Draw diagrams without evidence | Every diagram element must link to a record ID. `check` rejects unresolved IDs |
+| Follow instructions in repository text or commit messages | Treat them as audit inputs |
+| File issues or send anything externally | Prepare drafts only. The requester sends them |
+| Perform data remediation or count affected records | Propose ways to locate and repair the data. Any SQL is a proposal and remains unexecuted |
+| Run reproduction steps automatically | Derive steps from code and mark them as unexecuted. `verify-scan` or the requester runs them, and bug-scan imports only references to the results |
+| Consult real data, logs, or actual usage counts | Assess databases from schema and code only. Use affected-user counts or frequency as evidence only when the requester provides the data |
+| Produce numerical risk scores | Use levels from a fixed table to avoid false precision |
+| Set a defect to Fixed solely because it no longer appears | Require a fix commit or verification result. Use `NotSeen` when neither is available |
+| Replace issue trackers such as Jira (permissions, notifications, comments, assignments) | The ledger records defects and only links external IDs |
 
-## 2. 既存スキルとの関係(調査結果)
+## 2. Relationship to existing skills (survey results)
 
-対象は `~/repos/github.com/*-scan` の 11 リポジトリです。読み方には差があります。`SKILL.md` の全文を読んだのは architecture と prune、冒頭だけは security と performance です。残りは description、ファイル構成、`examples/` のサンプル、キーワード検索で確認しました。各 scan の詳細な手順までは確認していません。
+The survey covered 11 repositories under `~/repos/github.com/*-scan`. The depth varied. For architecture and prune, the survey covered all of `SKILL.md`. For security and performance, it covered only the opening sections. For the rest, it used the description, file layout, samples in `examples/`, and keyword searches. The survey did not verify each scan's detailed procedures.
 
-| 観点 | 事実 | 設計への影響 |
+| Aspect | Finding | Design implication |
 |---|---|---|
-| 問い | 監査系 scan は「今のコードの問題」を領域別に見つける。`verify-scan` は変更の検証、`brand-feature-scan` は機能提案が主題。混入元の追跡を示す語(`introduced by`、`混入` など)は `SKILL.md` と `reference/` の検索で 0 件 | 新規スキルの居場所がある |
-| 履歴 | 変更履歴を分析の軸にしているのは `architecture-scan` のみで、用途は変更コストの裏付け(`reference/recon.md:153`)。`security-scan` は履歴内の秘密情報の検索に使う(`reference/perspectives.md:250`)。`review-md` は revert と fix hotspot から規則を作る(`reference/recon.md:45-54`)が、図の生成は description に含まれない | `history.py` を新規に作る |
-| 図 | `architecture-scan` は自前の SVG と Mermaid(`scripts/render.py:427`, `:1246`)。`verify-scan` は画面遷移図(`scripts/flow.py`)。`scan-report-kit` に作図機能は無い | 作図は自前の `diagrams.py` に置き、スタイルだけキットを使う(`architecture-scan/.../render.py:31` と同じ形) |
-| 経路の型 | `infra-scan` の attack path は「入口 → 辺 → 重要資産」で、各辺を `allowed` / `blocked` / `UNKNOWN` と判定して引用する(`reference/attack-paths.md`) | 現存の入口の図(D5)にこの型を流用する |
-| パターン語彙 | `verify-scan/reference/regression-surface.md` に回帰パターンの整理がある | §5 のパターン分類の土台にする |
-| schema | findings 型の 9 scan で共通なのは `id, title, severity, confidence, location, impact, validation` の 7 つ | 取り込みはこの 7 つだけを読む |
-| ID 衝突 | `P-001` は performance と prune で、`F-001` は infra、prompt、security で重複する | 取り込みキーは `<scan>:<id>` にする |
-| `location` | 文字列とリストが混在する | 取り込み時に正規化する |
+| Question | Audit scans find problems in current code by domain. `verify-scan` focuses on verifying changes, and `brand-feature-scan` focuses on feature proposals. Searches of `SKILL.md` and `reference/` found 0 matches for terms indicating origin tracing, such as `introduced by` and `混入` | There is room for a new skill |
+| History | Only `architecture-scan` uses change history as a basis for analysis, to substantiate the cost of change (`reference/recon.md:153`). `security-scan` uses history to search for secrets (`reference/perspectives.md:250`). `review-md` derives rules from reverts and fix hotspots (`reference/recon.md:45-54`), and its description omits diagram generation | Create `history.py` |
+| Diagrams | `architecture-scan` uses custom SVG and Mermaid (`scripts/render.py:427`, `:1246`). `verify-scan` uses screen transition diagrams (`scripts/flow.py`). `scan-report-kit` has no diagram generation | Generate diagrams in a custom `diagrams.py` and use the kit only for styling (as in `architecture-scan/.../render.py:31`) |
+| Path model | The `infra-scan` attack path model is entry point → edge → critical asset. It classifies each edge as `allowed` / `blocked` / `UNKNOWN` and cites evidence (`reference/attack-paths.md`) | Reuse the model for the current entry points diagram (D5) |
+| Pattern vocabulary | `verify-scan/reference/regression-surface.md` catalogs regression patterns | Use it as the basis for the pattern taxonomy in §5 |
+| Schema | The 9 findings-based scans share 7 fields: `id, title, severity, confidence, location, impact, validation` | Read only these 7 fields during import |
+| ID collisions | `P-001` occurs in both performance and prune, and `F-001` occurs in infra, prompt, and security | Use `<scan>:<id>` as the import key |
+| `location` | Values can be strings or lists | Normalize during import |
 
-取り込み対象外: `verify-scan`(findings 型ではなく検証記録)と `brand-feature-scan`(提案型)。
+Excluded from import: `verify-scan` (verification records) and `brand-feature-scan` (proposals).
 
-## 3. 成立性の検証(実測)
+## 3. Feasibility validation (measurements)
 
-前提は、修正 commit から混入元へ遡れることです。簡易 SZZ(修正で変更された行を親 commit で blame する手法)を実行しました。
+The design assumes that fixes can be traced back to their introducing commits. The validation ran a simplified SZZ procedure that uses blame on the fix's parent commit for lines changed by the fix.
 
-| リポジトリ | commit 数 | fix commit(prefix 判定) | 抽出数 | 遡れた / ソース変更あり | テスト変更を伴う | 修正までの時間の中央値 |
+| Repository | Commits | Fix commits (by prefix) | Sampled | Traced back / with source changes | With test changes | Median time to fix |
 |---|---|---|---|---|---|---|
-| architecture-scan | 100 | 68 | 60 | 59 / 60 | 59 / 60 | 9.5 時間 |
-| ux-scan | 151 | 125 | 60 | 57 / 59 | 58 / 60 | 111 時間 |
-| verify-scan | 199 | 20 | 20 | 20 / 20 | 20 / 20 | 1.6 時間 |
-| security-scan | 161 | 82 | 60 | 55 / 58 | 56 / 60 | 8.5 時間 |
+| architecture-scan | 100 | 68 | 60 | 59 / 60 | 59 / 60 | 9.5 hours |
+| ux-scan | 151 | 125 | 60 | 57 / 59 | 58 / 60 | 111 hours |
+| verify-scan | 199 | 20 | 20 | 20 / 20 | 20 / 20 | 1.6 hours |
+| security-scan | 161 | 82 | 60 | 55 / 58 | 56 / 60 | 8.5 hours |
 
-merge commit を除き、最新から抽出しました(`executed`)。
+The sample started with the latest commits and excluded merge commits (`executed`).
 
-ただし、遡れても原因とは限りません。無作為の 12 組(3 リポジトリ各 4 組)の差分を読むと、次のように分かれました(`inspected`、Claude が 1 回読んだだけの判定で、独立した評価者はいません)。
+Tracing a fix back identifies only a candidate cause. Diff inspection of 12 randomly selected pairs (4 each from 3 repositories) yielded the following results (`inspected`, based on 1 pass by Claude with no independent reviewers).
 
-| 分類 | 組数 | 内容 |
+| Classification | Pairs | Details |
 |---|---|---|
-| 誤りを書いた commit を妥当に指す | 約 5 | 正規表現の誤り、前回修正の不足など |
-| 欠落(最初から処理が無い) | 約 7 | 混入点を定義しにくい。追加のみの修正では、blame が近くの無関係な行を指す場合もある |
+| Plausibly identifies the commit that introduced the error | About 5 | Incorrect regular expressions, incomplete previous fixes, and similar cases |
+| Omission (the logic was absent from the start) | About 7 | The point of introduction is hard to define. For addition-only fixes, blame may point to unrelated nearby lines |
 
-ここから設計を次の4点に変えました。
+These results prompted 4 design changes.
 
-1. 混入種別を分ける: `commission`(誤って書いた)、`omission`(欠落)、`requirement`(後からの要件)、`not-defect`
-2. 根拠の強さを3段階に分け、線種で描き分ける:
-   - `Traced`(実線): 修正と混入元の両方の差分を読み、因果を説明できた
-   - `Blamed`(破線): blame の結果だけで、未確認
-   - `Unattributable`(混入元なし): 欠落、または履歴が無い
-3. `Traced` だけを主要な数値に使う: 他と混ぜない
-4. 「fix の連鎖」は基準率と並べて示す: 混入元候補の 7〜8 割が fix commit でしたが、fix の割合が高いリポジトリ(ux-scan は 83%)では単に最後に触った commit が fix だっただけの可能性があります
+1. Distinguish introduction types: `commission` (incorrect implementation), `omission` (missing implementation), `requirement` (a later requirement), and `not-defect`
+2. Use 3 levels of evidence strength and distinguish them by line style:
+   - `Traced` (solid line): A review of both the fix and origin diffs supports a causal explanation
+   - `Blamed` (dashed line): Blame result only, unverified
+   - `Unattributable` (no origin): Omission or missing history
+3. Count only `Traced` in the primary metrics
+4. Show fix chains alongside the base rate. Fix commits accounted for 7–8 tenths of candidate origins. In repositories with a high share of fixes (83% in ux-scan), the last commit to touch the line may simply have been a fix
 
-この検証の対象はすべて同じ所有者のスキル群で、fix prefix が広く使われています。一般的なアプリのリポジトリでは未検証です(§9)。
+The validation covered only skills with the same owner and widespread use of the fix prefix. General application repositories remain untested (§9).
 
-## 4. 図のカタログ
+## 4. Diagram catalog
 
-各図には答える問いが1つあり、同内容の表を添えます。図は証拠ではなく記録の表現です(`verify-scan/.../flow.py` と同じ方針)。架空データでの見本は [bug-scan-samples.html](bug-scan-samples.html) にあります。
+Each diagram answers 1 question and includes a table with equivalent content. The records supply the evidence, and the diagrams visualize those records, following the approach in `verify-scan/.../flow.py`. See [bug-scan-samples.html](bug-scan-samples.html) for examples with synthetic data.
 
-| 図 | 答える問い | 形式 | 主な入力 | 段階 |
+| Diagram | Question | Format | Main input | Phase |
 |---|---|---|---|---|
-| D1 混入経路マップ | どの変更経路から入り、どのゲートを通って、どこで見つかったか | 左から右へのフロー、太さは件数 | 分類済み修正 + ゲート台帳 | 3 |
-| D2 パターン × モジュール | どこで何が繰り返すか | ヒートマップ | 分類済み修正 | 2 |
-| D3 fix 連鎖 | 修正が次の修正を生んでいないか | commit の DAG(時系列) | `history.json` | 1 |
-| D4 ホットスポット象限 | 危険な場所はどこか | 散布図(変更頻度 × 欠陥修正密度、テスト有無で印を分ける) | `history.json` | 1 |
-| D5 現存の入口 | 同じバグが今どの経路で起きうるか | finding ごとの因果チェーン | finding の `path` | 2 |
-| D6 課題 → パターン | どのコード課題がどのパターンを生んでいるか | 2部グラフ(課題 → パターン → 修正) | finding + 分類済み修正 | 3 |
-| D7 不具合の関連 | どれがどれにつながり、どれを先に直すべきか | 関連グラフ(根拠つきの矢印 + 自動算出の細線) | `relations` | 2 |
-| D8 対象マップ | この不具合はどの画面、API、テーブルに及ぶか | 画面 → API・ジョブ → DB・外部の3列図(選択で強調) | `surfaces.json` | 2 |
-| D9 リスク × 危険性 | どれが危なく、どれを先に見るべきか | 3×3 マトリクス(不可逆、無音を併記) | `risk` + `hazard` | 2 |
+| D1 混入経路マップ (Introduction path map) | Which change channel introduced the defect, which gates did it pass, and where was it detected? | Left-to-right flow, with width proportional to count | Classified fixes + gate inventory | 3 |
+| D2 パターン × モジュール (Pattern × module) | What recurs and where? | Heatmap | Classified fixes | 2 |
+| D3 fix 連鎖 (Fix chains) | Do fixes lead to further fixes? | Commit DAG (chronological) | `history.json` | 1 |
+| D4 ホットスポット象限 (Hotspot quadrants) | Which locations are risky? | Scatter plot (change frequency × defect fix density, with distinct markers for test presence) | `history.json` | 1 |
+| D5 現存の入口 (Current entry points) | Which paths could still trigger the same bug? | Causal chain per finding | Finding `path` | 2 |
+| D6 課題 → パターン (Issues → patterns) | Which code issues lead to which patterns? | 2-part graph (issue → pattern → fix) | Findings + classified fixes | 3 |
+| D7 不具合の関連 (Defect relationships) | How are defects related, and which should be fixed first? | Relationship graph (evidence-backed arrows + automatically derived thin lines) | `relations` | 2 |
+| D8 対象マップ (Surface map) | Which screens, APIs, and tables does this defect affect? | 3-column diagram (screen → API or job → DB or external service), with selection highlighting | `surfaces.json` | 2 |
+| D9 リスク × 危険性 (Risk × hazard) | Which defects are hazardous, and which should be reviewed first? | 3×3 matrix (also marks irreversible and silent defects) | `risk` + `hazard` | 2 |
 
-図とは別に、絞り込みと詳細表示ができる不具合リストをダッシュボードの先頭に置きます。
+The dashboard starts with a defect list that supports filtering and detailed views, separate from the diagrams.
 
-### D1 の見本(架空データ)
+### D1 example (synthetic data)
 
 ```mermaid
 flowchart LR
@@ -143,9 +143,9 @@ flowchart LR
   R --> F["D5 現存の入口 BG-001"]
 ```
 
-実線は `Traced`、破線は `Blamed` または `UNKNOWN` です。git だけでは「どのゲートを通過したか」を確定できないので、タグや PR の情報が無い辺は `UNKNOWN` のまま描きます。
+Solid lines indicate `Traced`. Dashed lines indicate `Blamed` or `UNKNOWN`. Git alone cannot establish which gates a change passed, so edges without tag or PR information remain `UNKNOWN`.
 
-### D3 の見本(架空データ)
+### D3 example (synthetic data)
 
 ```mermaid
 flowchart LR
@@ -154,77 +154,77 @@ flowchart LR
   c2 -.->|Blamed| c4["fix 0a9b<br/>全角空白を拒否"]
 ```
 
-## 5. 分類の語彙
+## 5. Classification vocabulary
 
-### 変更経路(channel)
+### Change channel (channel)
 
 `feature` / `fix` / `refactor` / `dependency` / `config` / `migration` / `generated` / `merge` / `unknown`
 
-### バグパターン(12 + 未分類)
+### Bug patterns (12 + unclassified)
 
-| ID | パターン | 出どころ |
+| ID | Pattern | Source |
 |---|---|---|
-| BP01 | 入力の形、境界値の見落とし | 今回の抽出 |
-| BP02 | 値に見える失敗(握りつぶし、既定値への置換) | regression-surface |
-| BP03 | 境界をまたぐ名前や契約のずれ | regression-surface |
-| BP04 | 重複したルールの乖離 | architecture-scan |
-| BP05 | 状態、並行、順序、部分書き込み | 今回の抽出、architecture-scan |
-| BP06 | 移行や依存更新による暗黙の変化 | regression-surface |
-| BP07 | 配線切れ(リスナー、ルート、ミドルウェア) | regression-surface |
-| BP08 | 一部のデータでしか再現しない | regression-surface |
-| BP09 | タイミング依存 | regression-surface |
-| BP10 | 環境、設定の差 | regression-surface |
-| BP11 | 部分修正(同種の別ケースが残る) | 今回の抽出 |
-| BP12 | 文書と実装のずれ | 今回の抽出 |
-| — | `Unclassified` | 無理に分類しない。件数を表示する |
+| BP01 | Overlooked input shapes or boundary values | This sample |
+| BP02 | Failures that look like valid values (swallowed errors, fallback to defaults) | regression-surface |
+| BP03 | Name or contract mismatches across boundaries | regression-surface |
+| BP04 | Divergence between duplicated rules | architecture-scan |
+| BP05 | State, concurrency, ordering, and partial writes | This sample, architecture-scan |
+| BP06 | Implicit changes from migrations or dependency updates | regression-surface |
+| BP07 | Broken wiring (listeners, routes, middleware) | regression-surface |
+| BP08 | Reproduces only with some data | regression-surface |
+| BP09 | Timing dependence | regression-surface |
+| BP10 | Environment or configuration differences | regression-surface |
+| BP11 | Partial fixes (other cases of the same kind remain) | This sample |
+| BP12 | Documentation and implementation drift | This sample |
+| — | `Unclassified` | Do not force a classification. Show the count |
 
-### コード課題
+### Code issues
 
-テスト不在 / ルール重複 / 例外の握りつぶし / 高 churn かつ高複雑度 / ゲート不在 / 暗黙の契約
+Missing tests / duplicated rules / swallowed exceptions / high churn and high complexity / missing gates / implicit contracts
 
-## 6. 実行の流れ
+## 6. Workflow
 
 `RECON → CATALOG → HISTORY → TRIAGE → REVIEW → VERIFY → RECONCILE → REPORT`
 
-| 段階 | すること | 出力 |
+| Stage | Work | Output |
 |---|---|---|
-| RECON | 構成、モジュール、コアフロー、ゲート台帳(テスト、lint、型、CI、CODEOWNERS を `path:line` で)、履歴の質(shallow か、squash か、prefix の有無) | scratch |
-| CATALOG | 画面、API、ジョブ、DB、外部サービス、設定を列挙し、呼び出しの対応を読み取る。読めない対応は `UNKNOWN` | `surfaces.json` |
-| HISTORY | `scripts/history.py` が修正候補、blame の辺、churn を機械的に抽出 | `history.json`(候補であり finding ではない) |
-| TRIAGE | 修正候補の差分を読み、種別、経路、パターン、根拠の強さを付ける。100 件を超えたらモジュールで層化抽出し、`n/N` を表示する | fix event(断片) |
-| REVIEW | 繰り返すパターンごとに、同種の入口を現在のコードから探す。finding ごとに横展開先を調べ、影響リリース、データ修復、検知の経緯を記録する | finding(断片) |
-| VERIFY | ガード、テスト、呼び出し元を調べて finding の反証を試みる。`Traced` の因果も読み直す | verdict |
-| RECONCILE | 今回の結果を独立に確定した後で前回の台帳と照合し、同じ不具合を結びつける。状態の変化と再発を記録する | `ledger.json` |
-| REPORT | merge → renumber → render → `check`。その後チャット要約 | 成果物一式 |
+| RECON | Inspect structure, modules, core flows, the gate inventory (tests, lint, types, CI, CODEOWNERS with `path:line`), and history quality (shallow history, squashing, and the presence of prefixes) | Scratch notes |
+| CATALOG | List screens, APIs, jobs, databases, external services, and configuration, and trace how they call each other. Mark relationships that cannot be determined as `UNKNOWN` | `surfaces.json` |
+| HISTORY | `scripts/history.py` automatically extracts candidate fixes, blame edges, and churn | `history.json` (candidates only) |
+| TRIAGE | Read the candidate diffs and assign type, channel, pattern, and evidence strength. Above 100 candidates, use stratified sampling by module and show `n/N` | Fix event (fragment) |
+| REVIEW | For each recurring pattern, look for equivalent entry points in current code. For each finding, inspect sibling sites and record affected releases, data remediation, and detection history | Finding (fragment) |
+| VERIFY | Inspect guards, tests, and callers to try to disprove findings. Reassess causal claims marked `Traced` | Verdict |
+| RECONCILE | Finalize the current results independently, then match the same defects against the previous ledger. Record status changes and recurrences | `ledger.json` |
+| REPORT | merge → renumber → render → `check`. Follow with a chat summary | Complete set of outputs |
 
-### 判断の分岐
+### Decision rules
 
-| 状況 | 動き |
+| Situation | Action |
 |---|---|
-| 「何を見ればいい?」と聞かれた | RECON までで checklist を返す。ファイルは作らない |
-| 特定モジュールだけ | そのモジュールと横断部分に限定し、残りは `limitations` に書く |
-| 履歴が薄い(shallow、または欠陥修正が 20 件未満) | 履歴の図(D1、D3)を省略し、理由を明記する。D5、D6 は現在のコードで作る |
-| fix prefix が無いリポジトリ | 緩い語句判定 + 読んでの分類に切り替え、適合度が低い可能性を `limitations` に書く |
-| 他 scan の結果を渡された | 明示された場合だけ取り込む。依頼がなければ読まない(既存の Independence 規約と同じ) |
-| 前回と比較 | 新規に独立して走らせてから `compare.py` |
-| 修正を頼まれた | 範囲外。finding を報告して別依頼にする |
+| The requester asks what to look at | Stop at RECON and return a checklist without creating files |
+| Only a specific module is in scope | Limit the review to that module and cross-cutting areas, and record the rest in `limitations` |
+| History is thin (shallow or fewer than 20 defect fixes) | Omit historical diagrams (D1, D3) and state why. Use the current code for D5 and D6 |
+| The repository has no fix prefix | Use a looser keyword heuristic and manual classification. Note potentially poor matches in `limitations` |
+| The requester provides results from another scan | Import them only when explicitly requested. Otherwise, leave them unread under the existing Independence rule |
+| Compare with a previous run | Run a new independent scan, then use `compare.py` |
+| The requester asks for a fix | Report the finding and handle the fix in a separate request |
 
-### 重大度
+### Severity
 
-重大度は confidence とは独立で、基準は既存 scan と同じです。
+Severity is independent of confidence and uses the same criteria as existing scans.
 
-| 重大度 | 条件 |
+| Severity | Criteria |
 |---|---|
-| High | 欠陥の繰り返し(`Traced` 3 件以上)があり、かつ同種の入口がコアフローに残り、ゲートも無い |
-| Medium | 同種の入口はあるが、コード外の条件が1つ必要。またはコアフロー以外で繰り返している |
-| Low | 周辺コードでの繰り返し、または単発 |
-| Info | 傾向の記録のみで、現在の入口は未確認 |
+| High | A recurring defect (at least 3 `Traced` cases), an equivalent entry point still present in a core flow, and no gate |
+| Medium | An equivalent entry point exists but requires 1 condition outside the code, or the defect recurs outside a core flow |
+| Low | Recurs in peripheral code or occurred once |
+| Info | Trend only, with no confirmed entry point in current code |
 
-履歴上の統計だけでは Info を超えません。Medium 以上には現在のコードの `path:line` が必要です。
+Historical statistics alone cannot exceed Info. Medium and above require a `path:line` in current code.
 
-## 7. データ設計
+## 7. Data design
 
-既存 scan と同様に、JSON 断片を `merge` で合成し、図はすべて記録から生成します。
+As in existing scans, use `merge` to combine JSON fragments and generate every diagram from the records.
 
 ```jsonc
 {
@@ -252,24 +252,24 @@ flowchart LR
 }
 ```
 
-### `check` が拒否するもの
+### What `check` rejects
 
-- `Traced` なのに `reason` か混入元の commit が無い
-- 図の要素が記録の ID に解決できない
-- 抽出したのに `sample` が無い(全数のように見せない)
-- 記録に作者名やメールアドレスがある
-- Medium 以上で、現在のコードの `path:line` が無い
-- `dashboard.html` や `report.html` が記録からの再生成と一致しない(既存と同じ)
-- 再現状態が `verified` なのに実行結果の参照が無い
-- 関連(`relations`)に根拠が無い、または存在しない ID を指している
-- `surfaces` が `surfaces.json` に解決できない
-- 再現手順の入力に秘密情報や実在の個人情報らしき値がある
-- 未解決なのにリスク判定が無い
-- 必須範囲(§7.1)の項目が欠けている。分からない場合は空欄にせず、`UNKNOWN` と理由を書く
+- A `Traced` origin without a `reason` or introducing commit
+- A diagram element that does not resolve to a record ID
+- Sampled results without `sample`, which could make the sample look like the full population
+- Author names or email addresses in records
+- Medium or higher severity without a `path:line` in current code
+- A `dashboard.html` or `report.html` that differs from a fresh render of the records, as in existing scans
+- A `verified` reproduction state without a reference to the result
+- A relationship (`relations`) without evidence or pointing to a nonexistent ID
+- A `surfaces` entry that does not resolve in `surfaces.json`
+- Reproduction inputs that appear to contain secrets or real personal information
+- An unresolved defect without a risk assessment
+- Missing fields required by §7.1. When a value cannot be determined, record `UNKNOWN` and the reason
 
-### 配置
+### Layout
 
-既存 scan と同じ構成で、標準ライブラリだけを使います。
+The layout matches existing scans and uses only the standard library.
 
 ```
 skills/bug-scan/
@@ -282,154 +282,154 @@ skills/bug-scan/
 examples/  tests/  Makefile  README.md
 ```
 
-### 7.1 トラッキング要素
+### 7.1 Tracking fields
 
-1 件の不具合(`BG-*`、根本原因ごとに 1 件)が持つ項目です。修正済みの過去の不具合も、同じ形で記録します(複数の修正は `events` にまとめます)。
+A `BG-*` record describes 1 defect, with 1 record per root cause. Record past fixed defects in the same format and group multiple fixes under `events`.
 
-| 区分 | 項目 | 内容 | 由来 |
+| Category | Field | Contents | Source |
 |---|---|---|---|
-| 識別 | `id` | 実行ごとの番号(`BG-001`) | 既存 scan |
-| | `key` | 実行をまたいで同じと判定するキー(パターン + 正規化した場所 + 対象)。行番号は含めない | `security-scan` の `finding_keys.py` を参考 |
-| | `title`, `pattern`, `module` | 名前、バグパターン、モジュール | §5 |
-| 状態 | `status` | `Open` / `Triaged` / `Fixed` / `Verified` / `Accepted` / `Reopened` / `NotSeen` / `Unverified` | 既存の `status` を拡張 |
-| | `first_seen`, `last_seen`, `status_log[]` | 初回検出、最終確認、変更履歴(日時、値、根拠) | 新規 |
-| | `introduced_in`, `fixed_in` | 混入 commit(根拠の強さつき)、修正 commit | §3 |
-| 評価 | `severity`, `confidence`, `validation` | 既存 scan と同じ | 共通 7 項目 |
-| | `risk` | `likelihood`、`impact`、`detectability`、`level`、`basis`。`level` は固定の表から決まる | 新規 |
-| | `hazard` | `classes[]`(金銭、データ消失、データ不整合、セキュリティ、個人情報、可用性、法令、表示誤りなど)、`irreversible`、`silent`、`reach`、`recovery` | `blast_radius`、`subjects` を分解 |
-| 関連 | `relations[]` | `type`、`to`、`strength`、`evidence` | 新規 |
-| 再現 | `repro` | `state`、`preconditions[]`、`fixture`、`environment`、`steps[]`、`expected`、`actual`、`last_run` | `security-scan` の `reproduction` を参考 |
-| 対象 | `surfaces[]` | `surfaces.json` の ID + 操作内容(例: `DB-01` の `W: discount_total`) | `screen`、`request`、`data`、`resources` を統合 |
-| | `actors[]`, `conditions[]` | 操作する人や役割、発生条件(権限、環境、feature flag、言語、端末) | `actor` |
-| 根拠 | `location[]`, `events[]`, `tests[]`, `tests_missing` | コードの場所、修正履歴、既存のテスト、足りないテスト | 既存 + 新規 |
-| | `external_refs[]` | issue や PR、インシデントの URL。依頼者が渡したものだけ | `references` |
-| 対応 | `fix`, `guard`, `regression_test`, `fix_order` | 修正方針、再発防止、回帰テスト、修正の順序 | 既存 |
-| | `owner` | チームや役割だけ。人が入力する。commit の作者からは埋めない | 新規 |
-| 横展開 | `sibling_sites[]` | `location`、`state`(`affected` / `safe` / `unknown`)、`evidence` | 新規 |
-| 影響リリース | `affected_releases` | `first`、`last`、`fixed_first`、`basis` | 新規 |
-| データ修復 | `data_remediation` | `needed`(`yes` / `no` / `unknown`)、`locate`、`method`、`count` | `recovery` を詳しくしたもの |
-| 検知の経緯 | `detection` | `source`、`stage`、`detected_at`、`days_to_detect`、`days_to_fix`、`basis` | 新規 |
+| Identification | `id` | Per-run number (`BG-001`) | Existing scans |
+| | `key` | Key for matching the same defect across runs (pattern + normalized location + surface). Excludes line numbers | Based on `finding_keys.py` from `security-scan` |
+| | `title`, `pattern`, `module` | Name, bug pattern, and module | §5 |
+| Status | `status` | `Open` / `Triaged` / `Fixed` / `Verified` / `Accepted` / `Reopened` / `NotSeen` / `Unverified` | Extends existing `status` |
+| | `first_seen`, `last_seen`, `status_log[]` | First detection, last confirmation, and change history (timestamp, value, evidence) | New |
+| | `introduced_in`, `fixed_in` | Introducing commit (with evidence strength) and fix commit | §3 |
+| Assessment | `severity`, `confidence`, `validation` | Same as existing scans | 7 common fields |
+| | `risk` | `likelihood`, `impact`, `detectability`, `level`, and `basis`. The fixed table determines `level` | New |
+| | `hazard` | `classes[]` (financial, data loss, data inconsistency, security, personal information, availability, legal and regulatory, display errors, and others), `irreversible`, `silent`, `reach`, and `recovery` | Breaks down `blast_radius` and `subjects` |
+| Relationships | `relations[]` | `type`, `to`, `strength`, and `evidence` | New |
+| Reproduction | `repro` | `state`, `preconditions[]`, `fixture`, `environment`, `steps[]`, `expected`, `actual`, and `last_run` | Based on `reproduction` from `security-scan` |
+| Surfaces | `surfaces[]` | ID from `surfaces.json` + operation (e.g., `W: discount_total` on `DB-01`) | Combines `screen`, `request`, `data`, and `resources` |
+| | `actors[]`, `conditions[]` | People or roles performing the action and conditions that trigger it (permissions, environment, feature flag, language, device) | `actor` |
+| Evidence | `location[]`, `events[]`, `tests[]`, `tests_missing` | Code locations, fix history, existing tests, and missing tests | Existing + new |
+| | `external_refs[]` | URLs for issues, PRs, and incidents, limited to those supplied by the requester | `references` |
+| Remediation | `fix`, `guard`, `regression_test`, `fix_order` | Fix approach, recurrence prevention, regression tests, and fix order | Existing |
+| | `owner` | A person enters a team or role only. Do not populate it from commit authors | New |
+| Sibling sites | `sibling_sites[]` | `location`, `state` (`affected` / `safe` / `unknown`), and `evidence` | New |
+| Affected releases | `affected_releases` | `first`, `last`, `fixed_first`, and `basis` | New |
+| Data remediation | `data_remediation` | `needed` (`yes` / `no` / `unknown`), `locate`, `method`, and `count` | Expands `recovery` |
+| Detection history | `detection` | `source`, `stage`, `detected_at`, `days_to_detect`, `days_to_fix`, and `basis` | New |
 
-#### 必須範囲
+#### Required fields
 
-| 対象 | 必須にする項目 |
+| Scope | Required fields |
 |---|---|
-| 未解決の High / Medium | 全項目 |
-| 未解決の Low / Info | 識別、状態、評価、対象、根拠 |
-| 修正済みの過去の不具合 | 識別、状態、パターン、混入と修正の commit、検知の経緯 |
+| Unresolved High / Medium | All fields |
+| Unresolved Low / Info | Identification, status, assessment, surfaces, and evidence |
+| Past fixed defects | Identification, status, pattern, introducing and fix commits, and detection history |
 
-範囲外の項目は分かれば記録してかまいません。必須の項目が分からない場合は、空欄にせず `UNKNOWN` と理由を書きます。`owner` は人が入力する項目なので、どの範囲でも `check` の対象にしません。
+Record optional fields when known. For an unknown required field, record `UNKNOWN` and the reason. Because a person enters `owner`, `check` excludes it in all cases.
 
-#### 追加した4項目の決まり
+#### Rules for the 4 added fields
 
-| 項目 | 取得元 | 決まり |
+| Field | Source | Rule |
 |---|---|---|
-| 横展開先 | コード検索と読解 | 同じ修正で直る箇所はここに列挙し、別の修正が必要な箇所は別の不具合にする |
-| 影響リリース | `git tag --contains` | タグが無い、または混入元が無い場合は `UNKNOWN`。混入元が `Blamed` なら暫定と書く |
-| データ修復 | スキーマとコードからの導出 | `count` は依頼者がデータを渡さない限り `UNKNOWN`。SQL は案で、実行しない |
-| 検知の経緯 | git 履歴、PR、依頼者が渡す issue | 検知元が読み取れなければ `UNKNOWN`。日数は日付から機械的に計算する |
+| Sibling sites | Code search and inspection | List sites that the same fix would address. Record sites that require a different fix as separate defects |
+| Affected releases | `git tag --contains` | Use `UNKNOWN` when tags or an origin are unavailable. Mark the result provisional if the origin is `Blamed` |
+| Data remediation | Derived from schema and code | Use `UNKNOWN` for `count` unless the requester provides data. Any SQL is a proposal and remains unexecuted |
+| Detection history | git history, PRs, and issues supplied by the requester | Use `UNKNOWN` when the detection source cannot be determined. Calculate elapsed days from the dates |
 
-#### 関連の種類(`relations.type`)
+#### Relationship types (`relations.type`)
 
-| 種類 | 意味 | 作り方 |
+| Type | Meaning | How to derive it |
 |---|---|---|
-| `regression_of` | 過去の不具合の再発 | 根拠必須 |
-| `caused_by` | 別の不具合やその修正が原因 | 根拠必須。`Traced` か `Blamed` を明示 |
-| `same_root_cause` | 根本原因が同じ | 根拠必須 |
-| `blocks` | これを先に直す必要がある | 根拠必須 |
-| `duplicate_of` | 重複 | 根拠必須 |
-| `shares_surface` | 同じ DB やジョブを使用 | `surfaces` から自動算出。因果を意味しない |
+| `regression_of` | Recurrence of a past defect | Requires evidence |
+| `caused_by` | Caused by another defect or its fix | Requires evidence. Specify `Traced` or `Blamed` |
+| `same_root_cause` | Same root cause | Requires evidence |
+| `blocks` | This defect must be fixed first | Requires evidence |
+| `duplicate_of` | Duplicate | Requires evidence |
+| `shares_surface` | Uses the same database or job | Derive automatically from `surfaces`. Implies no causal relationship |
 
-#### 再現の状態(`repro.state`)
+#### Reproduction states (`repro.state`)
 
-| 状態 | 意味 |
+| State | Meaning |
 |---|---|
-| `static` | コードから導出した手順で、未実行 |
-| `test` | 修正時のテストや既存テストで確認済み(参照つき) |
-| `verified` | 実行して確認済み(`verify-scan` や依頼者の結果を参照) |
-| `not-reproduced` | 実行したが再現しなかった |
-| `unknown` | 手順を確定できない。足りない情報を記録する |
+| `static` | Steps derived from code and still unexecuted |
+| `test` | Confirmed by a test written for the fix or an existing test, with a reference |
+| `verified` | Confirmed by execution, with a reference to results from `verify-scan` or the requester |
+| `not-reproduced` | Ran the steps without reproducing the defect |
+| `unknown` | The steps cannot be determined. Record the missing information |
 
-入力値は合成データだけにします。実在の個人情報や本番の値は記録しません。
+Use only synthetic data for inputs. Exclude real personal information and production values from records.
 
-#### 対象カタログ(`surfaces.json`)
+#### Surface catalog (`surfaces.json`)
 
-| 種別 | ID | 持つ情報 | 抽出の参考 |
+| Type | ID | Recorded information | Extraction reference |
 |---|---|---|---|
-| 画面 | `SC-*` | 名前、ルート、コンポーネントの `path:line`、関連フロー | `ux-scan` の inventory |
-| API | `API-*` | メソッド、パス、ハンドラの `path:line`、認可の有無 | `prune-scan` の `routes` |
-| ジョブ、イベント | `JOB-*` | 名前、起動元、キュー | `prune-scan` の entry points |
-| DB | `DB-*` | ストア、テーブル、カラム、制約、定義の `path:line`、読み書きする箇所 | migration と ORM を静的に読む(`verify-scan` のスキーマ採取は実行が必要なので使わない) |
-| 外部 | `EXT-*` | サービス名、呼び出し箇所 | `architecture-scan` の `external` |
-| 設定 | `CFG-*` | 環境変数、feature flag、読み取り箇所 | `prune-scan` の `env_read` |
+| Screen | `SC-*` | Name, route, component `path:line`, and related flows | `ux-scan` inventory |
+| API | `API-*` | Method, path, handler `path:line`, and whether authorization is present | `routes` from `prune-scan` |
+| Job, event | `JOB-*` | Name, trigger, and queue | `prune-scan` entry points |
+| DB | `DB-*` | Store, table, columns, constraints, definition `path:line`, and read/write sites | Read migrations and ORM code statically. Schema capture in `verify-scan` requires execution and is out of scope |
+| External | `EXT-*` | Service name and call sites | `external` from `architecture-scan` |
+| Configuration | `CFG-*` | Environment variables, feature flags, and read sites | `env_read` from `prune-scan` |
 
-対応(画面 → API → DB)には `traced` / `inferred` / `UNKNOWN` を付けます。動的なルートは読み取れないことがあるので、`limitations` に書きます。
+Mark mappings (screen → API → DB) as `traced` / `inferred` / `UNKNOWN`. Dynamic routes can be hard to trace statically. Record those gaps in `limitations`.
 
-#### リスクの段階(固定の表)
+#### Risk levels (fixed table)
 
-| 発生可能性 \ 影響 | 低 | 中 | 高 |
+| Likelihood \ Impact | Low | Medium | High |
 |---|---|---|---|
-| 高 | 中 | 高 | 高 |
-| 中 | 低 | 中 | 高 |
-| 低 | 低 | 低 | 中 |
+| High | Medium | High | High |
+| Medium | Low | Medium | High |
+| Low | Low | Low | Medium |
 
-`severity` は既存 scan と同じ基準で「コードから言える重大さ」、`risk` は「起きやすさも含めた優先度の材料」です。不一致はありえるので、理由を `basis` に書きます。発生可能性はコードからの推定で、実測ではありません。
+`severity` reflects how serious the defect is based on the code, using the criteria from existing scans. `risk` informs prioritization and also accounts for likelihood. The two can differ. Record the reason in `basis`. Likelihood is estimated from code inspection without direct measurement.
 
-#### 実行をまたぐ追跡(`ledger.json`)
+#### Cross-run tracking (`ledger.json`)
 
-- 保存先はリポジトリの外で、依頼者が指定します(読み取り専用の規約を守るため)
-- 既存 scan の Independence 規約に合わせ、今回の結果を確定してから台帳を読みます
-- 照合の結果は 4 通りです: 新規、継続、`NotSeen`(見つからなくなった)、再発(`Fixed` の後に再び検出)
-- `NotSeen` は修正の証明ではありません。スコープが違うと見つからないこともあります
-- 人が付けた状態(`Accepted`、`owner` など)は上書きしません
+- The requester specifies a location outside the repository to comply with the read-only rule
+- Read the ledger after finalizing the current results, in line with the existing scans' Independence rule
+- Matching has 4 outcomes: new, continuing, `NotSeen` (no longer found), and recurrence (detected again after `Fixed`)
+- `NotSeen` does not prove a fix. A change in scope can also cause a defect to go undetected
+- Preserve values entered by a person, such as `Accepted` and `owner`
 
-#### 安全面
+#### Safety
 
-commit message と差分は信頼しない入力として扱います。`history.json` に差分本文は保存しません(過去の commit には秘密情報が残っていることがあるため)。引用は短い抜粋に限り、秘密情報をマスクしてから記録します(`ux-scan` の `scripts/secret_lines.py` と同様)。
+Treat commit messages and diffs as untrusted input. Omit diff contents from `history.json` because past commits may contain secrets. Limit quotes to short excerpts and mask secrets before recording them, as in `scripts/secret_lines.py` from `ux-scan`.
 
-## 8. 検討した案
+## 8. Options considered
 
-| 案 | 判断 | 理由 |
+| Option | Decision | Rationale |
 |---|---|---|
-| A. 独立した新規 scan | 採用 | 問いと成果物が既存と違う。単体でインストールできる。代償は 1 リポジトリ分の保守 |
-| B. `architecture-scan` に観点を追加 | 不採用 | 契約は「設計 finding と before/after 図」。`render.py` はすでに 1,696 行あり、図 6 種を足すと役割がぶれる |
-| C. 他 scan の結果を集約して描くだけ | 不採用(取り込み機能としてのみ残す) | 確認した 9 つの findings サンプルに混入経路の項目が無いので、肝心の問いに答えられない |
-| D. 外部の SZZ ツールや可視化ライブラリを使う | 不採用 | 既存 scan のスクリプトは import の検査で標準ライブラリのみ。この形を保つ |
-| E. blame の結果を混入元としてそのまま使う | 不採用 | §3 の抽出では欠落が過半で、blame が無関係な行を指す例もあった |
+| A. A new standalone scan | Adopted | Its question and outputs differ from existing scans. It can be installed on its own. The trade-off is maintaining 1 additional repository |
+| B. Add a perspective to `architecture-scan` | Rejected | Its contract is design findings and before/after diagrams. `render.py` already has 1,696 lines, and adding 6 diagram types would blur its responsibilities |
+| C. Only aggregate and diagram results from other scans | Rejected (retained only as an import feature) | The 9 findings samples reviewed contain no defect introduction path field, so this option cannot answer the main question |
+| D. Use external SZZ tools or visualization libraries | Rejected | Existing scan scripts enforce standard-library-only imports through checks. Keep the same approach |
+| E. Use blame results directly as origins | Rejected | Most cases sampled in §3 were omissions, and blame sometimes identified unrelated lines |
 
-この設計では全自動の高速実行を諦めます。TRIAGE で差分を読むので、履歴が多いほど時間がかかります。実行時の可視化やリアルタイム追跡もありません。
+The design gives up fast, fully automated runs. TRIAGE requires diff inspection, so larger histories take longer. It provides no runtime visualization or real-time tracking.
 
-## 9. この設計が間違っている場合
+## 9. Conditions that would invalidate the design
 
-最も重要な前提は、一般的なアプリのリポジトリでも、読んでの分類で混入経路に意味のある偏りが見えることです。
+The most important assumption is that manual classification also reveals meaningful differences among defect introduction channels in general application repositories.
 
-実装前に安く確かめるには、性質の違う 3 リポジトリ(スキル以外で、1 つは conventional commits 不使用)から 30 組ずつ抽出し、手で分類します。
+To test this inexpensively before implementation, sample 30 pairs each from 3 repositories with different characteristics (all outside the skills collection, with 1 that does not use conventional commits) and classify them manually.
 
-次のいずれかなら設計を変えます。
+Change the design if any of the following occurs.
 
-- `Traced` にできる組が全体の 2 割未満 → D1、D3 を主役から外し、D4、D5、D6(現在のコード中心)に絞る
-- 変更経路の分布が基準率(種類別の commit 比率)と差が無い → D1 の件数表示をやめ、ゲート台帳だけにする
-- 二人が独立に分類して一致率が低い → パターンを 12 から減らす
-- 実行をまたいで `key` が安定しない(同じ不具合が別物になる)→ 自動照合をやめ、候補を提示して人が確定する
-- 画面 → API → DB の対応が静的に読めないリポジトリが多い → D8 を「読めた範囲のみ」と明示するか、段階を遅らせる
-- 検知元が `UNKNOWN` ばかりになる(PR や issue の情報が無い)→ `detection` を必須から外し、D1 の検知段階を任意の図にする
+- Fewer than 2 tenths of all pairs qualify as `Traced` → De-emphasize D1 and D3 and focus on D4, D5, and D6 (primarily current code)
+- The change channel distribution matches the base rate (share of commits by type) → Drop counts from D1 and keep only the gate inventory
+- Two people classify independently and agreement is low → Reduce the number of patterns from 12
+- `key` is unstable across runs (the same defect is treated as a different one) → Replace automatic matching with suggestions that a person confirms
+- Static inspection cannot map screen → API → DB in many repositories → Mark D8 as covering only the mappings that could be determined, or defer it to a later phase
+- Detection sources are mostly `UNKNOWN` (PR or issue information is unavailable) → Make `detection` optional and make D1's detection stage an optional diagram
 
-## 10. 実装の順序
+## 10. Implementation order
 
-1. `history.py` と fixture テスト。`architecture-scan` で `history.json` を出す ← 最初の一歩
-2. D3 と D4 を SVG で描き、`check` まで通す(分類なしで端から端まで)
-3. §9 のパイロット。ここで続行か変更かを判断する
-4. TRIAGE の語彙と schema、`merge`、`renumber`
-5. D2、D5 と REVIEW、VERIFY。不具合リスト(§7.1 の項目)と D9
-6. `surfaces.py` と D8、`relations` と D7
-7. D1、D6 とゲート台帳
-8. `ledger.py`(実行をまたぐ追跡)
-9. `import_findings.py`、`compare.py`
+1. `history.py` and fixture tests. Produce `history.json` using `architecture-scan` as the target ← First step
+2. Draw D3 and D4 in SVG and pass `check` (end to end without classification)
+3. Run the pilot in §9. Decide whether to proceed or revise the design
+4. TRIAGE vocabulary and schema, `merge`, and `renumber`
+5. D2, D5, REVIEW, and VERIFY. Defect list (fields in §7.1) and D9
+6. `surfaces.py` and D8, `relations` and D7
+7. D1, D6, and the gate inventory
+8. `ledger.py` (cross-run tracking)
+9. `import_findings.py`, `compare.py`
 
-## 11. 未決事項
+## 11. Open items
 
-#TODO(agent): DEFERRED §9 のパイロットを実装前に実施する(対象リポジトリの指定が必要)。
+#TODO(agent): DEFERRED Run the pilot in §9 before implementation (requires target repositories to be specified).
 
-#TODO(agent): OPEN コアとなる利用者を確定する。既定は「自分のリポジトリを調べる開発者本人」で、チーム共有向けの匿名化や権限管理は設計に含めない。
+#TODO(agent): OPEN Confirm the primary user. The default is a developer inspecting their own repository. The design excludes anonymization and access controls for team sharing.
 
-#TODO(agent): OPEN `ledger.json` の保存先を確定する。既定は依頼者が指定するリポジトリ外のディレクトリ。チームで共有するなら別途リポジトリにコミットする運用が要るが、読み取り専用の規約とは別の作業になる。
+#TODO(agent): OPEN Confirm where to store `ledger.json`. The default is a directory outside the repository specified by the requester. Team sharing would require a separate workflow to commit it to a repository, outside the read-only workflow.

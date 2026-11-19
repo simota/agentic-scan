@@ -1,31 +1,31 @@
-# PDCA レポート(ターミナル / エージェント版)
+# PDCA report (terminal / agent version)
 
 
-オーナーの評価は「AI 生成感が強い」だった。前の版と ui-deslop の書き直し版は、どちらも墨色・生成り・明朝体・罫線の、AI 生成 LP によくある型だった。そこでブランドから作り直した。方向はオーナーが選んだ「ターミナル / エージェント」。採点の基準は前と同じ(FV 20、価値 20、CTA 15、デザイン 15、レスポンシブ 10、UX・a11y 10、性能・SEO 10)。画像は `screenshots/rebrand/cycles/`。
+The owner's assessment was 「AI 生成感が強い」 ("it feels strongly AI-generated"). Both the previous version and the ui-deslop rewrite used ink black, off-white, Mincho serif type, and rules — a common pattern in AI-generated LPs. So the brand was rebuilt, in the "terminal / agent" direction the owner chose. The scoring criteria are the same as before (FV 20, value 20, CTA 15, design 15, responsive 10, UX/a11y 10, performance/SEO 10). Images are in `screenshots/rebrand/cycles/`.
 
-| サイクル | 点 | 主な問題 | 実施したこと | 検証の結果 |
+| Cycle | Score | Main problems | What was done | Verification result |
 |---|---|---|---|---|
-| R1 | 64 | 320 / 375px で横幅が 568px(grid の列が `<pre>` に引っ張られた)。1440px で H1 が語の途中で折れる(「触れず/に、」「指摘/を。」)。台帳の行が 1 行おきに空く。jq のコマンドが右で切れる。全ページの撮影でダッシュボードが白い(撮影スクリプトが遅延読み込みを起こしていなかった) | 初回の実装 | 12 通りの撮影で、320 / 375 が横スクロールあり |
-| R2 | 78 | コマンドが折り返さない。320px で H1 が 4 行。kicker と spec の区切りの点が行頭に落ちる。rules の 4 列で見出しが「ませ/ん。」と割れる | 列に `minmax(0, 1fr)` と `min-width: 0` を指定。行を inline-block に。H1 の文字サイズの上限と列の比を 1.2 : 1 に。台帳の文字の大きさを `100cqi / 31.5` に。区切り記号をやめて余白で区切る。rules は 2 列 | 12 通りとも横スクロールなし。7 行すべてが 375px で横スクロールなしに見える |
-| R3 | 82 | `make list` の目次が 1 行おきに空く。ダッシュボードが全ページの撮影でまだ白い | コマンドの折り返しを直した(セレクタの優先順位) | 個別に確かめると、画像は普通に読み込まれていた(1119px 幅で描画)。全ページの撮影の問題だけと判明 |
-| R4 | 86 | 目次の枠が列の高さまで伸びる。「右の指摘は」がモバイルの位置と合わない | 目次の行を inline-block に。撮影スクリプトで lazy の画像を eager にしてから撮る | ダッシュボードが全ページの画像に写る。モバイルの目次は 2 段組で読める |
-| R5 | 89 | Lighthouse のモバイルの a11y が 97(ワードマークの aria-label と見える文字の不一致、索引のリンクが 20px) | 目次の枠に `align-self: start`。文を「添えた指摘は」に。aria-label を削除。索引のリンクを 28px に。残っていた直書きの値をトークンに | Lighthouse はモバイルもデスクトップも 4 項目すべて 100。操作の確認もすべて通った(qa-report) |
+| R1 | 64 | At 320 / 375px the width was 568px (grid columns were pulled by `<pre>`). At 1440px the H1 broke mid-word (「触れず/に、」, 「指摘/を。」). Ledger rows had a blank line between every row. The jq command was cut off on the right. Dashboards were white in full-page screenshots (the capture script did not trigger lazy loading) | Initial implementation | In the 12 capture combinations, 320 / 375 had horizontal scrolling |
+| R2 | 78 | Commands did not wrap. At 320px the H1 was 4 lines. The separator dots in the kicker and spec fell to the start of a line. In the 4-column rules, a heading split as 「ませ/ん。」 | Set `minmax(0, 1fr)` and `min-width: 0` on columns. Made rows inline-block. Capped the H1 font size and set the column ratio to 1.2 : 1. Set the ledger font size to `100cqi / 31.5`. Dropped separator symbols in favor of spacing. rules in 2 columns | No horizontal scrolling in any of the 12. All 7 rows visible at 375px without horizontal scrolling |
+| R3 | 82 | The `make list` table of contents had a blank line between every row. Dashboards were still white in full-page screenshots | Fixed command wrapping (selector specificity) | Checked individually, the images loaded normally (rendered at 1119px width). Identified as a problem with full-page screenshots only |
+| R4 | 86 | The table-of-contents box stretched to the column height. 「右の指摘は」 ("the findings on the right") did not match the layout on mobile | Made table-of-contents rows inline-block. The capture script switches lazy images to eager before capturing | Dashboards appear in full-page images. The mobile table of contents is readable in 2 columns |
+| R5 | 89 | Lighthouse mobile a11y was 97 (the wordmark's aria-label did not match the visible text; index links were 20px) | `align-self: start` on the table-of-contents box. Changed the sentence to 「添えた指摘は」 ("the accompanying findings"). Removed the aria-label. Index links to 28px. Replaced remaining hard-coded values with tokens | Lighthouse 100 on all 4 categories on both mobile and desktop. All interaction checks passed (qa-report) |
 
-## R5 の採点の内訳
+## R5 score breakdown
 
-| 項目 | 点 | 根拠 |
+| Item | Score | Rationale |
 |---|---:|---|
-| FV | 18 / 20 | 何の製品か、何が得られるか、CTA がどの幅でも最初の画面に入る。1024px 以上では、実データの台帳と署名の行(F-004)も見える。375px では台帳が下端に少しかかるだけ |
-| 価値 | 18 / 20 | 判定つきの指摘、誤検知も残すこと、スキルごとの工程を、製品自身のデータで見せている。エージェントが動いている様子そのもの(セッション)は、作り物になるため見せていない |
-| CTA | 12 / 15 | 導線とコピーは動く。リポジトリが非公開なので、権限のない訪問者は導入できない |
-| デザイン | 13 / 15 | `r--` のワードマーク、等幅の書体、重大度の色、反転した帯で、前の版とはっきり違う。ただ、skills の節は文字が多く、中盤は単調。ダッシュボードの画面だけは明朝体のエディトリアル調で、LP の見た目と揃っていない |
-| レスポンシブ | 10 / 10 | 6 幅 × 2 テーマで崩れなし。モバイル専用の構成(台帳を画面の端まで、目次を 2 段組、モバイル用の画像) |
-| UX・a11y | 9 / 10 | キーボード、フォーカス、動きを減らす設定、JS 無効のすべてを確認。スクリーンリーダーと実機は確かめていない |
-| 性能・SEO | 9 / 10 | Lighthouse は 4 項目とも 100。OGP の画像がない |
-| **合計** | **89** | |
+| FV | 18 / 20 | What the product is, what you get, and the CTAs fit in the first screen at every width. At 1024px and up, the real-data ledger and the signature row (F-004) are also visible. At 375px the ledger only slightly reaches the bottom edge |
+| Value | 18 / 20 | Findings with verdicts, keeping false positives, and each skill's procedure are shown with the product's own data. The agent actually running (a session) is not shown, since it would have to be fabricated |
+| CTA | 12 / 15 | The flow and copy work. Because the repository is private, visitors without access cannot install |
+| Design | 13 / 15 | The `r--` wordmark, monospace type, severity colors, and inverted band clearly differ from the previous version. However, the skills section is text-heavy and the middle is monotonous. Only the dashboard screens are in the Mincho editorial style and do not match the LP's look |
+| Responsive | 10 / 10 | No breakage across 6 widths × 2 themes. Mobile-specific layout (ledger to the screen edges, 2-column table of contents, mobile images) |
+| UX/a11y | 9 / 10 | Keyboard, focus, reduced motion, and JS disabled all checked. Screen readers and real devices not verified |
+| Performance/SEO | 9 / 10 | Lighthouse 100 on all 4 categories. No OGP image |
+| **Total** | **89** | |
 
-## 90 に届かなかった理由
+## Why it did not reach 90
 
-1. 非公開のリポジトリ(CTA)。LP の側では解決できない。
-2. skills の節の密度。12 件を、作り物を混ぜずにすべて載せることを優先した。
-3. ダッシュボードの画面の見た目が LP と揃っていない。これはスキル側のデザインで、今回の範囲(`site/` だけ)の外にある。
+1. The private repository (CTA). This cannot be solved on the LP side.
+2. The density of the skills section. Showing all 12 without mixing in anything fabricated took priority.
+3. The look of the dashboard screens does not match the LP. That is the skills' design, outside this scope (`site/` only).

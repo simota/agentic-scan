@@ -1,26 +1,26 @@
-# Pattern 09: 研究ノート・推論ログ調 (`09-research-notebook.html`)
+# Pattern 09: Research Notebook and Reasoning Log (`09-research-notebook.html`)
 
-## コンセプト
-エージェントによる静的レビューを「査読可能な観察・実験ノートブック」として定着させる 1 カラム中心のデザイン。冒頭に YAML フロントマター風の実行条件を置き、`CELL [01]`〜`CELL [04]` のセル番号ガターに沿って、要約 → 指摘索引 → 推論ステップ（経路・反証・影響・修正方針）→ 観察境界の順に縦へ読み進められる。
+## Concept
+Present the agent's static review as a notebook of observations and experiments that readers can review, using a primarily 1-column layout. Start with run conditions styled as YAML front matter. Follow the cell numbers in the gutter from `CELL [01]` to `CELL [04]` through the summary → findings index → reasoning steps (trace, falsification, impact, and fix direction) → limits of observation.
 
-## なぜ agentic-scan らしいか
-- **「読んで、反証してから、渡す」に最も忠実**: ただの指摘一覧ではなく、`TRACE → VERIFICATION → IMPACT → REMEDIATION` という推論の連なりを主役にしており、LP が掲げる「裏の取れた指摘」と `FalsePositive`（棄却された仮説）を消さずに残す思想と完全に噛み合う。
-- **過度なダッシュボード装飾を排した知的なトーン**: 等幅のセルラベル・YAML ブロックがブランドを担い、日本語の根拠文は可読性の高いサンセリフで十分な行間（1.75）を確保しているため、長文の検証根拠や制約事項をストレスなく精読できる。
+## Why It Fits agentic-scan
+- **Closest to 「読んで、反証してから、渡す」**: The design foregrounds the reasoning sequence `TRACE → VERIFICATION → IMPACT → REMEDIATION`. It follows the LP's emphasis on 「裏の取れた指摘」 and its practice of retaining `FalsePositive` entries (rejected hypotheses).
+- **A scholarly tone with restrained dashboard styling**: Monospace cell labels and YAML blocks carry the brand. Japanese evidence uses a legible sans-serif with ample line spacing (1.75), making lengthy verification evidence and constraints easy to read closely.
 
-## 他スキルへの横展開方法
-- **推論ステップの組み替えが容易**: セル内の `<ol class="step-list">` は各スキルの工程にそのまま合わせられる。
+## Adapting It to Other Skills
+- **Easy to adapt the reasoning steps**: Match each cell's `<ol class="step-list">` to the skill's stages.
   - `logic-scan`: `STEP 01 業務ルール` → `STEP 02 反例（Counterexample）` → `STEP 03 影響と修正`
   - `bug-scan`: `STEP 01 履歴の起源` → `STEP 02 現行コードの同型経路` → `STEP 03 再現手順と修正`
   - `architecture-scan`: `STEP 01 期待される境界` → `STEP 02 実際の依存` → `STEP 03 改善方針`
   - `ux-scan`: `STEP 01 対象フロー・画面` → `STEP 02 阻害要因` → `STEP 03 改善案`
-- **複数レポートの連結**: 印刷用ドキュメント（`assessment.html`）とダッシュボードの視覚構造をほぼ同一（`CELL [03]` を全件展開するだけ）に統一できる。
+- **Aligning multiple reports**: The print document (`assessment.html`) and dashboard can use nearly identical visual structures by expanding all findings in `CELL [03]`.
 
-## 既存 `render.py`・`dashboard.css` に入れるときの変更範囲と工数感
-- **変更範囲**:
-  - `dashboard.css` / `document.css`: 既存の 2 カラム（サイドバー＋メイン）を廃するか、左サイドバーを細いセルガター（`7.5rem`）に置き換え、LP のクールグレー・等幅・サンセリフ体系へ移行。
-  - `render.py`: 既存の `card()`（`assessment.html`）と詳細展開行（`dashboard.html`）が持つ `location` / `evidence` / `impact` / `fix` / `previous_validation` を `<ol class="step-list">` でラップするだけで移行可能。既存フィルタ UI も `CELL [02]` 内にそのまま収まる。
-- **工数感**: 小〜中（0.5〜1 日 / 1 スキルあたり。印刷用 `assessment.html` と共通化しやすい分、トータルの保守コストが最も低い部類）。
+## Changes and Estimated Effort for the Existing `render.py` and `dashboard.css`
+- **Scope of changes**:
+  - `dashboard.css` / `document.css`: Remove the existing 2-column layout (sidebar and main content) or replace the left sidebar with a narrow cell gutter (`7.5rem`). Adopt the LP's cool gray, monospace, and sans-serif styles.
+  - `render.py`: Wrap the `location` / `evidence` / `impact` / `fix` / `previous_validation` fields from the existing `card()` (`assessment.html`) and expandable detail rows (`dashboard.html`) in `<ol class="step-list">`. The existing filter UI fits inside `CELL [02]`.
+- **Estimated effort**: Small to medium (0.5–1 day per skill). It is among the lowest in total maintenance cost because it can readily share components with the print `assessment.html`.
 
-## 弱点
-- **一望性・並列比較の弱さ**: 1 カラム縦積みのため、重大度や複数カテゴリの偏りを一瞬で俯瞰する用途や、大量の指摘を一気にトリアージする作業では、マルチカラム型（08 や 10）よりスクロール量が増える。
-- **検索・フィルタの常設スペースが狭い**: 多数の絞り込み条件を常時画面にピン留めしたい場合は、`CELL [02]` の上部に折りたたみフィルタバーを足す工夫が必要。
+## Limitations
+- **Limited overview and side-by-side comparison**: A vertical 1-column layout requires more scrolling than multi-column designs (08 and 10) to see concentrations by severity or across categories at a glance, or to triage many findings at once.
+- **Limited room for persistent search and filters**: To keep many filter criteria pinned on screen, add a collapsible filter bar at the top of `CELL [02]`.

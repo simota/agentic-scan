@@ -1,45 +1,45 @@
-# 03 ミッションコントロール監視コンソール
+# 03 Mission Control Monitoring Console
 
-モック: `03-mission-control.html`
+Mockup: `03-mission-control.html`
 
-## コンセプト
+## Concept
 
-レポートを、1 画面で全体の状態を見張る監視コンソールにする。並べるものは次のとおり。
+Make the report a monitoring console that shows the overall state on 1 screen. Include the following elements.
 
-- 最上段の帯: 対応状況の読み値(open 4 / closed 2 / excluded 1)
-- 重大度のタイル: 1 マスが 1 件
-- 判定の帯グラフ
-- 観点のランプ
-- 指摘のアラートストリーム
-- 選んだ 1 件のインスペクター
+- Top band with a status readout (open 4 / closed 2 / excluded 1)
+- Severity tiles with 1 cell per finding
+- Verdict strip chart
+- Perspective indicators
+- Finding alert stream
+- Inspector for the selected finding
 
-## なぜ agentic-scan らしいか
+## Why It Fits agentic-scan
 
-- LP で唯一反転している帯(`--band`)を、最上段の状態表示に使った。ワードマークの `r--` とスキル名も、帯の中に等幅で置いた。
-- 重大度のタイルは件数を 1 マス 1 件で描く。塗ったマスが未解決、枠だけのマスが対応済み。数字を水増しせずに、状態の違いを形で見せられる。
-- 判定の帯グラフでは、FalsePositive をアクセント色の独立した区画にした。誤検知も消さずに数える、という規則をそのまま図にしたもの。
-- LP が避けたもの(ネオン、光彩、走査線、黒地に緑)は使っていない。ランプも光らせず、平らな丸にした。
+- Use the LP's only inverted band (`--band`) for the top status display. Set the `r--` wordmark and skill name in monospace inside the band.
+- Draw the severity tiles with 1 cell per finding. Filled cells are open and outlined cells are closed. The shapes distinguish statuses without inflating counts.
+- Give FalsePositive a separate accent-colored segment in the verdict strip. This visualizes the rule that false positives remain in the record and count.
+- Follow the LP in avoiding neon, glow, scan lines, and green on black. The indicators are flat circles without glow.
 
-## 他スキルへの横展開
+## Adapting It to Other Skills
 
-- タイル、判定、観点のランプは、`severity`、`validation.verdict`、`status`、`perspectives` から作る。フィールドが共通なので、どのスキルでもそのまま使える。
-- インスペクターの項目(location / request / actor など)はスキルごとに変える。並びは「該当 → 根拠 → 修正方針」に固定する。
-- スキル固有の可視化は、パネルを 1 枚足す形で入れる。例: ux-scan の画面、bug-scan の関係図、architecture-scan の依存の図。12 列の grid なので、`grid-column` を指定するだけで置ける。
+- Build the tiles, verdicts, and perspective indicators from `severity`, `validation.verdict`, `status`, and `perspectives`. These shared fields work across all skills.
+- Vary the inspector fields (location / request / actor, etc.) by skill. Keep the order fixed as 該当 → 根拠 → 修正方針 (location → evidence → fix direction).
+- Add 1 panel for a skill-specific visualization, such as ux-scan screens, bug-scan relationship diagrams, or architecture-scan dependency diagrams. With a 12-column grid, placement requires only `grid-column`.
 
-## 既存の render.py / dashboard.css に入れるときの変更範囲と工数感(見積もり)
+## Changes and Estimated Effort for the Existing render.py / dashboard.css
 
-- 今の security-scan の dashboard には、すでに appbar、sidebar、cards、register、tr.detail がある(`render.py` の `DASHBOARD` テンプレート)。
-  - 変えるのは次の 3 つ。
-    - sidebar をやめて 12 列の grid にする。
-    - cards をタイルに変える。
-    - 行の展開をやめ、右側のインスペクターに出す。
-  - インスペクターを使うには、選んだ行を切り替える JS が少し要る。今の JS は DOM を組み立てる作りなので、その延長で書ける。
-- dashboard.css は、レイアウトの部分を大きく書き換えることになる。トークンは LP の値に揃える。
-- 工数は、1 スキルあたり 2〜3 日。2 系統の dashboard.css を共通の部品にまとめるなら、最初に 1 回だけ余分な作業が要る。
+- The current security-scan dashboard already has an appbar, sidebar, cards, register, and tr.detail (the `DASHBOARD` template in `render.py`).
+  - Make these 3 changes.
+    - Replace the sidebar with a 12-column grid.
+    - Turn the cards into tiles.
+    - Move row details from inline expansion to the inspector on the right.
+  - The inspector needs a small amount of JS to change the selected row. Extend the existing JS that builds the DOM.
+- Rewrite much of the layout in dashboard.css. Match the tokens to the LP values.
+- Estimated effort is 2–3 days per skill. Consolidating the 2 dashboard.css families into shared components takes extra work the first time.
 
-## 弱点
+## Limitations
 
-- 情報の密度が高く、360px 幅では縦に長い 1 列になる。コンソールらしさは、主に 1024px 以上の画面で出る。
-- 「監視」の比喩は、継続して見張るものを連想させる。ところが実際のレポートは 1 回きりの静的な記録で、比喩と合わない。
-- 指摘が多いと、インスペクターとアラートストリームの位置が離れる。sticky にすると、印刷との両立に手間がかかる。
-- 08(スキャンスイープ計器パネル)と、計器の見た目が近づきやすい。この案では、メーターや円グラフを使わないことで区別した。
+- The layout is dense and becomes 1 long column at 360px. It looks most like a console on screens 1024px and wider.
+- The monitoring metaphor suggests continuous observation, while the report is a one-time static record.
+- With many findings, the inspector and alert stream move far apart. Making the inspector sticky complicates printing.
+- The instrumentation can look similar to 08 (Scan Sweep Instrument Panel). This design omits meters and pie charts to distinguish the two.

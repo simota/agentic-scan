@@ -1,45 +1,45 @@
-# プロダクト分析
+# Product analysis
 
-## 概要
+## Overview
 
-agentic-scan は、AI コーディングエージェント(Claude Code・Codex・Antigravity)が対象リポジトリを読んで診断するための 12 のスキル集。各スキルは観点ごとに独立し、共通の手順(RECON → CHECKLIST → REVIEW → VERIFY → REPORT。一部は PLAN を含む)で指摘を記録し、チャット要約・HTML ダッシュボード・レポートとして返す。
+agentic-scan is a collection of 12 skills that AI coding agents (Claude Code, Codex, Antigravity) use to read and diagnose a target repository. Each skill is independent per review focus, records findings with a common procedure (RECON → CHECKLIST → REVIEW → VERIFY → REPORT; some include PLAN), and returns them as a chat summary, an HTML dashboard, and a report.
 
-根拠: ルート `README.md`、各 `<skill>/README.md` の冒頭と "What it does" / "Install" 節。
+Sources: the root `README.md`, and the opening and "What it does" / "Install" sections of each `<skill>/README.md`.
 
-## 確認できた事実(LP の訴求に使ったもの)
+## Confirmed facts (used in the LP's messaging)
 
-| 事実 | 根拠 |
+| Fact | Source |
 |---|---|
-| 12 スキル(security, infra-security, privacy, logic, data-integrity, bug, test-gap, architecture, performance, prune, ux, prompt) | ルート `README.md` の表 |
-| 既定は読み取り専用。コードを編集せず、デプロイ済みシステムへ通信しない | 各 README 冒頭の注記 |
-| 例外: logic-scan の REPRO、test-gap-scan と data-integrity-scan の GUARD、performance-scan のベンチマークは依頼と許可がある場合のみ | `logic-scan/README.md`, `test-gap-scan/README.md`, `data-integrity-scan/README.md`, `performance-scan/README.md` |
-| infra-security-scan はクラウド API を呼ばず `terraform plan/apply` も実行しない | `infra-security-scan/README.md` |
-| privacy-scan は法的助言ではない | `privacy-scan/README.md` |
-| ux-scan は好みではなく基準で判定する(`padding: 13px` の例) | `ux-scan/README.md` |
-| High / Medium を再検証(VERIFY)してから報告 | 各 README の "What it does" 図 |
-| 出力: チャット要約、dashboard.html、report.md / report.html / PDF(スキルにより異なる)、findings.json | 各 README の図 |
-| SARIF への書き出し、再スキャンとの比較、日本語・英語の出力 | 12 README すべてに記載(grep で確認) |
-| Python 3.9+(一部 3.10+)、標準ライブラリのみ、PDF は Chrome / Chromium | 各 README の Requirements |
-| `make link` で、インストール済みのホスト(claude / codex / agy)すべてにリンク | 各スキルの `Makefile`、ルート `Makefile` |
-| `make demo` で同梱サンプルからダッシュボード生成 | 各 README、実行して確認 |
-| サンプル指摘のタイトル(LP の 12 行の右列) | 各 `examples/findings.sample*.json` から抽出 |
+| 12 skills (security, infra-security, privacy, logic, data-integrity, bug, test-gap, architecture, performance, prune, ux, prompt) | Table in the root `README.md` |
+| Read-only by default. Does not edit code and does not contact deployed systems | Note at the top of each README |
+| Exceptions: logic-scan's REPRO, test-gap-scan's and data-integrity-scan's GUARD, and performance-scan's benchmarks run only when requested and permitted | `logic-scan/README.md`, `test-gap-scan/README.md`, `data-integrity-scan/README.md`, `performance-scan/README.md` |
+| infra-security-scan does not call cloud APIs and does not run `terraform plan/apply` | `infra-security-scan/README.md` |
+| privacy-scan is not legal advice | `privacy-scan/README.md` |
+| ux-scan judges by criteria, not taste (the `padding: 13px` example) | `ux-scan/README.md` |
+| High / Medium are re-verified (VERIFY) before reporting | The "What it does" diagram in each README |
+| Outputs: chat summary, dashboard.html, report.md / report.html / PDF (varies by skill), findings.json | The diagram in each README |
+| SARIF export, comparison with a re-scan, Japanese and English output | Stated in all 12 READMEs (confirmed with grep) |
+| Python 3.9+ (some 3.10+), standard library only, Chrome / Chromium for PDF | Requirements in each README |
+| `make link` links to every installed host (claude / codex / agy) | Each skill's `Makefile`, the root `Makefile` |
+| `make demo` generates a dashboard from the bundled sample | Each README; confirmed by running it |
+| Sample finding titles (the right column of the LP's 12 rows) | Extracted from each `examples/findings.sample*.json` |
 
-## ターゲット
+## Target
 
-- 主: 自分のアプリのコードを AI エージェントと書いている開発者・テックリード。エージェントにレビューも任せたいが、「それらしいだけの指摘」では使えないと感じている人。
-- 課題: 指摘に場所・根拠・終わりの条件がない。エージェントが勝手にコードを直す不安。観点(セキュリティ、UX、データ整合性…)ごとに道具がばらばら。
-- 代替手段: 汎用のコードレビュー依頼、個別の静的解析ツール、人手のレビュー。
-- 導入をためらう理由: コードを書き換えられる不安、本番やクラウドへの接触、セットアップの手間、結果の信頼性。
-- 決め手: 既定の読み取り専用、検証済みの判定、ファイルと行つきの指摘、依存なし・`make link` のみ。
+- Primary: developers and tech leads writing their own app's code with AI agents. People who want to hand review to the agent too, but feel that findings which merely sound plausible are useless.
+- Problems: findings lack a location, evidence, and a done condition. Worry that the agent will change code on its own. Separate tools for each review focus (security, UX, data integrity…).
+- Alternatives: generic code-review requests, individual static analysis tools, human review.
+- Reasons to hesitate: worry about code being rewritten, contact with production or the cloud, setup effort, reliability of results.
+- Deciding factors: read-only by default, verified verdicts, findings with file and line, no dependencies and only `make link`.
 
-## 推測(リポジトリに根拠がないもの)
+## Assumptions (no basis in the repository)
 
-- 上記ペルソナと心理的障壁は推測。利用者データ・導入実績・満足度などはリポジトリに存在しないため、LP には載せていない。
-- 料金・ライセンスの記載は見つからなかったため LP では触れていない。
+- The persona and psychological barriers above are assumptions. User data, adoption record, satisfaction, and the like do not exist in the repository, so they are not on the LP.
+- No pricing or license statement was found, so the LP does not mention them.
 
-## 差別化(確認できる範囲)
+## Differentiation (within what can be confirmed)
 
-1. 観点ごとの専用スキル 12 種が、同じ手順と同じ報告書形式を持つ。
-2. 検証(反証)を経た判定(Confirmed / Valid など)を指摘ごとに記録する。
-3. 既定で読み取り専用。書き込みを伴う手順は依頼と許可がある場合だけ。
-4. 外部パッケージ不要。
+1. 12 dedicated skills, one per review focus, share the same procedure and report format.
+2. A verdict (Confirmed / Valid, etc.) reached through verification (falsification) is recorded for each finding.
+3. Read-only by default. Procedures that write run only when requested and permitted.
+4. No external packages needed.

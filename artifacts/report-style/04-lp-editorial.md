@@ -1,46 +1,46 @@
-# 04 LP 準拠のエディトリアル(基準案)
+# 04 LP-Aligned Editorial (Baseline)
 
-モック: `04-lp-editorial.html`
+Mockup: `04-lp-editorial.html`
 
-## コンセプト
+## Concept
 
-`site/styles.css` の部品だけでレポートを組む。ほかの案と比べるための基準になる案。
+Build the report using only components from `site/styles.css`. This design serves as a baseline for comparing the other concepts.
 
-| LP の部品 | レポートでの使い方 |
+| LP Component | Use in the Report |
 |---|---|
-| hero と台帳の `.term` | 件数 |
-| skills の一覧 | 指摘の一覧 |
-| install の 2 列 | 1 件の詳細 |
-| 反転した verify の帯 | 判断が必要な事項 |
+| Hero and ledger `.term` | Counts |
+| Skills list | Findings list |
+| Install section's 2 columns | Details for 1 finding |
+| Inverted verify band | Items requiring a decision |
 
-## なぜ agentic-scan らしいか
+## Why It Fits agentic-scan
 
-- LP を読んだ人が、そのまま開いて迷わない。トークン、書体、余白、角丸の値は、LP と同じものを使っている。
-- 見出しには、件数と状態を事実だけで書いた。例:「指摘は 7 件。」「未解決の High が 2 件あります」。LP のコピーの方針に合わせ、数字はサンプルデータにあるものだけを使っている。
-- 台帳の注記で F-004(誤検知)の根拠を引用する。これは LP のヒーローの注記と同じ構造。
-- 反転した帯には decisions を置いた。LP の決まり「decide: 決めるのは人です」を、レポートの中で実際に使う場所。
+- Readers familiar with the LP can open the report and navigate it easily. The tokens, typefaces, spacing, and border radii match the LP.
+- Headings state only facts about counts and status. Examples: 「指摘は 7 件。」「未解決の High が 2 件あります」. In keeping with the LP's copy guidelines, all numbers come from the sample data.
+- The ledger note quotes the evidence for F-004 (false positive). This follows the structure of the LP hero note.
+- The inverted band contains decisions. It puts the LP rule 「decide: 決めるのは人です」 into practice in the report.
 
-## 他スキルへの横展開
+## Adapting It to Other Skills
 
-- 節の順番(件数 → 一覧 → 詳細 → 判断)は全スキルで共通にする。各節の見出しの文は、件数から機械的に作る。
-- 一覧の左の線(`border-left`)は、選択の印として使う。スキル固有の要素は、詳細の 2 列のうち左の facts に dt / dd として足す。例: ux-scan の画面、logic-scan の反例、bug-scan の再現手順。
-- assessment.html(印刷用)にも同じ部品を使える。印刷の見た目も LP と揃う。
+- Use the same section order across skills (counts → list → details → decisions). Generate each section heading mechanically from the counts.
+- Use the line on the left of the list (`border-left`) to mark the selection. Add skill-specific information as dt / dd pairs in the facts column on the left of the 2-column detail view. Examples include ux-scan screens, logic-scan counterexamples, and bug-scan reproduction steps.
+- The same components can be used in assessment.html (print). This aligns the print design with the LP as well.
 
-## 既存の render.py / dashboard.css に入れるときの変更範囲と工数感(見積もり)
+## Changes and Estimated Effort for the Existing render.py / dashboard.css
 
-- いちばん小さく始めるなら、トークンだけを差し替える。
-  - 今の dashboard.css は紙の色寄りで、`--bg:#f6f5f1`、明朝の `--serif` を持つ。これを LP の冷たいグレーと `--mono` / `--sans` に置き換える。
-  - 重大度の色は、もう LP と同じ値になっている。
-  - 11 個の dashboard.css は、内容が 2 系統に分かれている。両方にトークンの塊を入れるだけで済む。全体で半日程度。
-- さらに部品まで寄せる場合は、次のように対応させる。
-  - masthead → `.bar` とワードマーク
+- The smallest initial change is to swap the tokens.
+  - The current dashboard.css uses a paper-like palette with `--bg:#f6f5f1` and a Mincho `--serif`. Replace these with the LP's cool gray and `--mono` / `--sans`.
+  - The severity colors already match the LP values.
+  - The 11 dashboard.css files fall into 2 families. Add the token block to both. This takes about half a day in total.
+- To align the components as well, use these mappings.
+  - masthead → `.bar` and wordmark
   - summary-banner → hero
-  - priority-item → 一覧の `li`
-  - 1 スキルあたり 1〜2 日。
-- dashboard の検索、フィルター、register の表は、エディトリアルの構成と相性が悪い。dashboard は部品の寄せまでにとどめ、この構成は assessment.html の側に入れる、という分け方もできる。
+  - priority-item → list `li`
+  - 1–2 days per skill.
+- Dashboard search, filters, and the register table fit poorly into the editorial structure. One option is to align only the dashboard components and reserve this structure for assessment.html.
 
-## 弱点
+## Limitations
 
-- 読み物として整っている分、指摘が数十件あると一覧が長くなる。比較や絞り込みには弱い。
-- LP と見分けがつかない。「宣伝のページ」と「診断の結果」を取り違えられるおそれがある。
-- 新しさはない。基準案なので、ほかの案と比べてどこが良くなったかを見るための物差しとして使う。
+- The layout reads well, but the list gets long with dozens of findings. It is less suitable for comparison and filtering.
+- It is hard to distinguish from the LP. Readers may confuse the promotional page with the scan results.
+- The design offers nothing new. Its purpose as a baseline is to show where the other concepts improve on it.

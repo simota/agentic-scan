@@ -1,22 +1,22 @@
-# 05 パッチレビュー
+# 05 Patch Review
 
-## コンセプト
+## Concept
 
-指摘をファイル単位のパッチレビューとして読む。左のファイル一覧から、右のハンク見出し、現状の根拠、提案する修正へと視線を移す。
+Read findings as a file-by-file patch review. Start with the file list on the left, then move to the hunk heading, evidence of the current behavior, and proposed fix on the right.
 
-## agentic-scan らしさ
+## Why It Fits agentic-scan
 
-`r--`、指摘 ID、パス、検証判定を等幅で揃え、和文はゴシック体で読む。記号と見出しを併用し、`−` は根拠、`+` は修正方針の読み出しに使う。修正方針には LP の `--mark`、High には `--high` を用いる。誤検知の F-004 も一覧で判定を追える。
+Set `r--`, finding IDs, paths, and verification verdicts in monospace, and Japanese text in Gothic type. Pair symbols with headings, using `−` for evidence and `+` for fix direction. Use the LP's `--mark` for fix direction and `--high` for High. The list also shows the verdict for the false positive F-004.
 
-## 横展開
+## Adapting It to Other Skills
 
-- **ux-scan** はファイルパスの位置に画面・コンポーネント名を置き、観察した状態と設計変更の提案を並べる。
-- **bug-scan** は該当ファイル・行と根拠をハンクに置き、原因の記録と修正・再発防止策を対応づける。１件が複数ファイルにまたがる場合は同じ指摘 ID の下に場所を列挙する。
+- **ux-scan** puts screen and component names where file paths would go, and pairs the observed state with proposed design changes.
+- **bug-scan** puts affected files and lines and the evidence in the hunk, and maps the recorded cause to the fix and recurrence prevention measures. If 1 finding spans multiple files, list the locations under the same finding ID.
 
-## 組み込みと工数
+## Integration and Effort
 
-**中・1〜2人日程度**（security-scan での初回組み込みと確認）。`render.py` の `DASHBOARD` で一覧と遅延展開される詳細をファイル一覧・ハンクの構造に変更し、既存フィルタ、アンカー、展開・フォーカス処理を接続する。PDF 側は `render_assessment_html()` の指摘本文にも同じ見出し構造を採用する。各 `dashboard.css` には LP 由来のトークン、2カラムから1カラムへの切り替え、ハンクと印刷用のスタイルを追加する。集計と検証判定は既存のモデルを使う。
+**Medium, about 1–2 person-days** (initial integration and verification in security-scan). In `DASHBOARD` in `render.py`, restructure the list and lazily expanded details as a file list and hunks. Connect the existing filters, anchors, and expansion and focus handling. For the PDF, use the same heading structure in the finding bodies in `render_assessment_html()`. Add LP-derived tokens, a responsive switch from 2 columns to 1, and hunk and print styles to each `dashboard.css`. Use the existing model for counts and verification verdicts.
 
-## 弱点
+## Limitations
 
-`−` と `+` は実際の削除・追加行にも見えるため、各ブロックの見出しが欠かせない。原因が複数ファイルに分散する指摘や、一点の修正に絞れない提案では、パッチの比喩が弱まる。
+`−` and `+` can look like actual removed and added lines, so each block needs a heading. The patch metaphor is less effective for findings whose causes span multiple files or proposals that cannot be reduced to a single edit.

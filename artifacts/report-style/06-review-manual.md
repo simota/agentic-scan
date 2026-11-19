@@ -1,22 +1,22 @@
-# 06 レビュー仕様書
+# 06 Review Specification
 
-## コンセプト
+## Concept
 
-man ページや RFC のように、診断対象、集計、指摘一覧、詳細を番号付きの節でたどる。本文を一定の読み幅に収め、一覧と詳細を節リンクでつなぐ。
+Follow numbered sections for scan scope, counts, the findings list, and details, as in a man page or RFC. Keep the text at a consistent reading width and connect the list to the details with section links.
 
-## agentic-scan らしさ
+## Why It Fits agentic-scan
 
-LP と同じ冷たいグレー、墨色の罫線、`r--` を使う。等幅のスキル名、節番号、ファイル・行、検証判定が参照の手がかりになり、根拠と修正方針は和文ゴシックで読み進められる。誤検知は一覧上で判定を明示する。
+Use the LP's cool gray, ink-colored rules, and `r--`. Monospace skill names, section numbers, files and lines, and verification verdicts serve as reference points. Evidence and fix direction use Japanese Gothic type. The list explicitly shows the verdict for false positives.
 
-## 横展開
+## Adapting It to Other Skills
 
-- **ux-scan** は診断対象に画面・ビューポートや主要導線を記載し、詳細で観察条件と改善案を参照できるようにする。
-- **bug-scan** は詳細の定義リストに起点コミット、影響する箇所、根拠を置く。節アンカーと指摘 ID を、レビュー会議や共有 PDF からの参照に使える。
+- **ux-scan** lists screens, viewports, and primary flows in the scan scope, with observation conditions and proposed improvements in the details.
+- **bug-scan** puts the originating commit, affected locations, and evidence in the detail definition list. Section anchors and finding IDs can be referenced in review meetings and shared PDFs.
 
-## 組み込みと工数
+## Integration and Effort
 
-**小〜中・1〜1.5人日程度**（security-scan での初回組み込みと確認）。`render.py` の `render_assessment_html()` にある既存の索引と指摘本文に節題とアンカーを通す。PDF 用の `document.css` とダッシュボードの `dashboard.css` に書体、目次、罫線、狭幅での表、改ページ制御を追加する。`DASHBOARD` は既存のセクションナビと指摘表を再利用し、節番号と参照リンクを差し込む。検索・絞り込みは既存の UI に接続する。
+**Small to medium, about 1–1.5 person-days** (initial integration and verification in security-scan). Add section titles and anchors to the existing index and finding bodies in `render_assessment_html()` in `render.py`. Add typography, table-of-contents, rule, narrow-width table, and page-break styles to the PDF's `document.css` and the dashboard's `dashboard.css`. In `DASHBOARD`, reuse the existing section navigation and findings table, and insert section numbers and reference links. Connect search and filtering to the existing UI.
 
-## 弱点
+## Limitations
 
-件数の強調と操作部品が控えめなため、件数の急変を見る用途や何度も絞り込む運用では目次と静的な一覧だけでは手数が増える。狭幅では長い指摘名とパスにより表の行が縦に伸びる。
+Counts and controls have little visual emphasis. Relying on the table of contents and static list takes more steps when monitoring abrupt changes in counts or filtering repeatedly. At narrow widths, long finding names and paths make table rows taller.

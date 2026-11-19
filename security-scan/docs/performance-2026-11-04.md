@@ -1,127 +1,127 @@
-# 性能最適化の検証記録 — 2026-11-04（JST）
+# Performance Optimization Verification Record — 2026-11-04 (JST)
 
-## A. 最適化サマリー
+## A. Optimization Summary
 
-基準コミットは `ddaca26df47253abd12414282982f0aa87b792cf`。取得直後の作業ツリーに未コミット変更がないことを確認し、専用ブランチで作業した。最初に全体監査・`make check`・既存8ワークロードの3規模測定を行い、その後に独立した候補を実装・比較した。実行環境は Python 3.12.14 / Linux x86_64。新しい実行時依存関係は追加していない。
+The baseline commit is `ddaca26df47253abd12414282982f0aa87b792cf`. After confirming there were no uncommitted changes in the freshly checked-out working tree, work proceeded on a dedicated branch. We first performed a full audit, `make check`, and 3-scale measurements of the 8 existing workloads, then implemented and compared independent candidates. The execution environment was Python 3.12.14 / Linux x86_64. No new runtime dependencies were added.
 
-本記録の数値は合成したオフライン入力に対する実測であり、ネットワーク監査や本番利用全体の速度を表すものではない。全指標・全入力に対する非劣化を証明したとは扱わない。合成fixtureのうち改善を採用した経路と、無変更の対照経路を区別する。生サンプル、条件、出力ハッシュ、初期値と再測定値は [測定データ](performance-2026-11-04.json) に保存した。
+Numbers in this record are empirical measurements on synthetic offline inputs and do not represent network audit speed or overall production performance. They are not treated as proof of non-regression across all metrics or inputs. Among synthetic fixtures, paths with adopted improvements are distinguished from unmodified control paths. Raw samples, conditions, output hashes, initial values, and re-measurements are saved in [measurement data](performance-2026-11-04.json).
 
-### 調査した領域
+### Areas Investigated
 
-| 領域 | 確認範囲・判断 |
+| Area | Scope & Assessment |
 |---|---|
-| 構成・主要経路 | 標準ライブラリ中心の Python CLI。依存スキャン、所見更新、証拠取得・検証、HTML/PDF生成、契約確認、実行管理を横断した。Python 3.9/3.12 のCIを持ち、Cargo workspaceの一部解析は3.11以降の `tomllib` を使用する。 |
-| アルゴリズム | ID重複判定、F/D分類、除外所見の採番、Compose要素の選別、workflow解析の繰り返し、ファイル名判定、URL redactionを確認・計測した。URLの変更は最終的に取り消した。 |
-| メモリ・キャッシュ | ソートの一時領域、分類リスト、レポート索引、局所LRU、文字列保持、URL callback生成を確認した。永続キャッシュやキャッシュ上限の変更は加えていない。 |
-| I/O・証拠 | ファイルの種別・リンク拒否、サイズ・件数・時間制限、ハッシュ、前後の同一性確認を維持した。再読み込みの省略は行わない。 |
-| 非同期・並列・復旧 | writer lock、子プロセスへの継承、期限超過時の終了、checkpoint、stage/rollback、原子的公開を確認した。製品側の並列度は変更していない。 |
-| 外部監査・依存 | 外部監査の呼出し、結果解析、triageを調査した。オンライン通信の速度・負荷は未測定で、外部監査の並列化や永続結果キャッシュは保留した。 |
-| データベース | 通常業務向けのDB経路はない。SQLiteは件数を制限した再現用fixtureに用いられる。DB改善を成果には数えない。 |
-| HTML・JS/CSS・PDF | HTML生成経路、検索・ソート・遅延描画、印刷処理を調査した。既存JSの検索キャッシュ・debounce・詳細DOM遅延構築・共有Collatorを確認。ブラウザやアクセシビリティの実測不足からJS/CSS/PDF実装は変更しない。 |
-| vendor・生成物 | `scan_report_kit` とその `MANIFEST` は変更していない。生成されたレポートを製品コードとして編集していない。 |
-| CI・ビルド | Makefile、文書参照、構文、vendor整合性、サンプル描画、自己スキャン、Python行列、必須Chrome/PDF gateを確認した。一般的なコンパイルやフロントエンドbundle工程はない。 |
+| Architecture & hot paths | Standard-library-centric Python CLI. Covered dependency scanning, findings updates, evidence capture/verification, HTML/PDF generation, contract checks, and run management. CI runs Python 3.9/3.12; part of Cargo workspace parsing uses `tomllib` from Python 3.11+. |
+| Algorithms | Checked and measured ID duplicate detection, F/D classification, excluded-finding renumbering, Compose element selection, repeated workflow parsing, filename matching, and URL redaction. URL changes were ultimately reverted. |
+| Memory & caching | Checked sorting temporaries, classification lists, report indexes, local LRU, string retention, and URL callback allocation. No persistent caches or cache-limit changes were introduced. |
+| I/O & evidence | Preserved file type and symlink rejection, size/count/time limits, hashing, and before/after identity checks. Re-reads are not skipped. |
+| Async, concurrency & recovery | Checked writer lock, inheritance by child processes, deadline termination, checkpoints, stage/rollback, and atomic publish. Product-side concurrency was not changed. |
+| External audits & dependencies | Investigated external audit invocations, result parsing, and triage. Online network speed and load were not measured; parallelizing external audits and persistent result caching were deferred. |
+| Database | No regular operational DB path exists. SQLite is used for count-limited reproduction fixtures. DB improvements are not counted as results. |
+| HTML, JS/CSS & PDF | Investigated HTML generation, search/sort/lazy rendering, and printing. Verified existing JS search cache, debounce, lazy detail DOM construction, and shared Collator. JS/CSS/PDF implementations were not modified due to lack of browser and accessibility measurements. |
+| Vendor & generated artifacts | `scan_report_kit` and its `MANIFEST` were not modified. Generated reports were not edited as product code. |
+| CI & build | Checked Makefile, doc references, syntax, vendor integrity, sample rendering, self-scan, Python matrix, and mandatory Chrome/PDF gate. There is no conventional compile or frontend bundling step. |
 
-### 実装した最適化
+### Implemented Optimizations
 
-| 優先 | 対象 | 問題と変更 | 計算量・互換性の根拠 |
+| Priority | Target | Problem & Change | Complexity & Compatibility Rationale |
 |---|---|---|---|
-| 1 | 契約チェック | IDごとの全件 `count` と所見辞書のmembership比較を除去。ID配列をその場でソートし、隣接重複を一度だけ診断する。F/Dを一回で分類し、不要になったID配列を解放する。 | 重複判定は O(N²)→O(N log N)、分類はO(N²)→O(N)。重複の辞書順、一意性、診断順、F/D相対順を維持。 |
-| 2 | 採番 | active/excludedを一回で分類し、従来と同じキーでソート。分類後の参照リストを解放する。 | O(N×除外数)の辞書比較を削除。最初のID走査を残し、異常入力の例外優先順位を維持。 |
-| 3 | Compose | トップレベル要素とサービス配下要素の相互membershipを削除。 | ソース行範囲が交わらないため常に不一致。対象選別のO(T×S)を除去し、検査対象・順番・行番号を維持。 |
-| 4 | workflow | trigger抽出をテキストごとに一回へ集約。ローカル参照に必須の `./` がない場合だけローカルグラフ用の再解析を省く。 | ファイル読み込み、通常のセキュリティ検査、privilege/input伝播、順序・上限・不完全判定を維持。 |
-| 5 | requirements判定 | prose除外regexを、結果が必要な最後の `requirements/` 分岐へ移動。 | 短絡順序、bool戻り値、suffix iterableの消費回数を維持。不一致拡張子や明示的なrequirements名で重複作業を減らす。 |
+| 1 | Contract check | Removed per-ID full `count` and finding-dict membership comparisons. Sort the ID list in place and diagnose adjacent duplicates once. Classify F/D in a single pass and release the no-longer-needed ID list. | Duplicate check O(N²)→O(N log N), classification O(N²)→O(N). Preserves lexicographical order of duplicates, uniqueness, diagnostic order, and relative F/D order. |
+| 2 | Renumbering | Classify active/excluded in a single pass and sort with the same key as before. Release reference lists after classification. | Eliminated O(N×excluded) dict comparisons. Kept the initial ID scan to preserve exception precedence on malformed input. |
+| 3 | Compose | Removed mutual membership checks between top-level elements and service-nested elements. | Source line ranges never overlap, so they never matched. Eliminated O(T×S) target selection while preserving inspected targets, order, and line numbers. |
+| 4 | Workflow | Consolidated trigger extraction to once per text. Skip re-parsing for the local graph only when `./` (required for local references) is absent. | Preserves file reads, standard security checks, privilege/input propagation, ordering, limits, and incomplete-result detection. |
+| 5 | Requirements detection | Moved prose-exclusion regex into the final `requirements/` branch where its result is needed. | Preserves short-circuit order, bool return value, and suffix iterable consumption count. Reduces redundant work for non-matching extensions and explicit requirements names. |
 
-### 採用しなかった候補
+### Rejected Candidates
 
-| 候補 | 採否・理由 |
+| Candidate | Decision & Reason |
 |---|---|
-| requirementsの拡張子不一致を先頭でreturn | 最初の案ではrequirementsディレクトリ内の分類でCPU約6.2%増。取り消し、上記の遅延評価へ変更した。 |
-| URL guard＋callback共有の最終候補 | OSV解析・HTML生成のCPU時間とプロセスRSSは改善したが、通常規模reportでPython traced peakの増加が繰り返し観測された。通常条件の非劣化が未確定のため本体と6専用testsを取り消し、全統合比較をやり直した。 |
-| URL syntax guard単独 | コロン・percentを含む非URLでCPU平均+2.240%、95%区間+0.428～+3.960%。単独案は不採用。callback生成も除去した組合せを別途比較したが、その組合せも上記理由で取り消した。 |
-| `has_url_credentials` の同様のguard | 非劣化の根拠が不足したため実装を残していない。 |
-| レポートの検証カタログ索引共有 | 時間は改善したが、standalone呼出しの追加メモリや内部API拡張を含む非劣化を確定できず取り消した。 |
-| 既知ラベルのeager fallback省略 | LRUに入るキーとeviction順が変わる。境界測定の微小peak差は正逆で反転し固定劣化とは判定しなかったが、保持する文字列サイズまで含めた非劣化が未確定のため取り消した。 |
-| Gitオブジェクトのheader/body分割hash | 16MiB単体では改善したが、64B入力で追加peak32B、[hashlibのGIL解放条件](https://docs.python.org/3.12/library/hashlib.html)の境界の変更、実Gitで明確な改善を確定できない問題が残ったため取り消した。 |
-| 証拠の再読込省略・検証共有 | 競合・変更・stale結果の検出に必要。安全境界を弱める変更は採用しない。 |
-| 全体redaction cache、外部監査並列化、runnerコピー削減、deepcopy範囲縮小、CI cache変更 | 保持量・失効・エラー順序・復旧・外部負荷・実CI効果の検証が不足しており保留。 |
+| Early return on extension mismatch in requirements | Initial version increased CPU by ~6.2% when classifying inside `requirements` directories. Reverted and replaced with the deferred evaluation above. |
+| Final candidate combining URL guard + shared callback | Improved CPU time and process RSS for OSV parsing and HTML generation, but repeatedly increased Python traced peak in normal-scale report runs. Because non-regression under normal conditions was not established, reverted the implementation and its 6 dedicated tests and re-ran all integrated comparisons. |
+| URL syntax guard alone | Average CPU +2.240% (95% CI +0.428% to +3.960%) on non-URLs containing colons/percent signs. Rejected standalone. A combined variant removing callback creation was compared separately, then also reverted for the reason above. |
+| Similar guard for `has_url_credentials` | Not retained due to insufficient evidence of non-regression. |
+| Shared verification-catalog index in report | Improved time, but reverted because non-regression—including extra memory in standalone calls and internal API expansion—could not be established. |
+| Skipping eager fallback for known labels | Changes LRU keys and eviction order. Tiny boundary peak differences flipped sign on reversal and were not judged a fixed regression, but reverted because non-regression including retained string size was not established. |
+| Split header/body hashing for Git objects | Improved 16 MiB standalone, but added 32 B peak on 64 B input, shifted the [hashlib GIL release threshold](https://docs.python.org/3.12/library/hashlib.html), and failed to confirm clear gains on real Git; reverted. |
+| Skipping evidence re-reads / sharing verification | Required to detect races, mutations, and stale results. Changes that weaken security boundaries are not adopted. |
+| Global redaction cache, parallel external audits, reduced runner copies, narrower deepcopy scope, CI cache changes | Deferred due to insufficient verification of retention size, invalidation, error ordering, recovery, external load, and real CI impact. |
 
-`render.py`、`url_redaction.py`、`evidence_integrity.py`、vendored assets、実行制限、依存関係、CIの必須検査条件は基準と同一である。
+`render.py`, `url_redaction.py`, `evidence_integrity.py`, vendored assets, execution limits, dependencies, and mandatory CI checks remain identical to the baseline.
 
-## B. 変更ファイル一覧
+## B. Changed Files
 
-| ファイル | 変更内容・目的 | 互換性・検証 |
+| File | Change & Purpose | Compatibility & Verification |
 |---|---|---|
-| `skills/security-scan/scripts/contract_check.py` | 重複ID検査と所見分類の反復削減、一時配列の寿命短縮 | 診断順・内容・入力不変、ランダム/不正ID/欠損出力、6回帰テスト |
-| `skills/security-scan/scripts/findings.py` | active/excludedの一回分類と一時配列解放 | 採番・辞書挿入順・例外優先順位・除外比率、6回帰テスト |
-| `skills/security-scan/scripts/deps_scan.py` | Compose、workflow、ファイル名判定の重複作業削減 | 2,861ケース差分一致、8回帰テスト、I/Oカウンタ |
-| `scripts/ci/benchmark_performance.py` | 任意のCPU・P95/P99・throughput・Python peak・RSS測定 | 既定JSONのキーを維持する回帰テスト。時間とallocationの測定を分離 |
-| `scripts/ci/benchmark_pipeline.py` | 3規模のscan/contract/renumber/HTML/URL/Git-control fixture | 同一fixture・完全出力hash・無害なオフライン入力 |
-| `scripts/ci/compare_performance.py` | 別interpreterの交互比較、出力一致、raw sample、bootstrap区間 | 固定revisionの上書き拒否、timeout・子プロセス終了、同一revision smoke test |
-| `tests/test_contract_performance.py` | 6回帰テスト | 全体suiteに含めて実行 |
-| `tests/test_findings_renumber_performance.py` | 6回帰テスト | 全体suiteに含めて実行 |
-| `tests/test_scan_efficiency.py` | 8回帰テスト | 全体suiteに含めて実行 |
-| `tests/test_performance_harness.py` | 3回帰テスト | 既定出力形式、予約引数、2-worker比較の完了を検証 |
-| `README.md` | 計測方法・新しい比較コマンドの説明 | 文書参照検査 |
-| `docs/ci.md` | 条件・限界・RSS範囲・再現コマンドの説明 | 文書参照検査 |
-| `docs/performance-2026-11-04.md` | 本報告 | 生データから性能表を生成 |
-| `docs/performance-2026-11-04.json` | raw samples・hash・実行条件・判断材料 | 未測定値を補完しない |
+| `skills/security-scan/scripts/contract_check.py` | Reduced repeated work in duplicate ID checks and finding classification; shortened temporary list lifetime | Diagnostic order/content and input immutability; randomized/invalid IDs and missing outputs; 6 regression tests |
+| `skills/security-scan/scripts/findings.py` | Single-pass active/excluded classification and release of temporary lists | Numbering, dict insertion order, exception precedence, excluded ratios; 6 regression tests |
+| `skills/security-scan/scripts/deps_scan.py` | Reduced redundant work in Compose, workflow, and filename detection | 2,861-case differential match, 8 regression tests, I/O counters |
+| `scripts/ci/benchmark_performance.py` | Optional CPU, P95/P99, throughput, Python peak, and RSS measurement | Regression test preserving default JSON keys; separates timing from allocation measurement |
+| `scripts/ci/benchmark_pipeline.py` | 3-scale scan/contract/renumber/HTML/URL/Git-control fixtures | Identical fixtures, full output hashes, benign offline inputs |
+| `scripts/ci/compare_performance.py` | Alternating comparison in separate interpreters, output matching, raw samples, bootstrap intervals | Refuses overwriting fixed revisions, timeout & child termination, same-revision smoke test |
+| `tests/test_contract_performance.py` | 6 regression tests | Executed as part of full suite |
+| `tests/test_findings_renumber_performance.py` | 6 regression tests | Executed as part of full suite |
+| `tests/test_scan_efficiency.py` | 8 regression tests | Executed as part of full suite |
+| `tests/test_performance_harness.py` | 3 regression tests | Verifies default output format, reserved args, and completion of 2-worker comparison |
+| `README.md` | Measurement instructions and new comparison command | Doc reference check |
+| `docs/ci.md` | Conditions, limitations, RSS scope, and reproduction commands | Doc reference check |
+| `docs/performance-2026-11-04.md` | This report | Performance tables generated from raw data |
+| `docs/performance-2026-11-04.json` | Raw samples, hashes, execution conditions, and decision evidence | Does not impute unmeasured values |
 
-## C. 性能比較
+## C. Performance Comparison
 
-### 測定方法
+### Methodology
 
-- 同じLinux環境とPython、CPU affinity 1、`PYTHONHASHSEED=0`、bytecode書込みなし。同じ最新harnessで基準worktreeと候補を測定した。
-- revisionごとに別interpreterを使い、3回warmup後、各21ペアを前→後／後→前で交互実行した。timed operation同士は並走させていない。
-- 入力生成・コピー・IPC・結果hashは計測外。OS/filesystem cacheはwarmで、cold-cache計測とは区別する。
-- 時間・CPUと、3回のtracemalloc実行を分離した。各回の完全結果hash一致が必須。採番の辞書挿入順は別の差分テストでも確認した。
-- 区間はpaired bootstrap 3,000再標本化による平均時間比の95%区間。1を跨ぐ結果を改善・等価の証明とはしない。多数のケースの未調整区間であり、同一revision同士の対照でも一部に偏りが出るため、単一の有意判定だけで採否を決めず、再測定とコード構造も確認した。
-- P95/P99はnearest-rank。21回のP99は観測最大値で、本番tail/SLOを推定できる精度ではない。
-- throughputは1バッチ／平均時間。製品の同時リクエスト処理能力ではない。
-- Python peakはoperation中に新規追跡したallocationであり、事前の入力・importsを含まない。RSSはworker全体のhigh-waterで、先行workloadやtracingも含む。両者を混同しない。
+- Same Linux environment and Python, CPU affinity 1, `PYTHONHASHSEED=0`, no bytecode writing. Measured baseline worktree and candidate using the same latest harness.
+- Separate interpreter per revision; after 3 warmups, 21 pairs alternated before→after and after→before. Timed operations never ran concurrently.
+- Input generation, copying, IPC, and result hashing are outside the timed region. OS/filesystem cache is warm and distinct from cold-cache measurements.
+- Wall/CPU timing was separated from 3 tracemalloc runs. Exact full-result hash match was required on every run. Dict insertion order for renumbering was also verified via a separate differential test.
+- Intervals are 95% intervals for the mean time ratio from 3,000 paired bootstrap resamples. Results spanning 1 are not treated as proof of improvement or equivalence. Because these are unadjusted intervals across many cases and even same-revision controls show occasional bias, adoption was not decided by a single significance check alone; re-measurements and code structure were also inspected.
+- P95/P99 use nearest-rank. P99 over 21 runs is the observed maximum and does not estimate production tail/SLO.
+- Throughput is 1 batch / mean time, not product concurrent request capacity.
+- Python peak is newly traced allocations during the operation, excluding prior inputs and imports. RSS is the worker process high-water mark, including prior workloads and tracing. Do not conflate the two.
 
-### 高負荷ワークロード
+### High-Load Workloads
 
-| ワークロード | 前P50 ms | 後P50 ms | P50変化 | 平均時間比95%区間 | 出力 |
+| Workload | Before P50 ms | After P50 ms | P50 Change | Mean Time Ratio 95% CI | Output |
 |---|---:|---:|---:|---|---|
-| Compose（1,500 services / 1,000 extensions） | 53.335 | 33.619 | -36.97% | 0.606–0.640 | 一致 |
-| remote workflow（48 files × 160 steps） | 379.463 | 327.099 | -13.80% | 0.817–0.908 | 一致 |
-| local actionを含むworkflow（48 files × 160 steps） | 403.498 | 405.701 | +0.55% | 0.942–1.056 | 一致 |
-| source tree（10,000 files） | 471.338 | 437.467 | -7.19% | 0.906–0.976 | 一致 |
-| 契約チェック（1,800所見） | 94.160 | 5.346 | -94.32% | 0.055–0.064 | 一致 |
-| 採番（999所見、半数除外） | 12.904 | 1.232 | -90.45% | 0.079–0.108 | 一致 |
-| HTML 2種（400所見・500証拠・200実行） | 938.391 | 952.789 | +1.53% | 0.994–1.039 | 一致 |
-| URLを含まない10,000フィールド | 14.146 | 14.325 | +1.27% | 0.938–1.028 | 一致 |
-| 500 URL/行 × 20行 | 79.271 | 80.001 | +0.92% | 0.979–1.033 | 一致 |
-| 約21Ki文字、末尾区切り文字 × 100行 | 167.094 | 166.131 | -0.58% | 0.973–1.093 | 一致 |
-| workspace探索（600 members） | 617.295 | 576.435 | -6.62% | 0.945–1.047 | 一致 |
-| source excerpts（500所見・10,000行） | 40.760 | 41.205 | +1.09% | 0.905–1.034 | 一致 |
-| 既存HTML fixture（400所見） | 987.856 | 988.932 | +0.11% | 0.942–1.040 | 一致 |
-| source modelなしtriage（100所見） | 0.944 | 1.017 | +7.65% | 0.929–1.224 | 一致 |
-| live-integrity HTML（200所見・500証拠） | 1674.410 | 1736.688 | +3.72% | 0.943–1.025 | 一致 |
-| OSV独立groups（2,000 records） | 393.577 | 388.323 | -1.33% | 0.919–1.002 | 一致 |
-| OSV alias pairs（2,000 records） | 300.110 | 301.903 | +0.60% | 0.925–1.044 | 一致 |
-| OSV groupなし（2,000 records） | 416.208 | 415.009 | -0.29% | 0.952–1.019 | 一致 |
+| Compose (1,500 services / 1,000 extensions) | 53.335 | 33.619 | -36.97% | 0.606–0.640 | Match |
+| Remote workflow (48 files × 160 steps) | 379.463 | 327.099 | -13.80% | 0.817–0.908 | Match |
+| Workflow with local actions (48 files × 160 steps) | 403.498 | 405.701 | +0.55% | 0.942–1.056 | Match |
+| Source tree (10,000 files) | 471.338 | 437.467 | -7.19% | 0.906–0.976 | Match |
+| Contract check (1,800 findings) | 94.160 | 5.346 | -94.32% | 0.055–0.064 | Match |
+| Renumbering (999 findings, half excluded) | 12.904 | 1.232 | -90.45% | 0.079–0.108 | Match |
+| HTML 2 variants (400 findings, 500 evidence, 200 runs) | 938.391 | 952.789 | +1.53% | 0.994–1.039 | Match |
+| 10,000 fields without URLs | 14.146 | 14.325 | +1.27% | 0.938–1.028 | Match |
+| 500 URLs/line × 20 lines | 79.271 | 80.001 | +0.92% | 0.979–1.033 | Match |
+| ~21 Ki chars, trailing delimiters × 100 lines | 167.094 | 166.131 | -0.58% | 0.973–1.093 | Match |
+| Workspace discovery (600 members) | 617.295 | 576.435 | -6.62% | 0.945–1.047 | Match |
+| Source excerpts (500 findings, 10,000 lines) | 40.760 | 41.205 | +1.09% | 0.905–1.034 | Match |
+| Existing HTML fixture (400 findings) | 987.856 | 988.932 | +0.11% | 0.942–1.040 | Match |
+| Triage without source model (100 findings) | 0.944 | 1.017 | +7.65% | 0.929–1.224 | Match |
+| Live-integrity HTML (200 findings, 500 evidence) | 1674.410 | 1736.688 | +3.72% | 0.943–1.025 | Match |
+| OSV distinct groups (2,000 records) | 393.577 | 388.323 | -1.33% | 0.919–1.002 | Match |
+| OSV alias pairs (2,000 records) | 300.110 | 301.903 | +0.60% | 0.925–1.044 | Match |
+| OSV ungrouped (2,000 records) | 416.208 | 415.009 | -0.29% | 0.952–1.019 | Match |
 
-### 指標別：契約チェック1,800所見
+### By Metric: Contract Check (1,800 Findings)
 
-| 指標 | 最適化前 | 最適化後 | 変化率 | 判定 |
+| Metric | Before | After | Change | Verdict |
 |---|---:|---:|---:|---|
-| 平均実行時間 | 95.742 ms | 5.702 ms | -94.04% | 改善 |
-| P50 | 94.160 ms | 5.346 ms | -94.32% | 改善 |
-| P95 | 114.371 ms | 8.420 ms | -92.64% | 改善 |
-| P99（観測最大） | 125.639 ms | 9.424 ms | -92.50% | 改善 |
-| CPU時間P50 | 94.157 ms | 5.349 ms | -94.32% | 改善 |
-| 直列throughput | 10.445 checks/s | 175.379 checks/s | +1579.11% | 改善 |
-| Python peak（3回中央値） | 1,472,420 B | 1,456,252 B | -1.10% | 改善 |
-| ファイル読込 | 4回 | 4回 | 0% | 読込量も同一（個別I/O計測） |
-| 物理disk I/O・online network・DB負荷 | 未測定 | 未測定 | — | 未検証／DB通常経路は対象なし |
-| CPU使用率・GC pause・並行throughput | 未測定 | 未測定 | — | 未検証 |
+| Mean runtime | 95.742 ms | 5.702 ms | -94.04% | Improved |
+| P50 | 94.160 ms | 5.346 ms | -94.32% | Improved |
+| P95 | 114.371 ms | 8.420 ms | -92.64% | Improved |
+| P99 (observed max) | 125.639 ms | 9.424 ms | -92.50% | Improved |
+| CPU time P50 | 94.157 ms | 5.349 ms | -94.32% | Improved |
+| Serial throughput | 10.445 checks/s | 175.379 checks/s | +1579.11% | Improved |
+| Python peak (median of 3) | 1,472,420 B | 1,456,252 B | -1.10% | Improved |
+| File reads | 4 | 4 | 0% | Identical read volume (separate I/O measurement) |
+| Physical disk I/O, online network, DB load | Unmeasured | Unmeasured | — | Unverified / no regular DB path |
+| CPU utilization, GC pause, concurrent throughput | Unmeasured | Unmeasured | — | Unverified |
 
-### 全規模のP50変化率
+### P50 Change Across All Scales
 
-数値は各初回統合比較の点推定である。小規模のノイズや再測定の結果を省略しない。URL・HTMLなど本体が無変更の対照経路の変動を改善成果に数えない。raw samplesと信頼区間は測定データを参照する。
+Values are point estimates from each initial integrated comparison. Small-scale noise and re-measurement results are not omitted. Fluctuations on unmodified control paths such as URL and HTML are not counted as improvements. See the measurement data for raw samples and confidence intervals.
 
-| ワークロード | small | normal | high |
+| Workload | small | normal | high |
 |---|---:|---:|---:|
 | compose | -0.82% | +0.88% | -36.97% |
 | workflow_remote | -10.17% | -17.43% | -13.80% |
@@ -142,74 +142,74 @@
 | osv_alias_pairs | +0.38% | -1.10% | +0.60% |
 | osv_ungrouped | -4.87% | -5.20% | -0.29% |
 
-### 小規模・メモリ・起動の追加検証
+### Additional Small-Scale, Memory, and Startup Verification
 
-小規模の契約チェックは初回21ペアでP50が増えたが、同じharness・入力を501ペアで再測定した。下表はその再測定であり、初回値は上表と生データに残している。時間比の区間が1を跨ぐため、改善とも同等性の証明とも扱わない。
+Small-scale contract check showed a P50 increase in the initial 21 pairs, so the same harness and input were re-measured with 501 pairs. The table below shows that re-measurement; initial values remain in the table above and in the raw data. Because the time-ratio interval spans 1, this is treated neither as an improvement nor as proof of equivalence.
 
-| 指標 | 前 | 後 | 判定 |
+| Metric | Before | After | Verdict |
 |---|---:|---:|---|
-| P50 | 0.333156 ms | 0.333386 ms | +0.069%、明確な差を確認せず |
-| 平均時間比95%区間 | — | 0.979–1.050 | 同等性の証明ではない |
-| Python peak | 207,802 B | 207,625 B | 減少 |
+| P50 | 0.333156 ms | 0.333386 ms | +0.069%, no clear difference confirmed |
+| Mean time ratio 95% CI | — | 0.979–1.050 | Not proof of equivalence |
+| Python peak | 207,802 B | 207,625 B | Decreased |
 
-scanの初回比較には別々のfixtureディレクトリを用いた。Composeで4 B、source treeで4 / 36 / 96 Bの差が出たため、同じ実ファイル・inode・内容・安定metadataを使い、各revisionを新しいinterpreterで3回warmup＋5回traceした。高負荷Composeとsource treeの3規模は、対応する5サンプルのpeakと保持データがすべて一致した。
+Initial scan comparisons used separate fixture directories. Because differences of 4 B appeared in Compose and 4 / 36 / 96 B in source tree, we re-ran each revision in a fresh interpreter with 3 warmups + 5 traces using the exact same real files, inodes, contents, and stable metadata. High-load Compose and all 3 scales of source tree matched identically across all 5 paired samples in both peak and retained data.
 
-| 共有入力 | 前Python peak中央値 | 後Python peak中央値 | 結果 |
+| Shared Input | Before Python Peak Median | After Python Peak Median | Result |
 |---|---:|---:|---|
-| high/compose | 1,336,553 B | 1,336,553 B | 出力・順序・保持サイズ・各peak一致 |
-| small/source_tree | 48,892 B | 48,892 B | 出力・順序・保持サイズ・各peak一致 |
-| normal/source_tree | 1,965,721 B | 1,965,721 B | 出力・順序・保持サイズ・各peak一致 |
-| high/source_tree | 12,537,983 B | 12,537,983 B | 出力・順序・保持サイズ・各peak一致 |
+| high/compose | 1,336,553 B | 1,336,553 B | Output, order, retained size, and all peaks matched |
+| small/source_tree | 48,892 B | 48,892 B | Output, order, retained size, and all peaks matched |
+| normal/source_tree | 1,965,721 B | 1,965,721 B | Output, order, retained size, and all peaks matched |
+| high/source_tree | 12,537,983 B | 12,537,983 B | Output, order, retained size, and all peaks matched |
 
-small/local workflowは最初のtraceに59 Bの差が残り、5回中央値では8 B差だった。同じ実ファイルとworkerを使ってrevision実行順を逆にした再測定では、対応する5サンプルすべてが一致した（38,432 / 38,424 / 38,416 / 38,408 / 38,392 B）。初回差を隠さず記録し、持続する増加とは判定していない。
+In `small/local workflow`, a 59 B difference remained on the first trace, with an 8 B difference in the 5-run median. In a re-measurement reversing the revision execution order with the same real files and worker, all 5 paired samples matched identically (38,432 / 38,424 / 38,416 / 38,408 / 38,392 B). The initial difference is recorded without omission and is not judged a persistent increase.
 
-無変更の描画関数を使う対照にも差が残る。normal catalogのPython peak中央値は5,123,424→5,123,706 B（+282 B）、high live-integrityは10,579,175→10,585,144 B（+5,969 B）だった。両経路の計測本体は今回変更した関数を呼ばないことを静的に確認した。同一revision同士の対照でも変動が観測されるが、import状態や先行workloadも含むため、この残差の機序を測定ノイズと特定したわけではない。これらを速度改善・完全なメモリ同等性の根拠には数えない。
+Differences also remain in controls using unmodified rendering functions: normal catalog Python peak median was 5,123,424→5,123,706 B (+282 B), and high live-integrity was 10,579,175→10,585,144 B (+5,969 B). Static analysis confirmed that the timed bodies of both paths do not call any function modified in this work. Although fluctuations are also observed in same-revision controls, import state and prior workloads are involved, so the mechanism of these residuals was not definitively attributed to measurement noise. They are not counted as evidence of speedup or exact memory equivalence.
 
-起動は4つのCLIの `--help` をfresh interpreterで各31ペア比較した。既存bytecodeの有無による条件差を除くため、両revisionで同じ空のbytecode prefixを指定した。さらにscriptパスの差を除くため、同一の作業用コピーへ本体3ファイルだけを計測外で切り替え、全変更ファイルのbyte一致を確認してから起動した。bytecodeの読み込み・書き込みはともに行わない。OSのファイルcacheはwarmであり、cold-cache起動とは異なる。異なるscriptパスで測定した最初の2回も、生データの予備測定欄に残している。
+Startup was compared across 4 CLIs via `--help` in fresh interpreters for 31 pairs each. To eliminate differences from pre-existing bytecode, both revisions used the same empty bytecode prefix. To further eliminate script path differences, only the 3 product files were swapped into an identical working copy outside the timed region, verifying byte identity of all changed files before launch. Bytecode was neither read nor written. The OS file cache was warm, differing from cold-cache startup. The first 2 runs measured with different script paths are also retained in the preliminary section of the raw data.
 
-| CLI | 前起動P50 ms | 後起動P50 ms | 平均時間比95%区間 | 前/後RSS中央値 B |
+| CLI | Before Startup P50 ms | After Startup P50 ms | Mean Time Ratio 95% CI | Before/After RSS Median B |
 |---|---:|---:|---|---:|
 | deps_scan.py | 361.791 | 353.288 | 0.954–1.028 | 27,172,864 / 27,164,672 |
 | findings.py | 276.994 | 289.018 | 0.994–1.090 | 23,310,336 / 23,285,760 |
 | contract_check.py | 196.392 | 195.057 | 0.970–1.050 | 17,354,752 / 17,354,752 |
 | render.py | 330.760 | 318.112 | 0.955–1.034 | 22,204,416 / 22,204,416 |
 
-上記のRSSはwrapper・imports・source compileを含むプロセス全体のhigh-waterである。起動時間やRSSの小さな点推定差だけから改善・非劣化を断定しない。全サンプルとCPU区間は生データに保存した。
+The RSS figures above are whole-process high-water marks including the wrapper, imports, and source compilation. Improvement or non-regression is not concluded from small point-estimate differences in startup time or RSS alone. All samples and CPU intervals are saved in the raw data.
 
-### その他のメモリ・I/O検証
+### Other Memory & I/O Verification
 
-IDをランダム順にした1,800件のfull contract checkを、出力ファイルがすべて欠ける条件でも比較した。大きなJSON読込にpeakが隠されない条件で、valid / invalid / mixedの診断が一致し、3ケースともpeakが約16 KiB減少した。採番は0/1/10/999件・除外なし/半数/全数の9ケースでpeakが減った。
+A 1,800-finding full contract check with randomized ID order was also compared with all output files missing. Under this condition where large JSON reads do not mask the peak, diagnostics matched across valid, invalid, and mixed cases, and peak dropped by ~16 KiB in all 3 cases. Renumbering reduced peak across all 9 combinations of 0/1/10/999 findings and none/half/all excluded.
 
-scanのPythonファイルAPIカウンタでは、Compose・source tree・local workflowの回数と入力読込byte数が同一。remote workflowは `read_text` 40回・141,035 Bを維持し、`stat` 170→166、`lstat` 426→394となった。これはPython APIの観測であり、物理disk転送量やOS cache missの実測ではない。
+In scan Python file API counters, call counts and input bytes read were identical for Compose, source tree, and local workflow. Remote workflow kept 40 `read_text` calls and 141,035 B, while `stat` changed 170→166 and `lstat` 426→394. These are Python API observations, not measurements of physical disk transfer or OS cache misses.
 
-URL候補を含んだ統合試行と追加診断は `pre_integration_experiments` の `rejected_url_integrated` / `rejected_url_followups` に分離した。採用後の数値に流用していない。候補取消後に基準と最終状態を改めて全比較した。最終状態の追加比較は `followups` に保存した。
+Integrated trials and follow-up diagnostics that included the URL candidate were isolated under `pre_integration_experiments` as `rejected_url_integrated` / `rejected_url_followups` and are not reused in adopted figures. After reverting that candidate, a full comparison between baseline and final state was re-run. Additional final-state comparisons are stored under `followups`.
 
-## D. 品質保証結果
+## D. Quality Assurance Results
 
-- 初期 `make check`: 1,097件実行、成功1,071、失敗0、error0、既存opt-in skip26。
-- 最終 `make check`: 1120件実行、成功1094、失敗0、error0、skip26。追加23件はすべて成功。
-- 追加テストは実行速度の閾値でなく、出力・順序・異常系・入力不変・比較回数の上限を確認する。
-- 同じ内容・異なる順序のID、欠落/非文字列/Unicode ID、重複・同一辞書、除外所見、Compose legacy/empty/repeated section、local call伝播、escaped trigger、suffix generatorを検証した。
-- 検討中のURL案でも型・例外・quote位置・多重encoding等を差分検証したが、メモリ条件の非劣化未確定により取り消した。この案の6専用テストは最終suite数に含めない。既存のURL・redaction回帰テストは全体suiteで実行する。
-- `make benchmark`、`make detection-benchmark`、文書参照、vendor MANIFEST、サンプル描画、自己依存スキャン、`git diff --check`、NodeによるJS構文チェックを実行した。
-- 全PythonファイルをPython 3.9文法でAST解析した。これは実際のPython 3.9 runtimeテストや型チェックとは別である。
-- 専用type checker/linter設定は存在しない。mypy/ruff成功とは報告しない。通常のコンパイル・bundle工程はなく、`make check`を配布整合性のgateとして扱う。
-- 起動確認はfresh interpreterのCLI `--help`を各31ペアで比較。出力hashを一致させ、warm filesystem・同一runpy wrapperの条件と全サンプルを測定データに記録した。
+- Initial `make check`: 1,097 run, 1,071 passed, 0 failed, 0 errors, 26 existing opt-in skipped.
+- Final `make check`: 1120 run, 1094 passed, 0 failed, 0 errors, 26 skipped. All 23 added tests passed.
+- Added tests verify outputs, ordering, error paths, input immutability, and comparison-count bounds rather than runtime thresholds.
+- Verified identical-content/different-order IDs, missing/non-string/Unicode IDs, duplicates and identical dicts, excluded findings, Compose legacy/empty/repeated sections, local call propagation, escaped triggers, and suffix generators.
+- The evaluated URL proposal was also differentially tested for types, exceptions, quote positions, and multi-encoding, then reverted because memory non-regression was not established. Its 6 dedicated tests are excluded from the final suite count. Existing URL and redaction regression tests run in the full suite.
+- Ran `make benchmark`, `make detection-benchmark`, doc references, vendor MANIFEST, sample rendering, self-dependency scan, `git diff --check`, and Node JS syntax check.
+- Parsed all Python files with Python 3.9 grammar via AST. This is distinct from actual Python 3.9 runtime testing or type checking.
+- No dedicated type checker or linter configuration exists; mypy/ruff success is not claimed. There is no standard compile/bundle step; `make check` serves as the distribution integrity gate.
+- Startup verification compared CLI `--help` in fresh interpreters for 31 pairs each, matching output hashes and recording warm-filesystem and identical `runpy` wrapper conditions plus all samples in the measurement data.
 
-### ブラウザ・PDFとCI
+### Browser, PDF, and CI
 
-ローカルには実行可能なChrome/ChromiumとPython Playwrightがなく、既存opt-inの26件は未実行。必須browser/PDF gateの成功とは扱わない。
+Executable Chrome/Chromium and Python Playwright are not available locally, so the 26 existing opt-in tests were not run. The mandatory browser/PDF gate is not treated as passed.
 
-基準コミットの [CI run 41657402714](https://github.com/simota/security-scan/actions/runs/41657402714) ではPython 3.9/3.12 jobsは成功し、reports jobはテスト実行前のChrome version guardで失敗していた。観測版 `156.0.8078.79` に対し許可版は `155.0.8059.39,156.0.8078.47`。今回、許可リスト・必須テスト・skip禁止条件を緩めていない。候補コミットのCI結果はPRのChecksを参照する。
+In baseline [CI run 41657402714](https://github.com/simota/security-scan/actions/runs/41657402714), the Python 3.9/3.12 jobs passed, while the `reports` job failed at the Chrome version guard before tests ran: observed version `156.0.8078.79` vs allowed `155.0.8059.39,156.0.8078.47`. Neither the allowlist, mandatory tests, nor no-skip requirements were relaxed. See PR Checks for candidate commit CI results.
 
-## E. 残存リスク・終了条件
+## E. Residual Risks & Exit Criteria
 
-1. 実ネットワーク監査、外部サービス負荷、cold-cache起動、実disk転送量、GC pause分布、多利用者でのP95/P99・同時実行throughputは未検証である。
-2. report peakの微小変動と時間ノイズは初回値・再測定・同一revision controlで区別する。信頼区間が1を跨ぐだけでは同等性の証明にならない。
-3. ブラウザの表示品質、アクセシビリティ、日本語/英語PDFの実行確認には、承認済みの実ブラウザ環境の復旧が必要である。
-4. カタログ索引共有、全体cache、外部監査の並列化、runnerのコピー削減には残存余地があるが、保持量・失効・競合・障害復旧を含む非劣化を確認するまで保留する。
-5. 検証できない領域の改善率・運用費用削減率を推測で補っていない。高リスクの追加変更や、測定ノイズ内の効果を追って複雑化する段階で停止した。
+1. Real network audits, external service load, cold-cache startup, physical disk transfer, GC pause distribution, and multi-user P95/P99 and concurrent throughput are unverified.
+2. Small report peak fluctuations and timing noise are distinguished via initial values, re-measurements, and same-revision controls. A confidence interval spanning 1 does not by itself prove equivalence.
+3. Verifying browser rendering quality, accessibility, and Japanese/English PDF generation requires restoring an approved real browser environment.
+4. Remaining opportunities exist in shared catalog indexing, global caching, parallel external audits, and reduced runner copies, but they remain deferred until non-regression—including retention, invalidation, races, and fault recovery—can be verified.
+5. Improvement rates and operational cost savings in unverifiable areas are not estimated. Work stopped before adding high-risk changes or complexity chasing effects within measurement noise.
 
-## 再現
+## Reproduction
 
-`docs/ci.md` の「Offline performance comparisons」に、両worktreeを同じharnessで比較するコマンドと各指標の範囲を記載している。厳密なサイズ・引数・環境は測定データの `comparison_invocations` を使う。基準コミットと候補のproduction file SHA-256も同ファイルに記録した。外部監査コマンド・対象アプリ・記録されたreproduction commandをベンチマークが実行することはない。
+"Offline performance comparisons" in `docs/ci.md` describes the commands to compare both worktrees under the same harness and the scope of each metric. Use `comparison_invocations` in the measurement data for exact sizes, arguments, and environment. Production file SHA-256 digests for baseline and candidate commits are also recorded there. Benchmarks never execute external audit commands, target applications, or recorded reproduction commands.

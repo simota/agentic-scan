@@ -1,166 +1,166 @@
-# SQI 改善レポート（bug-scan）
+# SQI Improvement Report (bug-scan)
 
-基準: [sqi-rubric.md](sqi-rubric.md)（変更前に固定）。比較対象: `309e1dd` と現在の作業ツリー。実測値: [measured/](measured/)。
+Rubric: [sqi-rubric.md](sqi-rubric.md) (fixed before the changes). Comparison: `309e1dd` and the current working tree. Measurements: [measured/](measured/).
 
-暫定値です。実ブラウザを起動できず（下記「未検証」）、実ユーザーテストもしていません。採点者は実装者本人の1名で、独立したレビューはありません。スコアは品質を説明する補助指標で、利用者の満足度や生産性の向上を示すものではありません。
+The results are provisional. A real browser could not be launched (see “Unverified checks and remaining risks” below), and no tests with real users were conducted. There was 1 scorer, the implementer, and no independent review. The scores help describe quality and do not demonstrate gains in user satisfaction or productivity.
 
-## 品質スコア
+## Quality scores
 
-| 指標 | 改善前 | 改善後 | 差分 | 判定 | カバレッジ | 根拠 |
+| Metric | Before | After | Change | Assessment | Coverage | Evidence |
 |---|---:|---:|---:|---|---:|---|
-| DQI 設計 | 56.0 | 74.0 | +18.0 | 改善 | 100% | E2 中心、一部 E1 |
-| AQI アーキテクチャ | 66.0 | 80.0 | +14.0 | 改善 | 100% | E2 中心、一部 E1 |
-| VQI ビジュアル | 49.2 | 63.1 | +13.9 | 改善（暫定） | 65% | E1 と静的計算のみ。描画は未確認 |
-| UXQI UI/UX | 48.9 | 71.1 | +22.2 | 改善（暫定） | 90% | E2（jsdom）。実ブラウザと実ユーザーは未確認 |
-| SQI 総合 | 55.0 | 72.1 | +17.0 | 改善（暫定） | 89% | 4 領域の等重み平均 |
+| DQI Design | 56.0 | 74.0 | +18.0 | Improved | 100% | Mostly E2, some E1 |
+| AQI Architecture | 66.0 | 80.0 | +14.0 | Improved | 100% | Mostly E2, some E1 |
+| VQI Visual quality | 49.2 | 63.1 | +13.9 | Improved (provisional) | 65% | E1 and static calculations only. Rendering unverified |
+| UXQI UI/UX | 48.9 | 71.1 | +22.2 | Improved (provisional) | 90% | E2 (jsdom). Real browsers and real users unverified |
+| SQI Overall | 55.0 | 72.1 | +17.0 | Improved (provisional) | 89% | Equally weighted average of 4 domains |
 
-VQI と UXQI は、採点できた項目の重みで 100 点に正規化しています（未検証を 0 点や平均点で埋めていません）。項目と条件は前後で同じです。総合の差分は丸める前の値から計算しています。
+VQI and UXQI are normalized to 100 points using the weights of the scored criteria. Unverified criteria receive neither 0 points nor the average score. Criteria and conditions are the same before and after. The overall change is calculated from unrounded values.
 
-## 未検証と残存リスク
+## Unverified checks and remaining risks
 
-実ブラウザでの表示は確認していません。Chromium はサンドボックスの Mach ポート制限で起動できず、サンドボックス外での実行は自動モードの分類器に拒否されました。Chrome 拡張は `file://` を受け付けず、ローカルサーバーはポートの bind が禁止されています。Playwright の Firefox は取得に失敗しました。
+Display in a real browser remains unverified. Chromium could not start because of Mach port restrictions in the sandbox, and the automatic mode classifier rejected execution outside the sandbox. The Chrome extension does not accept `file://`, and local servers cannot bind to a port. The Playwright Firefox download failed.
 
-そのため、ページのはみ出し、SVG 文字の重なり、箱からのはみ出し、フォーカスの見え方、ダークテーマの見た目、LCP/CLS、スクロール追従、印刷と PDF は未確認です。`.bsf .plot` の横スクロールと最小幅、`focus-visible`、配色トークンの変更は、描画を確認しないまま採用しました。
+As a result, page overflow, overlapping SVG text, overflow from boxes, focus visibility, dark theme appearance, LCP/CLS, behavior while scrolling, print, and PDF remain unverified. Changes to horizontal scrolling and minimum width for `.bsf .plot`, `focus-visible`, and color tokens were adopted without checking rendered output.
 
-`docs/quality/audit.py ui` は最後まで実行できていません。ブラウザの起動前に失敗しているため、スクリプト自体に不具合が残っている可能性があります。`dom_audit.mjs` は動作確認済みです。
+`docs/quality/audit.py ui` has yet to run to completion. It failed before the browser launched, so the script itself may still contain defects. `dom_audit.mjs` was verified.
 
-アクセシビリティの数値は jsdom 上のものです。jsdom にはレイアウトがなく、axe のコントラスト規則も使えないため、axe が 0 件でも WCAG 適合を意味しません。スクリーンリーダーの確認と、実ユーザーのタスク成功率・所要時間も未実施です。
+Accessibility measurements come from jsdom. jsdom has no layout, and axe contrast rules cannot run there, so 0 axe findings do not establish WCAG conformance. Screen reader checks and measurements of task success rates and completion times with real users were not performed.
 
-`locked` の修正は `fcntl` のある環境のみ有効です。Windows では従来どおりロックなしです。`surfaces.py merge` と `ledger.py` にはロックがありません。
+The `locked` fix works only in environments with `fcntl`. Windows still runs without locking. `surfaces.py merge` and `ledger.py` have no locking.
 
-VQI 階層と UXQI の予測可能性は、ルーブリックの解釈に依存するため主観が残ります。
+VQI visual hierarchy and UXQI predictability remain subjective because they depend on how the rubric is interpreted.
 
-改善候補は `TEST_PATH` の統合、C901 の削減、CI の追加、キットの上流への還元です。
+Candidates for improvement include consolidating `TEST_PATH`, reducing C901 violations, adding CI, and contributing changes upstream to the kit.
 
-## 品質保証
+## Quality assurance
 
-| 検証 | 結果 |
+| Check | Result |
 |---|---|
-| `make test` | 60 件成功、失敗 0。3 回連続で同じ結果 |
-| `make check` | 成功（ja/en の描画、契約、MANIFEST を含む） |
-| 新規テストの反証 | 旧コードに対して failures 15、errors 16 |
-| Lint | ruff F 系 0 件。型チェックと専用 Lint の設定はリポジトリに無い |
-| E2E・実ブラウザ | 未実施 |
-| `report.pdf` | 未実施（ブラウザが必要） |
+| `make test` | 60 passed, 0 failures. Same result in 3 consecutive runs |
+| `make check` | Passed (includes ja/en rendering, contract checks, and MANIFEST) |
+| New tests against the old code | 15 failures, 16 errors |
+| Lint | 0 Ruff F-series findings. The repository has no type-checking or dedicated lint configuration |
+| E2E and real browser | Not run |
+| `report.pdf` | Not generated (requires a browser) |
 
-## 採点内訳
+## Score breakdown
 
 ### DQI
 
-| 項目 | 重み | 前 | 後 | 加重差 | 根拠 |
+| Criterion | Weight | Before | After | Weighted change | Evidence |
 |---|---:|---:|---:|---:|---|
-| 責務分離 | 20 | 2 | 3 | +4 | 終了状態などのルール重複を `common.py` に統合（重複リテラル 10→0）。`TEST_PATH` の 2 定義と、図の中でデータと描画が混在する点は残るため 4 に届かず |
-| 凝集度 | 15 | 3 | 4 | +3 | `insert_once` の未使用引数を削除、`excluded`/`closed` を共有層へ移動 |
-| 契約の明確性 | 15 | 3 | 4 | +3 | 不正入力 22 件で traceback 11→0、破損 1→0 |
-| 変更容易性 | 15 | 3 | 4 | +3 | 状態値の追加で触るファイルが 4→2 |
-| 可読性 | 10 | 3 | 3 | 0 | C901 は 14→16 に増加（検証関数の追加）。E741 は 5 のまま |
-| テスト容易性 | 15 | 3 | 4 | +3 | 行カバレッジ 86→87%。不正入力と並行処理のテストを追加 |
-| 不変条件・例外 | 10 | 3 | 4 | +2 | 消失更新 約135/200→0/200 |
+| Separation of responsibilities | 20 | 2 | 3 | +4 | Consolidated duplicate rules, including terminal states, in `common.py` (duplicate literals 10→0). The 2 `TEST_PATH` definitions and the mixing of data and rendering in diagrams kept the score below 4 |
+| Cohesion | 15 | 3 | 4 | +3 | Removed an unused argument from `insert_once` and moved `excluded`/`closed` to the shared layer |
+| Contract clarity | 15 | 3 | 4 | +3 | For 22 invalid inputs, tracebacks fell (11→0) and so did corruption cases (1→0) |
+| Ease of change | 15 | 3 | 4 | +3 | Files touched when adding a status value fell (4→2) |
+| Readability | 10 | 3 | 3 | 0 | C901 violations increased (14→16) with the addition of validation functions. E741 remained at 5 |
+| Testability | 15 | 3 | 4 | +3 | Line coverage rose (86→87%). Added tests for invalid input and concurrency |
+| Invariants and exceptions | 10 | 3 | 4 | +2 | Lost updates fell (about 135/200→0/200) |
 
 ### AQI
 
-| 項目 | 重み | 前 | 後 | 加重差 | 根拠 |
+| Criterion | Weight | Before | After | Weighted change | Evidence |
 |---|---:|---:|---:|---:|---|
-| 境界・依存方向 | 20 | 4 | 4 | 0 | 循環 0 のまま、キットの MANIFEST は一致 |
-| レイヤー・データフロー | 15 | 3 | 4 | +3 | 図が独自に判定していた未解決の条件を共有ヘルパーに置換（D6〜D9） |
-| 変更影響の局所性 | 15 | 3 | 4 | +3 | E1。シナリオ: 状態値追加、図の追加、記録フィールド追加、キット更新（最大 4→3 ファイル）。基準書は `audit.py` に記載すると書いたが、実際の列挙はここのみ |
-| 契約・整合性 | 15 | 3 | 4 | +3 | D3/D4/D5 の表の欠落を解消、並行 merge の消失を解消 |
-| 障害耐性 | 10 | 3 | 4 | +2 | `merge`、`surfaces merge`、`ledger`、`compare`、`render` が不正入力に名前付きエラーを返す |
-| セキュリティ境界 | 10 | 4 | 4 | 0 | 既存テスト維持。緩めた箇所なし |
-| 観測・運用 | 10 | 3 | 4 | +2 | 図の省略を明示、`quality.reached_max_commits` を追加。CI は無し |
-| スケーラビリティ | 5 | 3 | 4 | +1 | 800 件で約 1 秒。上限を画面に表示 |
+| Boundaries and dependency direction | 20 | 4 | 4 | 0 | Cycles remained at 0 and the kit's MANIFEST matched |
+| Layers and data flow | 15 | 3 | 4 | +3 | Replaced diagram-specific checks for unresolved records with a shared helper (D6–D9) |
+| Locality of change impact | 15 | 3 | 4 | +3 | E1. Scenarios included adding a status value, adding a diagram, adding a record field, and updating the kit (maximum 4→3 files). The rubric says the scenarios would be documented in `audit.py`, but they are listed only here |
+| Contracts and consistency | 15 | 3 | 4 | +3 | Restored missing table entries for D3/D4/D5 and eliminated lost updates during concurrent merges |
+| Fault tolerance | 10 | 3 | 4 | +2 | `merge`, `surfaces merge`, `ledger`, `compare`, and `render` return named errors for invalid input |
+| Security boundaries | 10 | 4 | 4 | 0 | Existing tests were retained and no boundaries were relaxed |
+| Observability and operations | 10 | 3 | 4 | +2 | Made diagram omissions explicit and added `quality.reached_max_commits`. No CI |
+| Scalability | 5 | 3 | 4 | +1 | About 1 second for 800 records. The limit is displayed in the UI |
 
-### VQI（カバレッジ 65%）
+### VQI (65% coverage)
 
-| 項目 | 重み | 前 | 後 | 加重差 | 根拠 |
+| Criterion | Weight | Before | After | Weighted change | Evidence |
 |---|---:|---:|---:|---:|---|
-| 視覚的階層 | 20 | 3 | 4 | +4 | 設計書どおり不具合リストを図より先に配置（DOM 順で確認） |
-| 一貫性 | 20 | 2 | 2 | 0 | 図のカードは角丸の箱で、キットの罫線スタイルと混在したまま（下記の不採用） |
-| タイポグラフィ | 15 | 2 | 3 | +3 | モバイルの SVG 文字の計算値 4.2px→10.1px。重なりは未測定なので 4 にせず |
-| レイアウト | 15 | 未検証 | 未検証 | - | ページのはみ出しは描画が必要 |
-| インタラクション状態 | 10 | 未検証 | 未検証 | - | CSS は修正済み、ピクセル確認は未実施 |
-| 色・コントラスト | 10 | 3 | 4 | +2 | 図のトークン組の AA 違反 5→0、キットのトークン組 0 件。トークンの静的計算のみ |
-| 余白・密度 | 10 | 未検証 | 未検証 | - | 描画が必要 |
+| Visual hierarchy | 20 | 3 | 4 | +4 | Placed the defect list before the diagrams per the design (confirmed by DOM order) |
+| Consistency | 20 | 2 | 2 | 0 | Diagram cards remain rounded boxes alongside the kit's ruled style (see changes not adopted below) |
+| Typography | 15 | 2 | 3 | +3 | Calculated SVG text size on mobile increased (4.2px→10.1px). Overlap was not measured, so the score stayed below 4 |
+| Layout | 15 | Unverified | Unverified | - | Checking page overflow requires rendering |
+| Interaction states | 10 | Unverified | Unverified | - | CSS was updated. Pixel-level checks were not performed |
+| Color and contrast | 10 | 3 | 4 | +2 | AA violations for diagram token pairs fell (5→0). The kit's token pairs had 0 violations. Based solely on static token calculations |
+| Spacing and density | 10 | Unverified | Unverified | - | Requires rendering |
 
-### UXQI（カバレッジ 90%）
+### UXQI (90% coverage)
 
-| 項目 | 重み | 前 | 後 | 加重差 | 根拠 |
+| Criterion | Weight | Before | After | Weighted change | Evidence |
 |---|---:|---:|---:|---:|---|
-| タスク達成 | 25 | 2 | 3 | +5 | T2（図→記録）が ID を手で検索する操作から 1 操作に。画面数は未測定なので 4 にせず |
-| 発見容易性 | 15 | 2 | 3 | +3 | 目次とページの順序が一致、図の索引を追加。スクロール追従は未確認 |
-| 予測可能性 | 15 | 3 | 4 | +3 | 報告書の無意味なフォーカス停止 130→0、英語ページの区切り文字と D4 のツールチップを修正 |
-| フィードバック | 10 | 3 | 4 | +2 | D8 の選択件数の読み上げ、図の省略の明示 |
-| エラー防止・回復 | 10 | 2 | 4 | +4 | コーパス全件が項目を示すエラーに。修正のヒントまでは無い |
-| アクセシビリティ | 15 | 3 | 4 | +3 | 図の要素の名前 0→134、記録までの Tab 168→28、axe の違反 0。ただし jsdom 上でコントラスト規則なし |
-| 体感性能 | 10 | 未検証 | 未検証 | - | 描画が必要。HTML サイズの増加は下記 |
+| Task completion | 25 | 2 | 3 | +5 | T2 (diagram → record) now takes 1 action instead of a manual ID search. The number of screens was not measured, so the score stayed below 4 |
+| Discoverability | 15 | 2 | 3 | +3 | Aligned the table of contents with page order and added a diagram index. Behavior while scrolling remains unverified |
+| Predictability | 15 | 3 | 4 | +3 | Unnecessary focus stops in the report fell (130→0). Fixed separators on the English page and D4 tooltips |
+| Feedback | 10 | 3 | 4 | +2 | D8 announces the selected count and diagram omissions are explicit |
+| Error prevention and recovery | 10 | 2 | 4 | +4 | Every corpus entry now produces an error that identifies the field. The errors do not yet suggest fixes |
+| Accessibility | 15 | 3 | 4 | +3 | Named diagram elements increased (0→134), Tab presses to reach a record decreased (168→28), and axe violations were 0. Measured in jsdom without contrast rules |
+| Perceived performance | 10 | Unverified | Unverified | - | Requires rendering. See the HTML size increase below |
 
-## 実測値
+## Measurements
 
-| 領域 | 指標 | 前 | 後 | 方法 |
+| Area | Metric | Before | After | Method |
 |---|---|---:|---:|---|
-| 設計 | 不正入力コーパス 22 件の traceback | 11 | 0 | CLI 実行 |
-| 設計 | 同、記録の破損（文字列が 1 文字ずつのリストになる） | 1 | 0 | CLI 実行 |
-| 設計 | 重複したルールのリテラル | 10 | 0 | ソース集計 |
-| 設計 | C901 の超過 | 14 | 16（悪化） | ruff |
-| 設計 | テスト数 / 行カバレッジ | 45 / 86% | 60 / 87% | unittest, coverage |
-| アーキ | 並行 merge の消失更新（200 件あたり、3 回） | 136, 137, 130 | 0, 0, 0 | 8 プロセス |
-| アーキ | 参照切れでの render | KeyError, ValueError | 名前付きエラー | スクリプト |
-| アーキ | import の循環 | 0 | 0 | AST |
-| 整合性 | D3 の表の行 / 全関連 | 9 / 21 | 21 / 21 | サンプル |
-| 整合性 | FalsePositive を D8 が未解決に数える | はい | いいえ | テスト |
-| デザイン | 図のトークン組の AA 違反 | 5 | 0 | 静的計算 |
-| UI | 記録までの Tab 数 | 168 | 28 | jsdom |
-| UI | Tab 停止の総数 | 176 | 64 | jsdom |
-| UI | 名前のある図の要素 | 0/130 | 134/134 | jsdom |
-| UI | 記録へ移動できるリンク | 0 | 20 | jsdom |
-| UI | 報告書の無意味なフォーカス停止 | 130 | 0 | jsdom |
-| UI | axe の違反（ダッシュボード / 報告書） | 0 / 1 minor | 0 / 1 minor | jsdom、コントラスト除外 |
-| 性能 | `render.build` の中央値（30 回） | 13.8 ms | 10.3 ms | ノイズの範囲とみなす（基準 ±20% を超えるが、この処理を速くする変更はしていない） |
-| 性能 | 8 / 80 / 800 件の生成 | 7 / 62 / 994 ms | 7 / 38 / 1035 ms | ノイズの範囲とみなす |
-| 性能 | `dashboard.html` | 176,153 B | 191,389 B | +8.6% |
-| 性能 | `report.html` | 146,419 B | 158,447 B | +8.2% |
+| Design | Tracebacks for 22 invalid inputs in the corpus | 11 | 0 | CLI execution |
+| Design | Record corruption in the same corpus (a string becomes a list with 1 character per element) | 1 | 0 | CLI execution |
+| Design | Duplicate rule literals | 10 | 0 | Source count |
+| Design | C901 violations | 14 | 16 (worse) | ruff |
+| Design | Test count / line coverage | 45 / 86% | 60 / 87% | unittest, coverage |
+| Architecture | Lost updates during concurrent merges (per 200 records, 3 runs) | 136, 137, 130 | 0, 0, 0 | 8 processes |
+| Architecture | Render with broken references | KeyError, ValueError | Named errors | Script |
+| Architecture | Import cycles | 0 | 0 | AST |
+| Consistency | D3 table rows / all relationships | 9 / 21 | 21 / 21 | Sample |
+| Consistency | D8 counts FalsePositive as unresolved | Yes | No | Test |
+| Visual design | AA violations for diagram token pairs | 5 | 0 | Static calculation |
+| UI | Tab presses to reach a record | 168 | 28 | jsdom |
+| UI | Total Tab stops | 176 | 64 | jsdom |
+| UI | Named diagram elements | 0/130 | 134/134 | jsdom |
+| UI | Links that navigate to records | 0 | 20 | jsdom |
+| UI | Unnecessary focus stops in the report | 130 | 0 | jsdom |
+| UI | axe violations (dashboard / report) | 0 / 1 minor | 0 / 1 minor | jsdom, excluding contrast |
+| Performance | Median `render.build` time (30 runs) | 13.8 ms | 10.3 ms | Treated as noise (exceeds the ±20% threshold, but no changes targeted this operation's speed) |
+| Performance | Generation for 8 / 80 / 800 records | 7 / 62 / 994 ms | 7 / 38 / 1035 ms | Treated as noise |
+| Performance | `dashboard.html` | 176,153 B | 191,389 B | +8.6% |
+| Performance | `report.html` | 146,419 B | 158,447 B | +8.2% |
 
-サイズの増加は `aria-label` などアクセシビリティ属性の追加によるものです。800 件の出力では +27% でした。アクセシビリティの改善と引き換えに受け入れましたが、劣化であることに変わりはありません。
+The output grew because of added accessibility attributes such as `aria-label`. For 800 records, the increase was +27%. This size regression was accepted in exchange for improved accessibility.
 
-## 変更内容
+## Changes
 
-| ファイル | 内容 | 対象指標 |
+| File | Change | Metrics |
 |---|---|---|
-| `scripts/common.py` | `excluded`, `closed`, `unresolved`, `clean` を集約 | DQI, AQI |
-| `scripts/findings.py` | `_check_fragment`, `_structure_errors`, `reference_errors` を追加。キーの計算を検証後に移動。ロックの競合を修正 | DQI, AQI, UXQI |
-| `scripts/diagrams.py` | 除外レコードの誤集計、表の欠落、省略の明示、`aria-label`、記録へのリンク、Tab 順の整理（矢印キー移動）、Esc、配色トークン、モバイルの最小幅 | AQI, VQI, UXQI |
-| `scripts/render.py` | 図を不具合リストの後へ移動、目次をページ順に、参照チェック、`insert_before` | VQI, UXQI, AQI |
-| `scripts/ledger.py`, `surfaces.py`, `compare.py` | 入力の検証と重複の削除 | AQI |
-| `scripts/history.py`, `import_findings.py` | 重複の削除、`reached_max_commits` の追加 | DQI, AQI |
-| `scripts/contract_check.py` | import 元の変更 | DQI |
-| `tests/test_bug_scan.py` | 回帰テスト 15 件を追加（旧コードに対して実行し、全テストケースの失敗を確認） | DQI |
-| `reference/diagrams.md`, `reference/history.md`, `README.md` | 動作の記述を更新 | - |
-| `docs/quality/` | 基準書、レポート、計測スクリプト（開発用） | - |
+| `scripts/common.py` | Centralized `excluded`, `closed`, `unresolved`, and `clean` | DQI, AQI |
+| `scripts/findings.py` | Added `_check_fragment`, `_structure_errors`, and `reference_errors`. Moved key computation after validation. Fixed lock contention | DQI, AQI, UXQI |
+| `scripts/diagrams.py` | Fixed miscounts of excluded records and missing table entries, made omissions explicit, added `aria-label` and record links, organized Tab order (arrow-key navigation), and addressed Esc, color tokens, and minimum width on mobile | AQI, VQI, UXQI |
+| `scripts/render.py` | Moved diagrams after the defect list, aligned the table of contents with page order, added reference checks and `insert_before` | VQI, UXQI, AQI |
+| `scripts/ledger.py`, `surfaces.py`, `compare.py` | Validated input and removed duplication | AQI |
+| `scripts/history.py`, `import_findings.py` | Removed duplication and added `reached_max_commits` | DQI, AQI |
+| `scripts/contract_check.py` | Changed the import source | DQI |
+| `tests/test_bug_scan.py` | Added 15 regression tests and verified that every case failed against the old code | DQI |
+| `reference/diagrams.md`, `reference/history.md`, `README.md` | Updated the behavior documentation | - |
+| `docs/quality/` | Rubric, report, and measurement scripts (for development) | - |
 
-`scan_report_kit/` と `examples/` は変更していません（MANIFEST 一致）。
+`scan_report_kit/` and `examples/` are unchanged (MANIFEST matches).
 
-### 互換性への影響
+### Compatibility impact
 
-- 図の位置: ダッシュボードで図が不具合リストの後に移りました（設計書の記述に合わせた変更です）。`#figures` と `#fig-dN` のアンカーは維持しています。
-- 再描画: 旧版で作った出力は、`contract_check.py` で「fresh render と不一致」と報告されます。再描画すれば解消します。
-- 厳格化: 次の入力は拒否するようになりました。自己参照の relation と存在しないゲートを持つ記録の render、数値の `summary`、文字列の `events`。
-- 契約チェック: 形状エラーがあると、その時点で停止します（以前は残りの規則も列挙していました）。
-- 記録の形式: 既存の `findings.json`、`surfaces.json`、`history.json` はそのまま読めます。`history.json` にフィールドが 1 つ増えます。
+- Diagram placement. Diagrams now follow the defect list on the dashboard, as specified in the design. The `#figures` and `#fig-dN` anchors are unchanged.
+- Re-rendering. For output from previous versions, `contract_check.py` reports that it “does not match a fresh render”. Re-rendering resolves the mismatch.
+- Stricter validation. Rendering now rejects records with self-referential relations or nonexistent gates. Numeric `summary` and string `events` are also rejected.
+- Contract checks. Checks stop as soon as they encounter a structural error. Previously they also reported violations of the remaining rules.
+- Record format. Existing `findings.json`, `surfaces.json`, and `history.json` files remain readable as-is. `history.json` gains 1 field.
 
-## 採用しなかった変更
+## Changes not adopted
 
-- 図のカードをキットの罫線スタイルに揃える: 描画を確認できないため保留しました。VQI 一貫性が 2 のままの原因です。
-- `diagrams.py` の分割、図のデータと描画の分離: 公開動作の問題を解決せず、過剰な再構成になるため見送りました。
-- `scan_report_kit` の修正: ベンダ品で、上流で変更する方針のためです。
-- CI の追加: このリポジトリの運用判断で、この環境では動作確認もできないため見送りました。
+- Align diagram cards with the kit's ruled style. Deferred because rendering could not be checked. This is why the VQI consistency score stayed at 2.
+- Split `diagrams.py` and separate diagram data from rendering. Skipped because the restructuring would be excessive without solving a problem in public behavior.
+- Modify `scan_report_kit`. It is vendored, and changes are made upstream.
+- Add CI. Deferred as a repository operations decision and because this environment could not verify it.
 
-## 再現方法
+## Reproduction
 
 ```sh
-# 実ブラウザの計測（サンドボックスの外で実行）。--root を変えれば 309e1dd の展開先も同じ条件で測れる
+# Real-browser measurements (run outside the sandbox). Change --root to measure the 309e1dd checkout under the same conditions
 python3 docs/quality/audit.py ui --out ui.json --shots shots --axe <axe.min.js> [--chromium <path>]
 
-# どの環境でも実行できる計測
+# Measurements that run in any environment
 python3 docs/quality/audit.py code --out code.json
 node docs/quality/dom_audit.mjs <dashboard.html> <report.html> <node_modules>
 ```

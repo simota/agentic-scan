@@ -1,24 +1,24 @@
-# Pattern 08: スキャンスイープ計器パネル (`08-sweep-instrument.html`)
+# Pattern 08: Scan Sweep Instrument Panel (`08-sweep-instrument.html`)
 
-## コンセプト
-静的なソースレビュー結果を「精密計測器のフロントパネル」として提示するデザイン。重大度の内訳（Severity Meter）、6 観点の走査結果（Perspective Sweep）、検証到達度（Verification Scale）を最上段の計器クラスタに集約し、下段の 2 ペイン（信号台帳＋検査プローブ）で個別の指摘を掘り下げる。
+## Concept
+Present static source review results as the front panel of a precision instrument. Group the severity breakdown (Severity Meter), sweep results for 6 perspectives (Perspective Sweep), and verification progress (Verification Scale) in the top instrument cluster. Use the 2 lower panes (signal register and inspection probe) to examine individual findings.
 
-## なぜ agentic-scan らしいか
-- **「走査して測る」という行為の直訳**: 黒地ネオンや光彩のような演出を避けつつ、LP と同じクールグレー地・等幅ラベル・1px 罫線・`r--` ワードマークで構成することで、「煽らず事実を測る read-only スキャナ」の信頼感を体現している。
-- **カバレッジと誤検知除外の可視化**: 観点ごとの走査結果（`CH-01`〜`CH-06`）を主役級に置き、`FalsePositive`（F-004）を消さずに `--mark` で強調表示することで、「読んで、反証してから、渡す」ブランド原則が一目で伝わる。
+## Why It Fits agentic-scan
+- **A literal representation of scanning and measuring**: Use the LP's cool gray background, monospace labels, 1px rules, and `r--` wordmark. Avoid effects such as neon on black and glow to convey the credibility of a read-only scanner that measures facts without hype.
+- **Visible coverage and false-positive exclusions**: Give per-perspective sweep results (`CH-01`–`CH-06`) a prominent place. Retain the `FalsePositive` (F-004) and highlight it with `--mark` to make the brand principle 「読んで、反証してから、渡す」 visible at a glance.
 
-## 他スキルへの横展開方法
-- **Perspective Sweep (`CH-01..N`)**: すべてのスキルが持つ観点・カバレッジ一覧をそのままチャンネル行に割り当てられる（`ux-scan` なら主要フロー別、`architecture-scan` ならレイヤー/境界別、`bug-scan` ならバグ注入経路別、`prune-scan` なら削除ユニット種別）。
-- **Severity Meter**: `prompt-scan` のように欠陥と改善提案が分かれるスキルでも、SVG セグメントバーを 2 本に並べるだけで同じ計器文脈を保てる。
-- **Inspection Probe**: スキル固有フィールド（`logic-scan` の反例、`ux-scan` の対象画面・ビューポート、`data-integrity-scan` のマイグレーション対象テーブル）は、プローブ内の `<dl class="probe-grid">` とセクションブロックを増減するだけで収まる。
+## Adapting It to Other Skills
+- **Perspective Sweep (`CH-01..N`)**: Map each skill's existing perspective and coverage list directly to channel rows (primary flows in `ux-scan`, layers and boundaries in `architecture-scan`, bug introduction paths in `bug-scan`, and removal unit types in `prune-scan`).
+- **Severity Meter**: In skills such as `prompt-scan`, which distinguish defects from improvement suggestions, put 2 segmented SVG bars side by side to retain the instrument design.
+- **Inspection Probe**: Accommodate skill-specific fields (`logic-scan` counterexamples, `ux-scan` target screens and viewports, and `data-integrity-scan` migration target tables) by adding or removing entries and blocks in the probe's `<dl class="probe-grid">` and sections.
 
-## 既存 `render.py`・`dashboard.css` に入れるときの変更範囲と工数感
-- **変更範囲**:
-  - `dashboard.css`: 現在の明朝体・生成りベース（Academic layer）を、LP トークン（クールグレー＋等幅見出し/ラベル＋サンセリフ本文）へ置換。計器クラスタ（`.cluster`, `.inst`）と 2 ペイン（`.workbench`）のレイアウトを追加。
-  - `render.py`: 既存の `#cards` / `#perspectives` / `#findings` のデータ構造はそのまま流用可能。SVG セグメントバー生成関数（15 行程度）と、テーブル行クリック時に右側プローブ（または詳細ペイン）へ描画する JS 差し替えが必要。
-  - 印刷用 `assessment.html` (`document.css`): 色トークンと書体だけ LP 準拠に揃える。
-- **工数感**: 中（1〜1.5 日 / 1 スキルあたり。共通の `report_assets/dashboard.css` を採用しているスキル群なら、共通キット改修＋各スキル取り込みで 2〜3 日程度）。
+## Changes and Estimated Effort for the Existing `render.py` and `dashboard.css`
+- **Scope of changes**:
+  - `dashboard.css`: Replace the current Mincho and off-white palette (Academic layer) with LP tokens (cool gray, monospace headings and labels, and sans-serif body text). Add layouts for the instrument cluster (`.cluster`, `.inst`) and 2 panes (`.workbench`).
+  - `render.py`: Reuse the existing data structures for `#cards` / `#perspectives` / `#findings`. Add an SVG segment bar generator (about 15 lines) and replace the JS to render the selected table row in the right-hand probe or detail pane.
+  - Print `assessment.html` (`document.css`): Align only the color tokens and typography with the LP.
+- **Estimated effort**: Medium (1–1.5 days per skill). For skills using the shared `report_assets/dashboard.css`, updating the shared kit and integrating it into each skill takes about 2–3 days.
 
-## 弱点
-- **指摘件数が多い（50〜100 件超）ときの 2 ペイン運用**: 左ペインの信号リストが縦に長くなると、スクロール位置と右プローブの対応が追いにくくなる（リスト側を固定高さスクロールにするか、フィルタ・検索バーの強化が必要）。
-- **PDF 印刷時の情報圧縮**: インタラクティブなプローブ切替は印刷時に選択中の 1 件しか出ないため、印刷専用（`assessment.html` 側）では全件展開する別レイアウトの併用が前提になる。
+## Limitations
+- **Using 2 panes with many findings (over 50–100)**: As the signal list in the left pane grows taller, it gets harder to relate the scroll position to the probe on the right. Use a fixed-height scrollable list or improve the filter and search bar.
+- **Information density in PDF printouts**: The interactive probe shows only the 1 selected finding when printed. A separate print layout on the `assessment.html` side must expand all findings.

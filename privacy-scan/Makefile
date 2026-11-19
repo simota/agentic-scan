@@ -4,7 +4,7 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make demo      render examples/findings.sample.json into $(DEMO_OUT)
+#   make demo      render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
@@ -113,7 +113,7 @@ DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 
 DEMO_OUT ?= $(or $(call path_value,TMPDIR),/tmp)/$(NAME)-demo
 LANG_OUT ?= ja
-DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
+DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 
 .PHONY: help link unlink status check demo test agent-known
 

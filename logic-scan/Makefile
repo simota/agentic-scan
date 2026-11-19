@@ -8,7 +8,7 @@
 #   make status    show what is installed, per host
 #   make test      run the offline regression tests
 #   make check     verify the skill is self-contained and internally consistent
-#   make demo      render examples/findings.sample.json into DEMO_OUT (default: a new mktemp dir)
+#   make demo      render examples/findings.sample.ja.json (LANG_OUT=en: findings.sample.json) into DEMO_OUT
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
@@ -97,7 +97,7 @@ DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md skills/$(NAM
 # hold another user's symlink, and render writes through symlinks).
 DEMO_OUT ?=
 LANG_OUT ?= ja
-DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
+DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 
 .PHONY: help link unlink status check demo test bench-score
 # `make -j link unlink` must still run the goals in the order given.

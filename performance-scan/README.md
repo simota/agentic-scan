@@ -238,7 +238,8 @@ skills/performance-scan/
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or manager
-examples/findings.sample.json  fictional sample for make demo / make check
+examples/findings.sample.json     fictional sample (English) for make demo / make check
+examples/findings.sample.ja.json  fictional sample (Japanese) for make demo LANG_OUT=ja / make check
 examples/findings.sample.baseline.json  an earlier fictional run of it, for compare.py
 scripts/install.py             path-safe install helper used by Makefile
 tests/                         offline tests for the scripts and the documents
@@ -252,7 +253,7 @@ make check   # tests plus citations resolve, references headed, frontmatter vali
              # scripts parse, description <= 400 bytes, no cited ../ paths,
              # sample renders in ja/en and passes the run contract,
              # compare (with --carry), summary, issue drafts and SARIF run on the samples
-make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for Japanese labels)
+make demo    # render the sample into .demo/ in this checkout (LANG_OUT=ja for the Japanese sample and labels)
 ```
 
 Requirements: Python 3.9+. No third-party packages. The `make` targets need

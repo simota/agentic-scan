@@ -159,7 +159,8 @@ skills/privacy-scan/
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or DPO
-examples/findings.sample.json  fictional sample for make demo / make check
+examples/findings.sample.json     fictional sample (English) for make demo / make check
+examples/findings.sample.ja.json  fictional sample (Japanese) for make demo / make check
 tests/                         offline tests for the scripts and the documents
 ```
 

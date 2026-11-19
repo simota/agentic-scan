@@ -4,14 +4,14 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make demo      render examples/findings.sample.json into $(DEMO_OUT)
+#   make demo      render examples/findings.sample.json (LANG_OUT=ja: findings.sample.ja.json) into $(DEMO_OUT)
 #
 # A host that is not installed is skipped and named. Narrowing is explicit:
 #
 #   make link AGENT=claude             # this host only
 #   make link PROJECT=/path/to/repo    # that project's .claude/skills instead
 #   make link SKILLS_DIR=/some/path    # one literal path; AGENT unused
-#   make demo LANG_OUT=ja              # Japanese labels (default: the record's language)
+#   make demo LANG_OUT=ja              # Japanese sample and labels (default: the record's language)
 
 NAME    := performance-scan
 # PYTHON is an executable name or path, including paths containing spaces.
@@ -63,7 +63,7 @@ DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 DEMO_OUT ?= $(REPO)/.demo
 # Empty: render in the record's own language.
 LANG_OUT ?=
-DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
+DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 
 .PHONY: help link unlink status check demo test
 

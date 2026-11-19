@@ -175,7 +175,8 @@ skills/architecture-scan/
                                console.{css,js} (the console-triage layer)
   templates/issue.{ja,en}.md   one finding as one issue
   templates/report.{ja,en}.md  findings report to an owner or tech lead
-examples/findings.sample.json  fictional sample for make demo / make check
+examples/findings.sample.json     fictional sample for make demo / make check (English)
+examples/findings.sample.ja.json  the same sample in Japanese (make demo LANG_OUT=ja)
 tests/                         offline tests for the scripts and the documents
 ```
 

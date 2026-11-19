@@ -115,7 +115,8 @@ skills/test-gap-scan/
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
-examples/findings.sample.json  fictional sample for make demo / make check
+examples/findings.sample.json     fictional sample for make demo / make check (English)
+examples/findings.sample.ja.json  the same sample in Japanese
 tests/                         offline tests for the scripts and the documents
 ```
 

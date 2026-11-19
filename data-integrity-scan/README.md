@@ -117,8 +117,9 @@ skills/data-integrity-scan/
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue
   templates/plan.{ja,en}.md    the plan handed to an executor
-examples/findings.sample.json  fictional sample for make demo / make check
-tests/                         offline tests for the scripts and the documents
+examples/findings.sample.json     English fictional sample for make demo / make check
+examples/findings.sample.ja.json  Japanese fictional sample for make demo / make check
+tests/                            offline tests for the scripts and the documents
 ```
 
 ## Development
@@ -127,7 +128,7 @@ tests/                         offline tests for the scripts and the documents
 make test    # offline unit tests
 make check   # tests plus citations resolve, references headed, frontmatter valid,
              # scripts parse,
-             # sample renders in ja/en and passes the run contract
+             # both samples render in ja/en and pass the run contract
 make demo    # render the sample into a new private temp dir (LANG_OUT=en for English)
 ```
 

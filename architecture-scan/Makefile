@@ -4,7 +4,7 @@
 #   make unlink    remove those symlinks
 #   make status    show what is installed, per host
 #   make check     verify the skill is self-contained and internally consistent
-#   make demo      render examples/findings.sample.json into DEMO_OUT (default: a new mktemp dir)
+#   make demo      render examples/findings.sample{,.ja}.json (by LANG_OUT) into DEMO_OUT (default: a new mktemp dir)
 #   make test      run the offline regression tests
 #   make help      list the targets
 #
@@ -95,7 +95,7 @@ DOCS := README.md skills/$(NAME)/*.md skills/$(NAME)/reference/*.md
 # hold another user's symlink, and render writes through symlinks).
 DEMO_OUT ?=
 LANG_OUT ?= ja
-DEMO_INPUT ?= $(REPO)/examples/findings.sample.json
+DEMO_INPUT ?= $(REPO)/examples/findings.sample$(if $(filter ja,$(LANG_OUT)),.ja,).json
 
 # A symlink is ours when it names this skill directory, possibly through a
 # symlinked parent (an earlier link may use a logical checkout path). A link to

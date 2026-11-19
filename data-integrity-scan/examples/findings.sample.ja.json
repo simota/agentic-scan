@@ -1,0 +1,209 @@
+{
+  "meta": {
+    "project": "acme-shop（架空）",
+    "scope": "app/ と db/。主要テーブルは orders、customers、wallets です。",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code（サンプル）",
+    "method": "静的レビュー。git log で過去 12 か月の履歴を確認しました。",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "ja", "axis": "confirmed"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "金額列には decimal(12,2) を使い、float は使いません。",
+     "source": "多数派の実装に基づきます。金額列 9 件中 9 件が該当します（db/schema.rb:40）。", "concern": "TYPES",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "主キーには bigint を使います。",
+     "source": "docs/adr/0011-migrations.md:7", "concern": "SCHEMA", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "orders.customer_id に外部キーがなく、参照先を失った注文を過去に二度修復",
+      "severity": "High",
+      "rollout": "Staged",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Schema constraints",
+      "step": "SC2",
+      "hazard": "注文が存在しない顧客を参照するおそれがあります。",
+      "remedy": "Add Foreign Key",
+      "location": ["app/admin/customers_controller.rb:42", "db/schema.rb:88"],
+      "scenario": "管理者が注文のある顧客を削除すると、モデルのコールバックが実行されず、注文だけが残ります。",
+      "blast_radius": "orders と customers が対象です。請求処理と月次売上のエクスポート処理が両方を読み取ります。",
+      "trace": "1. db/schema.rb:88 では orders.customer_id が bigint として定義され、外部キーはありません。 2. app/models/order.rb:8 の belongs_to による検証は、モデル経由の保存時に限られます。 3. customers_controller.rb:42 は delete_all を呼び出すため、app/models/customer.rb:4 の dependent: :restrict_with_error が実行されません。 4. 修正コミット 9c1d2e4 と 5b7a0f3 では、参照先を失った注文を手作業で修復しています。",
+      "impact": "顧客が削除された注文は請求処理でエラーを引き起こし、売上レポートからも漏れます。",
+      "exposure": "主要テーブル orders の customer_id への書き込み箇所は 3 か所です。対象期間内の修正コミット 9c1d2e4 と 5b7a0f3 では、参照先を失った行を修復しています。",
+      "enforcement": {"net": "partial", "sites": ["app/models/order.rb:8", "app/models/customer.rb:4"],
+                      "gaps": "検証はモデルに限られます。customers_controller.rb:42 の delete_all や生の SQL を使うと検証が実行されず、スキーマにも制約がありません。"},
+      "rollout_reason": "参照先を失った注文が既にあり、修復するまで外部キーを検証できません。外部キーの追加と検証を同じマイグレーションで行うと、走査中は orders への書き込みも止まります。",
+      "invariants": [
+        "すべての orders.customer_id は既存の customers.id を参照します。",
+        "注文がある顧客の削除はモデルとデータベースの両方で拒否されます。"
+      ],
+      "steps": [
+        "1. 読み取り専用クエリで参照先を失った注文を一覧にし、紐付け先を決めます（verify: ステージング用のコピーで取得した件数が依頼者への報告と一致することを確認します）。",
+        "2. 単独のマイグレーションで外部キーを NOT VALID として追加します（verify: ステージング用のコピーでマイグレーションが一秒未満で完了し、存在しない顧客の注文の挿入が拒否されることを確認します）。",
+        "3. 参照先を失った注文がなくなったら、後続のマイグレーションで VALIDATE CONSTRAINT を実行します（verify: ステージング用のコピーで検証が成功し、検証中も orders と customers に書き込めることを確認します）。"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "参照先を失った注文を修復し、外部キーを二回のマイグレーションで導入します。NOT VALID で追加し、その後 VALIDATE します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "db/schema.rb:88 に orders の add_foreign_key はありません。customers_controller.rb:42 は delete_all を呼び出しています。git show 9c1d2e4 5b7a0f3 では、参照先の顧客が存在しない注文を更新していることが確認できます。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "顧客統合でトランザクションを使わず、注文の移管前に重複顧客を削除",
+      "severity": "Medium",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Transaction boundaries",
+      "step": "TB1",
+      "hazard": "削除後、注文を移管するまでの間に処理が失敗すると、注文が参照先を失います。",
+      "remedy": "Widen Transaction Boundary",
+      "location": "app/jobs/merge_customers_job.rb:14-31",
+      "scenario": "ジョブはエラーのたびに再試行されます（config/sidekiq.yml:4）。削除後にタイムアウトすると、再試行しても注文の移管は進みません。",
+      "blast_radius": "1 件のジョブと、customers および orders が対象です。",
+      "trace": "1. merge_customers_job.rb:22 で重複顧客を削除します。 2. :28 でその顧客の注文を残す側の顧客へ移管します。 3. この二つの書き込みをまとめるトランザクションがありません。",
+      "impact": "統合された顧客の注文が削除済みの行を参照します。F-001 で外部キーを追加すると、ジョブが途中で失敗するようになります。",
+      "exposure": "主要テーブル customers と orders が対象です。ジョブは毎晩、重複と判定されたすべての顧客を処理します。",
+      "enforcement": {"net": "partial", "sites": ["app/models/customer.rb:4"],
+                      "gaps": "モデルは注文がある顧客の削除を拒否しますが、ジョブは delete を呼び出すため、この検証が実行されません。"},
+      "invariants": [
+        "統合後、重複顧客のすべての注文は残す側の顧客に紐付きます。",
+        "統合のどの段階で失敗しても、両方の顧客とすべての注文は処理前の状態に保たれます。"
+      ],
+      "steps": [
+        "1. 移管と削除を同じトランザクションにまとめ、先に注文を移管します（verify: ジョブのテストが通り、書き込みの間に例外を発生させても、両方の顧客と注文が変更されないことを確認します）。",
+        "2. 重複顧客が既に削除されていれば処理をスキップします（verify: 同じ顧客の組み合わせにジョブを二回実行しても、二回目には変更がないことを確認します）。"
+      ],
+      "fix": "注文の移管と重複顧客の削除を一つのトランザクションにまとめ、移管を先に実行します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/jobs/merge_customers_job.rb:22 の Customer.where(id: dup).delete_all は :28 より先に実行されます。ファイル内にトランザクションブロックがありません。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "ウォレットの引き落としで残高の読み取りと書き戻しをロックせずに実行",
+      "severity": "Medium",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Concurrency and lost updates",
+      "step": "CU1",
+      "hazard": "同時に実行された二件の引き落としが、どちらも残高の検証を通過します。",
+      "remedy": "Lock Rows for Update",
+      "location": "app/services/wallet/debit.rb:9-20",
+      "scenario": "決済ボタンのダブルクリックやリクエストの再試行によって、同じウォレットからの引き落としが同時に二件実行されます。",
+      "blast_radius": "1 件のサービスが対象で、すべてのウォレット決済に影響します。",
+      "trace": "1. debit.rb:12 で wallet.balance を読み取ります。 2. :15 で残高と引き落とし額を比較します。 3. :18 で balance - amount を保存します。行ロックもバージョン列もありません。",
+      "impact": "残高がゼロ未満になるか、二件の引き落としのうち片方が残高に反映されません。",
+      "exposure": "金額を扱う主要テーブル wallets が対象です。wallets.balance への書き込み箇所は 2 か所あり、対象期間内に修正コミットはありません。",
+      "enforcement": {"net": "partial", "sites": ["app/models/wallet.rb:7"],
+                      "gaps": "モデルは読み取った値に対して balance >= 0 を検証します。競合する書き込みを防ぐ制約はスキーマにありません。"},
+      "invariants": [
+        "wallets.balance はゼロ未満になりません。",
+        "残高 50 から同時に 30 ずつ引き落とすと、残高は 20 になり、片方の引き落としが拒否されます。"
+      ],
+      "steps": [
+        "1. 引き落としのトランザクション内で、ウォレットの行をロックして読み込みます（verify: ウォレットのテストが通り、二つのスレッドで残高 50 から 30 ずつ引き落とすと、残高が 20 になって片方が拒否されることを確認します）。"
+      ],
+      "fix": "ウォレットの行をロックした状態で、残高の読み取り・検証・書き込みを行います。次にこの箇所を変更する際にチェック制約を追加します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/services/wallet/debit.rb:12-18 はロックも lock_version も使わずに読み取りと保存を行います。db/schema.rb:61 に balance のチェック制約はありません。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "audit_events の主キーが bigint の規約に反して integer",
+      "severity": "Low",
+      "rollout": "Downtime",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Keys and identity",
+      "step": "KI2",
+      "hazard": "id のシーケンスは約 2.1 十億で上限に達します。",
+      "remedy": "Widen Column Type",
+      "location": ["db/migrate/20230102120000_create_audit_events.rb:3", "db/schema.rb:12"],
+      "scenario": "audit_events は毎月約 40 百万行ずつ増えます。",
+      "blast_radius": "対象は監査ログの 1 テーブルです。他からの参照はありません。",
+      "trace": "1. マイグレーションの :3 では id: :integer を指定して audit_events を作成しています。 2. db/schema.rb:12 に integer 型のキーが定義されています。 3. docs/ops/capacity.md:14 には、値域の 38% を使用していると記録されています。",
+      "impact": "シーケンスが integer 型の値域を超えると、audit_events への挿入が失敗します。",
+      "exposure": "主要テーブルではなく、id の値域の 38% を使用しています（docs/ops/capacity.md:14）。",
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "スキーマでは主キーを integer と定義するだけで、シーケンスの残り容量を確認する仕組みや警告はありません。"},
+      "rollout_reason": "キーを bigint に変更すると、排他ロックを取って audit_events を書き直します。現在の規模では、監査ログへの書き込みが数分間止まります。",
+      "steps": [
+        "1. メンテナンス時間帯に audit_events.id とそのシーケンスを bigint に変更します（verify: ステージング用のコピーで時間内に書き直しが完了し、挿入を再開できることを確認します）。"
+      ],
+      "convention": "C-02",
+      "fix": "ADR 0011 に従い、予定されたメンテナンス時間帯に主キーの型を bigint に拡張します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "db/migrate/20230102120000_create_audit_events.rb:3 では id: :integer を指定しています。docs/adr/0011-migrations.md:7 はキーに bigint を使うよう定めています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "legacy_exports テーブルに主キーがない",
+      "severity": "Low",
+      "rollout": "Online",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Keys and identity",
+      "step": "KI3",
+      "hazard": "行を一意に識別できません。",
+      "remedy": "Use Surrogate Key",
+      "location": "db/migrate/20190405090000_create_legacy_exports.rb:2",
+      "scenario": "このテーブルを読み書きする処理はありません。",
+      "blast_radius": "1 テーブル",
+      "trace": "1. マイグレーションの :2 では id: false を指定して legacy_exports を作成しています。 2. モデル・クエリ・ジョブにこのテーブル名は出てきません。",
+      "impact": "書き込みがないため、データが破損することはありません。",
+      "fix": "削除候補として、削除可否を検討するレビューに引き継ぎます。",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "テーブル名が出てくるのは db/migrate/20190405090000_create_legacy_exports.rb:2 だけです。app/ と lib/ で legacy_exports を検索すると 0 件です。"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "顧客統合の原子性を確保", "findings": ["F-002"],
+     "prerequisite": "なし", "pr_title": "fix: 顧客統合を一つのトランザクションで実行"},
+    {"batch": 2, "title": "orders.customer_id への外部キー追加", "findings": ["F-001"],
+     "prerequisite": "参照先を失った注文の紐付け先を決めてから、外部キーを追加します（判断事項を参照）。",
+     "pr_title": "db: orders から customers への外部キーを NOT VALID で追加してから検証"},
+    {"batch": 3, "title": "引き落とし時のウォレットの行ロック", "findings": ["F-003"],
+     "prerequisite": "なし", "pr_title": "fix: 引き落とし時にウォレットの行をロック"}
+  ],
+  "perspectives": [
+    {"name": "Schema constraints", "status": "applied", "note": "SC1-SC3 を適用し、SC2 で F-001 を検出しました。"},
+    {"name": "Application-only invariants", "status": "applied", "note": "AI1-AI3 を適用しました。ウォレットの検証は F-003 に該当します。"},
+    {"name": "Migration locking and rewrites", "status": "applied", "note": "ML1-ML3 を適用しました。大規模テーブルのインデックスは並行作成されます。"},
+    {"name": "Irreversible and destructive changes", "status": "applied", "note": "IR1-IR2 を適用しました。対象期間内の削除はすべて二段階で行われました。"},
+    {"name": "Deploy compatibility", "status": "applied", "note": "DP1-DP3 を適用しました。新しいコードより先にマイグレーションが実行されます（bin/deploy:31）。"},
+    {"name": "Backfills and data migrations", "status": "applied", "note": "BF1-BF3 を適用しました。対象期間内の唯一のバックフィルはバッチ処理です。"},
+    {"name": "Transaction boundaries", "status": "applied", "note": "TB1-TB3 を適用し、TB1 で F-002 を検出しました。"},
+    {"name": "Concurrency and lost updates", "status": "applied", "note": "CU1-CU3 を適用し、CU1 で F-003 を検出しました。"},
+    {"name": "Deletion and cascades", "status": "applied", "note": "DE1-DE3 を適用しました。管理者による削除は F-001 に該当します。"},
+    {"name": "Types and precision", "status": "applied", "note": "TP1 は C-01 で確認し、TP2-TP3 も適用しました。タイムスタンプはタイムゾーン付きで保存されます。"},
+    {"name": "Keys and identity", "status": "applied", "note": "KI1-KI3 を適用し、KI2 で F-004 を検出しました。"},
+    {"name": "Backup and restore assumptions", "status": "applied", "note": "BR1-BR2 を適用しました。docs/ops/restore.md:5 に 2026-08 の復元訓練が記録されています。"}
+  ],
+  "checked_ok": [
+    "app/services/orders/place.rb:21-64: 注文、明細、支払いは一つのトランザクションで書き込まれます。",
+    "すべての金額列が decimal(12,2) です（C-01、9 件中 9 件確認済み）。"
+  ],
+  "decisions": [
+    "F-001 の修正前に参照先を失った注文は、別の顧客に紐付け直しますか。それとも仮の顧客に紐付けて残しますか。",
+    "C-01（金額を decimal(12,2) で扱う）が意図した規約か確認します。"
+  ],
+  "limitations": [
+    "データベースには接続していません。テーブルの規模は docs/ops/capacity.md を参照しています。",
+    "2025-03 より前の履歴は移行時にまとめられています。"
+  ],
+  "next_steps": [
+    "バッチ 1 を先に進めます。修正担当者に templates/plan.ja.md を渡します。",
+    "F-004 は次回の定期メンテナンス時間帯に対応し、F-005 は削除可否を検討するレビューに引き継ぎます。"
+  ]
+}

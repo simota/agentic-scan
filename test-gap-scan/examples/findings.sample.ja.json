@@ -1,0 +1,232 @@
+{
+  "meta": {
+    "project": "acme-shop（架空のサンプル）",
+    "scope": "api/ と worker/。重要フロー: チェックアウト、返金",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code（サンプル）",
+    "method": "静的レビュー。git log 12 か月分",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "ja", "axis": "confirmed"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "時刻は frozen_clock fixture で固定する",
+     "source": "多数派: 時刻に依存するテスト 23 件中 23 件。tests/conftest.py:12", "concern": "CLOCK",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "ワーカーは HTTP クライアントをコンストラクタで受け取る",
+     "source": "docs/adr/0007-worker-wiring.md:9", "concern": "DOUBLE", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "B2B の明細返金にテストがなく、返金の修正 2 件もテストなしで出荷",
+      "severity": "High",
+      "testability": "Seam",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Untested critical paths",
+      "step": "UC1",
+      "gap": "明細返金の分岐にどのテストも到達しない",
+      "remedy": "Add Behaviour Test",
+      "location": ["api/refunds/b2b.py:61-104", "api/routes/refunds.py:30"],
+      "scenario": "返金は名前の挙がった重要フローで、B2B 返金の大半は明細返金です。",
+      "blast_radius": "api/refunds/ の 1 ファイル。すべての B2B 明細返金",
+      "trace": "1. b2b.py:61 で注文全体の返金と明細返金に分岐します。2. tests/test_refunds.py:12 は小売注文の全体返金だけを扱います。3. 修正 a1b2c3d と d4e5f6a は b2b.py:80-97 を変更しましたが、テストファイルは変更していません。",
+      "impact": "誤った返金額が、テストを失敗させることなく顧客と台帳に届きます。",
+      "exposure": "重要フロー（返金）です。修正 a1b2c3d と d4e5f6a はテストを変更せずに b2b.py を変更しています。期間内のコミットは 12 件です。",
+      "coverage": {"net": "partial", "tests": ["tests/test_refunds.py:12"],
+                   "gaps": "b2b.py に到達するテストがありません。b2b.py:64 で PaymentGateway() をその場で生成しています。"},
+      "asserts": [
+        "5 明細のうち 2 明細の返金では、その明細の合計を現在の丸め方（half-up、b2b.py:97）で返金します。",
+        "ゲートウェイはその金額の返金呼び出しをちょうど 1 回受け取ります。",
+        "取得済み金額を超える返金は RefundExceedsCapture を送出し、ゲートウェイを呼び出しません。"
+      ],
+      "steps": [
+        "1. ゲートウェイを refund_b2b() の引数として渡せるようにし、既定値を PaymentGateway() にします (verify: tests/test_refunds.py が green)",
+        "2. F-002 の FakeGateway を使って明細返金のテストを追加します (verify: b2b.py:97 が half-even で丸めると失敗し、それ以外では green)"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "ゲートウェイの継ぎ目を設けたうえで、refund_b2b() を通した B2B 明細返金の振る舞いテストを追加します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "b2b.py:61-104 を import しているのは api/routes/refunds.py:30 だけで、どちらもテストから import されていません。git show --stat a1b2c3d d4e5f6a にテストファイルは含まれません。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "共有のゲートウェイ mock が、本物のゲートウェイが拒否する金額も受け入れる",
+      "severity": "Medium",
+      "testability": "Direct",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Mock fidelity",
+      "step": "MF1",
+      "gap": "寛容すぎるテストダブル",
+      "remedy": "Replace Mock with Fake",
+      "location": "tests/conftest.py:30-44",
+      "scenario": "すべての決済・返金テストがこの fixture を使っています。",
+      "blast_radius": "テストファイル 9 件。チェックアウトと返金のフロー",
+      "trace": "1. conftest.py:30 はゲートウェイとして MagicMock() を返します。2. 修正 e7f8a9b は、本番で本物のゲートウェイが小数点以下 3 桁の金額を拒否したあとに、金額を丸めるようにしました。3. e7f8a9b より前の時点で失敗したはずのテストはありません。",
+      "impact": "本物のゲートウェイが拒否する金額や通貨でも、すべてのテストが通ります。",
+      "exposure": "チェックアウトと返金は重要フローです。修正 e7f8a9b はテストではなく本番で見つかりました。",
+      "coverage": {"net": "partial", "tests": ["tests/test_payments.py:22"],
+                   "gaps": "mock はどの金額・通貨に対しても成功を返します。"},
+      "asserts": [
+        "FakeGateway は、実際の API と同じく小数点以下が 2 桁を超える金額を拒否します。",
+        "FakeGateway は各呼び出しを記録し、テストが送信された金額と通貨を検証できるようにします。"
+      ],
+      "steps": [
+        "1. tests/conftest.py の mock の隣に FakeGateway を追加します (verify: tests/test_payments.py が green)",
+        "2. 決済テストを 1 ファイルずつ FakeGateway に移行します (verify: 各ファイルが green。作業用コピーで e7f8a9b を revert すると test_rounding が失敗)"
+      ],
+      "fix": "金額ルールを強制する偽のゲートウェイを用意し、すべての決済テストで使います。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/conftest.py:30 は MagicMock() を返します。e7f8a9b のコミットメッセージには、小数点以下 3 桁の金額に対してゲートウェイが返した 400 が記されています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "注文確定のテストがステータスコードしか検証しない",
+      "severity": "Medium",
+      "testability": "Direct",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Assertion strength",
+      "step": "AS1",
+      "gap": "重要フローに対する弱いアサーション",
+      "remedy": "Strengthen Assertions",
+      "location": "tests/test_orders.py:40-118",
+      "scenario": "チェックアウトは名前の挙がった重要フローで、place() は期間内に 22 コミットで変更されています。",
+      "blast_radius": "テストファイル 1 件。OrderService.place()",
+      "trace": "1. tests/test_orders.py:40 は注文を POST して 201 を検証します。2. :118 は割引付きの注文で同じことをします。3. どちらも合計額や保存された行を読みません。",
+      "impact": "合計額が誤っていても、outbox 行が欠けていても、両方のテストが通ります。",
+      "exposure": "チェックアウトは重要フローです。api/orders/service.py は期間内に 22 コミットあります。",
+      "coverage": {"net": "partial", "tests": ["tests/test_orders.py:40", "tests/test_orders.py:118"],
+                   "gaps": "合計額、永続化された注文、outbox 行が検証されていません。"},
+      "asserts": [
+        "応答の合計額が、明細価格の合計から割引を引いた額と等しくなります。",
+        "その合計額で、注文行 1 件と outbox 行 1 件が保存されます。"
+      ],
+      "steps": [
+        "1. 両方のテストで合計額と保存された行を検証します (verify: tests/test_orders.py が green。service.py:190 が割引を落とすと失敗)"
+      ],
+      "fix": "合計額、注文行、outbox 行を検証します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/test_orders.py:52 と :130 は status_code == 201 だけを検証しています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "エクスポートワーカーが import 時に HTTP クライアントを生成し、テストから独自のクライアントを渡せない",
+      "severity": "Low",
+      "testability": "Restructure",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Isolation and shared state",
+      "step": "IS1",
+      "gap": "コンストラクタの継ぎ目がないモジュールレベルのクライアント",
+      "remedy": "Introduce Test Seam",
+      "location": "worker/export.py:22",
+      "scenario": "クライアントに届く手段がほかにないため、エクスポートのテストはどれも export.client を patch する必要があります。",
+      "blast_radius": "worker/ の 1 ファイル。すべての Exporter",
+      "trace": "1. worker/export.py:22 が import 時にクライアントを生成します。2. Exporter.__init__ はクライアントを受け取らず、ADR 0007 に反しています。",
+      "impact": "エクスポートワーカーのテストは、モジュールのグローバル変数を patch するしかありません（F-005）。",
+      "exposure": "worker/export.py は期間内に 2 コミットです（ホットスポットの基準未満）。",
+      "coverage": {"net": "partial", "tests": ["tests/test_export.py:8"],
+                   "gaps": "クライアントは import 時に生成され（export.py:22）、それを受け取るコンストラクタがありません。"},
+      "steps": [
+        "1. クライアントの生成を Exporter.__init__ の引数に移し、既定値を現在の HttpClient() にして呼び出し側は変えません (verify: worker のテストが green、tests/test_export.py は無変更)"
+      ],
+      "convention": "C-02",
+      "fix": "ADR 0007 のとおりクライアントを注入し、現在のクライアントを既定値にします。振る舞いを変えないリファクタリングとして、単独で行います。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "worker/export.py:22 は client = HttpClient() です。docs/adr/0007-worker-wiring.md:9 はコンストラクタ注入を求めています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "エクスポートのテストがモジュールのグローバル変数を patch し、後続のテストに漏らす",
+      "severity": "Low",
+      "testability": "Direct",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Isolation and shared state",
+      "step": "IS1",
+      "gap": "テスト間で共有される、patch されたモジュールのグローバル変数",
+      "remedy": "Isolate Shared State",
+      "location": ["worker/export.py:30-58", "tests/test_export.py:8"],
+      "scenario": "tests/test_export.py は export.client を patch し、元に戻していません。",
+      "blast_radius": "テストファイル 1 件。その後に実行されるすべてのテスト",
+      "trace": "1. tests/test_export.py:8 は export.client に代入し、元に戻しません。2. worker/export.py:30-58 の Exporter.run() がそのグローバル変数を読みます。",
+      "impact": "test_export.py より後のテストは patch されたクライアントを参照するため、結果が実行順に依存します。",
+      "steps": [
+        "1. tests/test_export.py で Exporter に偽のクライアントを渡し、patch をやめます (verify: 単独でも逆順でもテストが通る)"
+      ],
+      "depends_on": ["F-004"],
+      "fix": "F-004 でコンストラクタ引数ができたら、偽のクライアントを渡して Exporter を生成します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "tests/test_export.py:8 はモジュールレベルで export.client = FakeClient() を設定し、それを戻す teardown がありません。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-006",
+      "title": "report_v1 ビルダーにテストがない",
+      "severity": "Low",
+      "testability": "Direct",
+      "effort": "M",
+      "confidence": "Suspected",
+      "category": "Untested critical paths",
+      "step": "UC2",
+      "gap": "テストのないモジュール",
+      "remedy": "Add Behaviour Test",
+      "location": "legacy/report_v1.py:1",
+      "scenario": "なし。このモジュールには到達しません。",
+      "blast_radius": "1 ファイル",
+      "trace": "1. legacy/report_v1.py:1 が build() を定義しています。2. それを参照する import、ルート、設定はありません。",
+      "impact": "デッドコードをテストしても露出はありません。",
+      "fix": "削除候補として、別の削除レビューに引き渡します。",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "legacy/report_v1.py:1 はどこからも import されていません。設定とルートで report_v1 を検索すると 0 件です。"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "偽の決済ゲートウェイ", "findings": ["F-002"],
+     "prerequisite": "なし", "pr_title": "test: 金額ルールを強制する偽ゲートウェイ"},
+    {"batch": 2, "title": "B2B 明細返金のテスト", "findings": ["F-001"],
+     "prerequisite": "B2B の正しい丸め方を決めます（人が判断すべき事項を参照）。それまでは、テストが現在の丸め方を固定します。",
+     "pr_title": "test: refund_b2b() を通した B2B 明細返金のテスト"},
+    {"batch": 3, "title": "注文の合計額と保存行の検証", "findings": ["F-003"],
+     "prerequisite": "なし", "pr_title": "test: 注文テストで合計額と保存された行を検証"}
+  ],
+  "perspectives": [
+    {"name": "Untested critical paths", "status": "applied", "note": "UC1-UC3 を適用。UC1 で F-001 を検出"},
+    {"name": "Error and edge cases", "status": "applied", "note": "EE1-EE3 を適用。返金のエラーは F-001 に含まれる"},
+    {"name": "Assertion strength", "status": "applied", "note": "AS1-AS3 を適用。AS1 で F-003 を検出"},
+    {"name": "Mock fidelity", "status": "applied", "note": "MF1-MF3 を適用。MF1 で F-002 を検出"},
+    {"name": "Nondeterminism and flakiness", "status": "applied", "note": "ND1 は C-01 で確認。ND2-ND3 を適用し、sleep や再実行はなし"},
+    {"name": "Isolation and shared state", "status": "applied", "note": "IS1-IS2 を適用。IS1 で F-004 と F-005 を検出"},
+    {"name": "Integration and contract seams", "status": "applied", "note": "IC1-IC3 を適用。ゲートウェイの契約は F-002 に含まれる"},
+    {"name": "Test level balance", "status": "applied", "note": "TL1-TL2 を適用"},
+    {"name": "Regression pinning", "status": "applied", "note": "RP1-RP2 を適用。見逃された修正は F-001 と F-002 で引用"},
+    {"name": "Test data and fixtures", "status": "applied", "note": "TD1-TD2 を適用。tests/factories.py のファクトリーが全体で使われている"},
+    {"name": "Disabled and skipped tests", "status": "applied", "note": "DS1-DS2 を適用。条件付きのプラットフォーム skip が 2 件"},
+    {"name": "Suite execution in CI", "status": "applied", "note": "CI1-CI2 を適用。.github/workflows/ci.yml が tests/ を実行し、エラー時に失敗する"}
+  ],
+  "checked_ok": [
+    "api/payments/charge.py: tests/test_charge.py:10-88 が金額、通貨、冪等キーを検証しています。",
+    "時刻に依存するテストはすべて frozen_clock を使っています（C-01。23 件中 23 件を確認）。"
+  ],
+  "decisions": [
+    "B2B の明細返金も、小売と同じく half-even で丸めるべきか。F-001 のテストは現在の half-up を固定します。",
+    "C-01（frozen_clock fixture）を意図したイディオムとして確認する。"
+  ],
+  "limitations": [
+    "テストは実行していません。カバレッジはテストを読んで判断しています。",
+    "2025-03 より前の履歴は、移行時に squash されています。"
+  ],
+  "next_steps": [
+    "まずバッチ 1 から着手し、テストを書く担当者に templates/plan.ja.md を渡します。",
+    "F-004（振る舞いを変えないリファクタリング、単独）を行い、次に worker/ に手を入れるときに F-005 を行います。F-006 は削除レビューに回します。"
+  ]
+}

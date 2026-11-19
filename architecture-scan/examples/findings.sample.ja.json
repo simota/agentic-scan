@@ -1,0 +1,148 @@
+{
+  "meta": {
+    "project": "acme-shop（架空）",
+    "scope": "モノレポ: api/、worker/、web/",
+    "commit": "0000000",
+    "date": "2026-10-09",
+    "assessor": "サンプル（実際の評価ではありません）",
+    "method": "静的レビュー。git 履歴は読み取りのみ。一時的な契約ファイルで import-linter を実行",
+    "lang": "ja",
+    "axis": "confirmed"
+  },
+  "rules": [
+    {"id": "R-01", "statement": "請求書を書き込むのは billing モジュールだけ", "source": "docs/adr/0004-billing.md:12", "family": "OWN", "inferred": false, "status": "violated"},
+    {"id": "R-02", "statement": "ドメインモジュールは ORM やベンダー SDK を import しない", "source": ".importlinter:3 の layers 契約", "family": "LAYER", "inferred": false, "status": "violated"},
+    {"id": "R-03", "statement": "すべてのメッセージコンシューマーは冪等", "source": "worker/consumers/base.py:20 の重複排除ヘルパーを 6 つ中 5 つのコンシューマーが使っていることから推定", "family": "TX", "inferred": true, "status": "violated"},
+    {"id": "R-04", "statement": "公開 API の応答は DTO を使い、ORM エンティティを返さない", "source": "api/README.md:40", "family": "CONTRACT", "inferred": false, "status": "not checked", "reason": "GraphQL リゾルバーは合意した対象範囲の外でした"},
+    {"id": "R-05", "statement": "FAIL の基準: 中核フローで障害を握りつぶさない", "source": "基準。api/errors.py:8 がすべてのエラーを境界で一度だけ変換している", "family": "FAIL", "inferred": true, "status": "holds"}
+  ],
+  "findings": [
+    {
+      "id": "A-001",
+      "title": "返金ジョブが請求書を直接書き込み、billing の税計算を通らない",
+      "severity": "High",
+      "confidence": "Confirmed",
+      "category": "Domain model and data ownership",
+      "step": "DM1",
+      "location": ["worker/refunds/job.py:58", "api/billing/service.py:120"],
+      "scenario": "返金フロー（中核）: サポートが発行するすべての返金",
+      "blast_radius": "invoices テーブル。2 つのデプロイ単位に書き込み元が 2 つ",
+      "trace": "1. worker/refunds/job.py:58 が invoices.total を直接更新します。2. api/billing/service.py:120 は請求書が変わるたびに税額を再計算します。3. worker/refunds/ 配下には service.py:120 を呼ぶ箇所がないため、返金された請求書は古い税額のまま残ります",
+      "contrast": "api/orders/cancel.py:40 は BillingService.adjust() を呼んでいます",
+      "impact": "期待（R-01）: 請求書の変更はすべて billing を経由します。実際: 返金された請求書に返金前の税額が残ります",
+      "rule": "R-01",
+      "fix": "テーブルを直接更新する代わりに、返金ジョブから BillingService.adjust() を呼びます",
+      "guard": "R-01: api/billing/ 以外からの invoices への書き込みを CI の検索で検出して失敗させます",
+      "validation": {"verdict": "Valid", "method": "static", "evidence": "job.py:58 で UPDATE を直接実行しています。worker/refunds/ から billing への呼び出しはありません"},
+      "status": "Open"
+    },
+    {
+      "id": "A-002",
+      "title": "出荷コンシューマーが再配信に対して冪等でない",
+      "severity": "Medium",
+      "confidence": "Environment-dependent",
+      "category": "Consistency and transactions",
+      "step": "TX2",
+      "location": "worker/consumers/shipment.py:31",
+      "scenario": "注文の出荷（中核）: 出荷した荷物 1 つにつきメッセージ 1 件",
+      "blast_radius": "stock_levels テーブル。コンシューマー 1 つ",
+      "trace": "1. worker/consumers/shipment.py:31 はメッセージごとに在庫を減らします。2. worker/consumers/base.py:20 の重複排除ヘルパーを使っていません。3. 再配信されたメッセージで shipment.py:31 がもう一度実行され、在庫が二重に減ります",
+      "contrast": "worker/consumers/payment.py:18 は重複排除ヘルパーを使っています",
+      "impact": "期待（R-03）: メッセージ 1 件につき効果は 1 回です。実際: ブローカーが少なくとも 1 回配信する方式なら、再配信のたびに在庫が実際より少なくずれていきます",
+      "rule": "R-03",
+      "fix": "メッセージ ID をキーにした重複排除ヘルパーを、在庫の減算と同じトランザクションで使います",
+      "guard": "R-03: 同じ出荷メッセージを 2 回配信し、減算が 1 回だけであることを確かめるテストを追加します",
+      "validation": {"verdict": "Likely", "method": "static", "evidence": "shipment.py:31 に重複排除がありません。ブローカーの配信方式はリポジトリ内に記載がありません"},
+      "status": "Open"
+    },
+    {
+      "id": "A-003",
+      "title": "価格ドメインが ORM セッションを import している",
+      "severity": "Low",
+      "confidence": "Confirmed",
+      "category": "Boundaries and layering",
+      "step": "BL1",
+      "location": "api/pricing/domain/discounts.py:3",
+      "scenario": "割引ルールの変更（12 か月で 4 回変更）",
+      "blast_radius": "1 モジュール、import 箇所 2 つ",
+      "trace": "1. discounts.py:3 が db.session を import しています。2. 割引ルールがドメイン関数の中でクーポンを問い合わせています",
+      "contrast": "api/orders/domain/quote.py:12 はリポジトリを注入で受け取っています",
+      "impact": "期待（R-02）: ドメインのコードは永続化に依存しません。実際: 割引ルールはデータベースがないとテストできません",
+      "rule": "R-02",
+      "fix": "クーポンのリポジトリを割引関数に渡します",
+      "guard": "R-02: import-linter の layers 契約に api.pricing.domain を追加します",
+      "validation": {"verdict": "Valid", "method": "analysed", "evidence": "discounts.py:3"},
+      "analysis": {"tool": "import-linter", "command": "lint-imports --config <scratch>/pricing-layers.ini", "result": "api.pricing.domain を追加した layers 契約の一時コピーで、破られた契約が 1 件: api.pricing.domain -> db"},
+      "status": "Open"
+    }
+  ],
+  "perspectives": [
+    {"name": "Boundaries and layering", "status": "applied", "note": "BL1 は R-02 で確認。BL2-BL4 を適用し、循環は 0 件"},
+    {"name": "Cohesion and responsibility", "status": "applied", "note": "CR1-CR3 を適用"},
+    {"name": "Coupling", "status": "applied", "note": "CP1-CP4 を適用。12 か月分の同時変更を確認"},
+    {"name": "Domain model and data ownership", "status": "applied", "note": "DM1 は R-01 で確認。DM2-DM5 を適用"},
+    {"name": "Consistency and transactions", "status": "applied", "note": "TX2 は R-03 で確認。TX1、TX3-TX5 を適用"},
+    {"name": "Failure handling", "status": "applied", "note": "FH1-FH3 を適用"},
+    {"name": "API and event contracts", "status": "not checked", "note": "AC1 は R-04、AC2-AC3 は未確認: GraphQL リゾルバーは対象範囲外。リゾルバーとスキーマを読む必要があります"},
+    {"name": "Configuration and environment", "status": "applied", "note": "CF1-CF3 を適用"},
+    {"name": "Testability", "status": "applied", "note": "TS1-TS3 を適用"},
+    {"name": "Operability", "status": "applied", "note": "OP1-OP3 を適用"},
+    {"name": "Duplication and consistency of patterns", "status": "applied", "note": "DU1-DU2 を適用"},
+    {"name": "Dependencies and evolution", "status": "applied", "note": "DE1-DE3 を適用"}
+  ],
+  "architecture": {
+    "before": {
+      "note": "評価したリビジョンのモジュール構成図。赤い矢印は A-001 から A-003 が示すもの",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "orm", "label": "db（ORM セッション）"},
+        {"id": "broker", "label": "メッセージブローカー", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base（重複排除）"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "書き込み"},
+        {"from": "refunds", "to": "invoices", "label": "UPDATE を直接実行", "finding": "A-001"},
+        {"from": "pricing", "to": "orm", "label": "db.session を import", "finding": "A-003"},
+        {"from": "broker", "to": "shipment", "label": "出荷メッセージ"},
+        {"from": "shipment", "to": "stock", "label": "在庫を減算", "finding": "A-002"}
+      ]
+    },
+    "after": {
+      "note": "同じ構成図に A-001 から A-003 の修正方針を反映したもの",
+      "nodes": [
+        {"id": "orders", "label": "api/orders"},
+        {"id": "billing", "label": "api/billing"},
+        {"id": "pricing", "label": "api/pricing/domain"},
+        {"id": "coupons", "label": "api/pricing のクーポンリポジトリ"},
+        {"id": "orm", "label": "db（ORM セッション）"},
+        {"id": "broker", "label": "メッセージブローカー", "kind": "external"},
+        {"id": "refunds", "label": "worker/refunds"},
+        {"id": "shipment", "label": "worker/consumers/shipment"},
+        {"id": "dedup", "label": "worker/consumers/base（重複排除）"},
+        {"id": "invoices", "label": "invoices", "kind": "store"},
+        {"id": "stock", "label": "stock_levels", "kind": "store"}
+      ],
+      "edges": [
+        {"from": "orders", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "refunds", "to": "billing", "label": "BillingService.adjust()"},
+        {"from": "billing", "to": "invoices", "label": "書き込み"},
+        {"from": "pricing", "to": "coupons", "label": "リポジトリを注入"},
+        {"from": "coupons", "to": "orm", "label": "クーポンを問い合わせ"},
+        {"from": "broker", "to": "shipment", "label": "出荷メッセージ"},
+        {"from": "shipment", "to": "dedup", "label": "メッセージ ID で重複排除"},
+        {"from": "shipment", "to": "stock", "label": "メッセージ 1 件につき 1 回減算"}
+      ]
+    }
+  },
+  "checked_ok": ["api/ のモジュール間に循環はありません（import グラフで循環 0 件）", "注文の確定はトランザクショナルアウトボックスを使っています (api/orders/outbox.py:15)"],
+  "decisions": ["すべてのコンシューマーを冪等にする必要があるか確認してください（R-03 は推定です）"],
+  "limitations": ["本番環境でのブローカーの配信方式は観察していません", "GraphQL リゾルバーは読んでいません"],
+  "next_steps": ["A-001 を修正し、書き込み元を 1 つに限るチェックを CI に追加します", "ブローカーの配信方式を確認してから A-002 を修正します"]
+}

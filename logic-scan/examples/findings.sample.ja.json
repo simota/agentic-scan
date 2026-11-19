@@ -1,0 +1,227 @@
+{
+  "meta": {
+    "project": "acme-billing（架空）",
+    "scope": "app/ と tests/。主要フローは購入手続き、請求書発行、サブスクリプション更新です。",
+    "commit": "3f2a9c1",
+    "date": "2026-10-15",
+    "assessor": "Claude Code（サンプル）",
+    "method": "静的レビューと git log による 12 か月分の履歴確認",
+    "window": "2025-10-15..2026-10-15",
+    "lang": "ja", "axis": "confirmed"
+  },
+  "conventions": [
+    {"id": "C-01", "idiom": "金額は円単位の整数で保存し、モジュール間で受け渡します。",
+     "source": "多数派の実装：金額フィールド 14 件中 14 件。app/billing/money.py:3", "concern": "NUMBERS",
+     "inferred": true, "status": "holds"},
+    {"id": "C-02", "idiom": "レポートのクエリは注文 ID の重複を除いて数えます。支払い行は集計の単位にしません。",
+     "source": "docs/adr/0007-reporting.md:7", "concern": "OTHER", "inferred": false,
+     "status": "drifted"}
+  ],
+  "findings": [
+    {
+      "id": "F-001",
+      "title": "税額の丸め単位が異なり、請求書の合計とカード決済額がずれる",
+      "severity": "High",
+      "change": "Shared",
+      "effort": "M",
+      "confidence": "Confirmed",
+      "category": "Numbers and money",
+      "step": "NM2",
+      "hazard": "カード決済額と請求書の合計に、明細 1 行につき最大 1 円の差が出ます。",
+      "remedy": "Centralise Rounding",
+      "location": ["app/billing/invoice.py:42", "app/payments/charge.py:88"],
+      "scenario": "税額に端数が出る明細が複数ある注文で発生します。例は税率 10% で 333 円の明細が 3 行ある注文です。",
+      "blast_radius": "購入手続きとサブスクリプション更新は charge.py を使って決済します。請求書と会計エクスポートは invoice.py を参照します。",
+      "trace": "1. app/billing/invoice.py:42 は明細ごとに税額を切り捨ててから合計します。2. app/payments/charge.py:88 は税抜きの明細額を合計し、税率を 1 回適用して Python の round() で丸めます（ちょうど中間の値は偶数側に丸めます）。3. それぞれの金額が顧客向けの請求書 PDF とカード利用明細に載ります。4. 修正 9c1d2e4 と 5b7a0f3 では、1 円の差額を手作業で返金しました。",
+      "impact": "顧客は請求書より 1 円多く支払います。サポート担当が手作業で返金し、会計エクスポートの金額と決済事業者の記録に差が出ます。",
+      "exposure": "金銭を扱う主要フローの購入手続きに影響します。charge.py の呼び出し元は 4 か所です。調査期間内に修正 9c1d2e4 と 5b7a0f3 で差額を返金しました。",
+      "counterexample": {
+        "input": "注文 1 件。333 円の明細が 3 行あり、税率は 10% です。",
+        "expected": "請求書の合計と決済額はいずれも 1,098 円です（切り捨て後の税額は明細 1 行につき 33 円）。",
+        "actual": "請求書の合計は 1,098 円、決済額は 1,099 円です（999 x 0.1 = 99.9 を 100 に丸めます）。",
+        "oracle": "docs/billing/tax.md:12 は、明細ごとに税額を計算し、端数を切り捨てると定めています。"
+      },
+      "enforcement": {"net": "partial", "sites": ["tests/billing/test_invoice.py:30"],
+                      "gaps": "請求書のテストは明細が 1 行の注文だけを対象にしています。決済額と請求書の合計を比較するテストはありません。"},
+      "change_reason": "charge.py:88 は購入手続きとサブスクリプション更新で共用されています（呼び出し元は 4 か所）。一部の請求書では更新時の決済額が 1 円減るため、経理部門はその差を見込む必要があります。",
+      "invariants": [
+        "すべての注文で、決済額と請求書の合計が一致します。",
+        "すべての呼び出し元が同じ関数を使い、明細ごとに税額を計算して端数を切り捨てます。"
+      ],
+      "steps": [
+        "1. 明細ごとの税額計算を billing.tax.line_tax に移し、invoice.py と charge.py から呼び出します。従来の決済額を期待していた更新テストを修正し、税率 10% で 333 円の明細が 3 行あるときに、請求書の合計と決済額がともに 1,098 円になることをテストします（verify: 変更を戻すと新しいテストが決済額のアサーションで失敗し、変更を適用すると請求と更新のテストスイートが通ることを確認します）。"
+      ],
+      "depends_on": ["F-002"],
+      "fix": "明細ごとに税額を切り捨てる関数を 1 つにまとめ、請求書と決済の両方で使います。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/billing/invoice.py:42 は明細ごとに floor で切り捨て、app/payments/charge.py:88 は round(total * rate) を使います。git show 9c1d2e4 5b7a0f3 で 1 円の差額の返金を確認できます。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-002",
+      "title": "購入手続きのプレビューで税率が 10% に固定され、店舗別税率を使う請求書とずれる",
+      "severity": "Medium",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Rule duplication and drift",
+      "step": "RD2",
+      "hazard": "税率の定義が 2 か所にあり、店舗の税率を使うのは請求書だけです。",
+      "remedy": "Single Source for the Rule",
+      "location": "app/checkout/preview.py:14-31",
+      "scenario": "軽減税率 8% が適用される食品店では、すべての顧客に請求書と異なる合計額がプレビューに表示されます。",
+      "blast_radius": "影響範囲は 1 モジュールで、すべての顧客が決済前に見る購入手続きのプレビューです。",
+      "trace": "1. app/checkout/preview.py:22 は合計にリテラル 1.1 を掛けます。2. app/billing/invoice.py:18 は shop.tax_rate を読み取ります。3. コミット 2e4f6a1（feat: per-shop tax rates）は店舗別税率の機能追加です。請求書を shop.tax_rate に切り替えた時点で、プレビューは従来の計算のままでした。4. db/seeds/shops.yml:12 と docs/billing/tax.md:5 では、食品店の税率は 8% です。",
+      "impact": "軽減税率が適用される店舗の顧客には、請求書より高い合計額が決済前に表示されます。",
+      "exposure": "主要フローの購入手続きに影響します。8% が適用される食品店が存在します（db/seeds/shops.yml:12）。税率の定義は 2 か所あり、2e4f6a1 でそのうち 1 か所が変わりました。この差を記録したサポート対応や返金はありません。",
+      "counterexample": {
+        "input": "tax_rate が 0.08 の店舗で、1,000 円の注文を行います。",
+        "expected": "プレビューの合計は、請求書と同じ 1,080 円です。",
+        "actual": "プレビューの合計は 1,100 円です。",
+        "oracle": "docs/billing/tax.md:5 は、店舗が表示または請求するすべての価格に、その店舗の税率を適用すると定めています。"
+      },
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "プレビューのテストはすべて税率 10% の店舗を使うため、テストではリテラルと店舗の税率が常に一致します。"},
+      "invariants": [
+        "表示または請求するすべての価格に、店舗の tax_rate を使います。",
+        "税率 8% の店舗では、1,000 円の注文のプレビューは 1,080 円です。"
+      ],
+      "steps": [
+        "1. リテラルを、請求の税計算モジュールを通じて取得する shop.tax_rate に置き換え、税率 8% の店舗のプレビューをテストします（verify: プレビューが 1,080 円になり、変更を戻すとテストが失敗することを確認します）。",
+        "2. 税率のリテラルをほかにも探し、同じモジュールを経由するようにします（verify: app/ の 0.1 と 1.1 を grep で検索し、税計算に使う箇所が残っていないことを確認します）。"
+      ],
+      "fix": "税率の取得元を請求の税計算モジュールに統一します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/checkout/preview.py:22 は total * 1.1 を計算し、app/billing/invoice.py:18 は shop.tax_rate を参照します。git show 2e4f6a1 で変更されたのが invoice.py だけと分かります。db/seeds/shops.yml:12 には tax_rate: 0.08 があります。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-003",
+      "title": "サブスクリプション更新がサーバーの UTC 日付で請求日を判定",
+      "severity": "Medium",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Dates, times and time zones",
+      "step": "DT1",
+      "hazard": "JST で請求日を迎えても、サーバーの UTC 日付が切り替わる 09:00 JST まで更新されません。",
+      "remedy": "Use Zone-Aware Time",
+      "location": "app/jobs/renew_subscriptions.py:9-20",
+      "scenario": "更新ジョブは毎時実行されます。顧客の請求日の 01:00 JST に実行される時点では、サーバーの日付はまだ前日です。",
+      "blast_radius": "影響範囲は 1 ジョブで、UTC より先に日付が変わるタイムゾーンのサブスクリプションすべてが対象です。",
+      "trace": "1. renew_subscriptions.py:12 は UTC に設定されたサーバーで date.today() を取得します（config/runtime.py:4）。2. :15 で、JST の暦日として保存された subscription.billing_day と比較します。3. 09:00 JST より前の実行では前日の日付が使われます。",
+      "impact": "更新は最大 9 時間遅れます。顧客は契約期間の終了後も 09:00 JST まで利用でき、その分だけ決済も遅れます。09:00 より前に毎時実行されるジョブでは、対象の顧客は更新されません。",
+      "exposure": "金銭を扱う主要フローのサブスクリプション更新に影響します。JST の顧客全員が対象で、調査期間内に修正コミットはありません。",
+      "counterexample": {
+        "input": "billing_day は 2026-11-01 (JST) です。ジョブは 2026-11-01 01:00 JST (2026-10-31 16:00 UTC) に実行されます。",
+        "expected": "この実行でサブスクリプションが更新されます。",
+        "actual": "date.today() が 2026-10-31 のため、更新が見送られます。UTC 日付が 2026-11-01 に変わる 09:00 JST の実行で更新されます。",
+        "oracle": "docs/billing/subscriptions.md:9 は、顧客のタイムゾーンでの請求日に更新すると定めています。"
+      },
+      "enforcement": {"net": "partial", "sites": ["tests/billing/test_renewal.py:14"],
+                      "gaps": "更新テストは、UTC と JST の日付が一致する 12:00 UTC に時刻を固定しています。"},
+      "invariants": [
+        "顧客のタイムゾーンで請求日が始まってから、最初のジョブ実行でサブスクリプションが更新されます。",
+        "請求日の 01:00 JST に実行されるジョブで更新されます。"
+      ],
+      "steps": [
+        "1. zoneinfo を使って顧客のタイムゾーンでの当日の日付を求め、billing_day と比較します。時刻を 2026-10-31 16:00 UTC に固定したテストを追加します（verify: 請求日が 2026-11-01 JST のサブスクリプションが更新され、変更を戻すとテストが失敗することを確認します）。"
+      ],
+      "fix": "billing_day との比較には、顧客のタイムゾーンでの当日の日付を使います。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/jobs/renew_subscriptions.py:12 は date.today() を使い、config/runtime.py:4 は TZ=UTC を設定しています。tests/billing/test_renewal.py:14 は時刻を 12:00 UTC に固定しています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-004",
+      "title": "月次売上レポートが注文を支払いの回数分だけ集計",
+      "severity": "Low",
+      "change": "Correction",
+      "effort": "S",
+      "confidence": "Confirmed",
+      "category": "Collections and aggregation",
+      "step": "CA1",
+      "hazard": "支払いを 2 回に分けた注文が 2 件として数えられます。",
+      "remedy": "Fix Aggregation Key",
+      "location": ["app/reports/monthly_sales.py:27", "app/reports/queries.sql:12"],
+      "scenario": "2026-03 に有効になった分割支払いでは、注文 1 件に対して支払い行が 2 行できます。",
+      "blast_radius": "経理部門だけが使用する社内レポート 1 件が対象です。",
+      "trace": "1. queries.sql:12 は orders と payments を結合します。2. monthly_sales.py:27 は結合後の行を数えます。3. docs/adr/0007-reporting.md:7 は、注文 ID の重複を除いて数えるよう定めています。",
+      "impact": "2026-03 以降、社内の月次レポートで注文数が過大に集計されています。",
+      "exposure": "主要フローの対象外にある社内レポートです。分割支払いは注文の約 4% を占めます（docs/ops/payments.md:20）。",
+      "enforcement": {"net": "none", "sites": [],
+                      "gaps": "レポートのテストがなく、フィクスチャにも分割支払いがありません。"},
+      "change_reason": "2026-03 以降のレポートは、注文数が過大な状態で経理部門に送付済みです。訂正には再集計と経理部門への連絡が必要です。",
+      "steps": [
+        "1. 注文 ID の重複を除いて数え、支払いを 2 回に分けた注文をフィクスチャに用意します（verify: 修正後は 1 件、変更を戻すと 2 件と数えられることを確認します）。",
+        "2. 訂正の判断に向けて、2026-03 以降で注文数が変わる月を列挙します（verify: 各月の差分が、その月の分割支払いの注文数と一致することを確認します）。再送の判断は経理部門が行います。"
+      ],
+      "convention": "C-02",
+      "fix": "ADR 0007 に従って注文 ID の重複を除いて数え、送付済みのレポートを訂正します。",
+      "validation": {"verdict": "Valid", "method": "static",
+                     "evidence": "app/reports/monthly_sales.py:27 は app/reports/queries.sql:12 で結合した結果に len(rows) を使います。docs/adr/0007-reporting.md:7 は COUNT(DISTINCT order_id) を求めています。"},
+      "status": "Open"
+    },
+    {
+      "id": "F-005",
+      "title": "旧クーポン処理で割引額 0 を未指定扱い",
+      "severity": "Low",
+      "change": "Local",
+      "effort": "S",
+      "confidence": "Suspected",
+      "category": "Null, empty and missing",
+      "step": "NE1",
+      "hazard": "if discount: は記録された 0 を読み飛ばし、既定値を使います。",
+      "remedy": "Distinguish Missing from Zero",
+      "location": "app/legacy/coupons.py:31",
+      "scenario": "このモジュールの呼び出し元はありません。",
+      "blast_radius": "1 モジュール",
+      "trace": "1. coupons.py:31 は割引額の真偽値を判定します。2. ルート、ジョブ、インポートのいずれからも coupons.py には到達しません。",
+      "impact": "呼び出されないコードなので、誤った結果が発生することはありません。",
+      "fix": "削除候補として、削除可能なコードを検討するレビューに引き継ぎます。",
+      "validation": {"verdict": "NotApplicable", "method": "static",
+                     "evidence": "app/legacy/coupons.py:31 への到達経路はありません。app/ と tests/ で coupons を検索すると、このファイル自体だけが見つかります。"},
+      "status": "Open"
+    }
+  ],
+  "plan": [
+    {"batch": 1, "title": "税率の取得元を統一", "findings": ["F-002"],
+     "prerequisite": "none", "pr_title": "fix: 購入手続きのプレビューで店舗の税率を使う"},
+    {"batch": 2, "title": "請求書と決済の端数処理を統一", "findings": ["F-001"],
+     "prerequisite": "更新時の決済額が 1 円減る場合があることについて、経理部門の了承を得ます（判断事項を参照）。",
+     "pr_title": "fix: 請求書と決済で税額を同じように明細ごとに丸める"},
+    {"batch": 3, "title": "顧客の現地日付で更新", "findings": ["F-003"],
+     "prerequisite": "none", "pr_title": "fix: 顧客のタイムゾーンで請求日を比較する"}
+  ],
+  "perspectives": [
+    {"name": "Boundaries and ranges", "status": "applied", "note": "BD1-BD3 を適用しました。どの処理でも期間の終端は範囲に含めません（app/billing/period.py:8）。"},
+    {"name": "Conditions and branches", "status": "applied", "note": "CB1-CB3 を適用しました。"},
+    {"name": "Null, empty and missing", "status": "applied", "note": "NE1-NE3 を適用しました。NE1 で、到達経路のない F-005 を見つけました。"},
+    {"name": "Numbers and money", "status": "applied", "note": "NM1-NM3 を適用しました。浮動小数点数を使うのは F-001 と F-002 の税額計算の途中だけです。保存された金額はすべて整数です（C-01）。NM2 で F-001 を見つけました。"},
+    {"name": "Dates, times and time zones", "status": "applied", "note": "DT1-DT3 を適用しました。DT1 で F-003 を見つけました。"},
+    {"name": "State and lifecycle", "status": "applied", "note": "SL1-SL3 を適用しました。サブスクリプションの状態遷移は app/billing/subscription.py:40 を経由します。"},
+    {"name": "Collections and aggregation", "status": "applied", "note": "CA1-CA3 を適用しました。CA1 で F-004 を見つけました。"},
+    {"name": "Text, encoding and locale", "status": "applied", "note": "TE1-TE3 を適用しました。顧客名は保存時に NFKC で正規化されます（app/customers/model.py:22）。"},
+    {"name": "In-process concurrency and ordering", "status": "applied", "note": "CO1-CO3 を適用しました。リクエスト間で共有される可変状態はありません。"},
+    {"name": "Rule duplication and drift", "status": "applied", "note": "RD1-RD3 を適用しました。RD2 で F-002 を見つけました。"},
+    {"name": "Error paths and defaults", "status": "applied", "note": "ER1-ER3 を適用しました。"},
+    {"name": "Equality and types", "status": "applied", "note": "EQ1-EQ3 を適用しました。すべての箇所で ID を int として比較しています。"}
+  ],
+  "checked_ok": [
+    "app/billing/period.py:8-30 で定義する請求期間は、どの読み取り処理でも半開区間 [start, end) です。",
+    "保存された金額フィールドはすべて円単位の整数です（C-01。14 件中 14 件を確認しました）。"
+  ],
+  "decisions": [
+    "F-001 の修正後に、更新時の決済額が 1 円減ることを許容するか判断してください（過去の差額は 9c1d2e4 と 5b7a0f3 で返金済みです）。",
+    "2026-03 以降に経理部門へ送付した月次レポートを訂正し、再送するか判断してください（F-004）。",
+    "金額を円単位の整数で保存・受け渡しする C-01 を、正式なルールとして確認してください。"
+  ],
+  "limitations": [
+    "テストは実行していません。反例はコードを読んで動作を追跡したものです。",
+    "2025-03 より前のコミット履歴は移行時にまとめられています。"
+  ],
+  "next_steps": [
+    "バッチ 1 を先に進め、修正担当者に templates/plan.ja.md を渡します。",
+    "F-004 は訂正したレポートについて経理部門の了承を得て進め、F-005 は削除可能なコードを検討するレビューに引き継ぎます。"
+  ]
+}

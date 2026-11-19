@@ -23,6 +23,26 @@ dashboard and a report. None of them edits the code under review.
 
 Each skill's own README describes its workflow and outputs.
 
+## Diff mode
+
+Every skill can review a change instead of the whole repository: a branch
+against its base, a pull request, a commit range, or uncommitted work. Ask for
+it in the request:
+
+```text
+/security-scan review only this branch against main
+/logic-scan the diff of PR 123
+/test-gap-scan my uncommitted changes
+```
+
+Each skill's `scripts/diffscope.py` takes the diff from the merge base, as a
+pull request shows it, and the review covers the changed files and the code
+they reach. A finding is kept only when the change causes, exposes or worsens
+it; defects that were already there are mentioned in the chat summary, not
+recorded. The report names the range and says it is not a full assessment, so
+do not compare it with a full run. The procedure is in each skill's
+`reference/diff-mode.md`.
+
 ## Language
 
 The documentation is in English. Reports follow the user's language, chosen

@@ -45,6 +45,22 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 - **Guards** — each finding names a fitness function (import contract, cycle
   check, single-writer search, idempotency test) that would keep the rule
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/architecture-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/architecture-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/architecture-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Install
 
 ```sh
@@ -170,6 +186,7 @@ skills/architecture-scan/
   scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
   scripts/compare.py           an earlier findings.json against a later one: new, resolved, persisting;
                                carries triage forward and gates regressions
+  scripts/diffscope.py         the change a diff-scoped run covers; places locations against it
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDE viewers
   scripts/report_style.py      loads report_assets/dashboard.css (the dashboard stylesheet) and
                                console.{css,js} (the console-triage layer)

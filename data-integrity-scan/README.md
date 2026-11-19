@@ -57,6 +57,22 @@ A missing constraint is not the measure: a constraint no write path could
 violate is not a finding, and a hazard on data nobody depends on costs
 little.
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/data-integrity-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/data-integrity-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/data-integrity-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Outputs
 
 Every output is rendered from one record, `findings.json`, which the agent
@@ -113,6 +129,7 @@ skills/data-integrity-scan/
   scripts/drafts.py            findings.json -> plan.md and one issue per finding (stdlib only)
   scripts/compare.py           an earlier run vs a later one: new, resolved, persisting; carried
                                Accepted status; --fail-on regression gate (stdlib only)
+  scripts/diffscope.py         the change a diff-scoped run covers; places locations against it
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and IDEs (stdlib only)
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue

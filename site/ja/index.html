@@ -219,6 +219,7 @@ wrote ../out/security-scan/assessment.html</pre>
         <h3>頼む</h3>
         <p class="ask">診断したいリポジトリで、エージェントにそのまま頼みます。</p>
         <p class="say">このリポジトリを security-scan で診断して</p>
+        <p class="say">main との差分だけを logic-scan で診断して</p>
       </li>
     </ol>
   </div>
@@ -239,6 +240,10 @@ wrote ../out/security-scan/assessment.html</pre>
       <details>
         <summary>どのエージェントで使えますか。</summary>
         <p>Claude Code、Codex、Antigravity です。<code>make link</code> が、インストールされているものすべてのスキル置き場にリンクを作ります。<code>make link AGENT=claude</code> のように一つだけ選ぶこともできます。</p>
+      </details>
+      <details>
+        <summary>ブランチやプルリクエストの差分だけを診断できますか。</summary>
+        <p>できます。すべてのスキルに diff モードがあります。ブランチとその基点、プルリクエスト、コミット範囲、未コミットの変更のいずれかを指定すると、変更されたファイルと、そこからたどれるコードを診断します。報告するのは変更によって生じた、表に出た、または悪化した問題だけで、レポートには全体診断ではないことを明記します。</p>
       </details>
       <details>
         <summary>privacy-scan の結果は法的な判断になりますか。</summary>

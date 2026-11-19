@@ -216,6 +216,7 @@ wrote ../out/security-scan/assessment.html</pre>
         <h3>Ask</h3>
         <p class="ask">In the repository you want reviewed, just ask your agent.</p>
         <p class="say">Review this repository with security-scan</p>
+        <p class="say">Review only this branch against main with logic-scan</p>
       </li>
     </ol>
   </div>
@@ -236,6 +237,10 @@ wrote ../out/security-scan/assessment.html</pre>
       <details>
         <summary>Which agents does it work with?</summary>
         <p>Claude Code, Codex and Antigravity. <code>make link</code> creates links in the skills folder of every one that is installed. You can also pick just one, as in <code>make link AGENT=claude</code>.</p>
+      </details>
+      <details>
+        <summary>Can it review only a branch or a pull request?</summary>
+        <p>Yes. Every skill has a diff mode: name a branch and its base, a pull request, a commit range or your uncommitted changes, and the review covers the changed files and the code they reach. Only problems the change causes, exposes or worsens are reported, and the report says it is not a full assessment.</p>
       </details>
       <details>
         <summary>Is privacy-scan's output a legal opinion?</summary>

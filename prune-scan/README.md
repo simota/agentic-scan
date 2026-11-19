@@ -65,6 +65,22 @@ we delete or simplify?".
 The full list with hunt steps is `skills/prune-scan/reference/perspectives.md`;
 the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/prune-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/prune-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/prune-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Scripts (standard library only)
 
 | Script | Does |
@@ -73,6 +89,7 @@ the purpose baseline is described in `skills/prune-scan/reference/units.md`.
 | `scripts/findings.py units\|merge\|check\|renumber` | Validate the units and findings; merge JSON fragments atomically; renumber findings into severity order |
 | `scripts/render.py findings.json --out DIR --lang ja\|en --repo REPO` | Dashboard, report and PDF via the bundled report kit |
 | `scripts/compare.py EARLIER LATER [--repo REPO] [--json OUT] [--fragment OUT]` | Follow-up review: match findings across two reviews by what they name (ids are renumbered every time) into resolved, accepted, ruled out, persisting with changes, missing, new and reopened; inventory candidates that appeared or are gone; whether missing findings' files still exist; a merge fragment that carries them as `Fixed` |
+| `scripts/diffscope.py scope REPO --base REF --out FILE` / `locate FILE PATH:LINE...` | The change a diff-scoped run covers (`reference/diff-mode.md`) |
 | `scripts/usage.py INVENTORY LOG... [--findings F] [--mount PREFIX]... [--json OUT]` | Usage evidence: requests per route in `routes` and per public asset in `assets_unreferenced`, from Common/Combined Log Format, load balancer lines or JSON lines (`.gz` too); status classes, first and last request, an evidence line naming source, window and query; each open finding tied to its routes with a reading; unmatched path shapes, masked. No client address, agent or query string is output |
 | `scripts/plan.py FINDINGS [--unit UNIT]... [--out PLAN.md] [--json OUT]` | Removal plan from the settled record: checkbox steps (remove now, then reduce or consolidate) ordered by severity and by the ordering prose in each finding's risk ("after P-010"), steps waiting for an undecided or kept prerequisite, the decisions with their questions, files several steps share, and what to run after the removals |
 | `scripts/sarif.py FINDINGS [--out FILE] [--repo REPO] [--min-severity High\|Medium\|Low\|Info]` | SARIF 2.1.0 for code scanning and IDE viewers: one result per open or accepted finding to act on (accepted ones suppressed), level from severity, rule from the hunt step, `occurrences` and the entry point as related locations, a fingerprint that survives renumbering; `--repo` binds `SRCROOT` and keeps the output out of the checkout |

@@ -73,6 +73,22 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 Ask for "what should we check" and it stops after the checklist. Ask it to
 check or audit and it runs all phases.
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/security-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/security-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/security-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Install
 
 ```sh
@@ -624,6 +640,7 @@ skills/security-scan/
   scripts/render.py            findings.json -> dashboard / assessment PDF (stdlib only)
   scripts/report_schema.py     the findings.json contract: enumerations, validation, parsing
   scripts/compare.py           two assessments -> new / reopened / persisting / not reported; --fail-on gate
+  scripts/diffscope.py         the change a diff-scoped run covers; places locations against it
   scripts/export.py            findings.json -> SARIF 2.1.0, CSV, issue drafts
   scripts/finding_keys.py      run-independent finding identity (fingerprint, matching keys)
   scripts/output_files.py      masked, atomic, symlink-refusing writes for derived files

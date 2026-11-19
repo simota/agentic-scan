@@ -54,6 +54,22 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   every store and every recipient. Both reports show it with the findings
   about each element and a *who receives personal data* table
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/privacy-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/privacy-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/privacy-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Install
 
 ```sh
@@ -151,6 +167,7 @@ skills/privacy-scan/
   reference/report.md          checklist and findings report formats
   scripts/findings.py          merges JSON fragments; refuses personal values; renumbers; checks the run contract; diffs runs
   scripts/compare.py           matches findings across two assessments for `findings.py diff`
+  scripts/diffscope.py         the change a diff-scoped run covers; places locations against it
   scripts/drafts.py            findings.json -> issue drafts and an owner report from the templates
   scripts/export.py            findings.json -> SARIF, findings CSV or data map CSV
   scripts/personal_values.py   the personal-value guard: why a text must not be saved (stdlib only)

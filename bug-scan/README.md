@@ -61,6 +61,22 @@ fix chains, hotspot quadrant, live entry points, and issues to patterns. See
 | Triage in a spreadsheet | `export.py csv`; cells cannot run as formulas |
 | Accept a risk, or take the acceptance back | `ledger.py set --status Accepted` / `--status Open`, always with a reason |
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/bug-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/bug-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/bug-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Tools
 
 ```sh
@@ -73,6 +89,7 @@ python3 $S/render.py out/findings.json --out out
 python3 $S/contract_check.py out --repo <checkout>
 python3 $S/ledger.py reconcile <ledger.json> out/findings.json --repo <repo> --fragment frag.json
 python3 $S/compare.py <earlier-out> <later-out>
+python3 $S/diffscope.py scope <repo> --base main --out diff.json   # diff mode: the change under review
 python3 $S/import_findings.py <other>/findings.json --scan security-scan --out frag.json
 python3 $S/ledger.py list <ledger.json> [--status NotSeen]
 python3 $S/ledger.py set <ledger.json> <key> --ref <issue-url> --reason filed

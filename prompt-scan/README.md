@@ -52,6 +52,22 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
 Ask "what should we check" and it stops after the checklist. Ask it to review
 or improve prompts and it runs all phases.
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/prompt-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/prompt-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/prompt-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## After the review
 
 - **Re-review**: after changing prompts, run a new review and compare it with
@@ -134,6 +150,7 @@ python3 skills/prompt-scan/scripts/compare.py baseline/findings.json out/finding
 | `skills/prompt-scan/scripts/findings.py` | Merges JSON fragments into `findings.json`; `renumber` restores severity order |
 | `skills/prompt-scan/scripts/render.py` | `dashboard.html`, `report.html`, `report.pdf` |
 | `skills/prompt-scan/scripts/compare.py` | What changed between two reviews; `--fail-on` gates on new findings, `--accepted-fragment` carries accepted risks forward |
+| `skills/prompt-scan/scripts/diffscope.py scope REPO --base REF --out FILE` / `locate FILE PATH:LINE...` | The change a diff-scoped run covers (`reference/diff-mode.md`) |
 | `skills/prompt-scan/scripts/export.py` | `summary` (chat), `sarif` (code scanning, IDEs), `issues` (one issue body per finding); `--fail-on` gates on Open findings |
 | `skills/prompt-scan/scripts/record.py` | The `findings.json` contract every script shares: vocabulary, strict parsing, schema, atomic replacement |
 | `skills/prompt-scan/scripts/excerpt.py` | What a report may quote from the reviewed repository, and the redaction applied to it |

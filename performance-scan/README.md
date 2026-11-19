@@ -43,6 +43,22 @@ RECON ─► CHECKLIST ─► REVIEW ─► VERIFY ─► REPORT
   driver, or one request blocks a shared resource; each condition the code does
   not control lowers it one level
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/performance-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/performance-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/performance-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Install
 
 ```sh
@@ -234,6 +250,7 @@ skills/performance-scan/
   scripts/summary.py           findings.json -> the chat summary on stdout
   scripts/issues.py            findings.json -> one issue draft per open finding
   scripts/compare.py           two findings.json -> new / resolved / changed, a CI gate, --carry
+  scripts/diffscope.py         the change a diff-scoped run covers; places locations against it
   scripts/sarif.py             findings.json -> SARIF 2.1.0 for code scanning and editors
   scripts/report_style.py      loads report_assets/dashboard.css, the dashboard stylesheet
   templates/issue.{ja,en}.md   one finding as one issue

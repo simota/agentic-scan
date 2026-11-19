@@ -90,6 +90,22 @@ baseline                perspectives         └─ chat summary
   read-only export commands to run themselves (`reference/snapshots.md`); the
   exports join the baseline with `iac_scan.py --snapshots DIR`
 
+## Diff mode
+
+To review a change instead of the whole repository, ask for it: this branch
+against `main`, a pull request, a commit range, or uncommitted work.
+`scripts/diffscope.py` takes the diff from the merge base (as a pull request
+shows it), the review units are cut to the changed files and the code they
+reach, and a finding is kept only when the change causes, exposes or worsens
+it. The record names the range in `meta.scope` and says in `limitations` that
+it is not a full assessment. The procedure is in
+`skills/infra-security-scan/reference/diff-mode.md`.
+
+```sh
+python3 skills/infra-security-scan/scripts/diffscope.py scope . --base main --out /tmp/diff.json   # add --worktree for uncommitted work
+python3 skills/infra-security-scan/scripts/diffscope.py locate /tmp/diff.json app/orders.py:42    # changed / file / outside / deleted
+```
+
 ## Install
 
 ```sh
@@ -145,6 +161,7 @@ skills/infra-security-scan/
   scripts/findings.py      merge finding fragments into findings.json
   scripts/render.py        dashboard.html, assessment.html, assessment.pdf
   scripts/compare.py       what changed between two assessments (render.py --previous)
+  scripts/diffscope.py     the change a diff-scoped run covers; places locations against it
   scripts/issues.py        issue drafts from templates/issue.<lang>.md
   scripts/sarif.py         SARIF 2.1.0 log for code scanning, CI and editors
   scripts/excerpts.py      which cited lines render.py --repo may show, redacted
